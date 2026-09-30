@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import logging
 import re
+from dataclasses import dataclass
 from typing import Any
+
+from django.db import transaction
 
 from simulate.models import (
     HostedHarnessJob,
@@ -31,6 +34,9 @@ _ORDINAL_WORDS = {
         start=1,
     )
 }
+
+
+MAX_SUITE_SCENARIOS = 200
 
 
 def scenarios_meant(
@@ -60,6 +66,14 @@ def scenarios_meant(
             found.append(name)
 
     for piece in said if isinstance(said, (list, tuple)) else [said]:
+        # A whole name or key is exact; only free text is split into numbers and ranges.
+        whole = str(piece or "").strip()
+        if whole in known:
+            take(whole)
+            continue
+        if whole in keys:
+            take(keys[whole])
+            continue
         for part in re.split(r"[,\s]+(?:and\s+)?", str(piece or "").strip()):
             part = part.strip().strip(".")
             if not part:
@@ -92,23 +106,66 @@ def scenarios_meant(
     return found
 
 
+@dataclass
+class SuiteChange:
+    """An applied change, plus the sandbox work that must wait until it is committed."""
+
+    body: dict[str, Any]
+    status: int = 200
+    suite: list[dict[str, Any]] | None = None
+
+    def after_commit(self, job: HostedHarnessJob) -> dict[str, Any]:
+        """Bring live sandboxes and saved chat workspaces up to the committed suite."""
+        if self.suite is None:
+            return self.body
+        from simulate.services.hosted_harness_gateway import (
+            push_scenarios_into_live_sandbox,
+            rewrite_conversation_scenarios,
+        )
+
+        try:
+            rewrite_conversation_scenarios(job, self.suite)
+        except (
+            Exception
+        ):  # noqa: BLE001 - a stale chat workspace is rebased on its next publish
+            logger.warning(
+                "harness_conversation_rewrite_failed job_id=%s", job.id, exc_info=True
+            )
+        try:
+            delivered = push_scenarios_into_live_sandbox(job, self.suite)
+        except Exception:  # noqa: BLE001 - the change is committed; a sandbox can catch up later
+            logger.warning(
+                "harness_live_sandbox_push_failed job_id=%s", job.id, exc_info=True
+            )
+            delivered = False
+        if delivered:
+            self.body["receipts"] = [
+                {**one, "outcome": "queued"} if one.get("outcome") == "applied" else one
+                for one in self.body.get("receipts") or []
+            ]
+        return self.body
+
+
 def amend_suite(
     job: HostedHarnessJob, changes: list[dict[str, Any]], *, rework: bool = True
-) -> tuple[dict[str, Any], int]:
+) -> SuiteChange:
     """Apply changes to a locked job's suite: one receipt per scenario each change names.
 
-    The caller holds the job row lock inside a transaction.
+    The caller holds the job row lock inside a transaction and calls ``after_commit`` once
+    that transaction has committed.
     """
     result = _amend(job, changes, rework)
-    return result if isinstance(result, tuple) else (result, 200)
+    if isinstance(result, SuiteChange):
+        return result
+    if isinstance(result, tuple):
+        return SuiteChange(body=result[0], status=result[1])
+    return SuiteChange(body=result)
 
 
 def _amend(job: HostedHarnessJob, changes: list[dict[str, Any]], rework: bool):
     from simulate.services.hosted_harness_gateway import (
         AuthoringArchiveKept,
-        push_scenarios_into_live_sandbox,
         rewrite_authoring_scenarios,
-        rewrite_conversation_scenarios,
     )
 
     output = (
@@ -183,6 +240,15 @@ def _amend(job: HostedHarnessJob, changes: list[dict[str, Any]], rework: bool):
                         "scenario": name,
                         "outcome": "refused",
                         "why": "dropping a scenario changes the suite, so it needs a re-proof",
+                    }
+                )
+                continue
+            if len(suite) == 1:
+                receipts.append(
+                    {
+                        "scenario": name,
+                        "outcome": "refused",
+                        "why": "an environment needs at least one scenario",
                     }
                 )
                 continue
@@ -310,52 +376,31 @@ def _amend(job: HostedHarnessJob, changes: list[dict[str, Any]], rework: bool):
                 ]
             }
     if touched:
-        # The archive a run replays changes first; if it cannot, nothing changes.
-        try:
-            rewrite_authoring_scenarios(job, suite)
-            rewrite_conversation_scenarios(job, suite)
-        except AuthoringArchiveKept as kept:
+
+        def refused_all(why: str) -> dict[str, Any]:
             return {
                 "receipts": [
                     (
-                        {
-                            **one,
-                            "outcome": "refused",
-                            "why": f"nothing changed: {kept}",
-                        }
+                        {**one, "outcome": "refused", "why": f"nothing changed: {why}"}
                         if one.get("outcome") == "applied"
                         else one
                     )
                     for one in receipts
                 ]
             }
-        if output is not None:
-            output.data = suite
-            output.summary = f"{len(suite)} pre-authored scenarios"
-            output.save(update_fields=["data", "summary", "updated_at"])
-        else:
-            job.stage_outputs = [
-                {**item, "data": suite} if item.get("kind") == "scenarios" else item
-                for item in (job.stage_outputs or [])
-            ]
-            job.save(update_fields=["stage_outputs", "updated_at"])
-        # Write to the archive, the live guest and the index, or the edit reverts or hides.
-        try:
-            from simulate.services.harness_scenarios import index_scenarios
 
-            index_scenarios(job, suite, prune=True)
-        except Exception:  # noqa: BLE001 - the edit itself applied; the index can lag
-            logger.warning(
-                "harness_scenario_reindex_failed job_id=%s",
-                job.id,
-                exc_info=True,
-            )
-        delivered = push_scenarios_into_live_sandbox(job, suite)
-        if delivered:
-            receipts = [
-                {**one, "outcome": "queued"} if one.get("outcome") == "applied" else one
-                for one in receipts
-            ]
+        try:
+            # One savepoint: the snapshot pointer, the suite output and the rows move together.
+            with transaction.atomic():
+                # The archive a run replays changes first; if it cannot, nothing changes.
+                rewrite_authoring_scenarios(job, suite)
+                record_suite(job, suite, output)
+        except AuthoringArchiveKept as kept:
+            return refused_all(str(kept))
+        except Exception:  # noqa: BLE001 - every store reverts together
+            logger.exception("harness_scenario_record_failed job_id=%s", job.id)
+            return refused_all("the scenario list could not be updated")
+        return SuiteChange(body={"receipts": receipts}, suite=suite)
     return {"receipts": receipts}
 
 
@@ -370,9 +415,13 @@ class ScenarioChangeRefused(Exception):
 def _locked_environment(
     environment_id, expected_revision: str | None
 ) -> HostedHarnessJob:
-    job = HostedHarnessJob.no_workspace_objects.select_for_update().get(
-        id=environment_id
+    job = (
+        HostedHarnessJob.no_workspace_objects.select_for_update()
+        .filter(id=environment_id)
+        .first()
     )
+    if job is None:
+        raise ScenarioChangeRefused("scenario_not_found", "environment not found", 404)
     if job.state != HostedHarnessJob.State.COMPLETED:
         raise ScenarioChangeRefused(
             "environment_not_ready", "scenarios can be changed once the build finishes"
@@ -483,8 +532,10 @@ def edit_scenario(
             changes.append(
                 {"op": "set_persona", "scenario": row.scenario_key, "persona": persona}
             )
-        receipts = _applied(*amend_suite(job, changes, rework=True))
+        change = amend_suite(job, changes, rework=True)
+        _applied(change.body, change.status)
         revision = _revision(job)
+    receipts = change.after_commit(job)["receipts"]
     row = (
         HostedHarnessScenario.no_workspace_objects.filter(id=row.id)
         .select_related("scenario", "call_execution")
@@ -515,7 +566,182 @@ def delete_scenarios(
         )
         if len(keys) != len(set(scenario_ids)):
             raise ScenarioChangeRefused("scenario_not_found", "scenario not found", 404)
-        receipts = _applied(
-            *amend_suite(job, [{"op": "drop", "scenarios": keys}], rework=True)
+        change = amend_suite(job, [{"op": "drop", "scenarios": keys}], rework=True)
+        _applied(change.body, change.status)
+        revision = _revision(job)
+    return {
+        "receipts": change.after_commit(job)["receipts"],
+        "revision": revision,
+        "scenario": None,
+    }
+
+
+def request_scenario_change(
+    environment: HostedHarnessJob,
+    *,
+    kind: str,
+    instruction: str,
+    scenario_ids: list,
+    count: int | None,
+    client_request_id: str,
+    base_url: str,
+):
+    """Hand a change that needs re-proving to the environment's builder agent.
+
+    The agent rewrites and re-proves the scenarios in its chat workspace; when the turn
+    finishes, the chat publish makes the result the environment's new snapshot.
+    """
+    from simulate.services.hosted_harness import HostedHarnessError
+    from simulate.services.hosted_harness_conversation import (
+        check_builder_workspace,
+        send_builder_message,
+    )
+
+    if environment.state != HostedHarnessJob.State.COMPLETED:
+        raise ScenarioChangeRefused(
+            "environment_not_ready", "scenarios can be changed once the build finishes"
         )
-        return {"receipts": receipts, "revision": _revision(job), "scenario": None}
+    instruction = (instruction or "").strip()
+    if kind == "revise":
+        found = HostedHarnessScenario.no_workspace_objects.filter(
+            job=environment, id__in=scenario_ids
+        ).count()
+        if found != len(set(scenario_ids)):
+            raise ScenarioChangeRefused("scenario_not_found", "scenario not found", 404)
+        content = (
+            "Revise the selected scenarios as follows, re-prove each one, "
+            f"and save the suite: {instruction}"
+        )
+    else:
+        live = HostedHarnessScenario.no_workspace_objects.filter(
+            job=environment
+        ).count()
+        if live + (count or 0) > MAX_SUITE_SCENARIOS:
+            raise ScenarioChangeRefused(
+                "suite_too_large",
+                f"an environment holds at most {MAX_SUITE_SCENARIOS} scenarios; "
+                f"it has {live}",
+                400,
+            )
+        guidance = f" {instruction}" if instruction else ""
+        content = (
+            f"Add exactly {count} new scenario{'s' if count != 1 else ''} to this suite."
+            f"{guidance} Keep every existing scenario as it is, prove each new one, "
+            "then save the suite."
+        )
+    try:
+        check_builder_workspace(environment)
+        return send_builder_message(
+            environment,
+            content=content,
+            client_request_id=client_request_id,
+            base_url=base_url,
+            payload={
+                "change_kind": kind,
+                "scenario_ids": [str(one) for one in scenario_ids],
+            },
+        )
+    except HostedHarnessError as exc:
+        raise ScenarioChangeRefused(exc.code, exc.message, exc.status_code) from exc
+
+
+def record_suite(
+    job: HostedHarnessJob,
+    suite: list[dict[str, Any]],
+    output: HostedHarnessStageOutput | None = None,
+) -> None:
+    """Make the platform's copies of the suite match ``suite``: the scenarios output and the rows.
+
+    Every writer that changes a suite goes through here, inside the caller's transaction, so
+    the output and the rows cannot disagree.
+    """
+    from simulate.services.harness_scenarios import index_scenarios
+
+    if output is None:
+        output = HostedHarnessStageOutput.no_workspace_objects.filter(
+            job=job, kind="scenarios"
+        ).first()
+    if output is not None:
+        output.data = suite
+        output.summary = f"{len(suite)} pre-authored scenarios"
+        output.save(update_fields=["data", "summary", "updated_at"])
+    else:
+        job.stage_outputs = [
+            {**item, "data": suite} if item.get("kind") == "scenarios" else item
+            for item in (job.stage_outputs or [])
+        ]
+        job.save(update_fields=["stage_outputs", "updated_at"])
+    index_scenarios(job, suite, prune=True)
+
+
+def resync_suite(
+    environment: HostedHarnessJob, *, dry_run: bool = False
+) -> dict[str, Any]:
+    """Rebuild an environment's scenarios output and rows from the snapshot it points at.
+
+    The snapshot is what runs replay, so it wins. The object is read outside the lock; the
+    write happens only if the environment still points at the same snapshot.
+    """
+    from simulate.services.hosted_harness_gateway import (
+        _authoring_archive_for,
+        authoring_stage_outputs_from_archive,
+    )
+    from simulate.utils.scenario_keys import canonical_scenario_key
+
+    metadata = (environment.payload or {}).get("metadata") or {}
+    object_key = str(metadata.get("authoring_object_key") or "")
+    report: dict[str, Any] = {
+        "environment": str(environment.id),
+        "snapshot": object_key,
+    }
+    if not object_key:
+        return {**report, "outcome": "skipped", "why": "no snapshot"}
+    if f"/{environment.id}" not in object_key:
+        return {
+            **report,
+            "outcome": "skipped",
+            "why": "snapshot belongs to another job",
+        }
+    body = _authoring_archive_for(environment)
+    if body is None:
+        return {**report, "outcome": "skipped", "why": "snapshot not readable"}
+    suite = next(
+        (
+            output.get("data")
+            for output in authoring_stage_outputs_from_archive(body)
+            if output.get("kind") == "scenarios"
+        ),
+        None,
+    )
+    if not isinstance(suite, list) or not suite:
+        return {**report, "outcome": "skipped", "why": "snapshot holds no scenarios"}
+    in_snapshot = {
+        canonical_scenario_key(one.get("scenario_key") or one.get("name"))
+        for one in suite
+        if isinstance(one, dict)
+    }
+    in_rows = {
+        canonical_scenario_key(key)
+        for key in HostedHarnessScenario.no_workspace_objects.filter(
+            job=environment
+        ).values_list("scenario_key", flat=True)
+    }
+    report.update(
+        scenarios=len(suite),
+        missing_rows=len(in_snapshot - in_rows),
+        extra_rows=len(in_rows - in_snapshot),
+    )
+    if dry_run:
+        return {**report, "outcome": "dry_run"}
+    with transaction.atomic():
+        job = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+            id=environment.id
+        )
+        current = str(
+            ((job.payload or {}).get("metadata") or {}).get("authoring_object_key")
+            or ""
+        )
+        if current != object_key:
+            return {**report, "outcome": "skipped", "why": "snapshot moved; run again"}
+        record_suite(job, suite)
+    return {**report, "outcome": "resynced"}

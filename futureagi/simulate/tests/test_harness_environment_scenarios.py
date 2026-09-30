@@ -3,7 +3,7 @@ import uuid
 import pytest
 from rest_framework.test import APIClient
 
-from simulate.models import HostedHarnessScenario
+from simulate.models import HostedHarnessJob, HostedHarnessScenario
 from simulate.services.harness_scenarios import index_scenarios
 from simulate.services.hosted_harness import create_selected_harness_run
 from simulate.tests.test_harness_amend_archive import NAMES, _key, _run_environment
@@ -123,11 +123,12 @@ def editable(environment, storage):  # noqa: F811
             for name in NAMES[:2]
         ],
     )
-    storage.objects[environment.payload["metadata"]["authoring_object_key"]] = _archive(
-        names=NAMES[:2]
-    )
+    key = f"harness-authoring/{environment.organization_id}/{environment.id}.tar.gz"
+    storage.objects[key] = _archive(names=NAMES[:2])
+    payload = environment.payload
+    payload["metadata"]["authoring_object_key"] = key
     HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
-        state=HostedHarnessJob.State.COMPLETED
+        state=HostedHarnessJob.State.COMPLETED, payload=payload
     )
     environment.refresh_from_db()
     return environment
@@ -248,6 +249,37 @@ def test_deleting_hides_scenarios_and_keeps_their_rows(client, editable):
 
 
 @pytest.mark.django_db
+def test_the_last_scenario_cannot_be_deleted(client, editable):
+    first, second = _row(editable, NAMES[0]), _row(editable, NAMES[1])
+
+    response = client.post(
+        f"{BASE}/{editable.id}/scenarios/delete/",
+        {"scenario_ids": [str(first.id), str(second.id)]},
+        format="json",
+    )
+
+    assert response.status_code == 200, response.content
+    outcomes = sorted(receipt["outcome"] for receipt in response.json()["receipts"])
+    assert outcomes == ["applied", "refused"]
+    listed = client.get(f"{BASE}/{editable.id}/scenarios/").json()["results"]
+    assert len(listed) == 1
+
+
+def test_a_whole_name_is_never_read_as_numbers():
+    from simulate.services.scenario_changes import scenarios_meant
+
+    suite = [
+        {"name": "Guest cancels"},
+        {"name": "Caller gives 2 dates"},
+        {"name": "Refund", "scenario_key": "refund plan 1"},
+    ]
+
+    assert scenarios_meant("Caller gives 2 dates", suite) == ["Caller gives 2 dates"]
+    assert scenarios_meant(["refund plan 1"], suite) == ["Refund"]
+    assert scenarios_meant("1, 2", suite) == ["Guest cancels", "Caller gives 2 dates"]
+
+
+@pytest.mark.django_db
 def test_changes_address_environments_only(client, editable):
     row = _row(editable)
     run, _ = create_selected_harness_run(
@@ -259,3 +291,219 @@ def test_changes_address_environments_only(client, editable):
     )
 
     assert response.status_code == 404
+
+
+@pytest.fixture
+def builder(settings, monkeypatch):
+    settings.HARNESS_PUBLIC_BASE_URL = "https://platform.example"
+    scheduled = []
+    monkeypatch.setattr(
+        "simulate.tasks.hosted_harness_conversation.schedule_conversation_runtime",
+        lambda conversation_id, base_url: scheduled.append(conversation_id),
+    )
+    return scheduled
+
+
+@pytest.mark.django_db
+def test_a_revision_is_handed_to_the_builder_naming_the_selected_scenarios(
+    client, editable, builder
+):
+    from simulate.services.hosted_harness_conversation import pending_commands
+
+    row = _row(editable)
+    response = client.post(
+        f"{BASE}/{editable.id}/scenarios/changes/",
+        {
+            "kind": "revise",
+            "scenario_ids": [str(row.id)],
+            "instruction": "the agent must read the booking back before confirming",
+        },
+        format="json",
+        HTTP_IDEMPOTENCY_KEY="revise-once",
+    )
+    again = client.post(
+        f"{BASE}/{editable.id}/scenarios/changes/",
+        {
+            "kind": "revise",
+            "scenario_ids": [str(row.id)],
+            "instruction": "the agent must read the booking back before confirming",
+        },
+        format="json",
+        HTTP_IDEMPOTENCY_KEY="revise-once",
+    )
+
+    assert response.status_code == 202, response.content
+    assert again.status_code == 202
+    assert len(builder) == 2
+    from simulate.models import HostedHarnessConversation
+
+    conversation = HostedHarnessConversation.no_workspace_objects.get(job=editable)
+    commands = pending_commands(conversation, after=0)["commands"]
+    assert len(commands) == 1
+    content = commands[0]["payload"]["content"]
+    assert "re-prove" in content and "read the booking back" in content
+    assert f"{row.name} ({row.scenario_key})" in content
+
+
+@pytest.mark.django_db
+def test_adding_asks_the_builder_for_that_many_new_scenarios(client, editable, builder):
+    from simulate.models import HostedHarnessConversation
+    from simulate.services.hosted_harness_conversation import pending_commands
+
+    response = client.post(
+        f"{BASE}/{editable.id}/scenarios/changes/",
+        {"kind": "add", "count": 3, "instruction": "callers booking for a friend"},
+        format="json",
+    )
+
+    assert response.status_code == 202, response.content
+    conversation = HostedHarnessConversation.no_workspace_objects.get(job=editable)
+    content = pending_commands(conversation, after=0)["commands"][0]["payload"]["content"]
+    assert content.startswith("Add exactly 3 new scenarios to this suite.")
+    assert "Keep every existing scenario as it is" in content
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"kind": "revise", "instruction": "change it"},
+        {"kind": "revise", "scenario_ids": ["00000000-0000-0000-0000-000000000000"]},
+        {"kind": "add"},
+    ],
+)
+def test_an_incomplete_change_is_refused(client, editable, builder, body):
+    response = client.post(f"{BASE}/{editable.id}/scenarios/changes/", body, format="json")
+
+    assert response.status_code == 400, response.content
+    assert builder == []
+
+
+@pytest.mark.django_db
+def test_changes_wait_for_the_build_and_known_scenarios(client, editable, builder):
+    from simulate.models import HostedHarnessJob
+
+    unknown = client.post(
+        f"{BASE}/{editable.id}/scenarios/changes/",
+        {"kind": "revise", "scenario_ids": [str(uuid.uuid4())], "instruction": "x"},
+        format="json",
+    )
+    HostedHarnessJob.no_workspace_objects.filter(id=editable.id).update(
+        state=HostedHarnessJob.State.RUNNING
+    )
+    building = client.post(
+        f"{BASE}/{editable.id}/scenarios/changes/", {"kind": "add", "count": 1}, format="json"
+    )
+
+    assert (unknown.status_code, unknown.json()["error"]) == (404, "scenario_not_found")
+    assert (building.status_code, building.json()["error"]) == (409, "environment_not_ready")
+    assert builder == []
+
+
+@pytest.mark.django_db
+def test_an_edit_that_cannot_update_the_rows_changes_nothing(client, editable, monkeypatch):
+    def broken(*args, **kwargs):
+        raise RuntimeError("index unavailable")
+
+    monkeypatch.setattr("simulate.services.harness_scenarios.index_scenarios", broken)
+    before = dict(editable.payload["metadata"])
+    row = _row(editable)
+
+    response = client.patch(
+        f"{BASE}/{editable.id}/scenarios/{row.id}/", {"keywords": ["refund"]}, format="json"
+    )
+
+    assert response.status_code == 409, response.content
+    assert response.json()["error"] == "scenario_change_refused"
+    editable.refresh_from_db()
+    assert editable.payload["metadata"]["authoring_object_key"] == (
+        before["authoring_object_key"]
+    )
+    assert _row(editable).keywords != ["refund"]
+
+
+@pytest.mark.django_db
+def test_a_live_sandbox_that_cannot_be_reached_does_not_fail_a_saved_edit(
+    client, editable, monkeypatch
+):
+    def unreachable(*args, **kwargs):
+        raise ConnectionError("sandbox gone")
+
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_gateway.push_scenarios_into_live_sandbox",
+        unreachable,
+    )
+    row = _row(editable)
+
+    response = client.patch(
+        f"{BASE}/{editable.id}/scenarios/{row.id}/", {"keywords": ["refund"]}, format="json"
+    )
+
+    assert response.status_code == 200, response.content
+    assert _row(editable).keywords == ["refund"]
+
+
+@pytest.mark.django_db
+def test_resync_rebuilds_rows_from_the_snapshot_and_never_deletes_one(editable):
+    from simulate.services.scenario_changes import resync_suite
+
+    kept = _row(editable, NAMES[0])
+    HostedHarnessScenario.all_objects.filter(id=kept.id).update(deleted=True)
+    stray = HostedHarnessScenario.all_objects.create(
+        job=editable, scenario_key="not-in-the-snapshot", name="not_in_the_snapshot"
+    )
+
+    preview = resync_suite(editable, dry_run=True)
+    assert preview["outcome"] == "dry_run"
+    assert (preview["missing_rows"], preview["extra_rows"]) == (1, 1)
+    assert HostedHarnessScenario.all_objects.get(id=kept.id).deleted is True
+
+    done = resync_suite(editable)
+
+    assert done["outcome"] == "resynced"
+    assert HostedHarnessScenario.all_objects.get(id=kept.id).deleted is False
+    assert HostedHarnessScenario.all_objects.get(id=stray.id).deleted is True
+    assert HostedHarnessScenario.all_objects.filter(job=editable).count() == 3
+
+
+def test_resync_leaves_a_job_that_replays_another_jobs_snapshot(editable):
+    from simulate.services.scenario_changes import resync_suite
+
+    borrower = HostedHarnessJob.no_workspace_objects.get(id=editable.id)
+    borrower.pk, borrower.run_id, borrower.idempotency_key = (
+        uuid.uuid4(),
+        uuid.uuid4(),
+        "borrower",
+    )
+    borrower.save()
+    HostedHarnessScenario.all_objects.create(
+        job=borrower, scenario_key="only-one", name="only_one"
+    )
+
+    report = resync_suite(borrower)
+
+    assert report["outcome"] == "skipped"
+    assert list(
+        HostedHarnessScenario.all_objects.filter(job=borrower).values_list(
+            "scenario_key", flat=True
+        )
+    ) == ["only-one"]
+
+
+@pytest.mark.django_db
+def test_adding_past_the_suite_limit_is_refused(client, editable, builder):
+    HostedHarnessScenario.all_objects.bulk_create(
+        HostedHarnessScenario(
+            job=editable, scenario_key=f"extra-{n}", name=f"extra_{n}"
+        )
+        for n in range(170)
+    )
+
+    response = client.post(
+        f"{BASE}/{editable.id}/scenarios/changes/",
+        {"kind": "add", "count": 40, "instruction": "more"},
+        format="json",
+    )
+
+    assert (response.status_code, response.json()["error"]) == (400, "suite_too_large")
+    assert builder == []

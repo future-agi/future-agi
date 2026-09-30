@@ -1436,13 +1436,11 @@ class HostedHarnessProvider:
     def send_message(self, request, pk) -> Response:
         from simulate.services.hosted_harness import HostedHarnessError
         from simulate.services.hosted_harness_conversation import (
-            enqueue_message,
+            check_builder_workspace,
+            send_builder_message,
             serialize_conversation,
         )
         from simulate.services.hosted_harness_ingress import _public_base_url
-        from simulate.tasks.hosted_harness_conversation import (
-            schedule_conversation_runtime,
-        )
 
         job = self._job(request, pk)
         if job is None:
@@ -1450,71 +1448,22 @@ class HostedHarnessProvider:
                 {"detail": "Hosted harness job not found"},
                 status=status.HTTP_404_NOT_FOUND,
             )
-        terminal_states = {
-            HostedHarnessJob.State.COMPLETED,
-            HostedHarnessJob.State.FAILED,
-            HostedHarnessJob.State.CANCELED,
-        }
-        if job.state in terminal_states:
-            conversation = (
-                HostedHarnessConversation.no_workspace_objects.filter(job=job)
-                .only("latest_workspace_object_key", "state")
-                .first()
-            )
-            metadata = (job.payload or {}).get("metadata") or {}
-            has_archive = bool(
-                metadata.get("authoring_object_key")
-                or getattr(conversation, "latest_workspace_object_key", None)
-            )
-            files_gone = (
-                getattr(conversation, "state", None)
-                == HostedHarnessConversation.State.RETIRED
-            )
-            if files_gone or (
-                job.state == HostedHarnessJob.State.COMPLETED and not has_archive
-            ):
-                return Response(
-                    {
-                        "error": "conversation_workspace_not_ready",
-                        "message": (
-                            "This environment's saved files are no longer available; "
-                            "rebuild it to chat."
-                            if files_gone
-                            else "This completed run has no saved authoring workspace to restore."
-                        ),
-                        "retryable": False,
-                    },
-                    status=status.HTTP_409_CONFLICT,
-                )
         data = request.validated_data
-        # Checked before queueing, so a message never waits on a runtime that cannot call back.
         try:
+            check_builder_workspace(job)
+            # Checked before queueing, so a message never waits on a runtime that cannot call back.
             base_url = _public_base_url(request)
-        except HostedHarnessError as exc:
-            return Response(exc.as_dict(), status=exc.status_code)
-        try:
-            conversation, _message, _created = enqueue_message(
+            conversation = send_builder_message(
                 job,
                 content=data["content"],
                 client_request_id=data["client_request_id"],
+                base_url=base_url,
                 kind=data["kind"],
                 reply_to=data.get("reply_to"),
                 payload=data.get("payload"),
             )
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)
-        try:
-            schedule_conversation_runtime(str(conversation.id), base_url)
-        except Exception:
-            return Response(
-                {
-                    "error": "conversation_scheduler_unavailable",
-                    "message": "The message was saved but its runtime could not be scheduled",
-                    "retryable": True,
-                },
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
-        conversation.refresh_from_db()
         return Response(
             serialize_conversation(conversation),
             status=status.HTTP_202_ACCEPTED,
@@ -1704,8 +1653,8 @@ class HostedHarnessProvider:
                 return Response(
                     {"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND
                 )
-            body, status_code = amend_suite(job, changes, rework=rework)
-        return Response(body, status=status_code)
+            change = amend_suite(job, changes, rework=rework)
+        return Response(change.after_commit(job), status=change.status)
 
     def extend(self, request, pk) -> Response:
         """Chat 'Add scenarios' on a finished RL environment: add ``count`` new scenarios,
