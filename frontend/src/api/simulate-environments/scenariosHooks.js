@@ -121,13 +121,14 @@ export function useAmendScenarios(jobId) {
 }
 
 // Direct edit / delete by row id. Same invalidation as an amend: either reshapes
-// the list page and the coverage grid.
+// the list page and the coverage grid. A refusal refreshes too, since the suite
+// may have moved underneath the page.
 export function useEditScenario(jobId) {
   const queryClient = useQueryClient();
   return useMutation({
     meta: { errorHandled: true },
     mutationFn: ({ scenarioId, body }) => editScenario(jobId, scenarioId, body),
-    onSuccess: () => {
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: harnessScenariosListKey(jobId) });
     },
   });
@@ -138,7 +139,7 @@ export function useDeleteScenarios(jobId) {
   return useMutation({
     meta: { errorHandled: true },
     mutationFn: (scenarioIds) => deleteScenarios(jobId, scenarioIds),
-    onSuccess: () => {
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: harnessScenariosListKey(jobId) });
     },
   });
