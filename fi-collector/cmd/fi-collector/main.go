@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -160,11 +161,7 @@ func main() {
 
 	go authenticator.WatchRevocations(ctx)
 
-	log.Info("starting",
-		"grpc_addr", cfg.Server.GRPCAddr,
-		"http_addr", cfg.Server.HTTPAddr,
-		"ch_url", cfg.Writer.URL,
-	)
+	logStarting(log, cfg)
 	runErr := srv.Run(ctx)
 	if traceNotifications != nil {
 		drainCtx, stopDrain := context.WithTimeout(context.Background(), 10*time.Second)
@@ -231,6 +228,20 @@ func loadConfig(log *slog.Logger, path string) rootConfig {
 		os.Exit(1)
 	}
 	return cfg
+}
+
+// logStarting masks a password in FI_CH_URL (http://user:pass@host works:
+// Go's HTTP client sends it as basic auth) so it never reaches the logs.
+func logStarting(log *slog.Logger, cfg rootConfig) {
+	chURL := "<unparseable>"
+	if u, err := url.Parse(cfg.Writer.URL); err == nil {
+		chURL = u.Redacted()
+	}
+	log.Info("starting",
+		"grpc_addr", cfg.Server.GRPCAddr,
+		"http_addr", cfg.Server.HTTPAddr,
+		"ch_url", chURL,
+	)
 }
 
 // applyEnvOverrides — surgical, only the fields ops most often need to

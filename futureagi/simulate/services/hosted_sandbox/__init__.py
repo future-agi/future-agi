@@ -17,6 +17,7 @@ from .factory import (
     get_sandbox_provider,
     sandbox_egress_domain_limit,
     sandbox_provider_name,
+    sandbox_runtime_policy,
     sandbox_runtime_reference,
     validate_sandbox_requirements,
 )
@@ -38,6 +39,7 @@ __all__ = [
     "sandbox_egress_domain_limit",
     "SandboxProviderError",
     "sandbox_provider_name",
+    "sandbox_runtime_policy",
     "sandbox_runtime_reference",
     "validate_sandbox_requirements",
 ]

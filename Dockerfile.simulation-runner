@@ -22,7 +22,7 @@ ARG FI_PACKAGE=agent-learning-kit
 # Keep the native LiveKit stack aligned with the ALK release lock. An
 # unconstrained install currently resolves livekit-agents 1.6.x, whose native
 # local-inference module crashes in linux/amd64 containers under Rosetta.
-ARG LIVEKIT_AGENTS_VERSION=1.5.17
+ARG LIVEKIT_AGENTS_VERSION=1.8.3
 
 RUN test -n "${FI_VERSION}" || (echo "FI_VERSION build-arg is required" && exit 1) \
     && python -m venv /opt/alk-venv \

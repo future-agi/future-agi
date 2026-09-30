@@ -171,7 +171,9 @@ class DaytonaSandboxRuntimeProvider(SandboxRuntimeProvider):
                 **common,
             )
         else:
-            params = CreateSandboxFromSnapshotParams(snapshot=self.snapshot, **common)
+            params = CreateSandboxFromSnapshotParams(
+                snapshot=spec.runtime_name or self.snapshot, **common
+            )
         sandbox = _call(self._client.create, params, timeout=timeout)
         return DaytonaSandbox(sandbox)
 

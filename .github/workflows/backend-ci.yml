@@ -6,6 +6,7 @@ on:
   push:
     branches: [dev, main]
   merge_group:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -38,6 +39,7 @@ jobs:
           filters: |
             backend:
               - 'futureagi/**'
+              - 'api_contracts/gateway/provider-url-policy.json'
               - 'docker-compose*.yml'
               - 'fi-collector/Dockerfile'
               - 'bin/install*'
@@ -164,6 +166,9 @@ jobs:
         with:
           enable-cache: true
           cache-dependency-glob: futureagi/uv.lock
+
+      - name: Install ffmpeg (pydub reads recordings through ffprobe, as in the runtime image)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg
 
       - name: Install dependencies (overlaps with service startup)
         run: uv sync --frozen --all-extras

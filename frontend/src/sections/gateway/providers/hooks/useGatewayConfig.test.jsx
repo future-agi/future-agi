@@ -6,19 +6,36 @@ import {
   QueryClient,
   QueryClientProvider,
 } from "@tanstack/react-query";
+import { act, waitFor } from "@testing-library/react";
 import {
   asRequestError,
   useFetchProviderModels,
+  useGatewayConfig,
+  useReloadConfig,
+  useRemoveBudget,
+  useRemoveProvider,
+  useSetBudget,
+  useToggleGuardrail,
+  useUpdateConfig,
+  useUpdateGuardrail,
   useUpdateProvider,
 } from "./useGatewayConfig";
 
-const { post } = vi.hoisted(() => ({ post: vi.fn() }));
+const { post, get } = vi.hoisted(() => ({ post: vi.fn(), get: vi.fn() }));
 
 vi.mock("src/utils/axios", () => ({
-  default: { post, get: vi.fn() },
+  default: { post, get },
   endpoints: {
     gateway: {
+      config: (id) => `/gateway/${id}/config`,
       updateProvider: (id) => `/gateway/${id}/provider/update`,
+      removeProvider: (id) => `/gateway/${id}/provider/remove`,
+      toggleGuardrail: (id) => `/gateway/${id}/guardrail/toggle`,
+      updateGuardrail: (id) => `/gateway/${id}/guardrail/update`,
+      setBudget: (id) => `/gateway/${id}/budget/set`,
+      removeBudget: (id) => `/gateway/${id}/budget/remove`,
+      updateConfig: (id) => `/gateway/${id}/config/update`,
+      reload: (id) => `/gateway/${id}/reload`,
       providerCredentials: { fetchModels: "/gateway/provider/models" },
     },
   },
@@ -72,6 +89,127 @@ describe("useUpdateProvider", () => {
 
     expect(post.mock.calls[0][2]).toEqual({ timeout: 30000 });
   });
+
+  it("finishes only once the provider config has been re-read", async () => {
+    const providersWithPrefix = (prefix) => ({
+      data: { result: { providers: { openai: { api_path_prefix: prefix } } } },
+    });
+    get.mockReset();
+    get.mockResolvedValueOnce(providersWithPrefix("/openai/v1"));
+    post.mockResolvedValue({ data: { result: { action: "updated" } } });
+
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const clientWrapper = ({ children }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(
+      () => ({ config: useGatewayConfig("gw-1"), update: useUpdateProvider() }),
+      { wrapper: clientWrapper },
+    );
+    await waitFor(() => expect(result.current.config.data).toBeTruthy());
+
+    // The re-read answers after the save does, as it would over the network.
+    get.mockImplementationOnce(
+      () =>
+        new Promise((resolve) =>
+          setTimeout(() => resolve(providersWithPrefix("")), 20),
+        ),
+    );
+    let prefixSeenOnSuccess;
+    await act(async () => {
+      await new Promise((resolve) =>
+        result.current.update.mutate(
+          {
+            gatewayId: "gw-1",
+            name: "openai",
+            config: { api_path_prefix: "" },
+          },
+          {
+            // Where AddProviderDialog closes; Edit reads the cache after this.
+            onSuccess: () => {
+              prefixSeenOnSuccess = client.getQueryData([
+                "agentcc-gateway-config",
+                "gw-1",
+              ]).providers.openai.api_path_prefix;
+              resolve();
+            },
+          },
+        ),
+      );
+    });
+
+    expect(prefixSeenOnSuccess).toBe("");
+  });
+});
+
+describe("config mutations", () => {
+  // Each dialog closes in its mutate() onSuccess, and Edit reads the cached
+  // config, so the mutation must not settle before the config is re-read.
+  it.each([
+    ["useRemoveProvider", useRemoveProvider, { gatewayId: "gw-1", name: "x" }],
+    [
+      "useToggleGuardrail",
+      useToggleGuardrail,
+      { gatewayId: "gw-1", name: "pii", enabled: false },
+    ],
+    [
+      "useUpdateGuardrail",
+      useUpdateGuardrail,
+      { gatewayId: "gw-1", name: "pii", config: {} },
+    ],
+    [
+      "useSetBudget",
+      useSetBudget,
+      { gatewayId: "gw-1", level: "org", config: {} },
+    ],
+    ["useRemoveBudget", useRemoveBudget, { gatewayId: "gw-1", level: "org" }],
+    ["useUpdateConfig", useUpdateConfig, { gatewayId: "gw-1", config: {} }],
+    ["useReloadConfig", useReloadConfig, "gw-1"],
+  ])(
+    "%s finishes only once the config has been re-read",
+    async (_, useHook, variables) => {
+      get.mockReset();
+      get.mockResolvedValueOnce({ data: { result: { version: 1 } } });
+      post.mockResolvedValue({ data: { result: {} } });
+
+      const client = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+      const clientWrapper = ({ children }) => (
+        <QueryClientProvider client={client}>{children}</QueryClientProvider>
+      );
+      const { result } = renderHook(
+        () => ({ config: useGatewayConfig("gw-1"), mutation: useHook() }),
+        { wrapper: clientWrapper },
+      );
+      await waitFor(() => expect(result.current.config.data).toBeTruthy());
+
+      get.mockImplementationOnce(
+        () =>
+          new Promise((resolve) =>
+            setTimeout(() => resolve({ data: { result: { version: 2 } } }), 20),
+          ),
+      );
+      let versionSeenOnSuccess;
+      await act(async () => {
+        await new Promise((resolve) =>
+          result.current.mutation.mutate(variables, {
+            onSuccess: () => {
+              versionSeenOnSuccess = client.getQueryData([
+                "agentcc-gateway-config",
+                "gw-1",
+              ]).version;
+              resolve();
+            },
+          }),
+        );
+      });
+
+      expect(versionSeenOnSuccess).toBe(2);
+    },
+  );
 });
 
 describe("useFetchProviderModels", () => {

@@ -1454,9 +1454,12 @@ def build_eval_column(eval_config):
 def reconcile_eval_column_order(
     *, column_order, eval_configs, evaluated_eval_ids, harness_eval_outputs=None
 ):
-    """Drop removed evals, refresh surviving names + configs, and append
-    a newly-active eval only when its id is in ``evaluated_eval_ids``
-    (i.e. attempted on at least one call of this execution)."""
+    """Keep the evaluation columns backed by ``eval_configs``, refresh their
+    names + configs, and append a config's own column only when its id is in
+    ``evaluated_eval_ids`` (i.e. attempted on at least one call of this
+    execution). Which configs count is the caller's choice: pass a live-only
+    collection to prune a removed eval's column, or one that also holds
+    soft-deleted rows to keep it."""
     current_eval_by_id = {str(ec.id): ec for ec in eval_configs}
     harness_eval_outputs = {
         str(eval_id): value

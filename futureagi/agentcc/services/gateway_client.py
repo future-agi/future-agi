@@ -6,6 +6,7 @@ import structlog
 
 from agentcc.contracts.gateway_admin import (
     CreateKeyRequest,
+    ImportKeysRequest,
     OrgConfig as GatewayOrgConfig,
     UpdateKeyRequest,
 )
@@ -124,6 +125,11 @@ class GatewayClient:
 
     def revoke_key(self, key_id):
         return self._request("DELETE", f"/-/keys/{key_id}")
+
+    def import_keys(self, keys):
+        """Load keys the gateway lacks, by hash; see gateway_key_payload."""
+        body = ImportKeysRequest(keys=keys).model_dump(exclude_none=True)
+        return self._request("POST", "/-/keys/sync", json_body=body)
 
     def update_key(self, key_id, **kwargs):
         body = {}

@@ -180,11 +180,10 @@ EVAL_EXECUTION_SETTING_SPECS = {
                 LONGEST_RUNNING_ENTRY_SECONDS + 1,
                 86_400,
             ),
-            # 0 is the off switch. A Temporal pause is the immediate lever,
-            # but ``register_temporal_schedules`` runs on every backend
-            # container start and re-registers the schedule with
-            # ``ScheduleState`` rebuilt from config, so a manual pause does not
-            # survive the next deploy, restart or scale-up. A setting does.
+            # 0 is the off switch. A Temporal pause is the immediate lever and
+            # outlives every deploy's re-registration, which keeps an existing
+            # schedule's paused state; only this setting also holds if the
+            # schedule is deleted and re-created.
             ("SWEEP_MAX_TASKS", 25, 0, 500),
         ),
         prefix="EVAL_TASK_",
@@ -376,6 +375,13 @@ INTERACTIVE_READ_SETTING_SPECS = {
             # unfiltered Users page does not read these.
             ("USER_LIST_PAGE_WALL_MS", 5_000, 100, 60_000),
             ("USER_LIST_WALK_MAX_STATEMENTS", 24, 1, 256),
+            # A walk that has published nothing is not ended by its statement
+            # count while its page wall lasts: the count grows one budget at a
+            # time, up to this many budgets. A dense witness whose users are
+            # all rejected spends 24 fast statements in a fraction of the
+            # wall; ending there returned empty pages for request after
+            # request. 1 keeps the plain budget.
+            ("USER_LIST_WALK_EMPTY_PAGE_BUDGETS", 4, 1, 16),
             ("USER_LIST_WALK_INITIAL_SLICE_SECONDS", 60 * 60, 1, 7 * 24 * 60 * 60),
             # A slice asks the server to stop it at half of what is left of
             # the request's analytics wall and is then retried a quarter as
@@ -421,6 +427,17 @@ INTERACTIVE_READ_SETTING_SPECS = {
             # (95 parts, 16k marks; 3.2 s at one thread on a cold index), the
             # boolean-key estimate 114-117 ms (395 parts, 33k marks).
             ("USER_LIST_WALK_PROBE_WALL_MS", 1_000, 25, 60_000),
+            # How many eligible walk witnesses a first Users page costs
+            # before it walks the cheapest (users_matching_walk's
+            # _choose_witness states the rule). 1 turns the measurement off:
+            # the static rank's first witness.
+            ("USER_LIST_WALK_WITNESS_CANDIDATES", 3, 1, 8),
+            # What one estimated row of a raw span-attribute witness costs
+            # against one row of a native one. Basis, measured on the largest
+            # tenant: a raw text slice reads the attribute map, about 3.2 KB a
+            # row (7.69 GB / 2.38M rows); a native status slice about 32 B a
+            # row (0.1 MB / 3,154 rows).
+            ("USER_LIST_WALK_RAW_WITNESS_ROW_WEIGHT", 16, 1, 1_024),
             ("FILTER_VALUE_READ_MAX_THREADS", 2, 1, 16),
             ("FILTER_SELECTOR_QUERY_TIMEOUT_MS", 2_500, 25, 10_000),
             ("FILTER_SELECTOR_MAX_OPT_IN_QUERY_TIMEOUT_MS", 3_000, 25, 30_000),

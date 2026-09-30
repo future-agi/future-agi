@@ -4,16 +4,20 @@ import copy
 import hashlib
 import io
 import json
+import logging
 import secrets
 import tarfile
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
 
 from django.conf import settings
 from django.db import transaction
+from django.db.models import Exists, OuterRef, Q
 from django.utils import timezone
+from minio.error import S3Error
 
 from simulate.models import (
     HostedHarnessAttempt,
@@ -21,9 +25,9 @@ from simulate.models import (
     HostedHarnessConversationEvent,
     HostedHarnessConversationLease,
     HostedHarnessConversationMessage,
+    HostedHarnessConversationTranscript,
     HostedHarnessJob,
     HostedHarnessReceipt,
-    HostedHarnessConversationTranscript,
 )
 from simulate.services.hosted_harness import (
     HostedHarnessError,
@@ -40,6 +44,29 @@ COMMAND_LIMIT = 100
 EVENT_LIMIT = 200
 TRANSCRIPT_ENTRY_LIMIT = 20_000
 TRANSCRIPT_BYTES_LIMIT = 32 * 1024 * 1024
+logger = logging.getLogger(__name__)
+
+# A chat process polls for commands every half second, even mid-turn; one that has not
+# polled for this long is gone, whatever its provider still reports.
+RUNTIME_STALE_SECONDS = 90
+_HEARTBEAT_WRITE_SECONDS = 5
+# Restarts that keep failing back off, then give up so the user is not left waiting forever.
+RUNTIME_RETRY_BACKOFF_SECONDS = 60
+RUNTIME_GIVE_UP_SECONDS = 15 * 60
+# Only a runtime start writes a starting lease, so one this fresh is a start still in progress.
+RUNTIME_START_SECONDS = 10 * 60
+_TERMINAL_JOB_STATES = frozenset(
+    {
+        HostedHarnessJob.State.COMPLETED,
+        HostedHarnessJob.State.FAILED,
+        HostedHarnessJob.State.CANCELED,
+    }
+)
+_ACTIVE_CONVERSATION_STATES = (
+    HostedHarnessConversation.State.STARTING,
+    HostedHarnessConversation.State.HYDRATING,
+    HostedHarnessConversation.State.RESPONDING,
+)
 
 
 @dataclass(frozen=True)
@@ -50,46 +77,22 @@ class ConversationCapability:
     document: dict[str, Any]
 
 
-def ensure_conversation(job: HostedHarnessJob) -> HostedHarnessConversation:
-    conversation, _ = HostedHarnessConversation.no_workspace_objects.get_or_create(
-        job=job,
-        defaults={
-            "organization": job.organization,
-            "workspace": job.workspace,
-            "current_stage": _logical_stage(job.current_stage),
-        },
-    )
-    return conversation
-
-
 def serialize_conversation(
     conversation: HostedHarnessConversation,
 ) -> dict[str, Any]:
     messages = list(reversed(conversation.messages.order_by("-sequence")[:EVENT_LIMIT]))
     events = list(reversed(conversation.events.order_by("-sequence")[:EVENT_LIMIT]))
     job_metadata = (conversation.job.payload or {}).get("metadata") or {}
-    terminal_states = {
-        HostedHarnessJob.State.COMPLETED,
-        HostedHarnessJob.State.FAILED,
-        HostedHarnessJob.State.CANCELED,
-    }
     lease = HostedHarnessConversationLease.no_workspace_objects.filter(
         conversation=conversation
     ).first()
-    chat_available = bool(
-        conversation.latest_workspace_object_key
-        or (
-            conversation.job.state in terminal_states
-            and job_metadata.get("authoring_object_key")
-        )
-        or (
-            conversation.job.state not in terminal_states
-            and lease is not None
-            and lease.state
-            in {
-                HostedHarnessConversationLease.State.STARTING,
-                HostedHarnessConversationLease.State.ACTIVE,
-            }
+    # A live job always accepts messages: they wait in order until its sandbox can run chat.
+    chat_available = (
+        conversation.state != HostedHarnessConversation.State.RETIRED
+        and bool(
+            conversation.job.state not in _TERMINAL_JOB_STATES
+            or conversation.latest_workspace_object_key
+            or job_metadata.get("authoring_object_key")
         )
     )
     return {
@@ -110,6 +113,255 @@ def serialize_conversation(
         },
     }
 
+
+def runtime_is_live(lease: HostedHarnessConversationLease | None, *, now=None) -> bool:
+    now = now or timezone.now()
+    return bool(
+        lease is not None
+        and lease.state == HostedHarnessConversationLease.State.ACTIVE
+        and lease.expires_at > now + timedelta(seconds=60)
+        and lease.heartbeat_at is not None
+        and now - lease.heartbeat_at < timedelta(seconds=RUNTIME_STALE_SECONDS)
+    )
+
+
+def runtime_start_pending(
+    lease: HostedHarnessConversationLease | None, *, now=None
+) -> bool:
+    """Whether another worker is still starting this conversation's runtime."""
+    now = now or timezone.now()
+    return bool(
+        lease is not None
+        and lease.state == HostedHarnessConversationLease.State.STARTING
+        and lease.heartbeat_at is not None
+        and now - lease.heartbeat_at < timedelta(seconds=RUNTIME_START_SECONDS)
+    )
+
+
+def _unacked_commands(conversation: HostedHarnessConversation):
+    return conversation.messages.filter(
+        role=HostedHarnessConversationMessage.Role.USER,
+        sequence__gt=conversation.command_acked_through,
+        state__in=(
+            HostedHarnessConversationMessage.State.QUEUED,
+            HostedHarnessConversationMessage.State.DELIVERED,
+        ),
+    )
+
+
+def settle_interrupted_turn(conversation: HostedHarnessConversation) -> None:
+    """Close a reply that a dead chat process was streaming; its command is redelivered."""
+    conversation.messages.filter(
+        role=HostedHarnessConversationMessage.Role.ASSISTANT,
+        state=HostedHarnessConversationMessage.State.STREAMING,
+    ).update(
+        state=HostedHarnessConversationMessage.State.FAILED,
+        updated_at=timezone.now(),
+    )
+    if not _unacked_commands(conversation).exists():
+        conversation.active_invocation_id = None
+
+
+def recover_stalled_conversations(
+    schedule: Callable[[str], Any], *, limit: int = 100
+) -> dict[str, int]:
+    """Restart chat runtimes that died with messages outstanding; settle ones that died idle."""
+    now = timezone.now()
+    unacked = HostedHarnessConversationMessage.no_workspace_objects.filter(
+        conversation=OuterRef("pk"),
+        role=HostedHarnessConversationMessage.Role.USER,
+        sequence__gt=OuterRef("command_acked_through"),
+        state__in=(
+            HostedHarnessConversationMessage.State.QUEUED,
+            HostedHarnessConversationMessage.State.DELIVERED,
+        ),
+    )
+    healthy = HostedHarnessConversationLease.no_workspace_objects.filter(
+        conversation=OuterRef("pk"),
+    ).filter(
+        Q(
+            state=HostedHarnessConversationLease.State.ACTIVE,
+            expires_at__gt=now + timedelta(seconds=60),
+            heartbeat_at__gt=now - timedelta(seconds=RUNTIME_STALE_SECONDS),
+        )
+        | Q(
+            state=HostedHarnessConversationLease.State.STARTING,
+            heartbeat_at__gt=now - timedelta(seconds=RUNTIME_START_SECONDS),
+        )
+    )
+    candidates = list(
+        HostedHarnessConversation.no_workspace_objects.annotate(
+            outstanding=Exists(unacked),
+            healthy=Exists(healthy),
+            overdue=Exists(
+                unacked.filter(
+                    created_at__lt=now - timedelta(seconds=RUNTIME_GIVE_UP_SECONDS)
+                )
+            ),
+        )
+        .filter(Q(outstanding=True) | Q(state__in=_ACTIVE_CONVERSATION_STATES))
+        .filter(healthy=False)
+        .filter(
+            Q(outstanding=False)
+            | Q(overdue=True)
+            | Q(updated_at__lte=now - timedelta(seconds=RUNTIME_RETRY_BACKOFF_SECONDS))
+        )
+        .order_by("last_activity_at")[:limit]
+    )
+    leases = {
+        lease.conversation_id: lease
+        for lease in HostedHarnessConversationLease.no_workspace_objects.filter(
+            conversation_id__in=[candidate.id for candidate in candidates]
+        )
+    }
+    counts = {
+        "candidates": len(candidates),
+        "restarted": 0,
+        "settled": 0,
+        "abandoned": 0,
+        "errors": 0,
+    }
+    for candidate in candidates:
+        lease = leases.get(candidate.id)
+        if runtime_is_live(lease, now=now) or runtime_start_pending(lease, now=now):
+            continue
+        if not candidate.outstanding:
+            counts["settled"] += _settle_idle(candidate.id)
+            continue
+        oldest = _unacked_commands(candidate).order_by("sequence").first()
+        if oldest is not None and now - oldest.created_at > timedelta(
+            seconds=RUNTIME_GIVE_UP_SECONDS
+        ):
+            counts["abandoned"] += _abandon_outstanding(candidate.id)
+            continue
+        try:
+            # Also back off starts waiting for an attempt to reach RUNNING.
+            HostedHarnessConversation.no_workspace_objects.filter(
+                id=candidate.id
+            ).update(updated_at=now)
+            schedule(str(candidate.id))
+        except Exception:
+            logger.exception(
+                "conversation runtime scheduling failed conversation=%s", candidate.id
+            )
+            counts["errors"] += 1
+            continue
+        counts["restarted"] += 1
+    return counts
+
+
+def _settle_idle(conversation_id) -> int:
+    with transaction.atomic():
+        conversation = (
+            HostedHarnessConversation.no_workspace_objects.select_for_update().get(
+                id=conversation_id
+            )
+        )
+        lease = HostedHarnessConversationLease.no_workspace_objects.filter(
+            conversation=conversation
+        ).first()
+        if (
+            runtime_is_live(lease)
+            or runtime_start_pending(lease)
+            or _unacked_commands(conversation).exists()
+            or conversation.state not in _ACTIVE_CONVERSATION_STATES
+        ):
+            return 0
+        settle_interrupted_turn(conversation)
+        conversation.state = HostedHarnessConversation.State.COLD
+        conversation.save(update_fields=["state", "active_invocation_id", "updated_at"])
+        return 1
+
+
+def retire_without_saved_workspace(conversation_id) -> int:
+    """Fail waiting messages for good: the run's saved files are gone, so no restart can work."""
+    with transaction.atomic():
+        conversation = (
+            HostedHarnessConversation.no_workspace_objects.select_for_update().get(
+                id=conversation_id
+            )
+        )
+        return _fail_outstanding(
+            conversation,
+            state=HostedHarnessConversation.State.RETIRED,
+            reply=(
+                "This environment's saved files are no longer available, so chat "
+                "can't start. Rebuild the environment to chat with it again."
+            ),
+        )
+
+
+def _abandon_outstanding(conversation_id) -> int:
+    with transaction.atomic():
+        conversation = (
+            HostedHarnessConversation.no_workspace_objects.select_for_update().get(
+                id=conversation_id
+            )
+        )
+        lease = HostedHarnessConversationLease.no_workspace_objects.filter(
+            conversation=conversation
+        ).first()
+        oldest = _unacked_commands(conversation).order_by("sequence").first()
+        if (
+            runtime_is_live(lease)
+            or runtime_start_pending(lease)
+            or oldest is None
+            or timezone.now() - oldest.created_at
+            <= timedelta(seconds=RUNTIME_GIVE_UP_SECONDS)
+        ):
+            return 0
+        return _fail_outstanding(
+            conversation,
+            state=HostedHarnessConversation.State.DEGRADED,
+            reply=(
+                "The environment chat could not start, so your message was not "
+                "delivered. Send it again to retry."
+            ),
+        )
+
+
+def _fail_outstanding(
+    conversation: HostedHarnessConversation, *, state: str, reply: str
+) -> int:
+    HostedHarnessConversationLease.no_workspace_objects.filter(
+        conversation=conversation
+    ).update(state=HostedHarnessConversationLease.State.EXPIRED)
+    abandoned = _unacked_commands(conversation).update(
+        state=HostedHarnessConversationMessage.State.FAILED,
+        updated_at=timezone.now(),
+    )
+    settle_interrupted_turn(conversation)
+    conversation.state = state
+    if abandoned:
+        HostedHarnessConversationMessage.no_workspace_objects.create(
+            conversation=conversation,
+            sequence=conversation.next_message_sequence,
+            role=HostedHarnessConversationMessage.Role.ASSISTANT,
+            kind=HostedHarnessConversationMessage.Kind.MESSAGE,
+            state=HostedHarnessConversationMessage.State.FAILED,
+            stage=conversation.current_stage,
+            content=reply,
+        )
+        conversation.next_message_sequence += 1
+    conversation.save(
+        update_fields=[
+            "state",
+            "next_message_sequence",
+            "active_invocation_id",
+            "updated_at",
+        ]
+    )
+    return abandoned
+
+
+def record_runtime_started(conversation: HostedHarnessConversation) -> None:
+    """A fresh process shows as working until it has answered what is waiting for it."""
+    conversation.state = (
+        HostedHarnessConversation.State.STARTING
+        if _unacked_commands(conversation).exists()
+        else HostedHarnessConversation.State.WARM_IDLE
+    )
+    conversation.save(update_fields=["state", "updated_at"])
 
 
 def ensure_conversation(job: HostedHarnessJob) -> HostedHarnessConversation:
@@ -427,11 +679,27 @@ def append_provider_transcript(
 def pending_commands(
     conversation: HostedHarnessConversation, *, after: int
 ) -> dict[str, Any]:
+    now = timezone.now()
+    lease = getattr(conversation, "lease", None)
+    if lease is not None and (
+        lease.state == HostedHarnessConversationLease.State.STARTING
+        or lease.heartbeat_at is None
+        or now - lease.heartbeat_at >= timedelta(seconds=_HEARTBEAT_WRITE_SECONDS)
+    ):
+        HostedHarnessConversationLease.no_workspace_objects.filter(
+            id=lease.id,
+            token_hash=lease.token_hash,
+            state__in=[
+                HostedHarnessConversationLease.State.STARTING,
+                HostedHarnessConversationLease.State.ACTIVE,
+            ],
+        ).update(heartbeat_at=now, state=HostedHarnessConversationLease.State.ACTIVE)
     messages = list(
-        conversation.messages.filter(
-            role=HostedHarnessConversationMessage.Role.USER,
+        _unacked_commands(conversation)
+        .filter(
             sequence__gt=after,
-        ).order_by("sequence")[:COMMAND_LIMIT]
+        )
+        .order_by("sequence")[:COMMAND_LIMIT]
     )
     return {
         "schema_version": CONVERSATION_SCHEMA_VERSION,
@@ -828,9 +1096,20 @@ def store_workspace_archive(
 def load_workspace_archive(conversation: HostedHarnessConversation) -> bytes | None:
     if not conversation.latest_workspace_object_key:
         return None
-    response = get_storage_client().get_object(
-        UPLOAD_BUCKET_NAME, conversation.latest_workspace_object_key
-    )
+    try:
+        response = get_storage_client().get_object(
+            UPLOAD_BUCKET_NAME, conversation.latest_workspace_object_key
+        )
+    except S3Error as exc:
+        if exc.code != "NoSuchKey":
+            raise
+        # The checkpoint object is gone; treat it like no checkpoint so chat falls back
+        # to the authoring archive rather than retiring. The user's edits are lost.
+        logger.warning(
+            "conversation checkpoint object missing; falling back to authoring archive conversation=%s",
+            conversation.id,
+        )
+        return None
     try:
         return response.read()
     finally:

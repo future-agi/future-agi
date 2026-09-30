@@ -7320,13 +7320,13 @@ class GetUserCodeExampleView(APIView):
                 return self._gm.bad_request("Project type must be 'observe'.")
 
         code_example = f"""import openai
-from fi_instrumentation import using_attributes
+from fi_instrumentation import FITracer, register, using_attributes
+from fi_instrumentation.fi_types import ProjectType
 from traceai_openai import OpenAIInstrumentor
 
 trace_provider = register(
     project_type=ProjectType.OBSERVE,
     project_name="{project_name}",
-    session_name="new-session",
 )
 
 tracer = FITracer(trace_provider.get_tracer(__name__))

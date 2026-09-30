@@ -271,11 +271,18 @@ const VoiceRightPanel = ({
         // backend used. Makes the shared EvalsTabView render the
         // dropdown / "Run" UX for failed voice evals.
         cell_id: e?.cell_id || e?.cellId,
+        eval_config_id: e?.id || String(id),
+        custom_eval_config_id: e?.custom_eval_config_id,
+        observation_span_id: e?.observation_span_id,
+        project_version_id: e?.project_version_id,
         template_type: e?.template_type,
+        error_localizer: e?.error_localizer === true,
         error_analysis:
           e?.error_analysis || e?.errorAnalysis || e?.error_details,
         error_localizer_status:
           e?.error_localizer_status || e?.errorLocalizerStatus,
+        error_localizer_message:
+          e?.error_localizer_message || e?.errorLocalizerMessage,
         selected_input_key: e?.selected_input_key || e?.selectedInputKey,
         datapoint: e?.datapoint || {
           selectedInputKey: e?.selected_input_key || e?.selectedInputKey,

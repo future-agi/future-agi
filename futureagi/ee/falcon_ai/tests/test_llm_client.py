@@ -26,6 +26,16 @@ def _clear_env():
 
 
 class ManagedTransportTests(unittest.IsolatedAsyncioTestCase):
+    def test_turing_default_uses_agentcc_container_port(self):
+        with mock.patch.dict(
+            "os.environ",
+            {"AGENTCC_INTERNAL_API_KEY": "test-key"},
+            clear=True,
+        ):
+            client = FalconLLMClient(provider="turing_large")
+
+        self.assertEqual(client.api_url, "http://agentcc-gateway:8080")
+
     async def test_summary_uses_managed_gateway_for_default_client(self):
         response = {
             "choices": [{"message": {"content": "summary"}}],

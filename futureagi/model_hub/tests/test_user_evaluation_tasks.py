@@ -663,6 +663,7 @@ class TestTemporalActivityTimeouts:
         from model_hub.tasks.user_evaluation import process_single_error_localization
 
         assert callable(process_single_error_localization)
+        assert process_single_error_localization._metadata["queue"] == "tasks_xl"
 
     def test_process_eval_batch_async_task_timeout(self):
         """Verify process_eval_batch_async_task has 1-hour timeout."""

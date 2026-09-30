@@ -107,7 +107,10 @@ services:
       # not starve the sandbox status API or Docker daemon. Hosted deployments override this
       # according to their per-sandbox resource envelope.
       ALK_SANDBOX_MAX_CONCURRENCY: ${ALK_SANDBOX_MAX_CONCURRENCY:-1}
+      ALK_HARNESS: ${ALK_HARNESS:-vertex-gemini}
       ALK_HARNESS_MODEL: ${ALK_HARNESS_MODEL:-claude-sonnet-4-6}
+      AGENTCC_API_KEY: ${AGENTCC_INTERNAL_API_KEY:-local-dev-only-shared-secret-replace-me}
+      AGENTCC_BASE_URL: ${AGENTCC_BASE_URL:-http://agentcc-gateway:8080}
       CLOUD_ML_REGION: ${CLOUD_ML_REGION:-global}
       # The sandbox reports canonical run events/results to the platform. Keep
       # these separate from model-provider settings loaded above: in hosted
