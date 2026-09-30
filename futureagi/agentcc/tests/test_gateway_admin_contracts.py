@@ -16,6 +16,7 @@ from agentcc.contracts.gateway_admin import (
 )
 from agentcc.models.org_config import AgentccOrgConfig
 from agentcc.services.config_push import (
+    _RULE_PROVIDER_DEFAULTS,
     _assemble_providers,
     _build_payload,
     push_all_org_configs,
@@ -24,6 +25,12 @@ from agentcc.views.gateway import _prepare_vertex_provider_config
 
 ORG_CONFIG_FIXTURE = (
     Path(__file__).resolve().parent / "fixtures/gateway_org_config.full.json"
+)
+# Shared with the gateway's test that each check's guardrail recognises the
+# provider pushed for it (TestGuardrailRecognisersAcceptEveryPushedProvider).
+GUARDRAIL_PROVIDERS_FIXTURE = (
+    Path(__file__).resolve().parents[3]
+    / "api_contracts/gateway/guardrail-providers.json"
 )
 
 
@@ -215,6 +222,50 @@ def test_build_payload_emits_gateway_org_config_contract(mock_assemble_providers
     assert contract.budgets.org_limit == 100
     assert contract.budgets.hard_limit is True
     assert contract.budgets.teams["engineering"].hard is False
+
+
+def test_rule_provider_defaults_are_the_providers_the_gateway_recognises():
+    shared = json.loads(GUARDRAIL_PROVIDERS_FIXTURE.read_text())
+
+    assert _RULE_PROVIDER_DEFAULTS == shared["checks"]
+
+
+_TOOL_PERMISSIONS_RULE = {
+    "name": "tool-permissions",
+    "stage": "pre",
+    "mode": "sync",
+    "action": "block",
+    "threshold": 0.8,
+    "enabled": True,
+    "config": {"mode": "denylist", "tools": "file_*", "apply_to": "request"},
+}
+
+
+@pytest.mark.parametrize(
+    "guardrails",
+    [
+        {"enabled": True, "rules": [_TOOL_PERMISSIONS_RULE]},
+        # Merged from guardrail policies by guardrail_sync.
+        {"enabled": True, "checks": [_TOOL_PERMISSIONS_RULE]},
+    ],
+    ids=["rules", "policy_checks"],
+)
+@patch("agentcc.services.config_push._assemble_providers", return_value={})
+def test_build_payload_pushes_tool_permissions_with_the_gateway_provider(
+    _mock_providers, guardrails
+):
+    payload = _build_payload("org-123", AgentccOrgConfig(guardrails=guardrails))
+
+    check = GatewayOrgConfig.model_validate(payload).guardrails.checks[
+        "tool-permissions"
+    ]
+    # The gateway builds a tool-permissions check only for this provider.
+    assert check.config == {
+        "mode": "denylist",
+        "tools": "file_*",
+        "apply_to": "request",
+        "provider": "tool_permission",
+    }
 
 
 @patch("integrations.services.credentials.CredentialManager.decrypt")
