@@ -51965,6 +51965,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           readOnly: true,
         },
+        transport: {
+          title: "Transport",
+          type: "string",
+          readOnly: true,
+        },
         phone_number: {
           title: "Phone number",
           description: "Phone number called (null for TEXT/chat simulations)",
@@ -52555,6 +52560,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         provider: {
           title: "Provider",
+          type: "string",
+          readOnly: true,
+        },
+        transport: {
+          title: "Transport",
           type: "string",
           readOnly: true,
         },

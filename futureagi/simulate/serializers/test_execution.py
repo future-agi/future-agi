@@ -350,8 +350,10 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
     scenario_graph = serializers.SerializerMethodField()
     scenario_graph_id = serializers.SerializerMethodField()
 
-    # Provider used for this call (e.g. "vapi", "retell", "livekit_bridge")
+    # Provider of the tested agent (e.g. "vapi", "retell", "livekit_bridge")
     provider = serializers.SerializerMethodField()
+    # Transport that carried the call; fixes the recording's channel layout
+    transport = serializers.SerializerMethodField()
 
     # Conversation metrics fields
     avg_agent_latency = serializers.IntegerField(
@@ -453,6 +455,7 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
             "customer_call_id",
             "simulation_call_type",
             "provider",
+            "transport",
             "phone_number",
         ]
         read_only_fields = ["id", "timestamp"]
@@ -589,35 +592,17 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
         return recordings or {}
 
     def get_provider(self, obj):
-        """Return the provider that produced this call's stored provider payload.
+        agent = getattr(getattr(obj, "test_execution", None), "agent_definition", None)
+        return getattr(agent, "provider", None) if agent else None
 
-        The agent definition can be Vapi while the executed call payload is
-        stored under another provider key (for example LiveKit web/SIP flows).
-        The drawer uses this value for both the chip and provider-specific
-        metrics rendering, so prefer the actual payload key when available.
-        """
+    def get_transport(self, obj):
         provider_data = getattr(obj, "provider_call_data", None)
-        if isinstance(provider_data, dict):
-            for provider in (
-                ProviderChoices.VAPI.value,
-                ProviderChoices.RETELL.value,
-                ProviderChoices.LIVEKIT.value,
-                ProviderChoices.ELEVEN_LABS.value,
-                ProviderChoices.OTHERS.value,
-            ):
-                if isinstance(provider_data.get(provider), dict) and provider_data.get(
-                    provider
-                ):
-                    return provider
-
-            for provider, payload in provider_data.items():
-                if isinstance(payload, dict) and payload:
-                    return provider
-
-        try:
-            return obj.test_execution.agent_definition.provider
-        except (AttributeError, Exception):
+        if not isinstance(provider_data, dict):
             return None
+        for provider, payload in provider_data.items():
+            if isinstance(payload, dict) and payload:
+                return provider
+        return None
 
     def get_call_type(self, obj):
         """
