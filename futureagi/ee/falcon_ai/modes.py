@@ -52,6 +52,10 @@ ALL_CATEGORIES = [
     "users",
     "usage",
     "docs",
+    # `agents` holds run_simulation, get_test_execution, list_test_executions and
+    # list_scenarios. Without it here the agent/simulation surface is read-only in
+    # auto mode — a simulation can be built but never executed.
+    "agents",
 ]
 
 MODES = {
@@ -76,7 +80,10 @@ MODES = {
         "description": "Experiment management",
     },
     "agents": {
-        "categories": ["context", "simulation"],
+        # `agents` as well as `simulation`: the catalog splits the surface across
+        # both groups, and run_simulation lives in `agents`. Listing only
+        # `simulation` left the dedicated agents mode unable to run a test.
+        "categories": ["context", "simulation", "agents"],
         "description": "Agent testing",
     },
     "prompts": {

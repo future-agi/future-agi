@@ -19,7 +19,7 @@ CATALOG_PATH = Path(__file__).resolve().parents[1] / "catalog/tools.yaml"
 def test_committed_catalog_generates_expected_tools():
     manifest = generate_tool_manifest(CONTRACT_PATH, CATALOG_PATH)
 
-    assert manifest["tool_count"] == 92
+    assert manifest["tool_count"] == 99
     tool_names = [tool["name"] for tool in manifest["tools"]]
     assert len(tool_names) == len(set(tool_names))
     assert {
@@ -294,6 +294,7 @@ def test_dashboard_tools_follow_the_real_dashboard_contract():
         "get_dashboard",
         "create_dashboard",
         "update_dashboard",
+        "delete_dashboard",
         "list_dashboard_widgets",
         "get_dashboard_widget",
         "create_dashboard_widget",

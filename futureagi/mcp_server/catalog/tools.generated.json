@@ -2,7 +2,7 @@
   "schema_version": 1,
   "source_contract": "swagger.json",
   "source_contract_sha256": "83fe2c54b6fbda789c5a5040e90d216af3279ab24d431ffbcdf003356fd1f02b",
-  "tool_count": 92,
+  "tool_count": 99,
   "tools": [
     {
       "name": "whoami",
@@ -1392,6 +1392,105 @@
       },
       "source": {
         "operationId": "model-hub_dataset_run-prompt-stats_list"
+      }
+    },
+    {
+      "name": "update_dataset_cell",
+      "description": "Set the value of a single dataset cell. Use this to correct one value; add_dataset_rows only appends and cannot edit an existing row.",
+      "group": "datasets",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "dataset_id": {
+            "type": "string"
+          },
+          "row_id": {
+            "title": "Row id",
+            "type": "string",
+            "format": "uuid"
+          },
+          "column_id": {
+            "title": "Column id",
+            "type": "string",
+            "format": "uuid"
+          },
+          "new_value": {
+            "anyOf": [
+              {
+                "title": "New value",
+                "type": "string",
+                "description": "New cell value. Accepts JSON primitives or multipart file uploads."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "dataset_id",
+          "row_id",
+          "column_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/model-hub/develops/{dataset_id}/update_cell_value/",
+        "parameters": {
+          "path": [
+            "dataset_id"
+          ],
+          "query": [],
+          "body": [
+            "row_id",
+            "column_id",
+            "new_value"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_develops_update_cell_value_create"
+      }
+    },
+    {
+      "name": "delete_datasets",
+      "description": "Soft-delete one or more datasets by passing dataset_ids. This is the only way to remove a dataset created earlier; deletion cascades to the dataset's rows, columns and attached evaluations.",
+      "group": "datasets",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "DELETE",
+        "path": "/model-hub/develops/delete_dataset/",
+        "parameters": {
+          "path": [],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_develops_delete_dataset_delete"
       }
     },
     {
@@ -4878,8 +4977,8 @@
       "annotations": {
         "readOnlyHint": false,
         "destructiveHint": true,
-        "idempotentHint": false,
-        "openWorldHint": true
+        "idempotentHint": true,
+        "openWorldHint": false
       },
       "request": {
         "method": "PATCH",
@@ -4906,6 +5005,80 @@
       },
       "source": {
         "operationId": "tracer_eval-task_update_eval_task"
+      }
+    },
+    {
+      "name": "list_trace_properties",
+      "description": "List the properties a trace can be filtered on, with their ids. Call this before building the filters argument for search_traces or list_spans - each filter clause needs a valid column_id and these are the only valid values.",
+      "group": "observability",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/tracer/trace/get_properties/",
+        "parameters": {
+          "path": [],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "tracer_trace_get_properties"
+      }
+    },
+    {
+      "name": "list_fired_alerts",
+      "description": "List alerts that have fired, newest first. Use this to find out what the platform has already flagged before digging into traces or error clusters.",
+      "group": "observability",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": "integer",
+            "description": "A page number within the paginated result set."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of results to return per page."
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "request": {
+        "method": "GET",
+        "path": "/tracer/user-alert-logs/all/",
+        "parameters": {
+          "path": [],
+          "query": [
+            "page",
+            "limit"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "tracer_user-alert-logs_list_all"
       }
     },
     {
@@ -5349,8 +5522,85 @@
       }
     },
     {
+      "name": "get_annotation_item_detail",
+      "description": "Return everything needed to annotate one queue item - its source content, the queue instructions, every label with its settings (the allowed values a submitted value must match), any annotations already recorded, and the next/previous item ids. Call this before submit_annotation; the label settings are not available anywhere else.",
+      "group": "annotations",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "queue_id": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "A UUID string identifying this queue item."
+          },
+          "annotator_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "include_completed": {
+            "type": "boolean"
+          },
+          "view_mode": {
+            "type": "string"
+          },
+          "review_status": {
+            "type": "string"
+          },
+          "exclude_review_status": {
+            "type": "string"
+          },
+          "include_all_annotations": {
+            "type": "boolean"
+          },
+          "reserve": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "queue_id",
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/model-hub/annotation-queues/{queue_id}/items/{id}/annotate-detail/",
+        "parameters": {
+          "path": [
+            "queue_id",
+            "id"
+          ],
+          "query": [
+            "annotator_id",
+            "include_completed",
+            "view_mode",
+            "review_status",
+            "exclude_review_status",
+            "include_all_annotations",
+            "reserve"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_annotation-queues_items_annotate_detail"
+      }
+    },
+    {
       "name": "submit_annotation",
-      "description": "Submit annotation values for an item in an annotation queue.",
+      "description": "Submit annotation values for an item in an annotation queue. The value shape must match the label's settings from get_annotation_item_detail. Submitting moves the item to in_progress only; call complete_annotation_item to finish it.",
       "group": "annotations",
       "inputSchema": {
         "type": "object",
@@ -5444,6 +5694,73 @@
       },
       "source": {
         "operationId": "model-hub_annotation-queues_items_annotations_submit_annotations"
+      }
+    },
+    {
+      "name": "complete_annotation_item",
+      "description": "Mark an annotated queue item complete and return the next item to work on. Required to finish an item - submit_annotation alone leaves it in_progress and the queue never closes.",
+      "group": "annotations",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "queue_id": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "A UUID string identifying this queue item."
+          },
+          "exclude": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          },
+          "exclude_review_status": {
+            "title": "Exclude review status",
+            "type": "string"
+          },
+          "include_completed": {
+            "title": "Include completed",
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "queue_id",
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/model-hub/annotation-queues/{queue_id}/items/{id}/complete/",
+        "parameters": {
+          "path": [
+            "queue_id",
+            "id"
+          ],
+          "query": [],
+          "body": [
+            "exclude",
+            "exclude_review_status",
+            "include_completed"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_annotation-queues_items_complete_item"
       }
     },
     {
@@ -9178,6 +9495,46 @@
       },
       "source": {
         "operationId": "tracer_dashboard_widgets_execute_query"
+      }
+    },
+    {
+      "name": "delete_dashboard",
+      "description": "Delete a dashboard and the widgets on it. This is the only way to remove a dashboard created earlier.",
+      "group": "dashboards",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "DELETE",
+        "path": "/tracer/dashboard/{id}/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "tracer_dashboard_delete"
       }
     },
     {

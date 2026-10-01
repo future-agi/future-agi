@@ -1,5 +1,5 @@
 version: 1
-expected_tool_count: 92
+expected_tool_count: 99
 
 # Pagination is an MCP-only page-size ceiling, so an oversized page is rejected
 # before the REST view queries and serializes it. The generator keeps a stricter
@@ -98,6 +98,16 @@ tools:
     description: Return dataset prompt IDs and token, cost and timing statistics. This is not execution status; use get_dataset for cell outputs and status.
     operation: {method: GET, path: "/model-hub/dataset/{dataset_id}/run-prompt-stats/"}
     access: read
+  - name: update_dataset_cell
+    group: datasets
+    description: Set the value of a single dataset cell. Use this to correct one value; add_dataset_rows only appends and cannot edit an existing row.
+    operation: {method: POST, path: "/model-hub/develops/{dataset_id}/update_cell_value/"}
+    access: write
+  - name: delete_datasets
+    group: datasets
+    description: Soft-delete one or more datasets by passing dataset_ids. This is the only way to remove a dataset created earlier; deletion cascades to the dataset's rows, columns and attached evaluations.
+    operation: {method: DELETE, path: "/model-hub/develops/delete_dataset/"}
+    access: destructive
   # prompts
   - name: list_prompt_templates
     group: prompts
@@ -259,6 +269,16 @@ tools:
     description: Update and rerun an online evaluation task using eval_task_id and edit_type. Pause a running task first. edit_rerun preserves existing results; fresh_run DELETES previous results and starts again. May incur evaluation charges.
     operation: {method: PATCH, path: "/tracer/eval-task/update_eval_task/"}
     access: destructive
+  - name: list_trace_properties
+    group: observability
+    description: List the properties a trace can be filtered on, with their ids. Call this before building the filters argument for search_traces or list_spans - each filter clause needs a valid column_id and these are the only valid values.
+    operation: {method: GET, path: "/tracer/trace/get_properties/"}
+    access: read
+  - name: list_fired_alerts
+    group: observability
+    description: List alerts that have fired, newest first. Use this to find out what the platform has already flagged before digging into traces or error clusters.
+    operation: {method: GET, path: "/tracer/user-alert-logs/all/"}
+    access: read
     idempotent: false
     open_world: true
   - name: pause_eval_task
@@ -306,10 +326,20 @@ tools:
     access: read
     pagination:
       limit: {maximum: 100}
+  - name: get_annotation_item_detail
+    group: annotations
+    description: Return everything needed to annotate one queue item - its source content, the queue instructions, every label with its settings (the allowed values a submitted value must match), any annotations already recorded, and the next/previous item ids. Call this before submit_annotation; the label settings are not available anywhere else.
+    operation: {method: GET, path: "/model-hub/annotation-queues/{queue_id}/items/{id}/annotate-detail/"}
+    access: read
   - name: submit_annotation
     group: annotations
-    description: Submit annotation values for an item in an annotation queue.
+    description: Submit annotation values for an item in an annotation queue. The value shape must match the label's settings from get_annotation_item_detail. Submitting moves the item to in_progress only; call complete_annotation_item to finish it.
     operation: {method: POST, path: "/model-hub/annotation-queues/{queue_id}/items/{id}/annotations/submit/"}
+    access: write
+  - name: complete_annotation_item
+    group: annotations
+    description: Mark an annotated queue item complete and return the next item to work on. Required to finish an item - submit_annotation alone leaves it in_progress and the queue never closes.
+    operation: {method: POST, path: "/model-hub/annotation-queues/{queue_id}/items/{id}/complete/"}
     access: write
   # experiments
   - name: list_experiments
@@ -528,6 +558,11 @@ tools:
     description: Execute a saved widget's query and return its chart data.
     operation: {method: POST, path: "/tracer/dashboard/{dashboard_pk}/widgets/{id}/query/"}
     access: read
+  - name: delete_dashboard
+    group: dashboards
+    description: Delete a dashboard and the widgets on it. This is the only way to remove a dashboard created earlier.
+    operation: {method: DELETE, path: "/tracer/dashboard/{id}/"}
+    access: destructive
   - name: query_dashboard_metrics
     group: dashboards
     description: Run an ad-hoc dashboard query (time_range and metrics, with optional filters and breakdowns) and return chart data without saving a widget.

@@ -11,7 +11,7 @@ from mcp_server.generated_registry import (
 def test_committed_generated_registry_loads_all_tools():
     registry = GeneratedToolRegistry.from_manifest()
 
-    assert registry.count() == 92
+    assert registry.count() == 99
     assert registry.get("list_datasets").group == "datasets"
     assert registry.get("get_dashboard").group == "dashboards"
     assert registry.get("get_gateway_config").group == "gateway"

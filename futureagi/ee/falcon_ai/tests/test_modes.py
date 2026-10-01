@@ -103,6 +103,42 @@ def test_skill_tool_names_are_loaded():
     assert {"evaluate_with_agent", "get_dashboard"} <= names
 
 
+def test_simulation_can_actually_be_executed():
+    """`run_simulation` lives in the `agents` catalog group, not `simulation`.
+
+    While `agents` was missing from both ALL_CATEGORIES and the agents mode's own
+    category list, Falcon could create an agent, version it, write scenarios and
+    save a test — and then had no tool to run any of it, in any mode.
+    """
+    for mode in ("general", "agents"):
+        names = _names(load_tools_for_mode(mode))
+        assert "run_simulation" in names, mode
+        # reading a run back matters as much as starting one
+        assert {"get_test_execution", "list_test_executions"} <= names, mode
+        # and scenarios must be discoverable to pick one for a test
+        assert "list_scenarios" in names, mode
+
+
+def test_added_catalog_tools_are_reachable_in_general_mode():
+    """Tools added to close incomplete flows — annotate, correct, clean up, filter."""
+    names = _names(load_tools_for_mode("general"))
+    assert {
+        # annotating was impossible: no tool returned label settings, and
+        # submit alone never completed an item
+        "get_annotation_item_detail",
+        "complete_annotation_item",
+        # datasets were a one-way ratchet: no cell edit, no delete
+        "update_dataset_cell",
+        "delete_datasets",
+        # trace filters need valid column ids from somewhere
+        "list_trace_properties",
+        # alerts had no coverage at all
+        "list_fired_alerts",
+        # dashboards could be created but never removed
+        "delete_dashboard",
+    } <= names
+
+
 def test_builtin_skills_only_reference_registered_tools():
     from ee.falcon_ai.builtin_skills_loader import load_builtin_skills
 
