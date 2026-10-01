@@ -42,8 +42,13 @@ const RUNS = [
 const env = { id: "env-1", name: "Refund Support", version: "v3" };
 const envState = { scenarios: Array.from({ length: 20 }, (_, i) => ({ id: `s${i}` })) };
 
-function renderSummary(props = {}, runs = RUNS, isLoading = false) {
-  useEnvironmentRuns.mockReturnValue({ runs, isLoading });
+function renderSummary(props = {}, runs = RUNS, isLoading = false, totals = {}) {
+  useEnvironmentRuns.mockReturnValue({
+    runs,
+    count: runs.length,
+    isLoading,
+    ...totals,
+  });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
@@ -65,6 +70,12 @@ describe("RunsSummary", () => {
     renderSummary();
     expect(screen.getByText("Simulations summary")).toBeInTheDocument();
     expect(screen.getByText("2 runs · 20 scenarios")).toBeInTheDocument();
+  });
+
+  it("heads the summary with the server's run-test totals, not the page's rows", () => {
+    // A 2-row page of a 12-run history that covered 7 scenarios in all.
+    renderSummary({}, RUNS, false, { count: 12, coveredScenarioCount: 7 });
+    expect(screen.getByText("12 runs · 7 scenarios")).toBeInTheDocument();
   });
 
   it("shows a real pass rate per run", () => {
@@ -189,8 +200,10 @@ describe("RunsSummary", () => {
     expect(screen.queryByRole("button", { name: "Stop simulation" })).toBeNull();
   });
 
-  it("marks the newest run on the graph's axis", () => {
+  it("marks the newest run on the graph's axis", async () => {
     renderSummary();
+    fireEvent.mouseDown(screen.getByText("Latest 1 run"));
+    fireEvent.click(await screen.findByRole("option", { name: "Latest 2 runs" }));
     expect(lastChart().options.xaxis.categories).toEqual(["Run 1", "Run 2 · latest"]);
   });
 
@@ -229,12 +242,31 @@ describe("RunsSummary", () => {
 
     it("keeps the user's pick once they change it", () => {
       renderSummary({}, manyEvals);
-      fireEvent.mouseDown(screen.getByRole("combobox"));
+      fireEvent.mouseDown(screen.getByText("5 of 7 evals"));
       fireEvent.click(screen.getByRole("option", { name: /E7/ }));
       expect(lastChart().series.map((x) => x.name)).toEqual([
         "E1", "E2", "E3", "E4", "E5", "E7",
       ]);
     });
+  });
+
+  it("shows the pager only once there is more than one page of runs", () => {
+    renderSummary({}, RUNS, false, { count: 10 });
+    expect(screen.queryByText(/Rows per page/)).toBeNull();
+  });
+
+  it("pages the runs table once the run-test holds more than ten runs", () => {
+    renderSummary({}, RUNS, false, { count: 11 });
+    expect(screen.getByText(/Rows per page/)).toBeInTheDocument();
+  });
+
+  it("draws the graph from the head of the table's first page, not a query of its own", () => {
+    renderSummary();
+    const pagings = useEnvironmentRuns.mock.calls.map((call) => call[2]);
+    expect(pagings).toContainEqual({ page: 0, pageSize: 10 });
+    expect(pagings.every((p) => p.pageSize === 10)).toBe(true);
+    // Default "Latest 1 run": only the newest run reaches the graph.
+    expect(lastChart().options.xaxis.categories).toHaveLength(1);
   });
 
   it("pins the runs table's header, since the table scrolls under a fixed graph", () => {

@@ -40675,6 +40675,12 @@ export const SimulateCallExecutionsReadResponse = zod.object({
         reason: zod.string().optional(),
         type: zod.string().optional(),
         template_type: zod.string().optional(),
+        kind: zod
+          .enum(["evaluation", "sub_goal"])
+          .optional()
+          .describe(
+            "Set on the v3 call detail: a sub-goal check or an evaluation",
+          ),
         visible: zod.boolean().optional(),
         error: zod.boolean().optional(),
         status: zod.string().optional(),
@@ -44356,6 +44362,7 @@ export const SimulateRunTestsExecutionsListResponse = zod.object({
       }),
     )
     .optional(),
+  covered_scenario_count: zod.number().optional(),
 });
 
 export const SimulateRunTestsPreviewExecutionsListParams = zod.object({
@@ -46493,6 +46500,12 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
         reason: zod.string().optional(),
         type: zod.string().optional(),
         template_type: zod.string().optional(),
+        kind: zod
+          .enum(["evaluation", "sub_goal"])
+          .optional()
+          .describe(
+            "Set on the v3 call detail: a sub-goal check or an evaluation",
+          ),
         visible: zod.boolean().optional(),
         error: zod.boolean().optional(),
         status: zod.string().optional(),
@@ -46740,6 +46753,7 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
         label: zod.string().min(1),
         started_at: zod.string().datetime({ offset: true }),
         calls: zod.number(),
+        latency_ms: zod.number(),
         duration_ms: zod.number(),
         llm_cents: zod.number(),
         tts_cents: zod.number(),
@@ -46749,6 +46763,12 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
     ),
     series_limit: zod.number(),
     series_mode: zod.enum(["calls", "time_buckets"]),
+    agent_latency_percentiles: zod.array(
+      zod.object({
+        percentile: zod.number(),
+        value: zod.number(),
+      }),
+    ),
     latency_percentiles: zod.array(
       zod.object({
         percentile: zod.number(),
@@ -47483,6 +47503,13 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
       completed_at: zod.string().datetime({ offset: true }),
       duration_seconds: zod.number(),
       latency_ms: zod.number(),
+      avg_stop_time_after_interruption: zod
+        .number()
+        .nullable()
+        .describe(
+          "Average stop time after caller interruption in milliseconds.",
+        ),
+      ai_interruption_count: zod.number().nullable(),
       turn_count: zod.number(),
       tokens: zod.number(),
       cost_cents: zod.number(),
@@ -47570,6 +47597,18 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
         csat: zod.number(),
         turns: zod.number(),
         latency_ms: zod.number(),
+        avg_stop_time_after_interruption: zod
+          .number()
+          .nullable()
+          .describe(
+            "Mean call stop latency in milliseconds, excluding unmeasured calls.",
+          ),
+        ai_interruptions: zod
+          .number()
+          .nullable()
+          .describe(
+            "Mean AI interruption count per call, excluding unmeasured calls.",
+          ),
         tokens: zod.number(),
         evaluations: zod.object({}).passthrough(),
       }),
@@ -47599,6 +47638,7 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
     zod.object({
       id: zod.string().min(1),
       name: zod.string().min(1),
+      kind: zod.enum(["evaluation", "sub_goal"]),
     }),
   ),
 });

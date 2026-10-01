@@ -73003,6 +73003,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           readOnly: true,
         },
+        covered_scenario_count: {
+          title: "Covered scenario count",
+          type: "integer",
+          readOnly: true,
+        },
       },
     },
     RunTestKPIsResponse: {
@@ -84740,6 +84745,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Template type",
           type: "string",
           "x-nullable": true,
+        },
+        kind: {
+          title: "Kind",
+          description:
+            "Set on the v3 call detail: a sub-goal check or an evaluation",
+          type: "string",
+          enum: ["evaluation", "sub_goal"],
         },
         visible: {
           title: "Visible",
@@ -98219,6 +98231,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "series",
         "series_limit",
         "series_mode",
+        "agent_latency_percentiles",
         "latency_percentiles",
         "distributions",
         "csat",
@@ -98269,6 +98282,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Series mode",
           type: "string",
           enum: ["calls", "time_buckets"],
+        },
+        agent_latency_percentiles: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/RunDashboardPercentile",
+          },
         },
         latency_percentiles: {
           type: "array",
@@ -98413,7 +98432,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     EvaluationColumn: {
-      required: ["id", "name"],
+      required: ["id", "name", "kind"],
       type: "object",
       properties: {
         id: {
@@ -98425,6 +98444,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Name",
           type: "string",
           minLength: 1,
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["evaluation", "sub_goal"],
         },
       },
     },
@@ -98450,6 +98474,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "completed_at",
         "duration_seconds",
         "latency_ms",
+        "avg_stop_time_after_interruption",
+        "ai_interruption_count",
         "turn_count",
         "tokens",
         "cost_cents",
@@ -98568,6 +98594,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
         latency_ms: {
           title: "Latency ms",
           type: "number",
+          "x-nullable": true,
+        },
+        avg_stop_time_after_interruption: {
+          title: "Avg stop time after interruption",
+          description:
+            "Average stop time after caller interruption in milliseconds.",
+          type: "integer",
+          "x-nullable": true,
+        },
+        ai_interruption_count: {
+          title: "Ai interruption count",
+          type: "integer",
           "x-nullable": true,
         },
         turn_count: {
@@ -111874,6 +111912,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "label",
         "started_at",
         "calls",
+        "latency_ms",
         "duration_ms",
         "llm_cents",
         "tts_cents",
@@ -111896,6 +111935,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         calls: {
           title: "Calls",
           type: "integer",
+        },
+        latency_ms: {
+          title: "Latency ms",
+          type: "number",
+          "x-nullable": true,
         },
         duration_ms: {
           title: "Duration ms",
@@ -112085,7 +112129,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     GroupAggregates: {
-      required: ["csat", "turns", "latency_ms", "tokens", "evaluations"],
+      required: [
+        "csat",
+        "turns",
+        "latency_ms",
+        "avg_stop_time_after_interruption",
+        "ai_interruptions",
+        "tokens",
+        "evaluations",
+      ],
       type: "object",
       properties: {
         csat: {
@@ -112100,6 +112152,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         latency_ms: {
           title: "Latency ms",
+          type: "number",
+          "x-nullable": true,
+        },
+        avg_stop_time_after_interruption: {
+          title: "Avg stop time after interruption",
+          description:
+            "Mean call stop latency in milliseconds, excluding unmeasured calls.",
+          type: "number",
+          "x-nullable": true,
+        },
+        ai_interruptions: {
+          title: "Ai interruptions",
+          description:
+            "Mean AI interruption count per call, excluding unmeasured calls.",
           type: "number",
           "x-nullable": true,
         },

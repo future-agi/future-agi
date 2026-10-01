@@ -51,6 +51,23 @@ describe("ChatCallDrawer share", () => {
 });
 
 describe("ChatCallDrawer tabs", () => {
+  it("leaves sub-goal checks out of the Evals tab", () => {
+    render(
+      <ChatCallDrawer
+        task={{
+          id: "call-execution-2",
+          status: "completed",
+          evalResults: [
+            { id: "ev-1", name: "Tone", kind: "evaluation", score: 1, passed: true },
+            { id: "sg-1", name: "pin_verified", kind: "sub_goal", score: 1, passed: true },
+          ],
+        }}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("tab", { name: "Evals (1)" })).toBeInTheDocument();
+  });
+
   it("has no Checklist or Graph tab while they have no data behind them", () => {
     render(<ChatCallDrawer task={{ id: "call-execution-1", status: "completed" }} onClose={vi.fn()} />);
     expect(screen.getByRole("tab", { name: "Transcript" })).toBeInTheDocument();

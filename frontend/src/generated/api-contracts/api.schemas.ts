@@ -19908,6 +19908,17 @@ export const CallExecutionDetailApiStatus = {
 } as const;
 
 /**
+ * Set on the v3 call detail: a sub-goal check or an evaluation
+ */
+export type CallExecutionEvalMetricApiKind =
+  (typeof CallExecutionEvalMetricApiKind)[keyof typeof CallExecutionEvalMetricApiKind];
+
+export const CallExecutionEvalMetricApiKind = {
+  evaluation: "evaluation",
+  sub_goal: "sub_goal",
+} as const;
+
+/**
  * number | bool | string | list[string] | null
  */
 export type CallExecutionEvalMetricApiValue = { [key: string]: unknown };
@@ -19928,6 +19939,8 @@ export interface CallExecutionEvalMetricApi {
   reason?: string;
   type?: string;
   template_type?: string;
+  /** Set on the v3 call detail: a sub-goal check or an evaluation */
+  kind?: CallExecutionEvalMetricApiKind;
   visible?: boolean;
   error?: boolean;
   status?: string;
@@ -21021,6 +21034,7 @@ export interface RunTestExecutionsResponseApi {
   /** @minLength 1 */
   readonly previous?: string;
   readonly results?: readonly TestExecutionItemResponseApi[];
+  readonly covered_scenario_count?: number;
 }
 
 export interface SimulationPreviewItemApi {
@@ -22428,6 +22442,7 @@ export interface RunDashboardSeriesApi {
   label: string;
   started_at: string;
   calls: number;
+  latency_ms: number;
   duration_ms: number;
   llm_cents: number;
   tts_cents: number;
@@ -22564,6 +22579,7 @@ export interface RunDashboardV3Api {
   series: RunDashboardSeriesApi[];
   series_limit: number;
   series_mode: RunDashboardV3ApiSeriesMode;
+  agent_latency_percentiles: RunDashboardPercentileApi[];
   latency_percentiles: RunDashboardPercentileApi[];
   distributions: RunDashboardDistributionApi[];
   csat: RunDashboardCsatApi;
@@ -22817,6 +22833,9 @@ export interface RunCallApi {
   completed_at: string;
   duration_seconds: number;
   latency_ms: number;
+  /** Average stop time after caller interruption in milliseconds. */
+  avg_stop_time_after_interruption: number | null;
+  ai_interruption_count: number | null;
   turn_count: number;
   tokens: number;
   cost_cents: number;
@@ -22835,6 +22854,10 @@ export interface GroupAggregatesApi {
   csat: number;
   turns: number;
   latency_ms: number;
+  /** Mean call stop latency in milliseconds, excluding unmeasured calls. */
+  avg_stop_time_after_interruption: number | null;
+  /** Mean AI interruption count per call, excluding unmeasured calls. */
+  ai_interruptions: number | null;
   tokens: number;
   evaluations: GroupAggregatesApiEvaluations;
 }
@@ -22868,11 +22891,20 @@ export interface RunFacetsApi {
   status: FacetValueApi[];
 }
 
+export type EvaluationColumnApiKind =
+  (typeof EvaluationColumnApiKind)[keyof typeof EvaluationColumnApiKind];
+
+export const EvaluationColumnApiKind = {
+  evaluation: "evaluation",
+  sub_goal: "sub_goal",
+} as const;
+
 export interface EvaluationColumnApi {
   /** @minLength 1 */
   id: string;
   /** @minLength 1 */
   name: string;
+  kind: EvaluationColumnApiKind;
 }
 
 export interface RunCallsV3ResponseApi {
