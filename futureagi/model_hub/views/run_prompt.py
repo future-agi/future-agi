@@ -494,7 +494,13 @@ class JsonStr(dict):
 
 
 def populate_placeholders(
-    messages: list[dict], dataset_id, row_id, col_id, model_name, template_format=None
+    messages: list[dict],
+    dataset_id,
+    row_id,
+    col_id,
+    model_name,
+    template_format=None,
+    variable_mapping=None,
 ):
     try:
         media_error = None
@@ -508,6 +514,7 @@ def populate_placeholders(
         context: dict[str, Any] = {}
         column_info = {}  # For image handling
         raw_values = {}  # For debugging
+        value_by_column_id = {}  # For variable mapping, keyed by column id
 
         # Collect column values
         for column_id in column_ids:
@@ -571,6 +578,7 @@ def populate_placeholders(
                     # Store at sanitized column_id level (hyphens -> underscores for Jinja2)
                     sanitized_col_id = sanitize_uuid_for_jinja(column_id)
                     context[sanitized_col_id] = cell_value
+                    value_by_column_id[str(column_id)] = cell_value
 
                     # Debug: Log what we're adding to context
                     logger.info(
@@ -583,6 +591,35 @@ def populate_placeholders(
                     f"Error processing column {column_id} ({column.name if 'column' in locals() else 'unknown'}): {e}"
                 )
                 continue
+
+        # Expose each mapped variable under its own name, so a prompt variable can
+        # be fed by a column whose name does not match it. The name-keyed entries
+        # built above are left in place, so prompts whose variables already match a
+        # column resolve exactly as they did before.
+        for variable_name, mapped_column in (variable_mapping or {}).items():
+            if not variable_name or not mapped_column:
+                continue
+            mapped_column = str(mapped_column)
+            if mapped_column in value_by_column_id:
+                context[variable_name] = value_by_column_id[mapped_column]
+                continue
+            # Fall back to matching by column name, for mappings stored before
+            # column ids were used.
+            match = next(
+                (
+                    cid
+                    for cid, info in column_info.items()
+                    if info["name"] == mapped_column
+                ),
+                None,
+            )
+            if match is not None and str(match) in value_by_column_id:
+                context[variable_name] = value_by_column_id[str(match)]
+            else:
+                logger.warning(
+                    "variable_mapping_unresolved",
+                    extra={"variable": variable_name, "mapped_to": mapped_column},
+                )
 
         # Debug: Log final context structure
         logger.info(f"Final context keys: {list(context.keys())}")
@@ -1744,7 +1781,9 @@ class AddRunPromptColumnView(APIView):
                 return self._gm.bad_request(get_error_message("COLUMN_NAME_EXISTS"))
 
             model_name = config.get("model")
-            if model_name and not is_model_in_catalog(model_name, organization_id=organization.id):
+            if model_name and not is_model_in_catalog(
+                model_name, organization_id=organization.id
+            ):
                 return self._gm.bad_request(
                     f"Model '{model_name}' is no longer available. "
                     "Please select a supported model."
@@ -2021,7 +2060,9 @@ class EditRunPromptColumnView(APIView):
                 return self._gm.not_found("Column or dataset not found")
 
             model_name = config.get("model")
-            if model_name and not is_model_in_catalog(model_name, organization_id=dataset.organization_id):
+            if model_name and not is_model_in_catalog(
+                model_name, organization_id=dataset.organization_id
+            ):
                 return self._gm.bad_request(
                     f"Model '{model_name}' is no longer available. "
                     "Please select a supported model."
@@ -2788,8 +2829,10 @@ class RunPromptForRowsView(APIView):
                     return self._gm.not_found("Row not found")
 
             deprecated_models = [
-                rp.model for rp in run_prompters
-                if rp.model and not is_model_in_catalog(rp.model, organization_id=user_org_id)
+                rp.model
+                for rp in run_prompters
+                if rp.model
+                and not is_model_in_catalog(rp.model, organization_id=user_org_id)
             ]
             if deprecated_models:
                 names = ", ".join(f"'{m}'" for m in set(deprecated_models))
