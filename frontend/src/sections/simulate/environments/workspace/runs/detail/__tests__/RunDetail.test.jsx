@@ -104,6 +104,35 @@ vi.mock("../../../evals/AddEvalsDrawer", () => ({
   default: AddEvalsDrawerStub,
 }));
 
+function AllEvaluationsDrawerStub({
+  open,
+  runTestId,
+  executionId,
+  canRun,
+  grading,
+  onAddEvaluations,
+}) {
+  return open ? (
+    <div>
+      {`all-evals-drawer:${runTestId}:${executionId}:${canRun}:${grading}`}
+      <button type="button" onClick={onAddEvaluations}>
+        open add flow
+      </button>
+    </div>
+  ) : null;
+}
+AllEvaluationsDrawerStub.propTypes = {
+  open: PropTypes.bool,
+  runTestId: PropTypes.string,
+  executionId: PropTypes.string,
+  canRun: PropTypes.bool,
+  grading: PropTypes.bool,
+  onAddEvaluations: PropTypes.func,
+};
+vi.mock("../AllEvaluationsDrawer", () => ({
+  default: AllEvaluationsDrawerStub,
+}));
+
 // The prev/next maths has its own tests; here only the page's wiring matters.
 const callListNavigation = vi.fn();
 vi.mock("../useCallListNavigation", () => ({
@@ -459,7 +488,12 @@ describe("RunDetail", () => {
       });
       renderDetail();
 
-      for (const name of [/Add evals/, /Export/, /Run again/, /Debug failures/]) {
+      for (const name of [
+        /Run evals/,
+        /Export/,
+        /Run again/,
+        /Debug failures/,
+      ]) {
         expect(screen.getByRole("button", { name })).toBeDisabled();
       }
       // Stop stays available — it is the one action a live run needs.
@@ -471,6 +505,25 @@ describe("RunDetail", () => {
     },
   );
 
+  it("keeps the evaluations reachable while a finished run is graded again", () => {
+    useRunDetail.mockReturnValue({
+      identity: {
+        ...IDENTITY,
+        status: "running",
+        executionStatus: "evaluating",
+        stoppable: false,
+      },
+      stats: STATS,
+      isLoading: false,
+    });
+    renderDetail();
+
+    expect(screen.getByRole("button", { name: /Run evals/ })).toBeEnabled();
+    for (const name of [/Export/, /Run again/, /Debug failures/]) {
+      expect(screen.getByRole("button", { name })).toBeDisabled();
+    }
+  });
+
   it("enables the header actions once the run has finished", () => {
     useRunDetail.mockReturnValue({
       identity: IDENTITY,
@@ -479,7 +532,7 @@ describe("RunDetail", () => {
     });
     renderDetail();
 
-    for (const name of [/Add evals/, /Export/, /Run again/, /Debug failures/]) {
+    for (const name of [/Run evals/, /Export/, /Run again/, /Debug failures/]) {
       expect(screen.getByRole("button", { name })).toBeEnabled();
     }
   });
@@ -495,18 +548,94 @@ describe("RunDetail", () => {
     expect(screen.getByText("Failed")).toBeInTheDocument();
   });
 
-  it("opens the real eval picker from the header action, pointed at this run", async () => {
+  it("opens the run's evaluations from the header, and the add flow from there", async () => {
     useRunDetail.mockReturnValue({
-      identity: IDENTITY,
+      identity: { ...IDENTITY, executionStatus: "completed" },
       stats: STATS,
       isLoading: false,
     });
     const user = userEvent.setup();
     renderDetail();
 
-    expect(screen.queryByText(/add-evals-drawer/)).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Add evals" }));
+    expect(screen.queryByRole("button", { name: "Add evals" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Run evals" }));
+    expect(
+      screen.getByText("all-evals-drawer:rt1:ex1:true:false"),
+    ).toBeInTheDocument();
+
+    expect(screen.queryByText(/^add-evals-drawer:/)).toBeNull();
+    await user.click(screen.getByRole("button", { name: "open add flow" }));
     expect(screen.getByText("add-evals-drawer:ex1")).toBeInTheDocument();
+  });
+
+  it("lets the drawer grade only once the run has finished", async () => {
+    useRunDetail.mockReturnValue({
+      identity: {
+        ...IDENTITY,
+        status: "running",
+        executionStatus: "evaluating",
+      },
+      stats: STATS,
+      isLoading: false,
+    });
+    const user = userEvent.setup();
+    renderDetail();
+
+    await user.click(screen.getByRole("button", { name: "Run evals" }));
+    expect(
+      screen.getByText("all-evals-drawer:rt1:ex1:false:true"),
+    ).toBeInTheDocument();
+  });
+
+  it("refreshes analytics and open call drawers once grading on the run finishes", () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+    // Build a fresh element each call so RunDetail re-renders.
+    const tree = () => (
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <RunDetail
+            env={ENV}
+            envState={{ evals: [] }}
+            backed
+            testId="rt1"
+            executionId="ex1"
+          />
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+
+    useRunDetail.mockReturnValue({
+      identity: {
+        ...IDENTITY,
+        status: "running",
+        executionStatus: "evaluating",
+      },
+      stats: STATS,
+      isLoading: false,
+    });
+    const { rerender } = render(tree());
+    expect(invalidate).not.toHaveBeenCalledWith({
+      queryKey: ["simulation-run-analytics-v3", "ex1"],
+    });
+    expect(invalidate).not.toHaveBeenCalledWith({
+      queryKey: ["simulation-call-detail-v3"],
+    });
+
+    useRunDetail.mockReturnValue({
+      identity: { ...IDENTITY, executionStatus: "completed" },
+      stats: STATS,
+      isLoading: false,
+    });
+    rerender(tree());
+    expect(invalidate).toHaveBeenCalledWith({
+      queryKey: ["simulation-run-analytics-v3", "ex1"],
+    });
+    expect(invalidate).toHaveBeenCalledWith({
+      queryKey: ["simulation-call-detail-v3"],
+    });
   });
 
   it("falls back to the store-only picker for a non-backed environment reached via ?mockRuns=1", async () => {

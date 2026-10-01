@@ -8,6 +8,11 @@ import {
 } from "src/sections/common/simulation/constants/statusStyles";
 import { MOCK_RUNS } from "./_fixtures/runs";
 
+// Grading finishes on its own, so an `Evaluating` run offers no Stop here.
+const STOPPABLE_RUN_STATUSES = STOPPABLE_STATUSES.filter(
+  (s) => s !== "Evaluating",
+);
+
 // The Runs tab's data source. For a real completed harness job the env carries
 // `platform.runTestId`, so the run history is the product's real executions
 // API; otherwise it is the client-seeded `envState.runs` (empty until the
@@ -78,7 +83,7 @@ export function executionToRun(raw) {
     // (passed/failed), this is where the run is (queued/running/completed).
     runState: RUN_STATE[raw?.status] ?? status,
     // Only a run that hasn't finished and isn't already stopping can be stopped.
-    stoppable: STOPPABLE_STATUSES.includes(raw?.status),
+    stoppable: STOPPABLE_RUN_STATUSES.includes(raw?.status),
     startedAt: raw?.start_time ?? null,
     finishedAt: raw?.completed_at ?? null,
     total,

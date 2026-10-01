@@ -19727,6 +19727,9 @@ export interface SimulateEvalConfigResponseApi {
   /** @minLength 1 */
   readonly eval_group?: string;
   readonly template_id?: string;
+  /** @minLength 1 */
+  readonly eval_type?: string;
+  readonly regradable?: boolean;
 }
 
 export interface RunTestResponseApi {
@@ -20795,6 +20798,9 @@ export interface EvalConfigResponseApi {
   status?: EvalConfigResponseApiStatus;
   readonly eval_group?: string;
   readonly template_id?: string;
+  /** @minLength 1 */
+  readonly eval_type?: string;
+  readonly regradable?: boolean;
 }
 
 export interface AddEvalConfigsResponseApi {
@@ -21131,6 +21137,7 @@ export interface RunNewEvalsResponseApi {
   message: string;
   run_test_id: string;
   call_execution_count: number;
+  dispatched: boolean;
 }
 
 export interface RunTestScenarioItemResponseApi {

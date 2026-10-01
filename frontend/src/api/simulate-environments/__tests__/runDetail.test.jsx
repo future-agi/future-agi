@@ -795,7 +795,7 @@ describe("useRunDetail", () => {
     expect(result.current.stats.failed).toBe(4);
   });
 
-  it("marks a running Run stoppable and a cancelling one not", async () => {
+  it("marks a running Run stoppable and a cancelling or grading one not", async () => {
     const identityFor = async (status) => {
       axios.get.mockResolvedValueOnce({
         data: {
@@ -817,6 +817,27 @@ describe("useRunDetail", () => {
     expect((await identityFor("pending")).stoppable).toBe(true);
     expect((await identityFor("cancelling")).stoppable).toBe(false);
     expect((await identityFor("completed")).stoppable).toBe(false);
+    expect((await identityFor("evaluating")).stoppable).toBe(false);
+  });
+
+  it("exposes the execution's own status so the page knows when it can grade again", async () => {
+    for (const status of ["completed", "evaluating"]) {
+      axios.get.mockResolvedValueOnce({
+        data: {
+          execution: {
+            id: `ex-raw-${status}`,
+            status,
+            summary: { total: 4, outcomes: {} },
+          },
+        },
+      });
+      const { result } = renderHook(
+        () => useRunDetail("rt1", `ex-raw-${status}`),
+        { wrapper: makeWrapper() },
+      );
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      expect(result.current.identity.executionStatus).toBe(status);
+    }
   });
 
   it("reports a cancelling Run as cancelling, not running", async () => {

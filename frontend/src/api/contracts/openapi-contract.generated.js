@@ -30900,6 +30900,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           404: {
             $ref: "#/definitions/EvalErrorResponse",
           },
+          409: {
+            $ref: "#/definitions/EvalErrorResponse",
+          },
           500: {
             $ref: "#/definitions/EvalErrorResponse",
           },
@@ -31508,6 +31511,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/ErrorResponse",
           },
           404: {
+            $ref: "#/definitions/ErrorResponse",
+          },
+          409: {
             $ref: "#/definitions/ErrorResponse",
           },
           500: {
@@ -72618,7 +72624,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     RunNewEvalsResponse: {
-      required: ["message", "run_test_id", "call_execution_count"],
+      required: [
+        "message",
+        "run_test_id",
+        "call_execution_count",
+        "dispatched",
+      ],
       type: "object",
       properties: {
         message: {
@@ -72634,6 +72645,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         call_execution_count: {
           title: "Call execution count",
           type: "integer",
+        },
+        dispatched: {
+          title: "Dispatched",
+          type: "boolean",
         },
       },
     },
@@ -83081,6 +83096,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Template id",
           type: "string",
           format: "uuid",
+          readOnly: true,
+        },
+        eval_type: {
+          title: "Eval type",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        regradable: {
+          title: "Regradable",
+          type: "boolean",
           readOnly: true,
         },
       },
@@ -99294,6 +99320,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
           format: "uuid",
           readOnly: true,
           "x-nullable": true,
+        },
+        eval_type: {
+          title: "Eval type",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        regradable: {
+          title: "Regradable",
+          type: "boolean",
+          readOnly: true,
         },
       },
     },
