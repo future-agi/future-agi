@@ -319,6 +319,9 @@ class MCPOAuthTokenView(APIView):
         validation_error_response=_oauth_validation_error_response,
     )
     def post(self, request):
+        data = request.validated_data
+        grant_type = data.get("grant_type")
+
         lockout_wait = get_invalid_attempt_lockout_wait(request)
         if lockout_wait:
             self._log_token_warning(
@@ -334,9 +337,6 @@ class MCPOAuthTokenView(APIView):
                 status=429,
                 headers={"Retry-After": str(lockout_wait)},
             )
-
-            data = request.validated_data
-            grant_type = data.get("grant_type")
 
         if grant_type == "authorization_code":
             return self._handle_authorization_code(data)
