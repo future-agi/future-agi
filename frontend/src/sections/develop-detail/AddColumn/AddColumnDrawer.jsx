@@ -31,6 +31,7 @@ import {
 } from "../states";
 import { useDevelopDetailContext } from "src/pages/dashboard/Develop/Context/DevelopDetailContext";
 import { useDevelopDetailContext as useDevelopDetailsContext } from "src/sections/develop-detail/Context/DevelopDetailContext";
+import { ColumnNameValidationSchema } from "src/utils/validation";
 
 const dataType = [
   { name: "All" },
@@ -228,6 +229,7 @@ const AddColumnDrawer = ({ hideScenarioFeatures = false }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [staticColumnType, setStaticColumnType] = useState("");
   const [columnName, setColumnName] = useState("");
+  const [columnNameError, setColumnNameError] = useState("");
   const { openAddColumnDrawer, setOpenAddColumnDrawer } =
     useAddColumnDrawerStore();
   const onClose = () => {
@@ -245,6 +247,7 @@ const AddColumnDrawer = ({ hideScenarioFeatures = false }) => {
       enqueueSnackbar("Column added successfully", { variant: "success" });
       refreshGrid();
       setColumnName("");
+      setColumnNameError("");
       setStaticColumnType("");
       onClose();
     },
@@ -253,7 +256,23 @@ const AddColumnDrawer = ({ hideScenarioFeatures = false }) => {
   const handleClose = () => {
     setStaticColumnType("");
     setColumnName("");
+    setColumnNameError("");
     onClose();
+  };
+
+  const handleAddColumn = () => {
+    const validation = ColumnNameValidationSchema.safeParse(columnName);
+    if (!validation.success) {
+      setColumnNameError(
+        validation.error.issues[0]?.message || "Invalid column name",
+      );
+      return;
+    }
+
+    addColumn({
+      new_column_name: columnName,
+      column_type: staticColumnType.toLowerCase().replace(/\s+/g, ""),
+    });
   };
 
   return (
@@ -373,7 +392,13 @@ const AddColumnDrawer = ({ hideScenarioFeatures = false }) => {
               placeholder="Enter column name"
               value={columnName}
               required
-              onChange={(e) => setColumnName(e.target.value)}
+              error={Boolean(columnNameError)}
+              helperText={columnNameError}
+              inputProps={{ maxLength: 50 }}
+              onChange={(e) => {
+                setColumnName(e.target.value);
+                setColumnNameError("");
+              }}
             />
             <Box
               sx={{
@@ -407,14 +432,7 @@ const AddColumnDrawer = ({ hideScenarioFeatures = false }) => {
                 }}
                 variant="contained"
                 color="primary"
-                onClick={() => {
-                  addColumn({
-                    new_column_name: columnName,
-                    column_type: staticColumnType
-                      .toLowerCase()
-                      .replace(/\s+/g, ""),
-                  });
-                }}
+                onClick={handleAddColumn}
                 disabled={!columnName}
                 loading={isLoading}
               >
