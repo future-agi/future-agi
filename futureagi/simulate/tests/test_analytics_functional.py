@@ -26,6 +26,7 @@ from simulate.models.hosted_harness import (
 from simulate.models.run_test import RunTest
 from simulate.models.simulator_agent import SimulatorAgent
 from simulate.models.test_execution import CallExecution, TestExecution
+from simulate.services.run_results_v3_queries import run_calls_queryset
 
 # ============================================================================
 # Fixtures
@@ -1109,6 +1110,74 @@ class TestRunResultsV3Views:
         assert "Sibling run goal" not in by_key
         assert str(stray_key.id) in by_key[stray_key.scenario.name]
 
+    def test_runs_read_together_each_resolve_their_own_scenarios(
+        self,
+        organization,
+        workspace,
+        test_execution,
+        test_execution_2,
+        analytics_call_executions,
+        run_test_second_execution_calls,
+    ):
+        # The trend reads several runs in one queryset; a call must still only
+        # see its own run's job and environment, never a sibling run's.
+        environment = self._harness_job(organization, workspace)
+        for execution, goal in (
+            (test_execution, "First run goal"),
+            (test_execution_2, "Second run goal"),
+        ):
+            run_job = self._harness_job(
+                organization,
+                workspace,
+                environment=environment,
+                run_test=execution.run_test,
+                test_execution=execution,
+            )
+            HostedHarnessScenario.no_workspace_objects.create(
+                job=run_job, scenario_key="pin-reset", use_case=goal
+            )
+        HostedHarnessScenario.no_workspace_objects.create(
+            job=environment, scenario_key="refund", use_case="Environment goal"
+        )
+        first_call = analytics_call_executions[0]
+        second_call, second_environment_call = run_test_second_execution_calls
+        for call, key in (
+            (first_call, "pin-reset"),
+            (second_call, "pin-reset"),
+            (second_environment_call, "refund"),
+        ):
+            call.call_metadata = {"harness_scenario_key": key}
+            call.save(update_fields=["call_metadata"])
+
+        goals = dict(
+            run_calls_queryset(
+                test_execution, [test_execution.id, test_execution_2.id]
+            ).values_list("id", "result_goal")
+        )
+
+        assert goals[first_call.id] == "First run goal"
+        assert goals[second_call.id] == "Second run goal"
+        assert goals[second_environment_call.id] == "Environment goal"
+
+    def test_authored_scenario_lookup_does_not_join_the_job_table(
+        self, organization, workspace, test_execution
+    ):
+        # Scenario keys repeat on every run of an environment, so a lookup that
+        # joins back to the job table to find the run scans it once per call.
+        environment = self._harness_job(organization, workspace)
+        self._harness_job(
+            organization,
+            workspace,
+            environment=environment,
+            run_test=test_execution.run_test,
+            test_execution=test_execution,
+        )
+
+        sql = str(run_calls_queryset(test_execution).query)
+
+        assert "simulate_hosted_harness_scenario" in sql
+        assert "simulate_hosted_harness_job" not in sql
+
     def test_non_numeric_json_metrics_do_not_break_list_or_analytics(
         self,
         auth_client,
@@ -1621,7 +1690,7 @@ class TestRunResultsV3Views:
             assert response.status_code == status.HTTP_404_NOT_FOUND
 
     @staticmethod
-    def _harness_job(organization, workspace):
+    def _harness_job(organization, workspace, **fields):
         return HostedHarnessJob.no_workspace_objects.create(
             organization=organization,
             workspace=workspace,
@@ -1635,6 +1704,7 @@ class TestRunResultsV3Views:
             deadline_at=timezone.now() + timedelta(hours=1),
             scenario_count=1,
             payload={"metadata": {}, "runtime": {"max_duration_seconds": 600}},
+            **fields,
         )
 
     def _link_call_to_scenario(self, layout, job, call, **scenario_fields):

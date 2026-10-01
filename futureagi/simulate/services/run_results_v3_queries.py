@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from collections import Counter
 from typing import Any
 
@@ -31,7 +32,7 @@ from django.db.models.lookups import Exact, GreaterThan, In
 
 from model_hub.models.develop_dataset import Cell
 from simulate.models import CallExecution, SimulateEvalConfig, TestExecution
-from simulate.models.hosted_harness import HostedHarnessScenario
+from simulate.models.hosted_harness import HostedHarnessJob, HostedHarnessScenario
 from simulate.semantics import SupportedProviders
 from simulate.services.harness_scenarios import GROUP_BY as SCENARIO_GROUP_BY
 from simulate.services.harness_scenarios import level_label
@@ -41,6 +42,8 @@ from simulate.services.run_results_v3_expressions import (
     _json_text,
     _safe_json_float,
 )
+
+ALL_ROWS = sys.maxsize
 
 OUTCOMES = ("passed", "failed", "error", "inconclusive")
 # The Scenarios tab's axes, plus the run's own outcome.
@@ -245,10 +248,22 @@ def run_calls_queryset(
     # A hosted call's use case, sub-goals, persona and coverage live on its
     # authored scenario: linked to the call on a direct run, or found by the
     # call's scenario key on the run's own job or its parent environment.
-    own_run = Q(job__test_execution_id=OuterRef("test_execution_id"))
-    own_environment = Q(
-        job__simulation_runs__test_execution_id=OuterRef("test_execution_id")
-    )
+    # The jobs are resolved here, once, so each per-call lookup is a
+    # (job, scenario_key) index hit. Keys repeat on every run of an
+    # environment, so matching the key first and joining back to the run
+    # scanned the job table for every call.
+    own_run = Q(pk__in=[])
+    own_environment = Q(pk__in=[])
+    run_jobs = HostedHarnessJob.all_objects.filter(
+        test_execution_id__in=(
+            execution_ids if execution_ids is not None else [execution.id]
+        )
+    ).values_list("test_execution_id", "id", "environment_id")
+    for run_id, job_id, environment_id in run_jobs:
+        this_run = Exact(OuterRef("test_execution_id"), Value(run_id))
+        own_run |= Q(this_run, job_id=job_id)
+        if environment_id:
+            own_environment |= Q(this_run, job_id=environment_id)
     authored = (
         HostedHarnessScenario.all_objects.filter(
             Q(call_execution_id=OuterRef("pk"))
@@ -501,8 +516,9 @@ def _summary_from_values(values: dict[str, Any]) -> dict[str, Any]:
 def summarize_run_calls(
     queryset: QuerySet, include_percentiles: bool = True
 ) -> dict[str, Any]:
+    rows = queryset.order_by()[:ALL_ROWS]
     return _summary_from_values(
-        queryset.aggregate(**_aggregate_expressions(include_percentiles))
+        rows.aggregate(**_aggregate_expressions(include_percentiles))
     )
 
 
