@@ -346,6 +346,19 @@ def _goals_payload(scenario) -> dict | None:
     }
 
 
+def _evaluation_category(call: CallExecution, evaluation_id: str) -> str:
+    """Keep authored sub-goal checks distinct from standalone eval outputs."""
+    outputs = call.eval_outputs if isinstance(call.eval_outputs, dict) else {}
+    item = outputs.get(evaluation_id)
+    if (
+        isinstance(item, dict)
+        and item.get("source") == "harness"
+        and item.get("kind") in {"judge", "checkpoint"}
+    ):
+        return "sub_goal"
+    return "evaluation"
+
+
 def simulation_evidence_page(
     *, attempt_id: uuid.UUID, lease_token: str, cursor: int
 ) -> dict:
@@ -432,14 +445,15 @@ def simulation_evidence_page(
                     for entry in call.transcripts.all()
                 ],
                 "goals": authored.get(call.id),
-                # The run's own verdicts: Omega explains how a goal broke, the
-                # evals decide whether it did.
+                # Transported separately by the worker: only its verifier sees
+                # these fallible harness verdicts after independent discovery.
                 "evaluations": [
                     {
                         "name": row["name"],
                         "value": None if row["value"] is None else str(row["value"]),
                         "passed": row["passed"],
                         "reason": row["reason"],
+                        "category": _evaluation_category(call, row["id"]),
                     }
                     for row in eval_rows(call, live_eval_ids)
                 ],
