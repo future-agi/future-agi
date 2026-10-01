@@ -89,6 +89,7 @@ export default function TraceTable({
   columns,
   activeCallId = null,
   scrollRef,
+  runActive = false,
 }) {
   const [collapsed, setCollapsed] = useState(null);
   const activeRowRef = useRef(null);
@@ -98,6 +99,12 @@ export default function TraceTable({
   const visible = columns || defaultTraceColumns();
   const show = (key) => visible.has(key);
   const showEvals = show("evals");
+  // The server's group figures can't tell a call still running from one with no
+  // value. So a group counts as still coming while one of its calls here is
+  // live, or, while the run goes on, while some of its calls are on other pages.
+  const groupLive = (g) =>
+    g.rows.some((t) => LIVE_CALL_STATUSES.has(t.executionStatus)) ||
+    (runActive && g.rows.length < g.count);
 
   const collapsedSet = collapsed ?? new Set(groups.map((g) => g.label));
   const toggleCollapsed = (label) =>
@@ -472,6 +479,7 @@ export default function TraceTable({
                   <React.Fragment key={g.label}>
                     <TraceGroupHeaderRow
                       group={g}
+                      loading={groupLive(g)}
                       collapsed={collapsedSet.has(g.label)}
                       onToggle={() => toggleCollapsed(g.label)}
                       show={show}
@@ -495,4 +503,5 @@ TraceTable.propTypes = {
   columns: PropTypes.instanceOf(Set),
   activeCallId: PropTypes.string,
   scrollRef: PropTypes.oneOfType([PropTypes.func, PropTypes.object]),
+  runActive: PropTypes.bool,
 };

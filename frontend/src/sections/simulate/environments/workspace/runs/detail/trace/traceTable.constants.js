@@ -104,6 +104,9 @@ export const CALL_STATUS_CHIPS = {
   cancelled: { chip: "cancelled", label: "Cancelled" },
 };
 
+// An eval result's status while its grade is still on the way.
+export const PENDING_EVAL_STATUS = "pending";
+
 export const defaultTraceColumns = () =>
   new Set(TRACE_COLUMNS.filter((c) => c.defaultOn).map((c) => c.key));
 

@@ -363,6 +363,93 @@ describe("TraceTable — AI interruptions column", () => {
   });
 });
 
+describe("TraceTable — group row while its calls run", () => {
+  const blank = {
+    csat: null,
+    turns: null,
+    latencyMs: null,
+    tokens: null,
+    aiInterruptions: null,
+    evalResults: [],
+  };
+  const call = (id, executionStatus) => ({
+    ...row(id),
+    ...blank,
+    executionStatus,
+  });
+  const renderGroup = (groupProps, tableProps = {}) =>
+    render(
+      <TraceTable
+        groups={[{ label: "G", count: 2, agg: {}, ...groupProps }]}
+        evals={[{ id: "e1", name: "Tone" }]}
+        onOpen={vi.fn()}
+        {...tableProps}
+      />,
+    );
+  // Every cell after the label and its descriptive columns: the metrics and
+  // the eval.
+  const groupMetricCells = () =>
+    [...screen.getByText("G").closest("tr").children].slice(-6);
+  const skeletons = () =>
+    groupMetricCells().filter((td) => td.querySelector(".MuiSkeleton-root"));
+
+  it("shows a skeleton in each empty metric and eval cell while a call is running", () => {
+    renderGroup({ rows: [call("g1", "ongoing"), call("g2", "completed")] });
+    expect(skeletons()).toHaveLength(6);
+  });
+
+  it("treats a queued call as still coming too", () => {
+    renderGroup({ rows: [call("g1", "pending"), call("g2", "completed")] });
+    expect(skeletons()).toHaveLength(6);
+  });
+
+  it("keeps an aggregate it already has instead of a skeleton", () => {
+    renderGroup({
+      rows: [call("g1", "ongoing"), call("g2", "completed")],
+      agg: { turns: 4 },
+    });
+    expect(skeletons()).toHaveLength(5);
+    expect(screen.getByText("4")).toBeInTheDocument();
+  });
+
+  it("shows a dash once every call in the group has finished", () => {
+    renderGroup({ rows: [call("g1", "completed"), call("g2", "failed")] });
+    expect(skeletons()).toHaveLength(0);
+    groupMetricCells().forEach((td) => expect(td).toHaveTextContent("-"));
+  });
+
+  it("loads only the eval cell while a finished call's eval is still grading", () => {
+    renderGroup({
+      rows: [
+        {
+          ...call("g1", "completed"),
+          evalResults: [{ id: "e1", status: "pending", score: null }],
+        },
+        call("g2", "completed"),
+      ],
+    });
+    const cells = groupMetricCells();
+    expect(cells.at(-1).querySelector(".MuiSkeleton-root")).not.toBeNull();
+    expect(skeletons()).toHaveLength(1);
+  });
+
+  it("loads while the run is going and some of the group's calls are on another page", () => {
+    renderGroup(
+      { rows: [call("g1", "completed")], count: 3 },
+      { runActive: true },
+    );
+    expect(skeletons()).toHaveLength(6);
+  });
+
+  it("doesn't load a group split across pages once the run has finished", () => {
+    renderGroup(
+      { rows: [call("g1", "completed")], count: 3 },
+      { runActive: false },
+    );
+    expect(skeletons()).toHaveLength(0);
+  });
+});
+
 describe("TraceTable — persona cell", () => {
   it("shows a persona that has no name but has other fields", () => {
     render(

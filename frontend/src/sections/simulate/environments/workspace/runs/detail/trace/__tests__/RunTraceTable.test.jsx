@@ -178,6 +178,28 @@ describe("RunTraceTable", () => {
     });
   });
 
+  it("loads a group row while the run is going and the group's calls are on other pages", () => {
+    const group = {
+      label: "Refunds",
+      rows: [{ ...TASKS[0], executionStatus: "completed" }],
+      count: 3,
+      agg: {},
+    };
+    useRunCalls.mockReturnValue({
+      tasks: group.rows,
+      columns: COLUMNS,
+      groups: [group],
+      facets: FACETS,
+      count: 3,
+      totalPages: 2,
+      isLoading: false,
+      runActive: true,
+    });
+    renderTable();
+    const groupRow = screen.getByText("Refunds").closest("tr");
+    expect(groupRow.querySelector(".MuiSkeleton-root")).not.toBeNull();
+  });
+
   it("renders the real calls, grouped by scenario, with the eval column", async () => {
     const user = userEvent.setup();
     renderTable();

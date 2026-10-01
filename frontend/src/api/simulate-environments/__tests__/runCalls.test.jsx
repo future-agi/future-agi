@@ -370,6 +370,25 @@ describe("useRunCalls", () => {
     unmount();
   });
 
+  it("says whether the run is still going, from the execution's status", async () => {
+    axios.get.mockResolvedValue({
+      data: { ...payload(), execution: { status: "running" } },
+    });
+    const { result } = renderHook(() => useRunCalls("ex-live"), {
+      wrapper: makeWrapper(),
+    });
+    await waitFor(() => expect(result.current.runActive).toBe(true));
+
+    axios.get.mockResolvedValue({
+      data: { ...payload(), execution: { status: "completed" } },
+    });
+    const { result: done } = renderHook(() => useRunCalls("ex-done"), {
+      wrapper: makeWrapper(),
+    });
+    await waitFor(() => expect(done.current.isLoading).toBe(false));
+    expect(done.current.runActive).toBe(false);
+  });
+
   it("polls active execution results and stops polling when the Run is terminal", async () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },

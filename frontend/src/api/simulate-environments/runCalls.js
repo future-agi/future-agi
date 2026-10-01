@@ -321,6 +321,7 @@ export function useRunCalls(executionId, opts = {}) {
     facets,
     summary,
     totalPages,
+    runActive: ACTIVE_EXECUTION_STATUSES.has(data?.execution?.status),
     isLoading: !!executionId && query.isPending,
     error: query.error,
   };
