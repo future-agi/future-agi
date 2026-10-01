@@ -13,8 +13,9 @@ from model_hub.serializers.optimize_dataset import (
 from model_hub.serializers.performance_report import PerformanceReportSerializer
 from model_hub.services.ai_eval_writer_service import OUTPUT_FORMAT_PROMPTS
 from model_hub.services.dataset_validators import MAX_PAGE_SIZE as DATASET_MAX_PAGE_SIZE
+from model_hub.utils.SQL_queries import EVAL_TEMPLATE_SORT_COLUMNS
 from tfc.utils.api_errors import API_ERROR_TYPE_CHOICES
-from tfc.utils.serializer_fields import StringOrObjectField
+from tfc.utils.serializer_fields import JsonValueField, StringOrObjectField
 from tracer.serializers.filters import (
     SortParamField,
     StrictInputSerializer,
@@ -1940,9 +1941,24 @@ class EvalUsageQuerySerializer(serializers.Serializer):
 class EvalUsageStatsSerializer(serializers.Serializer):
     total_runs = serializers.IntegerField()
     runs_period = serializers.IntegerField()
-    success_count = serializers.IntegerField()
-    error_count = serializers.IntegerField()
-    pass_rate = serializers.FloatField()
+    success_count = serializers.IntegerField(
+        help_text=(
+            "Deprecated compatibility field. Usage counts only successful "
+            "runs, so this always equals runs_period."
+        ),
+    )
+    error_count = serializers.IntegerField(
+        help_text=(
+            "Deprecated compatibility field. Usage counts only successful "
+            "runs, so this is always 0; failed runs stay in the eval logs."
+        ),
+    )
+    pass_rate = serializers.FloatField(
+        help_text=(
+            "Deprecated compatibility field. Usage counts only successful "
+            "runs, so this is 100 when runs_period is above 0, otherwise 0."
+        ),
+    )
 
 
 class EvalUsageFeedbackSerializer(serializers.Serializer):
@@ -3022,6 +3038,20 @@ class LegacyEvalTemplatesRequestSerializer(serializers.Serializer):
         default=list,
     )
 
+    def validate_sort(self, value):
+        """Accept only the columns the Evaluations > Usage grid sorts by."""
+        for item in value:
+            column_id = item.get("column_id") if isinstance(item, dict) else None
+            if (
+                not isinstance(column_id, str)
+                or column_id not in EVAL_TEMPLATE_SORT_COLUMNS
+            ):
+                raise serializers.ValidationError(
+                    "Sort column_id must be one of: "
+                    f"{', '.join(EVAL_TEMPLATE_SORT_COLUMNS)}."
+                )
+        return value
+
 
 class HuggingFaceDatasetConfigRequestSerializer(serializers.Serializer):
     dataset_path = serializers.CharField()
@@ -3164,7 +3194,9 @@ class CreateDatasetFromExperimentRequestSerializer(serializers.Serializer):
 
 class CreateEmptyDatasetRequestSerializer(serializers.Serializer):
     new_dataset_name = serializers.CharField()
-    model_type = serializers.CharField(required=False, allow_blank=True)
+    model_type = serializers.CharField(
+        required=False, allow_blank=True, default=ModelTypes.GENERATIVE_LLM.value
+    )
     is_sdk = serializers.BooleanField(required=False, default=False)
     row = serializers.IntegerField(
         required=False, min_value=0, max_value=MAX_EMPTY_DATASET_ROWS
@@ -3219,8 +3251,20 @@ class DatasetSdkRowsRequestSerializer(serializers.Serializer):
     dataset_id = serializers.UUIDField(required=False, allow_null=True)
 
 
+class DatasetRowCellRequestSerializer(serializers.Serializer):
+    column_name = serializers.CharField()
+    value = JsonValueField(required=False, allow_null=True)
+
+
+class DatasetRowRequestSerializer(serializers.Serializer):
+    id = serializers.UUIDField(required=False)
+    # A row without cells is valid and creates an empty row; the endpoint has
+    # always accepted ``{"rows": [{}]}`` so the contract must keep it optional.
+    cells = DatasetRowCellRequestSerializer(many=True, required=False, default=list)
+
+
 class DatasetAddRowsRequestSerializer(serializers.Serializer):
-    rows = serializers.ListField(child=serializers.JSONField())
+    rows = DatasetRowRequestSerializer(many=True, allow_empty=False)
 
 
 class DatasetAddRowsFromExistingRequestSerializer(serializers.Serializer):

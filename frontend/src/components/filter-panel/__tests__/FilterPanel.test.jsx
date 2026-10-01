@@ -166,6 +166,16 @@ describe("FilterPanel — the opt-in props", () => {
     expect(screen.getByText(/basic filter/i)).toBeInTheDocument();
   });
 
+  it("shows an empty state instead of crashing when there are no fields", () => {
+    // A source whose server catalogue is empty (`fields: []`) used to render a
+    // default row with no field to bind to, so FilterRow read `.type` off
+    // undefined and threw. It must degrade to an empty state instead.
+    expect(() => renderPanel([])).not.toThrow();
+    expect(screen.getByText(/no filters available/i)).toBeInTheDocument();
+    // Nothing to add, so the Add-filter control is disabled.
+    expect(screen.getByRole("button", { name: /add filter/i })).toBeDisabled();
+  });
+
   it("placement maps to the popover's horizontal origins", () => {
     // jsdom has no layout, so both placements compute identical styles —
     // assert the props MUI is handed rather than the rendered position.

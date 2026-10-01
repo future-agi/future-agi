@@ -349,7 +349,7 @@ func TestHandleStreamFailoverUsesOrgProviderOverride(t *testing.T) {
 	h := &Handlers{
 		registry:         registry,
 		engine:           pipeline.NewEngine(),
-		orgProviderCache: providers.NewOrgProviderCache(cfg.Providers),
+		orgProviderCache: providers.NewOrgProviderCache(cfg.Providers, false),
 	}
 	orgCfg := &tenant.OrgConfig{
 		Providers: map[string]*tenant.ProviderConfig{

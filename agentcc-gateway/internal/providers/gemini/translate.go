@@ -101,14 +101,14 @@ type geminiFuncResponse struct {
 }
 
 type geminiGenerationConfig struct {
-	Temperature        *float64            `json:"temperature,omitempty"`
-	TopP               *float64            `json:"topP,omitempty"`
-	MaxOutputTokens    *int                `json:"maxOutputTokens,omitempty"`
-	StopSequences      []string            `json:"stopSequences,omitempty"`
-	ResponseMimeType   string              `json:"responseMimeType,omitempty"`
-	ResponseSchema     json.RawMessage     `json:"responseSchema,omitempty"`
-	ResponseModalities []string            `json:"responseModalities,omitempty"`
-	SpeechConfig       *geminiSpeechConfig `json:"speechConfig,omitempty"`
+	Temperature        *float64              `json:"temperature,omitempty"`
+	TopP               *float64              `json:"topP,omitempty"`
+	MaxOutputTokens    *int                  `json:"maxOutputTokens,omitempty"`
+	StopSequences      []string              `json:"stopSequences,omitempty"`
+	ResponseMimeType   string                `json:"responseMimeType,omitempty"`
+	ResponseSchema     json.RawMessage       `json:"responseSchema,omitempty"`
+	ResponseModalities []string              `json:"responseModalities,omitempty"`
+	SpeechConfig       *geminiSpeechConfig   `json:"speechConfig,omitempty"`
 	ThinkingConfig     *geminiThinkingConfig `json:"thinkingConfig,omitempty"`
 }
 
@@ -140,9 +140,9 @@ type geminiToolDeclarations struct {
 }
 
 type geminiFuncDecl struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description,omitempty"`
-	Parameters  json.RawMessage `json:"parameters,omitempty"`
+	Name                 string          `json:"name"`
+	Description          string          `json:"description,omitempty"`
+	ParametersJSONSchema json.RawMessage `json:"parametersJsonSchema,omitempty"`
 }
 
 type geminiResponse struct {
@@ -157,8 +157,9 @@ type geminiCandidate struct {
 }
 
 type geminiUsageMetadata struct {
-	PromptTokenCount     int `json:"promptTokenCount"`
-	CandidatesTokenCount int `json:"candidatesTokenCount"`
+	CachedContentTokenCount *int `json:"cachedContentTokenCount,omitempty"`
+	PromptTokenCount        int  `json:"promptTokenCount"`
+	CandidatesTokenCount    int  `json:"candidatesTokenCount"`
 	// Gemini reports thinking tokens separately from candidatesTokenCount but
 	// bills them as output. Fold them into CompletionTokens so thinking-on runs
 	// aren't under-billed (OpenAI's completion_tokens includes reasoning too).
@@ -306,9 +307,9 @@ func translateRequest(req *models.ChatCompletionRequest) (*geminiRequest, string
 				continue
 			}
 			decls = append(decls, geminiFuncDecl{
-				Name:        t.Function.Name,
-				Description: t.Function.Description,
-				Parameters:  normalizeToolSchema(t.Function.Parameters),
+				Name:                 t.Function.Name,
+				Description:          t.Function.Description,
+				ParametersJSONSchema: normalizeToolSchema(t.Function.Parameters),
 			})
 		}
 		if len(decls) > 0 {
@@ -747,6 +748,11 @@ func translateResponse(resp *geminiResponse, model string) *models.ChatCompletio
 			PromptTokens:     resp.UsageMetadata.PromptTokenCount,
 			CompletionTokens: resp.UsageMetadata.CandidatesTokenCount + resp.UsageMetadata.ThoughtsTokenCount,
 			TotalTokens:      resp.UsageMetadata.TotalTokenCount,
+		}
+		if cached := resp.UsageMetadata.CachedContentTokenCount; cached != nil {
+			details, _ := json.Marshal(map[string]int{"cached_tokens": *cached})
+			raw := json.RawMessage(details)
+			result.Usage.PromptTokensDetails = &raw
 		}
 	}
 

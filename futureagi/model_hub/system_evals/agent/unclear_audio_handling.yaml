@@ -1,0 +1,73 @@
+eval_id: 212
+name: unclear_audio_handling
+description: 'Evaluates, from call audio, how the agent handles unclear, cut-off, or silent user audio and background noise:
+  asks the user to repeat instead of guessing, ignores background speech and media, and breaks out of repeat loops under persistent
+  noise. Takes call audio only, because a transcript cannot show unclear audio or background speech.'
+criteria: "You are evaluating the agent's behaviour whenever the user's audio was unclear, cut off, silent, or mixed with\
+  \ background noise. Judge from the call audio, and only at moments where unclear audio or background noise can be heard\
+  \ or the agent asks the user to repeat. The agent prompt, if provided, may define how clarification must be done.\n\n##\
+  \ Criteria\n1. Clarify, do not guess or act: When the user's words are unintelligible or cut off, the agent briefly asks\
+  \ them to repeat (in the language the agent prompt specifies for clarification, otherwise the user's language) and does\
+  \ not act on a guessed interpretation, such as confirming a detail it did not clearly hear or answering a question the user\
+  \ did not ask. If the agent prompt forbids fillers such as 'one moment' on unclear turns, saying one is also a failure.\n\
+  2. Background is not the caller: Speech or media in the background (TV, music, side conversations) is not treated as the\
+  \ user's request.\n3. Break persistent-noise loops: After two consecutive failed exchanges due to noise or unclear audio,\
+  \ the agent's next response gives actionable guidance (e.g. moving somewhere quieter) instead of a third plain repeat request.\n\
+  \n## Anti-bias Rules\n- If the audio contains no unclear audio or background noise, return PASS and begin the explanation\
+  \ with 'Not applicable: no unclear audio'.\n- Tool calls cannot be heard in call audio and are out of scope; judge only\
+  \ what the agent says.\n- Accents, code-switching, and non-native phrasing are not unclear audio.\n- One clarifying request\
+  \ followed by success is ideal handling, not a failure.\n- Do not penalise the agent for the environment itself, only for\
+  \ its response to it.\n\n## Scoring\n- Return PASS if the agent asked for clarification instead of guessing or acting, ignored\
+  \ background speech, and gave guidance by the third consecutive failed exchange.\n- Return FAIL if it acted aloud on a guessed\
+  \ interpretation of unclear input, said a filler the prompt forbids, responded to background audio as the caller, clarified\
+  \ in a language the prompt forbids, or made a third plain repeat request without guidance.\n\n## Input\n<agent_prompt>{{agent_prompt}}</agent_prompt>\n\
+  <conversation>{{conversation}}</conversation>"
+eval_tags:
+- Audio
+visible_ui: true
+permissions:
+  allow_edit: false
+  allow_copy: true
+choices:
+- Passed
+- Failed
+output_type_normalized: pass_fail
+pass_threshold: 0.5
+config:
+  required_keys:
+  - agent_prompt
+  - conversation
+  optional_keys:
+  - agent_prompt
+  output: Pass/Fail
+  eval_type_id: AgentEvaluator
+  config: {}
+  config_params_desc:
+    agent_prompt: 'The agent''s system prompt (persona, script and behavioural instructions). Optional: leave unmapped if
+      not available'
+    conversation: 'Call audio of the full conversation. Transcripts are not accepted: a transcript cannot show unclear audio
+      or background speech'
+  param_modalities:
+    agent_prompt:
+    - TEXT
+    conversation:
+    - AUDIO
+  rule_prompt: "You are evaluating the agent's behaviour whenever the user's audio was unclear, cut off, silent, or mixed\
+    \ with background noise. Judge from the call audio, and only at moments where unclear audio or background noise can be\
+    \ heard or the agent asks the user to repeat. The agent prompt, if provided, may define how clarification must be done.\n\
+    \n## Criteria\n1. Clarify, do not guess or act: When the user's words are unintelligible or cut off, the agent briefly\
+    \ asks them to repeat (in the language the agent prompt specifies for clarification, otherwise the user's language) and\
+    \ does not act on a guessed interpretation, such as confirming a detail it did not clearly hear or answering a question\
+    \ the user did not ask. If the agent prompt forbids fillers such as 'one moment' on unclear turns, saying one is also\
+    \ a failure.\n2. Background is not the caller: Speech or media in the background (TV, music, side conversations) is not\
+    \ treated as the user's request.\n3. Break persistent-noise loops: After two consecutive failed exchanges due to noise\
+    \ or unclear audio, the agent's next response gives actionable guidance (e.g. moving somewhere quieter) instead of a third\
+    \ plain repeat request.\n\n## Anti-bias Rules\n- If the audio contains no unclear audio or background noise, return PASS\
+    \ and begin the explanation with 'Not applicable: no unclear audio'.\n- Tool calls cannot be heard in call audio and are\
+    \ out of scope; judge only what the agent says.\n- Accents, code-switching, and non-native phrasing are not unclear audio.\n\
+    - One clarifying request followed by success is ideal handling, not a failure.\n- Do not penalise the agent for the environment\
+    \ itself, only for its response to it.\n\n## Scoring\n- Return PASS if the agent asked for clarification instead of guessing\
+    \ or acting, ignored background speech, and gave guidance by the third consecutive failed exchange.\n- Return FAIL if\
+    \ it acted aloud on a guessed interpretation of unclear input, said a filler the prompt forbids, responded to background\
+    \ audio as the caller, clarified in a language the prompt forbids, or made a third plain repeat request without guidance.\n\
+    \n## Input\n<agent_prompt>{{agent_prompt}}</agent_prompt>\n<conversation>{{conversation}}</conversation>"

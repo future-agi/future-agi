@@ -5,6 +5,7 @@ import CompactTabs from "src/components/VoiceDetailDrawerV2/CompactTabs";
 import AttributesTable from "src/components/VoiceDetailDrawerV2/AttributesTable";
 import MessagesView from "src/components/VoiceDetailDrawerV2/MessagesView";
 import ScenarioView from "src/components/VoiceDetailDrawerV2/ScenarioView";
+import { isEmptyPersona } from "src/components/VoiceDetailDrawerV2/persona.utils";
 import Iconify from "src/components/iconify";
 import { ShowComponent } from "src/components/show";
 import {
@@ -74,10 +75,13 @@ const ChatRightPanel = ({
     return [];
   }, [data]);
 
+  // A call can have a persona with no dataset row behind it (scenario_columns
+  // empty); the Scenario tab is where that persona shows, so keep it.
   const hasScenarioData =
     isSimulate &&
-    !!data?.scenario_columns &&
-    Object.keys(data.scenario_columns).length > 0;
+    ((!!data?.scenario_columns &&
+      Object.keys(data.scenario_columns).length > 0) ||
+      !isEmptyPersona(data?.persona_details));
 
   const tabs = useMemo(() => {
     const t = [
@@ -353,6 +357,7 @@ const ChatRightPanel = ({
               sourceId={annotationSources.sourceId}
               secondarySourceType={annotationSources.secondarySourceType}
               secondarySourceId={annotationSources.secondarySourceId}
+              projectId={data?.project_id}
               title=""
               renderActions={
                 onAction ? (

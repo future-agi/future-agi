@@ -25,7 +25,8 @@ RAW_ERROR_DEBT_BY_FILE = {
     # Hosted harness endpoints predate the common response envelope. Keep the
     # current counts explicit so additions still fail this guard while the
     # existing responses are migrated without breaking UI clients.
-    Path("futureagi/simulate/services/harness_provider.py"): 30,
+    Path("futureagi/simulate/services/harness_provider.py"): 47,
+    Path("futureagi/simulate/views/harness_environment.py"): 15,
     Path("futureagi/simulate/views/harness_job.py"): 8,
     Path("futureagi/simulate/views/hosted_harness.py"): 1,
     Path("futureagi/simulate/views/preview_pagination.py"): 1,

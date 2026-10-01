@@ -28,6 +28,7 @@ import AttributesTable from "./AttributesTable";
 import MessagesView from "./MessagesView";
 import CallDetailsBar from "./CallDetailsBar";
 import ScenarioView from "./ScenarioView";
+import { isEmptyPersona } from "./persona.utils";
 
 const TABS = {
   ANALYTICS: "analytics",
@@ -52,6 +53,7 @@ const VoiceRightPanel = ({
   onAction,
   hiddenActionIds = [],
   hideAnnotationTab,
+  showFixWithFalcon = true,
 }) => {
   const [currentTab, setCurrentTab] = useState(TABS.ANALYTICS);
   const isSimulate = data?.module === "simulate";
@@ -93,10 +95,13 @@ const VoiceRightPanel = ({
   const callLogs = getSpanAttributes(observationSpan)?.callLogs;
   const hasLogs = !!vapiId || !!callLogs || !!data?.id;
 
+  // A call can have a persona with no dataset row behind it (scenario_columns
+  // empty); the Scenario tab is where that persona shows, so keep it.
   const hasScenarioData =
     isSimulate &&
-    !!data?.scenario_columns &&
-    Object.keys(data.scenario_columns).length > 0;
+    ((!!data?.scenario_columns &&
+      Object.keys(data.scenario_columns).length > 0) ||
+      !isEmptyPersona(data?.persona_details));
 
   const tabs = useMemo(() => {
     // Icons match the trace drawer's SpanDetailPane TAB_CONFIG where they
@@ -271,11 +276,18 @@ const VoiceRightPanel = ({
         // backend used. Makes the shared EvalsTabView render the
         // dropdown / "Run" UX for failed voice evals.
         cell_id: e?.cell_id || e?.cellId,
+        eval_config_id: e?.id || String(id),
+        custom_eval_config_id: e?.custom_eval_config_id,
+        observation_span_id: e?.observation_span_id,
+        project_version_id: e?.project_version_id,
         template_type: e?.template_type,
+        error_localizer: e?.error_localizer === true,
         error_analysis:
           e?.error_analysis || e?.errorAnalysis || e?.error_details,
         error_localizer_status:
           e?.error_localizer_status || e?.errorLocalizerStatus,
+        error_localizer_message:
+          e?.error_localizer_message || e?.errorLocalizerMessage,
         selected_input_key: e?.selected_input_key || e?.selectedInputKey,
         datapoint: e?.datapoint || {
           selectedInputKey: e?.selected_input_key || e?.selectedInputKey,
@@ -413,6 +425,8 @@ const VoiceRightPanel = ({
               evals={normalizedEvals}
               emptyMessage="No evaluations for this call"
               showSpanColumn={false}
+              // A host with no Falcon flow wired (environment runs) turns it off.
+              showFixWithFalcon={showFixWithFalcon}
               onFixWithFalcon={({ level, ev, failingEvals, allEvals }) => {
                 const projectId = data?.project_id;
                 const callId = data?.id;
@@ -480,6 +494,7 @@ const VoiceRightPanel = ({
               sourceId={annotationSources.sourceId}
               secondarySourceType={annotationSources.secondarySourceType}
               secondarySourceId={annotationSources.secondarySourceId}
+              projectId={data?.project_id}
               openQueueItemOnRowClick={!isSimulate}
               title=""
               renderActions={
@@ -524,6 +539,7 @@ VoiceRightPanel.propTypes = {
   onAction: PropTypes.func,
   hiddenActionIds: PropTypes.arrayOf(PropTypes.string),
   hideAnnotationTab: PropTypes.bool,
+  showFixWithFalcon: PropTypes.bool,
 };
 
 export default VoiceRightPanel;

@@ -8,6 +8,13 @@ import checker from "vite-plugin-checker";
 
 // ----------------------------------------------------------------------
 
+// Upload source maps to Sentry only when a build explicitly asks for it.
+// Without an auth token the plugin still runs sentry-cli, which falls back to
+// any credentials on the machine (~/.sentryclirc, or a .sentryclirc in any
+// parent directory of the build), so a plain local `vite build` would upload.
+export const shouldUploadSentrySourceMaps = (env = process.env) =>
+  env.SENTRY_UPLOAD_SOURCEMAPS === "true";
+
 export default defineConfig({
   base: "/",
   plugins: [react(), checker({
@@ -17,7 +24,8 @@ export default defineConfig({
     },
   }), sentryVitePlugin({
     org: "future-agi",
-    project: "frontend"
+    project: "frontend",
+    disable: !shouldUploadSentrySourceMaps(),
   })],
   resolve: {
     alias: [

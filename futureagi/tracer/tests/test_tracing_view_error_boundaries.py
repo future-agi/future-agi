@@ -428,8 +428,9 @@ def _graph_call(monkeypatch, view_kind, outcome, *, allow_sampled=False):
         ServerException("private bytes and stack", code=307),
         ServerException("private type and stack", code=386),
         NetworkError("private graph network host"),
+        EOFError("private graph stream closed mid-response"),
     ],
-    ids=["code-159", "code-241", "code-307", "code-386", "network"],
+    ids=["code-159", "code-241", "code-307", "code-386", "network", "eof"],
 )
 def test_graph_boundaries_return_sanitized_503_for_unavailable_reads(
     monkeypatch,
@@ -629,7 +630,7 @@ def _trace_detail_call(monkeypatch, exc):
     request = SimpleNamespace()
     view = TraceView()
     view.request = request
-    return view.retrieve(request, pk="trace-1")
+    return unwrap(TraceView.retrieve)(view, request, pk="trace-1")
 
 
 def _span_detail_call(monkeypatch, exc):

@@ -257,7 +257,7 @@ async def run_hosted_sdk_job(input: RunHostedJobInput) -> RunHostedJobOutput:
                     )
             return_code = await proc.wait()
         except asyncio.CancelledError:
-            _terminate(proc)
+            await _terminate(proc)
             raise
         finally:
             # Keep the scratch on failure for debugging; the run root is durable.
@@ -751,9 +751,17 @@ def _parse_status_line(line: str) -> dict[str, Any] | None:
     return parsed if isinstance(parsed, dict) and "phase" in parsed else None
 
 
-def _terminate(proc: asyncio.subprocess.Process) -> None:
+async def _terminate(proc: asyncio.subprocess.Process) -> None:
     if proc.returncode is None:
         try:
             proc.terminate()
         except ProcessLookupError:
-            pass
+            return
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=5)
+        except asyncio.TimeoutError:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                return
+            await proc.wait()

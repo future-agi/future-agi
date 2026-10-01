@@ -78,6 +78,10 @@ export default function AlertsSheetView() {
     });
   const alertIsMuted = isAlertMuted(alertRuleDetails);
   const hasLoadedAlertDetails = Boolean(alertRuleDetails?.id);
+  // The trace link is built from the details response (project, filters,
+  // window), so the button waits for it rather than silently doing nothing.
+  const canViewTrace =
+    hasLoadedAlertDetails && Boolean(alertRuleDetails?.project);
 
   const handleDuplicateAlert = () => {
     setDuplicateModal(false);
@@ -266,7 +270,7 @@ export default function AlertsSheetView() {
   };
 
   const handleViewTraceClick = () => {
-    if (!alertRuleDetails?.id) return;
+    if (!canViewTrace) return;
     trackEvent(Events.alertViewTracesClicked, {
       [PropertyName.id]: alertRuleDetails.id,
     });
@@ -421,6 +425,7 @@ export default function AlertsSheetView() {
                   size="small"
                   data-alert-sheet-action="view-trace"
                   startIcon={<SvgColor src="/assets/icons/custom/eye.svg" />}
+                  disabled={!canViewTrace}
                   onClick={handleViewTraceClick}
                 >
                   View Trace

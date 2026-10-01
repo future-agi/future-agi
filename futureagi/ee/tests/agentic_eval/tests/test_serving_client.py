@@ -5,17 +5,22 @@ Run with: python -m pytest agentic_eval/tests/test_serving_client.py -v
 """
 
 import base64
+import time
 from unittest.mock import Mock, patch
 
 import pytest
 import requests
 from PIL import Image
 
+from agentic_eval.core.embeddings import serving_client
 from agentic_eval.core.embeddings.serving_client import (
     ModelServingClient,
     close_serving_client,
     get_serving_client,
 )
+
+# Bound at import, before the conftest fixture swaps in its stand-in.
+REAL_SERVING_PROBE = serving_client._probe
 
 
 @pytest.mark.unit
@@ -40,6 +45,13 @@ class TestModelServingClient:
             client = ModelServingClient()
             assert client.base_url == 'http://env-serving:8080'
             client.close()
+
+    def test_the_default_url_is_the_normalised_serving_url(self, monkeypatch):
+        monkeypatch.setenv("MODEL_SERVING_URL", " http://env-serving:8080/ ")
+        client = ModelServingClient()
+        assert client.base_url == serving_client.serving_base_url()
+        assert client.base_url == "http://env-serving:8080"
+        client.close()
 
     def test_initialization_custom_url(self):
         """Test client initialization with custom URL"""
@@ -303,31 +315,32 @@ class TestModelServingClient:
         with pytest.raises(ValueError, match="Unsupported audio type"):
             self.client._process_audio_input(123)  # type: ignore
 
-    @patch('requests.Session.get')
-    def test_health_check_success(self, mock_get):
+    @pytest.fixture
+    def real_probe(self, monkeypatch):
+        monkeypatch.setattr(serving_client, "_probe", REAL_SERVING_PROBE)
+
+    @patch("agentic_eval.core.embeddings.serving_client.requests.get")
+    def test_health_check_success(self, mock_get, real_probe):
         """Test successful health check"""
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_get.return_value = mock_response
+        mock_get.return_value = Mock(status_code=200)
 
         result = self.client.health_check(use_cache=False)
 
         assert result is True
         mock_get.assert_called_once()
+        assert mock_get.call_args.args[0] == f"{self.base_url}/health"
 
-    @patch('requests.Session.get')
-    def test_health_check_failure(self, mock_get):
+    @patch("agentic_eval.core.embeddings.serving_client.requests.get")
+    def test_health_check_failure(self, mock_get, real_probe):
         """Test failed health check"""
-        mock_response = Mock()
-        mock_response.status_code = 503
-        mock_get.return_value = mock_response
+        mock_get.return_value = Mock(status_code=503)
 
         result = self.client.health_check(use_cache=False)
 
         assert result is False
 
-    @patch('requests.Session.get')
-    def test_health_check_exception(self, mock_get):
+    @patch("agentic_eval.core.embeddings.serving_client.requests.get")
+    def test_health_check_exception(self, mock_get, real_probe):
         """Test health check with exception"""
         mock_get.side_effect = requests.exceptions.ConnectionError()
 
@@ -335,23 +348,28 @@ class TestModelServingClient:
 
         assert result is False
 
-    @pytest.mark.slow
-    def test_health_check_caching(self):
+    @patch("agentic_eval.core.embeddings.serving_client.requests.get")
+    def test_health_check_caching(self, mock_get, real_probe):
         """Test health check caching functionality"""
-        with patch('requests.Session.get') as mock_get:
-            mock_response = Mock()
-            mock_response.status_code = 200
-            mock_get.return_value = mock_response
+        mock_get.return_value = Mock(status_code=200)
 
-            # First call
-            result1 = self.client.health_check(use_cache=True)
-            # Second call should use cache
-            result2 = self.client.health_check(use_cache=True)
+        # Second call should use cache
+        assert self.client.health_check(use_cache=True) is True
+        assert self.client.health_check(use_cache=True) is True
 
-            assert result1 is True
-            assert result2 is True
-            # Should only call once due to caching
-            assert mock_get.call_count == 1
+        assert mock_get.call_count == 1
+
+    @patch("requests.Session.get")
+    def test_health_check_shares_the_serving_probe_verdict(self, session_get):
+        # One verdict per URL, shared with serving_available(): the client
+        # does not keep a second cache that can disagree with it.
+        session_get.return_value = Mock(status_code=503)
+        serving_client._probe_cache[self.base_url] = (True, time.monotonic())
+
+        assert self.client.health_check() is True
+        serving_client.mark_serving_unavailable(self.base_url)
+        assert self.client.health_check() is False
+        session_get.assert_not_called()
 
     @patch('requests.Session.get')
     def test_get_model_status_success(self, mock_get):

@@ -61,6 +61,7 @@ from agentcc.services.gateway_client import (
     GatewayClientError,
     get_gateway_client,
 )
+from agentcc.services.url_safety import ensure_provider_base_url_allowed
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.general_methods import GeneralMethods
 
@@ -392,6 +393,7 @@ class AgentccGatewayViewSet(ViewSet):
                     "base_url",
                     "api_format",
                     "models_list",
+                    "extra_config",
                     "is_active",
                     "default_timeout_seconds",
                     "max_concurrent",
@@ -401,12 +403,14 @@ class AgentccGatewayViewSet(ViewSet):
             )
             providers_map = {}
             for p in providers:
+                extra_config = p.get("extra_config") or {}
                 providers_map[p["provider_name"]] = {
                     "id": str(p["id"]),
                     "name": p["provider_name"],
                     "display_name": p["display_name"] or p["provider_name"],
                     "base_url": p["base_url"],
                     "api_format": p["api_format"],
+                    "api_path_prefix": extra_config.get("api_path_prefix", "/v1"),
                     "models": p["models_list"] or [],
                     "is_active": p["is_active"],
                     "default_timeout": p["default_timeout_seconds"],
@@ -553,6 +557,19 @@ class AgentccGatewayViewSet(ViewSet):
                 return self._gm.bad_request(
                     "Google service-account credentials can only be used with Vertex AI."
                 )
+            saved_base_url = (
+                AgentccProviderCredential.no_workspace_objects.filter(
+                    organization=org, provider_name=provider_name, deleted=False
+                )
+                .values_list("base_url", flat=True)
+                .first()
+            )
+            try:
+                ensure_provider_base_url_allowed(
+                    provider_config.get("base_url", ""), saved_base_url=saved_base_url
+                )
+            except ValueError as e:
+                return self._gm.bad_request(str(e))
 
             from integrations.services.credentials import CredentialManager
 
@@ -604,6 +621,7 @@ class AgentccGatewayViewSet(ViewSet):
                         "base_url",
                         "api_format",
                         "models",
+                        "display_name",
                         "default_timeout",
                         "default_timeout_seconds",
                         "max_concurrent",

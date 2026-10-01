@@ -16,6 +16,7 @@ import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from tracer.constants.dashboard import text_annotation_aggregation_error
 from tracer.services.clickhouse.query_builders.dashboard import (
     InvalidMetricCombinationError,
 )
@@ -449,8 +450,11 @@ class DatasetQueryBuilder(DashboardQueryBuilderBase):
         params: dict,
     ) -> tuple[str, dict]:
         label_id = metric.get("label_id", metric.get("config_id", ""))
-        output_type = metric.get("output_type", "numeric")
+        output_type = (metric.get("output_type") or "numeric").lower()
         params["annotation_label_id"] = label_id
+        aggregation_error = text_annotation_aggregation_error(output_type, aggregation)
+        if aggregation_error:
+            raise InvalidMetricCombinationError(aggregation_error)
 
         # Annotation data is stored in cells with column source = 'annotation_label'
         TEXT_AGGS = ("pass_rate", "fail_rate", "pass_count", "fail_count", "true_rate")

@@ -1,13 +1,15 @@
 # views.py
 from datetime import datetime, timedelta
 
-import requests
 import structlog
 from django.contrib.auth.hashers import check_password
 from django.core.cache import cache
+from django.db import DatabaseError, InterfaceError
 from django.db.models import Q
 from django.utils import timezone
+from django_redis.exceptions import ConnectionInterrupted
 from drf_yasg.utils import swagger_auto_schema
+from redis.exceptions import RedisError
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -31,6 +33,7 @@ from accounts.serializers import UserSerializer
 from accounts.serializers.contracts import (
     ACCOUNTS_ERROR_RESPONSES,
     AccountsAccessTokenResponseSerializer,
+    AccountsErrorResponseSerializer,
     AccountsRedisDeleteResponseSerializer,
     AccountsRedisSetResponseSerializer,
     AccountsTokenPairResponseSerializer,
@@ -45,6 +48,7 @@ from accounts.serializers.contracts import (
 from accounts.serializers.user import UserOnboardingSerializer
 
 # from accounts.user_onboard import upload_demo_dataset
+from accounts.utils import record_hubspot_login
 from accounts.views.signup import verify_recaptcha
 from analytics.utils import (
     MixpanelEvents,
@@ -64,6 +68,15 @@ from tfc.utils.general_methods import GeneralMethods
 from tracer.models.project import Project
 
 logger = structlog.get_logger(__name__)
+
+# Postgres or Redis being slow or down says nothing about the password, so a
+# login that fails with one of these must not count towards the lockout.
+LOGIN_INFRASTRUCTURE_ERRORS = (
+    DatabaseError,
+    InterfaceError,
+    ConnectionInterrupted,
+    RedisError,
+)
 
 
 @swagger_auto_schema(
@@ -138,7 +151,11 @@ class CustomTokenObtainPairView(TokenObtainPairView):
 
     @validated_request(
         request_serializer=LoginRequestSerializer,
-        responses={200: AccountsTokenPairResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={
+            200: AccountsTokenPairResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+            503: AccountsErrorResponseSerializer,
+        },
         reject_unknown_fields=True,
     )
     def post(self, request, *args, **kwargs):
@@ -185,9 +202,9 @@ class CustomTokenObtainPairView(TokenObtainPairView):
                         }
                     )
                 else:
-                    logger.info("recaptcha verification passed")
+                    logger.debug("recaptcha verification passed")
             else:
-                logger.info(
+                logger.debug(
                     "recaptcha verification bypassed for localhost or special email"
                 )
 
@@ -399,34 +416,13 @@ class CustomTokenObtainPairView(TokenObtainPairView):
                 if new_org:
                     if _first_active_membership.role != OrganizationRoles.OWNER.value:
                         new_org = False
-
-                headers = {
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {settings.HUBSPOT_API_TOKEN}",
-                }
-
-                contact = {
-                    "properties": {
-                        "lead_type": user.organization_role,
-                        "logged_in": "Yes",
-                    }
-                }
-
-                try:
-                    resp = requests.patch(
-                        settings.HUBSPOT_UPDATE_URL.format(user.email),
-                        json=contact,
-                        headers=headers,
-                        timeout=10,
-                    )
-                    resp.raise_for_status()
-                    logger.info("Contact Created Successfully in HubSpot")
-                except requests.exceptions.RequestException as e:
-                    logger.error(f"Failed to Create Contact in HubSpot: {str(e)}")
-
                 response.data["new_org"] = new_org  # Add the extra key
-            except Exception as e:
-                logger.error(f"Failed to Create Contact in HubSpot: {str(e)}")
+            except Exception:
+                logger.exception("login_new_org_flag_failed", user_id=str(user.id))
+
+            # No-op without HUBSPOT_API_TOKEN; otherwise runs off the request
+            # path, so HubSpot can never slow down or fail a login.
+            record_hubspot_login(user)
             cache.delete(block_key)
             cache.delete(attempts_key)
 
@@ -436,6 +432,22 @@ class CustomTokenObtainPairView(TokenObtainPairView):
             track_mixpanel_event(MixpanelEvents.LOGIN_CLICK.value, properties)
 
             return response
+
+        except LOGIN_INFRASTRUCTURE_ERRORS as exc:
+            # The cache may be what is down, so don't touch the attempt counter.
+            logger.exception(
+                "login_infrastructure_unavailable",
+                email=request.data.get("email", "").lower(),
+                error_type=type(exc).__name__,
+            )
+            return self._gm.custom_error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                {
+                    "error": "Login temporarily unavailable",
+                    "error_code": "LOGIN_SERVICE_UNAVAILABLE",
+                    "message": get_error_message("LOGIN_SERVICE_UNAVAILABLE"),
+                },
+            )
 
         except Exception:
             # Log the full traceback so masked login errors are debuggable.
@@ -512,9 +524,9 @@ class CustomTokenRefreshView(APIView):
                     logger.error("Refresh recaptcha verification failed")
                     return self._gm.bad_request("Verification failed.")
                 else:
-                    logger.info("Refresh recaptcha verification passed")
+                    logger.debug("Refresh recaptcha verification passed")
             else:
-                logger.info(
+                logger.debug(
                     "Refresh recaptcha verification bypassed for localhost or special email"
                 )
 
@@ -714,9 +726,13 @@ def get_user_info(request):
         else:
             return str(RoleMapping.get_workspace_role(org_role))
 
-    # Get current workspace from user config or default workspace
-    current_workspace_id = user.config.get("currentWorkspaceId") or user.config.get(
-        "defaultWorkspaceId"
+    # Explicit authenticated workspace selection also applies to API-key clients.
+    selected_workspace = getattr(request, "workspace", None)
+    current_workspace_id = (
+        selected_workspace.id
+        if selected_workspace is not None
+        else user.config.get("currentWorkspaceId")
+        or user.config.get("defaultWorkspaceId")
     )
 
     if current_workspace_id:
