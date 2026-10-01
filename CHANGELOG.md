@@ -1,5 +1,42 @@
 # Changelog
 
+## [1.45.0](https://github.com/future-agi/future-agi/compare/v1.44.0...v1.45.0) (2026-10-01)
+
+
+### Features
+
+* add interruption metrics to simulation call lists ([6d0bd85](https://github.com/future-agi/future-agi/commit/6d0bd85dc8c7ad2021228bbd6b6c16ae32be3c00))
+* **simulate:** show stop latency in the call's analytics card ([11bef4b](https://github.com/future-agi/future-agi/commit/11bef4b4548e4d35d4d512bcbf70dffe3d8c21cf))
+* **simulate:** split sub-goal checks from evaluations in the run table ([e01fed8](https://github.com/future-agi/future-agi/commit/e01fed8d5875003f10a7a1e43fc0f2255b2e9aa0))
+
+
+### Bug Fixes
+
+* **simulate:** address review on sub-goal filters, group counts and formatting ([1fb5c4d](https://github.com/future-agi/future-agi/commit/1fb5c4dda0e89b7b4437c028da89a66a4750af80))
+* **simulate:** adopt [#3163](https://github.com/future-agi/future-agi/issues/3163)'s group model and cover paging and sub-goals ([8058d3f](https://github.com/future-agi/future-agi/commit/8058d3f87d94769eddbda121dfac4a9111502c3b))
+* **simulate:** badge the Runs tab with the run total, not the page ([2d57047](https://github.com/future-agi/future-agi/commit/2d5704775baacebd5fba0a0e1a5d10791cf06ed5))
+* **simulate:** count runs and covered scenarios over every execution ([33e567e](https://github.com/future-agi/future-agi/commit/33e567e4a6581a9ff685c7916644f7daa9f7aa18))
+* **simulate:** default the runs lists to empty where they are read ([da22f99](https://github.com/future-agi/future-agi/commit/da22f9982081e5626c96ac8c800d3f0840d7cced))
+* **simulate:** draw the waveform rows from the backend's stereo channel layout ([d12cddc](https://github.com/future-agi/future-agi/commit/d12cddc4b7982a7fde75312d9c18aa4cfc62a2fb))
+* **simulate:** finish the waveform split when the call's direction changes mid-download ([e41f749](https://github.com/future-agi/future-agi/commit/e41f7497268f9b558d1da924ce34b46ca5c5be6c))
+* **simulate:** hide interruption metrics on chat runs ([074f9ec](https://github.com/future-agi/future-agi/commit/074f9ec333a6eabf96d95d68b9368c3164019f51))
+* **simulate:** hide sub-goal checks from the call drawers' eval lists ([f7c18d9](https://github.com/future-agi/future-agi/commit/f7c18d931d6dc2516df97fc17e719d280b62922c))
+* **simulate:** keep each group-by's opened groups separately and cover the review cases ([c56558c](https://github.com/future-agi/future-agi/commit/c56558c3d7b984655d8fd13140a4d9f45211803e))
+* **simulate:** keep run table groups open or closed across filters [TH-8118] ([5dd0b72](https://github.com/future-agi/future-agi/commit/5dd0b726e19ce61cc8014b345c6d47dce02307c3))
+* **simulate:** keep the call-length fields in the run analytics payload ([5bb2ee5](https://github.com/future-agi/future-agi/commit/5bb2ee5f60d50208581e18724d5f154748d52dc9))
+* **simulate:** keep unseen run table groups closed and the open call visible across group-by ([4e47819](https://github.com/future-agi/future-agi/commit/4e47819ce362cc190c41dfda8d2bab5f8e3730a7))
+* **simulate:** load the run trace table's group rows while their calls are still coming ([b46f8e0](https://github.com/future-agi/future-agi/commit/b46f8e0358c4c3bed6159daa2f25509eb65e486b))
+* **simulate:** loading state for group rows in the run trace table ([61a0b56](https://github.com/future-agi/future-agi/commit/61a0b56785c1fb471507081a0cb24447a6a24ff6))
+* **simulate:** page the runs table and pick how many runs the graph shows ([b57861e](https://github.com/future-agi/future-agi/commit/b57861e850d9a431ecd849a6cabea82b9faa0ca7))
+* **simulate:** plot agent latency in the run analytics latency charts ([0ef0725](https://github.com/future-agi/future-agi/commit/0ef07259dad1540112176c958005ceacae3edbda))
+* **simulate:** plot agent latency in the run analytics latency charts ([9e58ed9](https://github.com/future-agi/future-agi/commit/9e58ed9b118b3ca6a2893f787565090bb4243994))
+* **simulate:** read pruned scenarios in rows and draw the graph from page 1 ([09b8d2b](https://github.com/future-agi/future-agi/commit/09b8d2b74726930be93ea429c06f47a77a5b16bb))
+* **simulate:** run detail scenario fields and runs tab pagination ([4ac0fcb](https://github.com/future-agi/future-agi/commit/4ac0fcb6f5bc6c24da64a049054d2b0a5d789616))
+* **simulate:** say which speaker is on each side of a call's stereo recording ([7141250](https://github.com/future-agi/future-agi/commit/71412502f20dde8eb5c498fc7b885d7ef348cf70))
+* **simulate:** say which speaker is on each side of a call's stereo recording ([828c473](https://github.com/future-agi/future-agi/commit/828c47387135cdca3360802fc9932613fe33aa9e))
+* **simulate:** say why Run preflight is off for a bad contact number ([e134692](https://github.com/future-agi/future-agi/commit/e1346922f677516858958d8594851139be3dff3d))
+* **simulate:** show situation, sub-goals and ideal outcome in run detail ([b92966c](https://github.com/future-agi/future-agi/commit/b92966c8ce29a6d267198762b30c8efa2e1c9edc))
+
 ## [1.44.0](https://github.com/future-agi/future-agi/compare/v1.43.3...v1.44.0) (2026-10-01)
 
 
