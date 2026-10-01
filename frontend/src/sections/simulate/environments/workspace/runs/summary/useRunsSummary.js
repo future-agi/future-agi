@@ -15,7 +15,7 @@ import { buildSummaryRow, buildEvalSeries, deriveEvals } from "./summaryData";
 // and cached — so the summary and the detail never disagree. A mock run (the
 // `?mockRuns=1` switch) carries its scores inline, so no fetch is made for it.
 export function useRunsSummary(env, envState) {
-  const { runs, isLoading: runsLoading } = useEnvironmentRuns(env, envState);
+  const { runs, count, coveredScenarioCount, isLoading: runsLoading } = useEnvironmentRuns(env, envState);
 
   const scoreQueries = useQueries({
     // `useKpis` cannot be called here (one query per run, count unknown), so
@@ -42,9 +42,9 @@ export function useRunsSummary(env, envState) {
     const rowsChrono = [...rows].reverse();
     const evals = deriveEvals(rows);
     const series = buildEvalSeries(rowsChrono, evals);
-    return { rows, rowsChrono, evals, series, isLoading: runsLoading };
+    return { rows, rowsChrono, evals, series, count, coveredScenarioCount, isLoading: runsLoading };
     // scoreKey stands in for scoreData (fresh array each render); runs is stable
     // across renders while the query data is unchanged.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [runs, scoreKey, runsLoading]);
+  }, [runs, scoreKey, runsLoading, count, coveredScenarioCount]);
 }

@@ -44389,6 +44389,7 @@ export const SimulateRunTestsExecutionsListResponse = zod.object({
       }),
     )
     .optional(),
+  covered_scenario_count: zod.number().optional(),
 });
 
 export const SimulateRunTestsPreviewExecutionsListParams = zod.object({

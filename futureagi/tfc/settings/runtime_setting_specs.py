@@ -69,7 +69,7 @@ PROPERTY_CATALOG_RUNTIME_SETTING_SPECS = {
         (
             ("MAX_PAGE_SIZE", 50, 1, 200),
             ("MAX_SEARCH_BYTES", 512, 1, 4096),
-            ("QUERY_WALL_MS", 10_000, 100, 30_000),
+            ("QUERY_WALL_MS", 10_000, 100, 60_000),
             ("READ_POOL_SIZE", 4, 1, 32),
             ("READ_MAX_THREADS", 2, 1, 16),
             ("READ_MAX_CONCURRENT_QUERIES_PER_USER", 4, 1, 16),
@@ -96,7 +96,7 @@ PROPERTY_CATALOG_RUNTIME_SETTING_SPECS = {
         prefix="PROPERTY_CATALOG_",
     ),
     **_specs(
-        (("READ_TRANSPORT_TIMEOUT_SECONDS", 10.0, 0.1, 30.0),),
+        (("READ_TRANSPORT_TIMEOUT_SECONDS", 10.0, 0.1, 60.0),),
         value_type=float,
         prefix="PROPERTY_CATALOG_",
     ),

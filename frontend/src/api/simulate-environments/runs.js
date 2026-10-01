@@ -128,7 +128,13 @@ export function useEnvironmentRuns(env, envState) {
     queryKey: ["run-test-executions", runTestId],
     queryFn: () => listRunTestExecutions(runTestId),
     enabled: !!runTestId && !mockRuns,
-    select: mapExecutions,
+    // `count` and `covered_scenario_count` describe the whole run-test, not the
+    // page, so the summary header reads them instead of counting rows.
+    select: (payload) => ({
+      runs: mapExecutions(payload),
+      count: payload?.count ?? null,
+      coveredScenarioCount: payload?.covered_scenario_count ?? null,
+    }),
     refetchInterval: (query) =>
       (query.state.data?.results || []).some(
         (row) => !TERMINAL_STATUSES.includes(row?.status),
@@ -138,12 +144,17 @@ export function useEnvironmentRuns(env, envState) {
   });
 
   if (mockRuns) {
-    return { runs: MOCK_RUNS, isLoading: false };
+    return { runs: MOCK_RUNS, count: null, coveredScenarioCount: null, isLoading: false };
   }
   if (runTestId) {
-    return { runs: query.data ?? [], isLoading: query.isLoading };
+    return {
+      runs: query.data?.runs ?? [],
+      count: query.data?.count ?? null,
+      coveredScenarioCount: query.data?.coveredScenarioCount ?? null,
+      isLoading: query.isLoading,
+    };
   }
-  return { runs: envState?.runs ?? [], isLoading: false };
+  return { runs: envState?.runs ?? [], count: null, coveredScenarioCount: null, isLoading: false };
 }
 
 // Where "Run simulation" / "Start simulation" navigates. A built environment

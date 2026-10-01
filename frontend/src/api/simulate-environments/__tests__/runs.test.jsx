@@ -232,6 +232,35 @@ describe("useEnvironmentRuns", () => {
     expect(third.label).toBe("Run 1");
   });
 
+  it("exposes the run-test's total and covered-scenario count from the payload, not the page", async () => {
+    axios.get.mockResolvedValue({
+      data: {
+        count: 12,
+        covered_scenario_count: 7,
+        results: [
+          { id: "ex-12", status: "Completed", start_time: "2026-02-03T10:00:00.000Z", total_chats: 5, success_rate: 100 },
+          { id: "ex-11", status: "Failed", start_time: "2026-02-02T10:00:00.000Z", total_chats: 5, success_rate: 40 },
+        ],
+      },
+    });
+    const env = { id: "env-c", platform: { runTestId: "rt1", testExecutionId: "ex1" } };
+    const { result } = renderHook(() => useEnvironmentRuns(env, { runs: [] }), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.runs.length).toBe(2));
+    expect(result.current.count).toBe(12);
+    expect(result.current.coveredScenarioCount).toBe(7);
+  });
+
+  it("carries no totals for an environment without a run-test", () => {
+    const { result } = renderHook(() => useEnvironmentRuns({ id: "env-x" }, { runs: [] }), {
+      wrapper: makeWrapper(),
+    });
+    expect(result.current.count).toBeNull();
+    expect(result.current.coveredScenarioCount).toBeNull();
+  });
+
   it("stamps the server ordinal from `count`, not the page length", async () => {
     // A 3-row page out of a 12-run history: the server orders newest-first and
     // reports the run-test's total in `count`. The ordinal each row shows must

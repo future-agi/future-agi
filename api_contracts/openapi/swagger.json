@@ -131320,6 +131320,11 @@
                         "$ref": "#/definitions/TestExecutionItemResponse"
                     },
                     "readOnly": true
+                },
+                "covered_scenario_count": {
+                    "title": "Covered scenario count",
+                    "type": "integer",
+                    "readOnly": true
                 }
             }
         },

@@ -73018,6 +73018,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           readOnly: true,
         },
+        covered_scenario_count: {
+          title: "Covered scenario count",
+          type: "integer",
+          readOnly: true,
+        },
       },
     },
     RunTestKPIsResponse: {

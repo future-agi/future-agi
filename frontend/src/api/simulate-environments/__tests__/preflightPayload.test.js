@@ -59,7 +59,6 @@ describe("draftToPreflightPayload — repo", () => {
         level: "full",
         retention_days: 30,
         allow_bundle_download: false,
-        max_artifact_bytes: 1073741824,
       },
       metadata: { name: "support-bot", authoring_key: "support-bot" },
     });

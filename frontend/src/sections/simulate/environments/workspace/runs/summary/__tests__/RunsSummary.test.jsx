@@ -42,8 +42,8 @@ const RUNS = [
 const env = { id: "env-1", name: "Refund Support", version: "v3" };
 const envState = { scenarios: Array.from({ length: 20 }, (_, i) => ({ id: `s${i}` })) };
 
-function renderSummary(props = {}, runs = RUNS, isLoading = false) {
-  useEnvironmentRuns.mockReturnValue({ runs, isLoading });
+function renderSummary(props = {}, runs = RUNS, isLoading = false, totals = {}) {
+  useEnvironmentRuns.mockReturnValue({ runs, isLoading, ...totals });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
@@ -65,6 +65,12 @@ describe("RunsSummary", () => {
     renderSummary();
     expect(screen.getByText("Simulations summary")).toBeInTheDocument();
     expect(screen.getByText("2 runs · 20 scenarios")).toBeInTheDocument();
+  });
+
+  it("heads the summary with the server's run-test totals, not the page's rows", () => {
+    // A 2-row page of a 12-run history that covered 7 scenarios in all.
+    renderSummary({}, RUNS, false, { count: 12, coveredScenarioCount: 7 });
+    expect(screen.getByText("12 runs · 7 scenarios")).toBeInTheDocument();
   });
 
   it("shows a real pass rate per run", () => {
