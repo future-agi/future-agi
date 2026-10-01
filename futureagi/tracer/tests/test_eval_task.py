@@ -10,6 +10,7 @@ import uuid
 import pytest
 from rest_framework import status
 
+from accounts.models import Organization
 from accounts.models.workspace import Workspace
 from model_hub.models.ai_model import AIModel
 from tracer.models.custom_eval_config import CustomEvalConfig
@@ -65,6 +66,65 @@ def make_custom_eval_config_for_project(project, custom_eval_config, name):
         config=custom_eval_config.config or {},
         mapping=custom_eval_config.mapping or {},
         filters={},
+    )
+
+
+def make_sibling_project(project, name):
+    """Another project of ``project``'s workspace, so the caller can see it."""
+    return Project.objects.create(
+        name=name,
+        organization=project.organization,
+        workspace=project.workspace,
+        model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+        trace_type="observe",
+    )
+
+
+def linked_eval_ids(task):
+    return set(task.evals.values_list("id", flat=True))
+
+
+OUT_OF_SCOPE_CONFIG_KINDS = ["other_organization", "other_workspace", "deleted_project"]
+
+
+def make_out_of_scope_eval_config(kind, project, user, custom_eval_config):
+    """A live eval config the caller cannot use: one of another organization,
+    of another workspace of the caller's organization, or of a deleted
+    project."""
+    if kind == "other_organization":
+        organization = Organization.objects.create(name="Other Organization")
+        owner = Project.objects.create(
+            name="Other Organization Project",
+            organization=organization,
+            workspace=Workspace.objects.create(
+                name="Other Organization Workspace",
+                organization=organization,
+                is_default=True,
+                is_active=True,
+                created_by=user,
+            ),
+            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+            trace_type="observe",
+        )
+    elif kind == "other_workspace":
+        owner = make_other_workspace_eval_task(
+            project, user, custom_eval_config
+        ).project
+    else:
+        owner = make_sibling_project(project, "Deleted Sibling Project")
+    config = make_custom_eval_config_for_project(
+        owner, custom_eval_config, "Out Of Scope Config"
+    )
+    if kind == "deleted_project":
+        Project.all_objects.filter(id=owner.id).update(deleted=True)
+    return config
+
+
+def refusal_without_id(response, named_id):
+    """A refusal's status and body with the id it names masked, so the answer
+    for one id can be compared with the answer for another."""
+    return response.status_code, json.dumps(response.json()).replace(
+        str(named_id), "<id>"
     )
 
 
@@ -204,6 +264,39 @@ class TestEvalTaskCreateAPI:
         )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    @pytest.mark.parametrize("kind", OUT_OF_SCOPE_CONFIG_KINDS)
+    def test_create_answers_an_out_of_scope_eval_config_as_unknown(
+        self, auth_client, project, user, custom_eval_config, kind
+    ):
+        """A config the caller cannot use is refused like an id that does not
+        exist, and no task is created."""
+        out_of_scope = make_out_of_scope_eval_config(
+            kind, project, user, custom_eval_config
+        )
+        unknown_id = uuid.uuid4()
+
+        def create(config_id):
+            return auth_client.post(
+                "/tracer/eval-task/",
+                {
+                    "project": str(project.id),
+                    "name": "Out Of Scope Config Task",
+                    "run_type": "continuous",
+                    "sampling_rate": 100,
+                    "evals": [str(config_id)],
+                },
+                format="json",
+            )
+
+        refused = create(out_of_scope.id)
+        unknown = create(unknown_id)
+
+        assert refused.status_code == status.HTTP_400_BAD_REQUEST
+        assert refusal_without_id(refused, out_of_scope.id) == refusal_without_id(
+            unknown, unknown_id
+        )
+        assert not EvalTask.objects.filter(name="Out Of Scope Config Task").exists()
 
     def test_create_eval_task_accepts_linked_source_id_filters(
         self, auth_client, populated_observe_project, eval_template
@@ -963,6 +1056,9 @@ class TestEvalTaskUpdateAPI:
         )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json()["message"] == (
+            f"Eval configs not found for task project: {other_config.id}"
+        )
         assert not eval_task.evals.filter(id=other_config.id).exists()
 
     def test_update_eval_task_rejects_empty_eval_list(self, auth_client, eval_task):
@@ -996,6 +1092,307 @@ class TestEvalTaskUpdateAPI:
         eval_task.refresh_from_db()
         assert eval_task.name == "Renamed Inline Task"
         assert eval_task.status == EvalTaskStatus.COMPLETED
+
+    def test_detail_patch_links_an_eval_config_of_the_tasks_project(
+        self, auth_client, project, eval_task, custom_eval_config
+    ):
+        """The control for the refusals below: naming the task's own project
+        and one of its own configs is accepted."""
+        own_config = make_custom_eval_config_for_project(
+            project, custom_eval_config, "Own Project Config For Detail Patch"
+        )
+
+        response = auth_client.patch(
+            f"/tracer/eval-task/{eval_task.id}/",
+            {"project": str(project.id), "evals": [str(own_config.id)]},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert linked_eval_ids(eval_task) == {own_config.id}
+
+    def test_detail_patch_rejects_an_eval_config_of_another_project(
+        self, auth_client, project, eval_task, custom_eval_config
+    ):
+        """Eval configs must belong to the task's project on the detail route
+        too, as on create and ``update_eval_task``."""
+        other_config = make_custom_eval_config_for_project(
+            make_sibling_project(project, "Sibling Project For Detail Patch"),
+            custom_eval_config,
+            "Sibling Project Config For Detail Patch",
+        )
+
+        response = auth_client.patch(
+            f"/tracer/eval-task/{eval_task.id}/",
+            {"evals": [str(other_config.id)]},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json()["message"] == (
+            f"evals: Eval configs not found for task project: {other_config.id}"
+        )
+        assert linked_eval_ids(eval_task) == {custom_eval_config.id}
+
+    def test_detail_patch_rejects_moving_the_task_to_another_project(
+        self, auth_client, project, eval_task, custom_eval_config
+    ):
+        sibling = make_sibling_project(project, "Sibling Project For Task Move")
+
+        response = auth_client.patch(
+            f"/tracer/eval-task/{eval_task.id}/",
+            {"project": str(sibling.id)},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json()["attr"] == "project"
+        assert "cannot be moved to another project" in response.json()["message"]
+        eval_task.refresh_from_db()
+        assert eval_task.project_id == project.id
+        assert linked_eval_ids(eval_task) == {custom_eval_config.id}
+
+    def test_detail_put_rejects_moving_the_task_with_that_projects_configs(
+        self, auth_client, project, eval_task, custom_eval_config
+    ):
+        """A full update that moves the task and swaps in the new project's
+        configs is refused as a whole: the task keeps project and configs."""
+        sibling = make_sibling_project(project, "Sibling Project For Task Put")
+        sibling_config = make_custom_eval_config_for_project(
+            sibling, custom_eval_config, "Sibling Project Config For Task Put"
+        )
+
+        response = auth_client.put(
+            f"/tracer/eval-task/{eval_task.id}/",
+            {
+                "project": str(sibling.id),
+                "name": "Moved Task",
+                "evals": [str(sibling_config.id)],
+                "sampling_rate": 100,
+                "run_type": "continuous",
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json()["attr"] == "project"
+        assert "cannot be moved to another project" in response.json()["message"]
+        eval_task.refresh_from_db()
+        assert eval_task.project_id == project.id
+        assert eval_task.name == "Test Eval Task"
+        assert linked_eval_ids(eval_task) == {custom_eval_config.id}
+
+    def test_detail_put_within_the_project_still_saves(
+        self, auth_client, project, eval_task, custom_eval_config
+    ):
+        own_config = make_custom_eval_config_for_project(
+            project, custom_eval_config, "Own Project Config For Task Put"
+        )
+
+        response = auth_client.put(
+            f"/tracer/eval-task/{eval_task.id}/",
+            {
+                "project": str(project.id),
+                "name": "Replaced In Place",
+                "evals": [str(own_config.id)],
+                "sampling_rate": 100,
+                "run_type": "continuous",
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        eval_task.refresh_from_db()
+        assert eval_task.project_id == project.id
+        assert eval_task.name == "Replaced In Place"
+        assert linked_eval_ids(eval_task) == {own_config.id}
+
+    @pytest.mark.parametrize("kind", OUT_OF_SCOPE_CONFIG_KINDS)
+    @pytest.mark.parametrize("method", ["patch", "put"])
+    def test_detail_update_answers_an_out_of_scope_eval_config_as_unknown(
+        self, auth_client, project, user, eval_task, custom_eval_config, method, kind
+    ):
+        """A config the caller cannot use is refused on the detail route like
+        an id that does not exist, and nothing is linked."""
+        out_of_scope = make_out_of_scope_eval_config(
+            kind, project, user, custom_eval_config
+        )
+        unknown_id = uuid.uuid4()
+
+        def send(config_id):
+            body = {"evals": [str(config_id)]}
+            if method == "put":
+                body.update(
+                    project=str(project.id),
+                    name=eval_task.name,
+                    sampling_rate=100,
+                    run_type="continuous",
+                )
+            return getattr(auth_client, method)(
+                f"/tracer/eval-task/{eval_task.id}/", body, format="json"
+            )
+
+        refused = send(out_of_scope.id)
+        unknown = send(unknown_id)
+
+        assert refused.status_code == status.HTTP_400_BAD_REQUEST
+        assert refused.json()["attr"] == "evals"
+        assert refusal_without_id(refused, out_of_scope.id) == refusal_without_id(
+            unknown, unknown_id
+        )
+        assert linked_eval_ids(eval_task) == {custom_eval_config.id}
+
+
+@pytest.mark.integration
+class TestEvalConfigProjectScope:
+    """``tracer.selectors.eval_tasks.scope``: which requested eval configs
+    are not a project's own, for every surface that links them to a task."""
+
+    def test_without_a_project_or_organization_no_config_belongs(
+        self, organization, workspace, custom_eval_config
+    ):
+        from tracer.selectors.eval_tasks.scope import (
+            eval_config_ids_outside_project,
+        )
+
+        requested = [custom_eval_config.id]
+
+        assert eval_config_ids_outside_project(
+            requested,
+            project_id=None,
+            organization=organization,
+            workspace=workspace,
+        ) == [str(custom_eval_config.id)]
+        assert eval_config_ids_outside_project(
+            requested,
+            project_id=custom_eval_config.project_id,
+            organization=None,
+            workspace=workspace,
+        ) == [str(custom_eval_config.id)]
+        assert (
+            eval_config_ids_outside_project(
+                [],
+                project_id=custom_eval_config.project_id,
+                organization=organization,
+                workspace=workspace,
+            )
+            == []
+        )
+
+    def test_only_live_configs_of_the_project_belong(
+        self, organization, workspace, project, custom_eval_config
+    ):
+        from tracer.selectors.eval_tasks.scope import (
+            eval_config_ids_outside_project,
+        )
+
+        deleted_config = make_custom_eval_config_for_project(
+            project, custom_eval_config, "Deleted Own Config"
+        )
+        CustomEvalConfig.all_objects.filter(id=deleted_config.id).update(deleted=True)
+        sibling_config = make_custom_eval_config_for_project(
+            make_sibling_project(project, "Sibling Project For Scope"),
+            custom_eval_config,
+            "Sibling Project Config For Scope",
+        )
+        foreign_ids = [deleted_config.id, sibling_config.id, uuid.uuid4()]
+
+        outside = eval_config_ids_outside_project(
+            [custom_eval_config.id, *foreign_ids],
+            project_id=project.id,
+            organization=organization,
+            workspace=workspace,
+        )
+
+        assert outside == sorted(str(config_id) for config_id in foreign_ids)
+
+    def test_a_projects_own_config_is_outside_a_callers_scope(
+        self, organization, workspace, user, project, custom_eval_config
+    ):
+        """The project's own config does not belong when the caller cannot
+        reach the project: another workspace, another organization, or a
+        deleted project."""
+        from tracer.selectors.eval_tasks.scope import (
+            eval_config_ids_outside_project,
+        )
+
+        other_workspace_project = make_other_workspace_eval_task(
+            project, user, custom_eval_config
+        ).project
+        other_workspace_config = make_custom_eval_config_for_project(
+            other_workspace_project,
+            custom_eval_config,
+            "Other Workspace Config For Scope",
+        )
+        assert eval_config_ids_outside_project(
+            [other_workspace_config.id],
+            project_id=other_workspace_project.id,
+            organization=organization,
+            workspace=workspace,
+        ) == [str(other_workspace_config.id)]
+
+        other_organization = Organization.objects.create(name="Other Organization")
+        assert eval_config_ids_outside_project(
+            [custom_eval_config.id],
+            project_id=project.id,
+            organization=other_organization,
+            workspace=None,
+        ) == [str(custom_eval_config.id)]
+
+        Project.all_objects.filter(id=project.id).update(deleted=True)
+        assert eval_config_ids_outside_project(
+            [custom_eval_config.id],
+            project_id=project.id,
+            organization=organization,
+            workspace=workspace,
+        ) == [str(custom_eval_config.id)]
+
+    def test_projects_in_scope_are_the_callers_live_projects(
+        self, organization, workspace, user, project, custom_eval_config
+    ):
+        """The projects an eval task or an eval config may name: in a default
+        workspace, also the organization's projects that sit in no workspace,
+        but never another organization's."""
+        from tracer.selectors.eval_tasks.scope import projects_in_scope
+
+        def unplaced_project(name, owner):
+            return Project.objects.create(
+                name=name,
+                organization=owner,
+                workspace=None,
+                model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+                trace_type="observe",
+            )
+
+        unplaced = unplaced_project("Project In No Workspace", organization)
+        other_workspace = make_other_workspace_eval_task(
+            project, user, custom_eval_config
+        ).project
+        unplaced_project(
+            "Other Organization Project In No Workspace",
+            Organization.objects.create(name="Other Organization"),
+        )
+        deleted = make_sibling_project(project, "Deleted Sibling Project")
+        Project.all_objects.filter(id=deleted.id).update(deleted=True)
+
+        def scoped_ids(organization, workspace):
+            # The base manager carries no filter of its own, so every row
+            # below is the selector's choice.
+            return set(
+                projects_in_scope(
+                    Project._base_manager.all(),
+                    organization=organization,
+                    workspace=workspace,
+                ).values_list("id", flat=True)
+            )
+
+        assert scoped_ids(organization, workspace) == {project.id, unplaced.id}
+        assert scoped_ids(organization, None) == {
+            project.id,
+            unplaced.id,
+            other_workspace.id,
+        }
+        assert scoped_ids(None, workspace) == set()
 
 
 @pytest.mark.integration

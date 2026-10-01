@@ -80,6 +80,7 @@ class CreateEvalTaskTool(BaseTool):
             RunType,
         )
         from tracer.models.project import Project
+        from tracer.selectors.eval_tasks.scope import eval_configs_in_scope
 
         # Validate project
         try:
@@ -100,13 +101,15 @@ class CreateEvalTaskTool(BaseTool):
                 error_code="VALIDATION_ERROR",
             )
 
-        # Validate eval configs exist and belong to this project
+        # Validate eval configs exist and belong to this project, through the
+        # scope the eval-task endpoints use.
         eval_config_ids = [str(eid) for eid in params.eval_config_ids]
-        eval_configs = CustomEvalConfig.objects.filter(
-            id__in=eval_config_ids,
-            project=project,
-            deleted=False,
-        )
+        eval_configs = eval_configs_in_scope(
+            CustomEvalConfig.objects.all(),
+            organization=context.organization,
+            workspace=context.workspace,
+            project_id=project.id,
+        ).filter(id__in=eval_config_ids)
         found_ids = {str(ec.id) for ec in eval_configs}
         missing_ids = set(eval_config_ids) - found_ids
         if missing_ids:
