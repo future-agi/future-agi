@@ -9,6 +9,7 @@ class SdkConfig(AppConfig):
         # Import all model modules so Django discovers them.
         # Required for cross-app FK resolution (model_hub → tracer).
         from tracer.models import (
+            cekura_integration,  # noqa: F401
             custom_eval_config,  # noqa: F401
             dashboard,  # noqa: F401
             eval_ci_cd,  # noqa: F401
