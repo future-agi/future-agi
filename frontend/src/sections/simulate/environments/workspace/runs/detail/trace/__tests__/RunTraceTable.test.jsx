@@ -327,6 +327,257 @@ describe("RunTraceTable", () => {
     );
   });
 
+  // A status chip the list hasn't fetched yet shows "Loading calls…" in the
+  // table's place, so the table unmounts. The groups the user opened must
+  // survive that. A row's persona name only shows while its group is open.
+  it("keeps a group the user expanded open while a filter loads", async () => {
+    const user = userEvent.setup();
+    let loading = false;
+    const base = useRunCalls.getMockImplementation();
+    useRunCalls.mockImplementation((...args) =>
+      loading
+        ? { ...base(...args), tasks: [], groups: [], isLoading: true }
+        : base(...args),
+    );
+    const { rerender } = renderTable();
+
+    await user.click(screen.getByText("Escalate to a human"));
+    expect(screen.getByText("Angry caller")).toBeInTheDocument();
+
+    loading = true;
+    await user.click(screen.getByRole("button", { name: "Failing" }));
+    expect(screen.getByText("Loading calls…")).toBeInTheDocument();
+
+    loading = false;
+    rerender(<RunTraceTable executionId="ex1" onOpenCall={vi.fn()} />);
+    expect(screen.getByText("Angry caller")).toBeInTheDocument();
+  });
+
+  it("keeps each group's own state through a filter with no matches", async () => {
+    const user = userEvent.setup();
+    // The chip's count says one call is inconclusive, but the list comes back
+    // empty (the count is from before a refetch), so the table gives way to
+    // the empty state.
+    const base = useRunCalls.getMockImplementation();
+    useRunCalls.mockImplementation((...args) => ({
+      ...base(...args),
+      facets: {
+        ...FACETS,
+        status: [...FACETS.status, { value: "inconclusive", count: 1 }],
+      },
+    }));
+    renderTable();
+
+    await user.click(screen.getByRole("button", { name: /Expand all/ }));
+    // Expanded, the label shows in the group header and again in the row; the
+    // header comes first.
+    await user.click(screen.getAllByText("Refund a double charge")[0]);
+    expect(screen.queryByText("The Hungry Customer in a Rush")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: /Inconclusive/ }));
+    expect(screen.getByText("No calls match that filter")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^All/ }));
+
+    expect(screen.queryByText("The Hungry Customer in a Rush")).toBeNull();
+    expect(screen.getByText("Angry caller")).toBeInTheDocument();
+    expect(screen.getByText("Caller")).toBeInTheDocument();
+  });
+
+  it("keeps the open call's row visible after changing group-by", async () => {
+    const user = userEvent.setup();
+    renderTable({ activeCallId: "t2" });
+    expect(screen.getAllByRole("row", { selected: true })).toHaveLength(1);
+    await user.click(screen.getByRole("button", { name: /Group by/ }));
+    await user.click(screen.getByRole("menuitem", { name: "Status" }));
+    expect(screen.getAllByRole("row", { selected: true })).toHaveLength(1);
+  });
+
+  // A row's persona name only shows while its group is open: Refund holds
+  // "The Hungry Customer in a Rush", Escalate "Angry caller", Timeout "Caller".
+  describe("which groups stay open", () => {
+    const persona = {
+      refund: () => screen.queryByText("The Hungry Customer in a Rush"),
+      escalate: () => screen.queryByText("Angry caller"),
+      timeout: () => screen.queryByText("Caller"),
+    };
+    const header = (label) => screen.getAllByText(label)[0];
+    const chip = (name) => screen.getByRole("button", { name });
+
+    it("leaves other groups closed after opening the only group a filter showed", async () => {
+      const user = userEvent.setup();
+      renderTable();
+      await user.click(chip("Failing"));
+      await user.click(header("Escalate to a human"));
+      await user.click(chip(/^All/));
+
+      expect(persona.escalate()).toBeInTheDocument();
+      expect(persona.refund()).toBeNull();
+      expect(persona.timeout()).toBeNull();
+    });
+
+    it("opens groups from another filter after Expand all", async () => {
+      const user = userEvent.setup();
+      renderTable();
+      await user.click(chip("Failing"));
+      await user.click(chip(/Expand all/));
+      await user.click(chip(/^All/));
+
+      expect(persona.refund()).toBeInTheDocument();
+      expect(persona.escalate()).toBeInTheDocument();
+      expect(persona.timeout()).toBeInTheDocument();
+    });
+
+    it("keeps the rest open when one group is closed after Expand all", async () => {
+      const user = userEvent.setup();
+      renderTable();
+      await user.click(chip(/Expand all/));
+      await user.click(header("Refund a double charge"));
+
+      expect(persona.refund()).toBeNull();
+      expect(persona.escalate()).toBeInTheDocument();
+      expect(persona.timeout()).toBeInTheDocument();
+      expect(chip(/Expand all/)).toBeInTheDocument();
+    });
+
+    it("keeps groups seen under Expand all open after one is closed elsewhere", async () => {
+      const user = userEvent.setup();
+      renderTable();
+      await user.click(chip("Failing"));
+      await user.click(chip(/Expand all/));
+      await user.click(chip(/^All/));
+      await user.click(header("Refund a double charge"));
+
+      expect(persona.refund()).toBeNull();
+      expect(persona.escalate()).toBeInTheDocument();
+      expect(persona.timeout()).toBeInTheDocument();
+    });
+
+    it("reads Collapse all once every group is opened by hand, and closes them", async () => {
+      const user = userEvent.setup();
+      renderTable();
+      await user.click(header("Refund a double charge"));
+      expect(chip(/Expand all/)).toBeInTheDocument();
+      await user.click(header("Escalate to a human"));
+      await user.click(header("Handle a timeout"));
+      expect(chip(/Collapse all/)).toBeInTheDocument();
+
+      await user.click(chip(/Collapse all/));
+      expect(persona.refund()).toBeNull();
+      expect(persona.escalate()).toBeNull();
+      expect(persona.timeout()).toBeNull();
+    });
+
+    it("keeps Expand all through a group-by change", async () => {
+      const user = userEvent.setup();
+      renderTable();
+      await user.click(chip(/Expand all/));
+      await user.click(screen.getByRole("button", { name: /Group by/ }));
+      await user.click(screen.getByRole("menuitem", { name: "Status" }));
+
+      expect(persona.refund()).toBeInTheDocument();
+      expect(persona.escalate()).toBeInTheDocument();
+      expect(persona.timeout()).toBeInTheDocument();
+    });
+
+    const groupBy = async (user, name) => {
+      await user.click(screen.getByRole("button", { name: /Group by/ }));
+      await user.click(screen.getByRole("menuitem", { name }));
+    };
+
+    it("keeps the groups Expand all opened after a Group by round trip", async () => {
+      const user = userEvent.setup();
+      renderTable();
+      await user.click(chip(/Expand all/));
+      await groupBy(user, "Status");
+      await user.click(header("Failed"));
+      await groupBy(user, "Use case");
+
+      expect(persona.refund()).toBeInTheDocument();
+      expect(persona.escalate()).toBeInTheDocument();
+      expect(persona.timeout()).toBeInTheDocument();
+    });
+
+    it("keeps a group opened by hand after touching another Group by", async () => {
+      const user = userEvent.setup();
+      renderTable();
+      await user.click(header("Refund a double charge"));
+      await groupBy(user, "Status");
+      await user.click(header("Failed"));
+      await groupBy(user, "Use case");
+
+      expect(persona.refund()).toBeInTheDocument();
+      expect(persona.escalate()).toBeNull();
+    });
+
+    it("closes groups under every Group by on Collapse all", async () => {
+      const user = userEvent.setup();
+      renderTable();
+      await user.click(header("Refund a double charge"));
+      await groupBy(user, "Status");
+      await user.click(chip(/Expand all/));
+      await user.click(chip(/Collapse all/));
+      await groupBy(user, "Use case");
+
+      expect(persona.refund()).toBeNull();
+    });
+
+    it("keeps groups first seen under Expand all open after one closes on another filter", async () => {
+      const user = userEvent.setup();
+      renderTable();
+      await user.click(chip("Failing"));
+      await user.click(chip(/Expand all/));
+      await user.click(chip(/^All/));
+      await user.click(chip(/^Errored/));
+      await user.click(header("Handle a timeout"));
+      await user.click(chip(/^All/));
+
+      expect(persona.refund()).toBeInTheDocument();
+      expect(persona.escalate()).toBeInTheDocument();
+      expect(persona.timeout()).toBeNull();
+    });
+
+    // The table unmounts while a filter loads; the parent keeps the "already
+    // opened for this call" marker so the remount doesn't reopen its group.
+    it("keeps the open call's group closed after the user closes it and a filter loads", async () => {
+      const user = userEvent.setup();
+      let loading = false;
+      const base = useRunCalls.getMockImplementation();
+      useRunCalls.mockImplementation((...args) =>
+        loading
+          ? { ...base(...args), tasks: [], groups: [], isLoading: true }
+          : base(...args),
+      );
+      const props = {
+        executionId: "ex1",
+        onOpenCall: vi.fn(),
+        activeCallId: "t2",
+      };
+      const { rerender } = render(<RunTraceTable {...props} />);
+      expect(persona.escalate()).toBeInTheDocument();
+
+      await user.click(header("Escalate to a human"));
+      expect(persona.escalate()).toBeNull();
+
+      loading = true;
+      await user.click(chip("Failing"));
+      expect(screen.getByText("Loading calls…")).toBeInTheDocument();
+
+      loading = false;
+      rerender(<RunTraceTable {...props} />);
+      expect(persona.escalate()).toBeNull();
+    });
+
+    it("starts other filters closed after Collapse all", async () => {
+      const user = userEvent.setup();
+      renderTable();
+      await user.click(chip(/Expand all/));
+      await user.click(chip(/Collapse all/));
+      await user.click(chip("Failing"));
+
+      expect(persona.escalate()).toBeNull();
+    });
+  });
+
   it("scopes to handed-over calls until the affected-calls chip is dismissed", async () => {
     const user = userEvent.setup();
     const { container } = renderTable({

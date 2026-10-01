@@ -16,11 +16,11 @@ export const CHART_GUIDE = {
   pipeline_cost:
     "Per-call spend, split by voice-pipeline stage. If LLM towers over everything, you're overspending on model tokens (shorter prompt, cheaper model, cache). If TTS or STT dominate, look at voice provider tier. Transport bloat usually means calls staying open too long.",
   task_latency:
-    "Latency for each task in the order it ran. Random spikes = flaky infra; a steady climb = something the agent is doing more of over time (retries, context growth); a step change = usually a new tool or model kicking in mid-run.",
+    "Each task's agent latency (the agent's average response time per turn in that task), in the order the tasks ran. Random spikes = flaky infra; a steady climb = something the agent is doing more of over time (retries, context growth); a step change = usually a new tool or model kicking in mid-run.",
   percentiles:
-    "Every task's end-to-end latency, sorted: read across to a percentile, up to the latency. p50 = typical; p90 = the slower 10% of tasks (the ones your SLO is really written for); p99 = your worst tail. A curve that bends sharply upward near the right edge means a small set of tasks is dragging the tail.",
+    "Every measured task's agent latency (the agent's average response time per turn in that task), sorted: read across to a percentile, up to the latency. p50 = typical; p90 = the slower 10% of tasks (the ones your SLO is really written for); p99 = your worst tail. A curve that bends sharply upward near the right edge means a small set of tasks is dragging the tail.",
   response_time:
-    "Each call's average time for the agent to start replying after the caller stops talking, the same per-call figure as the Agent Latency tile. Red buckets are at or over the 550ms target, where callers start to notice silence. A second hump on the right usually means one tool or prompt path is consistently slow.",
+    "Each call's average agent response time per turn (for voice, the gap between the caller finishing and the agent starting to speak), the same per-call figure as the agent latency tile. Red buckets are at or over the 550ms target, where callers start to notice silence. A second hump on the right usually means one tool or prompt path is consistently slow.",
   distribution:
     "One row per metric with the four numbers that describe its shape. p90 is the number to defend in a review; the max tells you how bad your worst tail actually got. A big gap between p50 and p99 means a few outliers are dragging the run and are worth investigating first.",
   risk: "Ranks the tasks by the use case they exercise (refund, escalation, tool call, etc.) and shows the pass/fail split for each. The use case at the top is the one the agent struggles with most, usually a better fix target than picking off individual failing tasks.",
@@ -29,7 +29,7 @@ export const CHART_GUIDE = {
   tools_failure:
     "The share of each tool's calls that failed, worst first, with failed / total calls on each bar. Anything past the 40% danger line is breaking the agent's flow. The agent can't reason its way around a broken tool, so route these to infra, not the prompt team.",
   slowest:
-    "The eight worst offenders on latency. These are the ones driving your p90 and p99 up. Fix one of these and the Latency percentiles curve visibly improves. If the top ones share a persona or use case, you've found a pattern, not a one-off.",
+    "The eight tasks that ran longest, by wall-clock duration. If the top ones share a persona or use case, you've found a pattern, not a one-off.",
   expensive:
     "The eight tasks that ate the most dollars this run. A handful of expensive tasks usually dominate the total. A shorter prompt on these often saves more than optimising every task. Cross-check with tokens: high cost + high tokens is prompt bloat, high cost + low tokens is a pricey model.",
 };

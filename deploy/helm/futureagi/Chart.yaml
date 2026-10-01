@@ -10,9 +10,9 @@ type: application
 # and helm-ci.yml fails when they drift from .release-please-manifest.json.
 # .github/workflows/helm-release.yml publishes each version once, to
 # oci://ghcr.io/future-agi/charts/futureagi, after that tag's images exist.
-version: 1.42.0 # x-release-please-version
+version: 1.44.0 # x-release-please-version
 # Default tag of every Future AGI image (image.tag overrides it).
-appVersion: "v1.42.0" # x-release-please-version
+appVersion: "v1.44.0" # x-release-please-version
 kubeVersion: ">=1.27.0-0"
 home: https://futureagi.com
 icon: https://raw.githubusercontent.com/future-agi/future-agi/main/frontend/public/logo/logo_single.svg
