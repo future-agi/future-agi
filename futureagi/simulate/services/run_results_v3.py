@@ -77,10 +77,8 @@ def call_outcome(call: CallExecution, live_eval_ids: set[str]) -> str:
 
 
 def _provider(call: CallExecution) -> str | None:
-    if isinstance(call.provider_call_data, dict):
-        for name, payload in call.provider_call_data.items():
-            if isinstance(payload, dict) and payload:
-                return str(name)
+    # provider_call_data is keyed by the transport that carried the call (hosted
+    # ALK always stores under "livekit"), so it cannot identify the tested agent.
     agent = call.test_execution.agent_definition
     return getattr(agent, "provider", None) if agent else None
 
