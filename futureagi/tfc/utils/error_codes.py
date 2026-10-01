@@ -760,6 +760,13 @@ err_dict = {
     "CUSTOM_EVAL_CONFIG_NOT_FOUND": [
         "Custom evaluation config not found for this organization."
     ],
+    "CUSTOM_EVAL_CONFIG_CANNOT_CHANGE_PROJECT": [
+        "An eval config cannot be moved to another project. Create it in that project instead."
+    ],
+    "EVAL_TASK_CANNOT_CHANGE_PROJECT": [
+        "An eval task cannot be moved to another project. Create a new eval task in that project instead."
+    ],
+    "EVAL_CONFIGS_NOT_IN_TASK_PROJECT": ["Eval configs not found for task project: {}"],
     "UNABLE_TO_FETCH_CHECKS": ["Unable to fetch data. Please try again later."],
     "MISSING_COLUMNS_FOR_DATASETS": ["Missing columns in datasets."],
     "FAILED_TO_DELETE_PROJECT": ["Unable to delete project. Please try again."],

@@ -73,8 +73,11 @@ class UpdateEvalTaskTool(BaseTool):
         from django.utils import timezone
 
         from tfc.temporal.eval_tasks.client import start_eval_task_workflow_sync
-        from tracer.models.custom_eval_config import CustomEvalConfig
         from tracer.models.eval_task import EvalTask, EvalTaskStatus
+        from tracer.selectors.eval_tasks.scope import (
+            eval_config_ids_outside_project,
+            eval_tasks_in_scope,
+        )
         from tracer.serializers.eval_task import EditEvalTaskSerializer
         from tracer.services.eval_tasks.entries import soft_delete_live
 
@@ -94,15 +97,18 @@ class UpdateEvalTaskTool(BaseTool):
                 error_code="VALIDATION_ERROR",
             )
 
-        # Get task with org check
+        # The eval-task endpoints' scope, not the organization alone: a task in
+        # another workspace, or in a deleted project, is not this caller's.
         try:
             eval_task = (
-                EvalTask.objects.select_related("project")
-                .prefetch_related("evals")
-                .get(
-                    id=params.eval_task_id,
-                    project__organization=context.organization,
+                eval_tasks_in_scope(
+                    EvalTask.objects,
+                    organization=context.organization,
+                    workspace=context.workspace,
                 )
+                .select_related("project")
+                .prefetch_related("evals")
+                .get(id=params.eval_task_id)
             )
         except EvalTask.DoesNotExist:
             return ToolResult.not_found("EvalTask", str(params.eval_task_id))
@@ -119,21 +125,24 @@ class UpdateEvalTaskTool(BaseTool):
                 error_code="VALIDATION_ERROR",
             )
 
-        # Validate evals if provided
+        # A task runs only its own project's eval configs, as the endpoints
+        # require: the reads find its results through each config's project.
         new_eval_ids = None
         if params.evals is not None:
-            eval_id_strs = [str(eid) for eid in params.evals]
-            eval_configs = CustomEvalConfig.objects.filter(
-                id__in=eval_id_strs, deleted=False
+            missing_ids = eval_config_ids_outside_project(
+                params.evals,
+                project_id=eval_task.project_id,
+                organization=context.organization,
+                workspace=context.workspace,
             )
-            found_ids = {str(ec.id) for ec in eval_configs}
-            missing_ids = set(eval_id_strs) - found_ids
             if missing_ids:
                 return ToolResult.error(
-                    f"CustomEvalConfig(s) not found: {', '.join(missing_ids)}",
+                    "CustomEvalConfig(s) not found on the task's project: "
+                    f"{', '.join(missing_ids)}. "
+                    "Ensure the eval configs are configured on this project.",
                     error_code="NOT_FOUND",
                 )
-            new_eval_ids = eval_id_strs
+            new_eval_ids = [str(eid) for eid in params.evals]
 
         # Build serializer data for validation
         update_data = {"edit_type": params.edit_type}
