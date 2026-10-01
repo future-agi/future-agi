@@ -317,6 +317,15 @@ export default function TraceTable({
             <MetricValue metric="tokens" value={t.tokens} loading={callLive} />
           </TableCell>
         )}
+        {show("aiInterruptions") && (
+          <TableCell sx={numCellSx} onClick={() => onOpen(t)}>
+            <MetricValue
+              metric="aiInterruptions"
+              value={t.aiInterruptions}
+              loading={callLive}
+            />
+          </TableCell>
+        )}
 
         {showEvals &&
           evals.map((e) => {
@@ -433,6 +442,11 @@ export default function TraceTable({
               )}
               {show("tokens") && (
                 <TableCell sx={{ ...headCellSx, width: 120 }}>Tokens</TableCell>
+              )}
+              {show("aiInterruptions") && (
+                <TableCell sx={{ ...headCellSx, width: 140 }}>
+                  AI interruptions
+                </TableCell>
               )}
               {showEvals &&
                 evals.map((e) => (

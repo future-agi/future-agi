@@ -197,6 +197,7 @@ export default function TraceGroupHeaderRow({
       {show("turns") && numCell(a.turns, "", "turns")}
       {show("latency") && numCell(a.latency, "ms", "latency")}
       {show("tokens") && numCell(a.tokens, "", undefined, "Total")}
+      {show("aiInterruptions") && numCell(a.aiInterruptions)}
       {showEvals &&
         evals.map((e) => {
           const ea = a.evals?.[e.id];

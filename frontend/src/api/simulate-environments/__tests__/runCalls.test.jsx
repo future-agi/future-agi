@@ -36,6 +36,7 @@ const payload = () => ({
       aggregates: {
         csat: 5.65,
         turns: 9.5,
+        ai_interruptions: 1.5,
         latency_ms: 465,
         tokens: 450,
         evaluations: { "eval-1": { scored: 8, score_sum: 6 } },
@@ -48,6 +49,7 @@ const payload = () => ({
       outcome: "passed",
       csat: 8.2,
       turn_count: 5,
+      ai_interruption_count: 2,
       latency_ms: 320,
       duration_seconds: 42.5,
       modality: "voice",
@@ -178,6 +180,7 @@ describe("mapCallRow", () => {
     expect(t.critical).toBe(false);
     expect(t.csat).toBe(8.2);
     expect(t.turns).toBe(5);
+    expect(t.aiInterruptions).toBe(2);
     expect(t.latencyMs).toBe(320);
     expect(t.durationMs).toBe(42500);
     expect(t.tokens).toBe(450);
@@ -226,6 +229,13 @@ describe("mapCallRow", () => {
     expect(t.evalResults).toHaveLength(0);
     expect(t.csat).toBeNull();
     expect(t.durationMs).toBeNull();
+    expect(t.aiInterruptions).toBeNull();
+  });
+
+  it("keeps a measured zero AI interruptions as 0, not a dash", () => {
+    expect(
+      mapCallRow({ id: "z", ai_interruption_count: 0 }).aiInterruptions,
+    ).toBe(0);
   });
 
   it("carries a removed eval's marker", () => {
@@ -278,6 +288,7 @@ describe("buildTraceColumns", () => {
         "turns",
         "latency",
         "tokens",
+        "aiInterruptions",
         "eval-1",
         "eval-2",
       ]),
@@ -325,6 +336,7 @@ describe("useRunCalls", () => {
     expect(result.current.groups).toHaveLength(1);
     expect(result.current.groups[0].label).toBe("Server-computed group");
     expect(result.current.groups[0].agg).toMatchObject({
+      aiInterruptions: 1.5,
       evals: { "eval-1": { scored: 8, scoreSum: 6 } },
     });
     expect(result.current.groups[0].rows.map((row) => row.id)).toEqual([

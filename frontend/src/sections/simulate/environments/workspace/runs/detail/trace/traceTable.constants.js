@@ -82,6 +82,13 @@ export const TRACE_COLUMNS = [
     width: 96,
     group: "System metrics",
   },
+  {
+    key: "aiInterruptions",
+    label: "AI interruptions",
+    defaultOn: true,
+    width: 140,
+    group: "System metrics",
+  },
   { key: "evals", label: "Evaluations", defaultOn: true, group: "Evaluations" },
 ];
 

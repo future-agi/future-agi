@@ -120,6 +120,7 @@ export function mapCallRow(row, evalColumns = []) {
     critical: false,
     csat: row?.csat != null ? Math.round(row.csat * 10) / 10 : null,
     turns: row?.turn_count ?? null,
+    aiInterruptions: row?.ai_interruption_count ?? null,
     latencyMs: row?.latency_ms ?? row?.avg_agent_latency ?? null,
     tokens: row?.tokens ?? row?.total_tokens ?? null,
     durationMs:
@@ -294,6 +295,7 @@ export function useRunCalls(executionId, opts = {}) {
           agg: {
             csat: group.aggregates?.csat ?? null,
             turns: group.aggregates?.turns ?? null,
+            aiInterruptions: group.aggregates?.ai_interruptions ?? null,
             latency: group.aggregates?.latency_ms ?? null,
             tokens: group.aggregates?.tokens ?? null,
             evals,

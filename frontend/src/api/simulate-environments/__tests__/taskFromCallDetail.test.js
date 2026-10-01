@@ -21,6 +21,7 @@ const CHAT_DETAIL = {
   duration_seconds: 42,
   turn_count: 6,
   total_tokens: 1200,
+  ai_interruption_count: 3,
   avg_agent_latency: null,
   avg_latency_ms: 850,
   overall_score: 3.46,
@@ -53,6 +54,7 @@ describe("taskFromCallDetail", () => {
       durationMs: 42000,
       turns: 6,
       tokens: 1200,
+      aiInterruptions: 3,
       latencyMs: 850,
       csat: 3.5,
     });

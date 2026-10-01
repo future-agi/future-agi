@@ -13,6 +13,7 @@ const row = (id) => ({
   turns: 3,
   latencyMs: 100,
   tokens: null,
+  aiInterruptions: 2,
   durationMs: 1000,
   personaDetails: { name: "P", voice: null, age: null, traits: [] },
   evalResults: [],
@@ -281,7 +282,13 @@ describe("TraceTable — eval cells without a score", () => {
 });
 
 describe("TraceTable — metric cells while the call runs", () => {
-  const empty = { csat: null, turns: null, latencyMs: null, tokens: null };
+  const empty = {
+    csat: null,
+    turns: null,
+    latencyMs: null,
+    tokens: null,
+    aiInterruptions: null,
+  };
   const renderCall = (executionStatus) =>
     render(
       <TraceTable
@@ -298,9 +305,10 @@ describe("TraceTable — metric cells while the call runs", () => {
         activeCallId="m1"
       />,
     );
-  // CSAT, Turns, Latency, Tokens are the four cells before the evals.
+  // CSAT, Turns, Latency, Tokens, AI interruptions are the five cells before
+  // the evals.
   const metricCells = () =>
-    [...document.querySelector('tr[aria-selected="true"]').children].slice(-4);
+    [...document.querySelector('tr[aria-selected="true"]').children].slice(-5);
 
   it("shows a skeleton in each empty metric cell while the call is live", () => {
     renderCall("ongoing");
@@ -316,6 +324,42 @@ describe("TraceTable — metric cells while the call runs", () => {
       expect(cell.querySelector(".MuiSkeleton-root")).toBeNull();
       expect(cell).toHaveTextContent("-");
     });
+  });
+});
+
+describe("TraceTable — AI interruptions column", () => {
+  // `evals` is empty, so the new column is each row's last cell.
+  const lastCell = (tr) => [...tr.children].at(-1);
+
+  it("heads the column right after Tokens", () => {
+    render(table());
+    const heads = [...document.querySelectorAll("thead th")].map(
+      (th) => th.textContent,
+    );
+    expect(heads.indexOf("AI interruptions")).toBe(heads.indexOf("Tokens") + 1);
+  });
+
+  it("shows the call's count in its own cell", () => {
+    render(table({ activeCallId: "a1" }));
+    expect(lastCell(activeRow())).toHaveTextContent("2");
+  });
+
+  it("shows the server's group average on the group row", () => {
+    render(
+      table({
+        groups: [{ ...group("A", ["a1"]), agg: { aiInterruptions: 1.5 } }],
+      }),
+    );
+    expect(lastCell(screen.getByText("A").closest("tr"))).toHaveTextContent(
+      "1.5",
+    );
+  });
+
+  it("shows a dash on the group row when the server sends no average", () => {
+    render(table());
+    expect(lastCell(screen.getByText("A").closest("tr"))).toHaveTextContent(
+      "-",
+    );
   });
 });
 

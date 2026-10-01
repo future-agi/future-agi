@@ -261,6 +261,8 @@ export function useRunDetail(runTestId, executionId, { envName } = {}) {
  * @property {?number} csat        Per-call CSAT, on the product's 0–10 scale
  *                                 (`overall_score`); null when absent.
  * @property {?number} turns       Turn count.
+ * @property {?number} aiInterruptions Times the agent talked over the caller;
+ *                                 voice only, null when not measured.
  * @property {?number} latencyMs   Mean latency, ms.
  * @property {?number} tokens      Token total.
  * @property {?number} durationMs  Call duration, ms.
