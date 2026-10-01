@@ -76,6 +76,20 @@ export const TRACE_COLUMNS = [
     group: "System metrics",
   },
   {
+    key: "stopLatency",
+    label: "Stop latency",
+    defaultOn: true,
+    width: 140,
+    group: "System metrics",
+  },
+  {
+    key: "aiInterruptions",
+    label: "AI interruptions",
+    defaultOn: true,
+    width: 150,
+    group: "System metrics",
+  },
+  {
     key: "tokens",
     label: "Tokens",
     defaultOn: true,
@@ -96,6 +110,12 @@ export const CALL_STATUS_CHIPS = {
   failed: { chip: "failed", label: "Failed" },
   cancelled: { chip: "cancelled", label: "Cancelled" },
 };
+
+// Columns a chat run has no data for: interruptions only happen on a voice call.
+export const VOICE_ONLY_COLUMNS = new Set(["aiInterruptions", "stopLatency"]);
+
+// An eval result's status while its grade is still on the way.
+export const PENDING_EVAL_STATUS = "pending";
 
 export const defaultTraceColumns = () =>
   new Set(TRACE_COLUMNS.filter((c) => c.defaultOn).map((c) => c.key));

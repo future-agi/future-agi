@@ -235,6 +235,11 @@ class RunCallSerializer(serializers.Serializer):
     completed_at = serializers.DateTimeField(allow_null=True)
     duration_seconds = serializers.FloatField(allow_null=True)
     latency_ms = serializers.FloatField(allow_null=True)
+    avg_stop_time_after_interruption = serializers.IntegerField(
+        allow_null=True,
+        help_text="Average stop time after caller interruption in milliseconds.",
+    )
+    ai_interruption_count = serializers.IntegerField(allow_null=True)
     turn_count = serializers.IntegerField(allow_null=True)
     tokens = serializers.IntegerField(allow_null=True)
     cost_cents = serializers.FloatField(allow_null=True)
@@ -265,6 +270,14 @@ class GroupAggregatesSerializer(serializers.Serializer):
     csat = serializers.FloatField(allow_null=True)
     turns = serializers.FloatField(allow_null=True)
     latency_ms = serializers.FloatField(allow_null=True)
+    avg_stop_time_after_interruption = serializers.FloatField(
+        allow_null=True,
+        help_text="Mean call stop latency in milliseconds, excluding unmeasured calls.",
+    )
+    ai_interruptions = serializers.FloatField(
+        allow_null=True,
+        help_text="Mean AI interruption count per call, excluding unmeasured calls.",
+    )
     tokens = serializers.FloatField(allow_null=True)
     evaluations = serializers.JSONField()
 

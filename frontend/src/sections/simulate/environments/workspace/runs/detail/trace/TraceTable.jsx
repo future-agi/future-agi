@@ -89,6 +89,7 @@ export default function TraceTable({
   columns,
   activeCallId = null,
   scrollRef,
+  runActive = false,
 }) {
   const [collapsed, setCollapsed] = useState(null);
   const activeRowRef = useRef(null);
@@ -98,6 +99,12 @@ export default function TraceTable({
   const visible = columns || defaultTraceColumns();
   const show = (key) => visible.has(key);
   const showEvals = show("evals");
+  // The server's group figures can't tell a call still running from one with no
+  // value. So a group counts as still coming while one of its calls here is
+  // live, or, while the run goes on, while some of its calls are on other pages.
+  const groupLive = (g) =>
+    g.rows.some((t) => LIVE_CALL_STATUSES.has(t.executionStatus)) ||
+    (runActive && g.rows.length < g.count);
 
   const collapsedSet = collapsed ?? new Set(groups.map((g) => g.label));
   const toggleCollapsed = (label) =>
@@ -312,6 +319,25 @@ export default function TraceTable({
             <MetricValue metric="latency" value={t.latencyMs} suffix="ms" loading={callLive} />
           </TableCell>
         )}
+        {show("stopLatency") && (
+          <TableCell sx={numCellSx} onClick={() => onOpen(t)}>
+            <MetricValue
+              metric="stopLatency"
+              value={t.stopLatencyMs}
+              suffix="ms"
+              loading={callLive}
+            />
+          </TableCell>
+        )}
+        {show("aiInterruptions") && (
+          <TableCell sx={numCellSx} onClick={() => onOpen(t)}>
+            <MetricValue
+              metric="aiInterruptions"
+              value={t.aiInterruptions}
+              loading={callLive}
+            />
+          </TableCell>
+        )}
         {show("tokens") && (
           <TableCell sx={numCellSx} onClick={() => onOpen(t)}>
             <MetricValue metric="tokens" value={t.tokens} loading={callLive} />
@@ -431,6 +457,16 @@ export default function TraceTable({
               {show("latency") && (
                 <TableCell sx={{ ...headCellSx, width: 96 }}>Latency</TableCell>
               )}
+              {show("stopLatency") && (
+                <TableCell sx={{ ...headCellSx, width: 140 }}>
+                  Stop latency
+                </TableCell>
+              )}
+              {show("aiInterruptions") && (
+                <TableCell sx={{ ...headCellSx, width: 150 }}>
+                  AI interruptions
+                </TableCell>
+              )}
               {show("tokens") && (
                 <TableCell sx={{ ...headCellSx, width: 120 }}>Tokens</TableCell>
               )}
@@ -458,6 +494,7 @@ export default function TraceTable({
                   <React.Fragment key={g.label}>
                     <TraceGroupHeaderRow
                       group={g}
+                      loading={groupLive(g)}
                       collapsed={collapsedSet.has(g.label)}
                       onToggle={() => toggleCollapsed(g.label)}
                       show={show}
@@ -481,4 +518,5 @@ TraceTable.propTypes = {
   columns: PropTypes.instanceOf(Set),
   activeCallId: PropTypes.string,
   scrollRef: PropTypes.oneOfType([PropTypes.func, PropTypes.object]),
+  runActive: PropTypes.bool,
 };

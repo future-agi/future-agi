@@ -12,13 +12,17 @@ import {
 import Iconify from "src/components/iconify";
 import { FilterPanel } from "src/components/filter-panel";
 import { useRunCalls } from "src/api/simulate-environments/runDetail";
+import { AGENT_TYPES } from "src/sections/agents/constants";
 
 import SectionCard from "../../../../components/SectionCard";
 import EmptyState from "../../../../components/EmptyState";
 import TraceTable from "./TraceTable";
 import { TraceGroupByPicker, TraceColumnsPicker } from "./TracePickers";
 import StatusFilterChips from "./StatusFilterChips";
-import { defaultTraceColumns } from "./traceTable.constants";
+import {
+  VOICE_ONLY_COLUMNS,
+  defaultTraceColumns,
+} from "./traceTable.constants";
 
 const STATUS_CHIP_API = {
   failing: "failed",
@@ -132,9 +136,25 @@ export default function RunTraceTable({
     groups = [],
     facets = {},
     totalPages = 1,
+    agentType = null,
+    runActive = false,
     isLoading,
     error,
   } = useRunCalls(executionId, listQuery);
+
+  // A chat run has no voice metrics. Without the run's agent type, the calls
+  // decide.
+  const chatRun = agentType
+    ? agentType === AGENT_TYPES.CHAT
+    : tasks.length > 0 &&
+      tasks.every((t) => t.simulationCallType === AGENT_TYPES.CHAT);
+  const shownColumns = useMemo(
+    () =>
+      chatRun
+        ? new Set([...visibleColumns].filter((k) => !VOICE_ONLY_COLUMNS.has(k)))
+        : visibleColumns,
+    [chatRun, visibleColumns],
+  );
 
 
   // The eval columns to render come from the data-driven column descriptors.
@@ -305,7 +325,11 @@ export default function RunTraceTable({
           setPage(1);
         }}
       />
-      <TraceColumnsPicker value={visibleColumns} onChange={setVisibleColumns} />
+      <TraceColumnsPicker
+        value={visibleColumns}
+        onChange={setVisibleColumns}
+        hidden={chatRun ? VOICE_ONLY_COLUMNS : undefined}
+      />
     </Stack>
   );
   const showPager = !isLoading && count > 0 && totalPages > 1;
@@ -345,13 +369,14 @@ export default function RunTraceTable({
           ) : (
             <TraceTable
               key={groupBy}
-              columns={visibleColumns}
+              columns={shownColumns}
               groups={groups}
               rows={groupBy ? null : tasks}
               evals={evals}
               onOpen={onOpenCall}
               activeCallId={activeCallId}
               scrollRef={tableScrollRef}
+              runActive={runActive}
             />
           )}
         </Box>

@@ -374,6 +374,10 @@ def build_call_rows(
                 "completed_at": call.completed_at,
                 "duration_seconds": call.duration_seconds,
                 "latency_ms": latency,
+                "avg_stop_time_after_interruption": (
+                    call.avg_stop_time_after_interruption_ms
+                ),
+                "ai_interruption_count": call.ai_interruption_count,
                 "turn_count": int(turn_count) if turn_count is not None else None,
                 "tokens": int(tokens) if tokens is not None else None,
                 "cost_cents": call.cost_cents,

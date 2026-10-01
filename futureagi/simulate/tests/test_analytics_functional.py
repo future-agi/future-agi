@@ -523,6 +523,14 @@ class TestRunResultsV3Views:
             "score_sum": 1,
         }
 
+    @pytest.mark.parametrize(
+        ("stop_latencies", "ai_interruptions", "avg_stop_latency", "avg_interruptions"),
+        [
+            ((1281, 0), (2, 1), 640.5, 1.5),
+            ((1281, None), (2, None), 1281, 2),
+            ((None, None), (None, None), None, None),
+        ],
+    )
     def test_group_aggregates_cover_all_filtered_pages(
         self,
         auth_client,
@@ -530,6 +538,10 @@ class TestRunResultsV3Views:
         eval_summary_te1_calls,
         pass_fail_eval_config,
         score_eval_config,
+        stop_latencies,
+        ai_interruptions,
+        avg_stop_latency,
+        avg_interruptions,
     ):
         for i, call in enumerate(eval_summary_te1_calls):
             call.call_metadata = {
@@ -540,6 +552,10 @@ class TestRunResultsV3Views:
             }
             call.overall_score = 6 + i * 2
             call.avg_agent_latency_ms = 100 + i * 100
+            call.avg_stop_time_after_interruption_ms = (
+                stop_latencies[i] if i < 2 else 9000
+            )
+            call.ai_interruption_count = ai_interruptions[i] if i < 2 else 100
             call.conversation_metrics_data = {
                 "turn_count": 2 + i * 2,
                 "total_tokens": 100 + i * 100,
@@ -566,6 +582,8 @@ class TestRunResultsV3Views:
             "csat": 7,
             "turns": 3,
             "latency_ms": 150,
+            "avg_stop_time_after_interruption": avg_stop_latency,
+            "ai_interruptions": avg_interruptions,
             "tokens": 300,
             "evaluations": {
                 str(pass_fail_eval_config.id): {"scored": 2, "score_sum": 2},
@@ -651,6 +669,39 @@ class TestRunResultsV3Views:
             row for row in response.json()["evaluations"] if row["id"] == score_id
         )
         assert entry["average_score"] == pytest.approx(expected)
+
+    @pytest.mark.parametrize(
+        ("stop_latency", "ai_interruptions"),
+        [(1281, 2), (0, 0), (None, None)],
+    )
+    def test_calls_include_interruption_metrics(
+        self,
+        auth_client,
+        test_execution,
+        analytics_call_executions,
+        stop_latency,
+        ai_interruptions,
+    ):
+        call = analytics_call_executions[0]
+        call.avg_stop_time_after_interruption_ms = stop_latency
+        call.ai_interruption_count = ai_interruptions
+        call.save(
+            update_fields=[
+                "avg_stop_time_after_interruption_ms",
+                "ai_interruption_count",
+            ]
+        )
+
+        response = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/calls/"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        row = next(
+            item for item in response.json()["results"] if item["id"] == str(call.id)
+        )
+        assert row["avg_stop_time_after_interruption"] == stop_latency
+        assert row["ai_interruption_count"] == ai_interruptions
 
     def test_calls_returns_normalized_rows_groups_and_facets(
         self, auth_client, test_execution, analytics_call_executions

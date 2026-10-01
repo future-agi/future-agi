@@ -165,6 +165,7 @@ const VoiceRightPanel = ({
       botWpm: data?.bot_wpm,
       userInterruptionCount: data?.user_interruption_count,
       aiInterruptionCount: data?.ai_interruption_count,
+      avgStopTimeAfterInterruptionMs: data?.avg_stop_time_after_interruption,
     };
 
     if (isSimulate) {

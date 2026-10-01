@@ -10,6 +10,9 @@ vi.mock("src/api/simulate-environments/runDetail", () => ({
 
 const { default: RunTraceTable } = await import("../RunTraceTable");
 const { default: TraceGroupHeaderRow } = await import("../TraceGroupHeaderRow");
+const { TRACE_COLUMNS, VOICE_ONLY_COLUMNS } = await import(
+  "../traceTable.constants"
+);
 
 const TASKS = [
   {
@@ -176,6 +179,28 @@ describe("RunTraceTable", () => {
         isLoading: false,
       };
     });
+  });
+
+  it("loads a group row while the run is going and the group's calls are on other pages", () => {
+    const group = {
+      label: "Refunds",
+      rows: [{ ...TASKS[0], executionStatus: "completed" }],
+      count: 3,
+      agg: {},
+    };
+    useRunCalls.mockReturnValue({
+      tasks: group.rows,
+      columns: COLUMNS,
+      groups: [group],
+      facets: FACETS,
+      count: 3,
+      totalPages: 2,
+      isLoading: false,
+      runActive: true,
+    });
+    renderTable();
+    const groupRow = screen.getByText("Refunds").closest("tr");
+    expect(groupRow.querySelector(".MuiSkeleton-root")).not.toBeNull();
   });
 
   it("renders the real calls, grouped by scenario, with the eval column", async () => {
@@ -411,6 +436,64 @@ describe("RunTraceTable", () => {
     await user.click(screen.getByRole("menuitem", { name: "Latency" }));
 
     expect(screen.queryByRole("columnheader", { name: "Latency" })).toBeNull();
+  });
+
+  describe("voice-only metrics on a chat run", () => {
+    const withRun = (agentType, simulationCallType) => {
+      const impl = useRunCalls.getMockImplementation();
+      useRunCalls.mockImplementation((...args) => {
+        const result = impl(...args);
+        return {
+          ...result,
+          agentType,
+          tasks: result.tasks.map((t) => ({ ...t, simulationCallType })),
+          groups: result.groups.map((g) => ({
+            ...g,
+            rows: g.rows.map((t) => ({ ...t, simulationCallType })),
+          })),
+        };
+      });
+    };
+    const VOICE_ONLY = ["AI interruptions", "Stop latency"];
+    const headers = () =>
+      VOICE_ONLY.map((name) => screen.queryByRole("columnheader", { name }));
+    const pickerItems = async (user) => {
+      await user.click(screen.getByRole("button", { name: /Columns/ }));
+      return VOICE_ONLY.map((name) => screen.queryByRole("menuitem", { name }));
+    };
+
+    it("shows the columns and picker entries on a voice run", async () => {
+      const user = userEvent.setup();
+      withRun("voice", "voice");
+      renderTable();
+      headers().forEach((h) => expect(h).toBeInTheDocument());
+      (await pickerItems(user)).forEach((item) =>
+        expect(item).toBeInTheDocument(),
+      );
+    });
+
+    it("hides the columns and picker entries on a chat run", async () => {
+      const user = userEvent.setup();
+      withRun("text", "text");
+      renderTable();
+      headers().forEach((h) => expect(h).toBeNull());
+      expect(screen.getByRole("button", { name: /Columns/ })).toHaveTextContent(
+        `/${TRACE_COLUMNS.length - VOICE_ONLY_COLUMNS.size}`,
+      );
+      (await pickerItems(user)).forEach((item) => expect(item).toBeNull());
+    });
+
+    it("falls back to the calls when the run has no agent type", () => {
+      withRun(null, "text");
+      renderTable();
+      headers().forEach((h) => expect(h).toBeNull());
+    });
+
+    it("keeps the column when the run's type and calls are unknown", () => {
+      withRun(null, undefined);
+      renderTable();
+      headers().forEach((h) => expect(h).toBeInTheDocument());
+    });
   });
 
   it("re-buckets the rows when the group-by axis changes to Status", async () => {

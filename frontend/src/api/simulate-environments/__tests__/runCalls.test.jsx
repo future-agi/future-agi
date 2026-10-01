@@ -37,6 +37,8 @@ const payload = () => ({
         csat: 5.65,
         turns: 9.5,
         latency_ms: 465,
+        avg_stop_time_after_interruption: 640.5,
+        ai_interruptions: 1.5,
         tokens: 450,
         evaluations: { "eval-1": { scored: 8, score_sum: 6 } },
       },
@@ -49,6 +51,8 @@ const payload = () => ({
       csat: 8.2,
       turn_count: 5,
       latency_ms: 320,
+      avg_stop_time_after_interruption: 1281,
+      ai_interruption_count: 2,
       duration_seconds: 42.5,
       modality: "voice",
       provider: "vapi",
@@ -111,6 +115,21 @@ const payload = () => ({
 
 describe("mapCallRow", () => {
   const evalCols = columnOrder();
+
+  it.each([0, null, undefined])(
+    "preserves missing and zero interruption metrics: %s",
+    (value) => {
+      const task = mapCallRow(
+        {
+          avg_stop_time_after_interruption: value,
+          ai_interruption_count: value,
+        },
+        [],
+      );
+      expect(task.stopLatencyMs).toBe(value ?? null);
+      expect(task.aiInterruptions).toBe(value ?? null);
+    },
+  );
 
   it("renders a live choices verdict by its label and inner score", () => {
     const row = {
@@ -179,6 +198,8 @@ describe("mapCallRow", () => {
     expect(t.csat).toBe(8.2);
     expect(t.turns).toBe(5);
     expect(t.latencyMs).toBe(320);
+    expect(t.stopLatencyMs).toBe(1281);
+    expect(t.aiInterruptions).toBe(2);
     expect(t.durationMs).toBe(42500);
     expect(t.tokens).toBe(450);
     // Routing hints carried onto the task for the call drawer.
@@ -277,6 +298,8 @@ describe("buildTraceColumns", () => {
         "csat",
         "turns",
         "latency",
+        "stopLatency",
+        "aiInterruptions",
         "tokens",
         "eval-1",
         "eval-2",
@@ -325,6 +348,8 @@ describe("useRunCalls", () => {
     expect(result.current.groups).toHaveLength(1);
     expect(result.current.groups[0].label).toBe("Server-computed group");
     expect(result.current.groups[0].agg).toMatchObject({
+      stopLatency: 640.5,
+      aiInterruptions: 1.5,
       evals: { "eval-1": { scored: 8, scoreSum: 6 } },
     });
     expect(result.current.groups[0].rows.map((row) => row.id)).toEqual([
@@ -356,6 +381,38 @@ describe("useRunCalls", () => {
       isLoading: true,
     });
     unmount();
+  });
+
+  it("carries the run's agent type from the execution", async () => {
+    axios.get.mockResolvedValue({
+      data: {
+        ...payload(),
+        execution: { status: "completed", agent_type: "text" },
+      },
+    });
+    const { result } = renderHook(() => useRunCalls("ex-chat"), {
+      wrapper: makeWrapper(),
+    });
+    await waitFor(() => expect(result.current.agentType).toBe("text"));
+  });
+
+  it("says whether the run is still going, from the execution's status", async () => {
+    axios.get.mockResolvedValue({
+      data: { ...payload(), execution: { status: "running" } },
+    });
+    const { result } = renderHook(() => useRunCalls("ex-live"), {
+      wrapper: makeWrapper(),
+    });
+    await waitFor(() => expect(result.current.runActive).toBe(true));
+
+    axios.get.mockResolvedValue({
+      data: { ...payload(), execution: { status: "completed" } },
+    });
+    const { result: done } = renderHook(() => useRunCalls("ex-done"), {
+      wrapper: makeWrapper(),
+    });
+    await waitFor(() => expect(done.current.isLoading).toBe(false));
+    expect(done.current.runActive).toBe(false);
   });
 
   it("polls active execution results and stops polling when the Run is terminal", async () => {

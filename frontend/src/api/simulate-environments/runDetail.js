@@ -266,6 +266,8 @@ export function useRunDetail(runTestId, executionId, { envName } = {}) {
  *                                 (`overall_score`); null when absent.
  * @property {?number} turns       Turn count.
  * @property {?number} latencyMs   Mean latency, ms.
+ * @property {?number} stopLatencyMs Mean stop time after interruption, ms.
+ * @property {?number} aiInterruptions AI interruption count.
  * @property {?number} tokens      Token total.
  * @property {?number} durationMs  Call duration, ms.
  * @property {?string} simulationCallType  "voice" | "text" — routes the call

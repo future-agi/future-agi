@@ -22825,6 +22825,9 @@ export interface RunCallApi {
   completed_at: string;
   duration_seconds: number;
   latency_ms: number;
+  /** Average stop time after caller interruption in milliseconds. */
+  avg_stop_time_after_interruption: number | null;
+  ai_interruption_count: number | null;
   turn_count: number;
   tokens: number;
   cost_cents: number;
@@ -22843,6 +22846,10 @@ export interface GroupAggregatesApi {
   csat: number;
   turns: number;
   latency_ms: number;
+  /** Mean call stop latency in milliseconds, excluding unmeasured calls. */
+  avg_stop_time_after_interruption: number | null;
+  /** Mean AI interruption count per call, excluding unmeasured calls. */
+  ai_interruptions: number | null;
   tokens: number;
   evaluations: GroupAggregatesApiEvaluations;
 }

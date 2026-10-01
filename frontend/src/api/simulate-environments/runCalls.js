@@ -121,6 +121,8 @@ export function mapCallRow(row, evalColumns = []) {
     csat: row?.csat != null ? Math.round(row.csat * 10) / 10 : null,
     turns: row?.turn_count ?? null,
     latencyMs: row?.latency_ms ?? row?.avg_agent_latency ?? null,
+    stopLatencyMs: row?.avg_stop_time_after_interruption ?? null,
+    aiInterruptions: row?.ai_interruption_count ?? null,
     tokens: row?.tokens ?? row?.total_tokens ?? null,
     durationMs:
       row?.duration_seconds != null
@@ -295,6 +297,8 @@ export function useRunCalls(executionId, opts = {}) {
             csat: group.aggregates?.csat ?? null,
             turns: group.aggregates?.turns ?? null,
             latency: group.aggregates?.latency_ms ?? null,
+            stopLatency: group.aggregates?.avg_stop_time_after_interruption ?? null,
+            aiInterruptions: group.aggregates?.ai_interruptions ?? null,
             tokens: group.aggregates?.tokens ?? null,
             evals,
           },
@@ -319,6 +323,8 @@ export function useRunCalls(executionId, opts = {}) {
     facets,
     summary,
     totalPages,
+    agentType: data?.execution?.agent_type ?? null,
+    runActive: ACTIVE_EXECUTION_STATUSES.has(data?.execution?.status),
     isLoading: !!executionId && query.isPending,
     error: query.error,
   };
