@@ -40,6 +40,7 @@ def agent_definition(db, organization, workspace):
     return AgentDefinition.objects.create(
         agent_name="Test Agent",
         agent_type=AgentDefinition.AgentTypeChoices.VOICE,
+        provider="vapi",
         contact_number="+15551230000",
         inbound=True,
         description="Test agent for resolver behavior",
