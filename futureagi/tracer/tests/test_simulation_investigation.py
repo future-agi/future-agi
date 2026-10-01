@@ -330,7 +330,7 @@ def test_debug_publication_retains_scoped_findings_for_grouping(
     assert snapshot["report"]["trace_id"] is None
 
 
-def test_debug_evidence_carries_the_runs_live_eval_verdicts(
+def test_debug_evidence_supplies_live_verdicts_for_the_worker_verifier(
     auth_client, organization, workspace
 ):
     scenario = Scenarios.objects.create(
@@ -351,7 +351,16 @@ def test_debug_evidence_carries_the_runs_live_eval_verdicts(
             "source": "harness",
             "status": "completed",
         },
-        # A verdict whose config no longer exists is not evidence.
+        "sub-goal-check": {
+            "name": "pickup_matches_caller",
+            "output": "Passed",
+            "output_type": "Pass/Fail",
+            "reason": "The harness judged the pickup correct.",
+            "source": "harness",
+            "kind": "judge",
+            "status": "completed",
+        },
+        # A verdict whose config no longer exists must not reach the verifier.
         str(uuid.uuid4()): {"name": "removed_eval", "output": "Failed"},
     }
     call.save(update_fields=["eval_outputs"])
@@ -370,7 +379,15 @@ def test_debug_evidence_carries_the_runs_live_eval_verdicts(
             "value": "Passed",
             "passed": True,
             "reason": "Replied in Spanish throughout.",
-        }
+            "category": "evaluation",
+        },
+        {
+            "name": "pickup_matches_caller",
+            "value": "Passed",
+            "passed": True,
+            "reason": "The harness judged the pickup correct.",
+            "category": "sub_goal",
+        },
     ]
 
 
@@ -812,6 +829,11 @@ def test_debug_diagnosis_counts_broken_goals_from_the_evals(
                     "finding_id": f"f{i}",
                     "requirement_id": goal,
                     "statement": statement,
+                    "recovery": (
+                        "recovered"
+                        if statement == "It skipped the booking offer in its greeting."
+                        else template["recovery"]
+                    ),
                 }
                 for i, (goal, statement) in enumerate(statements[call.id])
             ]
@@ -846,8 +868,8 @@ def test_debug_diagnosis_counts_broken_goals_from_the_evals(
     assert len(greeting["ways"]) == 1
     assert goals["ride_recorded"]["broken_call_ids"] == [str(looped.id)]
     assert goals["ride_recorded"]["tested_call_count"] == 3
-    # A finding on a goal the eval passed is never shown: the eval is the verdict.
-    # One on a goal the eval left undecided, or on no authored goal, is a one-off.
+    # An independently observed issue still appears when its goal's eval passed
+    # and the issue later recovered, without inflating the broken-goal count.
     # An agent mistake on a call our caller derailed is still the agent's.
     assert [way["title"] for way in body["one_offs"]] == [
         "It skipped the booking offer in its greeting.",
