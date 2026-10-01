@@ -154,6 +154,7 @@ def ingest_result_receipt(
     *,
     digest_body: dict[str, Any] | None = None,
     recovered_artifact_ids: list[str] | None = None,
+    replay_usage: bool = True,
 ) -> tuple[HostedHarnessReceipt, bool]:
     from simulate.services.harness_usage import replay_harness_usage
 
@@ -232,7 +233,8 @@ def ingest_result_receipt(
                     allocation, body, recovered_artifact_ids=recovered_artifact_ids
                 )
                 update_execution_counts(attempt.job)
-                transaction.on_commit(lambda: replay_harness_usage(attempt))
+                if replay_usage:
+                    transaction.on_commit(lambda: replay_harness_usage(attempt))
                 return existing, False
             if existing.attempt_number >= attempt.attempt_number:
                 raise HostedHarnessError(
@@ -295,7 +297,8 @@ def ingest_result_receipt(
             allocation, body, recovered_artifact_ids=recovered_artifact_ids
         )
         update_execution_counts(attempt.job)
-        transaction.on_commit(lambda: replay_harness_usage(attempt))
+        if replay_usage:
+            transaction.on_commit(lambda: replay_harness_usage(attempt))
         return receipt, True
 
 
