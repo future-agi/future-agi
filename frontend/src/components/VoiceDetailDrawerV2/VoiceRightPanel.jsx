@@ -215,9 +215,12 @@ const VoiceRightPanel = ({
   // field so the trace drawer's traffic-light bucketing kicks in.
   const normalizedEvals = useMemo(() => {
     if (!evalRows) return [];
-    const rows = Array.isArray(evalRows)
-      ? evalRows.map((e, i) => [e?.id || `eval-${i}`, e])
-      : Object.entries(evalRows);
+    // A sub-goal check is the scenario's, not an eval; simulate tags it.
+    const rows = (
+      Array.isArray(evalRows)
+        ? evalRows.map((e, i) => [e?.id || `eval-${i}`, e])
+        : Object.entries(evalRows)
+    ).filter(([, e]) => e?.kind !== "sub_goal");
 
     return rows.map(([id, e], i) => {
       const rawValue = e?.score ?? e?.output ?? e?.value;

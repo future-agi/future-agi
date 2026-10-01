@@ -18,7 +18,11 @@ from model_hub.models.evals_metric import EvalTemplate
 from simulate.models import AgentDefinition, Scenarios, SimulateEvalConfig
 from simulate.models.agent_optimiser import AgentOptimiser
 from simulate.models.agent_optimiser_run import AgentOptimiserRun
-from simulate.models.hosted_harness import HostedHarnessJob, HostedHarnessScenario
+from simulate.models.hosted_harness import (
+    HostedHarnessExecution,
+    HostedHarnessJob,
+    HostedHarnessScenario,
+)
 from simulate.models.run_test import RunTest
 from simulate.models.simulator_agent import SimulatorAgent
 from simulate.models.test_execution import CallExecution, TestExecution
@@ -1675,8 +1679,16 @@ class TestRunResultsV3Views:
         )
         warm, _ = build_evaluation_catalog(test_execution)
         assert warm == [
-            {"id": str(score_eval_config.id), "name": "Accuracy Score"},
-            {"id": str(pass_fail_eval_config.id), "name": "Quality Gate"},
+            {
+                "id": str(score_eval_config.id),
+                "name": "Accuracy Score",
+                "kind": "evaluation",
+            },
+            {
+                "id": str(pass_fail_eval_config.id),
+                "name": "Quality Gate",
+                "kind": "evaluation",
+            },
         ]
 
         new_config = SimulateEvalConfig.objects.create(
@@ -1688,9 +1700,17 @@ class TestRunResultsV3Views:
         columns, live_eval_ids = build_evaluation_catalog(test_execution)
 
         assert columns == [
-            {"id": str(new_config.id), "name": "Bonus Score"},
-            {"id": str(score_eval_config.id), "name": "Accuracy Score"},
-            {"id": str(pass_fail_eval_config.id), "name": "Quality Gate v2"},
+            {"id": str(new_config.id), "name": "Bonus Score", "kind": "evaluation"},
+            {
+                "id": str(score_eval_config.id),
+                "name": "Accuracy Score",
+                "kind": "evaluation",
+            },
+            {
+                "id": str(pass_fail_eval_config.id),
+                "name": "Quality Gate v2",
+                "kind": "evaluation",
+            },
         ]
         assert live_eval_ids == {
             str(new_config.id),
@@ -1826,8 +1846,8 @@ class TestRunResultsV3Views:
         columns, live_eval_ids = build_evaluation_catalog(test_execution)
 
         assert columns == [
-            {"id": config_id, "name": "Accuracy Score"},
-            {"id": "policy-check", "name": "Name B"},
+            {"id": config_id, "name": "Accuracy Score", "kind": "evaluation"},
+            {"id": "policy-check", "name": "Name B", "kind": "evaluation"},
         ]
         assert [column["id"] for column in columns].count(config_id) == 1
         assert live_eval_ids == {config_id}
@@ -1917,7 +1937,7 @@ class TestRunResultsV3Views:
         test_execution.completed_at = timezone.now()
         test_execution.save(update_fields=["status", "completed_at"])
         cache.set(
-            "simulate:v3:harness-eval-columns:"
+            "simulate:v3:harness-eval-columns:v2:"
             f"{test_execution.id}:{test_execution.completed_at.timestamp()}",
             ([], []),
         )
@@ -1925,6 +1945,284 @@ class TestRunResultsV3Views:
         columns, _ = build_evaluation_catalog(test_execution)
 
         assert "attempt-a" in {column["id"] for column in columns}
+
+    def test_a_sub_goal_check_keeps_its_kind_on_a_cached_load(
+        self, test_execution, analytics_call_executions
+    ):
+        """A harness column named after one of the call's receipt sub-goals is
+        a sub-goal column, on the first load and on the cached one."""
+        from simulate.services.run_results_v3 import build_evaluation_catalog
+
+        call = analytics_call_executions[0]
+        call.call_metadata = {
+            "hosted_harness_receipt": {
+                "sub_goals": [{"name": "identity_verified", "held": True}]
+            }
+        }
+        call.eval_outputs = {
+            "sub-goal-check": {
+                "source": "harness",
+                "name": "identity_verified",
+                "output": "Passed",
+                "output_type": "Pass/Fail",
+            },
+            "policy-check": {
+                "source": "harness",
+                "name": "Policy check",
+                "output": "Passed",
+                "output_type": "Pass/Fail",
+            },
+        }
+        call.save(update_fields=["call_metadata", "eval_outputs"])
+        expected = [
+            {"id": "policy-check", "name": "Policy check", "kind": "evaluation"},
+            {"id": "sub-goal-check", "name": "identity_verified", "kind": "sub_goal"},
+        ]
+
+        first, _ = build_evaluation_catalog(test_execution)
+        cached, _ = build_evaluation_catalog(test_execution)
+
+        assert first == expected
+        assert cached == expected
+
+    @staticmethod
+    def _harness_job(organization, workspace):
+        return HostedHarnessJob.no_workspace_objects.create(
+            organization=organization,
+            workspace=workspace,
+            run_id=uuid.uuid4(),
+            idempotency_key=uuid.uuid4().hex,
+            request_digest=uuid.uuid4().hex,
+            schema_version="1.6",
+            seed=1,
+            artifact_level="standard",
+            max_artifact_bytes=1024,
+            deadline_at=timezone.now() + timedelta(hours=1),
+            scenario_count=1,
+            payload={"metadata": {}, "runtime": {"max_duration_seconds": 600}},
+        )
+
+    def _link_call_to_scenario(self, layout, job, call, **scenario_fields):
+        if layout == "trial":
+            authored = HostedHarnessScenario.no_workspace_objects.create(
+                job=job, scenario_key="pin-reset", **scenario_fields
+            )
+            HostedHarnessExecution.no_workspace_objects.create(
+                job=job,
+                source_scenario=authored,
+                execution_key="pin-reset:1",
+                trial_index=1,
+                call_execution=call,
+            )
+            return authored
+        return HostedHarnessScenario.no_workspace_objects.create(
+            job=job, scenario_key="pin-reset", call_execution=call, **scenario_fields
+        )
+
+    def _call_row(self, auth_client, test_execution, call):
+        response = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/calls/"
+        )
+        assert response.status_code == status.HTTP_200_OK
+        return next(
+            row for row in response.json()["results"] if row["id"] == str(call.id)
+        )
+
+    @pytest.mark.parametrize("layout", ["trial", "registration"])
+    def test_calls_without_receipt_sub_goals_show_the_authored_scenarios_sub_goals(
+        self,
+        layout,
+        auth_client,
+        organization,
+        workspace,
+        test_execution,
+        analytics_call_executions,
+    ):
+        call = analytics_call_executions[0]
+        call.call_metadata = {"harness_scenario_key": "pin-reset"}
+        call.save(update_fields=["call_metadata"])
+        self._link_call_to_scenario(
+            layout,
+            self._harness_job(organization, workspace),
+            call,
+            sub_goals=["pin_verified", {"name": "exact_greeting"}],
+        )
+
+        row = self._call_row(auth_client, test_execution, call)
+
+        assert row["sub_goals"] == ["pin_verified", "exact_greeting"]
+
+    def test_receipt_sub_goals_take_priority_over_the_authored_scenarios(
+        self,
+        auth_client,
+        organization,
+        workspace,
+        test_execution,
+        analytics_call_executions,
+    ):
+        call = analytics_call_executions[0]
+        call.call_metadata = {
+            "hosted_harness_receipt": {
+                "sub_goals": [{"name": "identity_verified", "held": True}]
+            }
+        }
+        call.save(update_fields=["call_metadata"])
+        self._link_call_to_scenario(
+            "trial",
+            self._harness_job(organization, workspace),
+            call,
+            sub_goals=["pin_verified"],
+        )
+
+        row = self._call_row(auth_client, test_execution, call)
+
+        assert row["sub_goals"] == ["identity_verified"]
+
+    @pytest.mark.parametrize("layout", ["trial", "registration"])
+    def test_authored_sub_goals_filter_and_facet_like_the_rows_show_them(
+        self,
+        layout,
+        auth_client,
+        organization,
+        workspace,
+        test_execution,
+        analytics_call_executions,
+    ):
+        call = analytics_call_executions[0]
+        call.call_metadata = {"harness_scenario_key": "pin-reset"}
+        call.save(update_fields=["call_metadata"])
+        self._link_call_to_scenario(
+            layout,
+            self._harness_job(organization, workspace),
+            call,
+            sub_goals=["pin_verified", {"name": "exact_greeting"}],
+        )
+
+        response = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/calls/",
+            {"filters": json.dumps({"sub_goal": ["pin_verified"]})},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        body = response.json()
+        assert [row["id"] for row in body["results"]] == [str(call.id)]
+        assert body["count"] == 1
+        assert body["facets"]["sub_goal"] == [
+            {"value": "exact_greeting", "count": 1},
+            {"value": "pin_verified", "count": 1},
+        ]
+
+    @pytest.mark.parametrize("layout", ["trial", "registration"])
+    def test_a_pruned_scenarios_sub_goals_show_where_they_are_counted(
+        self,
+        layout,
+        auth_client,
+        organization,
+        workspace,
+        test_execution,
+        analytics_call_executions,
+    ):
+        call = analytics_call_executions[0]
+        call.call_metadata = {"harness_scenario_key": "pin-reset"}
+        call.save(update_fields=["call_metadata"])
+        authored = self._link_call_to_scenario(
+            layout,
+            self._harness_job(organization, workspace),
+            call,
+            sub_goals=["pin_verified"],
+        )
+        authored.deleted = True
+        authored.save(update_fields=["deleted"])
+
+        response = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/calls/"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        body = response.json()
+        row = next(row for row in body["results"] if row["id"] == str(call.id))
+        assert row["sub_goals"] == ["pin_verified"]
+        assert body["facets"]["sub_goal"] == [{"value": "pin_verified", "count": 1}]
+
+    def test_receipt_sub_goals_keep_the_authored_ones_out_of_filters_and_facets(
+        self,
+        auth_client,
+        organization,
+        workspace,
+        test_execution,
+        analytics_call_executions,
+    ):
+        call = analytics_call_executions[0]
+        call.call_metadata = {
+            "hosted_harness_receipt": {
+                "sub_goals": [{"name": "identity_verified", "held": True}]
+            }
+        }
+        call.save(update_fields=["call_metadata"])
+        self._link_call_to_scenario(
+            "trial",
+            self._harness_job(organization, workspace),
+            call,
+            sub_goals=["pin_verified"],
+        )
+
+        response = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/calls/",
+            {"filters": json.dumps({"sub_goal": ["pin_verified"]})},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        body = response.json()
+        assert body["results"] == []
+        assert body["facets"]["sub_goal"] == [
+            {"value": "identity_verified", "count": 1}
+        ]
+
+    @pytest.mark.parametrize("layout", ["trial", "registration"])
+    def test_calls_read_situation_and_outcome_from_the_authored_scenarios_row(
+        self,
+        layout,
+        auth_client,
+        organization,
+        workspace,
+        dataset_for_scenario,
+        test_execution,
+        analytics_call_executions,
+    ):
+        situation = Column.objects.get(dataset=dataset_for_scenario, name="situation")
+        outcome = Column.objects.create(
+            dataset=dataset_for_scenario,
+            name="outcome",
+            data_type="text",
+            source=SourceChoices.OTHERS.value,
+        )
+        scenario_row = Row.objects.create(dataset=dataset_for_scenario, order=1)
+        Cell.objects.create(
+            dataset=dataset_for_scenario,
+            column=situation,
+            row=scenario_row,
+            value="Caller forgot their guest PIN.",
+        )
+        Cell.objects.create(
+            dataset=dataset_for_scenario,
+            column=outcome,
+            row=scenario_row,
+            value="The agent resets the PIN after verifying identity.",
+        )
+        call = analytics_call_executions[0]
+        self._link_call_to_scenario(
+            layout,
+            self._harness_job(organization, workspace),
+            call,
+            dataset_row=scenario_row,
+        )
+
+        row = self._call_row(auth_client, test_execution, call)
+
+        assert row["scenario_details"] == "Caller forgot their guest PIN."
+        assert (
+            row["ideal_outcome"] == "The agent resets the PIN after verifying identity."
+        )
 
 
 # ============================================================================

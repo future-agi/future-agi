@@ -82,6 +82,43 @@ def _json_value(field: str, *keys: str):
     return expression
 
 
+# The rows show the authored scenario's sub-goals when the call carries none of
+# its own (see ``build_call_rows``), so the filter and facets read the same way.
+_NO_RESULT_SUB_GOALS = (
+    Q(call_metadata__hosted_harness_receipt__sub_goals__isnull=True)
+    | Q(call_metadata__hosted_harness_receipt__sub_goals=[])
+) & (Q(call_metadata__sub_goals__isnull=True) | Q(call_metadata__sub_goals=[]))
+
+
+def _authored_sub_goal_q(value: Any) -> Q:
+    """Match a call whose linked scenario lists ``value`` as a sub-goal.
+
+    A trial's source scenario wins over a registration, as in the rows.
+    """
+    execution = "hosted_harness_execution__source_scenario__sub_goals"
+    registration = "hosted_registration__sub_goals"
+    return (
+        Q(**{f"{execution}__contains": [value]})
+        | Q(**{f"{execution}__contains": [{"name": value}]})
+        | (
+            Q(hosted_harness_execution__isnull=True)
+            & (
+                Q(**{f"{registration}__contains": [value]})
+                | Q(**{f"{registration}__contains": [{"name": value}]})
+            )
+        )
+    )
+
+
+def _authored_sub_goals_expression():
+    empty = Value([], output_field=JSONField())
+    return Coalesce(
+        NullIf(F("hosted_harness_execution__source_scenario__sub_goals"), empty),
+        NullIf(F("hosted_registration__sub_goals"), empty),
+        output_field=JSONField(),
+    )
+
+
 def _eval_verdict_q(eval_ids: set[str], values: list[Any]) -> Q:
     verdict = Q(pk__in=[])
     for eval_id in eval_ids:
@@ -369,6 +406,7 @@ def apply_run_call_query(queryset: QuerySet, query: dict[str, Any]) -> QuerySet:
             )
             sub_goal_query |= Q(call_metadata__sub_goals__contains=[value])
             sub_goal_query |= Q(call_metadata__sub_goals__contains=[{"name": value}])
+            sub_goal_query |= _NO_RESULT_SUB_GOALS & _authored_sub_goal_q(value)
         queryset = queryset.filter(sub_goal_query)
 
     group_by = query.get("group_by")
@@ -487,8 +525,15 @@ def run_call_facets(
         queryset.order_by()
         .annotate(
             result_sub_goals=Coalesce(
-                _json_value("call_metadata", "hosted_harness_receipt", "sub_goals"),
-                _json_value("call_metadata", "sub_goals"),
+                NullIf(
+                    _json_value("call_metadata", "hosted_harness_receipt", "sub_goals"),
+                    Value([], output_field=JSONField()),
+                ),
+                NullIf(
+                    _json_value("call_metadata", "sub_goals"),
+                    Value([], output_field=JSONField()),
+                ),
+                _authored_sub_goals_expression(),
                 Value([], output_field=JSONField()),
                 output_field=JSONField(),
             )

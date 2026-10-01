@@ -53,7 +53,11 @@ export default function WorkspacePanels({
   canRun = false,
 }) {
   const navigate = useNavigate();
-  const { runs, isLoading: runsLoading } = useEnvironmentRuns(env, envState);
+  const {
+    runs = [],
+    count: runCount,
+    isLoading: runsLoading,
+  } = useEnvironmentRuns(env, envState);
 
   // Runs appears once the environment has a run. While the list is still
   // loading, a deep link to ?tab=runs keeps the tab so it does not bounce to
@@ -82,7 +86,8 @@ export default function WorkspacePanels({
   // `counts` (builder still streaming) hides every numeric badge.
   const badgeCount = (badge) => {
     if (!counts) return null;
-    if (badge === "runs") return runs.length;
+    // The runs list is paged; the total is the server's count, not the page.
+    if (badge === "runs") return runCount ?? runs.length;
     return counts[badge] ?? 0;
   };
 

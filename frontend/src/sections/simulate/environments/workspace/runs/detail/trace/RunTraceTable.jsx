@@ -12,7 +12,9 @@ import {
   Stack,
   Button,
   Chip,
+  FormControlLabel,
   Pagination,
+  Switch,
   Typography,
 } from "@mui/material";
 
@@ -28,6 +30,7 @@ import { TraceGroupByPicker, TraceColumnsPicker } from "./TracePickers";
 import StatusFilterChips from "./StatusFilterChips";
 import {
   CLOSED_GROUP_VIEW,
+  GROUPINGS,
   VOICE_ONLY_COLUMNS,
   defaultTraceColumns,
 } from "./traceTable.constants";
@@ -78,8 +81,6 @@ export default function RunTraceTable({
     defaultTraceColumns(),
   );
   const [filterAnchor, setFilterAnchor] = useState(null);
-  const [filters, setFilters] = useState(initialFilters);
-
   // Which groups are open lives here, not in the table: a filter's loading
   // and empty states unmount the table, and its own state would go with it,
   // folding every group back up. Labels differ per axis, so each axis keeps
@@ -116,6 +117,7 @@ export default function RunTraceTable({
     [groupBy],
   );
   const expandedForRef = useRef(null);
+  const [filters, setFilters] = useState(initialFilters);
 
   const serverFilters = useMemo(() => {
     const next = {};
@@ -201,12 +203,18 @@ export default function RunTraceTable({
     [chatRun, visibleColumns],
   );
 
-
   // The eval columns to render come from the data-driven column descriptors.
   const evals = useMemo(
     () =>
       columns
         .filter((c) => c.group === "Evaluations")
+        .map((c) => ({ id: c.key, name: c.label })),
+    [columns],
+  );
+  const subGoalEvals = useMemo(
+    () =>
+      columns
+        .filter((c) => c.group === "Sub-goal Results")
         .map((c) => ({ id: c.key, name: c.label })),
     [columns],
   );
@@ -293,6 +301,12 @@ export default function RunTraceTable({
     setStatusChip("all");
   };
 
+  // Like a "select all" box: on only while every group on screen is open,
+  // however they were opened.
+  const allOpen =
+    groups.length > 0 &&
+    groups.every((g) => groupView.all || groupView.expanded.has(g.label));
+
   const title = (
     <Stack direction="row" alignItems="center" spacing={1.25}>
       <TraceGroupByPicker
@@ -304,6 +318,35 @@ export default function RunTraceTable({
           setPage(1);
         }}
       />
+      {groupBy && (
+        <FormControlLabel
+          control={
+            <Switch
+              size="small"
+              checked={allOpen}
+              onChange={() =>
+                setGroupView((prev) =>
+                  allOpen
+                    ? CLOSED_GROUP_VIEW
+                    : {
+                        all: true,
+                        expanded: new Set([
+                          ...prev.expanded,
+                          ...groups.map((g) => g.label),
+                        ]),
+                      },
+                )
+              }
+            />
+          }
+          label="Expand all"
+          sx={{
+            ml: 0.5,
+            mr: 0,
+            ".MuiFormControlLabel-label": { typography: "s2" },
+          }}
+        />
+      )}
       <Button
         size="small"
         variant="outlined"
@@ -420,12 +463,18 @@ export default function RunTraceTable({
               groups={groups}
               rows={groupBy ? null : tasks}
               evals={evals}
-              onOpen={onOpenCall}
-              activeCallId={activeCallId}
-              scrollRef={tableScrollRef}
+              subGoalEvals={subGoalEvals}
               groupView={groupView}
               onGroupViewChange={setGroupView}
               expandedForRef={expandedForRef}
+              firstColumnLabel={
+                groupBy
+                  ? GROUPINGS.find((g) => g.id === groupBy)?.label
+                  : undefined
+              }
+              onOpen={onOpenCall}
+              activeCallId={activeCallId}
+              scrollRef={tableScrollRef}
               runActive={runActive}
             />
           )}

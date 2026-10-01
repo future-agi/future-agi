@@ -9,7 +9,6 @@ import {
   TableCell,
   TableHead,
   TableRow,
-  Button,
   tableBodyClasses,
   tableCellClasses,
   tableHeadClasses,
@@ -22,6 +21,9 @@ import { BUILD_TONES } from "../../../../buildEnvironment/buildTones";
 import {
   defaultTraceColumns,
   headCellSx,
+  bandCellSx,
+  GROUP_BAND_PX,
+  TRACE_COLUMNS,
   HEAD_ROW_PX,
   GROUP_ROW_PX,
   numCellSx,
@@ -31,6 +33,10 @@ import {
   CLOSED_GROUP_VIEW,
 } from "./traceTable.constants";
 import StatusChip from "../../StatusChip";
+import {
+  SubTasksCell,
+  TruncTooltip,
+} from "../../../scenarios/ScenarioTableCells";
 import { MetricValue, Score, Field, UnscoredEval } from "./traceCells";
 import TraceGroupHeaderRow from "./TraceGroupHeaderRow";
 
@@ -60,7 +66,12 @@ const lastRowDividersSx = {
 const TEXT_COL_WIDTH = { long: 260, short: 200 };
 // A call still in flight — its eval cells can only be waiting. `analyzing`
 // is a finished conversation whose evals are grading (the chat path).
-const LIVE_CALL_STATUSES = new Set(["pending", "queued", "ongoing", "analyzing"]);
+const LIVE_CALL_STATUSES = new Set([
+  "pending",
+  "queued",
+  "ongoing",
+  "analyzing",
+]);
 const textCellSx = (width) => ({
   ...bodyCellSx,
   width,
@@ -86,6 +97,8 @@ export default function TraceTable({
   groups,
   rows = null,
   evals,
+  subGoalEvals = [],
+  firstColumnLabel = "Run details",
   onOpen,
   columns,
   activeCallId = null,
@@ -111,6 +124,26 @@ export default function TraceTable({
   const visible = columns || defaultTraceColumns();
   const show = (key) => visible.has(key);
   const showEvals = show("evals");
+  const showSubGoalEvals = show("subGoalEvals");
+  const scoredColumns = [
+    ...(showSubGoalEvals ? subGoalEvals : []),
+    ...(showEvals ? evals : []),
+  ];
+  // The band above the head row: one segment per run of columns sharing a
+  // group, in column order, then the scored columns under their own names.
+  const bandSegments = TRACE_COLUMNS.filter(
+    (c) => c.key !== "evals" && c.key !== "subGoalEvals" && show(c.key),
+  ).reduce((acc, c) => {
+    const last = acc[acc.length - 1];
+    if (last && last.name === c.group) last.span += 1;
+    else acc.push({ name: c.group, span: 1 });
+    return acc;
+  }, []);
+  if (showSubGoalEvals && subGoalEvals.length)
+    bandSegments.push({ name: "Sub-goal Results", span: subGoalEvals.length });
+  if (showEvals && evals.length)
+    bandSegments.push({ name: "Evaluations", span: evals.length });
+  const headSx = { ...headCellSx, top: GROUP_BAND_PX };
   // The server's group figures can't tell a call still running from one with no
   // value. So a group counts as still coming while one of its calls here is
   // live, or, while the run goes on, while some of its calls are on other pages.
@@ -169,22 +202,6 @@ export default function TraceTable({
     activeRowRef.current?.scrollIntoView?.({ block: "nearest" });
   }, [activeCallId, activeGroupLabel, activeGroupCollapsed]);
 
-  // Like a "select all" box: it reads Collapse all only while every group on
-  // screen is open, however they were opened.
-  const allOpen = groups.length > 0 && groups.every((g) => isOpen(g.label));
-  const toggleAllGroups = () =>
-    setGroupView((prev) =>
-      allOpen
-        ? CLOSED_GROUP_VIEW
-        : {
-            all: true,
-            expanded: new Set([
-              ...prev.expanded,
-              ...groups.map((g) => g.label),
-            ]),
-          },
-    );
-
   const renderRow = (t) => {
     const outcome = runOutcome(t.status);
     const callLive = LIVE_CALL_STATUSES.has(t.executionStatus);
@@ -198,7 +215,7 @@ export default function TraceTable({
           cursor: "pointer",
           bgcolor: active ? "action.selected" : "transparent",
           // Scrolled into view below the pinned head and group rows, not under.
-          scrollMarginTop: HEAD_ROW_PX + GROUP_ROW_PX,
+          scrollMarginTop: GROUP_BAND_PX + HEAD_ROW_PX + GROUP_ROW_PX,
         }}
       >
         {show("callDetails") && (
@@ -325,7 +342,27 @@ export default function TraceTable({
             sx={textCellSx(TEXT_COL_WIDTH.long)}
             onClick={() => onOpen(t)}
           >
-            <Box sx={clampSx}>{t.scenarioDetails || t.scenario || "-"}</Box>
+            <Box sx={clampSx}>{t.scenario || "-"}</Box>
+          </TableCell>
+        )}
+
+        {show("situation") && (
+          <TableCell
+            sx={textCellSx(TEXT_COL_WIDTH.long)}
+            onClick={() => onOpen(t)}
+          >
+            <TruncTooltip title={t.scenarioDetails}>
+              <Box sx={clampSx}>{t.scenarioDetails || "-"}</Box>
+            </TruncTooltip>
+          </TableCell>
+        )}
+
+        {show("subGoals") && (
+          <TableCell
+            sx={textCellSx(TEXT_COL_WIDTH.long)}
+            onClick={() => onOpen(t)}
+          >
+            <SubTasksCell subTasks={t.subGoals} />
           </TableCell>
         )}
 
@@ -334,7 +371,9 @@ export default function TraceTable({
             sx={textCellSx(TEXT_COL_WIDTH.long)}
             onClick={() => onOpen(t)}
           >
-            <Box sx={clampSx}>{t.idealOutcome || "-"}</Box>
+            <TruncTooltip title={t.idealOutcome}>
+              <Box sx={clampSx}>{t.idealOutcome || "-"}</Box>
+            </TruncTooltip>
           </TableCell>
         )}
 
@@ -359,7 +398,12 @@ export default function TraceTable({
         )}
         {show("latency") && (
           <TableCell sx={numCellSx} onClick={() => onOpen(t)}>
-            <MetricValue metric="latency" value={t.latencyMs} suffix="ms" loading={callLive} />
+            <MetricValue
+              metric="latency"
+              value={t.latencyMs}
+              suffix="ms"
+              loading={callLive}
+            />
           </TableCell>
         )}
         {show("stopLatency") && (
@@ -387,147 +431,123 @@ export default function TraceTable({
           </TableCell>
         )}
 
-        {showEvals &&
-          evals.map((e) => {
-            const r = t.evalResults?.find((x) => x.id === e.id);
-            return (
-              <TableCell
-                key={e.id}
-                sx={{ ...bodyCellSx, p: 0, position: "relative" }}
-                onClick={() => onOpen(t)}
-              >
-                {r?.score != null || r?.label ? (
-                  <Score result={r} />
-                ) : (
-                  <UnscoredEval
-                    result={r}
-                    callLive={callLive}
-                    callStatus={t.executionStatus}
-                  />
-                )}
-              </TableCell>
-            );
-          })}
+        {scoredColumns.map((e) => {
+          const r = t.evalResults?.find((x) => x.id === e.id);
+          return (
+            <TableCell
+              key={e.id}
+              sx={{ ...bodyCellSx, p: 0, position: "relative" }}
+              onClick={() => onOpen(t)}
+            >
+              {r?.score != null || r?.label ? (
+                <Score result={r} />
+              ) : (
+                <UnscoredEval
+                  result={r}
+                  callLive={callLive}
+                  callStatus={t.executionStatus}
+                />
+              )}
+            </TableCell>
+          );
+        })}
       </TableRow>
     );
   };
 
-  // The table scrolls both ways in its own box, below the "Collapse all" bar,
-  // so the head and group rows stick to it rather than to the page.
+  // The table scrolls both ways in its own box, so the head and group rows
+  // stick to it rather than to the page.
   return (
     <Box sx={{ height: "100%", display: "flex", flexDirection: "column" }}>
-      {!rows && (
-        <Stack
-          direction="row"
-          alignItems="center"
-          spacing={1}
-          sx={{
-            flexShrink: 0,
-            px: 1.5,
-            py: 1,
-            borderBottom: "1px solid",
-            borderColor: "divider",
-          }}
-        >
-          <Button
-            size="small"
-            variant="text"
-            onClick={toggleAllGroups}
-            startIcon={
-              <Iconify
-                icon={
-                  allOpen
-                    ? "solar:alt-arrow-right-linear"
-                    : "solar:alt-arrow-down-linear"
-                }
-                width={14}
-              />
-            }
-            sx={{
-              typography: "s3",
-              fontWeight: "fontWeightSemiBold",
-              color: "text.secondary",
-              "&:hover": { bgcolor: "action.hover" },
-            }}
-          >
-            {allOpen ? "Collapse all" : "Expand all"}
-          </Button>
-          <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-            {groups.length} {groups.length === 1 ? "group" : "groups"}
-          </Typography>
-        </Stack>
-      )}
       <Box ref={scrollRef} sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
         <Table size="small" sx={lastRowDividersSx}>
           <TableHead>
+            {bandSegments.length > 0 && (
+              <TableRow>
+                {bandSegments.map((segment) => (
+                  <TableCell
+                    key={segment.name}
+                    colSpan={segment.span}
+                    sx={bandCellSx}
+                  >
+                    {segment.name}
+                  </TableCell>
+                ))}
+              </TableRow>
+            )}
             <TableRow>
               {show("callDetails") && (
-                <TableCell sx={{ ...headCellSx, width: 200 }}>
-                  Run details
+                <TableCell sx={{ ...headSx, width: 200 }}>
+                  {firstColumnLabel}
                 </TableCell>
               )}
               {show("status") && (
-                <TableCell sx={{ ...headCellSx, width: 120 }}>
-                  Status
-                </TableCell>
+                <TableCell sx={{ ...headSx, width: 120 }}>Status</TableCell>
               )}
               {show("persona") && (
-                <TableCell sx={{ ...headCellSx, width: 200 }}>
-                  Persona
-                </TableCell>
+                <TableCell sx={{ ...headSx, width: 200 }}>Persona</TableCell>
               )}
               {show("scenario") && (
-                <TableCell sx={{ ...headCellSx, width: TEXT_COL_WIDTH.long }}>
+                <TableCell sx={{ ...headSx, width: TEXT_COL_WIDTH.long }}>
                   Scenario
                 </TableCell>
               )}
+              {show("situation") && (
+                <TableCell sx={{ ...headSx, width: TEXT_COL_WIDTH.long }}>
+                  Situation
+                </TableCell>
+              )}
+              {show("subGoals") && (
+                <TableCell sx={{ ...headSx, width: TEXT_COL_WIDTH.long }}>
+                  Sub-goals
+                </TableCell>
+              )}
               {show("idealOutcome") && (
-                <TableCell sx={{ ...headCellSx, width: TEXT_COL_WIDTH.long }}>
+                <TableCell sx={{ ...headSx, width: TEXT_COL_WIDTH.long }}>
                   Ideal outcome
                 </TableCell>
               )}
               {show("conversationBranch") && (
-                <TableCell sx={{ ...headCellSx, width: TEXT_COL_WIDTH.short }}>
+                <TableCell sx={{ ...headSx, width: TEXT_COL_WIDTH.short }}>
                   Conversation branch
                 </TableCell>
               )}
               {show("csat") && (
-                <TableCell sx={{ ...headCellSx, width: 84 }}>CSAT</TableCell>
+                <TableCell sx={{ ...headSx, width: 84 }}>CSAT</TableCell>
               )}
               {show("turns") && (
-                <TableCell sx={{ ...headCellSx, width: 92 }}>Turns</TableCell>
+                <TableCell sx={{ ...headSx, width: 92 }}>Turns</TableCell>
               )}
               {show("latency") && (
-                <TableCell sx={{ ...headCellSx, width: 96 }}>Latency</TableCell>
+                <TableCell sx={{ ...headSx, width: 96 }}>Latency</TableCell>
               )}
               {show("stopLatency") && (
-                <TableCell sx={{ ...headCellSx, width: 140 }}>
+                <TableCell sx={{ ...headSx, width: 140 }}>
                   Stop latency
                 </TableCell>
               )}
               {show("aiInterruptions") && (
-                <TableCell sx={{ ...headCellSx, width: 150 }}>
+                <TableCell sx={{ ...headSx, width: 150 }}>
                   AI interruptions
                 </TableCell>
               )}
               {show("tokens") && (
-                <TableCell sx={{ ...headCellSx, width: 120 }}>Tokens</TableCell>
+                <TableCell sx={{ ...headSx, width: 120 }}>Tokens</TableCell>
               )}
-              {showEvals &&
-                evals.map((e) => (
-                  <TableCell key={e.id} sx={{ ...headCellSx, width: 150 }}>
-                    <Typography
-                      noWrap
-                      sx={{
-                        typography: "s2",
-                        fontWeight: "fontWeightMedium",
-                        color: "text.secondary",
-                      }}
-                    >
-                      {e.name}
-                    </Typography>
-                  </TableCell>
-                ))}
+              {scoredColumns.map((e) => (
+                <TableCell key={e.id} sx={{ ...headSx, width: 150 }}>
+                  <Typography
+                    noWrap
+                    sx={{
+                      typography: "s2",
+                      fontWeight: "fontWeightMedium",
+                      color: "text.secondary",
+                    }}
+                  >
+                    {e.name}
+                  </Typography>
+                </TableCell>
+              ))}
             </TableRow>
           </TableHead>
           <TableBody>
@@ -540,9 +560,10 @@ export default function TraceTable({
                       loading={groupLive(g)}
                       collapsed={!isOpen(g.label)}
                       onToggle={() => toggleGroup(g.label)}
+                      top={GROUP_BAND_PX + HEAD_ROW_PX}
                       show={show}
-                      showEvals={showEvals}
-                      evals={evals}
+                      showEvals={scoredColumns.length > 0}
+                      evals={scoredColumns}
                     />
                     {isOpen(g.label) && g.rows.map(renderRow)}
                   </React.Fragment>
@@ -557,6 +578,9 @@ TraceTable.propTypes = {
   groups: PropTypes.array.isRequired,
   rows: PropTypes.array,
   evals: PropTypes.array.isRequired,
+  subGoalEvals: PropTypes.array,
+  // The head of the first column: the axis the rows are grouped by.
+  firstColumnLabel: PropTypes.string,
   onOpen: PropTypes.func,
   columns: PropTypes.instanceOf(Set),
   activeCallId: PropTypes.string,

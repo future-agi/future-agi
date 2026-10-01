@@ -40680,6 +40680,12 @@ export const SimulateCallExecutionsReadResponse = zod.object({
         reason: zod.string().optional(),
         type: zod.string().optional(),
         template_type: zod.string().optional(),
+        kind: zod
+          .enum(["evaluation", "sub_goal"])
+          .optional()
+          .describe(
+            "Set on the v3 call detail: a sub-goal check or an evaluation",
+          ),
         visible: zod.boolean().optional(),
         error: zod.boolean().optional(),
         status: zod.string().optional(),
@@ -46528,6 +46534,12 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
         reason: zod.string().optional(),
         type: zod.string().optional(),
         template_type: zod.string().optional(),
+        kind: zod
+          .enum(["evaluation", "sub_goal"])
+          .optional()
+          .describe(
+            "Set on the v3 call detail: a sub-goal check or an evaluation",
+          ),
         visible: zod.boolean().optional(),
         error: zod.boolean().optional(),
         status: zod.string().optional(),
@@ -47660,6 +47672,7 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
     zod.object({
       id: zod.string().min(1),
       name: zod.string().min(1),
+      kind: zod.enum(["evaluation", "sub_goal"]),
     }),
   ),
 });

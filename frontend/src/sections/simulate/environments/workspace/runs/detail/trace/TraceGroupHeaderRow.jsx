@@ -1,12 +1,6 @@
 import PropTypes from "prop-types";
 import { alpha } from "@mui/material/styles";
-import {
-  Box,
-  Stack,
-  Typography,
-  TableCell,
-  TableRow,
-} from "@mui/material";
+import { Box, Stack, Typography, TableCell, TableRow } from "@mui/material";
 
 import Iconify from "src/components/iconify";
 import { interpolateColorBasedOnScore } from "src/utils/utils";
@@ -23,6 +17,8 @@ const DESC_KEYS = [
   "status",
   "persona",
   "scenario",
+  "situation",
+  "subGoals",
   "idealOutcome",
   "conversationBranch",
 ];
@@ -44,6 +40,7 @@ export default function TraceGroupHeaderRow({
   show,
   showEvals,
   evals,
+  top = HEAD_ROW_PX,
   loading = false,
 }) {
   // Pinned under the head row while its group's calls scroll past; the next
@@ -51,7 +48,7 @@ export default function TraceGroupHeaderRow({
   // the paper instead of replacing it.
   const cellSx = {
     position: "sticky",
-    top: HEAD_ROW_PX,
+    top,
     zIndex: 2,
     bgcolor: "background.paper",
     borderBottom: "1px solid",
@@ -62,7 +59,10 @@ export default function TraceGroupHeaderRow({
     ".MuiTableRow-root:hover &": { backgroundImage: rowHover },
     // The same column dividers as the head and call rows, so the grid runs
     // unbroken through the group row.
-    "&:not(:first-of-type)": { borderLeft: "1px solid", borderColor: "divider" },
+    "&:not(:first-of-type)": {
+      borderLeft: "1px solid",
+      borderColor: "divider",
+    },
   };
   const numCellSx = { ...cellSx, textAlign: "left" };
 
@@ -87,6 +87,18 @@ export default function TraceGroupHeaderRow({
         : "-";
     if (key === "scenario")
       return `${group.count} scenario${group.count === 1 ? "" : "s"}`;
+    if (key === "situation")
+      return `${group.count} situation${group.count === 1 ? "" : "s"}`;
+    if (key === "subGoals") {
+      // Counted from the rows here, so only once every call in the group is
+      // on this page: a page's share would read as the whole group's.
+      if (group.rows.length < group.count) return "-";
+      const subGoalCount = new Set(group.rows.flatMap((t) => t.subGoals || []))
+        .size;
+      return subGoalCount
+        ? `${subGoalCount} sub-goal${subGoalCount === 1 ? "" : "s"}`
+        : "-";
+    }
     if (key === "idealOutcome")
       return `${group.count} outcome${group.count === 1 ? "" : "s"}`;
     if (key === "conversationBranch")
@@ -175,7 +187,6 @@ export default function TraceGroupHeaderRow({
     </Stack>
   );
 
-
   return (
     <TableRow onClick={onToggle}>
       {descColumns.length === 0 ? (
@@ -184,10 +195,7 @@ export default function TraceGroupHeaderRow({
         </TableCell>
       ) : (
         descColumns.map((key, i) => (
-          <TableCell
-            key={key}
-            sx={{ ...cellSx, overflow: "hidden" }}
-          >
+          <TableCell key={key} sx={{ ...cellSx, overflow: "hidden" }}>
             {i === 0 ? (
               label
             ) : (
@@ -232,10 +240,7 @@ export default function TraceGroupHeaderRow({
           const meanScore = ea.scoreSum / ea.scored;
           const rate = Math.round(meanScore * 100);
           return (
-            <TableCell
-              key={`eval-${e.id}`}
-              sx={{ ...numCellSx, p: 0 }}
-            >
+            <TableCell key={`eval-${e.id}`} sx={{ ...numCellSx, p: 0 }}>
               <Box
                 sx={{
                   position: "absolute",
@@ -277,5 +282,6 @@ TraceGroupHeaderRow.propTypes = {
   show: PropTypes.func,
   showEvals: PropTypes.bool,
   evals: PropTypes.array,
+  top: PropTypes.number,
   loading: PropTypes.bool,
 };

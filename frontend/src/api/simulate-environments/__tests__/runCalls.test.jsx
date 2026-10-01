@@ -285,6 +285,18 @@ describe("mapCallRow", () => {
 });
 
 describe("buildTraceColumns", () => {
+  it("files a sub-goal check under Sub-goal Results, and an eval under Evaluations", () => {
+    const cols = buildTraceColumns([
+      { id: "sg-1", name: "pin_verified", kind: "sub_goal" },
+      { id: "ev-1", name: "Tone", kind: "evaluation" },
+      { id: "ev-2", name: "Legacy" },
+    ]);
+    const groupOf = (key) => cols.find((c) => c.key === key)?.group;
+    expect(groupOf("sg-1")).toBe("Sub-goal Results");
+    expect(groupOf("ev-1")).toBe("Evaluations");
+    expect(groupOf("ev-2")).toBe("Evaluations");
+  });
+
   it("emits the system columns plus one column per real eval", () => {
     const cols = buildTraceColumns(columnOrder());
     const keys = cols.map((c) => c.key);

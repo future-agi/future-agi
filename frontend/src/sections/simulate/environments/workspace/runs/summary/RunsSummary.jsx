@@ -5,6 +5,8 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
+import DataTablePagination from "src/components/data-table/DataTablePagination";
+import { RUNS_PAGE_SIZE } from "src/api/simulate-environments/runs";
 import SectionCard from "../../../components/SectionCard";
 import { useRunsSummary } from "./useRunsSummary";
 import SummaryGraph from "./SummaryGraph";
@@ -20,15 +22,27 @@ import { countCoveredScenarios } from "./summaryData";
 const MIN_SUMMARY_PX = 760;
 // How many eval lines the graph draws before the user picks their own.
 const DEFAULT_SHOWN_EVALS = 5;
+const GRAPH_RUN_OPTIONS = [1, 2, 3, 4, 5];
+const DEFAULT_GRAPH_RUNS = 1;
 
 export default function RunsSummary({ env, envState, onOpenRun, onGo }) {
-  const { rows, rowsChrono, evals, series, count, coveredScenarioCount, isLoading } =
-    useRunsSummary(env, envState);
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(RUNS_PAGE_SIZE);
+  const [graphRuns, setGraphRuns] = useState(DEFAULT_GRAPH_RUNS);
+  const {
+    rows,
+    rowsChrono,
+    evals,
+    series,
+    count,
+    coveredScenarioCount,
+    isLoading,
+  } = useRunsSummary(env, envState, { page, pageSize }, graphRuns);
   // The server counts over every run of the environment; the page-local
-  // fallbacks only serve mock runs and environments with no run-test.
-  const runCount = count ?? rows.length;
+  // fallback only serves mock runs and environments with no run-test.
   const scenarioCount =
-    coveredScenarioCount ?? countCoveredScenarios(rows, envState.scenarios?.length ?? 0);
+    coveredScenarioCount ??
+    countCoveredScenarios(rows, envState.scenarios?.length ?? 0);
 
   // Which eval lines to draw. Until the user picks, the first five; the last
   // one cannot be unticked (an empty chart reads as a bug, not a choice).
@@ -77,7 +91,7 @@ export default function RunsSummary({ env, envState, onOpenRun, onGo }) {
             Simulations summary
           </Typography>
           <Typography sx={{ typography: "s1", color: "text.secondary" }}>
-            {runCount} {runCount === 1 ? "run" : "runs"} · {scenarioCount} scenarios
+            {count} {count === 1 ? "run" : "runs"} · {scenarioCount} scenarios
           </Typography>
         </Box>
         <Stack direction="row" spacing={1} sx={{ flexShrink: 0 }}>
@@ -109,6 +123,19 @@ export default function RunsSummary({ env, envState, onOpenRun, onGo }) {
       >
         {/* eval filter + legend */}
         <Stack direction="row" alignItems="center" spacing={2} sx={{ px: 2.5, pt: 1.5, pb: 0.5, flexShrink: 0 }}>
+          <TextField
+            select size="small"
+            value={graphRuns}
+            onChange={(e) => setGraphRuns(Number(e.target.value))}
+            inputProps={{ "aria-label": "Runs in graph" }}
+            sx={{ width: 150, flexShrink: 0, "& .MuiInputBase-input": { typography: "s2", py: 0.5 } }}
+          >
+            {GRAPH_RUN_OPTIONS.map((n) => (
+              <MenuItem key={n} value={n} sx={{ typography: "s2", py: 0.5 }}>
+                Latest {n} {n === 1 ? "run" : "runs"}
+              </MenuItem>
+            ))}
+          </TextField>
           {evals.length > 0 && (
             <TextField
               select size="small"
@@ -142,11 +169,25 @@ export default function RunsSummary({ env, envState, onOpenRun, onGo }) {
 
         <Box sx={{ px: 2.5, py: 1.25, borderTop: "1px solid", borderColor: "divider", flexShrink: 0 }}>
           <Typography sx={{ typography: "s1", fontWeight: "fontWeightSemiBold" }}>
-            Runs ({rows.length})
+            Runs ({count})
           </Typography>
         </Box>
 
         <SummaryTable rows={rows} evals={evals} onOpenRun={onOpenRun} />
+        {count > RUNS_PAGE_SIZE && (
+          <Box sx={{ flexShrink: 0, borderTop: "1px solid", borderColor: "divider" }}>
+            <DataTablePagination
+              page={page}
+              pageSize={pageSize}
+              total={count}
+              onPageChange={setPage}
+              onPageSizeChange={(n) => {
+                setPageSize(n);
+                setPage(0);
+              }}
+            />
+          </Box>
+        )}
       </SectionCard>
     </Box>
   );

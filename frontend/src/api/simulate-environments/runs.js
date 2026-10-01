@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import axios, { endpoints } from "src/utils/axios";
 import { paths } from "src/routes/paths";
@@ -21,9 +21,13 @@ const STOPPABLE_RUN_STATUSES = STOPPABLE_STATUSES.filter(
 
 // Reads the raw executions payload ({ results, count }) for a run-test. The
 // endpoint is already registered — this adds no apiPath.
-export function listRunTestExecutions(runTestId) {
+export const RUNS_PAGE_SIZE = 10;
+
+export function listRunTestExecutions(runTestId, { page, limit } = {}) {
   return axios
-    .get(endpoints.runTests.detailExecutions(runTestId))
+    .get(endpoints.runTests.detailExecutions(runTestId), {
+      params: page ? { page, limit } : undefined,
+    })
     .then((res) => res.data);
 }
 
@@ -103,58 +107,73 @@ export function executionToRun(raw) {
 // `_execution_payload`: the count of the run-test's executions created no later
 // than this one). The list arrives newest-first (server `-created_at`) and
 // `count` is the run-test's total, so on this page that server count is exactly
-// `count - index` for row `index` — the same number the detail header reads, so
-// the two never disagree, and it stays right when the list is paginated (a
-// 3-row page of 12 runs is Run 12..10, not Run 3..1). The server order is
+// `count - offset - index` for row `index`, where `offset` is the number of rows
+// on earlier pages — the same number the detail header reads, so the two never
+// disagree (page 2 of 12 runs at 10 per page is Run 2..1). The server order is
 // trusted rather than re-sorted: a pending newest run has a null start_time, and
 // sorting by it would drop it to the bottom and mislabel it Run 1. Exported so
 // `useRunDetail` reuses this exact derivation.
-export function mapExecutions(payload) {
+export function mapExecutions(payload, offset = 0) {
   const results = payload?.results ?? [];
   const count = payload?.count ?? results.length;
   return results.map((raw, index) => {
-    const ordinal = count - index;
+    const ordinal = count - offset - index;
     return { ...executionToRun(raw), ordinal, label: `Run ${ordinal}` };
   });
 }
 
-export function useEnvironmentRuns(env, envState) {
+export function useEnvironmentRuns(
+  env,
+  envState,
+  { page = 0, pageSize = RUNS_PAGE_SIZE } = {},
+) {
   const [params] = useSearchParams();
   // Dev-only QA switch — never let it populate fixture runs in a prod build.
   const mockRuns = import.meta.env.DEV && params.get("mockRuns") === "1";
   const runTestId = env?.platform?.runTestId;
 
   const query = useQuery({
-    queryKey: ["run-test-executions", runTestId],
-    queryFn: () => listRunTestExecutions(runTestId),
+    queryKey: ["run-test-executions", runTestId, page, pageSize],
+    queryFn: () =>
+      listRunTestExecutions(runTestId, { page: page + 1, limit: pageSize }).then(
+        (payload) => ({
+          runs: mapExecutions(payload, page * pageSize),
+          count: payload?.count ?? 0,
+          coveredScenarioCount: payload?.covered_scenario_count ?? null,
+        }),
+      ),
     enabled: !!runTestId && !mockRuns,
-    // `count` and `covered_scenario_count` describe the whole run-test, not the
-    // page, so the summary header reads them instead of counting rows.
-    select: (payload) => ({
-      runs: mapExecutions(payload),
-      count: payload?.count ?? null,
-      coveredScenarioCount: payload?.covered_scenario_count ?? null,
-    }),
+    placeholderData: keepPreviousData,
     refetchInterval: (query) =>
-      (query.state.data?.results || []).some(
-        (row) => !TERMINAL_STATUSES.includes(row?.status),
-      )
+      (query.state.data?.runs || []).some((run) => run.status === "running")
         ? 2000
         : false,
   });
 
+  const pageOf = (list) => list.slice(page * pageSize, (page + 1) * pageSize);
   if (mockRuns) {
-    return { runs: MOCK_RUNS, count: null, coveredScenarioCount: null, isLoading: false };
+    return {
+      runs: pageOf(MOCK_RUNS),
+      count: MOCK_RUNS.length,
+      coveredScenarioCount: null,
+      isLoading: false,
+    };
   }
   if (runTestId) {
     return {
       runs: query.data?.runs ?? [],
-      count: query.data?.count ?? null,
+      count: query.data?.count ?? 0,
       coveredScenarioCount: query.data?.coveredScenarioCount ?? null,
       isLoading: query.isLoading,
     };
   }
-  return { runs: envState?.runs ?? [], count: null, coveredScenarioCount: null, isLoading: false };
+  const localRuns = envState?.runs ?? [];
+  return {
+    runs: pageOf(localRuns),
+    count: localRuns.length,
+    coveredScenarioCount: null,
+    isLoading: false,
+  };
 }
 
 // Where "Run simulation" / "Start simulation" navigates. A built environment

@@ -19911,6 +19911,17 @@ export const CallExecutionDetailApiStatus = {
 } as const;
 
 /**
+ * Set on the v3 call detail: a sub-goal check or an evaluation
+ */
+export type CallExecutionEvalMetricApiKind =
+  (typeof CallExecutionEvalMetricApiKind)[keyof typeof CallExecutionEvalMetricApiKind];
+
+export const CallExecutionEvalMetricApiKind = {
+  evaluation: "evaluation",
+  sub_goal: "sub_goal",
+} as const;
+
+/**
  * number | bool | string | list[string] | null
  */
 export type CallExecutionEvalMetricApiValue = { [key: string]: unknown };
@@ -19931,6 +19942,8 @@ export interface CallExecutionEvalMetricApi {
   reason?: string;
   type?: string;
   template_type?: string;
+  /** Set on the v3 call detail: a sub-goal check or an evaluation */
+  kind?: CallExecutionEvalMetricApiKind;
   visible?: boolean;
   error?: boolean;
   status?: string;
@@ -22885,11 +22898,20 @@ export interface RunFacetsApi {
   status: FacetValueApi[];
 }
 
+export type EvaluationColumnApiKind =
+  (typeof EvaluationColumnApiKind)[keyof typeof EvaluationColumnApiKind];
+
+export const EvaluationColumnApiKind = {
+  evaluation: "evaluation",
+  sub_goal: "sub_goal",
+} as const;
+
 export interface EvaluationColumnApi {
   /** @minLength 1 */
   id: string;
   /** @minLength 1 */
   name: string;
+  kind: EvaluationColumnApiKind;
 }
 
 export interface RunCallsV3ResponseApi {

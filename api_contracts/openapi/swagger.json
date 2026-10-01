@@ -128411,6 +128411,15 @@
                     "type": "string",
                     "x-nullable": true
                 },
+                "kind": {
+                    "title": "Kind",
+                    "description": "Set on the v3 call detail: a sub-goal check or an evaluation",
+                    "type": "string",
+                    "enum": [
+                        "evaluation",
+                        "sub_goal"
+                    ]
+                },
                 "visible": {
                     "title": "Visible",
                     "type": "boolean"
@@ -136765,7 +136774,8 @@
         "EvaluationColumn": {
             "required": [
                 "id",
-                "name"
+                "name",
+                "kind"
             ],
             "type": "object",
             "properties": {
@@ -136778,6 +136788,14 @@
                     "title": "Name",
                     "type": "string",
                     "minLength": 1
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "enum": [
+                        "evaluation",
+                        "sub_goal"
+                    ]
                 }
             }
         },

@@ -221,6 +221,11 @@ class CallExecutionEvalMetricSerializer(serializers.Serializer):
     template_type = serializers.CharField(
         allow_blank=True, allow_null=True, required=False
     )
+    kind = serializers.ChoiceField(
+        choices=["evaluation", "sub_goal"],
+        required=False,
+        help_text="Set on the v3 call detail: a sub-goal check or an evaluation",
+    )
     visible = serializers.BooleanField(required=False)
     error = serializers.BooleanField(required=False)
     status = serializers.CharField(allow_blank=True, required=False)
