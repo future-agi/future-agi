@@ -1,5 +1,12 @@
 import PropTypes from "prop-types";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   Box,
   Stack,
@@ -20,6 +27,7 @@ import TraceTable from "./TraceTable";
 import { TraceGroupByPicker, TraceColumnsPicker } from "./TracePickers";
 import StatusFilterChips from "./StatusFilterChips";
 import {
+  CLOSED_GROUP_VIEW,
   VOICE_ONLY_COLUMNS,
   defaultTraceColumns,
 } from "./traceTable.constants";
@@ -71,6 +79,43 @@ export default function RunTraceTable({
   );
   const [filterAnchor, setFilterAnchor] = useState(null);
   const [filters, setFilters] = useState(initialFilters);
+
+  // Which groups are open lives here, not in the table: a filter's loading
+  // and empty states unmount the table, and its own state would go with it,
+  // folding every group back up. Labels differ per axis, so each axis keeps
+  // its own opened set and a change under one never touches another; Expand
+  // all carries over.
+  const [groupState, setGroupState] = useState({
+    all: false,
+    expandedByAxis: {},
+  });
+  const groupView = useMemo(
+    () => ({
+      all: groupState.all,
+      expanded:
+        groupState.expandedByAxis[groupBy] ?? CLOSED_GROUP_VIEW.expanded,
+    }),
+    [groupState, groupBy],
+  );
+  const setGroupView = useCallback(
+    (update) =>
+      setGroupState((prev) => {
+        const current = {
+          all: prev.all,
+          expanded: prev.expandedByAxis[groupBy] ?? CLOSED_GROUP_VIEW.expanded,
+        };
+        const next = typeof update === "function" ? update(current) : update;
+        // Collapse all closes every axis, not just the one on screen.
+        if (next === CLOSED_GROUP_VIEW)
+          return { all: false, expandedByAxis: {} };
+        return {
+          all: next.all,
+          expandedByAxis: { ...prev.expandedByAxis, [groupBy]: next.expanded },
+        };
+      }),
+    [groupBy],
+  );
+  const expandedForRef = useRef(null);
 
   const serverFilters = useMemo(() => {
     const next = {};
@@ -254,6 +299,8 @@ export default function RunTraceTable({
         value={groupBy}
         onChange={(value) => {
           setGroupBy(value);
+          // The open call's group has to open again under the new axis.
+          expandedForRef.current = null;
           setPage(1);
         }}
       />
@@ -376,6 +423,9 @@ export default function RunTraceTable({
               onOpen={onOpenCall}
               activeCallId={activeCallId}
               scrollRef={tableScrollRef}
+              groupView={groupView}
+              onGroupViewChange={setGroupView}
+              expandedForRef={expandedForRef}
               runActive={runActive}
             />
           )}

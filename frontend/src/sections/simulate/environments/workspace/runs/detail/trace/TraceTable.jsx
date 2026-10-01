@@ -28,6 +28,7 @@ import {
   bodyCellSx,
   runOutcome,
   CALL_STATUS_CHIPS,
+  CLOSED_GROUP_VIEW,
 } from "./traceTable.constants";
 import StatusChip from "../../StatusChip";
 import { MetricValue, Score, Field, UnscoredEval } from "./traceCells";
@@ -89,13 +90,24 @@ export default function TraceTable({
   columns,
   activeCallId = null,
   scrollRef,
+  groupView: groupViewProp,
+  onGroupViewChange,
+  expandedForRef: expandedForRefProp,
   runActive = false,
 }) {
-  const [collapsed, setCollapsed] = useState(null);
+  // A parent that unmounts this table (a filter's loading or empty state)
+  // passes the open/closed groups in, so they survive the remount. Without
+  // one, the table keeps them itself.
+  const [ownGroupView, setOwnGroupView] = useState(CLOSED_GROUP_VIEW);
+  const groupView = onGroupViewChange
+    ? groupViewProp ?? CLOSED_GROUP_VIEW
+    : ownGroupView;
+  const setGroupView = onGroupViewChange || setOwnGroupView;
   const activeRowRef = useRef(null);
   // The call already expanded for, so a group the user collapses afterwards
   // stays collapsed across refetches.
-  const expandedForRef = useRef(null);
+  const ownExpandedForRef = useRef(null);
+  const expandedForRef = expandedForRefProp || ownExpandedForRef;
   const visible = columns || defaultTraceColumns();
   const show = (key) => visible.has(key);
   const showEvals = show("evals");
@@ -106,14 +118,36 @@ export default function TraceTable({
     g.rows.some((t) => LIVE_CALL_STATUSES.has(t.executionStatus)) ||
     (runActive && g.rows.length < g.count);
 
-  const collapsedSet = collapsed ?? new Set(groups.map((g) => g.label));
-  const toggleCollapsed = (label) =>
-    setCollapsed(() => {
-      const next = new Set(collapsedSet);
-      if (next.has(label)) next.delete(label);
-      else next.add(label);
-      return next;
+  const isOpen = (label) => groupView.all || groupView.expanded.has(label);
+  // Closing a group ends Expand all, but the groups it opened stay open.
+  const toggleGroup = (label) =>
+    setGroupView((prev) => {
+      const expanded = new Set(prev.expanded);
+      if (prev.all || expanded.has(label)) {
+        if (prev.all) groups.forEach((g) => expanded.add(g.label));
+        expanded.delete(label);
+        return { all: false, expanded };
+      }
+      expanded.add(label);
+      return { ...prev, expanded };
     });
+  // Under Expand all, groups that turn up from another filter or page open
+  // too. Record them, so closing one later leaves these open.
+  useEffect(() => {
+    if (!groupView.all || groups.every((g) => groupView.expanded.has(g.label)))
+      return;
+    setGroupView((prev) =>
+      prev.all
+        ? {
+            ...prev,
+            expanded: new Set([
+              ...prev.expanded,
+              ...groups.map((g) => g.label),
+            ]),
+          }
+        : prev,
+    );
+  }, [groupView, groups, setGroupView]);
   // The open call's row must be visible: expand its group once per call, then
   // bring the row into view.
   const activeGroupLabel = activeCallId
@@ -122,24 +156,33 @@ export default function TraceTable({
   useEffect(() => {
     if (!activeGroupLabel || expandedForRef.current === activeCallId) return;
     expandedForRef.current = activeCallId;
-    setCollapsed((prev) => {
-      const next = new Set(prev ?? groups.map((g) => g.label));
-      next.delete(activeGroupLabel);
-      return next;
-    });
-  }, [activeCallId, activeGroupLabel, groups]);
+    setGroupView((prev) =>
+      prev.all || prev.expanded.has(activeGroupLabel)
+        ? prev
+        : { ...prev, expanded: new Set([...prev.expanded, activeGroupLabel]) },
+    );
+  }, [activeCallId, activeGroupLabel, expandedForRef, setGroupView]);
   // Its row only mounts once its group expands, so scroll again when that
   // happens — not just when the call changes.
-  const activeGroupCollapsed = collapsedSet.has(activeGroupLabel);
+  const activeGroupCollapsed = !isOpen(activeGroupLabel);
   useEffect(() => {
     activeRowRef.current?.scrollIntoView?.({ block: "nearest" });
   }, [activeCallId, activeGroupLabel, activeGroupCollapsed]);
 
-  const allCollapsed =
-    groups.length > 0 && groups.every((g) => collapsedSet.has(g.label));
+  // Like a "select all" box: it reads Collapse all only while every group on
+  // screen is open, however they were opened.
+  const allOpen = groups.length > 0 && groups.every((g) => isOpen(g.label));
   const toggleAllGroups = () =>
-    setCollapsed(
-      allCollapsed ? new Set() : new Set(groups.map((g) => g.label)),
+    setGroupView((prev) =>
+      allOpen
+        ? CLOSED_GROUP_VIEW
+        : {
+            all: true,
+            expanded: new Set([
+              ...prev.expanded,
+              ...groups.map((g) => g.label),
+            ]),
+          },
     );
 
   const renderRow = (t) => {
@@ -393,9 +436,9 @@ export default function TraceTable({
             startIcon={
               <Iconify
                 icon={
-                  allCollapsed
-                    ? "solar:alt-arrow-down-linear"
-                    : "solar:alt-arrow-right-linear"
+                  allOpen
+                    ? "solar:alt-arrow-right-linear"
+                    : "solar:alt-arrow-down-linear"
                 }
                 width={14}
               />
@@ -407,7 +450,7 @@ export default function TraceTable({
               "&:hover": { bgcolor: "action.hover" },
             }}
           >
-            {allCollapsed ? "Expand all" : "Collapse all"}
+            {allOpen ? "Collapse all" : "Expand all"}
           </Button>
           <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
             {groups.length} {groups.length === 1 ? "group" : "groups"}
@@ -495,13 +538,13 @@ export default function TraceTable({
                     <TraceGroupHeaderRow
                       group={g}
                       loading={groupLive(g)}
-                      collapsed={collapsedSet.has(g.label)}
-                      onToggle={() => toggleCollapsed(g.label)}
+                      collapsed={!isOpen(g.label)}
+                      onToggle={() => toggleGroup(g.label)}
                       show={show}
                       showEvals={showEvals}
                       evals={evals}
                     />
-                    {!collapsedSet.has(g.label) && g.rows.map(renderRow)}
+                    {isOpen(g.label) && g.rows.map(renderRow)}
                   </React.Fragment>
                 ))}
           </TableBody>
@@ -518,5 +561,13 @@ TraceTable.propTypes = {
   columns: PropTypes.instanceOf(Set),
   activeCallId: PropTypes.string,
   scrollRef: PropTypes.oneOfType([PropTypes.func, PropTypes.object]),
+  // Which groups are open: `all` while Expand all is on, plus the labels
+  // opened. Pass both, or neither and the table keeps its own.
+  groupView: PropTypes.shape({
+    all: PropTypes.bool,
+    expanded: PropTypes.instanceOf(Set),
+  }),
+  onGroupViewChange: PropTypes.func,
+  expandedForRef: PropTypes.shape({ current: PropTypes.any }),
   runActive: PropTypes.bool,
 };

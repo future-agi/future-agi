@@ -134945,6 +134945,7 @@
                 "label",
                 "started_at",
                 "calls",
+                "latency_ms",
                 "duration_ms",
                 "llm_cents",
                 "tts_cents",
@@ -134967,6 +134968,11 @@
                 "calls": {
                     "title": "Calls",
                     "type": "integer"
+                },
+                "latency_ms": {
+                    "title": "Latency ms",
+                    "type": "number",
+                    "x-nullable": true
                 },
                 "duration_ms": {
                     "title": "Duration ms",
@@ -135437,6 +135443,7 @@
                 "series",
                 "series_limit",
                 "series_mode",
+                "agent_latency_percentiles",
                 "latency_percentiles",
                 "distributions",
                 "csat",
@@ -135490,6 +135497,12 @@
                         "calls",
                         "time_buckets"
                     ]
+                },
+                "agent_latency_percentiles": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/RunDashboardPercentile"
+                    }
                 },
                 "latency_percentiles": {
                     "type": "array",
