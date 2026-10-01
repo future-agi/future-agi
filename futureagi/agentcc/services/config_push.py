@@ -54,7 +54,7 @@ _RULE_PROVIDER_DEFAULTS = {
     "lasso-guard": "lasso",
     "crowdstrike-aidr": "crowdstrike",
     "zscaler-guard": "zscaler",
-    "tool-permissions": "tool_permissions",
+    "tool-permissions": "tool_permission",
     "mcp-security": "mcp_security",
 }
 
