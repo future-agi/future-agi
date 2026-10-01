@@ -32,7 +32,7 @@
   <a href="https://github.com/future-agi/future-agi/releases/latest"><img src="https://img.shields.io/github/v/release/future-agi/future-agi?style=flat-square&label=release&color=3fb950" alt="Latest release"></a>
   <a href="https://github.com/future-agi/future-agi/pulse"><img src="https://img.shields.io/github/commit-activity/m/future-agi/future-agi?style=flat-square&label=commit%20activity&color=3fb950" alt="Commit activity"></a>
   <a href="#-quickstart"><img src="https://img.shields.io/badge/docker-self--host%20ready-0db7ed?style=flat-square" alt="Docker self-host ready"></a>
-  <a href="https://discord.com/invite/n2tCUKBkAw"><img src="https://img.shields.io/badge/discord-join-5865F2?style=flat-square" alt="Discord"></a>
+  <a href="https://discord.com/invite/cBnWkd7T9v"><img src="https://img.shields.io/badge/discord-join-5865F2?style=flat-square" alt="Discord"></a>
   <br>
   <a href="https://pypi.org/project/agent-learning-kit/"><img src="https://img.shields.io/pypi/v/agent-learning-kit?style=flat-square&label=pypi%20agent-learning-kit" alt="PyPI agent-learning-kit"></a>
   <a href="https://www.npmjs.com/package/@traceai/fi-core"><img src="https://img.shields.io/npm/v/@traceai/fi-core?style=flat-square&label=npm%20%40traceai%2Ffi-core" alt="npm @traceai/fi-core"></a>
@@ -43,7 +43,7 @@
 <p>
   <a href="https://app.futureagi.com/auth/jwt/register?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=header_cta_cloud"><b>Try Cloud (Free)</b></a> ·
   <a href="#-quickstart"><b>Self-Host</b></a> ·
-  <a href="https://discord.com/invite/n2tCUKBkAw"><b>Support</b></a>
+  <a href="https://discord.com/invite/cBnWkd7T9v"><b>Support</b></a>
 </p>
 
 <p>
@@ -510,7 +510,7 @@ We love contributions — bug fixes, new evaluators, framework integrations, doc
 
 1.  [Browse `good first issue`](https://github.com/future-agi/future-agi/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
 2.  Read the [Contributing Guide](CONTRIBUTING.md)
-3.  Say hi on [Discord](https://discord.com/invite/n2tCUKBkAw) or [Discussions](https://github.com/orgs/future-agi/discussions)
+3.  Say hi on [Discord](https://discord.com/invite/cBnWkd7T9v) or [Discussions](https://github.com/orgs/future-agi/discussions)
 4.  Sign the CLA on your first PR (automatic bot)
 
 <!--
@@ -525,7 +525,7 @@ We love contributions — bug fixes, new evaluators, framework integrations, doc
 
 | | |
 |---|---|
-| 💬 [**Discord**](https://discord.com/invite/n2tCUKBkAw) | Real-time help from the team and community |
+| 💬 [**Discord**](https://discord.com/invite/cBnWkd7T9v) | Real-time help from the team and community |
 | 🗨️ [**GitHub Discussions**](https://github.com/orgs/future-agi/discussions) | Ideas, questions, roadmap input |
 | 🐦 [**Twitter / X**](https://x.com/FutureAGI_) | Release announcements |
 | 📝 [**Blog**](https://futureagi.com/blog?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=blog_section) | Engineering & research posts |
