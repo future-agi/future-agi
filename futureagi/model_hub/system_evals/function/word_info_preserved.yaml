@@ -21,13 +21,22 @@ config:
         if not ref and not hyp: return {"score": 1.0, "reason": "WIP: 1.0 (both empty)"}
         if not ref or not hyp: return {"score": 0.0, "reason": "WIP: 0.0 (one empty)"}
         n, m = len(ref), len(hyp)
-        dp = list(range(m+1))
-        for i in range(1, n+1):
-            prev = dp[:]
-            dp[0] = i
-            for j in range(1, m+1):
+        dp = [[i] + [0] * m for i in range(n + 1)]
+        dp[0] = list(range(m + 1))
+        for i in range(1, n + 1):
+            for j in range(1, m + 1):
                 cost = 0 if ref[i-1] == hyp[j-1] else 1
-                dp[j] = min(dp[j-1]+1, prev[j]+1, prev[j-1]+cost)
-        hits = max(0, n - dp[m])
+                dp[i][j] = min(dp[i-1][j-1] + cost, dp[i-1][j] + 1, dp[i][j-1] + 1)
+        # Hits come from the alignment, not the distance: an insertion is not a lost word.
+        hits, i, j = 0, n, m
+        while i > 0 and j > 0:
+            if ref[i-1] == hyp[j-1] and dp[i][j] == dp[i-1][j-1]:
+                hits += 1; i -= 1; j -= 1
+            elif dp[i][j] == dp[i-1][j-1] + 1:
+                i -= 1; j -= 1
+            elif dp[i][j] == dp[i-1][j] + 1:
+                i -= 1
+            else:
+                j -= 1
         wip = (hits/n) * (hits/m)
         return {"score": float(wip), "reason": f"WIP: {wip:.4f}"}
