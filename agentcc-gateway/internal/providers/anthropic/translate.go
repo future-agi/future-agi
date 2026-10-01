@@ -177,6 +177,13 @@ func translateRequest(req *models.ChatCompletionRequest) (*anthropicRequest, err
 		return nil, models.ErrBadRequest("invalid_tool_choice", err.Error())
 	}
 	tools := req.Tools
+	var choice string
+	if json.Unmarshal(req.ToolChoice, &choice) == nil && choice == "none" {
+		// Omit both declarations and choice to disable tools without relying on
+		// upstream support for tool_choice type "none". Omitting choice alone
+		// would leave declared tools available under Anthropic's default auto.
+		tools = nil
+	}
 	if allowed != nil {
 		tools, err = allowed.Filter(tools)
 		if err != nil {
@@ -227,9 +234,7 @@ func translateRequest(req *models.ChatCompletionRequest) (*anthropicRequest, err
 		if ar.ToolChoice == nil {
 			ar.ToolChoice = &anthropicToolChoice{Type: "auto"}
 		}
-		if ar.ToolChoice.Type != "none" {
-			ar.ToolChoice.DisableParallelToolUse = true
-		}
+		ar.ToolChoice.DisableParallelToolUse = true
 	}
 
 	if schema := extractResponseFormatSchema(req.ResponseFormat); len(schema) > 0 {
@@ -459,7 +464,8 @@ func translateToolChoice(raw json.RawMessage) (*anthropicToolChoice, error) {
 		case "auto":
 			return &anthropicToolChoice{Type: "auto"}, nil
 		case "none":
-			return &anthropicToolChoice{Type: "none"}, nil
+			// translateRequest also omits tools so the default cannot call them.
+			return nil, nil
 		case "required":
 			return &anthropicToolChoice{Type: "any"}, nil
 		}

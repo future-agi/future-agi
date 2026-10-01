@@ -438,33 +438,42 @@ func TestTranslateRequest_ToolChoiceAuto(t *testing.T) {
 }
 
 func TestTranslateRequest_ToolChoiceNone(t *testing.T) {
-	body := []byte(`{"model":"claude-sonnet-4-20250514","messages":[{"role":"user","content":"Hi"}],` +
-		`"tool_choice":"none","tools":[{"type":"function","function":{"name":"do_not_call","parameters":{"type":"object"}}}]}`)
-	var req models.ChatCompletionRequest
-	if err := json.Unmarshal(body, &req); err != nil {
-		t.Fatalf("unmarshaling request: %v", err)
-	}
+	for _, parallel := range []string{"", `,"parallel_tool_calls":false`, `,"parallel_tool_calls":true`} {
+		t.Run("parallel"+parallel, func(t *testing.T) {
+			body := []byte(`{"model":"claude-sonnet-4-20250514","messages":[{"role":"user","content":"Hi"}],` +
+				`"tool_choice":"none","tools":[{"type":"function","function":{"name":"do_not_call","parameters":{"type":"object"}}},{"type":"web_search_20250305","name":"web_search"}]` + parallel + `}`)
+			var req models.ChatCompletionRequest
+			if err := json.Unmarshal(body, &req); err != nil {
+				t.Fatalf("unmarshaling request: %v", err)
+			}
 
-	ar, err := translateRequest(&req)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(ar.Tools) != 1 {
-		t.Fatalf("tools length = %d, want 1", len(ar.Tools))
-	}
-	if ar.ToolChoice == nil || ar.ToolChoice.Type != "none" {
-		t.Fatalf("tool_choice = %+v, want none while tools remain declared", ar.ToolChoice)
-	}
-	encoded, err := json.Marshal(ar)
-	if err != nil {
-		t.Fatalf("encoding Anthropic request: %v", err)
-	}
-	var forwarded map[string]json.RawMessage
-	if err := json.Unmarshal(encoded, &forwarded); err != nil {
-		t.Fatalf("decoding Anthropic request: %v", err)
-	}
-	if string(forwarded["tool_choice"]) != `{"type":"none"}` {
-		t.Errorf("forwarded tool_choice = %s, want none", forwarded["tool_choice"])
+			ar, err := translateRequest(&req)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(ar.Tools) != 0 {
+				t.Errorf("tools length = %d, want 0", len(ar.Tools))
+			}
+			if ar.ToolChoice != nil {
+				t.Errorf("tool_choice = %+v, want omitted", ar.ToolChoice)
+			}
+			encoded, err := json.Marshal(ar)
+			if err != nil {
+				t.Fatalf("encoding Anthropic request: %v", err)
+			}
+			var forwarded map[string]json.RawMessage
+			if err := json.Unmarshal(encoded, &forwarded); err != nil {
+				t.Fatalf("decoding Anthropic request: %v", err)
+			}
+			for _, field := range []string{"tools", "tool_choice"} {
+				if value, ok := forwarded[field]; ok {
+					t.Errorf("forwarded %s = %s, want omitted", field, value)
+				}
+			}
+			if len(req.Tools) != 2 || string(req.ToolChoice) != `"none"` {
+				t.Fatal("translation mutated the canonical tool policy")
+			}
+		})
 	}
 }
 
