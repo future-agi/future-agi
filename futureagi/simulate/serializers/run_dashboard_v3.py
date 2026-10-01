@@ -85,6 +85,8 @@ class RunDashboardCsatSerializer(serializers.Serializer):
     bins = RunDashboardHistogramBinSerializer(many=True)
     measured = serializers.IntegerField()
     total = serializers.IntegerField()
+    satisfied = serializers.IntegerField()
+    satisfied_percent = serializers.FloatField(allow_null=True)
     agreement = RunDashboardAgreementSerializer()
 
 
@@ -142,14 +144,33 @@ class RunDashboardEvaluationSummarySerializer(serializers.Serializer):
     passed = serializers.IntegerField()
     measured = serializers.IntegerField()
     pass_rate = serializers.FloatField(allow_null=True)
+    errored_checks = serializers.IntegerField()
 
 
 class RunDashboardRiskSerializer(serializers.Serializer):
-    goal = serializers.CharField()
+    scenario = serializers.CharField()
     passed = serializers.IntegerField()
     failed = serializers.IntegerField()
     error = serializers.IntegerField()
     inconclusive = serializers.IntegerField()
+
+
+class RunDashboardHealthSerializer(serializers.Serializer):
+    show_banner = serializers.BooleanField()
+    attempted = serializers.IntegerField()
+    ran_cleanly = serializers.IntegerField()
+    connected = serializers.IntegerField()
+    errored = serializers.IntegerField()
+    not_evaluated = serializers.IntegerField()
+    eval_errors = serializers.IntegerField()
+
+
+class RunDashboardComparisonSerializer(serializers.Serializer):
+    available = serializers.BooleanField()
+    previous_execution_id = serializers.UUIDField(allow_null=True)
+    shared_scenarios = serializers.IntegerField()
+    newly_passing = serializers.ListField(child=serializers.CharField())
+    newly_failing = serializers.ListField(child=serializers.CharField())
 
 
 class RunDashboardV3Serializer(serializers.Serializer):
@@ -172,4 +193,6 @@ class RunDashboardV3Serializer(serializers.Serializer):
     unavailable_features = RunDashboardUnavailableSerializer(many=True)
     evaluation_summary = RunDashboardEvaluationSummarySerializer()
     use_case_risk = RunDashboardRiskSerializer(many=True)
+    run_health = RunDashboardHealthSerializer()
+    comparison = RunDashboardComparisonSerializer()
     goal_count = serializers.IntegerField()

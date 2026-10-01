@@ -126,6 +126,8 @@ export default function RunTraceTable({
     if (filters.goal?.length) next.goal = filters.goal;
     if (filters.subGoal?.length) next.sub_goal = filters.subGoal;
     if (filters.status?.length) next.status = filters.status;
+    if (filters.goal_outcome?.length)
+      next.goal_outcome = filters.goal_outcome;
     if (statusChip !== "all") next.status = [STATUS_CHIP_API[statusChip]];
     return next;
   }, [filters, statusChip]);

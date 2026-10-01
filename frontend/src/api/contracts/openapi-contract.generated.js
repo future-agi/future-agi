@@ -72410,6 +72410,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "execution",
         "summary",
         "scenario_risk",
+        "reliability",
         "turn_distribution",
         "evaluations",
         "failure_breakdown",
@@ -72435,6 +72436,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/Risk",
           },
+        },
+        reliability: {
+          $ref: "#/definitions/Reliability",
         },
         turn_distribution: {
           type: "array",
@@ -92660,6 +92664,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minLength: 1,
           "x-nullable": true,
         },
+        script_completed: {
+          title: "Script completed",
+          type: "boolean",
+        },
+        target_metrics: {
+          $ref: "#/definitions/HarnessTargetMetrics",
+        },
       },
       "x-nullable": true,
     },
@@ -98012,6 +98023,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "passed",
         "failed",
         "measured",
+        "errored",
         "missing",
         "pass_rate",
         "average_score",
@@ -98038,6 +98050,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         measured: {
           title: "Measured",
+          type: "integer",
+        },
+        errored: {
+          title: "Errored",
           type: "integer",
         },
         missing: {
@@ -98173,6 +98189,60 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    Reliability: {
+      required: [
+        "trials",
+        "scenarios",
+        "consistent_pass",
+        "passed_at_least_once",
+        "repeated",
+        "flaky",
+        "flip_rate",
+        "pass_rate_interval",
+        "rows",
+      ],
+      type: "object",
+      properties: {
+        trials: {
+          title: "Trials",
+          type: "integer",
+        },
+        scenarios: {
+          title: "Scenarios",
+          type: "integer",
+        },
+        consistent_pass: {
+          title: "Consistent pass",
+          type: "integer",
+        },
+        passed_at_least_once: {
+          title: "Passed at least once",
+          type: "integer",
+        },
+        repeated: {
+          title: "Repeated",
+          type: "integer",
+        },
+        flaky: {
+          title: "Flaky",
+          type: "integer",
+        },
+        flip_rate: {
+          title: "Flip rate",
+          type: "number",
+          "x-nullable": true,
+        },
+        pass_rate_interval: {
+          $ref: "#/definitions/ReliabilityInterval",
+        },
+        rows: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/ReliabilityRow",
+          },
+        },
+      },
+    },
     Risk: {
       required: [
         "total",
@@ -98183,7 +98253,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "latency",
         "tokens",
         "cost_cents",
-        "goal",
+        "scenario",
+        "scenario_key",
       ],
       type: "object",
       properties: {
@@ -98215,8 +98286,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
         cost_cents: {
           $ref: "#/definitions/TotalMetricStats",
         },
-        goal: {
-          title: "Goal",
+        scenario: {
+          title: "Scenario",
+          type: "string",
+          minLength: 1,
+        },
+        scenario_key: {
+          title: "Scenario key",
           type: "string",
           minLength: 1,
         },
@@ -98243,6 +98319,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "unavailable_features",
         "evaluation_summary",
         "use_case_risk",
+        "run_health",
+        "comparison",
         "goal_count",
       ],
       type: "object",
@@ -98342,6 +98420,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/RunDashboardRisk",
           },
+        },
+        run_health: {
+          $ref: "#/definitions/RunDashboardHealth",
+        },
+        comparison: {
+          $ref: "#/definitions/RunDashboardComparison",
         },
         goal_count: {
           title: "Goal count",
@@ -108938,6 +109022,41 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessTargetMetrics: {
+      required: ["provider"],
+      type: "object",
+      properties: {
+        provider: {
+          title: "Provider",
+          type: "string",
+          enum: ["vapi", "retell", "livekit"],
+        },
+        usage: {
+          $ref: "#/definitions/HarnessTargetUsage",
+        },
+        cost_cents: {
+          title: "Cost cents",
+          type: "integer",
+          minimum: 0,
+        },
+        latency: {
+          $ref: "#/definitions/HarnessTargetLatency",
+        },
+        provider_call_id: {
+          title: "Provider call id",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        provider_end_reason: {
+          title: "Provider end reason",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+      },
+      "x-nullable": true,
+    },
     HarnessScenarioRegistrationResponse: {
       required: ["scenario_key", "scenario_id"],
       type: "object",
@@ -111613,6 +111732,94 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    ReliabilityInterval: {
+      required: ["low", "high", "effective_n", "evaluated", "clusters"],
+      type: "object",
+      properties: {
+        low: {
+          title: "Low",
+          type: "number",
+        },
+        high: {
+          title: "High",
+          type: "number",
+        },
+        effective_n: {
+          title: "Effective n",
+          type: "number",
+        },
+        evaluated: {
+          title: "Evaluated",
+          type: "integer",
+        },
+        clusters: {
+          title: "Clusters",
+          type: "integer",
+        },
+      },
+      "x-nullable": true,
+    },
+    ReliabilityRow: {
+      required: [
+        "passed",
+        "failed",
+        "error",
+        "inconclusive",
+        "scenario",
+        "scenario_key",
+        "runs",
+        "evaluated",
+        "pass_rate",
+        "verdict",
+      ],
+      type: "object",
+      properties: {
+        passed: {
+          title: "Passed",
+          type: "integer",
+        },
+        failed: {
+          title: "Failed",
+          type: "integer",
+        },
+        error: {
+          title: "Error",
+          type: "integer",
+        },
+        inconclusive: {
+          title: "Inconclusive",
+          type: "integer",
+        },
+        scenario: {
+          title: "Scenario",
+          type: "string",
+          minLength: 1,
+        },
+        scenario_key: {
+          title: "Scenario key",
+          type: "string",
+          minLength: 1,
+        },
+        runs: {
+          title: "Runs",
+          type: "integer",
+        },
+        evaluated: {
+          title: "Evaluated",
+          type: "integer",
+        },
+        pass_rate: {
+          title: "Pass rate",
+          type: "number",
+          "x-nullable": true,
+        },
+        verdict: {
+          title: "Verdict",
+          type: "string",
+          enum: ["passed", "failed", "flaky", "not_evaluated"],
+        },
+      },
+    },
     RunDashboardBreakdown: {
       required: ["key", "label", "total", "segments", "headline"],
       type: "object",
@@ -111642,8 +111849,55 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    RunDashboardComparison: {
+      required: [
+        "available",
+        "previous_execution_id",
+        "shared_scenarios",
+        "newly_passing",
+        "newly_failing",
+      ],
+      type: "object",
+      properties: {
+        available: {
+          title: "Available",
+          type: "boolean",
+        },
+        previous_execution_id: {
+          title: "Previous execution id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        shared_scenarios: {
+          title: "Shared scenarios",
+          type: "integer",
+        },
+        newly_passing: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        newly_failing: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+    },
     RunDashboardCsat: {
-      required: ["bins", "measured", "total", "agreement"],
+      required: [
+        "bins",
+        "measured",
+        "total",
+        "satisfied",
+        "satisfied_percent",
+        "agreement",
+      ],
       type: "object",
       properties: {
         bins: {
@@ -111659,6 +111913,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
         total: {
           title: "Total",
           type: "integer",
+        },
+        satisfied: {
+          title: "Satisfied",
+          type: "integer",
+        },
+        satisfied_percent: {
+          title: "Satisfied percent",
+          type: "number",
+          "x-nullable": true,
         },
         agreement: {
           $ref: "#/definitions/RunDashboardAgreement",
@@ -111706,7 +111969,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     RunDashboardEvaluationSummary: {
-      required: ["graders", "passed", "measured", "pass_rate"],
+      required: [
+        "graders",
+        "passed",
+        "measured",
+        "pass_rate",
+        "errored_checks",
+      ],
       type: "object",
       properties: {
         graders: {
@@ -111725,6 +111994,52 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Pass rate",
           type: "number",
           "x-nullable": true,
+        },
+        errored_checks: {
+          title: "Errored checks",
+          type: "integer",
+        },
+      },
+    },
+    RunDashboardHealth: {
+      required: [
+        "show_banner",
+        "attempted",
+        "ran_cleanly",
+        "connected",
+        "errored",
+        "not_evaluated",
+        "eval_errors",
+      ],
+      type: "object",
+      properties: {
+        show_banner: {
+          title: "Show banner",
+          type: "boolean",
+        },
+        attempted: {
+          title: "Attempted",
+          type: "integer",
+        },
+        ran_cleanly: {
+          title: "Ran cleanly",
+          type: "integer",
+        },
+        connected: {
+          title: "Connected",
+          type: "integer",
+        },
+        errored: {
+          title: "Errored",
+          type: "integer",
+        },
+        not_evaluated: {
+          title: "Not evaluated",
+          type: "integer",
+        },
+        eval_errors: {
+          title: "Eval errors",
+          type: "integer",
         },
       },
     },
@@ -111881,11 +112196,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     RunDashboardRisk: {
-      required: ["goal", "passed", "failed", "error", "inconclusive"],
+      required: ["scenario", "passed", "failed", "error", "inconclusive"],
       type: "object",
       properties: {
-        goal: {
-          title: "Goal",
+        scenario: {
+          title: "Scenario",
           type: "string",
           minLength: 1,
         },
@@ -115402,6 +115717,64 @@ export const OPENAPI_CONTRACT = Object.freeze({
         rows: {
           title: "Rows",
           type: "integer",
+        },
+      },
+    },
+    HarnessTargetLatency: {
+      type: "object",
+      properties: {
+        turn: {
+          title: "Turn",
+          type: "integer",
+          minimum: 0,
+        },
+        model: {
+          title: "Model",
+          type: "integer",
+          minimum: 0,
+        },
+        voice: {
+          title: "Voice",
+          type: "integer",
+          minimum: 0,
+        },
+        transcriber: {
+          title: "Transcriber",
+          type: "integer",
+          minimum: 0,
+        },
+        endpointing: {
+          title: "Endpointing",
+          type: "integer",
+          minimum: 0,
+        },
+        turns: {
+          type: "array",
+          items: {
+            type: "integer",
+            minimum: 0,
+          },
+          maxItems: 1000,
+        },
+      },
+    },
+    HarnessTargetUsage: {
+      type: "object",
+      properties: {
+        prompt_tokens: {
+          title: "Prompt tokens",
+          type: "integer",
+          minimum: 0,
+        },
+        completion_tokens: {
+          title: "Completion tokens",
+          type: "integer",
+          minimum: 0,
+        },
+        total_tokens: {
+          title: "Total tokens",
+          type: "integer",
+          minimum: 0,
         },
       },
     },
