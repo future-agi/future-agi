@@ -103,6 +103,10 @@ def annotate_goal_outcome(queryset: QuerySet) -> QuerySet:
     return queryset.annotate(dashboard_disconnection=end_reason).annotate(
         dashboard_goal=Case(
             When(
+                result_outcome__in=["queued", "in_progress"],
+                then=F("result_outcome"),
+            ),
+            When(
                 Q(call_metadata__harness_outcome_status__in=["escalated", "handoff"])
                 | Q(dashboard_disconnection="Transferred"),
                 then=Value("escalated"),

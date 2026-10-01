@@ -688,6 +688,14 @@ def _csv_rows(
     yield writer.writerow([_escape_csv_cell(value) for value in headers])
     for row in rows:
         evaluations = {item["id"]: item.get("value") for item in row["evaluations"]}
+        sub_goals = []
+        for goal in row["sub_goal_results"]:
+            verdict = (
+                "passed"
+                if goal["passed"] is True
+                else "failed" if goal["passed"] is False else "inconclusive"
+            )
+            sub_goals.append(f"{goal['name']} ({OUTCOME_LABELS[verdict]})")
         yield writer.writerow(
             [
                 _escape_csv_cell(value)
@@ -698,7 +706,7 @@ def _csv_rows(
                     row["goal"],
                     row["ideal_outcome"],
                     row["conversation_branch"],
-                    ", ".join(goal["name"] for goal in row["sub_goal_results"]),
+                    ", ".join(sub_goals),
                     row["persona"],
                     row["outcome"],
                     row["execution_status"],

@@ -9,11 +9,10 @@ from collections import defaultdict
 from typing import Any
 
 from django.core.cache import cache
-from django.db.models import Case, IntegerField, Q, Value, When
 
 from model_hub.models.develop_dataset import Cell
 from simulate.models import CallExecution, SimulateEvalConfig, TestExecution
-from simulate.models.hosted_harness import HostedHarnessScenario
+from simulate.services.harness_scenarios import authored_scenarios_for_calls
 from simulate.services.run_results_v3_scoring import (
     judge_stored_eval,
     resolve_eval_scoring_spec,
@@ -227,41 +226,12 @@ def _row_dimensions(calls: list[CallExecution]) -> dict[str, dict[str, Any]]:
 def _authored_branches(
     execution: TestExecution, calls: list[CallExecution]
 ) -> dict[str, str]:
-    source_keys: dict[str, str | None] = {}
-    for call in calls:
-        metadata = call.call_metadata if isinstance(call.call_metadata, dict) else {}
-        key = metadata.get("harness_scenario_key")
-        source_keys[str(call.id)] = (
-            key if isinstance(key, str) and key.strip() else None
-        )
-    keys = set(source_keys.values()) - {None}
-    own_run = Q(job__test_execution=execution)
-    own_environment = Q(job__simulation_runs__test_execution=execution)
-    scenarios = (
-        HostedHarnessScenario.no_workspace_objects.filter(
-            Q(call_execution_id__in=[call.id for call in calls])
-            | ((own_run | own_environment) & Q(scenario_key__in=keys))
-        )
-        .annotate(
-            match_rank=Case(
-                When(own_run, then=Value(0)),
-                default=Value(1),
-                output_field=IntegerField(),
-            )
-        )
-        .order_by("match_rank", "-created_at")
-        .values("call_execution_id", "scenario_key", "branch")
+    scenarios = authored_scenarios_for_calls(
+        execution.run_test_id, calls, test_execution_id=execution.id
     )
-    linked, by_key = {}, {}
-    for scenario in scenarios:
-        if scenario["call_execution_id"]:
-            linked.setdefault(str(scenario["call_execution_id"]), scenario["branch"])
-        by_key.setdefault(scenario["scenario_key"], scenario["branch"])
     return {
-        str(call.id): linked.get(
-            str(call.id), by_key.get(source_keys[str(call.id)], "")
-        )
-        for call in calls
+        str(call_id): scenario.branch if scenario is not None else ""
+        for call_id, scenario in scenarios.items()
     }
 
 

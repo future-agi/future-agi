@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "src/utils/test-utils";
 import userEvent from "@testing-library/user-event";
+import { within } from "@testing-library/react";
 
 // The wrapper owns the network hook; feed it a fixed set of mapped tasks.
 const useRunCalls = vi.fn();
@@ -16,7 +17,10 @@ const TASKS = [
     id: "t1",
     scenario: "Refund a double charge",
     goal: "Refund a double charge",
-    subGoals: ["Identity verified", "Refund created"],
+    subGoalResults: [
+      { name: "Identity verified", passed: true },
+      { name: "Refund created", passed: true },
+    ],
     persona: "Impatient caller",
     personaDetails: {
       name: "The Hungry Customer in a Rush",
@@ -37,7 +41,7 @@ const TASKS = [
     id: "t2",
     scenario: "Escalate to a human",
     goal: "Escalate to a human",
-    subGoals: ["Transferred to human"],
+    subGoalResults: [{ name: "Transferred to human", passed: false }],
     persona: "Angry caller",
     personaDetails: {
       name: "Angry caller",
@@ -58,7 +62,7 @@ const TASKS = [
     id: "t3",
     scenario: "Handle a timeout",
     goal: "Handle a timeout",
-    subGoals: [],
+    subGoalResults: [],
     persona: "Caller",
     personaDetails: {
       name: "Caller",
@@ -221,6 +225,16 @@ describe("RunTraceTable", () => {
     expect(screen.getByText("US male")).toBeInTheDocument();
     expect(screen.getByText("34")).toBeInTheDocument();
     expect(screen.getByText("impatient, in a hurry")).toBeInTheDocument();
+    for (const [name, verdict] of [
+      ["Identity verified", "Passed"],
+      ["Refund created", "Passed"],
+      ["Transferred to human", "Failed"],
+    ]) {
+      const goal = screen.getByText(name).parentElement;
+      expect(
+        within(goal).getByRole("img", { name: verdict }),
+      ).toBeInTheDocument();
+    }
   });
 
   it("fires onOpenCall with the task on a row click", async () => {

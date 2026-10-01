@@ -211,7 +211,7 @@ export default function TraceTable({
               </Stack>
               {t.subGoalResults?.length > 0 && (
                 <Stack spacing={0.5} sx={{ mt: 1 }}>
-                  {t.subGoalResults.map((goal) => {
+                  {t.subGoalResults.map((goal, goalIndex) => {
                     const verdict = runOutcome(
                       goal.passed === true
                         ? "passed"
@@ -221,7 +221,7 @@ export default function TraceTable({
                     );
                     return (
                       <Stack
-                        key={goal.name}
+                        key={`${goal.name}-${goalIndex}`}
                         direction="row"
                         alignItems="center"
                         spacing={0.75}

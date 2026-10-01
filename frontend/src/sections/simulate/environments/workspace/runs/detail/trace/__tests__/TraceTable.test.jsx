@@ -135,6 +135,62 @@ describe("TraceTable — outcome labels", () => {
 });
 
 describe("TraceTable — sub-goal verdicts", () => {
+  it("keeps duplicate names and their verdicts distinct across refreshes", () => {
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    const duplicateGoals = (verdicts) =>
+      table({
+        groups: [
+          {
+            ...group("A", ["a1"]),
+            rows: [
+              {
+                ...row("a1"),
+                subGoalResults: verdicts.map((passed) => ({
+                  name: "Verify identity",
+                  passed,
+                })),
+              },
+            ],
+          },
+        ],
+        activeCallId: "a1",
+      });
+    const expectVerdicts = (verdicts) => {
+      const goals = within(activeRow()).getAllByText("Verify identity");
+      expect(goals).toHaveLength(verdicts.length);
+      goals.forEach((goal, index) => {
+        const result = within(goal.parentElement);
+        if (verdicts[index] === "Inconclusive") {
+          expect(result.getByText("Inconclusive")).toBeInTheDocument();
+        } else {
+          expect(
+            result.getByRole("img", { name: verdicts[index] }),
+          ).toBeInTheDocument();
+        }
+      });
+    };
+
+    try {
+      const { rerender } = render(duplicateGoals([true, false]));
+      expectVerdicts(["Passed", "Failed"]);
+
+      rerender(duplicateGoals([false, null, true]));
+      expectVerdicts(["Failed", "Inconclusive", "Passed"]);
+
+      rerender(duplicateGoals([null]));
+      expectVerdicts(["Inconclusive"]);
+      expect(
+        consoleError.mock.calls.some((args) =>
+          args.some((arg) => String(arg).includes("same key")),
+        ),
+      ).toBe(false);
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
   it("shows the exact verdict beside each sub-goal under Run details", () => {
     render(
       table({

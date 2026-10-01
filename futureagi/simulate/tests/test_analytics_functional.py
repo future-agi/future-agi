@@ -1914,6 +1914,15 @@ class TestRunResultsV3Views:
         ("queued_status", "active_status"),
         [("pending", "ongoing"), ("queued", "analyzing")],
     )
+    @pytest.mark.parametrize(
+        ("harness_outcome", "ended_reason"),
+        [
+            (None, None),
+            ("escalated", None),
+            ("handoff", None),
+            (None, "warm-transfer-completed"),
+        ],
+    )
     def test_goal_outcome_chart_drill_down_matches_list_and_export(
         self,
         auth_client,
@@ -1921,6 +1930,8 @@ class TestRunResultsV3Views:
         analytics_call_executions,
         queued_status,
         active_status,
+        harness_outcome,
+        ended_reason,
     ):
         transferred, passed, queued, in_progress = analytics_call_executions
         for call in (transferred, passed):
@@ -1933,7 +1944,9 @@ class TestRunResultsV3Views:
             (in_progress, active_status),
         ):
             call.status = call_status
-            call.save(update_fields=["status"])
+            call.call_metadata = {"harness_outcome_status": harness_outcome}
+            call.ended_reason = ended_reason
+            call.save(update_fields=["status", "call_metadata", "ended_reason"])
 
         base = f"/simulate/v3/test-executions/{test_execution.id}"
         dashboard = auth_client.get(f"{base}/analytics/").json()["dashboard"]
