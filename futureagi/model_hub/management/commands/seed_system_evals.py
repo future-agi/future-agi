@@ -25,7 +25,7 @@ logger = structlog.get_logger(__name__)
 # Bump this when system evals change. Seeder skips if DB is already at this version.
 # 19: dev's voice-agent evals (18) plus this branch's MODEL_SERVING_URL-aware
 # embedding evals (17), so a database seeded at either one re-seeds.
-SYSTEM_EVALS_VERSION = 19
+SYSTEM_EVALS_VERSION = 20
 
 # Postgres advisory-lock key. Serialises concurrent seed_evals() calls
 # across pods so the bulk_create path can't race on new eval_ids. Any
