@@ -1,0 +1,242 @@
+{
+  "id": "banking_support",
+  "display_name": "Banking — Card, Fraud & Account Support",
+  "channel": "voice",
+  "direction": "inbound",
+  "languages": ["en", "es"],
+  "description": "Inbound retail-bank / fintech support agent: balance & transaction info, card lock/replace, transaction disputes, and fraud-alert response, with step-up authentication before any sensitive action. Modeled on Fin (fintech pack), Decagon, Retell (Sunshine Loans), and Cognigy conversational-banking agents. Never gives financial or investment advice; never reads full card/account numbers; never moves money — funds transfers are routed to a secure channel.",
+  "runtime": {
+    "type": "pipeline",
+    "llm": { "provider": "openai", "model": "gpt-4o", "temperature": 0.2 },
+    "stt": { "provider": "deepgram", "model": "nova-2", "language": "multi" },
+    "tts": { "provider": "cartesia", "voice": "confident-professional" },
+    "vad": { "provider": "silero" },
+    "allow_interruptions": true
+  },
+  "session_state": {
+    "customer_name": "str",
+    "customer_id": "str=none",
+    "auth_level": "str=none",
+    "step_up_verified": "bool=false",
+    "intent": "str=none",
+    "outcome": "str=none"
+  },
+  "workflow": {
+    "entry_agent": "authenticate",
+    "agents": [
+      {
+        "id": "authenticate",
+        "title": "Authenticate & route",
+        "first_message": "Thanks for calling. For your security I'll need to verify your identity before we begin. Can you confirm the phone number or ID on your account?",
+        "instructions": "You are a bank support agent. FIRST, if the caller reports a lost/stolen card or fraud in progress, treat it as priority — verify identity, then route to the card_services or fraud phase quickly. Verify the caller with verify_identity (baseline). Determine intent and hand off: balance/transactions → account_info; lock or replace a card → card_services; dispute a charge or report fraud → fraud; general 'how do I' question → faq. Sensitive actions (card lock/replace, disputes, reading full transaction history) require step-up auth — the destination phase will handle it. Never give financial or investment advice; never read a full card or account number aloud.",
+        "tools": ["verify_identity"],
+        "handoffs": [
+          { "to": "account_info", "when": "caller wants balance or recent transactions" },
+          { "to": "card_services", "when": "caller wants to lock, freeze, or replace a card" },
+          { "to": "fraud", "when": "caller wants to dispute a charge or report fraud/lost card" },
+          { "to": "faq", "when": "caller asks a general how-to question" }
+        ],
+        "terminal": false
+      },
+      {
+        "id": "account_info",
+        "title": "Account info",
+        "instructions": "Provide balance and recent transaction info. get_balance is allowed at baseline auth; reading detailed transaction history requires step-up — if not yet stepped up, call step_up_auth and verify_otp first, then get_transactions. Refer to cards/accounts only by last 4 digits. If the caller then wants to dispute something, hand to fraud. Do not advise on spending, saving, or investments.",
+        "tools": ["get_balance", "step_up_auth", "verify_otp", "get_transactions"],
+        "handoffs": [
+          { "to": "fraud", "when": "caller wants to dispute a transaction they see" }
+        ],
+        "terminal": true
+      },
+      {
+        "id": "card_services",
+        "title": "Card services (step-up gated)",
+        "instructions": "Handle card lock/freeze and replacement. These are sensitive: if step_up_verified is not true, call step_up_auth then verify_otp before acting. Then call lock_card or order_replacement_card, confirm the last 4 and the mailing timeframe, and confirm completion. For a lost/stolen card, lock first, then offer a replacement.",
+        "tools": ["step_up_auth", "verify_otp", "lock_card", "order_replacement_card"],
+        "handoffs": [],
+        "terminal": true
+      },
+      {
+        "id": "fraud",
+        "title": "Dispute & fraud (step-up gated, code-validated)",
+        "instructions": "Handle transaction disputes and fraud reports. Require step-up auth (step_up_auth + verify_otp) before filing anything. For a specific unrecognized charge, gather the amount/date/merchant and call file_dispute. If the caller reports clear fraud or a compromised card, call report_fraud, which locks the card and escalates to the fraud team — then reassure them and hand off. Never promise a specific refund outcome or timeline beyond what the tool returns.",
+        "tools": ["step_up_auth", "verify_otp", "file_dispute", "report_fraud", "escalate_to_human"],
+        "handoffs": [],
+        "terminal": true
+      },
+      {
+        "id": "faq",
+        "title": "General FAQ (bounded)",
+        "instructions": "Answer general how-to and policy questions from the knowledge base with search_kb, and cite the source. Do NOT give financial, tax, or investment advice. If the question needs account-specific action, route to the right phase; if it needs judgment or a human, call escalate_to_human.",
+        "tools": ["search_kb"],
+        "handoffs": [],
+        "terminal": true
+      }
+    ],
+    "global_handlers": [
+      { "id": "human", "tool": "escalate_to_human", "when": "caller demands a human, is distressed, or the case is complex", "then": "handoff:end" },
+      { "id": "fraud_priority", "tool": "report_fraud", "when": "caller reports active fraud or a lost/stolen card mid-conversation", "then": "handoff:fraud" }
+    ]
+  },
+  "tools": [
+    {
+      "name": "verify_identity",
+      "description": "Baseline identity verification (knowledge factors). Returns an auth level. Required before any account interaction.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "identifier": { "type": "string", "description": "phone or customer id on the account" },
+          "answer": { "type": "string", "description": "knowledge factor answer" }
+        },
+        "required": ["identifier", "answer"]
+      },
+      "execution": { "type": "webhook", "method": "POST", "url": "{{FAI_TOOL_BASE}}/bank/verify_identity" },
+      "mock": { "verified": true, "customer_id": "CUS-4410", "customer_name": "Alex Kim", "auth_level": "baseline" },
+      "sets": { "customer_id": "$.customer_id", "customer_name": "$.customer_name", "auth_level": "$.auth_level" },
+      "errors": ["identity not verified"]
+    },
+    {
+      "name": "step_up_auth",
+      "description": "Trigger step-up authentication by sending a one-time passcode to the customer's verified device. Required before sensitive actions.",
+      "parameters": { "type": "object", "properties": {}, "required": [] },
+      "execution": { "type": "webhook", "method": "POST", "url": "{{FAI_TOOL_BASE}}/bank/step_up/send" },
+      "mock": { "sent": true, "channel": "sms" },
+      "errors": ["no verified device on file"]
+    },
+    {
+      "name": "verify_otp",
+      "description": "Verify the one-time passcode the customer received. Sets step-up auth on success.",
+      "parameters": {
+        "type": "object",
+        "properties": { "code": { "type": "string" } },
+        "required": ["code"]
+      },
+      "execution": { "type": "webhook", "method": "POST", "url": "{{FAI_TOOL_BASE}}/bank/step_up/verify" },
+      "mock": { "verified": true },
+      "sets": { "step_up_verified": "$.verified" },
+      "errors": ["incorrect or expired code"]
+    },
+    {
+      "name": "get_balance",
+      "description": "Return current account balance(s). Allowed at baseline auth.",
+      "parameters": { "type": "object", "properties": {}, "required": [] },
+      "execution": { "type": "webhook", "method": "GET", "url": "{{FAI_TOOL_BASE}}/bank/balance" },
+      "mock": { "checking": 1284.55, "savings": 5230.10 },
+      "errors": ["not verified"]
+    },
+    {
+      "name": "get_transactions",
+      "description": "Return recent transactions. Requires step-up auth.",
+      "parameters": {
+        "type": "object",
+        "properties": { "count": { "type": "integer", "default": 5 } },
+        "required": []
+      },
+      "execution": { "type": "webhook", "method": "GET", "url": "{{FAI_TOOL_BASE}}/bank/transactions" },
+      "mock": [
+        { "id": "TX-771", "date": "Aug 28", "merchant": "Blue Bottle", "amount": 6.75 },
+        { "id": "TX-772", "date": "Aug 29", "merchant": "Amazon", "amount": 42.10 }
+      ],
+      "errors": ["step-up auth required"]
+    },
+    {
+      "name": "lock_card",
+      "description": "Lock/freeze a card by its last 4 digits. Requires step-up auth.",
+      "parameters": {
+        "type": "object",
+        "properties": { "card_last4": { "type": "string" } },
+        "required": ["card_last4"]
+      },
+      "execution": { "type": "webhook", "method": "POST", "url": "{{FAI_TOOL_BASE}}/bank/card/lock" },
+      "mock": { "locked": true },
+      "errors": ["step-up auth required", "card not found"]
+    },
+    {
+      "name": "order_replacement_card",
+      "description": "Order a replacement card. Requires step-up auth.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "card_last4": { "type": "string" },
+          "reason": { "type": "string", "enum": ["lost", "stolen", "damaged"] }
+        },
+        "required": ["card_last4", "reason"]
+      },
+      "execution": { "type": "webhook", "method": "POST", "url": "{{FAI_TOOL_BASE}}/bank/card/replace" },
+      "mock": { "ordered": true, "arrives_in_days": 5 },
+      "errors": ["step-up auth required"]
+    },
+    {
+      "name": "file_dispute",
+      "description": "File a dispute for a specific transaction. Requires step-up auth.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "transaction_id": { "type": "string" },
+          "reason": { "type": "string" }
+        },
+        "required": ["transaction_id", "reason"]
+      },
+      "execution": { "type": "webhook", "method": "POST", "url": "{{FAI_TOOL_BASE}}/bank/dispute" },
+      "mock": { "dispute_id": "DSP-5521", "provisional_credit": "under review" },
+      "errors": ["step-up auth required", "transaction not found"]
+    },
+    {
+      "name": "report_fraud",
+      "description": "Report fraud or a lost/stolen card: locks the affected card and escalates to the fraud team.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "card_last4": { "type": "string" },
+          "detail": { "type": "string" }
+        },
+        "required": ["detail"]
+      },
+      "execution": { "type": "webhook", "method": "POST", "url": "{{FAI_TOOL_BASE}}/bank/fraud" },
+      "mock": { "case_id": "FRD-3390", "card_locked": true },
+      "errors": []
+    },
+    {
+      "name": "search_kb",
+      "description": "Answer a general how-to/policy question from the knowledge base, with citations. Never financial advice.",
+      "parameters": {
+        "type": "object",
+        "properties": { "query": { "type": "string" } },
+        "required": ["query"]
+      },
+      "execution": { "type": "webhook", "method": "POST", "url": "{{FAI_TOOL_BASE}}/bank/kb" },
+      "mock": { "answer": "You can set travel notices in the app under Card Settings > Travel.", "citations": ["help/travel-notice"] },
+      "errors": ["no relevant content found"]
+    },
+    {
+      "name": "escalate_to_human",
+      "description": "Warm-transfer to a human banker/specialist with a summary of the interaction.",
+      "parameters": {
+        "type": "object",
+        "properties": { "reason": { "type": "string" } },
+        "required": ["reason"]
+      },
+      "execution": { "type": "transfer", "target": "{{BANKER_SIP}}", "pass_summary": true },
+      "mock": { "transferred": true },
+      "errors": []
+    }
+  ],
+  "guardrails": {
+    "deterministic": [
+      "No account interaction before verify_identity succeeds.",
+      "Sensitive actions (get_transactions, lock_card, order_replacement_card, file_dispute) are blocked until step_up_verified == true — enforced in each tool, not by the model.",
+      "The agent cannot move money: fund transfers/payments are out of scope and routed to a secure channel or a human.",
+      "report_fraud always locks the affected card and escalates — it cannot be downgraded by the conversation."
+    ],
+    "content": [
+      "Never give financial, tax, or investment advice.",
+      "Never read a full card number, account number, or full SSN aloud — last 4 only.",
+      "Do not promise specific refund amounts or timelines beyond what a tool returns."
+    ],
+    "notes": "Step-up auth (OTP) models the identity gating Fin/Decagon run in code for sensitive banking actions. Anti-social-engineering: identity and step-up are satisfied only by real factors/OTP, never by caller assertion."
+  },
+  "dispositions": [
+    "INFO_PROVIDED", "CARD_LOCKED", "CARD_REPLACED", "DISPUTE_FILED", "FRAUD_ESCALATED",
+    "FAQ_ANSWERED", "ESCALATED", "AUTH_FAILED"
+  ]
+}
