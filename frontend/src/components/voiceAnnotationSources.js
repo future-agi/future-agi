@@ -4,6 +4,7 @@ export function buildVoiceCallAnnotationSources({
   sessionId,
   module,
   callExecutionId,
+  projectId,
 }) {
   if (module === "simulate" && callExecutionId) {
     return [{ sourceType: "call_execution", sourceId: callExecutionId }];
@@ -20,16 +21,22 @@ export function buildVoiceCallAnnotationSources({
       sourceType: "trace",
       sourceId: traceId,
       spanNotesSourceId: rootSpanId || undefined,
+      projectId,
     });
   }
   if (rootSpanId) {
-    sources.push({ sourceType: "observation_span", sourceId: rootSpanId });
+    sources.push({
+      sourceType: "observation_span",
+      sourceId: rootSpanId,
+      projectId,
+    });
   }
   if (sessionId) {
     sources.push({
       sourceType: "trace_session",
       sourceId: sessionId,
       spanNotesSourceId: rootSpanId || undefined,
+      projectId,
     });
   }
   return sources;
@@ -44,23 +51,34 @@ export function buildVoiceCallAnnotationSources({
  * Pre-fix the trace drawer only sent the selected span, which silently dropped
  * any queue whose items were added at trace or session level.
  */
-export function buildTraceAnnotationSources({ traceId, spanId, sessionId }) {
+export function buildTraceAnnotationSources({
+  traceId,
+  spanId,
+  sessionId,
+  projectId,
+}) {
   const sources = [];
   if (traceId) {
     sources.push({
       sourceType: "trace",
       sourceId: traceId,
       spanNotesSourceId: spanId || undefined,
+      projectId,
     });
   }
   if (spanId) {
-    sources.push({ sourceType: "observation_span", sourceId: spanId });
+    sources.push({
+      sourceType: "observation_span",
+      sourceId: spanId,
+      projectId,
+    });
   }
   if (sessionId) {
     sources.push({
       sourceType: "trace_session",
       sourceId: sessionId,
       spanNotesSourceId: spanId || undefined,
+      projectId,
     });
   }
   return sources;

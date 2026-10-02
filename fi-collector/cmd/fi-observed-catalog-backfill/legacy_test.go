@@ -418,6 +418,26 @@ func TestLegacyRequiresExplicitSelection(t *testing.T) {
 	}
 }
 
+func TestLegacyPreviewPageBudgetNamesTheFix(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewEncoder(w).Encode(legacyTestDefinition("x", "1", "string")); err != nil {
+			t.Error(err)
+		}
+	}))
+	defer server.Close()
+	reader, err := newSourceReader(server.URL, "old_verified_catalog", "readonly_user", "local_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := legacyTestSelection
+	cfg := options{project: s.Scope.ProjectID, mode: "legacy", source: reader, legacyEpoch: uint(s.Epoch),
+		legacyRevision: s.Revision, legacyBuild: s.BuildToken, maxPages: 1, pageSize: 1, limits: observedcatalog.DefaultLimits()}
+	err = runLegacy(context.Background(), cfg, &testScopeReader{scope: s.Scope}, nil, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "raise --max-pages") || strings.Contains(err.Error(), "resume the same checkpoint") {
+		t.Fatalf("legacy preview budget error is not actionable: %v", err)
+	}
+}
+
 func TestLegacyUsesSeparateReadOnlySource(t *testing.T) {
 	row := legacyTestValue(t, "model", "string", "GPT")
 	row["source_kind"] = "system_attribute"

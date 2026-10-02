@@ -38,6 +38,11 @@ dependencies = [
     "uvloop==0.20.0",
     "watchfiles==0.24.0",
     "torch==2.6.0",
+    # wav2clip requires torchaudio without a version; unpinned it resolves to
+    # 2.11.0, which declares no torch requirement but ships a C++ extension
+    # built for torch 2.11. Pin the release that matches torch 2.6.0 (with
+    # uv --torch-backend it comes from the same PyTorch index as torch).
+    "torchaudio==2.6.0",
     "transformers==4.44.2",
     "sentence-transformers==3.3.1",
     "tokenizers==0.19.1",

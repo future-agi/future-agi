@@ -250,21 +250,15 @@ class TestAgentccProviderCredentialOrganizationIsolation:
             )
 
         assert response.status_code == 200, response.json()
-        body = response.json()
-        # PUT falls through to DRF's default UpdateModelMixin (no override in
-        # the view) so the payload comes back raw; PATCH is overridden to
-        # wrap via _gm.success_response. Accept both shapes.
-        data = body.get("result", body)
+        # PUT is handled as PATCH, so it is wrapped by _gm.success_response.
+        data = response.json()["result"]
         assert data["display_name"] == "New Display"
 
         cred.refresh_from_db()
         assert cred.display_name == "New Display"
         assert cred.models_list == ["gpt-4o"]
-        # Current behavior: PUT does not push to the gateway because the
-        # view only overrides create/partial_update/destroy/rotate. PATCH
-        # (below) is the client path that fans out to the gateway. If PUT
-        # is ever overridden to push, this assertion should flip.
-        assert mock_push.call_count == 0
+        # PUT goes through partial_update, so it pushes to the gateway too.
+        assert mock_push.call_count == 1
 
     def test_patch_updates_single_field_leaving_others_intact(
         self, secondary_org_context, secondary_org_client
@@ -547,3 +541,412 @@ class TestFetchModelsHonoursThePathPrefix:
         assert response.json()["result"]["models"] == ["sonar"]
         called_url = session.get.call_args[0][0]
         assert called_url == "https://provider.example/openai/v1/models"
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestFetchModelsPrivateProviderURLs:
+    """Model discovery for local providers (Ollama, vLLM, a Docker service)."""
+
+    def _fetch(self, client, base_url):
+        return client.post(
+            "/agentcc/provider-credentials/fetch_models/",
+            {"base_url": base_url, "api_key": "sk-local", "api_format": "openai"},
+            format="json",
+        )
+
+    @pytest.fixture(autouse=True)
+    def dns(self, provider_dns):
+        return provider_dns({"mock-llm": ["172.20.0.5"]}, passthrough=True)
+
+    def test_private_base_url_is_refused_with_the_opt_in_to_set(
+        self, monkeypatch, secondary_org_client
+    ):
+        monkeypatch.delenv("AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS", raising=False)
+        response = self._fetch(secondary_org_client, "http://mock-llm:8080")
+
+        assert response.status_code == 400
+        assert "AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS=true" in str(response.json())
+
+    def test_private_base_url_is_fetched_with_the_opt_in(
+        self, monkeypatch, secondary_org_client
+    ):
+        monkeypatch.setenv("AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS", "true")
+        session = MagicMock()
+        session.get.return_value.json.return_value = {"data": [{"id": "mock-custom"}]}
+
+        with patch(
+            "agentcc.views.provider_credential.build_ssrf_safe_session",
+            return_value=session,
+        ) as build_session:
+            response = self._fetch(secondary_org_client, "http://mock-llm:8080")
+
+        assert response.status_code == 200, response.json()
+        assert response.json()["result"]["models"] == ["mock-custom"]
+        assert build_session.call_args.kwargs["allow_private"] is True
+        assert session.get.call_args[0][0] == "http://mock-llm:8080/v1/models"
+
+    def test_metadata_address_is_refused_even_with_the_opt_in(
+        self, monkeypatch, secondary_org_client
+    ):
+        monkeypatch.setenv("AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS", "true")
+        response = self._fetch(secondary_org_client, "http://169.254.169.254")
+
+        assert response.status_code == 400
+        assert "never allowed" in str(response.json())
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestFetchModelsKeepsTheSavedKeyOnItsBaseURL:
+    """A caller who can use a saved credential cannot point its key elsewhere."""
+
+    def test_saved_key_is_not_sent_to_a_request_supplied_base_url(
+        self, secondary_org_context, secondary_org_client
+    ):
+        org_b, _ = secondary_org_context
+        AgentccProviderCredential.no_workspace_objects.create(
+            organization=org_b,
+            provider_name="openai",
+            display_name="OpenAI",
+            encrypted_credentials=CredentialManager.encrypt({"api_key": "sk-saved"}),
+            api_format="openai",
+            base_url="https://api.openai.com/v1",
+        )
+
+        with patch(
+            "agentcc.views.provider_credential.AgentccProviderCredentialViewSet._fetch_models_from_provider",
+            return_value=[],
+        ) as mock_fetch:
+            response = secondary_org_client.post(
+                "/agentcc/provider-credentials/fetch_models/",
+                {"provider_name": "openai", "base_url": "https://attacker.example"},
+                format="json",
+            )
+            assert response.status_code == 400
+            mock_fetch.assert_not_called()
+
+            # The saved base URL itself, or a key of the caller's own, is fine.
+            response = secondary_org_client.post(
+                "/agentcc/provider-credentials/fetch_models/",
+                {"provider_name": "openai", "base_url": "https://api.openai.com/v1/"},
+                format="json",
+            )
+            assert response.status_code == 200, response.json()
+            response = secondary_org_client.post(
+                "/agentcc/provider-credentials/fetch_models/",
+                {
+                    "provider_name": "openai",
+                    "base_url": "https://other.example",
+                    "api_key": "sk-typed",
+                },
+                format="json",
+            )
+            assert response.status_code == 200, response.json()
+            assert mock_fetch.call_args[0][2] == "sk-typed"
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestProviderBaseURLIsCheckedOnSave:
+    """A base URL the gateway refuses is refused when the provider is saved,
+    rather than saved and then answered with an error on every request."""
+
+    OPT_IN = "AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS"
+
+    @pytest.fixture(autouse=True)
+    def dns(self, provider_dns):
+        return provider_dns(
+            {
+                "mock-llm": ["172.20.0.5"],
+                "host.docker.internal": ["192.168.65.254"],
+                "api.openai.com": ["104.18.6.192"],
+            },
+            passthrough=True,
+        )
+
+    @pytest.fixture(autouse=True)
+    def _no_gateway_push(self):
+        with (
+            patch(
+                "agentcc.views.provider_credential.AgentccProviderCredentialViewSet._push_config_to_gateway",
+                return_value=True,
+            ),
+            patch("agentcc.views.gateway.push_org_config", return_value=True),
+        ):
+            yield
+
+    def _create(self, client, base_url, name="custom"):
+        return client.post(
+            "/agentcc/provider-credentials/",
+            {
+                "provider_name": name,
+                "credentials": {"api_key": "sk-local"},
+                "base_url": base_url,
+                "api_format": "openai",
+            },
+            format="json",
+        )
+
+    def _update_provider(self, client, base_url, name="custom", **config):
+        return client.post(
+            "/agentcc/gateways/default/update-provider/",
+            {
+                "name": name,
+                "config": {
+                    "api_key": "sk-local",
+                    "api_format": "openai",
+                    "models": ["mock-model"],
+                    "base_url": base_url,
+                    **config,
+                },
+            },
+            format="json",
+        )
+
+    def _saved(self, org, name="custom"):
+        return AgentccProviderCredential.no_workspace_objects.filter(
+            organization=org, provider_name=name, deleted=False
+        ).first()
+
+    @pytest.mark.parametrize(
+        "base_url",
+        [
+            "http://mock-llm:8080",
+            "http://100.64.77.10:8080",  # RFC 6598 shared address space
+            "http://10.0.0.12:11434",
+            "http://host.docker.internal:11434",
+        ],
+    )
+    def test_gateway_ui_refuses_a_private_base_url_without_the_opt_in(
+        self, monkeypatch, secondary_org_context, secondary_org_client, base_url
+    ):
+        monkeypatch.delenv(self.OPT_IN, raising=False)
+        org_b, _ = secondary_org_context
+
+        response = self._update_provider(secondary_org_client, base_url)
+
+        assert response.status_code == 400, response.json()
+        assert f"{self.OPT_IN}=true" in response.json()["message"]
+        assert self._saved(org_b) is None
+
+    def test_gateway_ui_saves_a_private_base_url_with_the_opt_in(
+        self, monkeypatch, secondary_org_context, secondary_org_client
+    ):
+        monkeypatch.setenv(self.OPT_IN, "true")
+        org_b, _ = secondary_org_context
+
+        response = self._update_provider(secondary_org_client, "http://mock-llm:8080")
+
+        assert response.status_code == 200, response.json()
+        assert self._saved(org_b).base_url == "http://mock-llm:8080"
+
+    @pytest.mark.parametrize(
+        "base_url",
+        [
+            "http://127.0.0.1:11434",
+            "http://169.254.169.254/latest",
+            "http://100.100.100.200",  # Alibaba metadata, inside 100.64.0.0/10
+        ],
+    )
+    def test_gateway_ui_refuses_loopback_and_metadata_even_with_the_opt_in(
+        self, monkeypatch, secondary_org_context, secondary_org_client, base_url
+    ):
+        monkeypatch.setenv(self.OPT_IN, "true")
+        org_b, _ = secondary_org_context
+
+        response = self._update_provider(secondary_org_client, base_url)
+
+        assert response.status_code == 400, response.json()
+        assert "never allowed" in response.json()["message"]
+        assert self._saved(org_b) is None
+
+    def test_gateway_ui_leaves_default_and_unresolvable_urls_to_the_gateway(
+        self, monkeypatch, secondary_org_context, secondary_org_client, dns
+    ):
+        monkeypatch.delenv(self.OPT_IN, raising=False)
+        org_b, _ = secondary_org_context
+
+        # No base_url: the provider's default endpoint (config.yaml or built in).
+        response = self._update_provider(secondary_org_client, "", name="openai")
+        assert response.status_code == 200, response.json()
+        dns.assert_not_called()
+
+        # Not resolvable from the backend: the gateway checks it on each request.
+        response = self._update_provider(
+            secondary_org_client, "https://llm.corp.invalid/v1", name="corp"
+        )
+        assert response.status_code == 200, response.json()
+        assert self._saved(org_b, "corp").base_url == "https://llm.corp.invalid/v1"
+
+    def test_gateway_ui_can_still_edit_a_provider_saved_before_the_check(
+        self, monkeypatch, secondary_org_context, secondary_org_client
+    ):
+        monkeypatch.delenv(self.OPT_IN, raising=False)
+        org_b, _ = secondary_org_context
+        AgentccProviderCredential.no_workspace_objects.create(
+            organization=org_b,
+            provider_name="custom",
+            display_name="Local vLLM",
+            encrypted_credentials=CredentialManager.encrypt({"api_key": "sk-local"}),
+            api_format="openai",
+            base_url="http://mock-llm:8080",
+        )
+
+        listed = secondary_org_client.get("/agentcc/provider-credentials/")
+        assert listed.status_code == 200, listed.json()
+
+        # The edit dialog sends the saved base URL back unchanged.
+        response = self._update_provider(
+            secondary_org_client, "http://mock-llm:8080/", models=["other-model"]
+        )
+        assert response.status_code == 200, response.json()
+        assert self._saved(org_b).models_list == ["other-model"]
+
+        # Pointing it at another private address is a new URL, and is checked.
+        response = self._update_provider(secondary_org_client, "http://10.0.0.12:8080")
+        assert response.status_code == 400, response.json()
+        assert f"{self.OPT_IN}=true" in response.json()["message"]
+        assert self._saved(org_b).base_url == "http://mock-llm:8080/"
+
+    def test_credential_api_refuses_a_private_base_url_without_the_opt_in(
+        self, monkeypatch, secondary_org_context, secondary_org_client
+    ):
+        monkeypatch.delenv(self.OPT_IN, raising=False)
+        org_b, _ = secondary_org_context
+
+        response = self._create(secondary_org_client, "http://100.64.77.10:8080")
+
+        assert response.status_code == 400, response.json()
+        assert f"{self.OPT_IN}=true" in response.json()["message"]
+        assert self._saved(org_b) is None
+
+        monkeypatch.setenv(self.OPT_IN, "true")
+        response = self._create(secondary_org_client, "http://100.64.77.10:8080")
+        assert response.status_code == 201, response.json()
+        assert self._saved(org_b).base_url == "http://100.64.77.10:8080"
+
+    def test_credential_api_leaves_a_single_label_host_to_the_opt_in(
+        self, monkeypatch, secondary_org_context, secondary_org_client
+    ):
+        # A Docker service or Kubernetes Service short name has no dot, like
+        # the gateway UI's http://mock-llm:8080. Whether it may be saved is the
+        # opt-in's decision, not the URL format's.
+        monkeypatch.delenv(self.OPT_IN, raising=False)
+        org_b, _ = secondary_org_context
+
+        response = self._create(secondary_org_client, "http://mock-llm:8080")
+
+        assert response.status_code == 400, response.json()
+        assert f"{self.OPT_IN}=true" in response.json()["message"]
+        assert self._saved(org_b) is None
+
+        monkeypatch.setenv(self.OPT_IN, "true")
+        response = self._create(secondary_org_client, "http://mock-llm:8080")
+        assert response.status_code == 201, response.json()
+        cred = self._saved(org_b)
+        assert cred.base_url == "http://mock-llm:8080"
+
+        response = secondary_org_client.patch(
+            f"/agentcc/provider-credentials/{cred.id}/",
+            {"base_url": "http://mock-llm:11434/v1"},
+            format="json",
+        )
+        assert response.status_code == 200, response.json()
+        cred.refresh_from_db()
+        assert cred.base_url == "http://mock-llm:11434/v1"
+
+    @pytest.mark.parametrize(
+        "base_url",
+        [
+            "mock-llm:8080",
+            "ftp://mock-llm/v1",
+            "http://:8080",
+            "http://mock llm:8080",
+            # The gateway's url.Parse refuses control characters, so a saved
+            # one would fail every request through the provider.
+            "http://mock\x01llm:8080",
+            "\x01http://mock-llm:8080",
+            "http://mock-llm:8080/v1\x7f",
+            "http://mock-llm:80a",
+            "http://mock-llm:65536",
+        ],
+    )
+    def test_credential_api_still_refuses_what_is_not_an_http_url_with_a_host(
+        self, monkeypatch, secondary_org_context, secondary_org_client, base_url
+    ):
+        monkeypatch.setenv(self.OPT_IN, "true")
+        org_b, _ = secondary_org_context
+
+        response = self._create(secondary_org_client, base_url)
+
+        assert response.status_code == 400, response.json()
+        assert "Enter a valid URL." in str(response.json())
+        assert self._saved(org_b) is None
+
+    def test_credential_api_checks_a_changed_base_url_only(
+        self, monkeypatch, secondary_org_context, secondary_org_client
+    ):
+        monkeypatch.delenv(self.OPT_IN, raising=False)
+        org_b, _ = secondary_org_context
+        cred = AgentccProviderCredential.no_workspace_objects.create(
+            organization=org_b,
+            provider_name="custom",
+            encrypted_credentials=CredentialManager.encrypt({"api_key": "sk-local"}),
+            api_format="openai",
+            base_url="http://10.0.0.12:8080",
+        )
+        url = f"/agentcc/provider-credentials/{cred.id}/"
+
+        response = secondary_org_client.patch(
+            url,
+            {"display_name": "Renamed", "base_url": "http://10.0.0.12:8080"},
+            format="json",
+        )
+        assert response.status_code == 200, response.json()
+
+        response = secondary_org_client.patch(
+            url, {"base_url": "http://100.64.77.10:8080"}, format="json"
+        )
+        assert response.status_code == 400, response.json()
+        assert f"{self.OPT_IN}=true" in response.json()["message"]
+        cred.refresh_from_db()
+        assert cred.base_url == "http://10.0.0.12:8080"
+        assert cred.display_name == "Renamed"
+
+        response = secondary_org_client.patch(
+            url, {"base_url": "https://api.openai.com/v1"}, format="json"
+        )
+        assert response.status_code == 200, response.json()
+        cred.refresh_from_db()
+        assert cred.base_url == "https://api.openai.com/v1"
+
+    def test_credential_api_put_is_checked_like_patch(
+        self, monkeypatch, secondary_org_context, secondary_org_client
+    ):
+        monkeypatch.delenv(self.OPT_IN, raising=False)
+        org_b, _ = secondary_org_context
+        cred = AgentccProviderCredential.no_workspace_objects.create(
+            organization=org_b,
+            provider_name="custom",
+            display_name="Local vLLM",
+            encrypted_credentials=CredentialManager.encrypt({"api_key": "sk-local"}),
+            api_format="openai",
+            base_url="https://api.openai.com/v1",
+        )
+
+        response = secondary_org_client.put(
+            f"/agentcc/provider-credentials/{cred.id}/",
+            {
+                "provider_name": "custom",
+                "display_name": "Renamed",
+                "base_url": "http://100.64.77.10:8080",
+            },
+            format="json",
+        )
+
+        assert response.status_code == 400, response.json()
+        assert f"{self.OPT_IN}=true" in response.json()["message"]
+        cred.refresh_from_db()
+        assert cred.base_url == "https://api.openai.com/v1"
+        assert cred.display_name == "Local vLLM"

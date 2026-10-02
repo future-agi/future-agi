@@ -1941,9 +1941,24 @@ class EvalUsageQuerySerializer(serializers.Serializer):
 class EvalUsageStatsSerializer(serializers.Serializer):
     total_runs = serializers.IntegerField()
     runs_period = serializers.IntegerField()
-    success_count = serializers.IntegerField()
-    error_count = serializers.IntegerField()
-    pass_rate = serializers.FloatField()
+    success_count = serializers.IntegerField(
+        help_text=(
+            "Deprecated compatibility field. Usage counts only successful "
+            "runs, so this always equals runs_period."
+        ),
+    )
+    error_count = serializers.IntegerField(
+        help_text=(
+            "Deprecated compatibility field. Usage counts only successful "
+            "runs, so this is always 0; failed runs stay in the eval logs."
+        ),
+    )
+    pass_rate = serializers.FloatField(
+        help_text=(
+            "Deprecated compatibility field. Usage counts only successful "
+            "runs, so this is 100 when runs_period is above 0, otherwise 0."
+        ),
+    )
 
 
 class EvalUsageFeedbackSerializer(serializers.Serializer):

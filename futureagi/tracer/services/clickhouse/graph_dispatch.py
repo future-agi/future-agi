@@ -39,11 +39,18 @@ from tracer.services.clickhouse.exact_graph_reads import (
     read_exact_eval_graph,
     read_exact_user_system_graph,
 )
+from tracer.services.clickhouse.graph_metric_statistic import (
+    publishes_latency,
+    snapshot_names_its_statistic,
+    stamps_metric_statistic,
+)
 from tracer.services.clickhouse.graph_read_cost import (
     estimate_raw_graph_scan_rows,
+    estimate_raw_log_graph_scan,
     estimate_user_graph_scan_rows,
     raw_graph_scan_fits_wall,
     raw_graph_scan_window,
+    raw_log_membership_fits_wall,
     user_graph_scan_fits_wall,
     user_graph_scan_window,
 )
@@ -73,6 +80,15 @@ GRAPH_RESULT_BYTES = settings.DASHBOARD_ROLLUP_MAX_RESULT_BYTES
 # prevents a rolling deploy from serving a 30-day cached payload produced by
 # the retired hierarchy-as-path projection.
 AGENT_GRAPH_PAYLOAD_VERSION = 5
+# The same, for the exact system-metric snapshots (observe-system-graph,
+# observe-session-system-graph, observe-user-system-graph). The version
+# rotates the identity, and with it the cache, alias, refresh-lock and
+# refresh-state keys, so no snapshot keyed without it (dev's, whose users
+# latency is a mean of per-user means) is ever read. Within a version, a
+# latency snapshot is served only when marked "mean"
+# (graph_metric_statistic.snapshot_names_its_statistic), which covers an
+# older worker taking a current-version job mid-deploy.
+OBSERVE_SYSTEM_GRAPH_PAYLOAD_VERSION = 2
 # A short-window selector may prove as many as 4,096 trace matches. Decoration
 # fans each trace set into child-span reads, so keep the same finite 40-trace
 # envelope used by the long-window sampler before any decoration query runs.
@@ -279,6 +295,29 @@ def _raw_trace_seed_candidates(
             )
         )
     return sorted(candidates, key=lambda item: (item.rank, item.filter_index))
+
+
+def _graph_parses_raw_log(filters: list[dict[str, Any]]) -> bool:
+    """Whether the statement parses every span's raw_log to decide membership.
+
+    Only the Voice chart's "exclude simulation calls" leaf does: it looks for
+    simulator phone numbers in each span's raw_log, so the read costs those
+    bytes rather than its span count.
+    """
+
+    # Lazy import for the same v1/v2 filter cycle as the seed compiler.
+    from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
+        is_internal_simulator_call_filter,
+    )
+    from tracer.services.clickhouse.query_builders.voice_call_list import (
+        VAPI_PHONE_NUMBERS,
+    )
+
+    # With no simulator numbers configured the leaf compiles to "0" and reads
+    # nothing (``simulator_call_root_predicate``).
+    if not VAPI_PHONE_NUMBERS:
+        return False
+    return any(is_internal_simulator_call_filter(item) for item in filters or [])
 
 
 def _graph_seed_probe_budget_ms(timeout_ms: int) -> int:
@@ -880,19 +919,33 @@ def _read_or_refresh_exact_graph(
     organization_id: str | None = None,
     workspace_id: str | None = None,
     schedule_on_miss: bool = True,
+    revalidate_open_window: bool = False,
 ) -> Any:
-    """Return immediately while a deduplicated exact refresh runs out of band."""
+    """Return immediately while a deduplicated exact refresh runs out of band.
+
+    ``revalidate_open_window`` lets an old open-window hit refresh its own
+    identity in the background (see ``read_or_schedule_exact_snapshot``). The
+    cache-only probes pass ``not refresh``: an explicit refresh re-calls with
+    ``refresh=True`` right after, and a probe claim would make that call find
+    its own claim and reconcile it against Temporal.
+    """
 
     if organization_id is not None:
         identity["organization_id"] = str(organization_id)
     if workspace_id is not None:
         identity["workspace_id"] = str(workspace_id)
+    metric_id = identity.get("metric_id")
     return read_or_schedule_exact_snapshot(
         namespace,
         identity,
         refresh=refresh,
         pending_payload=pending_payload,
         schedule_on_miss=schedule_on_miss,
+        revalidate_open_window=revalidate_open_window,
+        # A latency snapshot not marked as the mean is a miss.
+        accept_snapshot=lambda payload: snapshot_names_its_statistic(
+            namespace, metric_id, payload
+        ),
     )
 
 
@@ -1579,9 +1632,13 @@ class _GraphReadUnaffordable:
     schedule, never a reason to issue the statement inline and never on its own
     a reason to refuse: an uncosted read goes to the bounded worker, which can
     survive being wrong about it.
+
+    ``raw_log_marks`` is the granule count of a statement that parses raw_log,
+    carried for the same reason: the background wall is costed with it too.
     """
 
     estimated_rows: int | None
+    raw_log_marks: int | None = None
 
 
 def _affordable_raw_graph_seed(
@@ -1627,24 +1684,40 @@ def _affordable_raw_graph_seed(
         start_date=start_date,
         end_date=end_date,
     )
+    parses_raw_log = _graph_parses_raw_log(filters)
     estimated_rows: int | None = None
+    raw_log_marks: int | None = None
     try:
-        estimated_rows = estimate_raw_graph_scan_rows(
-            analytics=analytics,
-            project_id=project_id,
-            scan_start=scan_window[0],
-            scan_end=scan_window[1],
-            timeout_ms=analytics.remaining_read_ms(interactive_deadline_ms),
-        )
+        if parses_raw_log:
+            estimate = estimate_raw_log_graph_scan(
+                analytics=analytics,
+                project_id=project_id,
+                scan_start=scan_window[0],
+                scan_end=scan_window[1],
+                timeout_ms=analytics.remaining_read_ms(interactive_deadline_ms),
+            )
+            if estimate is not None:
+                estimated_rows, raw_log_marks = estimate
+        else:
+            estimated_rows = estimate_raw_graph_scan_rows(
+                analytics=analytics,
+                project_id=project_id,
+                scan_start=scan_window[0],
+                scan_end=scan_window[1],
+                timeout_ms=analytics.remaining_read_ms(interactive_deadline_ms),
+            )
         if raw_graph_scan_fits_wall(
             estimated_rows,
             remaining_ms=analytics.remaining_read_ms(interactive_deadline_ms),
+            raw_log_marks=raw_log_marks,
         ):
             return None
-        if observe_type != "trace":
+        if observe_type != "trace" or parses_raw_log:
             # A span graph compiles no trace-ID witness, so there is no second
-            # lever to try: the window is the read.
-            return _GraphReadUnaffordable(estimated_rows)
+            # lever to try: the window is the read. A raw_log parse has none
+            # either: a witness narrows spans, not the granules they share, and
+            # a seed admits up to _GRAPH_SEED_MAX_ESTIMATED_MARKS of them.
+            return _GraphReadUnaffordable(estimated_rows, raw_log_marks)
         seed_candidate, seed_probe_count = _select_raw_trace_seed_candidate(
             analytics=analytics,
             project_id=project_id,
@@ -1656,7 +1729,7 @@ def _affordable_raw_graph_seed(
     except ReadDeadlineExceeded:
         # The request wall is already gone. That is the plainest possible
         # proof that this statement cannot run on it.
-        return _GraphReadUnaffordable(estimated_rows)
+        return _GraphReadUnaffordable(estimated_rows, raw_log_marks)
     if seed_candidate is None:
         return _GraphReadUnaffordable(estimated_rows)
     return seed_candidate, seed_probe_count
@@ -1678,7 +1751,8 @@ def _schedule_unaffordable_graph_read(
 
     ``namespace`` is the exact-refresh lane the worker dispatches on and
     ``fits_wall`` the affordability rule for the statement that lane runs;
-    the defaults are the raw filtered graph's, the users graph passes its own.
+    the defaults are the raw filtered graph's; the users graph and the eval and
+    annotation charts pass their own.
 
     The background lane is a wider wall, not an unbounded one, so the same
     arithmetic is asked again against the deadline the worker would actually
@@ -1697,10 +1771,17 @@ def _schedule_unaffordable_graph_read(
 
     unaffordable = BoundedGraphReadError("read_budget_exceeded", retryable=True)
     # Unknown is not "too big": it is "not costed here". Route it to the wider
-    # wall rather than refusing a read that may well fit.
+    # wall rather than refusing a read that may well fit. A raw_log parse is
+    # priced by its granules on this wall as on the interactive one.
+    raw_log_cost = (
+        {}
+        if verdict.raw_log_marks is None
+        else {"raw_log_marks": verdict.raw_log_marks}
+    )
     schedulable = verdict.estimated_rows is None or fits_wall(
         verdict.estimated_rows,
         remaining_ms=GRAPH_WALL_DEADLINE_MS,
+        **raw_log_cost,
     )
     if organization_id and schedulable:
         try:
@@ -1817,6 +1898,7 @@ def fetch_background_raw_system_metric_graph(
             logger.info(
                 "graph_background_read_refused_by_cost_gate",
                 estimated_rows=int(seed.estimated_rows),
+                raw_log_marks=seed.raw_log_marks,
             )
             raise BoundedGraphReadError("read_budget_exceeded", retryable=True)
         # Uncosted, and no admitted witness. Run it unseeded on this bounded
@@ -1835,6 +1917,8 @@ def fetch_background_raw_system_metric_graph(
     )
 
 
+# Every call here is a system metric; a blank id publishes latency.
+@stamps_metric_statistic("trace", lambda call: call.get("metric_id") or "")
 def fetch_system_metric_graph_ch(
     *,
     analytics: Any,
@@ -1848,14 +1932,25 @@ def fetch_system_metric_graph_ch(
     organization_id: str | None = None,
     workspace_id: str | None = None,
 ) -> dict[str, Any]:
-    """Read an unfiltered rollup or an exact synchronous filtered graph."""
+    """Read an unfiltered rollup or an exact synchronous filtered graph.
+
+    An unfiltered LATENCY request is the exception to the rollup: it takes
+    the filtered path below with its empty filter set. The rollup reads
+    ``spans``'s hourly aggregate states, which hold latency only as t-digest
+    states over every physically inserted row; they carry no latency sum, so
+    they cannot publish the mean the filtered path publishes. On the exact
+    path a chart with no filter equals the same chart with a filter that
+    matches every span, and its Traffic bars come from the same statement.
+    Every other metric keeps the rollup (its Traffic series still counts
+    every physical version, a known over-count of re-versioned rows).
+    """
 
     project_id = _validated_project_id(project_id)
     filters = list(filters or [])
     normalized_observe_type = str(observe_type or "trace").strip().lower()
     if normalized_observe_type not in {"trace", "span"}:
         raise ValueError("observe_type must be trace or span")
-    if not _active_filters(filters):
+    if not _active_filters(filters) and not publishes_latency("trace", metric_id):
         if not bool(getattr(analytics, "supports_per_query_read_settings", True)):
             return degraded_graph_response(
                 str(metric_id or ""),
@@ -1897,6 +1992,7 @@ def fetch_system_metric_graph_ch(
         "interval": interval,
         "metric_id": str(metric_id or ""),
         "observe_type": normalized_observe_type,
+        "payload_version": OBSERVE_SYSTEM_GRAPH_PAYLOAD_VERSION,
     }
     pending_payload = _pending_graph_payload(str(metric_id or ""))
     cached = _read_or_refresh_exact_graph(
@@ -1907,6 +2003,7 @@ def fetch_system_metric_graph_ch(
         organization_id=organization_id,
         workspace_id=workspace_id,
         schedule_on_miss=False,
+        revalidate_open_window=not refresh,
     )
     if (
         isinstance(cached, dict)
@@ -2041,6 +2138,10 @@ def fetch_agent_graph_ch(
         },
         organization_id=organization_id,
         workspace_id=workspace_id,
+        # The toolbar window is hour-stable, so a revisit replays this
+        # identity: an old open-window hit is served and refreshed in the
+        # background. An explicit refresh already schedules.
+        revalidate_open_window=not refresh,
     )
 
 
@@ -2166,6 +2267,59 @@ def _affordable_user_graph_read(
     return _GraphReadUnaffordable(estimated_rows)
 
 
+def _affordable_raw_log_membership_read(
+    *,
+    analytics: Any,
+    project_id: str,
+    filters: list[dict[str, Any]],
+    interactive_deadline_ms: int,
+) -> _GraphReadUnaffordable | None:
+    """Decide whether this wall can run an eval/annotation read's raw_log parse.
+
+    Those charts compile the Voice simulator toggle into a ``spans FINAL``
+    membership over the whole window that parses every span's raw_log - see
+    ``_RAW_LOG_MEMBERSHIP_GRANULE_SCAN_MS``. ``None`` means the read carries no
+    such parse, or is proven to fit, and the path continues exactly as before;
+    the sentinel sends it to the bounded worker, as ``_affordable_user_graph_read``
+    does for the users graph. An unbounded or empty window is left to the reader.
+    """
+
+    if not _graph_parses_raw_log(filters):
+        return None
+    try:
+        analyzed = BaseQueryBuilder.analyze_bounded_datetime_filters(
+            filters, strict=True
+        )
+    except Exception:  # noqa: BLE001 - the reader raises the same, in its own words
+        return None
+    if analyzed.empty or analyzed.start is None or analyzed.end is None:
+        return None
+    # The membership reads complete identity hours, the users graph's window.
+    scan_start, scan_end = user_graph_scan_window(analyzed.start, analyzed.end)
+    estimated_rows: int | None = None
+    raw_log_marks: int | None = None
+    try:
+        estimate = estimate_raw_log_graph_scan(
+            analytics=analytics,
+            project_id=project_id,
+            scan_start=scan_start,
+            scan_end=scan_end,
+            timeout_ms=analytics.remaining_read_ms(interactive_deadline_ms),
+        )
+        if estimate is not None:
+            estimated_rows, raw_log_marks = estimate
+        if raw_log_membership_fits_wall(
+            estimated_rows,
+            remaining_ms=analytics.remaining_read_ms(interactive_deadline_ms),
+            raw_log_marks=raw_log_marks,
+        ):
+            return None
+    except ReadDeadlineExceeded:
+        return _GraphReadUnaffordable(estimated_rows, raw_log_marks)
+    return _GraphReadUnaffordable(estimated_rows, raw_log_marks)
+
+
+@stamps_metric_statistic("users", lambda call: call.get("metric_id") or "")
 def fetch_user_system_metric_graph_ch(
     *,
     analytics: Any,
@@ -2201,6 +2355,7 @@ def fetch_user_system_metric_graph_ch(
         "filters": filters,
         "interval": interval,
         "metric_id": normalized_metric_id,
+        "payload_version": OBSERVE_SYSTEM_GRAPH_PAYLOAD_VERSION,
     }
     pending_payload = _pending_graph_payload(normalized_metric_id)
     if organization_id:
@@ -2215,6 +2370,7 @@ def fetch_user_system_metric_graph_ch(
             organization_id=organization_id,
             workspace_id=workspace_id,
             schedule_on_miss=False,
+            revalidate_open_window=not refresh,
         )
         if (
             isinstance(cached, dict)
@@ -2616,7 +2772,6 @@ def fetch_eval_graph_ch(
     normalized_aggregation_context = str(aggregation_context or "trace").strip().lower()
     if normalized_aggregation_context not in {"trace", "session", "user"}:
         raise ValueError("unsupported eval graph aggregation context")
-    del refresh, organization_id, workspace_id
     interactive_deadline_ms = min(
         int(timeout_ms),
         GRAPH_INTERACTIVE_QUERY_TIMEOUT_MS,
@@ -2627,6 +2782,32 @@ def fetch_eval_graph_ch(
         analytics,
         ReadDeadline.start(interactive_deadline_ms),
     )
+    unaffordable = _affordable_raw_log_membership_read(
+        analytics=bounded_analytics,
+        project_id=project_id,
+        filters=filters,
+        interactive_deadline_ms=interactive_deadline_ms,
+    )
+    if unaffordable is not None:
+        metric_id = str(req_data_config.get("id") or "")
+        return _schedule_unaffordable_graph_read(
+            metric_id=metric_id,
+            verdict=unaffordable,
+            identity={
+                "project_id": project_id,
+                "filters": filters,
+                "interval": interval,
+                "req_data_config": req_data_config,
+                "observe_type": normalized_observe_type,
+                "aggregation_context": normalized_aggregation_context,
+            },
+            pending_payload=_pending_graph_payload(metric_id),
+            refresh=refresh,
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+            namespace="observe-eval-graph",
+            fits_wall=raw_log_membership_fits_wall,
+        )
     try:
         response = read_exact_eval_graph(
             analytics=bounded_analytics,
@@ -2925,7 +3106,6 @@ def fetch_annotation_graph_ch(
     normalized_aggregation_context = str(aggregation_context or "trace").strip().lower()
     if normalized_aggregation_context not in {"trace", "session", "user"}:
         raise ValueError("unsupported annotation graph aggregation context")
-    del refresh, organization_id, workspace_id
     interactive_deadline_ms = min(
         int(timeout_ms),
         GRAPH_INTERACTIVE_QUERY_TIMEOUT_MS,
@@ -2936,6 +3116,31 @@ def fetch_annotation_graph_ch(
         analytics,
         ReadDeadline.start(interactive_deadline_ms),
     )
+    unaffordable = _affordable_raw_log_membership_read(
+        analytics=bounded_analytics,
+        project_id=project_id,
+        filters=filters,
+        interactive_deadline_ms=interactive_deadline_ms,
+    )
+    if unaffordable is not None:
+        return _schedule_unaffordable_graph_read(
+            metric_id=label_id,
+            verdict=unaffordable,
+            identity={
+                "project_id": project_id,
+                "filters": filters,
+                "interval": interval,
+                "req_data_config": req_data_config,
+                "observe_type": normalized_observe_type,
+                "aggregation_context": normalized_aggregation_context,
+            },
+            pending_payload=_pending_graph_payload(label_id),
+            refresh=refresh,
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+            namespace="observe-annotation-graph",
+            fits_wall=raw_log_membership_fits_wall,
+        )
     try:
         response = read_exact_annotation_graph(
             analytics=bounded_analytics,

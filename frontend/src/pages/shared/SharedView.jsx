@@ -22,7 +22,8 @@ import {
 } from "src/sections/projects/LLMTracing/formatters";
 import Iconify from "src/components/iconify";
 import SharedVoiceView from "./SharedVoiceView";
-import { isVoiceCall } from "./sharedViewHelpers";
+import SharedSimulationCallView from "./SharedSimulationCallView";
+import { isVoiceCall, simulationCallKind } from "./sharedViewHelpers";
 
 function getSpan(entry) {
   return entry?.observation_span || entry?.observationSpan || {};
@@ -53,6 +54,12 @@ export default function SharedView() {
     () => isTrace && isVoiceCall(resourceData),
     [isTrace, resourceData],
   );
+  const isCallExecution = resourceType === "call_execution";
+  // A shared call resolves to the same payload as the in-app call detail.
+  const sharedCall = isCallExecution ? resourceData || null : null;
+  const isChatCall =
+    isCallExecution && simulationCallKind(sharedCall) === "chat";
+  const isVoiceView = isVoice || (isCallExecution && !isChatCall);
 
   // For traces, the resolve endpoint returns full span tree in data
   const spans =
@@ -174,15 +181,17 @@ export default function SharedView() {
     <>
       <Helmet>
         <title>
-          {isVoice
+          {isVoiceView
             ? `Shared Voice Call — ${resourceId?.substring(0, 8) || "..."}`
-            : isTrace
-              ? `Shared Trace — ${resourceId?.substring(0, 8) || "..."}`
-              : resourceType === "dashboard"
-                ? `Shared Dashboard — ${resourceData?.name || resourceId?.substring(0, 8) || "..."}`
-                : resourceType === "project"
-                  ? `Shared Project — ${resourceData?.name || resourceId?.substring(0, 8) || "..."}`
-                  : "Shared Resource"}
+            : isChatCall
+              ? `Shared Chat — ${resourceId?.substring(0, 8) || "..."}`
+              : isTrace
+                ? `Shared Trace — ${resourceId?.substring(0, 8) || "..."}`
+                : resourceType === "dashboard"
+                  ? `Shared Dashboard — ${resourceData?.name || resourceId?.substring(0, 8) || "..."}`
+                  : resourceType === "project"
+                    ? `Shared Project — ${resourceData?.name || resourceId?.substring(0, 8) || "..."}`
+                    : "Shared Resource"}
         </title>
       </Helmet>
 
@@ -211,13 +220,15 @@ export default function SharedView() {
           <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
             <Iconify
               icon={
-                isVoice
+                isVoiceView
                   ? "mdi:phone-outline"
-                  : resourceType === "dashboard"
-                    ? "mdi:view-dashboard-outline"
-                    : resourceType === "project"
-                      ? "mdi:folder-outline"
-                      : "mdi:share-variant-outline"
+                  : isChatCall
+                    ? "mdi:message-text-outline"
+                    : resourceType === "dashboard"
+                      ? "mdi:view-dashboard-outline"
+                      : resourceType === "project"
+                        ? "mdi:folder-outline"
+                        : "mdi:share-variant-outline"
               }
               width={20}
               sx={{ color: "primary.main" }}
@@ -225,13 +236,15 @@ export default function SharedView() {
             <Typography
               sx={{ fontSize: 14, fontWeight: 600, color: "text.primary" }}
             >
-              {isVoice
+              {isVoiceView
                 ? "Shared voice call"
-                : resourceType === "dashboard"
-                  ? "Shared dashboard"
-                  : resourceType === "project"
-                    ? "Shared project"
-                    : `Shared ${resourceType || "resource"}`}
+                : isChatCall
+                  ? "Shared chat"
+                  : resourceType === "dashboard"
+                    ? "Shared dashboard"
+                    : resourceType === "project"
+                      ? "Shared project"
+                      : `Shared ${resourceType || "resource"}`}
             </Typography>
             {resourceId && (
               <Typography
@@ -262,6 +275,8 @@ export default function SharedView() {
           >
             <CircularProgress size={32} />
           </Box>
+        ) : isCallExecution ? (
+          <SharedSimulationCallView call={sharedCall} />
         ) : isVoice ? (
           /* Voice call view — transcript + audio player, read-only */
           <SharedVoiceView resourceData={resourceData} />

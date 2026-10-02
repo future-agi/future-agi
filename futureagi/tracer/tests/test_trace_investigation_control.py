@@ -209,6 +209,10 @@ def test_claim_pins_context_and_reserves_project_capacity(observe_project):
 
     assert len(response["claims"]) == 1
     claim = response["claims"][0]
+    assert claim["organization_name"] == (
+        observe_project.organization.display_name or observe_project.organization.name
+    )
+    assert claim["project_name"] == observe_project.name
     assert claim["engine_version"] == "omega-v1"
     assert claim["read_cutoff"] <= timezone.now()
     assert claim["memory"]["entries"] == config.omega_memory

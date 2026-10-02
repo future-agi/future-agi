@@ -82,6 +82,8 @@ _EVAL_LEGACY_COLUMN_MARKERS = {
     "eval_scan._peerdb_version": "eval_scan.__eval_legacy_version__",
     "latest_eval._peerdb_is_deleted": "latest_eval.__eval_legacy_cdc_deleted__",
     "latest_eval._peerdb_version": "latest_eval.__eval_legacy_version__",
+    "candidate_eval._peerdb_is_deleted": "candidate_eval.__eval_legacy_cdc_deleted__",
+    "candidate_eval._peerdb_version": "candidate_eval.__eval_legacy_version__",
 }
 
 # ``model_hub_score`` is not part of the spans migration and retains PeerDB's

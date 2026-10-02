@@ -6,6 +6,8 @@ import math
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from functools import lru_cache
+from itertools import chain, product
 from typing import Any
 
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
@@ -107,6 +109,25 @@ def _values_fit_second_inline_budget(normalized_values: tuple[object, ...]) -> b
     )
 
 
+@lru_cache(maxsize=256)
+def _kelvin_sign_spellings(value: str) -> tuple[str, ...]:
+    """Every spelling of ``value`` with any of its "k"s as U+212A KELVIN SIGN.
+
+    Joining whole "k"-separated segments keeps each spelling one C-level pass
+    instead of a Python step per character. One list request still compiles
+    its filter plans hundreds to thousands of times over the same values, so
+    each value's spellings are built once, not once per compile. The caller
+    bounds count and bytes before asking, so an entry holds at most 256
+    spellings and 16 KiB of them.
+    """
+
+    segments = value.split("k")
+    return tuple(
+        "".join(chain.from_iterable(zip(segments, (*letters, ""), strict=True)))
+        for letters in product(("k", "\N{KELVIN SIGN}"), repeat=len(segments) - 1)
+    )
+
+
 def _legacy_ascii_lower_bloom_predicate(
     *,
     normalized_values: tuple[object, ...],
@@ -120,30 +141,29 @@ def _legacy_ascii_lower_bloom_predicate(
     lowercase has one non-ASCII inverse: U+212A KELVIN SIGN maps to ``k``.
     Enumerating every Kelvin-sign substitution therefore makes the legacy
     expression a necessary condition without changing the authoritative
-    Unicode comparison. Non-ASCII values and pathological variant counts
-    decline the optimization and keep the Unicode-only path.
+    Unicode comparison. Non-ASCII values and pathological variant counts or
+    sizes decline the optimization and keep the Unicode-only path.
     """
 
     variants: set[str] = set()
+    spelling_bytes = 0
     for raw_value in normalized_values:
         if not isinstance(raw_value, str) or not raw_value.isascii():
             return None
-        value_variants = [""]
-        for character in raw_value:
-            replacements = (
-                (character, "\N{KELVIN SIGN}") if character == "k" else (character,)
-            )
-            if (
-                len(value_variants) * len(replacements)
-                > _MAX_LEGACY_ASCII_BLOOM_VARIANTS
-            ):
-                return None
-            value_variants = [
-                prefix + replacement
-                for prefix in value_variants
-                for replacement in replacements
-            ]
-        variants.update(value_variants)
+        # Each "k" doubles the spellings, so the cap is decided by the count
+        # before any is built.
+        kelvin_slots = raw_value.count("k")
+        if 1 << kelvin_slots > _MAX_LEGACY_ASCII_BLOOM_VARIANTS:
+            return None
+        # Every spelling is the whole value again, in the statement and in
+        # each compile, so their bytes share the companion budget too: 256
+        # spellings of a 16 KiB value were 4 MiB per compile, seconds of
+        # Python per request, and a seed past the parser limit. Within it the
+        # witness never writes more than one "k"-free max-length value does.
+        spelling_bytes += len(raw_value) << kelvin_slots
+        if spelling_bytes > _MAX_INDEX_COMPANION_VALUE_UTF8_BYTES:
+            return None
+        variants.update(_kelvin_sign_spellings(raw_value))
         if len(variants) > _MAX_LEGACY_ASCII_BLOOM_VARIANTS:
             return None
 
@@ -365,6 +385,63 @@ def _parts(item: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     if not isinstance(raw_key, str) or not raw_key or not isinstance(config, dict):
         raise UnsupportedFilterShapeError("filter key and config are required")
     return raw_key, config
+
+
+def is_internal_trace_root_filter(item: dict[str, Any]) -> bool:
+    """Whether ``item`` is the private canonical-root ``observation_type`` leaf.
+
+    Voice-call lists and eval-task trace selection inject it with an
+    unforgeable marker. ``FilterItemField`` rejects that key on requests, so the
+    column type alone never turns a public leaf into a root predicate.
+    """
+
+    if not isinstance(item, dict) or item.get("_eval_task_trace_root") is not True:
+        return False
+    key, config = _parts(item)
+    col_type = str(config.get("col_type") or config.get("colType") or "").upper()
+    return col_type == _INTERNAL_ROOT_METRIC_TYPE and key == "observation_type"
+
+
+def is_internal_simulator_call_filter(item: dict[str, Any]) -> bool:
+    """Whether ``item`` is the private Voice "exclude simulation calls" leaf."""
+
+    if not isinstance(item, dict) or item.get("_eval_task_trace_root") is not True:
+        return False
+    key, config = _parts(item)
+    col_type = str(config.get("col_type") or config.get("colType") or "").upper()
+    return col_type == _INTERNAL_ROOT_METRIC_TYPE and key == "simulator_call"
+
+
+def simulator_call_root_predicate() -> tuple[str, dict[str, Any]]:
+    """Match a CH25 span that is a voice-call root placed by a simulator.
+
+    The Voice list applies the same ``simulator_call_sql`` to each latest
+    conversation root and drops those traces; graphs drop a trace when this
+    matches its live root. With no simulator numbers configured nothing
+    matches, rather than rendering an empty ``IN ()``.
+    """
+
+    from tracer.services.clickhouse.query_builders.voice_call_list import (
+        VAPI_PHONE_NUMBERS,
+        simulator_call_sql,
+    )
+    from tracer.services.clickhouse.v2.query_builders.filters import (
+        rewrite_v1_sql_to_v2,
+    )
+
+    if not VAPI_PHONE_NUMBERS:
+        return "0", {}
+    simulator_call = simulator_call_sql(
+        provider="provider",
+        raw_log_json="JSONExtractRaw(span_attributes_raw, 'raw_log')",
+        raw_log_text="JSONExtractString(span_attributes_raw, 'raw_log')",
+        span_attr_str="span_attr_str",
+    )
+    predicate = rewrite_v1_sql_to_v2(
+        "(parent_span_id IS NULL OR parent_span_id = '') "
+        f"AND observation_type = 'conversation' AND {simulator_call}"
+    )
+    return predicate, {"simulator_phone_numbers": tuple(VAPI_PHONE_NUMBERS)}
 
 
 def _normalize_value(
@@ -1505,6 +1582,8 @@ def compile_exact_graph_filter_predicates(
 
     ordinary_filters: list[dict[str, Any]] = []
     structured_filters: list[tuple[int, dict[str, Any]]] = []
+    trace_root_filters: list[tuple[int, dict[str, Any]]] = []
+    exclude_simulator_calls = False
     for index, item in enumerate(filters or []):
         if not isinstance(item, dict):
             raise UnsupportedFilterShapeError("filter must be an object")
@@ -1512,6 +1591,12 @@ def compile_exact_graph_filter_predicates(
         config = item.get(config_key) or {}
         if not isinstance(config, dict):
             raise UnsupportedFilterShapeError("filter config must be an object")
+        if is_internal_trace_root_filter(item):
+            trace_root_filters.append((index, item))
+            continue
+        if is_internal_simulator_call_filter(item):
+            exclude_simulator_calls = True
+            continue
         col_type = config.get("col_type") or config.get("colType")
         raw_value = config.get("filter_value", config.get("filterValue"))
         filter_type = str(config.get("filter_type") or config.get("filterType") or "")
@@ -1570,6 +1655,48 @@ def compile_exact_graph_filter_predicates(
             """
         clauses.append(row_clause)
         params.update(row_params)
+
+    for index, item in trace_root_filters:
+        # The private root invariant (a voice call's conversation root) belongs
+        # to the trace, so trace and span graphs alike select every row of a
+        # trace whose live root matches - the list's own root-scoped plan.
+        root_plan = _column_plan(
+            item,
+            index=index,
+            column="observation_type",
+            value_type="text",
+            nullable=False,
+            scope="root",
+        )
+        root_clause = (
+            "(parent_span_id IS NULL OR parent_span_id = '') "
+            f"AND ({root_plan.seed_predicate})"
+        )
+        clauses.append(
+            f"""
+            trace_id IN (
+                SELECT DISTINCT trace_id
+                FROM ({latest_span_membership_source_sql(predicate=root_clause)})
+                WHERE matched
+            )
+            """
+        )
+        params.update(root_plan.params)
+
+    if exclude_simulator_calls:
+        # The Voice list's simulator toggle: drop every row of a trace whose
+        # live root is a simulator call.
+        simulator_root, simulator_params = simulator_call_root_predicate()
+        clauses.append(
+            f"""
+            trace_id NOT IN (
+                SELECT DISTINCT trace_id
+                FROM ({latest_span_membership_source_sql(predicate=simulator_root)})
+                WHERE matched
+            )
+            """
+        )
+        params.update(simulator_params)
 
     return " AND ".join(f"({clause})" for clause in clauses), params
 
@@ -1913,11 +2040,7 @@ def compile_trace_filter_plans(
             plans.append(
                 _attribute_plan(item, index=index, scope="any", group_nulls=True)
             )
-        elif (
-            col_type == _INTERNAL_ROOT_METRIC_TYPE
-            and key == "observation_type"
-            and item.get("_eval_task_trace_root") is True
-        ):
+        elif is_internal_trace_root_filter(item):
             plans.append(
                 _column_plan(
                     item,
@@ -2202,8 +2325,11 @@ __all__ = [
     "compile_span_attribute_row_predicate",
     "compile_span_filter_plans",
     "compile_trace_filter_plans",
+    "is_internal_simulator_call_filter",
+    "is_internal_trace_root_filter",
     "partition_span_filter_plans",
     "partition_trace_filter_plans",
+    "simulator_call_root_predicate",
     "supports_span_filters",
     "supports_trace_filters",
     "targets_span_filter_domain",

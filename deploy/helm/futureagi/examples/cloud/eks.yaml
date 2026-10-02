@@ -1,0 +1,85 @@
+# Amazon EKS: RDS for PostgreSQL, ElastiCache for Redis, S3 with access keys,
+# the AWS Load Balancer Controller (an ALB Ingress) and gp3 volumes. ClickHouse
+# and Temporal run in the cluster from their own charts or operators,
+# installed separately:
+#   ClickHouse: the Altinity operator (or ClickHouse's own); the chart speaks
+#     plain HTTP (8123) and native (9000) to it, so keep it in the cluster.
+#   Temporal: the temporalio/temporal chart, on RDS or its own database.
+# Replace every example host and create the Secrets first:
+#
+#   kubectl create secret generic futureagi-postgres --from-literal=password='...'
+#   kubectl create secret generic futureagi-s3 \
+#     --from-literal=access-key='AKIA...' --from-literal=secret-key='...'
+#
+#   helm install futureagi oci://ghcr.io/future-agi/charts/futureagi --version X.Y.Z \
+#     -n futureagi --create-namespace -f eks.yaml --timeout 20m
+#
+# Not supported: IRSA or EKS Pod Identity for S3 and Bedrock (the app needs
+# access keys: a dedicated IAM user limited to the bucket), IAM database
+# authentication for RDS (use a password), and ElastiCache in-transit
+# encryption for the LLM gateway (it has no Redis TLS: keep it off for this
+# cluster, or run the gateway with one replica).
+global:
+  # A gp3 StorageClass (the EBS CSI driver's), for anything the chart stores.
+  storageClass: gp3
+postgres:
+  mode: external
+  existingSecret: futureagi-postgres
+  external:
+    host: futureagi.cluster-example.us-east-1.rds.amazonaws.com
+    sslMode: require
+clickhouse:
+  mode: external
+  external:
+    host: clickhouse-futureagi.clickhouse.svc.cluster.local
+redis:
+  mode: external
+  external:
+    host: futureagi.example.cache.amazonaws.com
+temporal:
+  mode: external
+  external:
+    address: temporal-frontend.temporal.svc.cluster.local:7233
+objectStorage:
+  mode: external
+  backend: s3
+  bucket: futureagi-uploads-example
+  region: us-east-1
+  existingSecret: futureagi-s3
+  external:
+    endpoint: https://s3.us-east-1.amazonaws.com
+# One internet-facing ALB for the UI, the API and OTLP/HTTP. The idle timeout
+# covers WebSockets; the ALB has no per-path timeout.
+ingress:
+  enabled: true
+  className: alb
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:us-east-1:111122223333:certificate/example
+    alb.ingress.kubernetes.io/load-balancer-attributes: idle_timeout.timeout_seconds=3600
+  tls:
+    # The ALB terminates TLS with the ACM certificate; listing the hosts makes
+    # the derived URLs https.
+    - hosts:
+        - futureagi.example.com
+        - api.futureagi.example.com
+  app:
+    host: futureagi.example.com
+  api:
+    host: api.futureagi.example.com
+# The ALB health-checks each target group itself, not through the readiness
+# probes: GET / on the traffic port with the pod's IP as the Host (the chart's
+# ALLOWED_HOSTS lists it), unless the Service's annotations say otherwise. The
+# API redirects /, so it is probed at /health/; the collector's OTLP port has
+# no such path, so at its admin port's /healthz.
+backend:
+  service:
+    annotations:
+      alb.ingress.kubernetes.io/healthcheck-path: /health/
+fiCollector:
+  service:
+    annotations:
+      alb.ingress.kubernetes.io/healthcheck-port: "9464"
+      alb.ingress.kubernetes.io/healthcheck-path: /healthz

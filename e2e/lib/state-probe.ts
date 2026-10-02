@@ -16,11 +16,11 @@ export class StateProbe {
   private pool: pg.Pool;
 
   constructor(private cfg: { api: ApiClient; chUrl: string; chDatabase: string; pgUrl: string;
-    catalogChUrl?: string; catalogChDatabase?: string }) {
+    chPassword: string; catalogChUrl?: string; catalogChDatabase?: string }) {
     this.pool = new pg.Pool({ connectionString: cfg.pgUrl, max: 2 });
   }
 
-  /** Read-only ClickHouse query over HTTP with server-side param binding:
+  /** Read-only ClickHouse query over HTTP, as user `default`, with server-side param binding:
    *  probe.ch('SELECT … WHERE project_id = {p:UUID}', { p: id }) */
   async ch<T>(query: string, params: Record<string, string | number> = {}): Promise<T[]> {
     return this.queryCh<T>(this.cfg.chUrl, this.cfg.chDatabase, query, params);
@@ -38,7 +38,8 @@ export class StateProbe {
     url.searchParams.set('database', database);
     url.searchParams.set('default_format', 'JSONEachRow');
     for (const [k, v] of Object.entries(params)) url.searchParams.set(`param_${k}`, String(v));
-    const res = await fetch(url, { method: 'POST', body: query });
+    const res = await fetch(url, { method: 'POST', body: query,
+      headers: { 'X-ClickHouse-User': 'default', 'X-ClickHouse-Key': this.cfg.chPassword } });
     if (!res.ok) throw new Error(`CH ${res.status}: ${await res.text()}`);
     const text = (await res.text()).trim();
     return text ? text.split('\n').map(line => JSON.parse(line) as T) : [];

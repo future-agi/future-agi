@@ -9,6 +9,8 @@ to avoid sandbox validation issues.
 from collections.abc import Callable
 from importlib import import_module
 
+from tfc.ee_loader import USAGE_TEMPORAL_MODULES
+
 # =============================================================================
 # Registry Storage
 # =============================================================================
@@ -54,6 +56,7 @@ TEMPORAL_ACTIVITY_MODULES = [
     "tracer.tasks",
     "tracer.tasks.trace_scanner",
     "tracer.tasks.eval_task_sweeper",
+    "tracer.tasks.outbox_cdc",
     "tracer.utils.span",
     "tracer.utils.eval",
     "tracer.utils.observability_provider",
@@ -128,7 +131,7 @@ def register_for_queues(
 
 def _load_usage_temporal_registry(name: str) -> Callable[[], list] | None:
     """Load cloud usage Temporal hooks, with legacy EE compatibility."""
-    for module_name in ("ee.cloud.temporal", "ee.usage.temporal"):
+    for module_name in USAGE_TEMPORAL_MODULES:
         try:
             temporal_module = import_module(module_name)
         except ModuleNotFoundError as exc:
@@ -730,6 +733,7 @@ def _ensure_activities_registered() -> None:
             cancel_hosted_harness_attempt,
             launch_hosted_harness_job,
             poll_hosted_harness_attempt,
+            record_hosted_harness_launch_failure,
         )
         from simulate.temporal.activities.hosted_runner import (
             build_runner_job,
@@ -746,11 +750,12 @@ def _ensure_activities_registered() -> None:
                 finalize_hosted_execution,
                 author_hosted_harness_job,
                 launch_hosted_harness_job,
+                record_hosted_harness_launch_failure,
                 poll_hosted_harness_attempt,
                 cancel_hosted_harness_attempt,
             ],
         )
-        log.info("registered_hosted_runner_activities", count=7)
+        log.info("registered_hosted_runner_activities", count=8)
     except ImportError as e:
         log.warning("could_not_load_hosted_runner_activities", error=str(e))
 

@@ -29,6 +29,19 @@ export function asRequestError(err, action) {
   return friendly;
 }
 
+// Returned from every config mutation's onSuccess, so the mutation (and the
+// dialog that closes on it) settles only once the config has been re-read:
+// otherwise Edit, clicked straight after Save, opens on the cached config from
+// before the save. The other keys are refreshed without waiting.
+export function refreshGatewayConfig(queryClient, ...alsoStaleKeys) {
+  alsoStaleKeys.forEach((queryKey) =>
+    queryClient.invalidateQueries({ queryKey }),
+  );
+  return queryClient.invalidateQueries({
+    queryKey: ["agentcc-gateway-config"],
+  });
+}
+
 export function useGatewayConfig(gatewayId) {
   return useQuery({
     queryKey: ["agentcc-gateway-config", gatewayId],
@@ -79,10 +92,8 @@ export function useUpdateProvider() {
         throw asRequestError(err, "Saving the provider");
       }
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["agentcc-gateway-config"] });
-      queryClient.invalidateQueries({ queryKey: ["agentcc-provider-health"] });
-    },
+    onSuccess: () =>
+      refreshGatewayConfig(queryClient, ["agentcc-provider-health"]),
   });
 }
 
@@ -98,10 +109,8 @@ export function useRemoveProvider() {
       );
       return data.result;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["agentcc-gateway-config"] });
-      queryClient.invalidateQueries({ queryKey: ["agentcc-provider-health"] });
-    },
+    onSuccess: () =>
+      refreshGatewayConfig(queryClient, ["agentcc-provider-health"]),
   });
 }
 
@@ -120,10 +129,7 @@ export function useToggleGuardrail() {
       );
       return data.result;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["agentcc-gateway-config"] });
-      queryClient.invalidateQueries({ queryKey: ["agentcc-org-config"] });
-    },
+    onSuccess: () => refreshGatewayConfig(queryClient, ["agentcc-org-config"]),
   });
 }
 
@@ -142,10 +148,7 @@ export function useUpdateGuardrail() {
       );
       return data.result;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["agentcc-gateway-config"] });
-      queryClient.invalidateQueries({ queryKey: ["agentcc-org-config"] });
-    },
+    onSuccess: () => refreshGatewayConfig(queryClient, ["agentcc-org-config"]),
   });
 }
 
@@ -164,9 +167,7 @@ export function useSetBudget() {
       );
       return data.result;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["agentcc-gateway-config"] });
-    },
+    onSuccess: () => refreshGatewayConfig(queryClient),
   });
 }
 
@@ -182,10 +183,7 @@ export function useRemoveBudget() {
       );
       return data.result;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["agentcc-gateway-config"] });
-      queryClient.invalidateQueries({ queryKey: ["agentcc-org-config"] });
-    },
+    onSuccess: () => refreshGatewayConfig(queryClient, ["agentcc-org-config"]),
   });
 }
 
@@ -201,10 +199,8 @@ export function useUpdateConfig() {
       );
       return data.result;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["agentcc-gateway-config"] });
-      queryClient.invalidateQueries({ queryKey: ["agentcc-provider-health"] });
-    },
+    onSuccess: () =>
+      refreshGatewayConfig(queryClient, ["agentcc-provider-health"]),
   });
 }
 
@@ -220,10 +216,8 @@ export function useReloadConfig() {
       );
       return data.result;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["agentcc-gateway-config"] });
-      queryClient.invalidateQueries({ queryKey: ["agentcc-provider-health"] });
-    },
+    onSuccess: () =>
+      refreshGatewayConfig(queryClient, ["agentcc-provider-health"]),
   });
 }
 

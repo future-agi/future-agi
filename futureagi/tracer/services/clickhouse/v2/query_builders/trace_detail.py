@@ -62,10 +62,18 @@ class TraceDetailHandlerV2(V2RewriteMixin, TraceDetailHandler):
     # every v2 builder to carry it, so the exclude set is empty.
     _v2_rewrite_exclude = frozenset()
 
+    def __init__(self, *, project_id: str | None = None, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.project_id = project_id
+
     def fetch(self) -> TraceDetail:
         """Return the assembled trace-detail dict from ClickHouse."""
         return retrieve_trace_detail_ch(
-            self.view, self.request, self.pk, self.analytics
+            self.view,
+            self.request,
+            self.pk,
+            self.analytics,
+            project_id=self.project_id,
         )
 
 
@@ -74,6 +82,8 @@ def retrieve_trace_detail_ch(
     request: Request,
     trace_id: str,
     analytics: AnalyticsQueryService,
+    *,
+    project_id: str | None = None,
 ) -> TraceDetail:
     """V2 trace detail from ClickHouse.
 
@@ -82,6 +92,9 @@ def retrieve_trace_detail_ch(
     and tenant-gated against PG ``Project`` (Project stays in PG). Trace
     metadata is taken from the PG ``Trace`` row when present and otherwise
     synthesized from the root span. Returns the response dict.
+
+    ``project_id`` pins the read to the project the trace was opened from; a
+    project outside the caller's scope resolves like a missing trace.
     """
     from django.db.utils import ProgrammingError
 
@@ -101,11 +114,13 @@ def retrieve_trace_detail_ch(
     # the selected project afterward; at scale that was both slow and an
     # avoidable cross-tenant probe. Project remains a small PG dimension.
     project_manager = getattr(Project, "no_workspace_objects", Project.objects)
+    project_scope = project_manager.filter(
+        _project_workspace_scope_q(request, project_prefix="")
+    )
+    if project_id:
+        project_scope = project_scope.filter(id=project_id)
     authorized_project_ids = [
-        str(value)
-        for value in project_manager.filter(
-            _project_workspace_scope_q(request, project_prefix="")
-        ).values_list("id", flat=True)[:4097]
+        str(value) for value in project_scope.values_list("id", flat=True)[:4097]
     ]
 
     # The eval logger has no project column. Resolve the selected project's

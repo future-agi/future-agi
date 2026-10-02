@@ -149,7 +149,7 @@ def analyze_single_trace(trace_id, task_id, ingest_embeddings: bool = True):
         # Mark the API call as successful
         if api_call_log_row:
             api_call_log_row.status = APICallStatusChoices.SUCCESS.value
-            api_call_log_row.save(update_fields=["status"])
+            api_call_log_row.save(update_fields=["status", "updated_at"])
 
         # Dual-write: emit usage event for new billing system (cost-based)
         try:
@@ -211,7 +211,7 @@ def analyze_single_trace(trace_id, task_id, ingest_embeddings: bool = True):
             if refund_cost_for_api_call is not None:
                 refund_cost_for_api_call(api_call_log_row, config={"error": str(e)})
             api_call_log_row.status = APICallStatusChoices.ERROR.value
-            api_call_log_row.save(update_fields=["status"])
+            api_call_log_row.save(update_fields=["status", "updated_at"])
 
         # Mark the run failed (transient marker; TTLs back to idle).
         deep_analysis_state.set_failed(str(trace_id))

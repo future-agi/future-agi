@@ -17,6 +17,7 @@ class SandboxLaunchSpec:
     allowed_domains: tuple[str, ...] = ()
     allowed_cidrs: tuple[str, ...] = ()
     unrestricted_egress: bool = False
+    runtime_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -75,6 +76,25 @@ class SandboxProviderConfigurationError(SandboxProviderError):
         super().__init__(message, status_code=422)
 
 
+class SandboxProviderUnavailableError(SandboxProviderConfigurationError):
+    """The selected provider's SDK is not installed in this backend image.
+
+    The SDKs are the optional ``sandbox`` extra (pyproject.toml), which the
+    default image does not ship. Unlike a configuration error this cannot be
+    fixed by retrying or by setting environment variables: the image has to be
+    rebuilt with ``--build-arg EXTRAS=sandbox``.
+    """
+
+    def __init__(self, provider: str, module: str) -> None:
+        super().__init__(
+            f"the {provider} SDK (`{module}`) is not installed in this backend "
+            "image; rebuild it with --build-arg EXTRAS=sandbox (futureagi/"
+            "Dockerfile.oss) or install the `sandbox` extra"
+        )
+        self.provider = provider
+        self.module = module
+
+
 class SandboxRuntimeProvider(ABC):
     name: str
     runtime_name: str
@@ -83,6 +103,16 @@ class SandboxRuntimeProvider(ABC):
     create_timeout_seconds = 300
     supports_adjustments = False
     supports_public_ingress = False
+
+    def renew_ttl(self, sandbox: Any, ttl_seconds: int) -> None:
+        """Re-arm the sandbox lease after provisioning, when supported.
+
+        Providers without a mutable lease must provision enough lifetime for the
+        whole job in ``create``. The guest capability is activated only after this
+        hook succeeds.
+        """
+
+        return None
 
     @abstractmethod
     def create(self, spec: SandboxLaunchSpec, *, timeout: int) -> Any:
