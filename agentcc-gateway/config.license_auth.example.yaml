@@ -2,6 +2,8 @@
 #
 # Add this section to your agentcc-gateway config.yaml to enable
 # managed AI service token verification.
+# POST /v1/systemone requires service "jev" and an exact model scope:
+# "jev-1.13.0" or "jev-latest". Existing Turing scopes remain unchanged.
 
 license_auth:
   enabled: true

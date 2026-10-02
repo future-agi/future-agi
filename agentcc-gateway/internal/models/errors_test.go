@@ -106,7 +106,8 @@ func TestWriteErrorFromError(t *testing.T) {
 
 	t.Run("generic error", func(t *testing.T) {
 		w := httptest.NewRecorder()
-		WriteErrorFromError(w, json.Unmarshal([]byte("invalid"), nil))
+		var value any
+		WriteErrorFromError(w, json.Unmarshal([]byte("invalid"), &value))
 		if w.Code != http.StatusInternalServerError {
 			t.Errorf("status = %d, want %d", w.Code, http.StatusInternalServerError)
 		}
