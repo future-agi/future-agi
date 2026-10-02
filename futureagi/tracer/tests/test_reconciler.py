@@ -321,6 +321,30 @@ class TestEvalChanges:
         assert result.requeued == 4
         assert _live(task, status=EvalEntryStatus.PENDING).count() == 4
 
+    def test_requeue_clears_the_previous_runs_error_message(
+        self, project, custom_eval_config
+    ):
+        """A requeue already cleared ``error`` and ``skipped_reason`` but kept
+        ``error_message``, so a pending entry carried a message from a run that
+        no longer exists. That residue is what made requeued production rows
+        readable as fresh inserts, and it is what a user sees on a row that has
+        not run yet."""
+        _make_spans(project, 4)
+        task = _task(project, evals=[custom_eval_config])
+        reconcile(task)
+        _live(task).update(
+            status=EvalEntryStatus.ERRORED,
+            error=True,
+            error_message="Error during evaluation: boom",
+            config_hash="stale-hash",
+        )
+
+        assert reconcile(task).requeued == 4
+
+        pending = _live(task, status=EvalEntryStatus.PENDING)
+        assert pending.count() == 4
+        assert list(pending.values_list("error_message", flat=True)) == [None] * 4
+
     def test_skipped_entry_requeued_when_its_row_changed_in_delta_pass(
         self, project, custom_eval_config
     ):

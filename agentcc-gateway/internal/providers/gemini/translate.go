@@ -140,9 +140,9 @@ type geminiToolDeclarations struct {
 }
 
 type geminiFuncDecl struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description,omitempty"`
-	Parameters  json.RawMessage `json:"parameters,omitempty"`
+	Name                 string          `json:"name"`
+	Description          string          `json:"description,omitempty"`
+	ParametersJSONSchema json.RawMessage `json:"parametersJsonSchema,omitempty"`
 }
 
 type geminiResponse struct {
@@ -307,9 +307,9 @@ func translateRequest(req *models.ChatCompletionRequest) (*geminiRequest, string
 				continue
 			}
 			decls = append(decls, geminiFuncDecl{
-				Name:        t.Function.Name,
-				Description: t.Function.Description,
-				Parameters:  normalizeToolSchema(t.Function.Parameters),
+				Name:                 t.Function.Name,
+				Description:          t.Function.Description,
+				ParametersJSONSchema: normalizeToolSchema(t.Function.Parameters),
 			})
 		}
 		if len(decls) > 0 {

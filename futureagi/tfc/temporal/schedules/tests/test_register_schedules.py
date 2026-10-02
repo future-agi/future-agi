@@ -7,11 +7,14 @@ empty when ``_build_schedule_for_config`` runs and every schedule falls back
 to ``DEFAULT_RETRY_POLICY`` regardless of decorator-declared max_retries.
 """
 
+import asyncio
+import dataclasses
 from datetime import timedelta
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from temporalio.client import ScheduleSpec
+from temporalio.client import ScheduleSpec, ScheduleState
 
 from tfc.temporal.drop_in.decorator import _ACTIVITY_REGISTRY, temporal_activity
 from tfc.temporal.drop_in.workflow import TaskRunnerInput
@@ -20,6 +23,7 @@ from tfc.temporal.schedules.manager import (
     _build_schedule_for_config,
     a_register_schedules,
     a_update_schedule,
+    register_schedules,
 )
 
 
@@ -152,6 +156,187 @@ class TestUpdateSchedule:
 
         assert schedule.spec.time_zone_name == "America/New_York"
         assert schedule.spec.jitter == timedelta(seconds=45)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("keep_state", [True, False])
+    async def test_update_keeps_the_existing_state_unless_told_not_to(self, keep_state):
+        existing_state = ScheduleState(note="Paused for incident 42", paused=True)
+        client = MagicMock()
+        handle = MagicMock()
+        client.get_schedule_handle.return_value = handle
+        sent = {}
+
+        async def update(updater):
+            description = SimpleNamespace(
+                schedule=SimpleNamespace(spec=ScheduleSpec(), state=existing_state)
+            )
+            sent["schedule"] = (
+                await updater(MagicMock(description=description))
+            ).schedule
+
+        handle.update = AsyncMock(side_effect=update)
+        schedule = _build_schedule_for_config(
+            ScheduleConfig(
+                schedule_id="fixture-state",
+                activity_name="never_registered_scheduled_activity",
+                interval_seconds=300,
+            )
+        )
+        rebuilt_state = schedule.state
+
+        await a_update_schedule(
+            client, "fixture-state", schedule, keep_state=keep_state
+        )
+
+        expected = existing_state if keep_state else rebuilt_state
+        assert sent["schedule"].state == expected
+
+
+@pytest.fixture
+def schedule_inventory(monkeypatch):
+    """Fake only Temporal's boundary; registration/cleanup/build/update stay real."""
+    retained = {"unified-property-catalog-dev", "operator-kept-schedule"}
+    configs = [
+        ScheduleConfig(
+            schedule_id=schedule_id,
+            activity_name="fixture_scheduled_activity",
+            interval_seconds=300,
+            queue="default",
+        )
+        for schedule_id in ("current-schedule", "new-schedule")
+    ]
+    stored = {
+        schedule_id: _build_schedule_for_config(
+            ScheduleConfig(
+                schedule_id=schedule_id,
+                activity_name="previous_activity",
+                interval_seconds=60,
+                queue="default",
+            )
+        )
+        for schedule_id in sorted(retained | {"current-schedule"})
+    }
+    original = dict(stored)
+    handles = {}
+
+    def get_handle(schedule_id):
+        if schedule_id not in handles:
+
+            async def describe():
+                return SimpleNamespace(schedule=stored[schedule_id])
+
+            async def update(updater):
+                result = await updater(SimpleNamespace(description=await describe()))
+                stored[schedule_id] = result.schedule
+
+            async def delete():
+                del stored[schedule_id]
+
+            handles[schedule_id] = MagicMock(
+                describe=AsyncMock(side_effect=describe),
+                update=AsyncMock(side_effect=update),
+                delete=AsyncMock(side_effect=delete),
+            )
+        return handles[schedule_id]
+
+    async def create(schedule_id, schedule, *, trigger_immediately):
+        assert schedule_id not in stored
+        assert trigger_immediately is False
+        stored[schedule_id] = schedule
+
+    client = MagicMock()
+    client.get_schedule_handle.side_effect = get_handle
+    client.list_schedules = AsyncMock(
+        side_effect=lambda: _AsyncIterMock(
+            [SimpleNamespace(id=schedule_id) for schedule_id in stored]
+        )
+    )
+    client.create_schedule = AsyncMock(side_effect=create)
+    monkeypatch.setattr(
+        "tfc.temporal.common.registry._import_temporal_activity_modules", MagicMock()
+    )
+    return client, configs, retained, stored, original, handles
+
+
+@pytest.mark.parametrize("entrypoint", ["async", "sync"])
+@pytest.mark.parametrize("cleanup_orphans", [None, False, True])
+def test_registration_preserves_unknown_schedules_unless_cleanup_is_explicit(
+    schedule_inventory, entrypoint, cleanup_orphans
+):
+    client, configs, retained, stored, original, handles = schedule_inventory
+    # Omission independently exercises each public function's default.
+    options = {} if cleanup_orphans is None else {"cleanup_orphans": cleanup_orphans}
+    if entrypoint == "async":
+        asyncio.run(a_register_schedules(client, configs, **options))
+    else:
+        register_schedules(client, configs, **options)
+
+    expected_ids = {"current-schedule", "new-schedule"}
+    if cleanup_orphans:
+        client.list_schedules.assert_awaited_once_with()
+        for schedule_id in retained:
+            handles[schedule_id].delete.assert_awaited_once_with()
+    else:
+        expected_ids |= retained
+        client.list_schedules.assert_not_called()
+        client.list_schedules.assert_not_awaited()
+        for schedule_id in retained:
+            assert stored[schedule_id] is original[schedule_id]
+            assert schedule_id not in handles
+    assert set(stored) == expected_ids
+    handles["current-schedule"].update.assert_awaited_once()
+    handles["current-schedule"].delete.assert_not_awaited()
+    handles["new-schedule"].delete.assert_not_awaited()
+    client.create_schedule.assert_awaited_once_with(
+        "new-schedule", stored["new-schedule"], trigger_immediately=False
+    )
+    for schedule_id in ("current-schedule", "new-schedule"):
+        assert stored[schedule_id].spec.intervals[0].every == timedelta(seconds=300)
+        assert (
+            stored[schedule_id].action.args[0].activity_name
+            == "fixture_scheduled_activity"
+        )
+
+
+def test_registration_keeps_an_operator_pause_while_syncing_the_definition(
+    schedule_inventory,
+):
+    # Every deploy registers every schedule, so an incident pause must outlive it.
+    client, configs, _, stored, _, _ = schedule_inventory
+    operator_state = ScheduleState(note="Paused for incident 42", paused=True)
+    stored["current-schedule"].state = operator_state
+
+    asyncio.run(a_register_schedules(client, configs))
+
+    current = stored["current-schedule"]
+    assert current.state == operator_state
+    assert current.spec.intervals[0].every == timedelta(seconds=300)
+    assert current.action.args[0].activity_name == "fixture_scheduled_activity"
+
+
+@pytest.mark.parametrize("paused", [False, True])
+def test_new_schedule_is_created_in_its_definition_state(schedule_inventory, paused):
+    client, configs, _, stored, _, _ = schedule_inventory
+    configs[1] = dataclasses.replace(configs[1], paused=paused)
+
+    asyncio.run(a_register_schedules(client, configs))
+
+    assert stored["new-schedule"].state.paused is paused
+
+
+def test_definition_pause_is_not_reapplied_to_an_existing_schedule(
+    schedule_inventory,
+):
+    # An operator unpaused a schedule that shipped paused; the next deploy
+    # must not pause it again.
+    client, configs, _, stored, _, _ = schedule_inventory
+    configs[0] = dataclasses.replace(configs[0], paused=True)
+    operator_state = ScheduleState(note="Unpaused via management command")
+    stored["current-schedule"].state = operator_state
+
+    asyncio.run(a_register_schedules(client, configs))
+
+    assert stored["current-schedule"].state == operator_state
 
 
 class _AsyncIterMock:

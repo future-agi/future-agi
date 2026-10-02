@@ -3,6 +3,7 @@
 from datetime import timedelta
 
 import pytest
+from django.conf import settings as django_settings
 
 from tracer.services.clickhouse.query_service import QueryResult
 from tracer.services.clickhouse.read_budget import ReadDeadlineExceeded
@@ -109,11 +110,9 @@ def test_active_recent_full_page_does_not_pay_for_discovery():
 
 @pytest.mark.unit
 @pytest.mark.parametrize("width_days", [1, 7])
-@pytest.mark.parametrize(
-    "caller_workers,expected_broad", [(None, 2), (1, 1), (2, 2), (4, 2)]
-)
-def test_broad_key_discovery_uses_finite_workers_and_preserves_explicit_caps(
-    monkeypatch, width_days, caller_workers, expected_broad
+@pytest.mark.parametrize("caller_workers", [None, 1, 2, 4])
+def test_key_discovery_owns_its_worker_budget_and_preserves_explicit_caps(
+    monkeypatch, width_days, caller_workers
 ):
     from tracer.selectors import trace_filter_reads as selector
 
@@ -132,10 +131,10 @@ def test_broad_key_discovery_uses_finite_workers_and_preserves_explicit_caps(
         settings for query, _, settings in executor.envelopes if query == "root_probe"
     ]
     assert probes
-    assert all(
-        settings["max_threads"] == (expected_broad if width_days > 1 else 1)
-        for settings in probes
-    )
+    # The probe's worker budget is its own runtime setting at every width. A
+    # caller's page-read worker count sizes hydration, not this proof, so it
+    # no longer clamps the probe; the caller's byte/memory caps still hold.
+    assert all(settings["max_threads"] == 2 for settings in probes)
     assert all(settings["max_memory_usage"] == 64 * 1024**2 for settings in probes)
     assert all(settings["result_overflow_mode"] == "throw" for settings in probes)
 
@@ -974,7 +973,7 @@ def test_population_real_application_wrapper_clears_caps_and_restores_context(
         server_enforced_readonly = False
         server_profile_locked = False
 
-        def execute_read(self, query, params, *, timeout_ms, settings):
+        def execute_read_with_progress(self, query, params, *, timeout_ms, settings):
             assert is_application_read()
             assert timeout_ms is None
             assert all(settings[key] == 0 for key in UNLIMITED_STATEMENT_SETTINGS)
@@ -996,6 +995,8 @@ def test_population_real_application_wrapper_clears_caps_and_restores_context(
                 [tuple(row[key] for key in columns) for row in result.data],
                 [(key, "String") for key in columns],
                 0.0,
+                len(result.data),
+                0,
             )
 
     monkeypatch.setattr(query_service, "get_v2_query_client", lambda: LocalClient())
@@ -1014,4 +1015,8 @@ def test_population_real_application_wrapper_clears_caps_and_restores_context(
             assert any(a.error_code for a in page.attempts)
     assert not is_application_read()
     probes = [settings for query, settings in envelopes if query == "population_probe"]
-    assert len(probes) == 1 and probes[0]["max_threads"] == 1
+    assert len(probes) == 1
+    assert (
+        probes[0]["max_threads"]
+        == django_settings.FILTER_SELECTOR_POPULATION_MAX_THREADS
+    )

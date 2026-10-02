@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Hashable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from math import ceil
 from time import monotonic
@@ -12,6 +12,10 @@ from typing import Any, Protocol
 
 from django.conf import settings
 
+from tracer.selectors.filter_seed_width import (
+    EMPTY_DENSITY_ESTIMATE,
+    FilterSeedWidthPolicy,
+)
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_service import QueryResult
 from tracer.services.clickhouse.read_budget import is_read_budget_error
@@ -26,7 +30,7 @@ _ABSOLUTE_MAX_QUERIES = 128
 # Historical eval reconciliation runs as a heartbeating Temporal activity and
 # may need to select a genuine 100k-row prefix. Its larger envelope is opt-in,
 # still finite, and keeps every physical statement on the same 512-row,
-# single-threaded, caller-capped ClickHouse limits. Reconciliation owns a
+# caller-capped ClickHouse limits and per-kind worker rules. Reconciliation owns a
 # three-hour activity timeout; this hard wall leaves ten minutes for buffered
 # validation, materializer hand-off, heartbeats, and scheduler jitter.
 _WORKFLOW_MAX_SEED_ATTEMPTS = 16_384
@@ -68,7 +72,33 @@ _ROOT_TIME_DISCOVERY_MAX_WINDOW = timedelta(hours=24)
 _ROOT_TIME_DISCOVERY_TIMEOUT_MS = 1_000
 _ROOT_TIME_DISCOVERY_MAX_BYTES = 1024 * 1024 * 1024
 _ROOT_TIME_DISCOVERY_MAX_ATTEMPTS = 3
+# The density probe a row-budgeted seed must pass before it may widen past its
+# unprobed cap. It is the same shape of cheap metadata read as root-time
+# discovery - a primary-key range question with no attribute predicate - so it
+# carries the same caps: one second, one gibibyte, one worker, and never a
+# partial result. Measured in production, only the worker and memory clamps
+# actually reach the server (``application_read_settings`` zeroes byte caps and
+# ``timeout_ms`` is not a statement deadline on the application read path);
+# they are kept because a lane whose probe is a plain aggregate still needs
+# them, and because an index-only probe reads no data for them to bound.
+_SEED_DENSITY_PROBE_TIMEOUT_MS = 1_000
+_SEED_DENSITY_PROBE_MAX_BYTES = 1024 * 1024 * 1024
+# An index-estimate probe answers with one row per table it would read, not a
+# single scalar. The statement names one table, so this ceiling exists only so
+# that a differently shaped answer is truncated into a refusal instead of
+# raising through the exact page.
+_SEED_DENSITY_PROBE_MAX_RESULT_ROWS = 64
 _POPULATION_TIME_DISCOVERY_MAX_THREADS = settings.FILTER_SELECTOR_POPULATION_MAX_THREADS
+# A seed over a slice wider than one day - the doubling walk's 32 h and 48 h
+# steps and any adaptive width beyond them - replays every physical row the
+# value bloom could not exclude through its latest-state state: CPU work over
+# pruned granules, like a broad population proof, not the small first-slice
+# read. Workers change only how fast the SAME granules are read; the rows,
+# bytes, memory caps and result are the statement's own. The gain is bounded
+# by the slice's independent mark ranges (2-13 parts, 26-48 marks measured on
+# the span list's 48 h seeds), which is why four workers finish what eight
+# would. The one-day threshold mirrors the population proof's rule below.
+_WIDE_SEED_MAX_THREADS = settings.FILTER_SELECTOR_WIDE_SEED_MAX_THREADS
 # Trace/span list queries fetch one additional page-sized de-duplication
 # margin; 5,000 is also the existing server-side result ceiling used by those
 # endpoints.  Keeping one public ceiling makes numbered-page work finite for
@@ -163,6 +193,17 @@ class FilterReadAttempt:
     result_payload_bytes: int
     query_count: int = 1
     error_code: str | None = None
+    # Server-side work, not result size, and ``None`` whenever the transport
+    # reports no native progress. Slice widths are the only thing sized from it.
+    read_rows: int | None = None
+    # For a ``seed_density_probe`` only: the row estimate the width policy
+    # actually used, so a driver or a receipt can record WHY a slice was
+    # issued at the width it was. ``None`` on every other kind, and on a probe
+    # whose result the lane could not read. It is an upper bound on the rows
+    # inside the probed interval, not a measurement of this statement's own
+    # work - that is ``read_rows``, which for an index-only probe is roughly
+    # nothing whatever this field says.
+    probe_rows: int | None = None
 
 
 @dataclass(frozen=True)
@@ -191,6 +232,18 @@ class BoundedFilterPage:
     continuation_slice_start: datetime | None = None
     continuation_before_start_time: datetime | None = None
     continuation_before_id: Any = None
+    # The public order boundary this page PROVES, in result-order space: every
+    # match at or above it is published here, and nothing the walk has still to
+    # find can reach it. The scan checkpoint above is in SEED order, which for
+    # a route whose rank can lag its seed (a session ranked by its oldest live
+    # root, a trace whose canonical root is older than a tombstoned newer one)
+    # is a different axis - so a caller that mints its exclusive cursor bound
+    # from the checkpoint, or from the last row of a page it never proved,
+    # claims a prefix that does not exist. A caller publishes this, verbatim,
+    # as the boundary of a checkpoint-carrying page. ``None`` on a complete
+    # page and on any page with no committed checkpoint. The second element is
+    # the order token, or ``None`` for "below every token at that time".
+    continuation_published_order_floor: tuple[datetime, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -216,6 +269,96 @@ class _BudgetExceeded(Exception):
     def __init__(self, error_code: str):
         self.error_code = error_code
         super().__init__(error_code)
+
+
+def _published_order_sort_key(boundary: tuple[Any, ...]) -> tuple[Any, ...]:
+    """Order two public boundaries, instant first and token second.
+
+    Both sides are in the order the list PUBLISHES. A floor carries a token
+    only when it was taken from a keyset the bound can name, which is exactly
+    the case where that token is the published one; a floor taken from a slice
+    carries ``None``, which stands below every token at its instant, and the
+    views spell that same ``None`` as empty components. So the tokens compared
+    here are always in one space, and normalising each side to a tuple of
+    strings makes the comparison total: an absent token sorts below an empty
+    one, which sorts below every real one.
+    """
+
+    instant, token = boundary[0], boundary[1] if len(boundary) > 1 else None
+    if isinstance(instant, datetime):
+        instant = _without_timezone(instant)
+    if token is None:
+        return instant, ()
+    if isinstance(token, tuple):
+        return instant, tuple(str(part) for part in token)
+    return instant, (str(token),)
+
+
+def _boundary_to_publish(
+    published_floor: tuple[Any, ...] | None,
+    cursor_key: tuple[Any, ...] | None,
+) -> tuple[Any, ...] | None:
+    """The boundary a page may pass on: its floor, unless that would RISE.
+
+    A public boundary is an exclusive upper bound on what is still to come, so
+    it may only ever move down. A floor is read off this page's scan position,
+    and that position can sit above a row an earlier hop published - which is
+    what happens on the pages that publish without a floor at all, where the
+    view resumes at a last published row ranked below where the scan had
+    reached. Handing the higher value on would un-exclude that row and publish
+    it twice, so the boundary this page was handed stands.
+
+    Compared as a whole boundary, instant AND token. Within one instant the
+    two can differ, and only the reachable direction is demonstrated: a page
+    can stop with a nameable keyset at the instant it was bounded at, at a
+    token BELOW that bound, and its floor is then a descent within the instant
+    that must be published (pinned through the reader in
+    ``test_boundary_instant_continuations.py``). The opposite direction, a
+    floor sorting above the bound at the same instant, was not produced by any
+    of the four fixtures this branch was reviewed against; the token is in the
+    comparison so the decision is total, not because a walk is known to reach
+    it. Comparing instants alone would decide that case the wrong way.
+
+    The comparison is sound because a floor carries a token only when it came
+    from a keyset the bound can name, which is precisely when that token is
+    the one the list publishes. A slice-form floor carries ``None``, and its
+    own cursor comes back from the view spelled as an empty component, so
+    ``(T, ())`` sorts strictly below ``(T, ("",))`` and the clamp does not fire
+    on a boundary this reader produced itself. That asymmetry is harmless:
+    both mean "below every token at T", and keeping the floor keeps the
+    tighter statement of the two.
+    """
+
+    if published_floor is None or cursor_key is None:
+        return published_floor
+    if _published_order_sort_key(published_floor) >= _published_order_sort_key(
+        cursor_key
+    ):
+        return cursor_key
+    return published_floor
+
+
+def bounded_filter_floor_order(
+    floor: tuple[datetime, Any],
+    *,
+    lowest_components: int,
+) -> tuple[Any, ...]:
+    """Flatten a reader floor into one list view's public order tuple.
+
+    The floor's token is already in the order the view publishes - that is what
+    the reader checks before committing it - so a tuple token flattens straight
+    into the view's components. A ``None`` token means "below every token at
+    that instant", which is spelled as empty components: no real token sorts
+    below one, and a shorter tuple of them still compares low against a longer
+    real one, so the boundary can only admit a row, never hide one.
+    """
+
+    floor_time, floor_token = floor
+    if floor_token is None:
+        return (floor_time, *("" for _ in range(lowest_components)))
+    if isinstance(floor_token, tuple):
+        return (floor_time, *(str(value) for value in floor_token))
+    return (floor_time, str(floor_token))
 
 
 def degraded_bounded_filter_page(error_code: str) -> BoundedFilterPage:
@@ -1327,6 +1470,19 @@ def read_bounded_filter_page(
     # cursors did not carry it, so resume from the frozen window start: slower,
     # but exact and gap-free.
     active_slice_start: datetime | None
+    # A carried slice that still owns an in-slice keyset is honoured verbatim:
+    # its lower boundary is the exact interval the keyset was proven inside, so
+    # narrowing it would strand the rows between the new and old boundaries. A
+    # carried slice without a keyset only *proposes* a width and may be shrunk.
+    #
+    # A cursor signed before a row budget shipped can therefore still carry one
+    # keyset-bearing slice far wider than that budget would schedule. This is
+    # accepted as a transient bounded by the signed cursor's own maximum age
+    # (TRACER_LIST_CURSOR_MAX_AGE_SECONDS), not repaired by CURSOR_VERSION:
+    # rejecting those cursors turns every open page into a 400, and the grid
+    # answers a 400 by falling back to the numbered lane, whose reads are
+    # strictly worse than one wide slice.
+    carried_slice_width_is_hint = False
     if (
         continuation_slice_end is not None
         and continuation_before_start_time is not None
@@ -1341,6 +1497,7 @@ def read_bounded_filter_page(
         # successful 1h -> 2h -> 4h widening schedule survives the HTTP round
         # trip. Older cursors omit it and retain the conservative initial width.
         active_slice_start = continuation_slice_start
+        carried_slice_width_is_hint = active_slice_start is not None
     else:
         active_slice_start = None
     # Five minutes remains the conservative default for every selector.  A
@@ -1363,6 +1520,126 @@ def read_bounded_filter_page(
             ):
                 raise ValueError("recommended max slice width exceeds bounded contract")
             max_slice_width = max(max_slice_width, raw_max_slice_width)
+    # A wall-clock ceiling is the wrong bound for a seed whose statement cost
+    # tracks the rows inside its slice rather than the slice's width. Such a
+    # builder declares a row budget and every following slice is sized from the
+    # rows the previous seed statement actually read. Only the acquisition
+    # boundary moves: slices stay contiguous, and predicates, ordering, the
+    # exact classifier and the signed cursor payload are unchanged.
+    seed_width_policy_builder = getattr(builder, "filter_seed_width_policy", None)
+    seed_width_policy: FilterSeedWidthPolicy | None = (
+        seed_width_policy_builder() if callable(seed_width_policy_builder) else None
+    )
+    if seed_width_policy is not None and not isinstance(
+        seed_width_policy, FilterSeedWidthPolicy
+    ):
+        raise ValueError("filter seed width policy must be a FilterSeedWidthPolicy")
+    # A width above the policy's unprobed cap is a width no measurement in this
+    # read justifies: reactive doubling sizes the next slice from the PREVIOUS
+    # one's rows and is blind to what the next slice contains. A lane that
+    # offers a density probe may buy that knowledge from the primary index,
+    # without reading column data; one that does not keeps the cap, which is
+    # the behaviour the row budget replaced.
+    seed_density_probe_builder = getattr(
+        builder, "build_filter_seed_density_probe_query", None
+    )
+    seed_density_probe_support = getattr(
+        builder, "supports_filter_seed_density_probe", None
+    )
+    # The lane that emits the probe statement also reads its result back. A
+    # lane that publishes no reducer answers the plainer question and returns
+    # its count in a ``seed_density_rows`` column.
+    seed_density_probe_estimator = getattr(
+        builder, "filter_seed_density_probe_estimate", None
+    )
+    seed_density_probe_enabled = bool(
+        seed_width_policy is not None
+        and callable(seed_density_probe_builder)
+        and callable(seed_density_probe_support)
+        and seed_density_probe_support() is True
+    )
+    # A lane whose ABSENCE PROOF is also linear in the rows of the interval it
+    # covers declares a second budget for it. It is a second budget rather than
+    # a second mechanism: the proof reads far narrower columns than the seed,
+    # so the row count that fills a statement's time differs by two orders of
+    # magnitude, but the lattice, the floor, the unprobed cap, the density
+    # probe and the proportional fit are the same policy doing the same
+    # arithmetic. A lane that declares none keeps its builder's own widths.
+    discovery_width_policy_builder = getattr(
+        builder, "filter_population_discovery_width_policy", None
+    )
+    discovery_width_policy: FilterSeedWidthPolicy | None = (
+        discovery_width_policy_builder()
+        if callable(discovery_width_policy_builder)
+        else None
+    )
+    if discovery_width_policy is not None and not isinstance(
+        discovery_width_policy, FilterSeedWidthPolicy
+    ):
+        raise ValueError("discovery width policy must be a FilterSeedWidthPolicy")
+    last_discovery_width: timedelta | None = None
+    last_discovery_read_rows: int | None = None
+    # THE PROBE ALLOWANCE, AND WHY IT IS NOT THE SEED BUDGET.
+    #
+    # ``max_query_count`` is the budget for the statements that ACQUIRE and
+    # classify rows. A density probe acquires nothing: it is a cost question
+    # asked so that an acquisition statement can be sized, and spending an
+    # acquisition slot on it means a page that was already budget-bound
+    # publishes fewer rows than the same page would without the guard -
+    # measured at 11 rows against 13, 21 against 25, and 57 against 59 over
+    # three hops. That is the guard charging the user for its own safety.
+    #
+    # So probes are allowed their own bounded allowance, OUTSIDE the
+    # acquisition budget and structurally bounded at two per seed statement:
+    # at most ``2 * max_seed_attempts`` for the request. They remain counted
+    # in ``attempts`` (telemetry, receipts and ``query_count`` are unchanged),
+    # and they remain bound by the request deadline and by every per-statement
+    # cap, so they cannot buy unbounded wall clock.
+    #
+    # THE BOUND THIS PRESERVES, stated so it can be tested: a request issues
+    # at most ``max_query_count + seed_density_probe_allowance`` statements,
+    # and never more than ``query_contract_limit`` - the read contract's
+    # absolute ceiling, ``_ABSOLUTE_MAX_QUERIES`` (128) on the product path.
+    # The allowance is clipped to whatever headroom that ceiling leaves, so
+    # the hard contract binds even if a caller raises the other two. For the
+    # trace-list lane's defaults (48 queries, 24 seed attempts) the bound is
+    # N = 48 + 48 = 96 <= 128.
+    seed_density_probe_allowance = (
+        min(2 * max_seed_attempts, max(0, query_contract_limit - max_query_count))
+        if seed_density_probe_enabled
+        else 0
+    )
+    seed_density_probe_attempts = 0
+    # One probe per distinct candidate slice per request. The schedule only
+    # ever proposes a given boundary/width pair once, so this is a guard
+    # against a retry paying twice, not an optimization of the common path.
+    # The RAW answer is cached - including "the estimate table was empty",
+    # which is not a number and whose reading depends on what else this
+    # request has proven by the time it is used.
+    seed_density_counts: dict[tuple[datetime, datetime], Any] = {}
+    # The window an empty-seed root-time discovery narrows to. One hour is the
+    # wall-clock lane's smallest useful slice; a row-budgeted lane cannot use a
+    # window below the floor it declared, and would be pinned there, because
+    # its own rule leaves a sub-floor width alone instead of widening it.
+    discovery_reset_width = (
+        timedelta(hours=1)
+        if seed_width_policy is None
+        else max(timedelta(hours=1), seed_width_policy.min_width)
+    )
+    if (
+        seed_width_policy is not None
+        and carried_slice_width_is_hint
+        and active_slice_start is not None
+    ):
+        # A carried slice is a width this request has not measured, and cursors
+        # signed before this policy shipped can carry many times the cap. Shrink
+        # it to what an unmeasured statement may read; the uncovered older part
+        # of the carried slice is the next contiguous slice's work, so the scan
+        # stays exact.
+        active_slice_start = max(
+            active_slice_start,
+            slice_end - seed_width_policy.carried_width(slice_end - active_slice_start),
+        )
 
     slice_width = _INITIAL_SLICE
     initial_slice_width_builder = getattr(
@@ -1402,18 +1679,41 @@ def read_bounded_filter_page(
     # slice.  Keep the failed-width ceiling for later widening, but make the
     # immediate recovery attempt use the normal five-minute slice.
     retry_slice_width: timedelta | None = None
+    # The row budget's only inputs. Until one seed statement reports progress,
+    # the unsignalled cap is the sole ceiling the budget can justify.
+    last_seed_read_rows: int | None = None
+    seed_read_rows_signalled = False
     page_complete = False
     degraded_error_code: str | None = None
+    # Set when a cap ended the seed walk, so the rollback that follows the
+    # progress flush can still tell an exception apart from an ordinary
+    # unfinished exit.
+    walk_hit_a_budget = False
+    # Set when a classifier chunk was popped out of the buffer and then failed.
+    # Those candidates are in neither place afterwards, so the buffer that
+    # remains is not a smaller buffer - it is an INCOMPLETE one, and no
+    # position may be committed on the strength of emptying it.
+    classifier_flush_interrupted = False
+    # Whether the live keyset's token may be compared against a PUBLISHED row's
+    # order token. It may when the seed row the keyset was taken from sorts the
+    # same way in both orders, which is a property of that row, not of whether
+    # the builder spells a seed token: a route that keysets on a physical span
+    # can still produce a keyset token identical to the row's. A keyset carried
+    # in from a previous hop is always comparable, because a hop that committed
+    # an incomparable one gave it up as a slice before publishing it.
+    before_key_is_result_comparable = True
     safe_slice_end = slice_end
     safe_active_slice_start = active_slice_start
     safe_before_start_time = before_start_time
     safe_before_id = before_id
+    safe_before_key_is_result_comparable = True
     safe_seen_seed_ids: set[Hashable] = set()
     safe_seen_candidate_ids: set[Hashable] = set()
     safe_matched_by_id: dict[Hashable, dict[str, Any]] = {}
-    safe_pending_identity_candidates: dict[
-        Hashable, tuple[dict[str, Any], datetime, datetime]
-    ] = {}
+    # No ``safe_pending_identity_candidates``: a committed position is now by
+    # construction one at which the classifier buffer was EMPTY, so there is
+    # never buffered work to restore alongside it, and a rollback empties the
+    # buffer instead of repopulating it.
     continuation_progressed = False
     root_discovery_builder = getattr(
         builder, "build_filter_root_time_discovery_query", None
@@ -1519,27 +1819,200 @@ def read_bounded_filter_page(
         | None
     ) = None
 
+    def classifier_flush_is_worth_a_statement() -> bool:
+        """Whether the walk should classify its buffer at this boundary.
+
+        The walk used to answer YES at every keyset and slice advance, and pay
+        a classifier statement for whatever that one step happened to acquire.
+        On a public page that is the wrong unit: the classifier's cost is
+        dominated by a fixed per-statement term, so a sparse cursor hop that
+        crossed four widening slices to find fifty rows bought four statements
+        where one would have answered the same question about the same
+        candidates. The buffer exists precisely to amortize that, and the
+        per-advance flush was emptying it before it could.
+
+        Three reasons survive, and they are the three the flush was really for.
+
+        * A reader that publishes a page at EACH slice boundary
+          (``not fill_bounded_cursor_page_across_slices``) decides there
+          whether it has a page, and that decision reads ``matched_by_id``.
+          For it the flush is the decision, not an optimisation, so it keeps
+          the statement unconditionally.
+        * Any reader whose buffered tail could now COMPLETE the public prefix.
+          This is the walk's stopping rule: the proof that the page is finished
+          can only be taken after a classifier chunk, so a buffer that might
+          close the page must be spent or the walk acquires history it does not
+          need. It is the same sufficiency test the eager prefix flush already
+          applies after a seed batch - written here too because that one fires
+          at most once per page unless the builder opts into repeats.
+        * An ARMED root-time discovery probe. That probe's gate refuses to run
+          while candidates are pending, and it is the mechanism that skips a
+          proven-empty tail in one cheap indexed statement instead of seeding
+          it slice by slice. Holding the buffer here to save one classifier
+          statement would cost several seeds, so this is the one place the
+          amortization loses and must not be taken.
+
+        Everything else waits: for the buffer's own ``classify_batch_size``
+        flush, for the completion flush after the seed loop, or - on a walk
+        that ends without a page - for the progress flush the acquisition
+        reserve in ``execute`` keeps affordable.
+        """
+
+        if not pending_identity_candidates:
+            return False
+        if not fill_bounded_cursor_page_across_slices:
+            return True
+        if root_discovery_enabled and discovery_ready:
+            return True
+        return len(matched_by_id) + len(pending_identity_candidates) >= prefix_needed
+
+    def continuation_reacquires_buffered_candidates() -> bool:
+        """Whether resuming at the CURRENT position re-reads the whole buffer.
+
+        THE RULE, and it is a rule about the resume boundary rather than about
+        the rows this request happened to see. A continuation resumes with an
+        exclusive upper bound: the signed keyset ``(before_start_time,
+        before_id)`` when one exists, and otherwise the open slice's own
+        ``slice_end``. Every acquired-but-unclassified candidate in
+        ``pending_identity_candidates`` is re-acquired by the next hop exactly
+        when its seed key lies strictly below that bound - so a position is
+        committable when that holds for ALL of them, and for no other reason.
+
+        Stated the other way round, this is what makes the cheap answer safe:
+        a committed position may be older than the scan has actually reached,
+        because a continuation that re-reads is exact and one that skips is
+        not. It may never be NEWER than a candidate nobody classified.
+
+        The load-bearing invariant is that the buffer's insertion order is
+        strictly newest-first: seed slices walk strictly older, the keyset walks
+        strictly older inside a slice, and each batch is sorted by
+        ``seed_row_key`` descending before it is buffered. So the front of the
+        buffer is always its newest end.
+
+        Both existing commit sites satisfy the rule for structural reasons,
+        which is why it costs nothing where the old flushes were not needed. The
+        classifier commits ``before`` = the last row of the chunk it just
+        classified, and ``flush`` always takes the NEWEST entries of the
+        buffer, so every survivor is older than that row. The walk's own
+        commits instead move ``before`` to the OLDEST row of the seed batch,
+        which is below everything the same batch left buffered - those are the
+        offers this declines, and declining them is what removes the
+        per-advance classifier statement that used to buy them.
+        """
+
+        if not pending_identity_candidates:
+            return True
+        buffered = [
+            seed_row_key(entry[0]) for entry in pending_identity_candidates.values()
+        ]
+        if before_start_time is None:
+            return all(key[0] < slice_end for key in buffered)
+        bound = (before_start_time, before_id)
+        return all(key < bound for key in buffered)
+
     def checkpoint_continuation() -> None:
-        """Commit only a fully classified candidate-prefix scan position."""
+        """Commit only a fully classified candidate-prefix scan position.
+
+        ENFORCED HERE, not at the call sites. The keyset walks ahead of the
+        classifier whenever a seed batch is buffered rather than classified on
+        the spot, and a committed keyset is a promise to the NEXT hop that
+        everything newer than it has already been published or rejected.
+
+        There are two ways to keep the promise. The walk used to buy it: flush
+        the buffer with a classifier statement at every keyset and slice
+        advance, so the position offered was always clean. That is the
+        expensive one, because the classifier's cost is dominated by a fixed
+        per-statement term - a cursor page that advanced four times paid four
+        classifier statements for one page's worth of candidates. The cheap one
+        is to DECLINE an offer that ``continuation_reacquires_buffered_candidates``
+        refuses: the buffer's own flush at ``classify_batch_size``, the
+        classifier's post-chunk commit and the completion flush after the seed
+        loop each restore a committable position soon enough.
+
+        The refusal also closes a hole the flushes only papered over: the
+        root-time-discovery branch checkpoints WITHOUT a preceding flush, so a
+        buffer held across a discovery jump could commit a position past
+        unclassified candidates.
+        """
 
         nonlocal safe_slice_end
         nonlocal safe_active_slice_start
         nonlocal safe_before_start_time
         nonlocal safe_before_id
+        nonlocal safe_before_key_is_result_comparable
         nonlocal safe_seen_seed_ids
         nonlocal safe_seen_candidate_ids
         nonlocal safe_matched_by_id
-        nonlocal safe_pending_identity_candidates
         nonlocal continuation_progressed
+        if not continuation_reacquires_buffered_candidates():
+            return
         safe_slice_end = slice_end
         safe_active_slice_start = active_slice_start
         safe_before_start_time = before_start_time
         safe_before_id = before_id
+        safe_before_key_is_result_comparable = before_key_is_result_comparable
         safe_seen_seed_ids = set(seen_seed_ids)
         safe_seen_candidate_ids = set(seen_candidate_ids)
         safe_matched_by_id = dict(matched_by_id)
-        safe_pending_identity_candidates = dict(pending_identity_candidates)
         continuation_progressed = True
+
+    def committed_publication_boundary() -> tuple[datetime, Any] | None:
+        """The floor this page may publish, read off the COMMITTED position.
+
+        Read it, never cache it. Every caller must see the position as it
+        stands when it asks, because a failed hydration rolls the committed
+        position BACK after the page has already been filtered: a floor
+        remembered from before that rollback would sit below the checkpoint the
+        page hands out, and the next hop, resuming at the checkpoint but
+        bounded by the floor, would classify the rows in between and discard
+        every one of them as already published.
+
+        THE INSTANT IS THE UNIT this bound can speak in. A keyset is exclusive,
+        so the row at the keyset was consumed and the floor is that keyset -
+        when its token can be compared against a published row's token, which
+        is a fact about the row the keyset was taken from, not about which
+        methods the builder spells. When it cannot, the bound can still say
+        WHICH INSTANT, and that is enough: the floor is the whole instant, so
+        every match the hop classified there is published now and the next hop
+        drops everything ranked at or above it.
+
+        What must NOT happen is holding those rows while the scan resumes below
+        them. The keyset is the only position that advances INSIDE an instant,
+        so a hop that gives it up to re-read the instant re-reads its own input
+        for ever whenever that instant holds more rows than one hop can
+        classify - an empty list that never fills.
+
+        An exhausted slice is half-open: everything at or after its end is
+        consumed, so the whole boundary instant is publishable and there is no
+        keyset to speak of.
+
+        What this gives up, deliberately: at an instant the keyset stopped
+        inside, a row the hop has NOT yet seen can rank in that same instant,
+        and the next hop drops it along with the ones that were published. That
+        costs a row only when two entities' ranks collide within one microsecond
+        AND the keyset lands between them, and it is what buys a bound that
+        always advances.
+        """
+
+        if not (bounded_continuation and not page_complete and continuation_progressed):
+            return None
+        if safe_before_start_time is not None:
+            if safe_before_key_is_result_comparable:
+                return safe_before_start_time, safe_before_id
+            # A keyset the bound cannot NAME. The page's public boundary is a
+            # single value in result order, and inside one instant that order
+            # cannot separate the rows this keyset has passed from the rows it
+            # has not. Naming the instant claims the unread remainder as
+            # published; naming one microsecond above it holds the keyset row
+            # nothing will re-read; giving the keyset up to re-read the instant
+            # stalls on an instant wider than a hop. So no floor is published
+            # here at all: the page keeps every match it classified and the
+            # view resumes at its last published row, which is what this reader
+            # did before the floor existed and what it still does exactly.
+            return None
+        if safe_slice_end is not None:
+            return safe_slice_end, None
+        return None
 
     def rollback_unhydrated_page() -> None:
         """Restore the honest scan position from before unpublished matches."""
@@ -1581,6 +2054,18 @@ def read_bounded_filter_page(
         active_slice_start = slice_start
         active_width = slice_end - slice_start
 
+    def budgeted_query_count() -> int:
+        """Statements charged to ``max_query_count`` so far.
+
+        Every statement is recorded in ``attempts`` - that is what the receipt
+        and ``query_count`` report - but density probes are paid for out of
+        their own allowance, so they are subtracted here. Keeping the two
+        counters apart is what stops a cost question from displacing the
+        acquisition statement it exists to size.
+        """
+
+        return len(attempts) - seed_density_probe_attempts
+
     def execute(
         *,
         kind: str,
@@ -1593,6 +2078,7 @@ def read_bounded_filter_page(
         max_bytes_to_read_cap: int | None = None,
         use_reserved_query_budget: bool = False,
     ) -> QueryResult:
+        nonlocal seed_density_probe_attempts
         # A resumable cursor must leave enough wall time to roll back an
         # in-flight seed batch and publish its last fully classified checkpoint,
         # even when that checkpoint contains zero matches and needs no row
@@ -1605,6 +2091,35 @@ def read_bounded_filter_page(
             if use_reserved_query_budget or not hydration_reserve_is_active
             else classification_deadline
         )
+        # THE FIRST-CHECKPOINT RESERVE, and the reason an unfinished hop is
+        # never a stopped one. Buffering a candidate instead of classifying it
+        # on the spot is a promise to spend one classifier before the request
+        # ends: no position may be committed past an unclassified candidate,
+        # so a hop that never spends it commits NOTHING - zero rows, four null
+        # continuation fields - and the identical retry does the identical
+        # empty work. A walk that acquires until its wall or its acquisition
+        # budget is gone cannot keep the promise, so while it owes one an
+        # ACQUIRING statement runs one statement envelope and one slot short.
+        # Nothing here predicts what the classifier will cost; the room is
+        # simply held back, exactly as the hydration reserve below holds back
+        # the room the public page needs.
+        #
+        # It is owed only until this hop has committed SOMETHING. Once
+        # ``continuation_progressed`` is set the hop already carries a
+        # position its next hop can resume from, a stranded buffer costs that
+        # hop re-acquisition rather than the whole list, and the walk goes
+        # back to spending its full envelope. Classification is what the
+        # reserve is FOR, so it spends it, and the reserve evaporates with the
+        # buffer, so a page that classifies as it goes never sees it.
+        classifier_reserve_is_active = bool(
+            bounded_continuation
+            and pending_identity_candidates
+            and not continuation_progressed
+            and not use_reserved_query_budget
+            and kind not in {"classify", "prefilter"}
+        )
+        if classifier_reserve_is_active:
+            active_deadline -= _BOUNDED_CONTINUATION_MIN_QUERY_HEADROOM_MS / 1000
         remaining_ms = int((active_deadline - monotonic()) * 1000)
         minimum_query_headroom_ms = (
             _BOUNDED_CONTINUATION_MIN_QUERY_HEADROOM_MS
@@ -1617,13 +2132,23 @@ def read_bounded_filter_page(
         )
         if remaining_ms < minimum_query_headroom_ms:
             raise _BudgetExceeded("deadline_exceeded")
-        active_query_limit = (
-            max_query_count
-            if use_reserved_query_budget or not hydration_reserve_is_active
-            else max_query_count - reserved_hydration_queries
-        )
-        if len(attempts) >= active_query_limit:
-            raise _BudgetExceeded("query_budget_exceeded")
+        if kind == "seed_density_probe":
+            # Probes draw on their own allowance, never on the acquisition
+            # budget: a cost question must not displace the statement whose
+            # cost it is answering. The allowance is finite and small, and
+            # every probe below still passes through the same deadline and
+            # per-statement caps as any other read.
+            if seed_density_probe_attempts >= seed_density_probe_allowance:
+                raise _BudgetExceeded("query_budget_exceeded")
+            seed_density_probe_attempts += 1
+        else:
+            active_query_limit = (
+                max_query_count
+                if use_reserved_query_budget or not hydration_reserve_is_active
+                else max_query_count - reserved_hydration_queries
+            ) - (1 if classifier_reserve_is_active else 0)
+            if budgeted_query_count() >= active_query_limit:
+                raise _BudgetExceeded("query_budget_exceeded")
         attempt_started = monotonic()
         statement_timeout_ms = min(query_timeout_ms, remaining_ms)
         if timeout_cap_ms is not None:
@@ -1652,22 +2177,40 @@ def read_bounded_filter_page(
                     int(settings["max_bytes_to_read"]),
                     max_bytes_to_read_cap,
                 )
+            if kind == "seed" and active_end - active_start > timedelta(days=1):
+                # Mirrors the broad population proof below: a seed over more
+                # than one day is CPU work over the granules the value bloom
+                # left, so it runs with the wide seed worker budget instead of
+                # the single narrow-seed worker. Same rows, same bytes, same
+                # result - only the worker count differs. An explicit caller
+                # worker budget remains an upper bound.
+                seed_workers = _WIDE_SEED_MAX_THREADS
+                explicit_workers = (read_settings or {}).get("max_threads")
+                if explicit_workers is not None and int(explicit_workers) > 0:
+                    seed_workers = min(seed_workers, int(explicit_workers))
+                settings["max_threads"] = seed_workers
+            if kind == "seed_density_probe":
+                # A cost question, never a membership one: one worker, a
+                # gibibyte, and never a partial count (a truncated count would
+                # under-report density and approve the very slice this probe
+                # exists to refuse).
+                settings["max_threads"] = min(int(settings["max_threads"]), 1)
+                settings["max_memory_usage"] = min(
+                    int(settings["max_memory_usage"]),
+                    _SEED_DENSITY_PROBE_MAX_BYTES,
+                )
+                settings.update(
+                    read_overflow_mode="throw",
+                    result_overflow_mode="throw",
+                    timeout_overflow_mode="throw",
+                )
             if kind in {"root_time_discovery", "population_time_discovery"}:
-                if (
-                    kind == "population_time_discovery"
-                    and discovery_windows
-                    and active_end - active_start > timedelta(days=1)
-                ):
-                    # Thin indexed key proofs over a broad interval are CPU
-                    # work, not the small root/time-only metadata probes. An
-                    # explicit caller worker budget remains an upper bound.
-                    population_workers = _POPULATION_TIME_DISCOVERY_MAX_THREADS
-                    explicit_workers = (read_settings or {}).get("max_threads")
-                    if explicit_workers is not None and int(explicit_workers) > 0:
-                        population_workers = min(
-                            population_workers, int(explicit_workers)
-                        )
-                    settings["max_threads"] = population_workers
+                if kind == "population_time_discovery":
+                    # Indexed key-presence proofs are CPU work over pruned
+                    # granules, not the small root/time-only metadata probes.
+                    # The probe owns its worker budget: a caller's page-read
+                    # worker setting sizes hydration, not this proof.
+                    settings["max_threads"] = _POPULATION_TIME_DISCOVERY_MAX_THREADS
                 else:
                     settings["max_threads"] = min(int(settings["max_threads"]), 1)
                 if kind == "root_time_discovery":
@@ -1691,7 +2234,7 @@ def read_bounded_filter_page(
             if is_read_budget_error(exc):
                 error_code = "read_budget_exceeded"
             elif (
-                kind in {"prefilter", "micro_seed", "zero_probe"}
+                kind in {"prefilter", "micro_seed", "zero_probe", "seed_density_probe"}
                 and isinstance(exc, (RuntimeError, TimeoutError))
             ) or (
                 kind
@@ -1733,9 +2276,235 @@ def read_bounded_filter_page(
                 elapsed_ms=(monotonic() - attempt_started) * 1000,
                 rows_returned=len(rows),
                 result_payload_bytes=_result_payload_bytes(rows),
+                read_rows=getattr(result, "read_rows", None),
             )
         )
         return result
+
+    def probe_guarded_width(
+        width: timedelta,
+        boundary: datetime,
+        *,
+        newer_neighbour_read_rows: int | None = None,
+        policy: FilterSeedWidthPolicy | None = None,
+    ) -> timedelta:
+        """Refuse to issue a slice wider than the cap without a density proof.
+
+        ``width`` is what the row budget proposes for the slice ending at
+        ``boundary``; the return value is what this read is allowed to issue.
+
+        Below the unprobed cap nothing happens - the ordinary 1 h -> 2 h -> 4 h
+        schedule is untouched and costs no extra statement. Above it, the
+        candidate slice is counted first:
+
+        * estimate within the row budget -> issue the proposed width. This is
+          the sparse tail, and it is why the tail is still crossed
+          logarithmically (8 h, 16 h, 32 h, 64 h ... each approved by its own
+          index read) rather than one cap-width slice at a time, which is the
+          regression a bare absolute cap would reintroduce: a 166 h tail at
+          4 h a slice is 42 statements and needs several HTTP continuations
+          before the first row reaches the user;
+        * estimate over budget -> shrink proportionally, never below the
+          floor, and then ask ONE more question: the proportional fit assumes
+          the candidate's rows are spread evenly and the shape this guard
+          exists for is precisely one where they are not, so the sub-slice it
+          proposes is costed too, and halved once more if it is still over.
+          This is the sparse-tail-meets-dense-region case: the 128 h slice
+          whose estimate is tens of millions of rows becomes a few hours, and
+          the first dense seed reads about the row budget instead of over
+          12 GiB;
+        * probe unavailable, failed, timed out, or answering a shape the lane
+          cannot read -> the unprobed cap. A lane with no probe hook, and a
+          transport that cannot answer one, get the fixed ceiling the row
+          budget replaced, which is never worse than the behaviour before the
+          budget shipped.
+
+        AT MOST TWO PROBES PER SEED STATEMENT, and structurally so: this is
+        the only place a probe is issued, it is called once per seed
+        statement, and it asks at most one refinement question. Both estimates
+        are cached per interval for the request. Probes are paid for from
+        their own allowance rather than from the acquisition budget, so a
+        request issues at most ``max_query_count`` acquisition statements plus
+        ``2 * max_seed_attempts`` probes, and never more than the read
+        contract's absolute ceiling.
+
+        ``newer_neighbour_read_rows`` is the read rows of the last completed
+        seed statement, which by construction covered a region NEWER than
+        ``boundary`` - slices walk strictly older and never overlap. Zero
+        there is the corroboration that lets an EMPTY estimate table be read
+        as a genuine zero rather than as an unusable answer; see
+        ``probed_slice_rows``.
+
+        Shrinking is always safe. Slices are contiguous and half-open, so a
+        narrower slice defers its older part to the next adjacent slice rather
+        than skipping it; predicates, ordering, the exact latest-state
+        classifier and the signed cursor payload are untouched. A failed probe
+        is recorded in ``optional_failed_attempts`` for the same reason the
+        other speculative reads are: it supplies acceleration only, and must
+        not turn an otherwise exact page into a degraded one.
+        """
+
+        policy = policy or seed_width_policy
+        if policy is None or not policy.requires_density_probe(width):
+            return width
+        if not seed_density_probe_enabled:
+            return min(width, policy.unprobed_cap)
+        empty_estimate_is_zero = newer_neighbour_read_rows == 0
+        counted = probed_slice_rows(
+            width, boundary, empty_estimate_is_zero=empty_estimate_is_zero
+        )
+        if counted is None:
+            return min(width, policy.unprobed_cap)
+        if counted <= policy.target_read_rows:
+            # THE PROPOSAL STOOD, so there is nothing left to ask. An estimate
+            # inside the budget - zero included - fits the candidate slice as
+            # proposed, and a refinement question can only ever NARROW a width
+            # the fit already declined to narrow. Asking anyway is what the
+            # first cut of this guard did on the sparse tail: two index reads
+            # per refused proposal that changed no width at all.
+            return width
+        fitted = policy.probed_width(width, counted)
+        if fitted >= width or fitted <= policy.min_width:
+            # Either the proposal stood, or the fit already reached the floor -
+            # and nothing a refinement could answer would narrow a floor-width
+            # slice, so asking would be a statement with no decision behind it.
+            return fitted
+        # THE REFUSAL CASE, AND THE SECOND QUESTION. ``probed_width`` divides
+        # one estimate by one width, so the sub-slice it proposes is only as
+        # good as the assumption that the candidate's rows are spread evenly
+        # across it - and on the shape this guard exists for they are not, they
+        # are piled at one end. The estimate is index-only, so asking again
+        # about the slice actually about to be issued costs another index read
+        # rather than another scan, and it is worth it: it is the difference
+        # between issuing a fitted slice and issuing a fitted slice that was
+        # checked. Exactly two questions per seed statement, never three - the
+        # ordinary halving rule corrects whatever is left from the next
+        # statement's own read rows.
+        refined = probed_slice_rows(
+            fitted, boundary, empty_estimate_is_zero=empty_estimate_is_zero
+        )
+        if refined is None:
+            return fitted
+        return policy.refined_width(fitted, refined)
+
+    def probed_slice_rows(
+        width: timedelta,
+        boundary: datetime,
+        *,
+        empty_estimate_is_zero: bool,
+    ) -> int | None:
+        """Estimate the rows inside ``[boundary - width, boundary)``, or None.
+
+        ``None`` means unknown - no probe was possible, the statement failed,
+        or the lane could not read its result - and every caller answers it the
+        same way, by refusing to widen past the unprobed cap.
+
+        AN EMPTY ESTIMATE IS NOT A ZERO ON ITS OWN. A probe that names no part
+        is the same answer whether the key condition selected nothing (the
+        slice really is empty) or the plan carried no readable step (the
+        slice's population is unknown), and those call for opposite widths -
+        the widest proposal, or the cap. The lane's reducer therefore refuses
+        to pick, and this is where the request's own evidence decides:
+
+        * ``empty_estimate_is_zero`` - a COMPLETED seed statement over a
+          region newer than ``boundary`` read zero rows, so this read has
+          independently established that history here has run out. An empty
+          estimate is then believed and the proposal is approved, which is how
+          a sparse tail is still crossed logarithmically;
+        * otherwise the answer is unknown and the caller keeps the unprobed
+          cap - the same conservative reading the repo's other production
+          ``EXPLAIN ESTIMATE`` consumer takes for the identical signal. The
+          cost is at most one capped slice at the edge where history stops:
+          that slice's own seed then reads zero rows and the next widening is
+          corroborated.
+
+        The RAW answer is cached per interval for the request, so a retry and
+        the refinement question cannot pay for the same interval twice, and an
+        empty answer refused early is re-read (not re-asked) once a later
+        statement corroborates it. The clamp to ``request_start`` is the one
+        the issued slice gets as well (``active_slice_start`` uses the same
+        expression), so the slice this answer approves is always a suffix of
+        the interval it describes.
+        """
+
+        def resolved(raw: Any) -> int | None:
+            if raw is EMPTY_DENSITY_ESTIMATE:
+                return 0 if empty_estimate_is_zero else None
+            return raw
+
+        if seed_width_policy is None or not seed_density_probe_enabled:
+            return None
+        probe_start = max(request_start, boundary - width)
+        if probe_start >= boundary:
+            return None
+        probe_key = (probe_start, boundary)
+        if probe_key in seed_density_counts:
+            return resolved(seed_density_counts[probe_key])
+        counted: Any = None
+        try:
+            probe_query, probe_params = seed_density_probe_builder(
+                slice_start=probe_start, slice_end=boundary
+            )
+            probe_result = execute(
+                kind="seed_density_probe",
+                query=probe_query,
+                params=probe_params,
+                active_start=probe_start,
+                active_end=boundary,
+                result_limit=_SEED_DENSITY_PROBE_MAX_RESULT_ROWS,
+                timeout_cap_ms=_SEED_DENSITY_PROBE_TIMEOUT_MS,
+                max_bytes_to_read_cap=_SEED_DENSITY_PROBE_MAX_BYTES,
+            )
+        except _BudgetExceeded as exc:
+            if exc.error_code in {"read_budget_exceeded", "prefilter_unavailable"}:
+                optional_failed_attempts.add(len(attempts) - 1)
+        except (TypeError, ValueError):
+            # A builder that cannot shape this probe for this slice is a lane
+            # without a probe, not a failed read.
+            pass
+        else:
+            counted = seed_density_estimate(probe_result)
+            # Record the estimate on the statement that bought it, so a driver
+            # or a receipt can say which number the width came from. It is the
+            # number the width was actually chosen from, so an empty estimate
+            # this request could not corroborate records None (unknown), not
+            # zero - the two led to opposite widths.
+            if attempts and attempts[-1].kind == "seed_density_probe":
+                attempts[-1] = replace(attempts[-1], probe_rows=resolved(counted))
+        seed_density_counts[probe_key] = counted
+        return resolved(counted)
+
+    def seed_density_estimate(probe_result: Any) -> Any:
+        """Read one density probe's result as an integer upper bound, or None.
+
+        The lane that emitted the statement is the one that knows its result
+        shape, so a builder publishing ``filter_seed_density_probe_estimate``
+        reduces its own rows - an index-estimate probe returns one row per
+        table it would read, not a single labelled scalar. A lane that
+        publishes no reducer is answering the older, plainer question and
+        returns its count in one ``seed_density_rows`` column.
+
+        Three answers, not two. A reducer may also report
+        ``EMPTY_DENSITY_ESTIMATE`` - an estimate table that named no part at
+        all - which is passed through UNRESOLVED, because whether that reads
+        as zero or as unknown is not a property of the result. Only the
+        caller, which knows what else this request has proven, can decide it.
+        """
+
+        rows = list(getattr(probe_result, "data", None) or [])
+        if callable(seed_density_probe_estimator):
+            estimate = seed_density_probe_estimator(
+                rows, getattr(probe_result, "columns", None)
+            )
+        else:
+            estimate = rows[0].get("seed_density_rows") if rows else None
+        if estimate is EMPTY_DENSITY_ESTIMATE:
+            return estimate
+        if estimate is None or isinstance(estimate, bool):
+            return None
+        if not isinstance(estimate, (int, float)):
+            return None
+        return max(0, int(estimate))
 
     def row_identity(row: dict[str, Any]) -> Hashable:
         identity_builder = getattr(builder, "bounded_filter_row_identity", None)
@@ -1821,6 +2590,7 @@ def read_bounded_filter_page(
         nonlocal candidate_witness_probe_started
         nonlocal before_id
         nonlocal before_start_time
+        nonlocal before_key_is_result_comparable
         nonlocal pre_match_continuation
         nonlocal last_classifier_empty
 
@@ -1859,7 +2629,7 @@ def read_bounded_filter_page(
             and (
                 candidate_witness_probe_attempt_count + candidate_witness_probe_strata
                 > candidate_witness_probe_attempt_limit
-                or len(attempts) + prefilter_query_reserve > max_query_count
+                or budgeted_query_count() + prefilter_query_reserve > max_query_count
                 or int((classification_deadline - monotonic()) * 1000)
                 < prefilter_time_reserve_ms
             )
@@ -1914,7 +2684,8 @@ def read_bounded_filter_page(
                 if (
                     candidate_witness_probe_attempt_count
                     >= candidate_witness_probe_attempt_limit
-                    or len(attempts) + 1 + remaining_exact_queries > max_query_count
+                    or budgeted_query_count() + 1 + remaining_exact_queries
+                    > max_query_count
                     or total_probe_remaining_ms < 25
                 ):
                     probe_complete = False
@@ -2131,7 +2902,10 @@ def read_bounded_filter_page(
                 ):
                     if bounded_continuation and pre_match_continuation is None:
                         pre_match_continuation = continuation_before_query
-                    if len(attempts) > max_query_count - reserved_hydration_queries:
+                    if (
+                        budgeted_query_count()
+                        > max_query_count - reserved_hydration_queries
+                    ):
                         raise _BudgetExceeded("query_budget_exceeded")
                     if monotonic() > classification_deadline:
                         raise _BudgetExceeded("deadline_exceeded")
@@ -2147,6 +2921,9 @@ def read_bounded_filter_page(
                 # livelock on a broad-but-not-identical witness result.
                 last_classified_seed = candidate_seed_rows[identity_batch[-1]]
                 before_start_time, before_id = seed_row_key(last_classified_seed)
+                before_key_is_result_comparable = seed_row_key(
+                    last_classified_seed
+                ) == result_row_key(last_classified_seed)
                 checkpoint_continuation()
 
             if stop_on_ordered_prefix and len(matched_by_id) >= prefix_needed:
@@ -2219,19 +2996,30 @@ def read_bounded_filter_page(
             )
 
         def flush(batch_size: int) -> bool:
-            nonlocal identity_refill_limit
+            nonlocal identity_refill_limit, classifier_flush_interrupted
             batch_identities = list(pending_identity_candidates)[:batch_size]
             batch_entries = [
                 pending_identity_candidates.pop(identity)
                 for identity in batch_identities
             ]
             matches_before_flush = len(matched_by_id)
-            prefix_proven = classify_seed_rows(
-                [entry[0] for entry in batch_entries],
-                active_start=min(entry[1] for entry in batch_entries),
-                active_end=max(entry[2] for entry in batch_entries),
-                stop_on_ordered_prefix=stop_on_ordered_prefix,
-            )
+            try:
+                prefix_proven = classify_seed_rows(
+                    [entry[0] for entry in batch_entries],
+                    active_start=min(entry[1] for entry in batch_entries),
+                    active_end=max(entry[2] for entry in batch_entries),
+                    stop_on_ordered_prefix=stop_on_ordered_prefix,
+                )
+            except _BudgetExceeded:
+                # The chunk was POPPED before it was classified and is already
+                # marked seen, so what stays behind is only the older
+                # leftovers. Resolving those does not make the buffer empty -
+                # it makes it LOOK empty, above a chunk nobody classified and
+                # no page published. Record that, so the progress flush after
+                # the walk declines this hop and the rollback restores the
+                # last position at which the buffer really was empty.
+                classifier_flush_interrupted = True
+                raise
             if ordered_identity_refill and not pending_identity_candidates:
                 gained = len(matched_by_id) - matches_before_flush
                 remaining = prefix_needed - len(matched_by_id)
@@ -2788,7 +3576,8 @@ def read_bounded_filter_page(
                 and before_start_time is None
                 and not pending_identity_candidates
                 and slice_end - request_start > timedelta(hours=1)
-                and len(attempts) + 3 + reserved_hydration_queries <= max_query_count
+                and budgeted_query_count() + 3 + reserved_hydration_queries
+                <= max_query_count
                 and (classification_deadline - monotonic()) * 1000
                 >= min(query_timeout_ms, discovery_remaining_ms)
                 + _BOUNDED_CONTINUATION_MIN_QUERY_HEADROOM_MS
@@ -2800,6 +3589,42 @@ def read_bounded_filter_page(
                     if discovery_windows
                     else discovery_window
                 )
+                if discovery_width_policy is not None:
+                    # THE SAME BUDGET, ON THE OTHER WIDE STATEMENT. The proof
+                    # about to be issued is linear in the rows of its interval,
+                    # so the builder proposes the widest interval that could be
+                    # useful and the budget fits it: the first proof of a read
+                    # is costed from the primary index, and every later one is
+                    # sized from the rows the PREVIOUS proof actually read and
+                    # then costed again. A proposal the probe cannot cost is
+                    # capped at the unprobed cap, and the next proof's own read
+                    # rows widen it back, so an unreadable estimate costs
+                    # statements and never history: proofs walk strictly older
+                    # over contiguous intervals, and a narrower one leaves the
+                    # rest to the next.
+                    proposed_discovery_window = min(
+                        active_discovery_window,
+                        slice_end - request_start,
+                        (
+                            discovery_width_policy.next_width(
+                                last_discovery_width,
+                                last_discovery_read_rows,
+                                request_width=slice_end - request_start,
+                            )
+                            if last_discovery_width is not None
+                            else active_discovery_window
+                        ),
+                    )
+                    active_discovery_window = probe_guarded_width(
+                        proposed_discovery_window,
+                        slice_end,
+                        newer_neighbour_read_rows=(
+                            last_discovery_read_rows
+                            if last_discovery_read_rows is not None
+                            else last_seed_read_rows
+                        ),
+                        policy=discovery_width_policy,
+                    )
                 probe_start = max(request_start, slice_end - active_discovery_window)
                 probe_query, probe_params = root_discovery_builder(
                     slice_start=probe_start, slice_end=slice_end
@@ -2832,6 +3657,8 @@ def read_bounded_filter_page(
                     root_discovery_enabled = False
                     population_resume_below = None
                 else:
+                    last_discovery_width = active_discovery_window
+                    last_discovery_read_rows = getattr(probe_result, "read_rows", None)
                     probe_rows = list(probe_result.data or [])
                     if len(probe_rows) != 1 or discovery_field not in probe_rows[0]:
                         raise ValueError(
@@ -2871,12 +3698,30 @@ def read_bounded_filter_page(
                             discovery_ready = False
                         next_end = min(slice_end, hour_start + timedelta(hours=1))
                         next_start = max(request_start, hour_start)
+                        if discovery_reset_width > timedelta(hours=1):
+                            # A row-budgeted lane's reset window is its floor,
+                            # so extend the replayed hour DOWNWARDS to it. The
+                            # hit hour is still replayed whole and the extra
+                            # coverage is the next contiguous slice's work
+                            # brought forward, so the scan stays exact; without
+                            # it the lane would re-enter the budget holding a
+                            # one-hour slice it can never widen again.
+                            next_start = max(
+                                request_start,
+                                min(next_start, next_end - discovery_reset_width),
+                            )
                     advanced = next_end < slice_end
                     slice_end = next_end
                     active_slice_start = next_start
-                    # Discovery may widen coverage, never the ordered seed's
-                    # working set. Keep a known failed-width ceiling too.
-                    slice_width = min(slice_width, timedelta(hours=1))
+                    # Discovery narrows the next slice so a hit lands in a small
+                    # window: proving where the newest row is only pays if the
+                    # slice that follows is cheap. A wall-clock lane's smallest
+                    # useful window is an hour, the granularity its primary-key
+                    # prefix prunes on; a row-budgeted lane's is the floor it
+                    # declared, below which a statement pays the same flat cost
+                    # for a fraction of the coverage. Narrow to that, never past
+                    # it, and never widen a slice discovery did not widen.
+                    slice_width = min(slice_width, discovery_reset_width)
                     if forced_width_cap is not None and next_start is not None:
                         active_slice_start = max(
                             next_start, slice_end - forced_width_cap
@@ -2906,8 +3751,19 @@ def read_bounded_filter_page(
             # entire request window inside this request's attempt count; that
             # turns a configured one-hour root seed into a multi-day read on
             # year-scale projects and can fail before emitting a checkpoint.
-            if not bounded_continuation and scheduled_coverage < remaining_window:
+            if (
+                not bounded_continuation
+                and scheduled_coverage < remaining_window
+                and not (seed_width_policy is not None and seed_read_rows_signalled)
+            ):
+                # Numbered pages have no cursor to resume from, so they still
+                # schedule the whole remaining window inside this request's
+                # attempt count. Once a statement has reported its read rows the
+                # row budget is the better estimator and supersedes it; the
+                # budget's own doubling reaches a sparse month in ten slices.
                 active_width = max(active_width, remaining_window / remaining_attempts)
+            if seed_width_policy is not None and not seed_read_rows_signalled:
+                active_width = seed_width_policy.unsignalled_width(active_width)
             if forced_width_cap is not None:
                 active_width = min(active_width, forced_width_cap)
             scheduled_slice_start = max(request_start, slice_end - active_width)
@@ -2925,7 +3781,8 @@ def read_bounded_filter_page(
             if optional_candidate_seed and (
                 optional_seed_attempted
                 or not probe_limits_enforced
-                or len(attempts) + 3 + reserved_hydration_queries > max_query_count
+                or budgeted_query_count() + 3 + reserved_hydration_queries
+                > max_query_count
                 or (classification_deadline - monotonic()) * 1000
                 < _OPTIONAL_CANDIDATE_SEED_TIMEOUT_MS
                 + _CANDIDATE_WITNESS_EXACT_RESERVE_MS
@@ -2981,7 +3838,7 @@ def read_bounded_filter_page(
                     seed_result = None
                     if (
                         windowed_seed_available
-                        and len(attempts) + 3 + reserved_hydration_queries
+                        and budgeted_query_count() + 3 + reserved_hydration_queries
                         <= max_query_count
                         and (classification_deadline - monotonic()) * 1000
                         >= query_timeout_ms + _CANDIDATE_WITNESS_EXACT_RESERVE_MS
@@ -3056,6 +3913,10 @@ def read_bounded_filter_page(
                     continue
                 else:
                     raise
+            last_seed_read_rows = getattr(seed_result, "read_rows", None)
+            seed_read_rows_signalled = (
+                seed_read_rows_signalled or last_seed_read_rows is not None
+            )
             seed_rows = sorted(seed_result.data, key=seed_row_key, reverse=True)
             if (
                 population_discovery
@@ -3181,7 +4042,7 @@ def read_bounded_filter_page(
                     seed_before_id,
                 ):
                     break
-                if bounded_continuation and pending_identity_candidates:
+                if bounded_continuation and classifier_flush_is_worth_a_statement():
                     classify_or_buffer_seed_rows(
                         [],
                         active_start=slice_start,
@@ -3190,6 +4051,10 @@ def read_bounded_filter_page(
                         force=True,
                     )
                 before_start_time, before_id = next_start_time, next_id
+                before_key_is_result_comparable = (
+                    next_start_time,
+                    next_id,
+                ) == result_row_key(seed_rows[-1])
                 if bounded_continuation:
                     checkpoint_continuation()
                 if (
@@ -3218,7 +4083,7 @@ def read_bounded_filter_page(
                 )
                 page_complete = True
                 break
-            if bounded_continuation and pending_identity_candidates:
+            if bounded_continuation and classifier_flush_is_worth_a_statement():
                 classify_or_buffer_seed_rows(
                     [],
                     active_start=slice_start,
@@ -3227,7 +4092,29 @@ def read_bounded_filter_page(
                     force=True,
                 )
             slice_end = slice_start
-            slice_width = min(active_width * 2, max_slice_width)
+            if seed_width_policy is not None:
+                # The budget replaces the doubling rule, not the contract the
+                # builder declared around it: a lane that both declares a
+                # policy and recommends a maximum slice keeps that maximum.
+                slice_width = probe_guarded_width(
+                    min(
+                        seed_width_policy.next_width(
+                            active_width,
+                            last_seed_read_rows,
+                            request_width=request_width,
+                        ),
+                        max_slice_width,
+                    ),
+                    slice_end,
+                    # The statement just completed covered a region newer than
+                    # this boundary (slices walk strictly older and never
+                    # overlap). Zero rows read there is this request's own
+                    # proof that history has run out, and the only evidence
+                    # that lets an empty index estimate be read as a zero.
+                    newer_neighbour_read_rows=last_seed_read_rows,
+                )
+            else:
+                slice_width = min(active_width * 2, max_slice_width)
             active_slice_start = (
                 max(request_start, slice_end - slice_width)
                 if carry_continuation_slice_width and slice_end > request_start
@@ -3265,26 +4152,101 @@ def read_bounded_filter_page(
                     # publication gate and the signed checkpoint proves that
                     # the window is not exhausted.
                     break
+
+        if (
+            page_complete
+            and pending_identity_candidates
+            and len(matched_by_id) < prefix_needed
+        ):
+            # THE COMPLETION FLUSH, and the only one left on a page that fills
+            # across slices. A page may claim completeness only once every
+            # candidate whose classification could still change it has been
+            # classified. The walk no longer flushes at each keyset and slice
+            # advance, so that last partial chunk is resolved here, once, on
+            # whichever exit declared the walk finished. The classifier window
+            # is the request's own - the window the sibling exhaustion flush
+            # under ``slice_start <= request_start`` already uses - and every
+            # buffered slice lies inside it.
+            #
+            # The two exclusions are the two ways a buffered candidate cannot
+            # matter. A page that already holds a full prefix has proven its
+            # cutoff against the last row it classified, and ``flush`` always
+            # consumes the NEWEST entries, so every survivor sorts below that
+            # cutoff - classifying them could not change a published row. And
+            # a page that is NOT complete leaves its buffer alone on purpose:
+            # those rows are neither published nor committed past, and the
+            # continuation resumes at the last position where the commit rule
+            # allowed a checkpoint, which lies before them, so the next hop
+            # re-acquires them rather than skipping them.
+            classify_or_buffer_seed_rows(
+                [],
+                active_start=request_start,
+                active_end=request_end,
+                stop_on_ordered_prefix=seed_proves_result_order,
+                force=True,
+            )
     except _BudgetExceeded as exc:
         page_complete = False
         degraded_error_code = exc.error_code
-        if bounded_continuation:
-            # A classifier may have completed one sub-batch before the next
-            # sub-batch hits a cap. Roll unfinished work back to the last fully
-            # classified ordered prefix; the signed continuation resumes after
-            # it, so no row can be skipped or published twice.
-            seen_seed_ids.clear()
-            seen_seed_ids.update(safe_seen_seed_ids)
-            seen_candidate_ids.clear()
-            seen_candidate_ids.update(safe_seen_candidate_ids)
-            matched_by_id.clear()
-            matched_by_id.update(safe_matched_by_id)
-            pending_identity_candidates.clear()
-            pending_identity_candidates.update(safe_pending_identity_candidates)
-            slice_end = safe_slice_end
-            active_slice_start = safe_active_slice_start
-            before_start_time = safe_before_start_time
-            before_id = safe_before_id
+        walk_hit_a_budget = True
+
+    if (
+        bounded_continuation
+        and not page_complete
+        and pending_identity_candidates
+        and not classifier_flush_interrupted
+    ):
+        # THE PROGRESS FLUSH, and the reason an unfinished hop is never a
+        # STOPPED one. A walk that ends without a page ends holding whatever
+        # its last boundary declined to classify, and that buffer is what
+        # ``checkpoint_continuation`` refuses to commit past. Refuse for the
+        # whole request and the hop commits nothing at all: zero rows, four
+        # null continuation fields, and a transport that reads an unfinished
+        # list as a finished one because the identical retry does the
+        # identical empty work. So spend the statement the deferral was always
+        # promising, here, once, on whichever exit ended the walk.
+        #
+        # Progress is the SCAN position, not the last published row: the
+        # explicit checkpoint below commits where the walk actually reached,
+        # so a flush that classifies its whole buffer and matches nothing
+        # still moves the next hop forward. Only a hop whose every flush RAN
+        # to completion earns that - ``classifier_flush_interrupted`` above
+        # is the one case where the buffer left behind is incomplete rather
+        # than merely smaller, and emptying it would commit past a chunk
+        # nobody classified. Such a hop declines and takes the rollback.
+        #
+        # Nothing here outranks the reserve: this statement is charged to the
+        # ordinary acquisition budget and the ordinary classification wall, so
+        # a hop with neither left simply declines again and is no worse off
+        # than before it asked.
+        try:
+            classify_or_buffer_seed_rows(
+                [],
+                active_start=request_start,
+                active_end=request_end,
+                force=True,
+            )
+        except _BudgetExceeded as exc:
+            degraded_error_code = degraded_error_code or exc.error_code
+        else:
+            checkpoint_continuation()
+
+    if walk_hit_a_budget and bounded_continuation:
+        # A classifier may have completed one sub-batch before the next
+        # sub-batch hits a cap. Roll unfinished work back to the last fully
+        # classified ordered prefix; the signed continuation resumes after
+        # it, so no row can be skipped or published twice.
+        seen_seed_ids.clear()
+        seen_seed_ids.update(safe_seen_seed_ids)
+        seen_candidate_ids.clear()
+        seen_candidate_ids.update(safe_seen_candidate_ids)
+        matched_by_id.clear()
+        matched_by_id.update(safe_matched_by_id)
+        pending_identity_candidates.clear()
+        slice_end = safe_slice_end
+        active_slice_start = safe_active_slice_start
+        before_start_time = safe_before_start_time
+        before_id = safe_before_id
 
     # A response may never claim completeness after a required ClickHouse
     # statement failed, even if a later narrower fallback found a sufficient
@@ -3314,6 +4276,49 @@ def read_bounded_filter_page(
         rollback_unhydrated_page()
 
     ordered_matches = sorted(matched_by_id.values(), key=result_row_key, reverse=True)
+
+    # THE PUBLICATION FLOOR, and the reason a checkpoint-carrying page is
+    # ordered as well as exact.
+    #
+    # The walk descends in SEED order and publishes in RESULT order, and on
+    # several routes those are different axes: a session is DISCOVERED by any
+    # of its roots and RANKED by its oldest one, and a trace whose newest raw
+    # root was tombstoned is ranked by an older canonical root. The seed key is
+    # an upper bound on the rank, never the rank itself. So after the scan has
+    # committed position ``P``, what the walk knows is this: every row whose
+    # seed key is above ``P`` has been classified, and every row it has still
+    # to find ranks at or below ``P``, because a row is reachable by its own
+    # rank. Only the matches ranked at or above ``P`` are therefore in their
+    # final position; one ranked below it can still be outranked by a row this
+    # hop never saw.
+    #
+    # A complete page proves its whole prefix and needs none of this. An
+    # unfinished one publishes the ordered part and holds the rest, which is
+    # not loss: a held row's rank IS one of its own seeds, below ``P``, so the
+    # descent still reaches it and publishes it in its true position. Nothing
+    # is published twice, because "published" is now exactly "ranked at or
+    # above ``P``" - the claim a continuation's exclusive bound already makes
+    # and, before this floor existed, made falsely. The previous behaviour
+    # published the out-of-order row, minted the bound from it, and then
+    # discarded every later match that outranked it while advancing the
+    # checkpoint past its seeds, so those rows left the list for good.
+    #
+    # Where seed and result order agree - the span list, every route that
+    # keysets on the rows it publishes - every match found is already at or
+    # above ``P`` and this filter removes nothing.
+    published_order_floor = committed_publication_boundary()
+    if published_order_floor is not None:
+        floor_time, floor_token = published_order_floor
+        ordered_matches = [
+            row
+            for row in ordered_matches
+            if (
+                result_row_key(row) >= (floor_time, floor_token)
+                if floor_token is not None
+                else result_row_key(row)[0] >= floor_time
+            )
+        ]
+
     offset = page_number * page_size
     has_more = len(ordered_matches) > offset + page_size
     page_rows = (
@@ -3379,6 +4384,21 @@ def read_bounded_filter_page(
     error_code = (
         None if page_complete else degraded_error_code or "scan_budget_exceeded"
     )
+    # Read the committed position ONE more time, after every rollback above, so
+    # the floor and the checkpoint published beside it are the same position.
+    # Both rollback sites between the two reads (classification drift, and the
+    # hydration budget) must leave page_rows empty and has_more false: a
+    # rollback that kept its rows would publish them against the first floor
+    # while handing out the second, and every row between the two would be
+    # published twice.
+    published_floor = committed_publication_boundary()
+    # A public boundary only ever descends; the rule and its reasons live in
+    # ``_boundary_to_publish``. What this page PUBLISHES is still decided by
+    # its own floor above; only the promise it passes on can be held back.
+    published_floor = _boundary_to_publish(published_floor, cursor_key)
+    publishes_a_checkpoint = (
+        bounded_continuation and not page_complete and continuation_progressed
+    )
     return BoundedFilterPage(
         # Raw seeds are not latest-state matches. Even graph callers that opt
         # into incomplete rows may expose only the outer union classifier's
@@ -3397,25 +4417,14 @@ def read_bounded_filter_page(
         deferred_candidate_rows=tuple(deferred_candidate_by_id.values()),
         classification_deferred=defer_classification,
         continuation_slice_start=(
-            safe_active_slice_start
-            if bounded_continuation and not page_complete and continuation_progressed
-            else None
+            safe_active_slice_start if publishes_a_checkpoint else None
         ),
-        continuation_slice_end=(
-            safe_slice_end
-            if bounded_continuation and not page_complete and continuation_progressed
-            else None
-        ),
+        continuation_slice_end=(safe_slice_end if publishes_a_checkpoint else None),
         continuation_before_start_time=(
-            safe_before_start_time
-            if bounded_continuation and not page_complete and continuation_progressed
-            else None
+            safe_before_start_time if publishes_a_checkpoint else None
         ),
-        continuation_before_id=(
-            safe_before_id
-            if bounded_continuation and not page_complete and continuation_progressed
-            else None
-        ),
+        continuation_before_id=(safe_before_id if publishes_a_checkpoint else None),
+        continuation_published_order_floor=published_floor,
     )
 
 

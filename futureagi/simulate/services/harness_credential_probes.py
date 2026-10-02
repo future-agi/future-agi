@@ -44,15 +44,21 @@ class ProbeResult:
     aliases: tuple[str, ...]
     ok: bool
     message: str
+    # The name the provider holds for a looked-up target, so a build can be
+    # labelled by it instead of by the opaque ID the user pasted.
+    target_name: str = ""
 
     def as_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "provider": self.provider,
             "label": self.label,
             "aliases": list(self.aliases),
             "ok": self.ok,
             "message": self.message,
         }
+        if self.target_name:
+            result["target_name"] = self.target_name
+        return result
 
 
 def _bearer(url: str, alias: str, **extra_headers: str):
@@ -287,10 +293,19 @@ def probe_provider_target(
             False,
             f"{label} ID could not be validated (HTTP {response.status_code})",
         )
+    try:
+        body = response.json()
+    except ValueError:
+        body = None
+    name_field = "name" if connector == "vapi" else "agent_name"
+    target_name = (
+        str(body.get(name_field) or "").strip()[:255] if isinstance(body, dict) else ""
+    )
     return ProbeResult(
         provider,
         label,
         aliases,
         True,
         f"{label} ID exists and is accessible with {alias}",
+        target_name,
     )

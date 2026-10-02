@@ -23,7 +23,12 @@ import {
   useUpdateProvider,
   useFetchProviderModels,
 } from "./hooks/useGatewayConfig";
-import { parseTimeoutSeconds } from "./utils";
+import {
+  DEFAULT_API_PATH_PREFIX,
+  getApiPathPrefix,
+  parseTimeoutSeconds,
+  withApiPathPrefix,
+} from "./utils";
 
 const PROVIDER_PRESETS = {
   openai: {
@@ -186,6 +191,7 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
   const [baseUrl, setBaseUrl] = useState(PROVIDER_PRESETS.openai.baseUrl);
   const [apiKey, setApiKey] = useState("");
   const [apiFormat, setApiFormat] = useState("openai");
+  const [apiPathPrefix, setApiPathPrefix] = useState(DEFAULT_API_PATH_PREFIX);
   const [models, setModels] = useState([]);
   const [timeoutVal, setTimeoutVal] = useState("");
   const [maxConcurrent, setMaxConcurrent] = useState("");
@@ -225,11 +231,16 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
   // The last fetch made with a key typed into the form.
   const typedFetchSeqRef = useRef(0);
 
+  // The prefix the stored-credential listing was fetched with, so editing the
+  // field is told apart from the dialog hydrating it.
+  const byNameFetchPrefix = useRef(null);
+
   const doFetchModels = useCallback(
-    ({ providerName, url, key, format }) => {
+    ({ providerName, url, key, format, prefix }) => {
       const seq = fetchSeqRef.current + 1;
       fetchSeqRef.current = seq;
       if (!providerName) typedFetchSeqRef.current = seq;
+      else byNameFetchPrefix.current = prefix;
       const isStale = () => fetchSeqRef.current !== seq;
       setFetchError("");
       setKeyFetchError("");
@@ -238,8 +249,13 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
       const blameKey = !providerName;
       fetchModels.mutate(
         providerName
-          ? { providerName }
-          : { baseUrl: url, apiKey: key, apiFormat: format },
+          ? { providerName, apiFormat: format, apiPathPrefix: prefix }
+          : {
+              baseUrl: url,
+              apiKey: key,
+              apiFormat: format,
+              apiPathPrefix: prefix,
+            },
         {
           onSuccess: (result) => {
             if (isStale()) return;
@@ -290,7 +306,10 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
       setName(provider.name || "");
       setBaseUrl(c.base_url ?? c.baseUrl ?? "");
       setApiKey("");
-      setApiFormat(c.api_format ?? c.apiFormat ?? "openai");
+      const storedFormat = c.api_format ?? c.apiFormat ?? "openai";
+      setApiFormat(storedFormat);
+      const storedPrefix = getApiPathPrefix(c);
+      setApiPathPrefix(storedPrefix);
       setModels(normalizeModels(c.models));
       const timeoutRaw = c.default_timeout ?? c.defaultTimeout;
       setTimeoutVal(timeoutRaw != null ? String(timeoutRaw) : "");
@@ -307,8 +326,13 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
       setSummaryDismissed(false);
       offeredModels.current = new Set(normalizeModels(c.models));
       storedKeyResult.current = null;
+      byNameFetchPrefix.current = null;
       if (provider.name !== "vertex")
-        doFetchModels({ providerName: provider.name });
+        doFetchModels({
+          providerName: provider.name,
+          format: storedFormat,
+          prefix: storedPrefix,
+        });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, isEditMode, provider]);
@@ -369,11 +393,47 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
     setFetchScheduled(true);
     const timer = setTimeout(() => {
       setFetchScheduled(false);
-      doFetchModels({ url: baseUrl, key: apiKey, format: apiFormat });
+      doFetchModels({
+        url: baseUrl,
+        key: apiKey,
+        format: apiFormat,
+        prefix: apiPathPrefix,
+      });
     }, 600);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [apiKey, baseUrl, apiFormat, isEditMode, isAwsAuth, isVertexAuth]);
+  }, [
+    apiKey,
+    baseUrl,
+    apiFormat,
+    apiPathPrefix,
+    isEditMode,
+    isAwsAuth,
+    isVertexAuth,
+  ]);
+
+  // Editing the prefix moves the discovery URL, so the stored-credential
+  // listing has to be fetched again. The effect above cannot do it: a blank key
+  // in edit mode means "keep the stored one", which returns before any fetch.
+  useEffect(() => {
+    if (!open || !isEditMode || !provider) return;
+    if (apiKey.trim()) return;
+    if (isAwsAuth || isVertexAuth || provider.name === "vertex") return;
+    // null until the hydrating fetch records one, so opening the dialog is not
+    // mistaken for a change.
+    if (byNameFetchPrefix.current === null) return;
+    if (byNameFetchPrefix.current === apiPathPrefix) return;
+
+    const timer = setTimeout(() => {
+      doFetchModels({
+        providerName: provider.name,
+        format: apiFormat,
+        prefix: apiPathPrefix,
+      });
+    }, 600);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [apiPathPrefix, apiKey, open, isEditMode, isAwsAuth, isVertexAuth]);
 
   const resetForm = () => {
     const defaultPreset = PROVIDER_PRESETS.openai;
@@ -381,6 +441,7 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
     setBaseUrl(defaultPreset.baseUrl);
     setApiKey("");
     setApiFormat(defaultPreset.apiFormat);
+    setApiPathPrefix(DEFAULT_API_PATH_PREFIX);
     setModels([]);
     setModelOptions([]);
     setFetchError("");
@@ -428,6 +489,7 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
     setGcpProject("");
     setGcpLocation("us-central1");
     setServiceAccountJSON("");
+    setApiPathPrefix(DEFAULT_API_PATH_PREFIX);
     // Clear models since provider changed
     setModels([]);
     setModelOptions([]);
@@ -547,7 +609,11 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
       return;
     }
 
-    const config = { base_url: baseUrl, api_format: apiFormat };
+    const config = withApiPathPrefix(
+      { base_url: baseUrl, api_format: apiFormat },
+      apiFormat,
+      apiPathPrefix,
+    );
     if (isVertexAuth) {
       config.gcp_project = gcpProject.trim();
       config.gcp_location = gcpLocation.trim();
@@ -873,6 +939,16 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
               </TextField>
             );
           })()}
+
+          {apiFormat === "openai" && (
+            <TextField
+              label="API Path Prefix"
+              fullWidth
+              value={apiPathPrefix}
+              onChange={(e) => setApiPathPrefix(e.target.value)}
+              helperText="Leave blank when the provider endpoint is not versioned, such as Perplexity Sonar."
+            />
+          )}
 
           <Box>
             <Stack

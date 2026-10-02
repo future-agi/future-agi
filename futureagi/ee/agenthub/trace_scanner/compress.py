@@ -6,13 +6,10 @@ No content selection happens here. The payload carries every span raw; the
 model identifies the user request and the final response itself.
 """
 
+import functools
 import json
 import re
 import statistics
-
-import nltk
-from nltk.corpus import stopwords as _nltk_stopwords
-from nltk.stem import PorterStemmer
 
 
 def _get_span_kind(attrs: dict) -> str:
@@ -31,8 +28,17 @@ def _get_span_kind(attrs: dict) -> str:
 # KEVINIFY — "Why waste time say lot word when few word do trick"
 # ---------------------------------------------------------------------------
 
-_STEMMER = PorterStemmer()
-_NLTK_STOPS = set(_nltk_stopwords.words("english"))
+# nltk is imported lazily: import nltk eagerly pulls scipy + scikit-learn
+# (~80 MB RSS) into every API/worker process at startup, while only the trace
+# scanner needs the stopword list.
+@functools.cache
+def _all_stops() -> frozenset[str]:
+    from nltk.corpus import stopwords as _nltk_stopwords
+
+    from tfc.utils.nltk_data import ensure_nltk_data
+
+    ensure_nltk_data("stopwords")
+    return frozenset(_nltk_stopwords.words("english")) | _EXTRA_STOPS
 
 _EXTRA_STOPS = {
     "please",
@@ -90,7 +96,6 @@ _EXTRA_STOPS = {
     "undefined",
 }
 
-_ALL_STOPS = _NLTK_STOPS | _EXTRA_STOPS
 
 _FILLER_RE = re.compile(
     r"(?:based on|in order to|as well as|due to|in terms of|with respect to"
@@ -113,7 +118,13 @@ def kevinify(text, max_len=2000):
     text = _JSON_NOISE_RE.sub(" ", text)
     text = _FILLER_RE.sub(" ", text)
 
+    import nltk  # lazy: see _all_stops()
+
+    from tfc.utils.nltk_data import ensure_nltk_data
+
+    all_stops = _all_stops()
     try:
+        ensure_nltk_data("punkt_tab")
         words = nltk.word_tokenize(text)
     except Exception:
         words = text.split()
@@ -123,7 +134,7 @@ def kevinify(text, max_len=2000):
         clean = w.strip(".,;:!?()-_'\"")
         if not clean or len(clean) <= 1:
             continue
-        if clean.lower() in _ALL_STOPS:
+        if clean.lower() in all_stops:
             continue
         kept.append(clean)
 

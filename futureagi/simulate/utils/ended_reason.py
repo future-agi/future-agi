@@ -32,6 +32,16 @@ _SDK_TO_CANONICAL = {
 }
 
 
+def canonical_ended_reasons() -> list[str]:
+    """Every canonical reason a hosted call can end with, sorted.
+
+    The column is free-form, so this is the vocabulary a hosted run produces
+    rather than an exhaustive set: a provider-native reason passes through
+    untranslated and will not appear here.
+    """
+    return sorted(set(_SDK_TO_CANONICAL.values()))
+
+
 def to_canonical_ended_reason(value):
     """Return the canonical ended_reason for an SDK code.
 

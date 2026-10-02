@@ -1,3 +1,4 @@
+import json
 import uuid
 from datetime import datetime
 from unittest.mock import MagicMock, patch
@@ -5,8 +6,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from model_hub.models.choices import StatusType
+from tracer.services.clickhouse.v2.span_reader import CHSpan
 from tracer.utils.replay_session import (
     _build_trace_query,
+    _chspan_to_legacy_dict,
+    _extract_transcripts_from_spans,
+    _extract_voice_trace_original_config,
     _get_transcripts_from_session_query,
     _get_transcripts_from_trace_query,
     _update_agent_definition,
@@ -744,6 +749,115 @@ class TestGetTranscriptsFromSessionQuery:
         turns = result[str(session_id)]
         assert turns[0]["input"] == "Early"
         assert turns[1]["input"] == "Late"
+
+
+# A vapi call payload as the collector stores it: a JSON string in the CH
+# spans row's ``attrs_string`` (dev: every conversation span since July).
+_VAPI_RAW_LOG = {
+    "id": "call-1",
+    "assistantId": "asst-1",
+    "type": "inboundPhoneCall",
+    "phoneCallProvider": "twilio",
+    "phoneNumber": {"number": "+15550100001"},
+    "assistant": {
+        "id": "asst-1",
+        "model": {"model": "gpt-4o", "messages": []},
+    },
+    "messages": [
+        {"role": "system", "message": "You are a clinic receptionist."},
+        {"role": "bot", "message": "Hello, how can I help?"},
+        {"role": "user", "message": "When do you open?"},
+        {"role": "bot", "message": "We open at nine."},
+    ],
+}
+
+
+def _ch_conversation_span(raw_log_json: str) -> CHSpan:
+    return CHSpan(
+        id="0d54f84ac36455d6",
+        project_id=str(uuid.uuid4()),
+        trace_id=str(uuid.uuid4()),
+        parent_span_id="",
+        name="call",
+        observation_type="conversation",
+        operation_name="",
+        start_time=datetime(2026, 9, 22, 16, 27, 36),
+        end_time=None,
+        latency_ms=0,
+        model="",
+        provider="openai",
+        prompt_tokens=0,
+        completion_tokens=0,
+        total_tokens=0,
+        cost=0.0,
+        status="OK",
+        status_message="",
+        org_id=None,
+        project_version_id=None,
+        end_user_id=None,
+        trace_session_id=None,
+        prompt_version_id=None,
+        prompt_label_id=None,
+        custom_eval_config_id=None,
+        input="",
+        output="",
+        tags="[]",
+        span_events="",
+        metadata="{}",
+        resource_attrs="{}",
+        attributes_extra="{}",
+        attrs_string={"raw_log": raw_log_json, "gen_ai.system": "vapi"},
+    )
+
+
+@pytest.mark.unit
+class TestVoiceRawLogFromClickHouse:
+    """Replay reads conversation spans from ClickHouse, where ``raw_log`` is a
+    JSON string, not the dict the PG-era readers expected."""
+
+    def _read_first_span_config(self, span):
+        mock_reader = MagicMock()
+        mock_reader.list_by_trace.return_value = [span]
+        mock_reader.__enter__ = lambda s: s
+        mock_reader.__exit__ = MagicMock(return_value=False)
+        trace_query = MagicMock()
+        trace_query.values_list.return_value.first.return_value = span.trace_id
+
+        with patch(
+            "tracer.services.clickhouse.v2.get_reader", return_value=mock_reader
+        ):
+            return _extract_voice_trace_original_config(trace_query)
+
+    def test_original_config_reads_a_json_string_raw_log(self):
+        span = _ch_conversation_span(json.dumps(_VAPI_RAW_LOG))
+
+        config = self._read_first_span_config(span)
+
+        assert config is not None
+        assert config["assistant_id"] == "asst-1"
+        assert config["inbound"] is True
+        assert config["description"] == "You are a clinic receptionist."
+        assert config["first_message"] == "Hello, how can I help?"
+        assert config["contact_number"] == "+15550100001"
+        assert config["model"] == "gpt-4o"
+
+    def test_unparseable_raw_log_has_no_config(self):
+        span = _ch_conversation_span("{not json")
+
+        assert self._read_first_span_config(span) is None
+
+    def test_transcripts_fall_back_to_a_json_string_raw_log(self):
+        # No provider_transcript / flattened transcript keys on the span: the
+        # turns only exist in raw_log.messages.
+        span = _ch_conversation_span(json.dumps(_VAPI_RAW_LOG))
+
+        transcripts = _extract_transcripts_from_spans([_chspan_to_legacy_dict(span)])
+
+        assert transcripts == {
+            span.trace_id: [
+                {"input": "When do you open?", "output": "We open at nine."}
+            ]
+        }
 
 
 @pytest.mark.unit

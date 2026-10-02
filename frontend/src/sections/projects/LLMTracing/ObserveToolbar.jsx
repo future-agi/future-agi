@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import PropTypes from "prop-types";
 import { Badge, Button, MenuItem, Popover, Stack } from "@mui/material";
-import { startOfToday, startOfTomorrow, startOfYesterday, sub } from "date-fns";
 import Iconify from "src/components/iconify";
 import DisplayPanel from "./DisplayPanel";
 import TraceFilterPanel from "./TraceFilterPanel";
@@ -11,7 +10,7 @@ import { pillSx } from "./toolbarStyles";
 import { useTabStoreShallow } from "./tabStore";
 import { ID_ONLY_FIELDS } from "./idFields";
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
-import { formatDate } from "src/utils/report-utils";
+import { observePresetDateFilter } from "../timeWindowPresets";
 import {
   buildApiFilterFromPanelRow,
   isNativeColumnType,
@@ -159,47 +158,9 @@ const ObserveToolbar = ({
       setCustomDateOpen(true);
       return;
     }
-    let filter = null;
-    switch (option) {
-      case "Today":
-        filter = [formatDate(startOfToday()), formatDate(startOfTomorrow())];
-        break;
-      case "Yesterday":
-        filter = [formatDate(startOfYesterday()), formatDate(startOfToday())];
-        break;
-      case "7D":
-        filter = [
-          formatDate(sub(new Date(), { days: 7 })),
-          formatDate(startOfTomorrow()),
-        ];
-        break;
-      case "30D":
-        filter = [
-          formatDate(sub(new Date(), { days: 30 })),
-          formatDate(startOfTomorrow()),
-        ];
-        break;
-      case "3M":
-        filter = [
-          formatDate(sub(new Date(), { months: 3 })),
-          formatDate(startOfTomorrow()),
-        ];
-        break;
-      case "6M":
-        filter = [
-          formatDate(sub(new Date(), { months: 6 })),
-          formatDate(startOfTomorrow()),
-        ];
-        break;
-      case "12M":
-        filter = [
-          formatDate(sub(new Date(), { months: 12 })),
-          formatDate(startOfTomorrow()),
-        ];
-        break;
-      default:
-        break;
-    }
+    // One shared window per preset: hour-floored start, next-midnight end,
+    // identical to the default load (see observePresetDateFilter).
+    const filter = observePresetDateFilter(option);
     if (filter)
       setDateFilter((prev) => ({
         ...prev,

@@ -79,53 +79,6 @@ function stringify(val) {
   return JSON.stringify(val, null, 2);
 }
 
-/* ── JsonSyntax — lightweight JSON syntax highlighting ── */
-
-const JsonSyntax = ({ json }) => {
-  if (!json) return null;
-  // Regex-based syntax coloring — matches keys, strings, numbers, booleans, null
-  const parts = json.split(/("(?:[^"\\]|\\.)*")\s*:/g);
-  const result = [];
-  for (let i = 0; i < parts.length; i++) {
-    if (i % 2 === 1) {
-      // This is a key
-      result.push(
-        <span key={i} style={{ color: "var(--text-primary)", fontWeight: 500 }}>
-          {parts[i]}
-        </span>,
-      );
-      result.push(
-        <span key={`${i}c`} style={{ color: "var(--text-disabled)" }}>
-          :{" "}
-        </span>,
-      );
-    } else {
-      // This is value content — colorize inline
-      const chunk = parts[i];
-      const colored = chunk.replace(
-        /("(?:[^"\\]|\\.)*")|(\b(?:true|false)\b)|(\bnull\b)|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g,
-        (match, str, bool, nul, num) => {
-          if (str)
-            return `<span style="color:var(--syntax-string)">${str}</span>`;
-          if (bool)
-            return `<span style="color:var(--syntax-boolean)">${match}</span>`;
-          if (nul)
-            return `<span style="color:var(--text-disabled)">${match}</span>`;
-          if (num)
-            return `<span style="color:var(--syntax-number)">${match}</span>`;
-          return match;
-        },
-      );
-      result.push(
-        <span key={i} dangerouslySetInnerHTML={{ __html: colored }} />,
-      );
-    }
-  }
-  return <>{result}</>;
-};
-
-JsonSyntax.propTypes = { json: PropTypes.string };
-
 /* ── MetricChip ───────────────────────────────────────── */
 
 const MetricChip = ({ label, value }) => (
@@ -1481,7 +1434,7 @@ EvalCard.propTypes = { ev: PropTypes.object, spanLabel: PropTypes.string };
 
 /* ── AnnotationsTabContent — uses ScoresListSection ── */
 
-const AnnotationsTabContent = ({ spanId, traceId, onAction }) => (
+const AnnotationsTabContent = ({ spanId, traceId, projectId, onAction }) => (
   <Box sx={{ display: "flex", flexDirection: "column", height: "100%" }}>
     <Box sx={{ flex: 1, overflow: "auto", p: 2 }}>
       <ScoresListSection
@@ -1489,6 +1442,7 @@ const AnnotationsTabContent = ({ spanId, traceId, onAction }) => (
         sourceId={spanId}
         secondarySourceType="trace"
         secondarySourceId={traceId}
+        projectId={projectId}
         title=""
         openQueueItemOnRowClick
         renderActions={
@@ -1521,6 +1475,7 @@ const AnnotationsTabContent = ({ spanId, traceId, onAction }) => (
 AnnotationsTabContent.propTypes = {
   spanId: PropTypes.string,
   traceId: PropTypes.string,
+  projectId: PropTypes.string,
   onAction: PropTypes.func,
 };
 
@@ -2226,6 +2181,7 @@ const SpanDetailPane = ({
           <AnnotationsTabContent
             spanId={span?.id}
             traceId={span?.trace}
+            projectId={projectId}
             onAction={onAction}
           />
         )}

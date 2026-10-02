@@ -83,6 +83,16 @@ class ManagementAPIAutoSchema(SwaggerAutoSchema):
         return responses
 
 
+class ExplicitQueryAutoSchema(ManagementAPIAutoSchema):
+    """Use the declared query serializer for endpoints that paginate themselves."""
+
+    def get_filter_parameters(self):
+        return []
+
+    def get_pagination_parameters(self):
+        return []
+
+
 def _serializer_name(serializer):
     if serializer is None:
         return None

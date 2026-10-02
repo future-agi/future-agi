@@ -21,7 +21,6 @@ from django.core.exceptions import ValidationError
 
 from accounts.models.user import User
 from accounts.services.token_service import issue_sos_tokens
-from tfc.settings.settings import ssl
 
 logger = structlog.get_logger(__name__)
 
@@ -73,10 +72,10 @@ def build_sos_handoff_url(
     except (User.DoesNotExist, ValidationError, ValueError):
         return None, "Active user not found."
 
-    if not settings.APP_URL:
+    if not settings.APP_BASE_URL:
         return None, "APP_URL is not configured — cannot build the SOS handoff URL."
 
     tokens = start_sos_session(target, source=source, operator=operator)
 
     params = urlencode({"access": tokens["access"], "refresh": tokens["refresh"]})
-    return f"{ssl}{settings.APP_URL}/sos?{params}", None
+    return f"{settings.APP_BASE_URL}/sos?{params}", None

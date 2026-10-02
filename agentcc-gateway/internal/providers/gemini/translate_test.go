@@ -261,8 +261,48 @@ func TestTranslateRequest_Tools(t *testing.T) {
 	if decl.Description != "Get current weather" {
 		t.Errorf("Description = %q, want %q", decl.Description, "Get current weather")
 	}
-	if string(decl.Parameters) != string(params) {
-		t.Errorf("Parameters = %s, want %s", decl.Parameters, params)
+	if string(decl.ParametersJSONSchema) != string(params) {
+		t.Errorf("ParametersJSONSchema = %s, want %s", decl.ParametersJSONSchema, params)
+	}
+}
+
+func TestTranslateRequest_NormalizesJSONToolSchemaForGemini(t *testing.T) {
+	params := json.RawMessage(`{
+		"$schema": "https://json-schema.org/draft/2020-12/schema",
+		"type": "object",
+		"properties": {
+			"name": {"type": ["string", "null"]},
+			"options": {
+				"type": ["object", "null"],
+				"propertyNames": {"pattern": "^[a-z]+$"},
+				"properties": {
+					"limit": {"type": ["integer", "null"], "exclusiveMinimum": 0},
+					"labels": {
+						"type": ["array", "null"],
+						"items": {"type": ["string", "null"]}
+					}
+				}
+			}
+		}
+	}`)
+	req := &models.ChatCompletionRequest{
+		Model:    "gemini-3.7-flash",
+		Messages: []models.Message{{Role: "user", Content: mustJSON("Inspect the agent")}},
+		Tools: []models.Tool{{
+			Type: "function",
+			Function: models.ToolFunction{
+				Name:       "inspect_agent",
+				Parameters: params,
+			},
+		}},
+	}
+
+	gr, _ := translateRequest(req)
+
+	got := string(gr.Tools[0].FunctionDeclarations[0].ParametersJSONSchema)
+	want := string(normalizeToolSchema(params))
+	if got != want {
+		t.Errorf("ParametersJSONSchema = %s, want %s", got, want)
 	}
 }
 
@@ -312,7 +352,7 @@ func TestTranslateRequest_ToolsRemoveUnsupportedVertexSchemaKeywords(t *testing.
 	}
 
 	gr, _ := translateRequest(req)
-	got := string(gr.Tools[0].FunctionDeclarations[0].Parameters)
+	got := string(gr.Tools[0].FunctionDeclarations[0].ParametersJSONSchema)
 	for _, unsupported := range []string{"$schema", "exclusiveMinimum", "propertyNames"} {
 		if strings.Contains(got, unsupported) {
 			t.Errorf("Parameters still contain unsupported keyword %q: %s", unsupported, got)

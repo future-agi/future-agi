@@ -118,10 +118,17 @@ def mock_ch_client():
     """Mock the ClickHouse client used by widget query execution."""
     with patch("tracer.views.dashboard.get_clickhouse_client") as mock_get:
         mock_client = MagicMock()
-        mock_client.execute_read.return_value = (
-            [(datetime(2025, 1, 1), 123.45), (datetime(2025, 1, 2), 200.10)],
-            [("time_bucket", "DateTime"), ("value", "Float64")],
+        rows = [(datetime(2025, 1, 1), 123.45), (datetime(2025, 1, 2), 200.10)]
+        columns = [("time_bucket", "DateTime"), ("value", "Float64")]
+        mock_client.execute_read.return_value = (rows, columns, 5.0)
+        # ``execute_ch_query`` reads through the progress-reporting transport
+        # (rows, columns, elapsed, rows read, bytes read).
+        mock_client.execute_read_with_progress.return_value = (
+            rows,
+            columns,
             5.0,
+            2,
+            128,
         )
         mock_get.return_value = mock_client
         yield mock_client

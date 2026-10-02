@@ -124,7 +124,6 @@ import type {
   AgentccAnalyticsLatencyStatsParams,
   AgentccAnalyticsModelComparison200,
   AgentccAnalyticsModelComparisonParams,
-  AgentccAnalyticsOverview200,
   AgentccAnalyticsOverviewParams,
   AgentccAnalyticsUsageTimeseries200,
   AgentccAnalyticsUsageTimeseriesParams,
@@ -160,6 +159,7 @@ import type {
   AgentccProviderCredentialApi,
   AgentccProviderCredentialsList200,
   AgentccProviderCredentialsListParams,
+  AgentccRequestLogApi,
   AgentccRequestLogDetailApi,
   AgentccRequestLogMetadataValuesResponseApi,
   AgentccRequestLogsExport200,
@@ -242,6 +242,7 @@ import type {
   CallExecutionLogsResponseApi,
   CallExecutionRerunApi,
   CallExecutionStatusUpdateApi,
+  CallExecutionV3DetailResponseApi,
   CallTranscriptResponseApi,
   CallWebsocketErrorResponseApi,
   CallWebsocketRequestApi,
@@ -321,9 +322,12 @@ import type {
   CustomMetricTestResponseApi,
   CustomPaymentCheckoutRequestApi,
   CustomerInvoicesResponseApi,
+  DashboardApi,
   DashboardCreateUpdateApi,
   DashboardDetailApi,
+  DashboardFilterValuesQueryApi,
   DashboardFilterValuesResponseApi,
+  DashboardMetricsCatalogQueryApi,
   DashboardMetricsCatalogResponseApi,
   DashboardPreviewQueryApi,
   DashboardQueryApi,
@@ -347,6 +351,7 @@ import type {
   DatasetEvalStatsResponseApi,
   DatasetExplanationSummaryResponseApi,
   DatasetJsonSchemaResponseApi,
+  DatasetLimitCheckFailedErrorApi,
   DatasetListResponseApi,
   DatasetMultipleStaticColumnsRequestApi,
   DatasetNamesResponseApi,
@@ -567,8 +572,27 @@ import type {
   GroupingOutboxResponseApi,
   HarnessAcceptedResponseApi,
   HarnessArtifactUploadResponseApi,
+  HarnessConversationAdjustmentApi,
+  HarnessConversationAdjustmentResponseApi,
+  HarnessConversationEventAckApi,
+  HarnessConversationEventBatchApi,
+  HarnessConversationMessageCreateApi,
+  HarnessConversationReadApi,
+  HarnessConversationRerunApi,
+  HarnessConversationRunStatusApi,
+  HarnessConversationTranscriptAppendApi,
+  HarnessConversationTranscriptAppendResponseApi,
+  HarnessConversationWorkspaceResponseApi,
+  HarnessEnvironmentAddEvaluationApi,
+  HarnessEnvironmentAvailableEvalsApi,
+  HarnessEnvironmentDetailApi,
+  HarnessEnvironmentListResponseApi,
+  HarnessEnvironmentRenameApi,
+  HarnessEnvironmentRunEvaluationQueuedApi,
+  HarnessEnvironmentToolCallEvaluationApi,
   HarnessEventBatchApi,
   HarnessEventBatchResponseApi,
+  HarnessIngressProxyRequestApi,
   HarnessIngressRequestApi,
   HarnessIngressResponseApi,
   HarnessJobActionApi,
@@ -578,12 +602,18 @@ import type {
   HarnessJobReadApi,
   HarnessManifestApi,
   HarnessPreflightApi,
+  HarnessPreflightResponseApi,
   HarnessResultReceiptApi,
+  HarnessRunCreateApi,
+  HarnessRunCreateResponseApi,
+  HarnessScenarioAmendApi,
   HarnessScenarioOperationApi,
   HarnessScenarioOperationResponseApi,
   HarnessSecretFileUploadResponseApi,
   HarnessSecretValuesApi,
   HarnessSourceUploadResponseApi,
+  HarnessUsageRequestApi,
+  HarnessUsageResponseApi,
   HealthCheckResponseApi,
   HeartbeatApi,
   HuggingFaceAddRowsRequestApi,
@@ -719,12 +749,14 @@ import type {
   ModelHubDevelopsGetDatasetTableListParams,
   ModelHubDevelopsGetDatasetsListParams,
   ModelHubDevelopsGetEvalStructureReadParams,
+  ModelHubDevelopsGetEvalsListListParams,
   ModelHubDevelopsGetExperimentDatasetTableListParams,
   ModelHubEmptyRequestApi,
   ModelHubErrorResponseApi,
   ModelHubEvalConfigResponseApi,
   ModelHubEvalGroupsList200,
   ModelHubEvalGroupsListParams,
+  ModelHubEvalGroupsReadParams,
   ModelHubEvalTemplatesUsageListParams,
   ModelHubExperimentDetailList200,
   ModelHubExperimentDetailListParams,
@@ -778,10 +810,12 @@ import type {
   ModelHubPromptLabelsTemplateLabelsParams,
   ModelHubPromptMetricsListParams,
   ModelHubPromptSpanMetricsListParams,
+  ModelHubPromptTemplatesGetRunStatusParams,
   ModelHubPromptTemplatesGetTemplateByName200,
   ModelHubPromptTemplatesGetTemplateByNameParams,
   ModelHubPromptTemplatesList200,
   ModelHubPromptTemplatesListParams,
+  ModelHubPromptTemplatesVersionsParams,
   ModelHubResponseSchemaList200,
   ModelHubResponseSchemaListParams,
   ModelHubScoresForSourceParams,
@@ -906,11 +940,14 @@ import type {
   PromptLabelApi,
   PromptMetricsEmptyScreenResponseApi,
   PromptMetricsResponseApi,
+  PromptRunRequestApi,
+  PromptRunStatusResponseApi,
   PromptSimulationListResponseApi,
   PromptSimulationRunResponseApi,
   PromptSimulationScenariosResponseApi,
   PromptSimulationUpdateRequestApi,
   PromptTemplateApi,
+  PromptTemplatePatchApi,
   ProviderStatusResponseApi,
   PublicConfigResponseApi,
   PublishGroupingApi,
@@ -977,6 +1014,9 @@ import type {
   ResourceTypeListResponseApi,
   ReviewItemRequestApi,
   RootSpansResponseApi,
+  RunAnalyticsV3ResponseApi,
+  RunCallsV3ResponseApi,
+  RunExportV3RequestApi,
   RunNewEvalsOnTestExecutionApi,
   RunNewEvalsResponseApi,
   RunPromptColumnConfigResponseApi,
@@ -1083,6 +1123,9 @@ import type {
   SimulateApiAgentPromptOptimiserListParams,
   SimulateApiAlkSimulateCallExecutionsRecordingUploadBody,
   SimulateApiCallExecutionsListParams,
+  SimulateApiHarnessConversationsCommandsParams,
+  SimulateApiHarnessConversationsSessionStoreParams,
+  SimulateApiHarnessEnvironmentsListParams,
   SimulateApiHarnessJobsSecretFileUploadBody,
   SimulateApiHarnessJobsSourceUploadBody,
   SimulateApiLivekitWebhookCreateBody,
@@ -1095,6 +1138,7 @@ import type {
   SimulateApiPersonasWorkspacePersonas200,
   SimulateApiPersonasWorkspacePersonasParams,
   SimulateApiRunTestsListParams,
+  SimulateApiTestExecutionsListParams,
   SimulateExportReadParams,
   SimulatePromptTemplatesSimulationsListParams,
   SimulateRunTestsEvalSummaryComparisonListParams,
@@ -1105,6 +1149,8 @@ import type {
   SimulateScenariosListParams,
   SimulateTestExecutionsPreviewCallsListParams,
   SimulateTestExecutionsReadParams,
+  SimulateV3TestExecutionCallsParams,
+  SimulationEvidenceRequestApi,
   SimulationPreviewErrorApi,
   SimulationPreviewPageApi,
   SimulatorAgentApi,
@@ -1165,6 +1211,9 @@ import type {
   TestExecutionChatBatchResponseApi,
   TestExecutionColumnOrderApi,
   TestExecutionColumnOrderResponseApi,
+  TestExecutionDebugAnalysisErrorApi,
+  TestExecutionDebugAnalysisNotFoundApi,
+  TestExecutionDebugAnalysisResponseApi,
   TestExecutionDetailResponseApi,
   TestExecutionRerunApi,
   TestExecutionRerunResponseApi,
@@ -1184,6 +1233,7 @@ import type {
   TraceErrorTaskResponseApi,
   TraceErrorTaskUpdateRequestApi,
   TraceErrorTaskUpdateResponseApi,
+  TraceGraphDataRequestApi,
   TraceIndexQueryApi,
   TraceListQueryApi,
   TraceNavigationResponseApi,
@@ -1210,12 +1260,8 @@ import type {
   TracerCustomEvalConfigListCustomEvalConfigsParams,
   TracerCustomEvalConfigListParams,
   TracerDashboardFilterValuesParams,
-  TracerDashboardList200,
-  TracerDashboardListParams,
   TracerDashboardMetricsParams,
   TracerDashboardQueryParams,
-  TracerDashboardSimulationAgents200,
-  TracerDashboardSimulationAgentsParams,
   TracerDashboardWidgetsExecuteQueryParams,
   TracerDashboardWidgetsList200,
   TracerDashboardWidgetsListParams,
@@ -1298,6 +1344,7 @@ import type {
   TracerTraceListTracesOfSessionParams,
   TracerTraceListTracesParams,
   TracerTraceListVoiceCallsParams,
+  TracerTraceReadParams,
   TracerTraceSessionGetSessionFilterValuesParams,
   TracerTraceSessionGetSessionGraphDataParams,
   TracerTraceSessionGetTraceSessionExportDataParams,
@@ -7031,9 +7078,14 @@ export type accountsTokenCreateResponse500 = {
   status: 500;
 };
 
+export type accountsTokenCreateResponse503 = {
+  data: AccountsErrorResponseApi;
+  status: 503;
+};
+
 export type accountsTokenCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 403 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 403 | 404 | 500 | 503>;
 };
 
 export type accountsTokenCreateResponseSuccess =
@@ -7046,6 +7098,7 @@ export type accountsTokenCreateResponseError = (
   | accountsTokenCreateResponse403
   | accountsTokenCreateResponse404
   | accountsTokenCreateResponse500
+  | accountsTokenCreateResponse503
   | accountsTokenCreateResponseDefault
 ) & {
   headers: Headers;
@@ -11664,7 +11717,7 @@ export const agentccAnalyticsModelComparison = async (
 };
 
 export type agentccAnalyticsOverviewResponse200 = {
-  data: AgentccAnalyticsOverview200;
+  data: AgentccRequestLogApi[];
   status: 200;
 };
 
@@ -19100,10 +19153,13 @@ export const getApiSetupChecksListUrl = () => {
 };
 
 /**
- * Returns ``{"status": "ok"|"issues", "mode": ..., "checks": [...]}``. No auth —
-it runs before any account exists. Self-hosted only: on cloud and EE the
-route answers 404, so neither the internal service topology nor the outbound
-probes it triggers are reachable by an anonymous caller.
+ * Returns ``{"status": "ok"|"issues", "mode": ..., "setup":
+"standalone"|"distributed"|"helm", "collector_http_url": ...,
+"account_exists": true|false, "checks": [...]}``. No auth — it runs
+before anyone can sign in. Self-hosted only:
+on cloud and EE the route answers 404, so neither the internal service
+topology nor the outbound probes it triggers are reachable by an
+anonymous caller.
  * @summary Public infrastructure probe for the OSS first-run setup screen.
  */
 export const apiSetupChecksList = async (
@@ -23122,6 +23178,7 @@ Includes queues where:
 Query params:
   - source_type, source_id  (single source)
   - OR sources (JSON array of {source_type, source_id} objects for multi-source lookup)
+  - project_id (optional): the project a trace / span drawer shows
  */
 export const modelHubAnnotationQueuesForSource = async (
   params?: ModelHubAnnotationQueuesForSourceParams,
@@ -32632,9 +32689,14 @@ export type modelHubDatasetsDuplicateCreateResponse500 = {
   status: 500;
 };
 
+export type modelHubDatasetsDuplicateCreateResponse503 = {
+  data: DatasetLimitCheckFailedErrorApi;
+  status: 503;
+};
+
 export type modelHubDatasetsDuplicateCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500 | 503>;
 };
 
 export type modelHubDatasetsDuplicateCreateResponseSuccess =
@@ -32647,6 +32709,7 @@ export type modelHubDatasetsDuplicateCreateResponseError = (
   | modelHubDatasetsDuplicateCreateResponse404
   | modelHubDatasetsDuplicateCreateResponse409
   | modelHubDatasetsDuplicateCreateResponse500
+  | modelHubDatasetsDuplicateCreateResponse503
   | modelHubDatasetsDuplicateCreateResponseDefault
 ) & {
   headers: Headers;
@@ -33007,9 +33070,14 @@ export type modelHubDevelopsAddAsNewCreateResponse500 = {
   status: 500;
 };
 
+export type modelHubDevelopsAddAsNewCreateResponse503 = {
+  data: DatasetLimitCheckFailedErrorApi;
+  status: 503;
+};
+
 export type modelHubDevelopsAddAsNewCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500 | 503>;
 };
 
 export type modelHubDevelopsAddAsNewCreateResponseSuccess =
@@ -33022,6 +33090,7 @@ export type modelHubDevelopsAddAsNewCreateResponseError = (
   | modelHubDevelopsAddAsNewCreateResponse404
   | modelHubDevelopsAddAsNewCreateResponse409
   | modelHubDevelopsAddAsNewCreateResponse500
+  | modelHubDevelopsAddAsNewCreateResponse503
   | modelHubDevelopsAddAsNewCreateResponseDefault
 ) & {
   headers: Headers;
@@ -33299,9 +33368,14 @@ export type modelHubDevelopsCloneDatasetCreateResponse500 = {
   status: 500;
 };
 
+export type modelHubDevelopsCloneDatasetCreateResponse503 = {
+  data: DatasetLimitCheckFailedErrorApi;
+  status: 503;
+};
+
 export type modelHubDevelopsCloneDatasetCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500 | 503>;
 };
 
 export type modelHubDevelopsCloneDatasetCreateResponseSuccess =
@@ -33314,6 +33388,7 @@ export type modelHubDevelopsCloneDatasetCreateResponseError = (
   | modelHubDevelopsCloneDatasetCreateResponse404
   | modelHubDevelopsCloneDatasetCreateResponse409
   | modelHubDevelopsCloneDatasetCreateResponse500
+  | modelHubDevelopsCloneDatasetCreateResponse503
   | modelHubDevelopsCloneDatasetCreateResponseDefault
 ) & {
   headers: Headers;
@@ -33373,10 +33448,15 @@ export type modelHubDevelopsCreateDatasetFromHuggingfaceCreateResponse500 = {
   status: 500;
 };
 
+export type modelHubDevelopsCreateDatasetFromHuggingfaceCreateResponse503 = {
+  data: DatasetLimitCheckFailedErrorApi;
+  status: 503;
+};
+
 export type modelHubDevelopsCreateDatasetFromHuggingfaceCreateResponseDefault =
   {
     data: ManagementAPIErrorResponseApi;
-    status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
+    status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500 | 503>;
   };
 
 export type modelHubDevelopsCreateDatasetFromHuggingfaceCreateResponseSuccess =
@@ -33389,6 +33469,7 @@ export type modelHubDevelopsCreateDatasetFromHuggingfaceCreateResponseError = (
   | modelHubDevelopsCreateDatasetFromHuggingfaceCreateResponse404
   | modelHubDevelopsCreateDatasetFromHuggingfaceCreateResponse409
   | modelHubDevelopsCreateDatasetFromHuggingfaceCreateResponse500
+  | modelHubDevelopsCreateDatasetFromHuggingfaceCreateResponse503
   | modelHubDevelopsCreateDatasetFromHuggingfaceCreateResponseDefault
 ) & {
   headers: Headers;
@@ -33447,9 +33528,14 @@ export type modelHubDevelopsCreateDatasetFromLocalFileCreateResponse500 = {
   status: 500;
 };
 
+export type modelHubDevelopsCreateDatasetFromLocalFileCreateResponse503 = {
+  data: DatasetLimitCheckFailedErrorApi;
+  status: 503;
+};
+
 export type modelHubDevelopsCreateDatasetFromLocalFileCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500 | 503>;
 };
 
 export type modelHubDevelopsCreateDatasetFromLocalFileCreateResponseSuccess =
@@ -33462,6 +33548,7 @@ export type modelHubDevelopsCreateDatasetFromLocalFileCreateResponseError = (
   | modelHubDevelopsCreateDatasetFromLocalFileCreateResponse404
   | modelHubDevelopsCreateDatasetFromLocalFileCreateResponse409
   | modelHubDevelopsCreateDatasetFromLocalFileCreateResponse500
+  | modelHubDevelopsCreateDatasetFromLocalFileCreateResponse503
   | modelHubDevelopsCreateDatasetFromLocalFileCreateResponseDefault
 ) & {
   headers: Headers;
@@ -33520,9 +33607,14 @@ export type modelHubDevelopsCreateDatasetManuallyCreateResponse500 = {
   status: 500;
 };
 
+export type modelHubDevelopsCreateDatasetManuallyCreateResponse503 = {
+  data: DatasetLimitCheckFailedErrorApi;
+  status: 503;
+};
+
 export type modelHubDevelopsCreateDatasetManuallyCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500 | 503>;
 };
 
 export type modelHubDevelopsCreateDatasetManuallyCreateResponseSuccess =
@@ -33535,6 +33627,7 @@ export type modelHubDevelopsCreateDatasetManuallyCreateResponseError = (
   | modelHubDevelopsCreateDatasetManuallyCreateResponse404
   | modelHubDevelopsCreateDatasetManuallyCreateResponse409
   | modelHubDevelopsCreateDatasetManuallyCreateResponse500
+  | modelHubDevelopsCreateDatasetManuallyCreateResponse503
   | modelHubDevelopsCreateDatasetManuallyCreateResponseDefault
 ) & {
   headers: Headers;
@@ -33593,9 +33686,14 @@ export type modelHubDevelopsCreateEmptyDatasetCreateResponse500 = {
   status: 500;
 };
 
+export type modelHubDevelopsCreateEmptyDatasetCreateResponse503 = {
+  data: DatasetLimitCheckFailedErrorApi;
+  status: 503;
+};
+
 export type modelHubDevelopsCreateEmptyDatasetCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500 | 503>;
 };
 
 export type modelHubDevelopsCreateEmptyDatasetCreateResponseSuccess =
@@ -33608,6 +33706,7 @@ export type modelHubDevelopsCreateEmptyDatasetCreateResponseError = (
   | modelHubDevelopsCreateEmptyDatasetCreateResponse404
   | modelHubDevelopsCreateEmptyDatasetCreateResponse409
   | modelHubDevelopsCreateEmptyDatasetCreateResponse500
+  | modelHubDevelopsCreateEmptyDatasetCreateResponse503
   | modelHubDevelopsCreateEmptyDatasetCreateResponseDefault
 ) & {
   headers: Headers;
@@ -33666,9 +33765,14 @@ export type modelHubDevelopsCreateSyntheticDatasetCreateResponse500 = {
   status: 500;
 };
 
+export type modelHubDevelopsCreateSyntheticDatasetCreateResponse503 = {
+  data: DatasetLimitCheckFailedErrorApi;
+  status: 503;
+};
+
 export type modelHubDevelopsCreateSyntheticDatasetCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500 | 503>;
 };
 
 export type modelHubDevelopsCreateSyntheticDatasetCreateResponseSuccess =
@@ -33681,6 +33785,7 @@ export type modelHubDevelopsCreateSyntheticDatasetCreateResponseError = (
   | modelHubDevelopsCreateSyntheticDatasetCreateResponse404
   | modelHubDevelopsCreateSyntheticDatasetCreateResponse409
   | modelHubDevelopsCreateSyntheticDatasetCreateResponse500
+  | modelHubDevelopsCreateSyntheticDatasetCreateResponse503
   | modelHubDevelopsCreateSyntheticDatasetCreateResponseDefault
 ) & {
   headers: Headers;
@@ -36288,16 +36393,36 @@ export type modelHubDevelopsGetEvalsListListResponse =
   | modelHubDevelopsGetEvalsListListResponseSuccess
   | modelHubDevelopsGetEvalsListListResponseError;
 
-export const getModelHubDevelopsGetEvalsListListUrl = (datasetId: string) => {
-  return `/model-hub/develops/${datasetId}/get_evals_list/`;
+export const getModelHubDevelopsGetEvalsListListUrl = (
+  datasetId: string,
+  params?: ModelHubDevelopsGetEvalsListListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/model-hub/develops/${datasetId}/get_evals_list/?${stringifiedParams}`
+    : `/model-hub/develops/${datasetId}/get_evals_list/`;
 };
 
 export const modelHubDevelopsGetEvalsListList = async (
   datasetId: string,
+  params?: ModelHubDevelopsGetEvalsListListParams,
   options?: RequestInit,
 ): Promise<modelHubDevelopsGetEvalsListListResponse> => {
   return apiMutator<modelHubDevelopsGetEvalsListListResponse>(
-    getModelHubDevelopsGetEvalsListListUrl(datasetId),
+    getModelHubDevelopsGetEvalsListListUrl(datasetId, params),
     {
       ...options,
       method: "GET",
@@ -36954,9 +37079,14 @@ export type modelHubDevelopsCreateDatasetCreateResponse500 = {
   status: 500;
 };
 
+export type modelHubDevelopsCreateDatasetCreateResponse503 = {
+  data: DatasetLimitCheckFailedErrorApi;
+  status: 503;
+};
+
 export type modelHubDevelopsCreateDatasetCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500 | 503>;
 };
 
 export type modelHubDevelopsCreateDatasetCreateResponseSuccess =
@@ -36969,6 +37099,7 @@ export type modelHubDevelopsCreateDatasetCreateResponseError = (
   | modelHubDevelopsCreateDatasetCreateResponse404
   | modelHubDevelopsCreateDatasetCreateResponse409
   | modelHubDevelopsCreateDatasetCreateResponse500
+  | modelHubDevelopsCreateDatasetCreateResponse503
   | modelHubDevelopsCreateDatasetCreateResponseDefault
 ) & {
   headers: Headers;
@@ -37555,8 +37686,27 @@ export type modelHubEvalGroupsReadResponse =
   | modelHubEvalGroupsReadResponseSuccess
   | modelHubEvalGroupsReadResponseError;
 
-export const getModelHubEvalGroupsReadUrl = (id: string) => {
-  return `/model-hub/eval-groups/${id}/`;
+export const getModelHubEvalGroupsReadUrl = (
+  id: string,
+  params?: ModelHubEvalGroupsReadParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/model-hub/eval-groups/${id}/?${stringifiedParams}`
+    : `/model-hub/eval-groups/${id}/`;
 };
 
 /**
@@ -37564,10 +37714,11 @@ export const getModelHubEvalGroupsReadUrl = (id: string) => {
  */
 export const modelHubEvalGroupsRead = async (
   id: string,
+  params?: ModelHubEvalGroupsReadParams,
   options?: RequestInit,
 ): Promise<modelHubEvalGroupsReadResponse> => {
   return apiMutator<modelHubEvalGroupsReadResponse>(
-    getModelHubEvalGroupsReadUrl(id),
+    getModelHubEvalGroupsReadUrl(id, params),
     {
       ...options,
       method: "GET",
@@ -39480,6 +39631,14 @@ Query params: page (0-based), page_size, period
 The response is rendered through
 ``EvalUsageStatsResponseResultSerializer(instance=...).data`` at the
 boundary so shape drift surfaces here instead of shipping silently.
+
+Counts and lists only successful runs from the usage ledger
+(``APICallLog`` rows with status ``success``), from every source: tasks,
+playground, composites, datasets and experiments. Errored and skipped runs
+are not usage but stay in the eval logs (task logs, template eval logs);
+an in-flight run counts once it succeeds. ``error_count`` is therefore 0
+and ``pass_rate`` 100 whenever there are runs; both remain for
+compatibility.
  * @summary GET /model-hub/eval-templates/<id>/usage/
  */
 export const modelHubEvalTemplatesUsageList = async (
@@ -50574,7 +50733,7 @@ export const modelHubPromptTemplatesUpdate = async (
 };
 
 export type modelHubPromptTemplatesPartialUpdateResponse200 = {
-  data: PromptTemplateApi;
+  data: PromptTemplatePatchApi;
   status: 200;
 };
 
@@ -50602,7 +50761,7 @@ export const getModelHubPromptTemplatesPartialUpdateUrl = (id: string) => {
 
 export const modelHubPromptTemplatesPartialUpdate = async (
   id: string,
-  promptTemplateApi: NonReadonly<PromptTemplateApi>,
+  promptTemplatePatchApi: NonReadonly<PromptTemplatePatchApi>,
   options?: RequestInit,
 ): Promise<modelHubPromptTemplatesPartialUpdateResponse> => {
   return apiMutator<modelHubPromptTemplatesPartialUpdateResponse>(
@@ -50611,7 +50770,7 @@ export const modelHubPromptTemplatesPartialUpdate = async (
       ...options,
       method: "PATCH",
       headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(promptTemplateApi),
+      body: JSON.stringify(promptTemplatePatchApi),
     },
   );
 };
@@ -51012,30 +51171,80 @@ export const modelHubPromptTemplatesGetNextVersion = async (
 };
 
 export type modelHubPromptTemplatesGetRunStatusResponse200 = {
-  data: PromptTemplateApi;
+  data: PromptRunStatusResponseApi;
   status: 200;
+};
+
+export type modelHubPromptTemplatesGetRunStatusResponse400 = {
+  data: ModelHubErrorResponseApi;
+  status: 400;
+};
+
+export type modelHubPromptTemplatesGetRunStatusResponse403 = {
+  data: ModelHubErrorResponseApi;
+  status: 403;
+};
+
+export type modelHubPromptTemplatesGetRunStatusResponse404 = {
+  data: ModelHubErrorResponseApi;
+  status: 404;
+};
+
+export type modelHubPromptTemplatesGetRunStatusResponse409 = {
+  data: ModelHubErrorResponseApi;
+  status: 409;
+};
+
+export type modelHubPromptTemplatesGetRunStatusResponse500 = {
+  data: ModelHubErrorResponseApi;
+  status: 500;
 };
 
 export type modelHubPromptTemplatesGetRunStatusResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
 };
 
 export type modelHubPromptTemplatesGetRunStatusResponseSuccess =
   modelHubPromptTemplatesGetRunStatusResponse200 & {
     headers: Headers;
   };
-export type modelHubPromptTemplatesGetRunStatusResponseError =
-  modelHubPromptTemplatesGetRunStatusResponseDefault & {
-    headers: Headers;
-  };
+export type modelHubPromptTemplatesGetRunStatusResponseError = (
+  | modelHubPromptTemplatesGetRunStatusResponse400
+  | modelHubPromptTemplatesGetRunStatusResponse403
+  | modelHubPromptTemplatesGetRunStatusResponse404
+  | modelHubPromptTemplatesGetRunStatusResponse409
+  | modelHubPromptTemplatesGetRunStatusResponse500
+  | modelHubPromptTemplatesGetRunStatusResponseDefault
+) & {
+  headers: Headers;
+};
 
 export type modelHubPromptTemplatesGetRunStatusResponse =
   | modelHubPromptTemplatesGetRunStatusResponseSuccess
   | modelHubPromptTemplatesGetRunStatusResponseError;
 
-export const getModelHubPromptTemplatesGetRunStatusUrl = (id: string) => {
-  return `/model-hub/prompt-templates/${id}/get-run-status/`;
+export const getModelHubPromptTemplatesGetRunStatusUrl = (
+  id: string,
+  params?: ModelHubPromptTemplatesGetRunStatusParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/model-hub/prompt-templates/${id}/get-run-status/?${stringifiedParams}`
+    : `/model-hub/prompt-templates/${id}/get-run-status/`;
 };
 
 /**
@@ -51043,10 +51252,11 @@ export const getModelHubPromptTemplatesGetRunStatusUrl = (id: string) => {
  */
 export const modelHubPromptTemplatesGetRunStatus = async (
   id: string,
+  params?: ModelHubPromptTemplatesGetRunStatusParams,
   options?: RequestInit,
 ): Promise<modelHubPromptTemplatesGetRunStatusResponse> => {
   return apiMutator<modelHubPromptTemplatesGetRunStatusResponse>(
-    getModelHubPromptTemplatesGetRunStatusUrl(id),
+    getModelHubPromptTemplatesGetRunStatusUrl(id, params),
     {
       ...options,
       method: "GET",
@@ -51148,7 +51358,7 @@ export const modelHubPromptTemplatesRunEvalsOnMultipleVersions = async (
 };
 
 export type modelHubPromptTemplatesRunTemplateResponse201 = {
-  data: PromptTemplateApi;
+  data: PromptRunRequestApi;
   status: 201;
 };
 
@@ -51179,7 +51389,7 @@ export const getModelHubPromptTemplatesRunTemplateUrl = (id: string) => {
  */
 export const modelHubPromptTemplatesRunTemplate = async (
   id: string,
-  promptTemplateApi: NonReadonly<PromptTemplateApi>,
+  promptRunRequestApi: PromptRunRequestApi,
   options?: RequestInit,
 ): Promise<modelHubPromptTemplatesRunTemplateResponse> => {
   return apiMutator<modelHubPromptTemplatesRunTemplateResponse>(
@@ -51188,7 +51398,7 @@ export const modelHubPromptTemplatesRunTemplate = async (
       ...options,
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(promptTemplateApi),
+      body: JSON.stringify(promptRunRequestApi),
     },
   );
 };
@@ -51442,16 +51652,36 @@ export type modelHubPromptTemplatesVersionsResponse =
   | modelHubPromptTemplatesVersionsResponseSuccess
   | modelHubPromptTemplatesVersionsResponseError;
 
-export const getModelHubPromptTemplatesVersionsUrl = (id: string) => {
-  return `/model-hub/prompt-templates/${id}/versions/`;
+export const getModelHubPromptTemplatesVersionsUrl = (
+  id: string,
+  params?: ModelHubPromptTemplatesVersionsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/model-hub/prompt-templates/${id}/versions/?${stringifiedParams}`
+    : `/model-hub/prompt-templates/${id}/versions/`;
 };
 
 export const modelHubPromptTemplatesVersions = async (
   id: string,
+  params?: ModelHubPromptTemplatesVersionsParams,
   options?: RequestInit,
 ): Promise<modelHubPromptTemplatesVersionsResponse> => {
   return apiMutator<modelHubPromptTemplatesVersionsResponse>(
-    getModelHubPromptTemplatesVersionsUrl(id),
+    getModelHubPromptTemplatesVersionsUrl(id, params),
     {
       ...options,
       method: "GET",
@@ -58174,6 +58404,524 @@ export const simulateApiCallExecutionsList = async (
   );
 };
 
+export type simulateApiHarnessEnvironmentsListResponse200 = {
+  data: HarnessEnvironmentListResponseApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsListResponseSuccess =
+  simulateApiHarnessEnvironmentsListResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsListResponseError =
+  simulateApiHarnessEnvironmentsListResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsListResponse =
+  | simulateApiHarnessEnvironmentsListResponseSuccess
+  | simulateApiHarnessEnvironmentsListResponseError;
+
+export const getSimulateApiHarnessEnvironmentsListUrl = (
+  params?: SimulateApiHarnessEnvironmentsListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/api/harness-environments/?${stringifiedParams}`
+    : `/simulate/api/harness-environments/`;
+};
+
+/**
+ * An environment is the job that built it (the world itself lives in object
+storage, addressed from the job's metadata), so these endpoints project the
+same rows the harness-jobs API serves. They exist separately because the
+list needs a row, not a run: the jobs list returns every event, receipt and
+stage-output payload for up to a hundred jobs, which is a detail document
+repeated a hundred times.
+
+Running and grading a simulation are deliberately not here. ``run`` starts
+one and returns 202; progress is read from the job.
+ * @summary The environments surface: list, delete, and start a simulation.
+ */
+export const simulateApiHarnessEnvironmentsList = async (
+  params?: SimulateApiHarnessEnvironmentsListParams,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsListResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsListResponse>(
+    getSimulateApiHarnessEnvironmentsListUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsReadResponse200 = {
+  data: HarnessEnvironmentDetailApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsReadResponseSuccess =
+  simulateApiHarnessEnvironmentsReadResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsReadResponseError =
+  simulateApiHarnessEnvironmentsReadResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsReadResponse =
+  | simulateApiHarnessEnvironmentsReadResponseSuccess
+  | simulateApiHarnessEnvironmentsReadResponseError;
+
+export const getSimulateApiHarnessEnvironmentsReadUrl = (id: string) => {
+  return `/simulate/api/harness-environments/${id}/`;
+};
+
+/**
+ * Same shape whichever door built it. A section the pipeline has not reached
+yet is null, so the client renders "building" rather than an empty pane.
+ * @summary One environment: overview, contract, world, scenarios, evaluations, settings.
+ */
+export const simulateApiHarnessEnvironmentsRead = async (
+  id: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsReadResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsReadResponse>(
+    getSimulateApiHarnessEnvironmentsReadUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsPartialUpdateResponse200 = {
+  data: HarnessEnvironmentDetailApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsPartialUpdateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsPartialUpdateResponseSuccess =
+  simulateApiHarnessEnvironmentsPartialUpdateResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsPartialUpdateResponseError =
+  simulateApiHarnessEnvironmentsPartialUpdateResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsPartialUpdateResponse =
+  | simulateApiHarnessEnvironmentsPartialUpdateResponseSuccess
+  | simulateApiHarnessEnvironmentsPartialUpdateResponseError;
+
+export const getSimulateApiHarnessEnvironmentsPartialUpdateUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/`;
+};
+
+/**
+ * The name is the only editable field: everything else on an environment
+records how it was built, and editing that would make the provenance the
+contract tab shows a claim rather than a record.
+ * @summary Rename an environment.
+ */
+export const simulateApiHarnessEnvironmentsPartialUpdate = async (
+  id: string,
+  harnessEnvironmentRenameApi: HarnessEnvironmentRenameApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsPartialUpdateResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsPartialUpdateResponse>(
+    getSimulateApiHarnessEnvironmentsPartialUpdateUrl(id),
+    {
+      ...options,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessEnvironmentRenameApi),
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsDeleteResponse204 = {
+  data: void;
+  status: 204;
+};
+
+export type simulateApiHarnessEnvironmentsDeleteResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 204>;
+};
+
+export type simulateApiHarnessEnvironmentsDeleteResponseSuccess =
+  simulateApiHarnessEnvironmentsDeleteResponse204 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsDeleteResponseError =
+  simulateApiHarnessEnvironmentsDeleteResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsDeleteResponse =
+  | simulateApiHarnessEnvironmentsDeleteResponseSuccess
+  | simulateApiHarnessEnvironmentsDeleteResponseError;
+
+export const getSimulateApiHarnessEnvironmentsDeleteUrl = (id: string) => {
+  return `/simulate/api/harness-environments/${id}/`;
+};
+
+/**
+ * Deleting while a sandbox is running would leave that sandbox billing
+against a row nobody can see, so cancellation is requested before the
+row disappears. The authoring archive and the organization's secrets are
+left in place: neither is owned by this row, and other environments may
+reference the same credentials.
+ * @summary Soft-delete an environment, cancelling its run first if one is live.
+ */
+export const simulateApiHarnessEnvironmentsDelete = async (
+  id: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsDeleteResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsDeleteResponse>(
+    getSimulateApiHarnessEnvironmentsDeleteUrl(id),
+    {
+      ...options,
+      method: "DELETE",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsAddEvaluationResponse201 = {
+  data: HarnessEnvironmentDetailApi;
+  status: 201;
+};
+
+export type simulateApiHarnessEnvironmentsAddEvaluationResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201>;
+};
+
+export type simulateApiHarnessEnvironmentsAddEvaluationResponseSuccess =
+  simulateApiHarnessEnvironmentsAddEvaluationResponse201 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsAddEvaluationResponseError =
+  simulateApiHarnessEnvironmentsAddEvaluationResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsAddEvaluationResponse =
+  | simulateApiHarnessEnvironmentsAddEvaluationResponseSuccess
+  | simulateApiHarnessEnvironmentsAddEvaluationResponseError;
+
+export const getSimulateApiHarnessEnvironmentsAddEvaluationUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/evaluations/`;
+};
+
+/**
+ * Applies to scenarios graded from here on. Calls that already ran keep
+the verdicts they were given, so adding an eval does not backfill a
+column onto past results.
+ * @summary Grade this environment by one more eval from the catalogue.
+ */
+export const simulateApiHarnessEnvironmentsAddEvaluation = async (
+  id: string,
+  harnessEnvironmentAddEvaluationApi: HarnessEnvironmentAddEvaluationApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsAddEvaluationResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsAddEvaluationResponse>(
+    getSimulateApiHarnessEnvironmentsAddEvaluationUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessEnvironmentAddEvaluationApi),
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsResponse200 =
+  {
+    data: HarnessEnvironmentAvailableEvalsApi;
+    status: 200;
+  };
+
+export type simulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 200>;
+  };
+
+export type simulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsResponseSuccess =
+  simulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsResponseError =
+  simulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsResponse =
+
+    | simulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsResponseSuccess
+    | simulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsResponseError;
+
+export const getSimulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsUrl =
+  (id: string) => {
+    return `/simulate/api/harness-environments/${id}/evaluations/available/`;
+  };
+
+/**
+ * The same catalogue authoring chose from, filtered to this environment's
+modality and to the templates the organization can see, minus what is
+already selected. Every entry is addable as it stands: an eval whose
+inputs this modality does not produce is left out rather than offered
+and then refused.
+ * @summary The evals this environment could still be graded by.
+ */
+export const simulateApiHarnessEnvironmentsEvaluationsAvailableEvaluations =
+  async (
+    id: string,
+    options?: RequestInit,
+  ): Promise<simulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsResponse> => {
+    return apiMutator<simulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsResponse>(
+      getSimulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsUrl(id),
+      {
+        ...options,
+        method: "GET",
+      },
+    );
+  };
+
+export type simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponse200 =
+  {
+    data: HarnessEnvironmentDetailApi;
+    status: 200;
+  };
+
+export type simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 200>;
+  };
+
+export type simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponseSuccess =
+  simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponseError =
+  simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponse =
+
+    | simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponseSuccess
+    | simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponseError;
+
+export const getSimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationUrl =
+  (id: string) => {
+    return `/simulate/api/harness-environments/${id}/evaluations/tool-call/`;
+  };
+
+/**
+ * Turn the tool-call judge on or off for this environment. Returns the full environment detail. Turning it on is refused for a hosted voice environment with no agent version yet.
+ */
+export const simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluation =
+  async (
+    id: string,
+    harnessEnvironmentToolCallEvaluationApi: HarnessEnvironmentToolCallEvaluationApi,
+    options?: RequestInit,
+  ): Promise<simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponse> => {
+    return apiMutator<simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponse>(
+      getSimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationUrl(id),
+      {
+        ...options,
+        method: "PUT",
+        headers: { "Content-Type": "application/json", ...options?.headers },
+        body: JSON.stringify(harnessEnvironmentToolCallEvaluationApi),
+      },
+    );
+  };
+
+export type simulateApiHarnessEnvironmentsRemoveEvaluationResponse204 = {
+  data: void;
+  status: 204;
+};
+
+export type simulateApiHarnessEnvironmentsRemoveEvaluationResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 204>;
+};
+
+export type simulateApiHarnessEnvironmentsRemoveEvaluationResponseSuccess =
+  simulateApiHarnessEnvironmentsRemoveEvaluationResponse204 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsRemoveEvaluationResponseError =
+  simulateApiHarnessEnvironmentsRemoveEvaluationResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsRemoveEvaluationResponse =
+  | simulateApiHarnessEnvironmentsRemoveEvaluationResponseSuccess
+  | simulateApiHarnessEnvironmentsRemoveEvaluationResponseError;
+
+export const getSimulateApiHarnessEnvironmentsRemoveEvaluationUrl = (
+  id: string,
+  evalConfigId: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/evaluations/${evalConfigId}/`;
+};
+
+/**
+ * Soft-delete only. The verdicts an eval already produced live on the call
+executions and in their receipts, not on this row, so a hard delete would
+leave past runs showing scores for something the environment no longer
+lists. Removing it stops future scenarios being graded by it and leaves
+the history it already wrote intact.
+ * @summary Stop running one eval against this environment.
+ */
+export const simulateApiHarnessEnvironmentsRemoveEvaluation = async (
+  id: string,
+  evalConfigId: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsRemoveEvaluationResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsRemoveEvaluationResponse>(
+    getSimulateApiHarnessEnvironmentsRemoveEvaluationUrl(id, evalConfigId),
+    {
+      ...options,
+      method: "DELETE",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsRunResponse202 = {
+  data: HarnessRunCreateResponseApi;
+  status: 202;
+};
+
+export type simulateApiHarnessEnvironmentsRunResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 202>;
+};
+
+export type simulateApiHarnessEnvironmentsRunResponseSuccess =
+  simulateApiHarnessEnvironmentsRunResponse202 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsRunResponseError =
+  simulateApiHarnessEnvironmentsRunResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsRunResponse =
+  | simulateApiHarnessEnvironmentsRunResponseSuccess
+  | simulateApiHarnessEnvironmentsRunResponseError;
+
+export const getSimulateApiHarnessEnvironmentsRunUrl = (id: string) => {
+  return `/simulate/api/harness-environments/${id}/run/`;
+};
+
+/**
+ * Create one new Run for the selected scenarios and trial count.
+ */
+export const simulateApiHarnessEnvironmentsRun = async (
+  id: string,
+  harnessRunCreateApi: HarnessRunCreateApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsRunResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsRunResponse>(
+    getSimulateApiHarnessEnvironmentsRunUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessRunCreateApi),
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponse202 = {
+  data: HarnessEnvironmentRunEvaluationQueuedApi;
+  status: 202;
+};
+
+export type simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 202>;
+  };
+
+export type simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponseSuccess =
+  simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponse202 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponseError =
+  simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponse =
+  | simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponseSuccess
+  | simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponseError;
+
+export const getSimulateApiHarnessEnvironmentsRunsAddRunEvaluationUrl = (
+  id: string,
+  executionId: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/runs/${executionId}/evaluations/`;
+};
+
+/**
+ * Add an eval to the environment and grade this run's already-finished calls with it.
+ */
+export const simulateApiHarnessEnvironmentsRunsAddRunEvaluation = async (
+  id: string,
+  executionId: string,
+  harnessEnvironmentAddEvaluationApi: HarnessEnvironmentAddEvaluationApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponse>(
+    getSimulateApiHarnessEnvironmentsRunsAddRunEvaluationUrl(id, executionId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessEnvironmentAddEvaluationApi),
+    },
+  );
+};
+
 export type simulateApiHarnessJobsListResponse200 = {
   data: HarnessJobReadApi[];
   status: 200;
@@ -58202,9 +58950,9 @@ export const getSimulateApiHarnessJobsListUrl = () => {
 };
 
 /**
- * Validates the v1.6 request contract and delegates execution to the backend
-selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
-``sandbox``). See ``simulate.services.harness_provider``.
+ * Validates the v1.6 request contract and delegates execution to the public backend selected by
+``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
+selects its managed sandbox runtime.
  * @summary Provider-neutral control plane for hosted ALK harness jobs.
  */
 export const simulateApiHarnessJobsList = async (
@@ -58247,9 +58995,9 @@ export const getSimulateApiHarnessJobsCreateUrl = () => {
 };
 
 /**
- * Validates the v1.6 request contract and delegates execution to the backend
-selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
-``sandbox``). See ``simulate.services.harness_provider``.
+ * Validates the v1.6 request contract and delegates execution to the public backend selected by
+``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
+selects its managed sandbox runtime.
  * @summary Provider-neutral control plane for hosted ALK harness jobs.
  */
 export const simulateApiHarnessJobsCreate = async (
@@ -58295,9 +59043,9 @@ export const getSimulateApiHarnessJobsHealthUrl = () => {
 };
 
 /**
- * Validates the v1.6 request contract and delegates execution to the backend
-selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
-``sandbox``). See ``simulate.services.harness_provider``.
+ * Validates the v1.6 request contract and delegates execution to the public backend selected by
+``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
+selects its managed sandbox runtime.
  * @summary Provider-neutral control plane for hosted ALK harness jobs.
  */
 export const simulateApiHarnessJobsHealth = async (
@@ -58312,18 +59060,18 @@ export const simulateApiHarnessJobsHealth = async (
   );
 };
 
-export type simulateApiHarnessJobsPreflightResponse201 = {
-  data: HarnessPreflightApi;
-  status: 201;
+export type simulateApiHarnessJobsPreflightResponse200 = {
+  data: HarnessPreflightResponseApi;
+  status: 200;
 };
 
 export type simulateApiHarnessJobsPreflightResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201>;
+  status: Exclude<HTTPStatusCodes, 200>;
 };
 
 export type simulateApiHarnessJobsPreflightResponseSuccess =
-  simulateApiHarnessJobsPreflightResponse201 & {
+  simulateApiHarnessJobsPreflightResponse200 & {
     headers: Headers;
   };
 export type simulateApiHarnessJobsPreflightResponseError =
@@ -58340,9 +59088,9 @@ export const getSimulateApiHarnessJobsPreflightUrl = () => {
 };
 
 /**
- * Validates the v1.6 request contract and delegates execution to the backend
-selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
-``sandbox``). See ``simulate.services.harness_provider``.
+ * Validates the v1.6 request contract and delegates execution to the public backend selected by
+``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
+selects its managed sandbox runtime.
  * @summary Provider-neutral control plane for hosted ALK harness jobs.
  */
 export const simulateApiHarnessJobsPreflight = async (
@@ -58388,9 +59136,9 @@ export const getSimulateApiHarnessJobsSecretFileUploadUrl = () => {
 };
 
 /**
- * Validates the v1.6 request contract and delegates execution to the backend
-selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
-``sandbox``). See ``simulate.services.harness_provider``.
+ * Validates the v1.6 request contract and delegates execution to the public backend selected by
+``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
+selects its managed sandbox runtime.
  * @summary Provider-neutral control plane for hosted ALK harness jobs.
  */
 export const simulateApiHarnessJobsSecretFileUpload = async (
@@ -58495,9 +59243,9 @@ export const getSimulateApiHarnessJobsSourceUploadUrl = () => {
 };
 
 /**
- * Validates the v1.6 request contract and delegates execution to the backend
-selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
-``sandbox``). See ``simulate.services.harness_provider``.
+ * Validates the v1.6 request contract and delegates execution to the public backend selected by
+``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
+selects its managed sandbox runtime.
  * @summary Provider-neutral control plane for hosted ALK harness jobs.
  */
 export const simulateApiHarnessJobsSourceUpload = async (
@@ -58553,9 +59301,9 @@ export const getSimulateApiHarnessJobsReadUrl = (id: string) => {
 };
 
 /**
- * Validates the v1.6 request contract and delegates execution to the backend
-selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
-``sandbox``). See ``simulate.services.harness_provider``.
+ * Validates the v1.6 request contract and delegates execution to the public backend selected by
+``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
+selects its managed sandbox runtime.
  * @summary Provider-neutral control plane for hosted ALK harness jobs.
  */
 export const simulateApiHarnessJobsRead = async (
@@ -58599,9 +59347,9 @@ export const getSimulateApiHarnessJobsAdjustUrl = (id: string) => {
 };
 
 /**
- * Validates the v1.6 request contract and delegates execution to the backend
-selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
-``sandbox``). See ``simulate.services.harness_provider``.
+ * Validates the v1.6 request contract and delegates execution to the public backend selected by
+``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
+selects its managed sandbox runtime.
  * @summary Provider-neutral control plane for hosted ALK harness jobs.
  */
 export const simulateApiHarnessJobsAdjust = async (
@@ -58648,9 +59396,9 @@ export const getSimulateApiHarnessJobsCancelUrl = (id: string) => {
 };
 
 /**
- * Validates the v1.6 request contract and delegates execution to the backend
-selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
-``sandbox``). See ``simulate.services.harness_provider``.
+ * Validates the v1.6 request contract and delegates execution to the public backend selected by
+``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
+selects its managed sandbox runtime.
  * @summary Provider-neutral control plane for hosted ALK harness jobs.
  */
 export const simulateApiHarnessJobsCancel = async (
@@ -58665,6 +59413,66 @@ export const simulateApiHarnessJobsCancel = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(harnessJobActionApi),
+    },
+  );
+};
+
+export type simulateApiHarnessJobsConversationConversationMessageResponse202 = {
+  data: HarnessConversationReadApi;
+  status: 202;
+};
+
+export type simulateApiHarnessJobsConversationConversationMessageResponse409 = {
+  data: ApiTextErrorResponseApi;
+  status: 409;
+};
+
+export type simulateApiHarnessJobsConversationConversationMessageResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 202 | 409>;
+  };
+
+export type simulateApiHarnessJobsConversationConversationMessageResponseSuccess =
+  simulateApiHarnessJobsConversationConversationMessageResponse202 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessJobsConversationConversationMessageResponseError =
+  (
+    | simulateApiHarnessJobsConversationConversationMessageResponse409
+    | simulateApiHarnessJobsConversationConversationMessageResponseDefault
+  ) & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessJobsConversationConversationMessageResponse =
+  | simulateApiHarnessJobsConversationConversationMessageResponseSuccess
+  | simulateApiHarnessJobsConversationConversationMessageResponseError;
+
+export const getSimulateApiHarnessJobsConversationConversationMessageUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-jobs/${id}/conversation/messages/`;
+};
+
+/**
+ * Validates the v1.6 request contract and delegates execution to the public backend selected by
+``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
+selects its managed sandbox runtime.
+ * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ */
+export const simulateApiHarnessJobsConversationConversationMessage = async (
+  id: string,
+  harnessConversationMessageCreateApi: HarnessConversationMessageCreateApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessJobsConversationConversationMessageResponse> => {
+  return apiMutator<simulateApiHarnessJobsConversationConversationMessageResponse>(
+    getSimulateApiHarnessJobsConversationConversationMessageUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessConversationMessageCreateApi),
     },
   );
 };
@@ -58697,9 +59505,9 @@ export const getSimulateApiHarnessJobsExtendUrl = (id: string) => {
 };
 
 /**
- * Validates the v1.6 request contract and delegates execution to the backend
-selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
-``sandbox``). See ``simulate.services.harness_provider``.
+ * Validates the v1.6 request contract and delegates execution to the public backend selected by
+``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
+selects its managed sandbox runtime.
  * @summary Provider-neutral control plane for hosted ALK harness jobs.
  */
 export const simulateApiHarnessJobsExtend = async (
@@ -58714,6 +59522,200 @@ export const simulateApiHarnessJobsExtend = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(harnessJobExtendApi),
+    },
+  );
+};
+
+export type simulateApiHarnessJobsRunsResponse202 = {
+  data: HarnessRunCreateResponseApi;
+  status: 202;
+};
+
+export type simulateApiHarnessJobsRunsResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 202>;
+};
+
+export type simulateApiHarnessJobsRunsResponseSuccess =
+  simulateApiHarnessJobsRunsResponse202 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessJobsRunsResponseError =
+  simulateApiHarnessJobsRunsResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessJobsRunsResponse =
+  | simulateApiHarnessJobsRunsResponseSuccess
+  | simulateApiHarnessJobsRunsResponseError;
+
+export const getSimulateApiHarnessJobsRunsUrl = (id: string) => {
+  return `/simulate/api/harness-jobs/${id}/runs/`;
+};
+
+/**
+ * Validates the v1.6 request contract and delegates execution to the public backend selected by
+``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
+selects its managed sandbox runtime.
+ * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ */
+export const simulateApiHarnessJobsRuns = async (
+  id: string,
+  harnessRunCreateApi: HarnessRunCreateApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessJobsRunsResponse> => {
+  return apiMutator<simulateApiHarnessJobsRunsResponse>(
+    getSimulateApiHarnessJobsRunsUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessRunCreateApi),
+    },
+  );
+};
+
+export type simulateApiHarnessJobsScenariosResponse200 = {
+  data: void;
+  status: 200;
+};
+
+export type simulateApiHarnessJobsScenariosResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessJobsScenariosResponseSuccess =
+  simulateApiHarnessJobsScenariosResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessJobsScenariosResponseError =
+  simulateApiHarnessJobsScenariosResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessJobsScenariosResponse =
+  | simulateApiHarnessJobsScenariosResponseSuccess
+  | simulateApiHarnessJobsScenariosResponseError;
+
+export const getSimulateApiHarnessJobsScenariosUrl = (id: string) => {
+  return `/simulate/api/harness-jobs/${id}/scenarios/`;
+};
+
+/**
+ * Validates the v1.6 request contract and delegates execution to the public backend selected by
+``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
+selects its managed sandbox runtime.
+ * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ */
+export const simulateApiHarnessJobsScenarios = async (
+  id: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessJobsScenariosResponse> => {
+  return apiMutator<simulateApiHarnessJobsScenariosResponse>(
+    getSimulateApiHarnessJobsScenariosUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessJobsScenariosAmendScenariosResponse201 = {
+  data: HarnessScenarioAmendApi;
+  status: 201;
+};
+
+export type simulateApiHarnessJobsScenariosAmendScenariosResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201>;
+};
+
+export type simulateApiHarnessJobsScenariosAmendScenariosResponseSuccess =
+  simulateApiHarnessJobsScenariosAmendScenariosResponse201 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessJobsScenariosAmendScenariosResponseError =
+  simulateApiHarnessJobsScenariosAmendScenariosResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessJobsScenariosAmendScenariosResponse =
+  | simulateApiHarnessJobsScenariosAmendScenariosResponseSuccess
+  | simulateApiHarnessJobsScenariosAmendScenariosResponseError;
+
+export const getSimulateApiHarnessJobsScenariosAmendScenariosUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-jobs/${id}/scenarios/amend/`;
+};
+
+/**
+ * Validates the v1.6 request contract and delegates execution to the public backend selected by
+``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
+selects its managed sandbox runtime.
+ * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ */
+export const simulateApiHarnessJobsScenariosAmendScenarios = async (
+  id: string,
+  harnessScenarioAmendApi: HarnessScenarioAmendApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessJobsScenariosAmendScenariosResponse> => {
+  return apiMutator<simulateApiHarnessJobsScenariosAmendScenariosResponse>(
+    getSimulateApiHarnessJobsScenariosAmendScenariosUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessScenarioAmendApi),
+    },
+  );
+};
+
+export type simulateApiHarnessJobsScenariosScenarioCoverageResponse200 = {
+  data: void;
+  status: 200;
+};
+
+export type simulateApiHarnessJobsScenariosScenarioCoverageResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessJobsScenariosScenarioCoverageResponseSuccess =
+  simulateApiHarnessJobsScenariosScenarioCoverageResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessJobsScenariosScenarioCoverageResponseError =
+  simulateApiHarnessJobsScenariosScenarioCoverageResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessJobsScenariosScenarioCoverageResponse =
+  | simulateApiHarnessJobsScenariosScenarioCoverageResponseSuccess
+  | simulateApiHarnessJobsScenariosScenarioCoverageResponseError;
+
+export const getSimulateApiHarnessJobsScenariosScenarioCoverageUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-jobs/${id}/scenarios/coverage/`;
+};
+
+/**
+ * Validates the v1.6 request contract and delegates execution to the public backend selected by
+``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
+selects its managed sandbox runtime.
+ * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ */
+export const simulateApiHarnessJobsScenariosScenarioCoverage = async (
+  id: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessJobsScenariosScenarioCoverageResponse> => {
+  return apiMutator<simulateApiHarnessJobsScenariosScenarioCoverageResponse>(
+    getSimulateApiHarnessJobsScenariosScenarioCoverageUrl(id),
+    {
+      ...options,
+      method: "GET",
     },
   );
 };
@@ -58891,7 +59893,7 @@ export const getSimulateApiHarnessAttemptsIngressUrl = (id: string) => {
 /**
  * The attempt capability authenticates the trusted ALK guest. Customer processes never
 receive that bearer and therefore cannot expose arbitrary sandbox ports themselves.
- * @summary Mint a short-lived, no-header Daytona URL for one guest-selected HTTP port.
+ * @summary Mint a short-lived, no-header URL for one guest-selected HTTP port.
  */
 export const simulateApiHarnessAttemptsIngress = async (
   id: string,
@@ -58991,6 +59993,698 @@ export const simulateApiHarnessAttemptsScenarios = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(harnessScenarioOperationApi),
+    },
+  );
+};
+
+export type simulateApiHarnessAttemptsUsageResponse200 = {
+  data: HarnessUsageResponseApi;
+  status: 200;
+};
+
+export type simulateApiHarnessAttemptsUsageResponse402 = {
+  data: HarnessUsageResponseApi;
+  status: 402;
+};
+
+export type simulateApiHarnessAttemptsUsageResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 402>;
+};
+
+export type simulateApiHarnessAttemptsUsageResponseSuccess =
+  simulateApiHarnessAttemptsUsageResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessAttemptsUsageResponseError = (
+  | simulateApiHarnessAttemptsUsageResponse402
+  | simulateApiHarnessAttemptsUsageResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type simulateApiHarnessAttemptsUsageResponse =
+  | simulateApiHarnessAttemptsUsageResponseSuccess
+  | simulateApiHarnessAttemptsUsageResponseError;
+
+export const getSimulateApiHarnessAttemptsUsageUrl = (id: string) => {
+  return `/simulate/api/harness/attempts/${id}/usage/`;
+};
+
+export const simulateApiHarnessAttemptsUsage = async (
+  id: string,
+  harnessUsageRequestApi: HarnessUsageRequestApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessAttemptsUsageResponse> => {
+  return apiMutator<simulateApiHarnessAttemptsUsageResponse>(
+    getSimulateApiHarnessAttemptsUsageUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessUsageRequestApi),
+    },
+  );
+};
+
+export type simulateApiHarnessConversationsAdjustResponse200 = {
+  data: HarnessConversationAdjustmentResponseApi;
+  status: 200;
+};
+
+export type simulateApiHarnessConversationsAdjustResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessConversationsAdjustResponseSuccess =
+  simulateApiHarnessConversationsAdjustResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessConversationsAdjustResponseError =
+  simulateApiHarnessConversationsAdjustResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessConversationsAdjustResponse =
+  | simulateApiHarnessConversationsAdjustResponseSuccess
+  | simulateApiHarnessConversationsAdjustResponseError;
+
+export const getSimulateApiHarnessConversationsAdjustUrl = (id: string) => {
+  return `/simulate/api/harness/conversations/${id}/adjust/`;
+};
+
+export const simulateApiHarnessConversationsAdjust = async (
+  id: string,
+  harnessConversationAdjustmentApi: HarnessConversationAdjustmentApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessConversationsAdjustResponse> => {
+  return apiMutator<simulateApiHarnessConversationsAdjustResponse>(
+    getSimulateApiHarnessConversationsAdjustUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessConversationAdjustmentApi),
+    },
+  );
+};
+
+export type simulateApiHarnessConversationsCommandsResponse200 = {
+  data: void;
+  status: 200;
+};
+
+export type simulateApiHarnessConversationsCommandsResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessConversationsCommandsResponseSuccess =
+  simulateApiHarnessConversationsCommandsResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessConversationsCommandsResponseError =
+  simulateApiHarnessConversationsCommandsResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessConversationsCommandsResponse =
+  | simulateApiHarnessConversationsCommandsResponseSuccess
+  | simulateApiHarnessConversationsCommandsResponseError;
+
+export const getSimulateApiHarnessConversationsCommandsUrl = (
+  id: string,
+  params?: SimulateApiHarnessConversationsCommandsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/api/harness/conversations/${id}/commands/?${stringifiedParams}`
+    : `/simulate/api/harness/conversations/${id}/commands/`;
+};
+
+export const simulateApiHarnessConversationsCommands = async (
+  id: string,
+  params?: SimulateApiHarnessConversationsCommandsParams,
+  options?: RequestInit,
+): Promise<simulateApiHarnessConversationsCommandsResponse> => {
+  return apiMutator<simulateApiHarnessConversationsCommandsResponse>(
+    getSimulateApiHarnessConversationsCommandsUrl(id, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessConversationsEventsResponse200 = {
+  data: HarnessConversationEventAckApi;
+  status: 200;
+};
+
+export type simulateApiHarnessConversationsEventsResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessConversationsEventsResponseSuccess =
+  simulateApiHarnessConversationsEventsResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessConversationsEventsResponseError =
+  simulateApiHarnessConversationsEventsResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessConversationsEventsResponse =
+  | simulateApiHarnessConversationsEventsResponseSuccess
+  | simulateApiHarnessConversationsEventsResponseError;
+
+export const getSimulateApiHarnessConversationsEventsUrl = (id: string) => {
+  return `/simulate/api/harness/conversations/${id}/events/`;
+};
+
+export const simulateApiHarnessConversationsEvents = async (
+  id: string,
+  harnessConversationEventBatchApi: HarnessConversationEventBatchApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessConversationsEventsResponse> => {
+  return apiMutator<simulateApiHarnessConversationsEventsResponse>(
+    getSimulateApiHarnessConversationsEventsUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessConversationEventBatchApi),
+    },
+  );
+};
+
+export type simulateApiHarnessConversationsRerunResponse202 = {
+  data: HarnessConversationRunStatusApi;
+  status: 202;
+};
+
+export type simulateApiHarnessConversationsRerunResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 202>;
+};
+
+export type simulateApiHarnessConversationsRerunResponseSuccess =
+  simulateApiHarnessConversationsRerunResponse202 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessConversationsRerunResponseError =
+  simulateApiHarnessConversationsRerunResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessConversationsRerunResponse =
+  | simulateApiHarnessConversationsRerunResponseSuccess
+  | simulateApiHarnessConversationsRerunResponseError;
+
+export const getSimulateApiHarnessConversationsRerunUrl = (id: string) => {
+  return `/simulate/api/harness/conversations/${id}/rerun/`;
+};
+
+export const simulateApiHarnessConversationsRerun = async (
+  id: string,
+  harnessConversationRerunApi: HarnessConversationRerunApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessConversationsRerunResponse> => {
+  return apiMutator<simulateApiHarnessConversationsRerunResponse>(
+    getSimulateApiHarnessConversationsRerunUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessConversationRerunApi),
+    },
+  );
+};
+
+export type simulateApiHarnessConversationsRunStatusResponse200 = {
+  data: HarnessConversationRunStatusApi;
+  status: 200;
+};
+
+export type simulateApiHarnessConversationsRunStatusResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessConversationsRunStatusResponseSuccess =
+  simulateApiHarnessConversationsRunStatusResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessConversationsRunStatusResponseError =
+  simulateApiHarnessConversationsRunStatusResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessConversationsRunStatusResponse =
+  | simulateApiHarnessConversationsRunStatusResponseSuccess
+  | simulateApiHarnessConversationsRunStatusResponseError;
+
+export const getSimulateApiHarnessConversationsRunStatusUrl = (id: string) => {
+  return `/simulate/api/harness/conversations/${id}/run-status/`;
+};
+
+export const simulateApiHarnessConversationsRunStatus = async (
+  id: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessConversationsRunStatusResponse> => {
+  return apiMutator<simulateApiHarnessConversationsRunStatusResponse>(
+    getSimulateApiHarnessConversationsRunStatusUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessConversationsSessionStoreResponse200 = {
+  data: void;
+  status: 200;
+};
+
+export type simulateApiHarnessConversationsSessionStoreResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessConversationsSessionStoreResponseSuccess =
+  simulateApiHarnessConversationsSessionStoreResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessConversationsSessionStoreResponseError =
+  simulateApiHarnessConversationsSessionStoreResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessConversationsSessionStoreResponse =
+  | simulateApiHarnessConversationsSessionStoreResponseSuccess
+  | simulateApiHarnessConversationsSessionStoreResponseError;
+
+export const getSimulateApiHarnessConversationsSessionStoreUrl = (
+  id: string,
+  params: SimulateApiHarnessConversationsSessionStoreParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/api/harness/conversations/${id}/session-store/?${stringifiedParams}`
+    : `/simulate/api/harness/conversations/${id}/session-store/`;
+};
+
+export const simulateApiHarnessConversationsSessionStore = async (
+  id: string,
+  params: SimulateApiHarnessConversationsSessionStoreParams,
+  options?: RequestInit,
+): Promise<simulateApiHarnessConversationsSessionStoreResponse> => {
+  return apiMutator<simulateApiHarnessConversationsSessionStoreResponse>(
+    getSimulateApiHarnessConversationsSessionStoreUrl(id, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessConversationsSessionStoreAppendSessionStoreResponse200 =
+  {
+    data: HarnessConversationTranscriptAppendResponseApi;
+    status: 200;
+  };
+
+export type simulateApiHarnessConversationsSessionStoreAppendSessionStoreResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 200>;
+  };
+
+export type simulateApiHarnessConversationsSessionStoreAppendSessionStoreResponseSuccess =
+  simulateApiHarnessConversationsSessionStoreAppendSessionStoreResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessConversationsSessionStoreAppendSessionStoreResponseError =
+  simulateApiHarnessConversationsSessionStoreAppendSessionStoreResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessConversationsSessionStoreAppendSessionStoreResponse =
+
+    | simulateApiHarnessConversationsSessionStoreAppendSessionStoreResponseSuccess
+    | simulateApiHarnessConversationsSessionStoreAppendSessionStoreResponseError;
+
+export const getSimulateApiHarnessConversationsSessionStoreAppendSessionStoreUrl =
+  (id: string) => {
+    return `/simulate/api/harness/conversations/${id}/session-store/append/`;
+  };
+
+export const simulateApiHarnessConversationsSessionStoreAppendSessionStore =
+  async (
+    id: string,
+    harnessConversationTranscriptAppendApi: HarnessConversationTranscriptAppendApi,
+    options?: RequestInit,
+  ): Promise<simulateApiHarnessConversationsSessionStoreAppendSessionStoreResponse> => {
+    return apiMutator<simulateApiHarnessConversationsSessionStoreAppendSessionStoreResponse>(
+      getSimulateApiHarnessConversationsSessionStoreAppendSessionStoreUrl(id),
+      {
+        ...options,
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...options?.headers },
+        body: JSON.stringify(harnessConversationTranscriptAppendApi),
+      },
+    );
+  };
+
+export type simulateApiHarnessConversationsWorkspaceResponse200 = {
+  data: HarnessConversationWorkspaceResponseApi;
+  status: 200;
+};
+
+export type simulateApiHarnessConversationsWorkspaceResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessConversationsWorkspaceResponseSuccess =
+  simulateApiHarnessConversationsWorkspaceResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessConversationsWorkspaceResponseError =
+  simulateApiHarnessConversationsWorkspaceResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessConversationsWorkspaceResponse =
+  | simulateApiHarnessConversationsWorkspaceResponseSuccess
+  | simulateApiHarnessConversationsWorkspaceResponseError;
+
+export const getSimulateApiHarnessConversationsWorkspaceUrl = (id: string) => {
+  return `/simulate/api/harness/conversations/${id}/workspace/`;
+};
+
+export const simulateApiHarnessConversationsWorkspace = async (
+  id: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessConversationsWorkspaceResponse> => {
+  return apiMutator<simulateApiHarnessConversationsWorkspaceResponse>(
+    getSimulateApiHarnessConversationsWorkspaceUrl(id),
+    {
+      ...options,
+      method: "PUT",
+    },
+  );
+};
+
+export type simulateApiHarnessIngressReadResponse200 = {
+  data: void;
+  status: 200;
+};
+
+export type simulateApiHarnessIngressReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessIngressReadResponseSuccess =
+  simulateApiHarnessIngressReadResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessIngressReadResponseError =
+  simulateApiHarnessIngressReadResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessIngressReadResponse =
+  | simulateApiHarnessIngressReadResponseSuccess
+  | simulateApiHarnessIngressReadResponseError;
+
+export const getSimulateApiHarnessIngressReadUrl = (
+  token: string,
+  targetPath: string,
+) => {
+  return `/simulate/api/harness/ingress/${token}/${targetPath}`;
+};
+
+/**
+ * Relay a signed callback URL to the active sandbox without exposing provider headers.
+ */
+export const simulateApiHarnessIngressRead = async (
+  token: string,
+  targetPath: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessIngressReadResponse> => {
+  return apiMutator<simulateApiHarnessIngressReadResponse>(
+    getSimulateApiHarnessIngressReadUrl(token, targetPath),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessIngressCreateResponse200 = {
+  data: Blob;
+  status: 200;
+};
+
+export type simulateApiHarnessIngressCreateResponse201 = {
+  data: Blob;
+  status: 201;
+};
+
+export type simulateApiHarnessIngressCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 201>;
+};
+
+export type simulateApiHarnessIngressCreateResponseSuccess = (
+  | simulateApiHarnessIngressCreateResponse200
+  | simulateApiHarnessIngressCreateResponse201
+) & {
+  headers: Headers;
+};
+export type simulateApiHarnessIngressCreateResponseError =
+  simulateApiHarnessIngressCreateResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessIngressCreateResponse =
+  | simulateApiHarnessIngressCreateResponseSuccess
+  | simulateApiHarnessIngressCreateResponseError;
+
+export const getSimulateApiHarnessIngressCreateUrl = (
+  token: string,
+  targetPath: string,
+) => {
+  return `/simulate/api/harness/ingress/${token}/${targetPath}`;
+};
+
+/**
+ * Relay a signed callback URL to the active sandbox without exposing provider headers.
+ */
+export const simulateApiHarnessIngressCreate = async (
+  token: string,
+  targetPath: string,
+  harnessIngressProxyRequestApi: HarnessIngressProxyRequestApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessIngressCreateResponse> => {
+  return apiMutator<simulateApiHarnessIngressCreateResponse>(
+    getSimulateApiHarnessIngressCreateUrl(token, targetPath),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessIngressProxyRequestApi),
+    },
+  );
+};
+
+export type simulateApiHarnessIngressUpdateResponse200 = {
+  data: Blob;
+  status: 200;
+};
+
+export type simulateApiHarnessIngressUpdateResponse201 = {
+  data: Blob;
+  status: 201;
+};
+
+export type simulateApiHarnessIngressUpdateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 201>;
+};
+
+export type simulateApiHarnessIngressUpdateResponseSuccess = (
+  | simulateApiHarnessIngressUpdateResponse200
+  | simulateApiHarnessIngressUpdateResponse201
+) & {
+  headers: Headers;
+};
+export type simulateApiHarnessIngressUpdateResponseError =
+  simulateApiHarnessIngressUpdateResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessIngressUpdateResponse =
+  | simulateApiHarnessIngressUpdateResponseSuccess
+  | simulateApiHarnessIngressUpdateResponseError;
+
+export const getSimulateApiHarnessIngressUpdateUrl = (
+  token: string,
+  targetPath: string,
+) => {
+  return `/simulate/api/harness/ingress/${token}/${targetPath}`;
+};
+
+/**
+ * Relay a signed callback URL to the active sandbox without exposing provider headers.
+ */
+export const simulateApiHarnessIngressUpdate = async (
+  token: string,
+  targetPath: string,
+  harnessIngressProxyRequestApi: HarnessIngressProxyRequestApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessIngressUpdateResponse> => {
+  return apiMutator<simulateApiHarnessIngressUpdateResponse>(
+    getSimulateApiHarnessIngressUpdateUrl(token, targetPath),
+    {
+      ...options,
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessIngressProxyRequestApi),
+    },
+  );
+};
+
+export type simulateApiHarnessIngressPartialUpdateResponse200 = {
+  data: Blob;
+  status: 200;
+};
+
+export type simulateApiHarnessIngressPartialUpdateResponse201 = {
+  data: Blob;
+  status: 201;
+};
+
+export type simulateApiHarnessIngressPartialUpdateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 201>;
+};
+
+export type simulateApiHarnessIngressPartialUpdateResponseSuccess = (
+  | simulateApiHarnessIngressPartialUpdateResponse200
+  | simulateApiHarnessIngressPartialUpdateResponse201
+) & {
+  headers: Headers;
+};
+export type simulateApiHarnessIngressPartialUpdateResponseError =
+  simulateApiHarnessIngressPartialUpdateResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessIngressPartialUpdateResponse =
+  | simulateApiHarnessIngressPartialUpdateResponseSuccess
+  | simulateApiHarnessIngressPartialUpdateResponseError;
+
+export const getSimulateApiHarnessIngressPartialUpdateUrl = (
+  token: string,
+  targetPath: string,
+) => {
+  return `/simulate/api/harness/ingress/${token}/${targetPath}`;
+};
+
+/**
+ * Relay a signed callback URL to the active sandbox without exposing provider headers.
+ */
+export const simulateApiHarnessIngressPartialUpdate = async (
+  token: string,
+  targetPath: string,
+  harnessIngressProxyRequestApi: HarnessIngressProxyRequestApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessIngressPartialUpdateResponse> => {
+  return apiMutator<simulateApiHarnessIngressPartialUpdateResponse>(
+    getSimulateApiHarnessIngressPartialUpdateUrl(token, targetPath),
+    {
+      ...options,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessIngressProxyRequestApi),
+    },
+  );
+};
+
+export type simulateApiHarnessIngressDeleteResponse204 = {
+  data: void;
+  status: 204;
+};
+
+export type simulateApiHarnessIngressDeleteResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 204>;
+};
+
+export type simulateApiHarnessIngressDeleteResponseSuccess =
+  simulateApiHarnessIngressDeleteResponse204 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessIngressDeleteResponseError =
+  simulateApiHarnessIngressDeleteResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessIngressDeleteResponse =
+  | simulateApiHarnessIngressDeleteResponseSuccess
+  | simulateApiHarnessIngressDeleteResponseError;
+
+export const getSimulateApiHarnessIngressDeleteUrl = (
+  token: string,
+  targetPath: string,
+) => {
+  return `/simulate/api/harness/ingress/${token}/${targetPath}`;
+};
+
+/**
+ * Relay a signed callback URL to the active sandbox without exposing provider headers.
+ */
+export const simulateApiHarnessIngressDelete = async (
+  token: string,
+  targetPath: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessIngressDeleteResponse> => {
+  return apiMutator<simulateApiHarnessIngressDeleteResponse>(
+    getSimulateApiHarnessIngressDeleteUrl(token, targetPath),
+    {
+      ...options,
+      method: "DELETE",
     },
   );
 };
@@ -60296,8 +61990,26 @@ export type simulateApiTestExecutionsListResponse =
   | simulateApiTestExecutionsListResponseSuccess
   | simulateApiTestExecutionsListResponseError;
 
-export const getSimulateApiTestExecutionsListUrl = () => {
-  return `/simulate/api/test-executions/`;
+export const getSimulateApiTestExecutionsListUrl = (
+  params?: SimulateApiTestExecutionsListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/api/test-executions/?${stringifiedParams}`
+    : `/simulate/api/test-executions/`;
 };
 
 /**
@@ -60309,10 +62021,11 @@ Query Parameters:
 - page: page number (default: 1)
  */
 export const simulateApiTestExecutionsList = async (
+  params?: SimulateApiTestExecutionsListParams,
   options?: RequestInit,
 ): Promise<simulateApiTestExecutionsListResponse> => {
   return apiMutator<simulateApiTestExecutionsListResponse>(
-    getSimulateApiTestExecutionsListUrl(),
+    getSimulateApiTestExecutionsListUrl(params),
     {
       ...options,
       method: "GET",
@@ -64497,6 +66210,119 @@ export const simulateTestExecutionsColumnOrderUpdate = async (
   );
 };
 
+export type simulateTestExecutionDebugAnalysisRetrieveResponse200 = {
+  data: TestExecutionDebugAnalysisResponseApi;
+  status: 200;
+};
+
+export type simulateTestExecutionDebugAnalysisRetrieveResponse404 = {
+  data: TestExecutionDebugAnalysisNotFoundApi;
+  status: 404;
+};
+
+export type simulateTestExecutionDebugAnalysisRetrieveResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 404>;
+};
+
+export type simulateTestExecutionDebugAnalysisRetrieveResponseSuccess =
+  simulateTestExecutionDebugAnalysisRetrieveResponse200 & {
+    headers: Headers;
+  };
+export type simulateTestExecutionDebugAnalysisRetrieveResponseError = (
+  | simulateTestExecutionDebugAnalysisRetrieveResponse404
+  | simulateTestExecutionDebugAnalysisRetrieveResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type simulateTestExecutionDebugAnalysisRetrieveResponse =
+  | simulateTestExecutionDebugAnalysisRetrieveResponseSuccess
+  | simulateTestExecutionDebugAnalysisRetrieveResponseError;
+
+export const getSimulateTestExecutionDebugAnalysisRetrieveUrl = (
+  testExecutionId: string,
+) => {
+  return `/simulate/test-executions/${testExecutionId}/debug-analysis/`;
+};
+
+/**
+ * @summary Get Test Execution debug analysis
+ */
+export const simulateTestExecutionDebugAnalysisRetrieve = async (
+  testExecutionId: string,
+  options?: RequestInit,
+): Promise<simulateTestExecutionDebugAnalysisRetrieveResponse> => {
+  return apiMutator<simulateTestExecutionDebugAnalysisRetrieveResponse>(
+    getSimulateTestExecutionDebugAnalysisRetrieveUrl(testExecutionId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateTestExecutionDebugAnalysisCreateResponse202 = {
+  data: TestExecutionDebugAnalysisResponseApi;
+  status: 202;
+};
+
+export type simulateTestExecutionDebugAnalysisCreateResponse404 = {
+  data: TestExecutionDebugAnalysisNotFoundApi;
+  status: 404;
+};
+
+export type simulateTestExecutionDebugAnalysisCreateResponse409 = {
+  data: TestExecutionDebugAnalysisErrorApi;
+  status: 409;
+};
+
+export type simulateTestExecutionDebugAnalysisCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 202 | 404 | 409>;
+};
+
+export type simulateTestExecutionDebugAnalysisCreateResponseSuccess =
+  simulateTestExecutionDebugAnalysisCreateResponse202 & {
+    headers: Headers;
+  };
+export type simulateTestExecutionDebugAnalysisCreateResponseError = (
+  | simulateTestExecutionDebugAnalysisCreateResponse404
+  | simulateTestExecutionDebugAnalysisCreateResponse409
+  | simulateTestExecutionDebugAnalysisCreateResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type simulateTestExecutionDebugAnalysisCreateResponse =
+  | simulateTestExecutionDebugAnalysisCreateResponseSuccess
+  | simulateTestExecutionDebugAnalysisCreateResponseError;
+
+export const getSimulateTestExecutionDebugAnalysisCreateUrl = (
+  testExecutionId: string,
+) => {
+  return `/simulate/test-executions/${testExecutionId}/debug-analysis/`;
+};
+
+/**
+ * @summary Request Test Execution debug analysis
+ */
+export const simulateTestExecutionDebugAnalysisCreate = async (
+  testExecutionId: string,
+  emptyRequestApi: EmptyRequestApi,
+  options?: RequestInit,
+): Promise<simulateTestExecutionDebugAnalysisCreateResponse> => {
+  return apiMutator<simulateTestExecutionDebugAnalysisCreateResponse>(
+    getSimulateTestExecutionDebugAnalysisCreateUrl(testExecutionId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(emptyRequestApi),
+    },
+  );
+};
+
 export type simulateTestExecutionsDeleteDeleteResponse204 = {
   data: void;
   status: 204;
@@ -65146,6 +66972,195 @@ export const simulateTestExecutionsTranscriptsList = async (
     {
       ...options,
       method: "GET",
+    },
+  );
+};
+
+export type simulateV3CallExecutionDetailResponse200 = {
+  data: CallExecutionV3DetailResponseApi;
+  status: 200;
+};
+
+export type simulateV3CallExecutionDetailResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateV3CallExecutionDetailResponseSuccess =
+  simulateV3CallExecutionDetailResponse200 & {
+    headers: Headers;
+  };
+export type simulateV3CallExecutionDetailResponseError =
+  simulateV3CallExecutionDetailResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateV3CallExecutionDetailResponse =
+  | simulateV3CallExecutionDetailResponseSuccess
+  | simulateV3CallExecutionDetailResponseError;
+
+export const getSimulateV3CallExecutionDetailUrl = (
+  callExecutionId: string,
+) => {
+  return `/simulate/v3/call-executions/${callExecutionId}/`;
+};
+
+export const simulateV3CallExecutionDetail = async (
+  callExecutionId: string,
+  options?: RequestInit,
+): Promise<simulateV3CallExecutionDetailResponse> => {
+  return apiMutator<simulateV3CallExecutionDetailResponse>(
+    getSimulateV3CallExecutionDetailUrl(callExecutionId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateV3TestExecutionAnalyticsResponse200 = {
+  data: RunAnalyticsV3ResponseApi;
+  status: 200;
+};
+
+export type simulateV3TestExecutionAnalyticsResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateV3TestExecutionAnalyticsResponseSuccess =
+  simulateV3TestExecutionAnalyticsResponse200 & {
+    headers: Headers;
+  };
+export type simulateV3TestExecutionAnalyticsResponseError =
+  simulateV3TestExecutionAnalyticsResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateV3TestExecutionAnalyticsResponse =
+  | simulateV3TestExecutionAnalyticsResponseSuccess
+  | simulateV3TestExecutionAnalyticsResponseError;
+
+export const getSimulateV3TestExecutionAnalyticsUrl = (
+  testExecutionId: string,
+) => {
+  return `/simulate/v3/test-executions/${testExecutionId}/analytics/`;
+};
+
+export const simulateV3TestExecutionAnalytics = async (
+  testExecutionId: string,
+  options?: RequestInit,
+): Promise<simulateV3TestExecutionAnalyticsResponse> => {
+  return apiMutator<simulateV3TestExecutionAnalyticsResponse>(
+    getSimulateV3TestExecutionAnalyticsUrl(testExecutionId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateV3TestExecutionCallsResponse200 = {
+  data: RunCallsV3ResponseApi;
+  status: 200;
+};
+
+export type simulateV3TestExecutionCallsResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateV3TestExecutionCallsResponseSuccess =
+  simulateV3TestExecutionCallsResponse200 & {
+    headers: Headers;
+  };
+export type simulateV3TestExecutionCallsResponseError =
+  simulateV3TestExecutionCallsResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateV3TestExecutionCallsResponse =
+  | simulateV3TestExecutionCallsResponseSuccess
+  | simulateV3TestExecutionCallsResponseError;
+
+export const getSimulateV3TestExecutionCallsUrl = (
+  testExecutionId: string,
+  params?: SimulateV3TestExecutionCallsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/v3/test-executions/${testExecutionId}/calls/?${stringifiedParams}`
+    : `/simulate/v3/test-executions/${testExecutionId}/calls/`;
+};
+
+export const simulateV3TestExecutionCalls = async (
+  testExecutionId: string,
+  params?: SimulateV3TestExecutionCallsParams,
+  options?: RequestInit,
+): Promise<simulateV3TestExecutionCallsResponse> => {
+  return apiMutator<simulateV3TestExecutionCallsResponse>(
+    getSimulateV3TestExecutionCallsUrl(testExecutionId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateV3TestExecutionExportResponse200 = {
+  data: void;
+  status: 200;
+};
+
+export type simulateV3TestExecutionExportResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateV3TestExecutionExportResponseSuccess =
+  simulateV3TestExecutionExportResponse200 & {
+    headers: Headers;
+  };
+export type simulateV3TestExecutionExportResponseError =
+  simulateV3TestExecutionExportResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateV3TestExecutionExportResponse =
+  | simulateV3TestExecutionExportResponseSuccess
+  | simulateV3TestExecutionExportResponseError;
+
+export const getSimulateV3TestExecutionExportUrl = (
+  testExecutionId: string,
+) => {
+  return `/simulate/v3/test-executions/${testExecutionId}/export/`;
+};
+
+export const simulateV3TestExecutionExport = async (
+  testExecutionId: string,
+  runExportV3RequestApi: RunExportV3RequestApi,
+  options?: RequestInit,
+): Promise<simulateV3TestExecutionExportResponse> => {
+  return apiMutator<simulateV3TestExecutionExportResponse>(
+    getSimulateV3TestExecutionExportUrl(testExecutionId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(runExportV3RequestApi),
     },
   );
 };
@@ -65835,7 +67850,7 @@ export const tracerCustomEvalConfigDelete = async (
 };
 
 export type tracerDashboardListResponse200 = {
-  data: TracerDashboardList200;
+  data: DashboardApi[];
   status: 200;
 };
 
@@ -65857,39 +67872,17 @@ export type tracerDashboardListResponse =
   | tracerDashboardListResponseSuccess
   | tracerDashboardListResponseError;
 
-export const getTracerDashboardListUrl = (
-  params?: TracerDashboardListParams,
-) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (Array.isArray(value)) {
-      value
-        .filter((item) => item !== undefined && item !== null)
-        .forEach((item) => normalizedParams.append(key, item.toString()));
-    } else if (value !== undefined && value !== null) {
-      normalizedParams.append(key, value.toString());
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/tracer/dashboard/?${stringifiedParams}`
-    : `/tracer/dashboard/`;
+export const getTracerDashboardListUrl = () => {
+  return `/tracer/dashboard/`;
 };
 
 export const tracerDashboardList = async (
-  params?: TracerDashboardListParams,
   options?: RequestInit,
 ): Promise<tracerDashboardListResponse> => {
-  return apiMutator<tracerDashboardListResponse>(
-    getTracerDashboardListUrl(params),
-    {
-      ...options,
-      method: "GET",
-    },
-  );
+  return apiMutator<tracerDashboardListResponse>(getTracerDashboardListUrl(), {
+    ...options,
+    method: "GET",
+  });
 };
 
 export type tracerDashboardCreateResponse201 = {
@@ -66020,6 +68013,76 @@ export const tracerDashboardFilterValues = async (
   );
 };
 
+export type tracerDashboardFilterValuesCreateResponse200 = {
+  data: DashboardFilterValuesResponseApi;
+  status: 200;
+};
+
+export type tracerDashboardFilterValuesCreateResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerDashboardFilterValuesCreateResponse422 = {
+  data: ApiErrorResponseApi;
+  status: 422;
+};
+
+export type tracerDashboardFilterValuesCreateResponse500 = {
+  data: ApiErrorResponseApi;
+  status: 500;
+};
+
+export type tracerDashboardFilterValuesCreateResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
+export type tracerDashboardFilterValuesCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 422 | 500 | 503>;
+};
+
+export type tracerDashboardFilterValuesCreateResponseSuccess =
+  tracerDashboardFilterValuesCreateResponse200 & {
+    headers: Headers;
+  };
+export type tracerDashboardFilterValuesCreateResponseError = (
+  | tracerDashboardFilterValuesCreateResponse400
+  | tracerDashboardFilterValuesCreateResponse422
+  | tracerDashboardFilterValuesCreateResponse500
+  | tracerDashboardFilterValuesCreateResponse503
+  | tracerDashboardFilterValuesCreateResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type tracerDashboardFilterValuesCreateResponse =
+  | tracerDashboardFilterValuesCreateResponseSuccess
+  | tracerDashboardFilterValuesCreateResponseError;
+
+export const getTracerDashboardFilterValuesCreateUrl = () => {
+  return `/tracer/dashboard/filter_values/`;
+};
+
+/**
+ * Return distinct values for a given metric/attribute, for filter value picker.
+ */
+export const tracerDashboardFilterValuesCreate = async (
+  dashboardFilterValuesQueryApi: DashboardFilterValuesQueryApi,
+  options?: RequestInit,
+): Promise<tracerDashboardFilterValuesCreateResponse> => {
+  return apiMutator<tracerDashboardFilterValuesCreateResponse>(
+    getTracerDashboardFilterValuesCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(dashboardFilterValuesQueryApi),
+    },
+  );
+};
+
 export type tracerDashboardMetricsResponse200 = {
   data: DashboardMetricsCatalogResponseApi;
   status: 200;
@@ -66098,6 +68161,72 @@ export const tracerDashboardMetrics = async (
     {
       ...options,
       method: "GET",
+    },
+  );
+};
+
+export type tracerDashboardMetricsCreateResponse200 = {
+  data: DashboardMetricsCatalogResponseApi;
+  status: 200;
+};
+
+export type tracerDashboardMetricsCreateResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerDashboardMetricsCreateResponse500 = {
+  data: ApiErrorResponseApi;
+  status: 500;
+};
+
+export type tracerDashboardMetricsCreateResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
+export type tracerDashboardMetricsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 500 | 503>;
+};
+
+export type tracerDashboardMetricsCreateResponseSuccess =
+  tracerDashboardMetricsCreateResponse200 & {
+    headers: Headers;
+  };
+export type tracerDashboardMetricsCreateResponseError = (
+  | tracerDashboardMetricsCreateResponse400
+  | tracerDashboardMetricsCreateResponse500
+  | tracerDashboardMetricsCreateResponse503
+  | tracerDashboardMetricsCreateResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type tracerDashboardMetricsCreateResponse =
+  | tracerDashboardMetricsCreateResponseSuccess
+  | tracerDashboardMetricsCreateResponseError;
+
+export const getTracerDashboardMetricsCreateUrl = () => {
+  return `/tracer/dashboard/metrics/`;
+};
+
+/**
+ * Backward compat: if ``workflow`` param is provided, return only
+that source's metrics in the old grouped format.
+ * @summary Return all available metrics across traces and datasets.
+ */
+export const tracerDashboardMetricsCreate = async (
+  dashboardMetricsCatalogQueryApi: DashboardMetricsCatalogQueryApi,
+  options?: RequestInit,
+): Promise<tracerDashboardMetricsCreateResponse> => {
+  return apiMutator<tracerDashboardMetricsCreateResponse>(
+    getTracerDashboardMetricsCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(dashboardMetricsCatalogQueryApi),
     },
   );
 };
@@ -66192,7 +68321,7 @@ export const tracerDashboardQuery = async (
 };
 
 export type tracerDashboardSimulationAgentsResponse200 = {
-  data: TracerDashboardSimulationAgents200;
+  data: DashboardApi[];
   status: 200;
 };
 
@@ -66214,37 +68343,18 @@ export type tracerDashboardSimulationAgentsResponse =
   | tracerDashboardSimulationAgentsResponseSuccess
   | tracerDashboardSimulationAgentsResponseError;
 
-export const getTracerDashboardSimulationAgentsUrl = (
-  params?: TracerDashboardSimulationAgentsParams,
-) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (Array.isArray(value)) {
-      value
-        .filter((item) => item !== undefined && item !== null)
-        .forEach((item) => normalizedParams.append(key, item.toString()));
-    } else if (value !== undefined && value !== null) {
-      normalizedParams.append(key, value.toString());
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/tracer/dashboard/simulation-agents/?${stringifiedParams}`
-    : `/tracer/dashboard/simulation-agents/`;
+export const getTracerDashboardSimulationAgentsUrl = () => {
+  return `/tracer/dashboard/simulation-agents/`;
 };
 
 /**
  * Return simulation agents with their observability project links.
  */
 export const tracerDashboardSimulationAgents = async (
-  params?: TracerDashboardSimulationAgentsParams,
   options?: RequestInit,
 ): Promise<tracerDashboardSimulationAgentsResponse> => {
   return apiMutator<tracerDashboardSimulationAgentsResponse>(
-    getTracerDashboardSimulationAgentsUrl(params),
+    getTracerDashboardSimulationAgentsUrl(),
     {
       ...options,
       method: "GET",
@@ -67112,19 +69222,26 @@ export type tracerDatasetAddToNewDatasetResponse201 = {
   status: 201;
 };
 
+export type tracerDatasetAddToNewDatasetResponse503 = {
+  data: DatasetLimitCheckFailedErrorApi;
+  status: 503;
+};
+
 export type tracerDatasetAddToNewDatasetResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201>;
+  status: Exclude<HTTPStatusCodes, 201 | 503>;
 };
 
 export type tracerDatasetAddToNewDatasetResponseSuccess =
   tracerDatasetAddToNewDatasetResponse201 & {
     headers: Headers;
   };
-export type tracerDatasetAddToNewDatasetResponseError =
-  tracerDatasetAddToNewDatasetResponseDefault & {
-    headers: Headers;
-  };
+export type tracerDatasetAddToNewDatasetResponseError = (
+  | tracerDatasetAddToNewDatasetResponse503
+  | tracerDatasetAddToNewDatasetResponseDefault
+) & {
+  headers: Headers;
+};
 
 export type tracerDatasetAddToNewDatasetResponse =
   | tracerDatasetAddToNewDatasetResponseSuccess
@@ -69598,6 +71715,62 @@ export const tracerInternalErrorFeedV2AttemptsPartialUpdate = async (
       method: "PATCH",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(updateInvestigationAttemptRequestApi),
+    },
+  );
+};
+
+export type tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponse201 =
+  {
+    data: SimulationEvidenceRequestApi;
+    status: 201;
+  };
+
+export type tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponse409 =
+  {
+    data: InvestigationControlErrorApi;
+    status: 409;
+  };
+
+export type tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 201 | 409>;
+  };
+
+export type tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponseSuccess =
+  tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponse201 & {
+    headers: Headers;
+  };
+export type tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponseError =
+  (
+    | tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponse409
+    | tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponseDefault
+  ) & {
+    headers: Headers;
+  };
+
+export type tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponse =
+  | tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponseSuccess
+  | tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponseError;
+
+export const getTracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateUrl = (
+  attemptId: string,
+) => {
+  return `/tracer/internal/error-feed-v2/attempts/${attemptId}/simulation-evidence/`;
+};
+
+export const tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreate = async (
+  attemptId: string,
+  simulationEvidenceRequestApi: SimulationEvidenceRequestApi,
+  options?: RequestInit,
+): Promise<tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponse> => {
+  return apiMutator<tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponse>(
+    getTracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateUrl(attemptId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(simulationEvidenceRequestApi),
     },
   );
 };
@@ -77247,7 +79420,7 @@ export const getTracerTraceGetGraphMethodsUrl = (
  * Fetch data for the observe graph with optimized queries
  */
 export const tracerTraceGetGraphMethods = async (
-  observeGraphDataRequestApi: ObserveGraphDataRequestApi,
+  traceGraphDataRequestApi: TraceGraphDataRequestApi,
   params?: TracerTraceGetGraphMethodsParams,
   options?: RequestInit,
 ): Promise<tracerTraceGetGraphMethodsResponse> => {
@@ -77257,7 +79430,7 @@ export const tracerTraceGetGraphMethods = async (
       ...options,
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(observeGraphDataRequestApi),
+      body: JSON.stringify(traceGraphDataRequestApi),
     },
   );
 };
@@ -78161,6 +80334,7 @@ export const getTracerTraceVoiceCallDetailUrl = (
 /**
  * Query params:
 - trace_id or legacy traceId (required) — UUID of the voice call trace.
+- project_id (optional) — the project the call was opened from.
  * @summary Return the heavy / detail-only fields for a single voice call.
  */
 export const tracerTraceVoiceCallDetail = async (
@@ -78217,21 +80391,46 @@ export type tracerTraceReadResponse =
   | tracerTraceReadResponseSuccess
   | tracerTraceReadResponseError;
 
-export const getTracerTraceReadUrl = (id: string) => {
-  return `/tracer/trace/${id}/`;
+export const getTracerTraceReadUrl = (
+  id: string,
+  params?: TracerTraceReadParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/trace/${id}/?${stringifiedParams}`
+    : `/tracer/trace/${id}/`;
 };
 
 /**
- * Retrieve a trace by its ID.
+ * Query params:
+- project_id (optional) — the project the trace was opened from.
+ * @summary Retrieve a trace by its ID.
  */
 export const tracerTraceRead = async (
   id: string,
+  params?: TracerTraceReadParams,
   options?: RequestInit,
 ): Promise<tracerTraceReadResponse> => {
-  return apiMutator<tracerTraceReadResponse>(getTracerTraceReadUrl(id), {
-    ...options,
-    method: "GET",
-  });
+  return apiMutator<tracerTraceReadResponse>(
+    getTracerTraceReadUrl(id, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
 };
 
 export type tracerTraceUpdateResponse200 = {

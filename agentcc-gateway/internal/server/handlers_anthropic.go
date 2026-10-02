@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/anthropicfmt"
 	"github.com/futureagi/agentcc-gateway/internal/models"
@@ -42,6 +43,8 @@ func (h *Handlers) AnthropicMessages(w http.ResponseWriter, r *http.Request) {
 	rc.RequestHeaders = cloneRequestHeaders(r)
 	body, err := io.ReadAll(io.LimitReader(r.Body, h.maxBodySize+1))
 	if err != nil {
+		slog.Warn("failed to read anthropic request body", "request_id", rc.RequestID,
+			"content_length", r.ContentLength, "error", err)
 		anthropicfmt.WriteError(w, http.StatusBadRequest, "invalid_request_error", "Failed to read request body")
 		return
 	}
@@ -123,52 +126,10 @@ func (h *Handlers) AnthropicMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Resolve provider.
-	var provider providers.Provider
-	var orgModelResolved bool
-
-	if orgCfg != nil && orgID != "" && h.orgProviderCache != nil {
-		for providerID, provCfg := range orgCfg.Providers {
-			if provCfg == nil || !provCfg.Enabled || !provCfg.HasCredentials() {
-				continue
-			}
-			for _, m := range provCfg.Models {
-				if orgModelMatches(m, model, providerID) {
-					orgProvider, err := h.orgProviderCache.GetOrCreateWithTenantConfig(orgID, providerID, provCfg.APIKey, provCfg)
-					if err == nil {
-						provider = orgProvider
-						rc.Provider = providerID
-						rc.Metadata["org_provider_model_match"] = model
-						orgModelResolved = true
-						break
-					}
-				}
-			}
-			if orgModelResolved {
-				break
-			}
-		}
-	}
-
-	if !orgModelResolved {
-		var err error
-		provider, err = h.resolveProvider(ctx, rc, model)
-		if err != nil {
-			if orgCfg != nil && orgID != "" && h.orgProviderCache != nil {
-				if orgP, providerID := h.resolveOrgProvider(orgID, orgCfg, model); orgP != nil {
-					provider = orgP
-					rc.Provider = providerID
-					rc.Metadata["org_provider"] = "true"
-					err = nil
-				}
-			}
-			if err != nil {
-				writeAnthropicErrorFromError(w, err)
-				return
-			}
-		}
-	}
-	if shouldApplyOrgProviderOverride(rc) {
-		provider = h.applyOrgProviderOverride(orgID, orgCfg, rc.Provider, provider)
+	provider, err := h.resolveProviderWithOrgFallback(ctx, rc, orgID, orgCfg, model)
+	if err != nil {
+		writeAnthropicErrorFromError(w, err)
+		return
 	}
 
 	// Build Anthropic-specific headers to forward.
@@ -247,6 +208,8 @@ func (h *Handlers) AnthropicCountTokens(w http.ResponseWriter, r *http.Request) 
 	rc.RequestHeaders = cloneRequestHeaders(r)
 	body, err := io.ReadAll(io.LimitReader(r.Body, h.maxBodySize+1))
 	if err != nil {
+		slog.Warn("failed to read anthropic token-count request body", "request_id", rc.RequestID,
+			"content_length", r.ContentLength, "error", err)
 		anthropicfmt.WriteError(w, http.StatusBadRequest, "invalid_request_error", "Failed to read request body")
 		return
 	}
@@ -723,12 +686,35 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 
 	var rawChunkCh <-chan models.StreamChunk
 	var errCh <-chan error
+	var firstChunk *models.StreamChunk
 
 	// Pre-plugins run before the upstream stream opens; post-plugins wait for
 	// the final chunk, which is where usage arrives.
 	if err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
-		rawChunkCh, errCh = provider.StreamChatCompletion(streamCtx, canonicalReq)
-		return nil
+		// Do not commit a 200/SSE response until the upstream has actually
+		// produced a chunk. Vertex can terminate before its first chunk (for
+		// example, an unexpected EOF), which must remain a retryable HTTP error.
+		for attempt := 0; attempt < 2; attempt++ {
+			rawChunkCh, errCh = provider.StreamChatCompletion(streamCtx, canonicalReq)
+			if rawChunkCh == nil {
+				return models.ErrUpstreamProvider(http.StatusBadGateway, "upstream provider returned no stream")
+			}
+			chunk, err := waitForFirstStreamChunk(streamCtx, rawChunkCh, errCh)
+			if err == nil {
+				firstChunk = chunk
+				return nil
+			}
+			var apiErr *models.APIError
+			if attempt == 1 || !errors.As(err, &apiErr) || (apiErr.Status != http.StatusBadGateway && apiErr.Status != http.StatusGatewayTimeout) {
+				return err
+			}
+			select {
+			case <-streamCtx.Done():
+				return streamCtx.Err()
+			case <-time.After(250 * time.Millisecond):
+			}
+		}
+		return models.ErrInternal("upstream stream did not start")
 	}); err != nil {
 		writeAnthropicErrorFromError(w, err)
 		return
@@ -740,14 +726,40 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 		h.writeAnthropicShortCircuit(w, rc)
 		return
 	}
-	if rawChunkCh == nil {
+	if rawChunkCh == nil || firstChunk == nil {
 		writeAnthropicErrorFromError(w, models.ErrInternal("no stream from provider"))
 		return
 	}
+	// Reinsert the already-observed first chunk for the usage tee and
+	// Anthropic translator. Stop forwarding promptly if the client leaves.
+	startedChunks := make(chan models.StreamChunk)
+	go func() {
+		defer close(startedChunks)
+		select {
+		case startedChunks <- *firstChunk:
+		case <-streamCtx.Done():
+			return
+		}
+		for {
+			select {
+			case chunk, ok := <-rawChunkCh:
+				if !ok {
+					return
+				}
+				select {
+				case startedChunks <- chunk:
+				case <-streamCtx.Done():
+					return
+				}
+			case <-streamCtx.Done():
+				return
+			}
+		}
+	}()
 
 	// Tee for usage: the counts are already structured here, unlike in the
 	// translated SSE bytes.
-	chunkCh, usageCh := teeStreamUsage(streamCtx, rawChunkCh)
+	chunkCh, usageCh := teeStreamUsage(streamCtx, startedChunks)
 	if alias := rc.Metadata["model_alias"]; alias != "" {
 		chunkCh = rewriteStreamModel(streamCtx, chunkCh, alias)
 	}
@@ -806,7 +818,7 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 			if !ok {
 				// Event channel closed — translator is done.
 				eventCh = nil
-				continue
+				break
 			}
 			if _, writeErr := w.Write(event); writeErr != nil {
 				slog.Warn("error writing translated anthropic stream", "request_id", rc.RequestID, "error", writeErr)
@@ -831,7 +843,7 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 				// without this guard the handler would exit before draining
 				// them).
 				translatorErrCh = nil
-				continue
+				break
 			}
 			if err != nil {
 				slog.Warn("translator stream error", "request_id", rc.RequestID, "error", err)
@@ -843,7 +855,7 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 		case err, ok := <-errCh:
 			if !ok {
 				errCh = nil
-				continue
+				break
 			}
 			if err != nil {
 				slog.Warn("provider stream error", "request_id", rc.RequestID, "error", err)

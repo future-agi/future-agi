@@ -1025,6 +1025,20 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
             refreshAverage();
           }
 
+          // The grid still shows the processing placeholders, which an
+          // update transaction cannot replace (their ids match no real row).
+          // The refresh fired when processing ended may have been answered
+          // by a page request sent before it ended, so reload the grid from
+          // this response instead.
+          if (
+            !processingData &&
+            useProcessingStore.getState().isProcessingData
+          ) {
+            queryClient.setQueryData(queryOptions.queryKey, data);
+            gridApiRef.current.api.refreshServerSide();
+            continue;
+          }
+
           if (rows?.length === 0) {
             gridApiRef.current?.api.refreshServerSide({ purge: true });
             gridApiRef.current?.api.setGridOption("context", {
@@ -1073,10 +1087,19 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
 
   useEffect(() => {
     if (wasProcessingData.current && !averageMetaData?.isProcessingData) {
+      // The cached pages were read while processing (the filter box's
+      // observer refetches them on every poll), and getRows serves any
+      // page that is not invalidated, so mark them stale before reloading.
+      queryClient.invalidateQueries({ queryKey: ["dataset-detail", dataset] });
       gridApiRef.current?.api?.refreshServerSide();
     }
     wasProcessingData.current = Boolean(averageMetaData?.isProcessingData);
-  }, [averageMetaData?.isProcessingData, refetchTableData]);
+  }, [
+    averageMetaData?.isProcessingData,
+    refetchTableData,
+    queryClient,
+    dataset,
+  ]);
 
   const onColumnChanged = useCallback(
     (params) => {
