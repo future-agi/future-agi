@@ -1,6 +1,8 @@
 import React, { useCallback, useMemo } from "react";
 import {
+  Alert,
   Box,
+  Button,
   Checkbox,
   Chip,
   IconButton,
@@ -23,11 +25,13 @@ import {
 import { useNavigate } from "react-router-dom";
 import { formatDistanceToNowStrict } from "date-fns";
 import Iconify from "src/components/iconify";
+import { RouterLink } from "src/routes/components";
+import { paths } from "src/routes/paths";
 import ErrorStatusChip from "./ErrorStatusChip";
 import ErrorSeverityBadge from "./ErrorSeverityBadge";
 import ErrorTrendSparkline from "./ErrorTrendSparkline";
-import { useErrorFeedList } from "src/api/errorFeed/error-feed";
-import { useErrorFeedApiParams, useErrorFeedStore } from "../store";
+import { FEED_PAGE_STATE } from "../feedPageState";
+import { useErrorFeedStore } from "../store";
 import PropTypes from "prop-types";
 
 // ── helpers ────────────────────────────────────────────────────────────────
@@ -296,16 +300,114 @@ function EmptyState({ filtered }) {
 }
 EmptyState.propTypes = { filtered: PropTypes.bool };
 
+// ── no Observe projects (TH-8209) ──────────────────────────────────────────
+// Shown only when the Observe catalog is empty AND the feed itself returned
+// nothing for the current scope. Reuses the table's in-table block treatment
+// and the existing Observe route; it is not an error.
+const NO_PROJECTS_TITLE = "No Observe projects in this workspace.";
+const NO_PROJECTS_BODY =
+  "Create an Observe project and connect your application to start collecting traces.";
+
+function NoProjectsState() {
+  return (
+    <TableRow>
+      <TableCell colSpan={10} align="center" sx={{ py: 8 }}>
+        <Stack alignItems="center" gap={1.5} role="status">
+          <Box
+            sx={{
+              width: 48,
+              height: 48,
+              borderRadius: "50%",
+              bgcolor: "action.hover",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <Iconify
+              icon="mdi:folder-plus-outline"
+              width={24}
+              sx={{ color: "text.disabled" }}
+            />
+          </Box>
+          <Typography
+            typography="m3"
+            color="text.primary"
+            fontWeight="fontWeightMedium"
+          >
+            {NO_PROJECTS_TITLE}
+          </Typography>
+          <Typography typography="s2" color="text.secondary">
+            {NO_PROJECTS_BODY}
+          </Typography>
+          <Stack direction="row" gap={1} sx={{ mt: 0.5 }}>
+            <Button
+              variant="contained"
+              size="small"
+              component={RouterLink}
+              href={paths.dashboard.observe}
+            >
+              Open Observe
+            </Button>
+            <Button
+              variant="outlined"
+              size="small"
+              component="a"
+              href="https://docs.futureagi.com/docs/error-feed"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Error Feed docs
+            </Button>
+          </Stack>
+        </Stack>
+      </TableCell>
+    </TableRow>
+  );
+}
+
+// ── failed read (TH-8209) ──────────────────────────────────────────────────
+// A failed list or catalog read must never render success copy. Same Alert +
+// Retry pattern as the Observe page's tab error state.
+const FEED_FAILED_TITLE = "Couldn't load the Error Feed";
+
+function FeedErrorState({ onRetry }) {
+  return (
+    <TableRow>
+      <TableCell colSpan={10} sx={{ py: 4, px: 3 }}>
+        <Alert
+          severity="error"
+          role="alert"
+          action={
+            <Button color="inherit" size="small" onClick={onRetry}>
+              Retry
+            </Button>
+          }
+        >
+          {FEED_FAILED_TITLE}
+        </Alert>
+      </TableCell>
+    </TableRow>
+  );
+}
+FeedErrorState.propTypes = { onRetry: PropTypes.func };
+
 // ── main component ─────────────────────────────────────────────────────────
-export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
+export default function ErrorFeedTable({
+  rows: rowsProp,
+  totalCount = 0,
+  isLoading = false,
+  pageState = FEED_PAGE_STATE.FEED,
+  onRetry,
+  selected,
+  onSelect,
+  onSelectAll,
+}) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const navigate = useNavigate();
   const { sortBy, sortDir, setSortBy, page, pageSize, setPage } =
     useErrorFeedStore();
-
-  const apiParams = useErrorFeedApiParams();
-  const { data, isLoading } = useErrorFeedList(apiParams);
 
   const isFiltered = useErrorFeedStore(
     (s) =>
@@ -319,8 +421,11 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
       ),
   );
 
-  const rows = useMemo(() => data?.data ?? [], [data]);
-  const totalCount = data?.total ?? 0;
+  const rows = useMemo(() => rowsProp ?? [], [rowsProp]);
+  const showError = pageState === FEED_PAGE_STATE.ERROR;
+  const showNoProjects = pageState === FEED_PAGE_STATE.NO_PROJECTS;
+  const showSkeleton =
+    !showError && (isLoading || pageState === FEED_PAGE_STATE.LOADING);
 
   const handleRowClick = useCallback(
     (clusterId) => {
@@ -422,10 +527,14 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
 
           {/* ── body ── */}
           <TableBody>
-            {isLoading ? (
+            {showError ? (
+              <FeedErrorState onRetry={onRetry} />
+            ) : showSkeleton ? (
               Array.from({ length: pageSize }).map((_, i) => (
                 <SkeletonRow key={i} />
               ))
+            ) : showNoProjects ? (
+              <NoProjectsState />
             ) : rows.length === 0 ? (
               <EmptyState filtered={isFiltered} />
             ) : (
@@ -591,7 +700,7 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
       </TableContainer>
 
       {/* ── Pagination ── */}
-      {totalCount > 0 && (
+      {pageState === FEED_PAGE_STATE.FEED && totalCount > 0 && (
         <Stack
           direction="row"
           alignItems="center"
@@ -670,6 +779,11 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
 }
 
 ErrorFeedTable.propTypes = {
+  rows: PropTypes.arrayOf(PropTypes.object),
+  totalCount: PropTypes.number,
+  isLoading: PropTypes.bool,
+  pageState: PropTypes.oneOf(Object.values(FEED_PAGE_STATE)),
+  onRetry: PropTypes.func,
   selected: PropTypes.arrayOf(PropTypes.string),
   onSelect: PropTypes.func,
   onSelectAll: PropTypes.func,
