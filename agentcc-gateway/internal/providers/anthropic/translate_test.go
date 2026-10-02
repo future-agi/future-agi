@@ -1005,6 +1005,36 @@ func TestStreamParse_MessageStop(t *testing.T) {
 	}
 }
 
+func TestStreamParse_ErrorEvent(t *testing.T) {
+	state := &streamState{messageID: "msg_6"}
+	data := `{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`
+
+	chunk, done, err := state.parseSSELine("error", data)
+	if err == nil {
+		t.Fatal("expected the error event to be returned as an error")
+	}
+	if !done {
+		t.Error("done should be true for an error event")
+	}
+	if chunk != nil {
+		t.Error("chunk should be nil for an error event")
+	}
+
+	apiErr, ok := err.(*models.APIError)
+	if !ok {
+		t.Fatalf("expected *models.APIError, got %T: %v", err, err)
+	}
+	if apiErr.Status != 502 {
+		t.Errorf("status = %d, want 502", apiErr.Status)
+	}
+	if apiErr.Code != "provider_overloaded_error" {
+		t.Errorf("code = %q, want %q", apiErr.Code, "provider_overloaded_error")
+	}
+	if apiErr.Message != "Overloaded" {
+		t.Errorf("message = %q, want %q", apiErr.Message, "Overloaded")
+	}
+}
+
 func TestStreamParse_Ping(t *testing.T) {
 	state := &streamState{}
 	data := `{"type":"ping"}`
