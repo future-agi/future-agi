@@ -245,6 +245,11 @@ def _transform_guardrails(guardrails_data, org_id=None):
                 else cfg
             )
             inner = clean_cfg.get("config") if isinstance(clean_cfg, dict) else None
+            if isinstance(clean_cfg, dict) and name in _RULE_PROVIDER_DEFAULTS:
+                if not isinstance(inner, dict):
+                    inner = {}
+                    clean_cfg["config"] = inner
+                inner.setdefault("provider", _RULE_PROVIDER_DEFAULTS[name])
             _normalize_eval_ids(inner)
             mapped[registry_name] = clean_cfg
         if org_id:
