@@ -4285,7 +4285,13 @@ class ExperimentsTableV2View(APIView):
                     error=str(e),
                 )
 
-            return self._gm.success_response("Experiment created successfully.")
+            # Carry the id in the message: the response contract is
+            # {status, result: str}, and without the id a caller that just
+            # created an experiment has no handle to poll it with. Keeping it
+            # inside `result` avoids changing the published response shape.
+            return self._gm.success_response(
+                f"Experiment created successfully. experiment_id={experiment.id}"
+            )
 
         except ValueError as e:
             return self._gm.bad_request(str(e))

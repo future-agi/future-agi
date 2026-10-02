@@ -176,11 +176,109 @@ def _expects_structure(schema: dict | None) -> bool:
     return False
 
 
+# Falcon trims any single tool result to ContextManager.MAX_RESULT_CHARS by
+# slicing the string (head + tail). On a raw API page that slice lands
+# mid-record, so the model silently receives a partial list and has no way to
+# tell. Stay just inside that cap instead, dropping whole items and saying how
+# many were dropped, so what arrives is both complete and self-describing.
+RENDER_BUDGET_CHARS = 5500
+
+
+def _compact(payload: Any) -> str:
+    # Separators matter: json.dumps defaults to ", "/": ", which is dead weight
+    # against a character budget the model never sees.
+    return json.dumps(
+        payload, ensure_ascii=False, default=str, separators=(",", ":")
+    )
+
+
+def _fit_to_budget(result: Any, budget: int) -> tuple[Any, int, int] | None:
+    """Keep as many whole items of the largest list as fit.
+
+    Returns (payload, shown, total), or None when there is no list to trim.
+    """
+    if isinstance(result, list):
+        items: list = result
+
+        def rebuild(kept: list) -> Any:
+            return kept
+
+    elif isinstance(result, dict):
+        key = max(
+            (k for k, v in result.items() if isinstance(v, list)),
+            key=lambda k: len(result[k]),
+            default=None,
+        )
+        if key is None:
+            return None
+        items = result[key]
+
+        def rebuild(kept: list) -> Any:
+            return {**result, key: kept}
+
+    else:
+        return None
+
+    if not items:
+        return None
+
+    low, high, best = 0, len(items), None
+    while low <= high:
+        mid = (low + high) // 2
+        if mid == 0:
+            low = 1
+            continue
+        if len(_compact(rebuild(items[:mid]))) <= budget:
+            best = mid
+            low = mid + 1
+        else:
+            high = mid - 1
+
+    # Always return at least one item: a single oversized record is still more
+    # useful than an empty page, and the caller's own cap will bound it.
+    shown = best or 1
+    return rebuild(items[:shown]), shown, len(items)
+
+
 def render_result(result: Any) -> str:
     """Serialize an API result for the model. JSON keeps field names exact."""
     if result is None:
         return "Done."
-    return json.dumps(result, ensure_ascii=False, default=str)
+
+    text = _compact(result)
+    if len(text) <= RENDER_BUDGET_CHARS:
+        return text
+
+    fitted = _fit_to_budget(result, RENDER_BUDGET_CHARS)
+    if fitted is None:
+        # Nothing list-shaped to trim; let the caller's cap handle it.
+        return text
+
+    payload, shown, total = fitted
+    text = _compact(payload)
+    if shown < total:
+        text += (
+            f"\n[showing {shown} of {total} items — narrow the filters "
+            f"or fetch a specific id to see the rest]"
+        )
+    return text
+
+
+# Route prefixes that only exist when an optional EE app is installed. The
+# catalog is a static file, so a tool pointing at one of these resolves to
+# nothing on an install without that app — offering it just means the model
+# picks it and gets a 404 it cannot act on. `/usage/` is mounted by
+# `tfc/openapi_urls.py` only under `if has_ee("ee.cloud")`.
+_EE_ROUTE_PREFIXES = {"/usage/": "ee.cloud"}
+
+
+def _route_is_mounted(path: str) -> bool:
+    from tfc.ee_loader import has_ee
+
+    for prefix, module in _EE_ROUTE_PREFIXES.items():
+        if path.startswith(prefix):
+            return has_ee(module)
+    return True
 
 
 def register_generated_tools(
@@ -191,9 +289,19 @@ def register_generated_tools(
     """Register every catalog tool in ``target``. Safe to call more than once."""
     executor = executor or DjangoAPIExecutor()
     registered: list[GeneratedAPITool] = []
+    skipped: list[str] = []
     for generated in source.list_all():
+        if not _route_is_mounted(generated.request.get("path", "")):
+            skipped.append(generated.name)
+            continue
         tool = GeneratedAPITool(generated, executor)
         target.register(tool)
         registered.append(tool)
+    if skipped:
+        logger.info(
+            "Skipped %d generated API tools whose routes are not mounted: %s",
+            len(skipped),
+            ", ".join(sorted(skipped)),
+        )
     logger.debug("Registered %d generated API tools", len(registered))
     return registered

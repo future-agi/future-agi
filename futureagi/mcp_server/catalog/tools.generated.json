@@ -2,7 +2,7 @@
   "schema_version": 1,
   "source_contract": "swagger.json",
   "source_contract_sha256": "83fe2c54b6fbda789c5a5040e90d216af3279ab24d431ffbcdf003356fd1f02b",
-  "tool_count": 99,
+  "tool_count": 101,
   "tools": [
     {
       "name": "whoami",
@@ -4977,8 +4977,8 @@
       "annotations": {
         "readOnlyHint": false,
         "destructiveHint": true,
-        "idempotentHint": true,
-        "openWorldHint": false
+        "idempotentHint": false,
+        "openWorldHint": true
       },
       "request": {
         "method": "PATCH",
@@ -5005,6 +5005,178 @@
       },
       "source": {
         "operationId": "tracer_eval-task_update_eval_task"
+      }
+    },
+    {
+      "name": "list_eval_configs",
+      "description": "List the custom evaluation configurations available for online evaluation tasks. The ids returned here are what create_eval_task takes in its `evals` argument - eval templates are a different object and their ids are not accepted there.",
+      "group": "observability",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": "integer",
+            "description": "A page number within the paginated result set."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of results to return per page."
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/tracer/custom-eval-config/",
+        "parameters": {
+          "path": [],
+          "query": [
+            "page",
+            "limit"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "tracer_custom-eval-config_list"
+      }
+    },
+    {
+      "name": "create_eval_config",
+      "description": "Create a custom evaluation configuration from an eval template so it can be attached to an online evaluation task. Use when list_eval_configs has no entry for the template you want to run over spans.",
+      "group": "observability",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "eval_template": {
+            "title": "Eval template",
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "title": "Name",
+                "type": "string",
+                "maxLength": 255
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "config": {
+            "anyOf": [
+              {
+                "title": "Config",
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mapping": {
+            "anyOf": [
+              {
+                "title": "Mapping",
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "project": {
+            "title": "Project",
+            "type": "string",
+            "format": "uuid"
+          },
+          "filters": {
+            "anyOf": [
+              {
+                "title": "Filters",
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "error_localizer": {
+            "title": "Error localizer",
+            "type": "boolean"
+          },
+          "kb_id": {
+            "anyOf": [
+              {
+                "title": "Kb id",
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "model": {
+            "anyOf": [
+              {
+                "title": "Model",
+                "type": "string",
+                "maxLength": 255
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "eval_template",
+          "project"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/tracer/custom-eval-config/",
+        "parameters": {
+          "path": [],
+          "query": [],
+          "body": [
+            "eval_template",
+            "name",
+            "config",
+            "mapping",
+            "project",
+            "filters",
+            "error_localizer",
+            "kb_id",
+            "model"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "tracer_custom-eval-config_create"
       }
     },
     {
@@ -5059,8 +5231,8 @@
       "annotations": {
         "readOnlyHint": true,
         "destructiveHint": false,
-        "idempotentHint": false,
-        "openWorldHint": true
+        "idempotentHint": true,
+        "openWorldHint": false
       },
       "request": {
         "method": "GET",
@@ -5872,7 +6044,7 @@
     },
     {
       "name": "create_experiment",
-      "description": "Create and start an experiment.",
+      "description": "Create and start an experiment. The new experiment's id is returned inside the `result` message as `experiment_id=<uuid>`; pass it to get_experiment to follow the run.",
       "group": "experiments",
       "inputSchema": {
         "type": "object",

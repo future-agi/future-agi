@@ -1,5 +1,5 @@
 version: 1
-expected_tool_count: 99
+expected_tool_count: 101
 
 # Pagination is an MCP-only page-size ceiling, so an oversized page is rejected
 # before the REST view queries and serializes it. The generator keeps a stricter
@@ -269,6 +269,18 @@ tools:
     description: Update and rerun an online evaluation task using eval_task_id and edit_type. Pause a running task first. edit_rerun preserves existing results; fresh_run DELETES previous results and starts again. May incur evaluation charges.
     operation: {method: PATCH, path: "/tracer/eval-task/update_eval_task/"}
     access: destructive
+    idempotent: false
+    open_world: true
+  - name: list_eval_configs
+    group: observability
+    description: List the custom evaluation configurations available for online evaluation tasks. The ids returned here are what create_eval_task takes in its `evals` argument - eval templates are a different object and their ids are not accepted there.
+    operation: {method: GET, path: "/tracer/custom-eval-config/"}
+    access: read
+  - name: create_eval_config
+    group: observability
+    description: Create a custom evaluation configuration from an eval template so it can be attached to an online evaluation task. Use when list_eval_configs has no entry for the template you want to run over spans.
+    operation: {method: POST, path: "/tracer/custom-eval-config/"}
+    access: write
   - name: list_trace_properties
     group: observability
     description: List the properties a trace can be filtered on, with their ids. Call this before building the filters argument for search_traces or list_spans - each filter clause needs a valid column_id and these are the only valid values.
@@ -279,8 +291,6 @@ tools:
     description: List alerts that have fired, newest first. Use this to find out what the platform has already flagged before digging into traces or error clusters.
     operation: {method: GET, path: "/tracer/user-alert-logs/all/"}
     access: read
-    idempotent: false
-    open_world: true
   - name: pause_eval_task
     group: observability
     description: Pause a running online evaluation task by eval_task_id. Already-launched evaluations may finish before the worker stops.
@@ -356,7 +366,7 @@ tools:
     access: read
   - name: create_experiment
     group: experiments
-    description: Create and start an experiment.
+    description: Create and start an experiment. The new experiment's id is returned inside the `result` message as `experiment_id=<uuid>`; pass it to get_experiment to follow the run.
     operation: {method: POST, path: "/model-hub/experiments/v2/"}
     access: write
     open_world: true
