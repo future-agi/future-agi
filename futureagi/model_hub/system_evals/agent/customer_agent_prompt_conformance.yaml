@@ -6,13 +6,13 @@ criteria: "You are evaluating whether the agent follows its system prompt instru
   \n## Criteria\n\n1. Persona adherence: The agent should maintain the role and personality defined in the system prompt.\n\
   \   - Good: System prompt says \"You are a friendly support agent\" and agent is friendly throughout.\n   - Bad: Agent starts\
   \ friendly but becomes curt or robotic in later turns.\n\n2. Behavioral constraints: Rules in the system prompt must be\
-  \ followed in every turn. A required response language is one of these rules; replying in another language breaks it in every turn where it happens.\n   - Good: System prompt says \"never discuss competitors\" and agent never does.\n   - Bad:\
+  \ followed in every turn.\n   - Good: System prompt says \"never discuss competitors\" and agent never does.\n   - Bad:\
   \ Agent mentions a competitor despite the system prompt prohibition.\n\n3. Tone and style consistency: Specified tone should\
   \ be maintained from first to last turn.\n   - Good: Formal tone maintained throughout when specified.\n   - Bad: Starts\
   \ formal but drifts to casual language.\n\n## Anti-bias Rules\n\n- If the system prompt is vague or minimal, the agent has\
   \ more latitude; DO NOT penalize reasonable interpretations.\n- Evaluate ONLY the agent's turns, not the customer's behavior.\n\
   - A short conversation with consistent adherence scores higher than a long one with drift.\n\n## Scoring\n\nScore 0.0 if\
-  \ the agent consistently ignores its system prompt. Score 0.5 if it follows in some turns but deviates in others. Score 0.0 if it breaks an explicit rule of the system prompt for most of the conversation. Score\
+  \ the agent consistently ignores its system prompt. Score 0.5 if it follows in some turns but deviates in others. Score 0.0 if it breaks an explicit instruction of the system prompt for most of the conversation. Score\
   \ 1.0 if it fully adheres across all turns.\n\n## Inputs\n\n<system_prompt>{{system_prompt}}</system_prompt>\n\n<conversation>{{conversation}}</conversation>"
 eval_tags:
 - Agents
@@ -59,12 +59,12 @@ config:
     \n## Criteria\n\n1. Persona adherence: The agent should maintain the role and personality defined in the system prompt.\n\
     \   - Good: System prompt says \"You are a friendly support agent\" and agent is friendly throughout.\n   - Bad: Agent\
     \ starts friendly but becomes curt or robotic in later turns.\n\n2. Behavioral constraints: Rules in the system prompt\
-    \ must be followed in every turn. A required response language is one of these rules; replying in another language breaks it in every turn where it happens.\n   - Good: System prompt says \"never discuss competitors\" and agent never does.\n\
+    \ must be followed in every turn.\n   - Good: System prompt says \"never discuss competitors\" and agent never does.\n\
     \   - Bad: Agent mentions a competitor despite the system prompt prohibition.\n\n3. Tone and style consistency: Specified\
     \ tone should be maintained from first to last turn.\n   - Good: Formal tone maintained throughout when specified.\n \
     \  - Bad: Starts formal but drifts to casual language.\n\n## Anti-bias Rules\n\n- If the system prompt is vague or minimal,\
     \ the agent has more latitude; DO NOT penalize reasonable interpretations.\n- Evaluate ONLY the agent's turns, not the\
     \ customer's behavior.\n- A short conversation with consistent adherence scores higher than a long one with drift.\n\n\
     ## Scoring\n\nScore 0.0 if the agent consistently ignores its system prompt. Score 0.5 if it follows in some turns but\
-    \ deviates in others. Score 0.0 if it breaks an explicit rule of the system prompt for most of the conversation. Score 1.0 if it fully adheres across all turns.\n\n## Inputs\n\n<system_prompt>{{system_prompt}}</system_prompt>\n\
+    \ deviates in others. Score 0.0 if it breaks an explicit instruction of the system prompt for most of the conversation. Score 1.0 if it fully adheres across all turns.\n\n## Inputs\n\n<system_prompt>{{system_prompt}}</system_prompt>\n\
     \n<conversation>{{conversation}}</conversation>"

@@ -6,7 +6,7 @@ description: Evaluates how accurately an agent captured the details a customer g
 criteria: "You are evaluating how accurately an agent captured the details a customer gave during a conversation. There is\
   \ no external gold record: a value is correct when it matches what the customer said, and wrong if it contradicts them.\n\
   \n## Criteria\n1. Faithful capture: Every value the agent records, reads back, or carries into a summary or handoff matches\
-  \ what the customer said, including each digit of numbers and addresses and any requested time or date.\n2. Confirmed, never invented: The agent explicitly confirms values where an error would be costly,\
+  \ what the customer said.\n2. Confirmed, never invented: The agent explicitly confirms values where an error would be costly,\
   \ and never records or carries forward a detail the customer did not give.\n3. Corrections absorbed and required fields\
   \ covered: The agent adopts a corrected value from that point on, and obtains the details its prompt requires or notes which\
   \ it could not get.\n\n## Anti-bias Rules\n- Transcription renders one value in many forms; treat \"(555) 123-4567\" and\
@@ -50,7 +50,7 @@ config:
   rule_prompt: "You are evaluating how accurately an agent captured the details a customer gave during a conversation. There\
     \ is no external gold record: a value is correct when it matches what the customer said, and wrong if it contradicts them.\n\
     \n## Criteria\n1. Faithful capture: Every value the agent records, reads back, or carries into a summary or handoff matches\
-    \ what the customer said, including each digit of numbers and addresses and any requested time or date.\n2. Confirmed, never invented: The agent explicitly confirms values where an error would be\
+    \ what the customer said.\n2. Confirmed, never invented: The agent explicitly confirms values where an error would be\
     \ costly, and never records or carries forward a detail the customer did not give.\n3. Corrections absorbed and required\
     \ fields covered: The agent adopts a corrected value from that point on, and obtains the details its prompt requires or\
     \ notes which it could not get.\n\n## Anti-bias Rules\n- Transcription renders one value in many forms; treat \"(555)\

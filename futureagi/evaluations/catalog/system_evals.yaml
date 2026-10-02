@@ -1757,7 +1757,7 @@ customer_agent_prompt_conformance:
        - Good: System prompt says "You are a friendly support agent" and agent is friendly throughout.
        - Bad: Agent starts friendly but becomes curt or robotic in later turns.
 
-    2. Behavioral constraints: Rules in the system prompt must be followed in every turn. A required response language is one of these rules; replying in another language breaks it in every turn where it happens.
+    2. Behavioral constraints: Rules in the system prompt must be followed in every turn.
        - Good: System prompt says "never discuss competitors" and agent never does.
        - Bad: Agent mentions a competitor despite the system prompt prohibition.
 
@@ -1773,7 +1773,7 @@ customer_agent_prompt_conformance:
 
     ## Scoring
 
-    Score 0.0 if the agent consistently ignores its system prompt. Score 0.5 if it follows in some turns but deviates in others. Score 0.0 if it breaks an explicit rule of the system prompt for most of the conversation. Score 1.0 if it fully adheres across all turns.
+    Score 0.0 if the agent consistently ignores its system prompt. Score 0.5 if it follows in some turns but deviates in others. Score 0.0 if it breaks an explicit instruction of the system prompt for most of the conversation. Score 1.0 if it fully adheres across all turns.
 
     ## Inputs
 
@@ -2140,7 +2140,7 @@ customer_agent_termination_handling:
     ## Anti-bias Rules
 
     - If the customer terminates abruptly (hangs up), this is NOT the agent's fault; evaluate only agent-side behavior.
-    - Truncated transcription logs should NOT be confused with actual termination problems; when the audio itself cuts off while the agent is mid-sentence before the conversation has been closed, that is an abnormal ending; a farewell clipped after the customer has already said goodbye is not.
+    - Truncated transcription logs should NOT be confused with actual termination problems; an agent turn cut off before the conversation is closed is an abnormal ending.
     - A short properly-closed conversation scores higher than a long one that ends abnormally.
 
     ## Scoring
@@ -2647,7 +2647,7 @@ intake_field_accuracy:
     You are evaluating how accurately an agent captured the details a customer gave during a conversation. There is no external gold record: a value is correct when it matches what the customer said, and wrong if it contradicts them.
 
     ## Criteria
-    1. Faithful capture: Every value the agent records, reads back, or carries into a summary or handoff matches what the customer said, including each digit of numbers and addresses and any requested time or date.
+    1. Faithful capture: Every value the agent records, reads back, or carries into a summary or handoff matches what the customer said.
     2. Confirmed, never invented: The agent explicitly confirms values where an error would be costly, and never records or carries forward a detail the customer did not give.
     3. Corrections absorbed and required fields covered: The agent adopts a corrected value from that point on, and obtains the details its prompt requires or notes which it could not get.
 
@@ -2677,11 +2677,11 @@ customer_agent_task_completion:
     ## Criteria
     1. Task execution and finality: The agent carries out the necessary actions to fully resolve the primary objective or core request of the customer.
     2. Explicit confirmation or outcome delivery: The agent clearly communicates the final result, confirmation, or status of the task so that the customer is aware it has been handled.
-    3. Handling blockers or policy boundaries: The agent correctly navigates system constraints, accurately applying company policies or executing valid workarounds to reach the closest possible resolution. Explaining a blocker clearly does not complete the task: if a system limit or an unavailable option stops the customer's primary objective, the task is not completed.
+    3. Handling blockers or policy boundaries: The agent correctly navigates system constraints, accurately applying company policies or executing valid workarounds to reach the closest possible resolution. A blocker that leaves the primary objective unmet means the task is not completed, however clearly it is communicated.
 
     ## Anti-bias Rules
     - If the customer abruptly terminates the conversation for reasons unrelated to the agent's handling, or refuses to provide mandatory information (e.g., account verification), do not penalize the agent for non-completion.
-    - An accurate, policy-compliant refusal (e.g., correctly denying a refund because it violates terms of service) counts as a successful task completion, as the inquiry was definitively resolved according to business logic.
+    - An accurate, policy-compliant refusal (e.g., correctly denying a refund because it violates terms of service) counts as a successful task completion, as the inquiry was definitively resolved according to business logic. A temporary system limit or error that blocks an otherwise valid request is not a policy refusal.
     - If the task requires back-end processing that takes hours or days to complete, the agent fulfills the criteria by successfully initiating the workflow and setting clear timeline expectations.
 
     ## Scoring
