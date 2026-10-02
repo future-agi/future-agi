@@ -256,6 +256,12 @@ providers:
   #     - openai/gpt-4o
   #     - anthropic/claude-3.5-sonnet
 
+  # telnyx:
+  #   api_key: "${TELNYX_API_KEY}"
+  #   type: "telnyx"
+  #   models:
+  #     - MiniMaxAI/MiniMax-M3-MXFP8
+
 # Explicit model-to-provider mapping (overrides provider-level models).
 # model_map:
 #   gpt-4o: openai
