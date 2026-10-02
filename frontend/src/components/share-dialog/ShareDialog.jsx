@@ -52,6 +52,15 @@ function readToken(link) {
   return typeof token === "string" ? token.trim() : "";
 }
 
+// Mirrors the server's validity rule: active and not past expires_at.
+function isLinkActive(link) {
+  if (!link || (link.is_active ?? link.isActive) === false) return false;
+  const expiresAt = link.expires_at ?? link.expiresAt;
+  if (!expiresAt) return true;
+  const expiry = Date.parse(expiresAt);
+  return Number.isNaN(expiry) ? true : expiry > Date.now();
+}
+
 function readAccessMode(link) {
   return link?.access_type ?? link?.accessType ?? null;
 }
@@ -72,6 +81,7 @@ const AccessOption = ({
   selected,
   disabled,
   pending,
+  unconfirmed,
   onClick,
 }) => (
   <Box
@@ -136,6 +146,10 @@ const AccessOption = ({
       <Typography sx={{ fontSize: 11, color: "text.disabled", flexShrink: 0 }}>
         Updating…
       </Typography>
+    ) : selected && unconfirmed ? (
+      <Typography sx={{ fontSize: 11, color: "text.disabled", flexShrink: 0 }}>
+        Last confirmed
+      </Typography>
     ) : (
       selected && (
         <Iconify
@@ -179,12 +193,13 @@ const ShareDialog = ({
     isError: linksError,
     error: linksErrorDetail,
     dataUpdatedAt: linksUpdatedAt,
+    isFetching: linksFetching,
     refetch: refetchLinks,
   } = useGetSharedLinks(open ? resourceType : null, open ? resourceId : null);
   // Handle both camelCase (isActive) and snake_case (is_active) from DRF
   const activeLink = useMemo(() => {
     if (!links || !Array.isArray(links)) return null;
-    return links.find((l) => (l.is_active ?? l.isActive) !== false) || null;
+    return links.find((l) => isLinkActive(l)) || null;
   }, [links]);
 
   const createMutation = useCreateSharedLink();
@@ -197,21 +212,67 @@ const ShareDialog = ({
   const generation = useRef(0);
   const copyInFlight = useRef(false);
   const copiedTimer = useRef(null);
+  // Result of the server read that completed in a generation. Auto-create is
+  // only allowed once the current generation has its own fresh, empty read
+  // (R2/R7): a cached empty list from an earlier open is not discovery.
+  const [discovery, setDiscovery] = useState({ gen: -1, empty: false });
+  const loadingSeenGen = useRef(-1);
+  // When the link created in this session was first observed; a newer
+  // successful server read that lacks it supersedes the mutation result.
+  const [createdSeenAt, setCreatedSeenAt] = useState(null);
   const createdLink =
     createMutation.data?.data?.result || createMutation.data?.result || null;
-  const shareLink = activeLink || createdLink;
+  const createdSuperseded =
+    createdSeenAt !== null &&
+    !linksError &&
+    Array.isArray(links) &&
+    typeof linksUpdatedAt === "number" &&
+    linksUpdatedAt > createdSeenAt;
+  const shareLink =
+    activeLink || (createdLink && !createdSuperseded ? createdLink : null);
   const createError = Boolean(createMutation.isError);
 
   const refetch = useCallback(async () => {
     if (typeof refetchLinks !== "function") return null;
+    const gen = generation.current;
     try {
       const result = await refetchLinks();
       if (!result || result.isError || result.data === undefined) return null;
+      if (gen === generation.current) {
+        setDiscovery({
+          gen,
+          empty: Array.isArray(result.data) && result.data.length === 0,
+        });
+      }
       return result;
     } catch {
       return null;
     }
   }, [refetchLinks]);
+
+  // A query load that started and finished in this generation is a fresh read.
+  useEffect(() => {
+    if (!open) return;
+    if (linksLoading) {
+      loadingSeenGen.current = generation.current;
+      return;
+    }
+    if (
+      loadingSeenGen.current === generation.current &&
+      !linksError &&
+      links !== undefined
+    ) {
+      loadingSeenGen.current = -1;
+      setDiscovery({
+        gen: generation.current,
+        empty: Array.isArray(links) && links.length === 0,
+      });
+    }
+  }, [open, linksLoading, linksError, links]);
+
+  useEffect(() => {
+    setCreatedSeenAt(createdLink ? Date.now() : null);
+  }, [createdLink]);
 
   const clearCopiedTimer = () => {
     if (copiedTimer.current) {
@@ -233,6 +294,7 @@ const ShareDialog = ({
     generation.current += 1;
     copyInFlight.current = false;
     autoCreated.current = false;
+    loadingSeenGen.current = -1;
     clearCopiedTimer();
     setCopied(false);
     setPendingMode(null);
@@ -262,11 +324,14 @@ const ShareDialog = ({
   }, [open, contextKey]);
 
   // Auto-create a restricted shared link when dialog opens and none exists.
-  // Only after a successful empty discovery; never from an error state.
+  // Only after a successful empty discovery in this generation; never from
+  // an error state or a cached list left over from an earlier open.
   useEffect(() => {
     if (!open || !resourceType || !resourceId) return;
+    if (discovery.gen !== generation.current || !discovery.empty) return;
     if (
       !linksLoading &&
+      !linksFetching &&
       !linksError &&
       links &&
       links.length === 0 &&
@@ -285,11 +350,13 @@ const ShareDialog = ({
     open,
     links,
     linksLoading,
+    linksFetching,
     linksError,
     resourceType,
     resourceId,
     createMutation,
     retryNonce,
+    discovery,
   ]);
 
   // Confirmed access mode: a matching PATCH acknowledgement wins until a
@@ -329,7 +396,7 @@ const ShareDialog = ({
     !createError &&
     !shareLink &&
     Array.isArray(links) &&
-    links.length > 0;
+    (links.length > 0 || Boolean(createdLink));
 
   let linkNotice = null;
   let linkNoticeAction = null;
@@ -463,7 +530,7 @@ const ShareDialog = ({
         { variant: "warning" },
       );
     } finally {
-      copyInFlight.current = false;
+      if (gen === generation.current) copyInFlight.current = false;
     }
   }, [copyReady, shareUrl]);
 
@@ -708,6 +775,7 @@ const ShareDialog = ({
               description="No sign-in required to view"
               selected={confirmedMode === "public"}
               pending={pendingMode === "public"}
+              unconfirmed={accessUnknown}
               disabled={!shareLinkReady}
               onClick={() => handleAccessModeChange("public")}
             />
@@ -718,6 +786,7 @@ const ShareDialog = ({
               description="Only people you add can view"
               selected={confirmedMode === "restricted"}
               pending={pendingMode === "restricted"}
+              unconfirmed={accessUnknown}
               disabled={!shareLinkReady}
               onClick={() => handleAccessModeChange("restricted")}
             />

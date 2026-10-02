@@ -76,6 +76,9 @@ const publicOption = () =>
 const restrictedOption = () =>
   screen.getByRole("button", { name: /^Restricted/i });
 const sharedUrl = (token) => `${window.location.origin}/shared/${token}`;
+// The server read that the dialog performs on open; mirrors the hook state.
+const emptyRead = () =>
+  refetch.mockResolvedValueOnce({ data: [], isError: false, isSuccess: true });
 const findReadyCopy = async () => {
   const button = await screen.findByRole("button", { name: "Copy" });
   await waitFor(() => expect(button).toBeEnabled());
@@ -156,6 +159,7 @@ describe("ShareDialog trace link readiness (R1, R2, R6)", () => {
 
   it("AC03 (D2): create failure shows a safe not-ready error with no dashboard URL or automatic retry", async () => {
     mocks.useGetSharedLinks.mockReturnValue(linksState({ data: [] }));
+    emptyRead();
     const view = render(dialog());
     await waitFor(() => expect(createMutate).toHaveBeenCalledTimes(1));
 
@@ -201,6 +205,7 @@ describe("ShareDialog trace link readiness (R1, R2, R6)", () => {
 
   it("AC05/AC17: a healthy empty list creates exactly one restricted link, even across re-renders", async () => {
     mocks.useGetSharedLinks.mockReturnValue(linksState({ data: [] }));
+    emptyRead();
     const view = render(dialog());
 
     await waitFor(() => expect(createMutate).toHaveBeenCalledTimes(1));
@@ -222,6 +227,7 @@ describe("ShareDialog trace link readiness (R1, R2, R6)", () => {
 describe("ShareDialog retry (R2, R3)", () => {
   it("AC06: retry after create failure refetches first and reuses an existing link without a new POST", async () => {
     mocks.useGetSharedLinks.mockReturnValue(linksState({ data: [] }));
+    emptyRead();
     const view = render(dialog());
     await waitFor(() => expect(createMutate).toHaveBeenCalledTimes(1));
     mocks.useCreateSharedLink.mockReturnValue(
@@ -244,6 +250,7 @@ describe("ShareDialog retry (R2, R3)", () => {
 
   it("AC07: a failed retry refetch never creates; a fresh empty result allows one restricted create", async () => {
     mocks.useGetSharedLinks.mockReturnValue(linksState({ data: [] }));
+    emptyRead();
     const view = render(dialog());
     await waitFor(() => expect(createMutate).toHaveBeenCalledTimes(1));
     mocks.useCreateSharedLink.mockReturnValue(
@@ -670,5 +677,181 @@ describe("ShareDialog context boundaries (R7)", () => {
     expect(
       screen.queryByText(/Couldn't create a share link/),
     ).not.toBeInTheDocument();
+  });
+
+  it("AC18/R2 (V1): reopening on a cached empty list never creates before a fresh read lands", async () => {
+    // First open: healthy empty list → one create, which then fails with a lost response.
+    mocks.useGetSharedLinks.mockReturnValue(linksState({ data: [] }));
+    emptyRead();
+    const view = render(dialog());
+    await waitFor(() => expect(createMutate).toHaveBeenCalledTimes(1));
+    mocks.useCreateSharedLink.mockReturnValue(
+      createState({ isError: true, error: new Error("lost") }),
+    );
+    view.rerender(dialog());
+    await screen.findByRole("button", { name: "Retry" });
+
+    // Close; the mutation is reset but the list cache still says [].
+    view.rerender(dialog({ open: false }));
+    expect(createReset).toHaveBeenCalled();
+    mocks.useCreateSharedLink.mockReturnValue(createState());
+    refetch.mockClear();
+    let resolveRead;
+    refetch.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveRead = resolve;
+        }),
+    );
+
+    // Reopen: the reread starts; no POST may be sent from the cached [].
+    view.rerender(dialog({ open: true }));
+    await waitFor(() => expect(refetch).toHaveBeenCalledTimes(1));
+    view.rerender(dialog({ open: true }));
+    await act(async () => {});
+    expect(createMutate).toHaveBeenCalledTimes(1);
+    expect(copyButton()).toBeDisabled();
+
+    // The fresh read is empty: exactly one restricted create follows.
+    await act(async () => {
+      resolveRead({ data: [], isError: false, isSuccess: true });
+    });
+    await waitFor(() => expect(createMutate).toHaveBeenCalledTimes(2));
+    expect(createMutate.mock.calls[1][0]).toMatchObject({
+      access_type: "restricted",
+    });
+    view.rerender(dialog({ open: true }));
+    expect(createMutate).toHaveBeenCalledTimes(2);
+  });
+
+  it("AC18/R2 (V1): closing while a create is in flight does not create again on reopen from cache", async () => {
+    mocks.useGetSharedLinks.mockReturnValue(linksState({ data: [] }));
+    emptyRead();
+    const view = render(dialog());
+    await waitFor(() => expect(createMutate).toHaveBeenCalledTimes(1));
+    mocks.useCreateSharedLink.mockReturnValue(createState({ isPending: true }));
+    view.rerender(dialog());
+
+    view.rerender(dialog({ open: false }));
+    mocks.useCreateSharedLink.mockReturnValue(createState());
+    refetch.mockClear();
+    refetch.mockResolvedValueOnce({
+      data: [activeLink],
+      isError: false,
+      isSuccess: true,
+    });
+    view.rerender(dialog({ open: true }));
+    await waitFor(() => expect(refetch).toHaveBeenCalledTimes(1));
+
+    // The reread found the committed link; render it. No second POST.
+    mocks.useGetSharedLinks.mockReturnValue(linksState());
+    view.rerender(dialog({ open: true }));
+    await findReadyCopy();
+    expect(createMutate).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("ShareDialog verifier follow-ups (V2–V5)", () => {
+  it("V2/AC17: a link created this session is unavailable once a newer server read lacks it", async () => {
+    mocks.useGetSharedLinks.mockReturnValue(
+      linksState({ data: [], dataUpdatedAt: 1 }),
+    );
+    emptyRead();
+    const view = render(dialog());
+    await waitFor(() => expect(createMutate).toHaveBeenCalledTimes(1));
+    mocks.useCreateSharedLink.mockReturnValue(
+      createState({ data: { data: { result: { ...activeLink } } } }),
+    );
+    view.rerender(dialog());
+    expect(await findReadyCopy()).toBeEnabled();
+
+    // A later successful read reports the link revoked.
+    mocks.useGetSharedLinks.mockReturnValue(
+      linksState({
+        data: [{ ...activeLink, is_active: false }],
+        dataUpdatedAt: Date.now() + 60_000,
+      }),
+    );
+    view.rerender(dialog());
+    expect(copyButton()).toBeDisabled();
+    expect(await screen.findByText(/no longer active/i)).toBeInTheDocument();
+    expect(createMutate).toHaveBeenCalledTimes(1);
+  });
+
+  it("V3/AC04: an expired link is not ready and is not silently recreated", async () => {
+    mocks.useGetSharedLinks.mockReturnValue(
+      linksState({
+        data: [{ ...activeLink, expires_at: "2000-01-01T00:00:00Z" }],
+      }),
+    );
+    render(dialog());
+    expect(copyButton()).toBeDisabled();
+    expect(await screen.findByText(/no longer active/i)).toBeInTheDocument();
+    expect(copyButton()).toBeDisabled();
+    expect(createMutate).not.toHaveBeenCalled();
+  });
+
+  it("V4/AC10: a clipboard write left over from a closed dialog cannot unlock concurrent writes", async () => {
+    let resolveFirst;
+    writeText.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFirst = resolve;
+        }),
+    );
+    const view = render(dialog());
+    fireEvent.click(await findReadyCopy());
+    expect(writeText).toHaveBeenCalledTimes(1);
+
+    view.rerender(dialog({ open: false }));
+    view.rerender(dialog({ open: true }));
+    let resolveSecond;
+    writeText.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveSecond = resolve;
+        }),
+    );
+    fireEvent.click(await findReadyCopy());
+    expect(writeText).toHaveBeenCalledTimes(2);
+
+    // The stale first write resolves; the second is still in flight.
+    await act(async () => {
+      resolveFirst();
+    });
+    fireEvent.click(copyButton());
+    expect(writeText).toHaveBeenCalledTimes(2);
+    expect(enqueueSnackbar).not.toHaveBeenCalledWith(
+      "Link copied!",
+      expect.anything(),
+    );
+
+    await act(async () => {
+      resolveSecond();
+    });
+    await waitFor(() =>
+      expect(enqueueSnackbar).toHaveBeenCalledWith(
+        "Link copied!",
+        expect.anything(),
+      ),
+    );
+    expect(enqueueSnackbar).toHaveBeenCalledTimes(1);
+  });
+
+  it("V5/R5: while access is unknown the retained option is labelled as last confirmed", async () => {
+    render(dialog());
+    await findReadyCopy();
+    fireEvent.click(publicOption());
+    const [, callbacks] = updateMutate.mock.calls[0];
+    refetch.mockResolvedValueOnce({ data: undefined, isError: true });
+    await act(async () => {
+      await callbacks.onError(new Error("lost"));
+    });
+    expect(
+      await screen.findByText(/couldn't be confirmed/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/last confirmed/i)).toBeInTheDocument();
+    expect(restrictedOption()).toHaveAttribute("aria-pressed", "true");
+    expect(copyButton()).toBeDisabled();
   });
 });

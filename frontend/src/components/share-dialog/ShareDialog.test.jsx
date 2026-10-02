@@ -52,6 +52,7 @@ describe("ShareDialog", () => {
       data: [],
       isLoading: false,
       isError: false,
+      refetch: vi.fn().mockResolvedValue({ data: [], isSuccess: true }),
     });
     mocks.useCreateSharedLink.mockReturnValue({
       mutate: createMutate,
