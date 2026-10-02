@@ -205,13 +205,21 @@ def convert_trace_to_graph(
             "required": False,
         }
 
+        node_config = {
+            "source_span_id": str(span["id"]),
+            "source_trace_id": str(trace_id),
+        }
+        parent_llm_id = llm_parent_map.get(span["id"])
+        if parent_llm_id:
+            node_config["source_parent_span_id"] = str(parent_llm_id)
+
         nodes_data.append(
             {
                 "id": node_uuids[span["id"]],
                 "type": "atomic",
                 "name": node_names[i],
                 "node_template_id": str(llm_template.id),
-                "config": {},
+                "config": node_config,
                 "position": positions[span["id"]],
                 "prompt_template": prompt_template,
                 "ports": [output_port],
@@ -227,6 +235,8 @@ def convert_trace_to_graph(
                 {
                     "source_node_id": node_uuids[parent_llm_id],
                     "target_node_id": node_uuids[span["id"]],
+                    "source_span_id": str(parent_llm_id),
+                    "target_span_id": str(span["id"]),
                 }
             )
 
