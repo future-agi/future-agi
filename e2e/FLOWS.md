@@ -647,6 +647,33 @@
 - the Django gateway config returns api_path_prefix as an explicit empty string
 - the organization config pushed to the Go gateway retains api_path_prefix as an explicit empty string
 
+### GW-E2E-003 — a platform engineer adds a declared custom property as a Request Logs column
+
+**Goal:** A platform engineer shows a declared custom property beside the built-in Request Logs columns, keeps that choice across reloads in this browser, and never sees it under another organization  
+**Spec:** `flows/gateway/request-log-columns.spec.ts:59`  
+**Tags:** —
+
+**User steps:**
+
+1. declare a custom property `tenant` for the org
+2. mint a gateway API key and deliver three gateway requests on the logs webhook, two carrying tenant metadata
+3. open Request Logs and open the Columns picker
+4. check `tenant`, hide `Provider` and move `Model` down
+5. reload the page
+6. reset to default
+7. open Request Logs as a second organization in the same browser
+8. delete the declaration and reopen the picker
+
+**Backend state verified:**
+
+- the declaration is stored in PG agentcc_custom_property_schema under the org
+- the table renders the tenant value per row and `-` where the row carries none
+- selecting and reordering columns issues no per-row request-log detail call and at most one declaration list call
+- the selection and order survive a reload for the same user, org and browser
+- reset restores the ten default headers and removes only this preference record
+- the second org never sees the first org’s tenant column, declaration or saved record
+- after the declaration is deleted the saved column is listed as no longer declared and is not rendered
+
 ## observe
 
 ### OBS-E2E-001 — SDK trace appears in Observe with coherent backend state
