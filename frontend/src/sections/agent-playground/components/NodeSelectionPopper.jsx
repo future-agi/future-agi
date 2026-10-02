@@ -32,11 +32,8 @@ export default function NodeSelectionPopper({
 
   const { data: templateNodes = [] } = useGetNodeTemplates();
   const nodesList = useMemo(
-    () =>
-      referenceableGraphs.length > 0
-        ? [...templateNodes, AGENT_NODE]
-        : [...templateNodes],
-    [templateNodes, referenceableGraphs],
+    () => [...templateNodes, AGENT_NODE],
+    [templateNodes],
   );
 
   const handlePromptExpandClick = useCallback((e) => {
