@@ -210,7 +210,12 @@ const ObserveListView = forwardRef(
           header: "Tags",
           size: 150,
           enableSorting: false,
-          cell: ({ row }) => <TagEditor projectId={row.original.id} />,
+          cell: ({ row }) => (
+            <TagEditor
+              projectId={row.original.id}
+              projectName={row.original.name}
+            />
+          ),
         },
         {
           // id matches the data field so getValue() resolves; fall back to
