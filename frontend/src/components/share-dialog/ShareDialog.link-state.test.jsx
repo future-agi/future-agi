@@ -751,6 +751,79 @@ describe("ShareDialog context boundaries (R7)", () => {
   });
 });
 
+describe("ShareDialog fresh-load discovery (R2, R7)", () => {
+  it("W3/AC05: a first open that loads from the server (no cache) creates exactly once", async () => {
+    mocks.useGetSharedLinks.mockReturnValue(
+      linksState({ data: undefined, isLoading: true }),
+    );
+    const view = render(dialog());
+    await act(async () => {});
+    expect(createMutate).not.toHaveBeenCalled();
+    expect(refetch).not.toHaveBeenCalled();
+
+    mocks.useGetSharedLinks.mockReturnValue(linksState({ data: [] }));
+    view.rerender(dialog());
+    await waitFor(() => expect(createMutate).toHaveBeenCalledTimes(1));
+    expect(createMutate.mock.calls[0][0]).toMatchObject({
+      resource_id: "trace-1",
+      access_type: "restricted",
+    });
+    view.rerender(dialog());
+    expect(createMutate).toHaveBeenCalledTimes(1);
+  });
+
+  it("W1/AC05/AC19: switching to an uncached, never-shared resource while open still creates exactly once", async () => {
+    const view = render(dialog());
+    await findReadyCopy();
+
+    // New resource: the query starts loading in the same commit as the switch.
+    mocks.useGetSharedLinks.mockReturnValue(
+      linksState({ data: undefined, isLoading: true }),
+    );
+    view.rerender(dialog({ resourceId: "trace-2" }));
+    await act(async () => {});
+    expect(createMutate).not.toHaveBeenCalled();
+
+    mocks.useGetSharedLinks.mockReturnValue(linksState({ data: [] }));
+    view.rerender(dialog({ resourceId: "trace-2" }));
+    await waitFor(() => expect(createMutate).toHaveBeenCalledTimes(1));
+    expect(createMutate.mock.calls[0][0]).toMatchObject({
+      resource_id: "trace-2",
+      access_type: "restricted",
+    });
+  });
+
+  it("W2: closing during an in-flight create keeps the mutation so reopen waits for it", async () => {
+    mocks.useGetSharedLinks.mockReturnValue(linksState({ data: [] }));
+    emptyRead();
+    const view = render(dialog());
+    await waitFor(() => expect(createMutate).toHaveBeenCalledTimes(1));
+    mocks.useCreateSharedLink.mockReturnValue(createState({ isPending: true }));
+    view.rerender(dialog());
+
+    view.rerender(dialog({ open: false }));
+    expect(createReset).not.toHaveBeenCalled();
+
+    // Reopen while the POST is still pending and the reread says []: no second POST.
+    emptyRead();
+    view.rerender(dialog({ open: true }));
+    await waitFor(() => expect(refetch).toHaveBeenCalled());
+    await act(async () => {});
+    expect(createMutate).toHaveBeenCalledTimes(1);
+    expect(copyButton()).toBeDisabled();
+  });
+
+  it("W4: an unparseable expiry is not ready", async () => {
+    mocks.useGetSharedLinks.mockReturnValue(
+      linksState({ data: [{ ...activeLink, expires_at: "not-a-date" }] }),
+    );
+    render(dialog());
+    expect(await screen.findByText(/no longer active/i)).toBeInTheDocument();
+    expect(copyButton()).toBeDisabled();
+    expect(createMutate).not.toHaveBeenCalled();
+  });
+});
+
 describe("ShareDialog verifier follow-ups (V2–V5)", () => {
   it("V2/AC17: a link created this session is unavailable once a newer server read lacks it", async () => {
     mocks.useGetSharedLinks.mockReturnValue(

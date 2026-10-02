@@ -58,7 +58,7 @@ function isLinkActive(link) {
   const expiresAt = link.expires_at ?? link.expiresAt;
   if (!expiresAt) return true;
   const expiry = Date.parse(expiresAt);
-  return Number.isNaN(expiry) ? true : expiry > Date.now();
+  return !Number.isNaN(expiry) && expiry > Date.now();
 }
 
 function readAccessMode(link) {
@@ -250,26 +250,6 @@ const ShareDialog = ({
     }
   }, [refetchLinks]);
 
-  // A query load that started and finished in this generation is a fresh read.
-  useEffect(() => {
-    if (!open) return;
-    if (linksLoading) {
-      loadingSeenGen.current = generation.current;
-      return;
-    }
-    if (
-      loadingSeenGen.current === generation.current &&
-      !linksError &&
-      links !== undefined
-    ) {
-      loadingSeenGen.current = -1;
-      setDiscovery({
-        gen: generation.current,
-        empty: Array.isArray(links) && links.length === 0,
-      });
-    }
-  }, [open, linksLoading, linksError, links]);
-
   useEffect(() => {
     setCreatedSeenAt(createdLink ? Date.now() : null);
   }, [createdLink]);
@@ -294,7 +274,9 @@ const ShareDialog = ({
     generation.current += 1;
     copyInFlight.current = false;
     autoCreated.current = false;
-    loadingSeenGen.current = -1;
+    // A query load already in progress for the new context belongs to the
+    // new generation, whichever effect observed it first.
+    loadingSeenGen.current = linksLoading ? generation.current : -1;
     clearCopiedTimer();
     setCopied(false);
     setPendingMode(null);
@@ -303,12 +285,34 @@ const ShareDialog = ({
     setAccessNotice(null);
     setVerifying(false);
     setRetryBusy(false);
-    createMutation.reset?.();
+    // A create still in flight on close is kept (same resource): reopen then
+    // waits for it instead of reading an empty list and creating again.
+    if (contextChanged || !createMutation.isPending) createMutation.reset?.();
     updateMutation.reset?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contextKey, open]);
 
   useEffect(() => clearCopiedTimer, []);
+
+  // A query load that started and finished in this generation is a fresh read.
+  useEffect(() => {
+    if (!open) return;
+    if (linksLoading) {
+      loadingSeenGen.current = generation.current;
+      return;
+    }
+    if (
+      loadingSeenGen.current === generation.current &&
+      !linksError &&
+      links !== undefined
+    ) {
+      loadingSeenGen.current = -1;
+      setDiscovery({
+        gen: generation.current,
+        empty: Array.isArray(links) && links.length === 0,
+      });
+    }
+  }, [open, linksLoading, linksError, links]);
 
   // Reopen reads the server before trusting a cached link (R7).
   useEffect(() => {
