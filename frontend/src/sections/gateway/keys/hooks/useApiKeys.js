@@ -8,6 +8,22 @@ import axios, { endpoints } from "src/utils/axios";
 
 const QUERY_KEY = "agentcc-api-keys";
 
+export function normalizeApiKey(key) {
+  if (!key) return key;
+
+  return {
+    ...key,
+    gatewayKeyId: key.gatewayKeyId ?? key.gateway_key_id ?? "",
+    keyPrefix: key.keyPrefix ?? key.key_prefix ?? "",
+    allowedModels: key.allowedModels ?? key.allowed_models ?? [],
+    allowedProviders: key.allowedProviders ?? key.allowed_providers ?? [],
+    createdAt: key.createdAt ?? key.created_at ?? null,
+    updatedAt: key.updatedAt ?? key.updated_at ?? null,
+    lastUsedAt: key.lastUsedAt ?? key.last_used_at ?? null,
+    expiresAt: key.expiresAt ?? key.expires_at ?? null,
+  };
+}
+
 export function useApiKeys(gatewayId) {
   const params = {};
   if (gatewayId) params.gateway_id = gatewayId;
@@ -16,7 +32,7 @@ export function useApiKeys(gatewayId) {
     queryKey: [QUERY_KEY, gatewayId],
     queryFn: async () => {
       const { data } = await axios.get(endpoints.gateway.apiKeys, { params });
-      return data.result || [];
+      return (data.result || []).map(normalizeApiKey);
     },
     enabled: Boolean(gatewayId),
     placeholderData: keepPreviousData,
@@ -29,7 +45,7 @@ export function useApiKeyDetail(keyId) {
     queryKey: [QUERY_KEY, "detail", keyId],
     queryFn: async () => {
       const { data } = await axios.get(endpoints.gateway.apiKeyDetail(keyId));
-      return data.result;
+      return normalizeApiKey(data.result);
     },
     enabled: Boolean(keyId),
     staleTime: 15000,
@@ -45,7 +61,7 @@ export function useCreateApiKey() {
         endpoints.gateway.createApiKey,
         payload,
       );
-      return data.result;
+      return normalizeApiKey(data.result);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [QUERY_KEY] });
@@ -62,7 +78,7 @@ export function useUpdateApiKey() {
         endpoints.gateway.updateApiKey(keyId),
         payload,
       );
-      return data.result;
+      return normalizeApiKey(data.result);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [QUERY_KEY] });
@@ -76,7 +92,7 @@ export function useRevokeApiKey() {
   return useMutation({
     mutationFn: async (keyId) => {
       const { data } = await axios.post(endpoints.gateway.revokeApiKey(keyId));
-      return data.result;
+      return normalizeApiKey(data.result);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [QUERY_KEY] });

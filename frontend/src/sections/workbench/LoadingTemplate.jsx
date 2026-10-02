@@ -1,8 +1,15 @@
-import { Box, LinearProgress, Stack, Typography } from "@mui/material";
+import { Box, Stack, Typography } from "@mui/material";
 import PropTypes from "prop-types";
-import React from "react";
+import React, { useMemo } from "react";
+import {
+  RocketMascot,
+  LOADING_MESSAGES,
+  pickRandom,
+} from "../../components/rocket-mascot";
 
 export default function LoadingTemplate({ sx }) {
+  const message = useMemo(() => pickRandom(LOADING_MESSAGES), []);
+
   return (
     <Box
       sx={{
@@ -13,45 +20,32 @@ export default function LoadingTemplate({ sx }) {
         justifyContent: "center",
         alignItems: "center",
         flexDirection: "column",
-        gap: 2,
+        gap: 2.5,
         ...sx,
       }}
     >
-      <Box
-        component={"img"}
-        src={"/assets/login_signup/futureagi.png"}
-        sx={{
-          height: "32px",
-          width: "32px",
-          flexShrink: 0,
-        }}
-      />
-      <Stack direction={"column"} gap={0} alignItems={"center"}>
+      <RocketMascot variant="launching" size={160} />
+      <Stack direction="column" gap={0.5} alignItems="center">
         <Typography
-          typography={"m3"}
-          color={"text.primary"}
-          fontWeight={"fontWeightMedium"}
+          typography="m3"
+          color="text.primary"
+          fontWeight="fontWeightMedium"
+          fontFamily="IBM Plex Sans"
         >
           Just a moment
         </Typography>
         <Typography
-          typography={"s2"}
-          color={"text.secondary"}
-          fontWeight={"fontWeightMedium"}
+          typography="s2"
+          color="text.secondary"
+          fontWeight="fontWeightRegular"
+          fontFamily="IBM Plex Sans"
+          fontStyle="italic"
+          textAlign="center"
+          maxWidth={360}
         >
-          We are loading your template...
+          {message}
         </Typography>
       </Stack>
-      <LinearProgress
-        sx={{
-          width: 1,
-          maxWidth: 360,
-          "& .MuiLinearProgress-bar": {
-            backgroundColor: "action.selected",
-          },
-          backgroundColor: "action.hover",
-        }}
-      />
     </Box>
   );
 }

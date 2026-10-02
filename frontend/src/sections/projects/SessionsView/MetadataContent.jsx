@@ -7,10 +7,8 @@ import { ShowComponent } from "src/components/show";
 import { canonicalKeys } from "src/utils/utils";
 
 export default function MetadataContent({ metadata = {} }) {
-  // canonicalKeys skips the camelCase aliases the axios interceptor
-  // adds next to every snake_case key — otherwise each metric renders
-  // twice: once with its labelled row and once as a blank-label ghost
-  // (because `metaDataLabelMapper` only has snake_case entries).
+  // De-dupe mixed-key local metadata so each metric renders once with the
+  // canonical label from `metaDataLabelMapper`.
   return (
     <Stack
       direction={"column"}

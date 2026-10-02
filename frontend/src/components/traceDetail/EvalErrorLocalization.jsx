@@ -8,6 +8,8 @@ import axios, { endpoints } from "src/utils/axios";
 import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "notistack";
 import ErrorLocalizeCard from "src/sections/common/ErrorLocalizeCard";
+import AudioErrorCard from "src/components/custom-audio/AudioErrorCard";
+import SkippedLocalizationBanner from "src/sections/common/SkippedLocalizationBanner";
 import { canonicalEntries } from "src/utils/utils";
 
 /**
@@ -27,6 +29,10 @@ import { canonicalEntries } from "src/utils/utils";
  *      /tracer/custom-eval-config/run_evaluation/ (which recomputes the
  *      error analysis as a side effect).
  *
+ *   3. Inline mode — call-detail payloads provide the analysis/status and
+ *      localized input directly, without IDs for starting a new task. This is
+ *      the read-only mode used by Environment run drawers.
+ *
  * UI states across both modes:
  *   • completed + analysis → ErrorLocalizeCard with highlighted segments
  *   • running / pending    → purple spinner banner
@@ -41,6 +47,7 @@ const EvalErrorLocalization = ({
   projectVersionId,
   initialAnalysis,
   initialStatus,
+  initialMessage,
   datapoint,
   selectedInputKey,
 }) => {
@@ -209,6 +216,9 @@ const EvalErrorLocalization = ({
       // Empty object — analysis ran but found no segments. Fall through
       // to the "run" card so users can re-trigger if they suspect it.
     } else {
+      const isAudioLocalization = entries.some(([, value]) =>
+        (Array.isArray(value) ? value : []).some((e) => e?.orgSegment),
+      );
       return (
         <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
           <Typography
@@ -223,22 +233,26 @@ const EvalErrorLocalization = ({
           >
             Possible Error
           </Typography>
-          {entries.map(([key, value]) => (
-            <ErrorLocalizeCard
-              key={key}
-              value={value}
-              column={selectedInputKey || key}
-              tabValue="raw"
-              datapoint={datapoint}
+          {isAudioLocalization ? (
+            <AudioErrorCard
+              valueInfos={{ errorAnalysis: analysis }}
+              column={selectedInputKey || "input"}
             />
-          ))}
+          ) : (
+            entries.map(([key, value]) => (
+              <ErrorLocalizeCard
+                key={key}
+                value={value}
+                column={selectedInputKey || key}
+                tabValue="raw"
+                datapoint={datapoint}
+              />
+            ))
+          )}
         </Box>
       );
     }
   }
-
-  // Without any IDs we can't offer run/retry actions.
-  if (!mode) return null;
 
   // ── State 2: running ─────────────────────────────────────────────────────
   if (effectiveStatus === "pending" || effectiveStatus === "running") {
@@ -302,27 +316,29 @@ const EvalErrorLocalization = ({
         <Typography variant="caption" fontWeight={600} color="error.main">
           Error localization failed
         </Typography>
-        {cellPollData?.error_message && (
+        {(cellPollData?.error_message || initialMessage) && (
           <Typography
             variant="caption"
             color="text.secondary"
             sx={{ fontSize: 10 }}
           >
-            {cellPollData.error_message}
+            {cellPollData?.error_message || initialMessage}
           </Typography>
         )}
-        <Box>
-          <Button
-            size="small"
-            variant="outlined"
-            color="primary"
-            onClick={() => triggerMutation.mutate()}
-            disabled={triggerMutation.isPending}
-            sx={{ textTransform: "none", fontSize: 11, mt: 0.25 }}
-          >
-            Retry
-          </Button>
-        </Box>
+        {mode && (
+          <Box>
+            <Button
+              size="small"
+              variant="outlined"
+              color="primary"
+              onClick={() => triggerMutation.mutate()}
+              disabled={triggerMutation.isPending}
+              sx={{ textTransform: "none", fontSize: 11, mt: 0.25 }}
+            >
+              Retry
+            </Button>
+          </Box>
+        )}
       </Box>
     );
   }
@@ -330,14 +346,9 @@ const EvalErrorLocalization = ({
   // ── State 4: skipped ─────────────────────────────────────────────────────
   if (effectiveStatus === "skipped") {
     return (
-      <Typography
-        variant="caption"
-        color="text.secondary"
-        sx={{ fontSize: 10, fontStyle: "italic" }}
-      >
-        Error localization was skipped — input data isn&apos;t available to
-        localize on.
-      </Typography>
+      <SkippedLocalizationBanner
+        message={cellPollData?.error_message || initialMessage}
+      />
     );
   }
 
@@ -415,6 +426,7 @@ EvalErrorLocalization.propTypes = {
   projectVersionId: PropTypes.string,
   initialAnalysis: PropTypes.object,
   initialStatus: PropTypes.string,
+  initialMessage: PropTypes.string,
   datapoint: PropTypes.object,
   selectedInputKey: PropTypes.string,
 };

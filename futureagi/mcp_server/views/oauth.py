@@ -3,8 +3,9 @@
 from urllib.parse import urlencode
 
 import structlog
-from django.conf import settings
-from rest_framework.permissions import AllowAny
+from django.db import DatabaseError
+from drf_yasg.utils import swagger_auto_schema
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -20,13 +21,82 @@ from mcp_server.oauth_utils import (
     generate_refresh_token,
     verify_client_secret,
 )
+from mcp_server.serializers.contracts import (
+    MCPErrorResponseSerializer,
+    MCPOAuthAuthorizeResponseSerializer,
+    MCPOAuthConsentRequestSerializer,
+    MCPOAuthRedirectResponseSerializer,
+    MCPOAuthTokenErrorResponseSerializer,
+    MCPOAuthTokenRequestSerializer,
+    MCPOAuthTokenResponseSerializer,
+)
+from tfc.utils.api_contracts import validated_request
 
 logger = structlog.get_logger(__name__)
+
+
+def _client_registry_unavailable_response(protocol="management"):
+    if protocol == "oauth":
+        return Response(
+            {
+                "error": "server_error",
+                "error_description": "OAuth client registry unavailable",
+            },
+            status=503,
+        )
+    return Response(
+        {"status": False, "error": "OAuth client registry unavailable"},
+        status=503,
+    )
+
+
+def _get_active_oauth_client(client_id, protocol="management"):
+    try:
+        return MCPOAuthClient.objects.get(client_id=client_id, is_active=True), None
+    except MCPOAuthClient.DoesNotExist:
+        return None, None
+    except DatabaseError:
+        logger.exception("mcp_oauth_client_registry_unavailable", client_id=client_id)
+        return None, _client_registry_unavailable_response(protocol=protocol)
+
+
+def _oauth_validation_error_response(errors):
+    grant_type_errors = errors.get("grant_type") if isinstance(errors, dict) else None
+    error_code = "invalid_request"
+    if grant_type_errors and any(
+        "valid choice" in str(error) for error in grant_type_errors
+    ):
+        error_code = "unsupported_grant_type"
+
+    def _field_errors_to_text(field_errors):
+        messages = (
+            field_errors if isinstance(field_errors, (list, tuple)) else [field_errors]
+        )
+        return ", ".join(str(error) for error in messages)
+
+    return Response(
+        {
+            "error": error_code,
+            "error_description": "; ".join(
+                f"{field}: {_field_errors_to_text(field_errors)}"
+                for field, field_errors in errors.items()
+            )
+            if isinstance(errors, dict)
+            else str(errors),
+        },
+        status=400,
+    )
 
 
 class MCPOAuthAuthorizeView(APIView):
     """GET /mcp/oauth/authorize/ — Return consent screen data."""
 
+    @swagger_auto_schema(
+        responses={
+            200: MCPOAuthAuthorizeResponseSerializer,
+            400: MCPErrorResponseSerializer,
+        },
+    )
     def get(self, request):
         client_id = request.query_params.get("client_id")
         redirect_uri = request.query_params.get("redirect_uri")
@@ -46,9 +116,10 @@ class MCPOAuthAuthorizeView(APIView):
                 status=400,
             )
 
-        try:
-            client = MCPOAuthClient.objects.get(client_id=client_id, is_active=True)
-        except MCPOAuthClient.DoesNotExist:
+        client, error_response = _get_active_oauth_client(client_id)
+        if error_response is not None:
+            return error_response
+        if client is None:
             return Response(
                 {"status": False, "error": "Unknown client_id"},
                 status=400,
@@ -94,6 +165,17 @@ class MCPOAuthAuthorizeView(APIView):
 class MCPOAuthConsentView(APIView):
     """POST /mcp/oauth/consent/ — Process user consent decision."""
 
+    permission_classes = [IsAuthenticated]
+
+    @validated_request(
+        request_serializer=MCPOAuthConsentRequestSerializer,
+        responses={
+            200: MCPOAuthRedirectResponseSerializer,
+            400: MCPErrorResponseSerializer,
+            403: MCPErrorResponseSerializer,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request):
         user = request.user
         organization = getattr(request, "organization", None) or getattr(
@@ -101,17 +183,11 @@ class MCPOAuthConsentView(APIView):
         )
         workspace = getattr(request, "workspace", None)
 
-        client_id = request.data.get("client_id")
-        redirect_uri = request.data.get("redirect_uri")
-        state = request.data.get("state", "")
-        approved = request.data.get("approved", False)
-        selected_groups = request.data.get("selected_groups", [])
-
-        if not client_id or not redirect_uri:
-            return Response(
-                {"status": False, "error": "Missing client_id or redirect_uri"},
-                status=400,
-            )
+        client_id = request.validated_data["client_id"]
+        redirect_uri = request.validated_data["redirect_uri"]
+        state = request.validated_data.get("state", "")
+        approved = request.validated_data.get("approved", False)
+        selected_groups = request.validated_data.get("selected_groups", [])
 
         if not organization:
             return Response(
@@ -119,9 +195,10 @@ class MCPOAuthConsentView(APIView):
                 status=403,
             )
 
-        try:
-            client = MCPOAuthClient.objects.get(client_id=client_id, is_active=True)
-        except MCPOAuthClient.DoesNotExist:
+        client, error_response = _get_active_oauth_client(client_id)
+        if error_response is not None:
+            return error_response
+        if client is None:
             return Response(
                 {"status": False, "error": "Unknown client_id"},
                 status=400,
@@ -178,32 +255,43 @@ class MCPOAuthTokenView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
 
+    @validated_request(
+        request_serializer=MCPOAuthTokenRequestSerializer,
+        responses={
+            200: MCPOAuthTokenResponseSerializer,
+            400: MCPOAuthTokenErrorResponseSerializer,
+            401: MCPOAuthTokenErrorResponseSerializer,
+        },
+        validation_error_response=_oauth_validation_error_response,
+    )
     def post(self, request):
-        grant_type = request.data.get("grant_type")
+        data = request.validated_data
+        grant_type = data.get("grant_type")
 
         if grant_type == "authorization_code":
-            return self._handle_authorization_code(request)
+            return self._handle_authorization_code(data)
         elif grant_type == "refresh_token":
-            return self._handle_refresh_token(request)
+            return self._handle_refresh_token(data)
         else:
             return Response(
                 {"error": "unsupported_grant_type"},
                 status=400,
             )
 
-    def _handle_authorization_code(self, request):
-        code = request.data.get("code")
-        client_id = request.data.get("client_id")
-        client_secret = request.data.get("client_secret")
-        redirect_uri = request.data.get("redirect_uri")
+    def _handle_authorization_code(self, data):
+        code = data.get("code")
+        client_id = data.get("client_id")
+        client_secret = data.get("client_secret")
+        redirect_uri = data.get("redirect_uri")
 
         if not all([code, client_id, client_secret]):
             return Response({"error": "invalid_request"}, status=400)
 
         # Validate client
-        try:
-            client = MCPOAuthClient.objects.get(client_id=client_id, is_active=True)
-        except MCPOAuthClient.DoesNotExist:
+        client, error_response = _get_active_oauth_client(client_id, protocol="oauth")
+        if error_response is not None:
+            return error_response
+        if client is None:
             return Response({"error": "invalid_client"}, status=401)
 
         if not verify_client_secret(client_secret, client.client_secret_hash):
@@ -295,18 +383,19 @@ class MCPOAuthTokenView(APIView):
             }
         )
 
-    def _handle_refresh_token(self, request):
-        refresh_token = request.data.get("refresh_token")
-        client_id = request.data.get("client_id")
-        client_secret = request.data.get("client_secret")
+    def _handle_refresh_token(self, data):
+        refresh_token = data.get("refresh_token")
+        client_id = data.get("client_id")
+        client_secret = data.get("client_secret")
 
         if not all([refresh_token, client_id, client_secret]):
             return Response({"error": "invalid_request"}, status=400)
 
         # Validate client
-        try:
-            client = MCPOAuthClient.objects.get(client_id=client_id, is_active=True)
-        except MCPOAuthClient.DoesNotExist:
+        client, error_response = _get_active_oauth_client(client_id, protocol="oauth")
+        if error_response is not None:
+            return error_response
+        if client is None:
             return Response({"error": "invalid_client"}, status=401)
 
         if not verify_client_secret(client_secret, client.client_secret_hash):

@@ -44,19 +44,15 @@ export const useGetAgentVersions = (id, search = null) => {
       const result = await axios.get(
         endpoints.agentPlayground.graphVersions(id),
         {
-          params: { page: pageParam, ...(search && { search }) },
+          params: {
+            page_number: pageParam,
+            ...(search && { search }),
+          },
         },
       );
       return result.data;
     },
-    getNextPageParam: (lastPage) => {
-      const currentPage = lastPage?.current_page;
-      const totalPages = lastPage?.total_pages;
-      if (currentPage < totalPages) {
-        return currentPage + 1;
-      }
-      return null;
-    },
+    getNextPageParam: (lastPage) => lastPage?.result?.metadata?.next_page,
     initialPageParam: 1,
   });
 };

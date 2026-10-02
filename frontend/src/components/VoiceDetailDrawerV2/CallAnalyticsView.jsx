@@ -12,6 +12,7 @@ import {
 import Iconify from "src/components/iconify";
 import { fmtMs } from "src/utils/utils";
 import { computeCallMetrics, enrichTurns } from "./transcriptUtils";
+import { fmtWpm } from "./formatters";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Formatting helpers
@@ -121,11 +122,6 @@ KpiCell.propTypes = {
   tone: PropTypes.oneOf(["default", "success", "warn", "danger"]),
 };
 
-const fmtWpm = (n) => {
-  if (n == null || !Number.isFinite(n)) return "—";
-  return String(Math.round(n));
-};
-
 const KpiStrip = ({ metrics, apiMetrics }) => {
   if (!metrics && !apiMetrics) return null;
   const m = metrics || {};
@@ -143,6 +139,7 @@ const KpiStrip = ({ metrics, apiMetrics }) => {
   const turnCount = api.turnCount ?? m.turnCount;
   const userInterrupts = api.userInterruptionCount;
   const aiInterrupts = api.aiInterruptionCount;
+  const stopLatency = api.avgStopTimeAfterInterruptionMs;
   const totalInterrupts = m.interruptionCount;
   const avgLatency = api.avgAgentLatencyMs;
   const userWpm = api.userWpm;
@@ -222,6 +219,12 @@ const KpiStrip = ({ metrics, apiMetrics }) => {
       tone: totalInterrupts > 0 ? "warn" : "default",
     });
   }
+
+  cells.push({
+    label: "Stop latency",
+    value: fmtMs(stopLatency, { forceMs: true }),
+    hint: "Agent's time to stop talking after the user interrupts",
+  });
 
   if (userWpm != null) {
     cells.push({
@@ -762,6 +765,7 @@ CallAnalyticsView.propTypes = {
     botWpm: PropTypes.number,
     userInterruptionCount: PropTypes.number,
     aiInterruptionCount: PropTypes.number,
+    avgStopTimeAfterInterruptionMs: PropTypes.number,
   }),
 };
 

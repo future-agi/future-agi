@@ -8,7 +8,7 @@ import axios, { endpoints } from "src/utils/axios";
 export const useCancelExecution = () => {
   return useMutation({
     mutationFn: (id) =>
-      axios.post(endpoints.testExecutions.cancelExecution(id)),
+      axios.post(endpoints.testExecutions.cancelExecution(id),{}),
   });
 };
 

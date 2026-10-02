@@ -1,4 +1,3 @@
-from typing import List, Optional
 from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
@@ -20,7 +19,7 @@ class CreateEvalTaskInput(PydanticBaseModel):
         min_length=1,
         max_length=255,
     )
-    eval_config_ids: List[UUID] = Field(
+    eval_config_ids: list[UUID] = Field(
         description=(
             "List of CustomEvalConfig IDs to run. "
             "These are eval configs already configured on the project. "
@@ -47,7 +46,7 @@ class CreateEvalTaskInput(PydanticBaseModel):
         le=1000000,
         description="Maximum number of spans to evaluate. Default 1000.",
     )
-    filters: Optional[dict] = Field(
+    filters: dict | None = Field(
         default=None,
         description=(
             "Optional filters to narrow which spans to evaluate. "
@@ -70,6 +69,9 @@ class CreateEvalTaskTool(BaseTool):
 
     def execute(self, params: CreateEvalTaskInput, context: ToolContext) -> ToolResult:
 
+        from django.db import transaction
+
+        from tfc.temporal.eval_tasks.client import start_eval_task_workflow_sync
         from tracer.models.custom_eval_config import CustomEvalConfig
         from tracer.models.eval_task import (
             EvalTask,
@@ -133,17 +135,19 @@ class CreateEvalTaskTool(BaseTool):
         if params.run_type == "historical":
             create_kwargs["spans_limit"] = params.spans_limit
 
-        eval_task = EvalTask.objects.create(**create_kwargs)
+        with transaction.atomic():
+            eval_task = EvalTask.objects.create(**create_kwargs)
 
-        # Link eval configs
-        eval_task.evals.set(eval_configs)
+            # Link eval configs
+            eval_task.evals.set(eval_configs)
 
-        # Create task logger for tracking progress
-        EvalTaskLogger.objects.create(
-            eval_task=eval_task,
-            offset=0,
-            status=EvalTaskStatus.PENDING,
-        )
+            # Create task logger for tracking progress
+            EvalTaskLogger.objects.create(
+                eval_task=eval_task,
+                offset=0,
+                status=EvalTaskStatus.PENDING,
+            )
+            transaction.on_commit(lambda: start_eval_task_workflow_sync(eval_task))
 
         eval_names = [ec.name for ec in eval_configs]
 

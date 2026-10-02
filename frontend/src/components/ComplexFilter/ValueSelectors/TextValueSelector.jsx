@@ -3,7 +3,7 @@ import PropTypes from "prop-types";
 import React from "react";
 
 const TextValueSelector = ({ definition, filter, updateFilter }) => {
-  const values = filter.filterConfig;
+  const values = filter.filter_config;
 
   return (
     <>
@@ -21,13 +21,13 @@ const TextValueSelector = ({ definition, filter, updateFilter }) => {
         label={definition?.propertyName}
         placeholder="Value"
         size="small"
-        value={values?.filterValue || ""}
+        value={values?.filter_value || ""}
         onChange={(e) =>
           updateFilter(filter.id, (existingFilter) => ({
             ...existingFilter,
-            filterConfig: {
-              ...existingFilter.filterConfig,
-              filterValue: e.target.value,
+            filter_config: {
+              ...existingFilter.filter_config,
+              filter_value: e.target.value,
             },
           }))
         }

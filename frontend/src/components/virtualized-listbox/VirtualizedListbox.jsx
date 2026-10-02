@@ -15,73 +15,69 @@ const MAX_HEIGHT = 260;
 const OVERSCAN = 10;
 const VIRTUALIZE_THRESHOLD = 50;
 
-const VirtualizedListContent = forwardRef(function VirtualizedListContent(
-  props,
-  ref,
-) {
-  const { items, style, ...rest } = props;
-  const parentRef = useRef(null);
+const VirtualizedListContent = forwardRef(
+  function VirtualizedListContent(props, ref) {
+    const { items, style, ...rest } = props;
+    const parentRef = useRef(null);
 
-  const setRef = (node) => {
-    parentRef.current = node;
-    if (typeof ref === "function") ref(node);
-    else if (ref) ref.current = node;
-  };
+    const setRef = (node) => {
+      parentRef.current = node;
+      if (typeof ref === "function") ref(node);
+      else if (ref) ref.current = node;
+    };
 
-  const virtualizer = useVirtualizer({
-    count: items.length,
-    getScrollElement: () => parentRef.current,
-    estimateSize: () => ROW_HEIGHT,
-    overscan: OVERSCAN,
-  });
+    const virtualizer = useVirtualizer({
+      count: items.length,
+      getScrollElement: () => parentRef.current,
+      estimateSize: () => ROW_HEIGHT,
+      overscan: OVERSCAN,
+    });
 
-  return (
-    <ul
-      ref={setRef}
-      {...rest}
-      style={{
-        ...style,
-        maxHeight: MAX_HEIGHT,
-        overflowY: "auto",
-        position: "relative",
-        margin: 0,
-        padding: 0,
-      }}
-    >
-      <li
+    return (
+      <ul
+        ref={setRef}
+        {...rest}
         style={{
+          ...style,
+          maxHeight: MAX_HEIGHT,
+          overflowY: "auto",
           position: "relative",
-          height: virtualizer.getTotalSize(),
-          listStyle: "none",
-          padding: 0,
           margin: 0,
+          padding: 0,
         }}
       >
-        {virtualizer.getVirtualItems().map((row) => {
-          const item = items[row.index];
-          if (!item) return null;
-          return React.cloneElement(item, {
-            key: row.key,
-            style: {
-              ...(item.props?.style || {}),
-              position: "absolute",
-              top: 0,
-              left: 0,
-              right: 0,
-              transform: `translateY(${row.start}px)`,
-              height: row.size,
-            },
-          });
-        })}
-      </li>
-    </ul>
-  );
-});
+        <li
+          style={{
+            position: "relative",
+            height: virtualizer.getTotalSize(),
+            listStyle: "none",
+            padding: 0,
+            margin: 0,
+          }}
+        >
+          {virtualizer.getVirtualItems().map((row) => {
+            const item = items[row.index];
+            if (!item) return null;
+            return React.cloneElement(item, {
+              key: row.key,
+              style: {
+                ...(item.props?.style || {}),
+                position: "absolute",
+                top: 0,
+                left: 0,
+                right: 0,
+                transform: `translateY(${row.start}px)`,
+                height: row.size,
+              },
+            });
+          })}
+        </li>
+      </ul>
+    );
+  },
+);
 
-const VirtualizedListbox = forwardRef(function VirtualizedListbox(
-  props,
-  ref,
-) {
+const VirtualizedListbox = forwardRef(function VirtualizedListbox(props, ref) {
   const { children, ...rest } = props;
   const items = React.Children.toArray(children);
 

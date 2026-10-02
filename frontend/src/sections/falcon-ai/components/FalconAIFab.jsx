@@ -1,10 +1,10 @@
-import React, { useEffect } from "react";
-import { useLocation } from "react-router-dom";
+import React, { useCallback, useEffect } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import Fab from "@mui/material/Fab";
 import SvgIcon from "@mui/material/SvgIcon";
 import CustomTooltip from "src/components/tooltip";
 import useFalconStore from "../store/useFalconStore";
-import { useDeploymentMode } from "src/hooks/useDeploymentMode";
+import { useFeatureAllowed } from "src/hooks/useCapabilities";
 
 function FalconIcon(props) {
   return (
@@ -61,24 +61,33 @@ function FalconIcon(props) {
 
 export default function FalconAIFab() {
   const { pathname } = useLocation();
-  const { isOSS } = useDeploymentMode();
+  const navigate = useNavigate();
+  const { allowed: falconAllowed } = useFeatureAllowed("falcon_ai");
   const isSidebarOpen = useFalconStore((s) => s.isSidebarOpen);
   const toggleSidebar = useFalconStore((s) => s.toggleSidebar);
+
+  const openFalconAI = useCallback(() => {
+    if (!falconAllowed) {
+      // Full page shows the capability upsell for unlicensed deployments.
+      navigate("/dashboard/falcon-ai");
+      return;
+    }
+    toggleSidebar();
+  }, [falconAllowed, navigate, toggleSidebar]);
 
   // Global keyboard shortcut: Cmd+K (Mac) / Ctrl+K (Windows)
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if (isOSS) return;
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
         e.preventDefault();
         e.stopPropagation();
-        toggleSidebar();
+        openFalconAI();
       }
     };
 
     window.addEventListener("keydown", handleKeyDown, true);
     return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, [isOSS, toggleSidebar]);
+  }, [openFalconAI]);
 
   // Hide FAB on Falcon AI full-page view
   if (pathname.startsWith("/dashboard/falcon-ai")) return null;
@@ -87,18 +96,9 @@ export default function FalconAIFab() {
   if (isSidebarOpen) return null;
 
   return (
-    <CustomTooltip
-      title={isOSS ? "Not available on self-hosted" : "Falcon AI (⌘K)"}
-      show={true}
-      placement="left"
-      arrow
-    >
+    <CustomTooltip title="Falcon AI (⌘K)" show={true} placement="left" arrow>
       <Fab
-        onClick={() => {
-          if (!isOSS) {
-            toggleSidebar();
-          }
-        }}
+        onClick={openFalconAI}
         size="medium"
         sx={{
           position: "fixed",

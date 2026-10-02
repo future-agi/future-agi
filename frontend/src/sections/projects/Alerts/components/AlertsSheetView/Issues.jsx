@@ -20,25 +20,32 @@ import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import SvgColor from "src/components/svg-color";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
-import { ShowComponent } from "src/components/show";
-import SheetFilters from "./SheetFilters";
 import ColumnDropdown from "src/components/ColumnDropdown/ColumnDropdown";
+import FilterPanel from "src/components/filter-panel/FilterPanel";
 import { useDebounce } from "src/hooks/use-debounce";
 import axios, { endpoints } from "src/utils/axios";
-import { issueColumns } from "../../common";
+import {
+  ISSUE_FILTER_FIELDS,
+  issueColumns,
+  normalizeAlertDetail,
+} from "../../common";
 import { camelCase } from "lodash";
 import { useAlertStore } from "../../store/useAlertStore";
 import { useAlertSheetView } from "../../store/useAlertSheetView";
 import { useAlertSheetFilterShallow } from "../../store/useAlertSheetFilterStore";
+import { buildFilterParams } from "../../store/alertFilterState";
 import logger from "src/utils/logger";
 import { APP_CONSTANTS } from "src/utils/constants";
 
 const TableAction = () => {
-  const { hasValidFilters, toggleFilter } = useAlertSheetFilterShallow();
+  const { activeFilters, hasValidFilters, setActiveFilters } =
+    useAlertSheetFilterShallow();
   const { setColumnDefs, columnDefs, setColumns, columns } =
     useAlertSheetView();
   const columnConfigureRef = useRef();
+  const filterRef = useRef();
   const [openColumnConfigure, setOpenColumnConfigure] = useState(false);
+  const [openFilter, setOpenFilter] = useState(false);
 
   const onColumnVisibilityChange = (columnId) => {
     const newColumnData = columns.map((col) =>
@@ -103,7 +110,8 @@ const TableAction = () => {
     <>
       <Stack direction={"row"} gap={2.5}>
         <IconButton
-          onClick={toggleFilter}
+          ref={filterRef}
+          onClick={() => setOpenFilter(true)}
           size="small"
           sx={{
             color: "text.primary",
@@ -151,6 +159,16 @@ const TableAction = () => {
           />
         </IconButton>
       </Stack>
+      <FilterPanel
+        anchorEl={filterRef?.current}
+        open={openFilter}
+        onClose={() => setOpenFilter(false)}
+        filterFields={ISSUE_FILTER_FIELDS}
+        currentFilters={activeFilters}
+        onApply={setActiveFilters}
+        basicOnly
+        placement="bottom-end"
+      />
       <ColumnDropdown
         open={openColumnConfigure}
         onClose={() => setOpenColumnConfigure(false)}
@@ -256,11 +274,7 @@ export default function Issues() {
     setGridRef,
   } = useAlertSheetView();
   const { openSheetView, handleProjectChange } = useAlertStore();
-  const {
-    showFilterSection: showFilter,
-    activeFilters,
-    hasValidFilters,
-  } = useAlertSheetFilterShallow();
+  const { activeFilters } = useAlertSheetFilterShallow();
 
   const timeoutRef = useRef(null);
   const agGridRef = useRef();
@@ -273,23 +287,10 @@ export default function Issues() {
 
   const debouncedSearchTerm = useDebounce(searchQuery, 300);
 
-  const extractedFilterObject = useMemo(() => {
-    if (!hasValidFilters) return null;
-
-    const filterObj = activeFilters.reduce((acc, filter) => {
-      const { filterType, filterValue } = filter;
-
-      if (Array.isArray(filterValue) && filterValue.length > 0) {
-        acc[filterType] = filterValue;
-      } else if (typeof filterValue === "string" && filterValue.trim() !== "") {
-        acc[filterType] = filterValue;
-      }
-
-      return acc;
-    }, {});
-
-    return Object.keys(filterObj).length > 0 ? filterObj : null;
-  }, [activeFilters, hasValidFilters]);
+  const extractedFilterObject = useMemo(
+    () => buildFilterParams(activeFilters),
+    [activeFilters],
+  );
 
   const defaultColDef = useMemo(
     () => ({
@@ -299,14 +300,14 @@ export default function Issues() {
       resizable: true,
       suppressHeaderMenuButton: true,
       suppressHeaderContextMenu: true,
-      suppressMultiSort: true,
     }),
     [],
   );
 
   const gridOptions = {
     pagination: false,
-    rowSelection: { mode: "multiRow" },
+    rowSelection: { mode: "multiRow", enableClickSelection: false },
+    suppressMultiSort: true,
   };
 
   const refreshRowsManual = useCallback(async () => {
@@ -387,19 +388,7 @@ export default function Issues() {
 
           //for column filtering and rearranging;
           setColumns(issueColumns);
-          setAlertRuleDetails({
-            ...data.result,
-            name: data?.result?.name,
-            createdBy: data?.result?.created_by?.name,
-            createdAt: data.result?.created_at,
-            lastTriggered: data?.result?.last_checked_at,
-            metricType: data?.result?.metric_type,
-            metricName: data?.result?.metric_name,
-            thresholdOperator: data?.result?.threshold_operator,
-            criticalThresholdValue: data?.result?.critical_threshold_value,
-            warningThresholdValue: data?.result?.warning_threshold_value,
-            notificationEmails: data?.result?.notification_emails,
-          });
+          setAlertRuleDetails(normalizeAlertDetail(data?.result));
 
           if (data?.result?.project) {
             handleProjectChange(data.result.project);
@@ -565,9 +554,6 @@ export default function Issues() {
           <TableAction />
         )}
       </Stack>
-      <ShowComponent condition={showFilter}>
-        <SheetFilters />
-      </ShowComponent>
       <Box className="ag-theme-quartz" sx={{ height: "calc(100vh - 215px)" }}>
         <AgGridReact
           ref={agGridRef}

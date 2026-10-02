@@ -99,9 +99,9 @@ describe("tokenMatchesLeaf", () => {
   });
 
   it("hits via exact substring on the value", () => {
-    expect(
-      tokenMatchesLeaf("gpt", "attributes.llm.model", "gpt-4", []),
-    ).toBe(true);
+    expect(tokenMatchesLeaf("gpt", "attributes.llm.model", "gpt-4", [])).toBe(
+      true,
+    );
   });
 
   it("falls back to Levenshtein when no substring hit exists", () => {

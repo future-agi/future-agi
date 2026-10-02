@@ -145,7 +145,6 @@ const OptimizationRunDetail = () => {
       filter: false,
       resizable: true,
       suppressMenu: true,
-      suppressMultiSort: true,
     }),
     [],
   );

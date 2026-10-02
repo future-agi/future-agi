@@ -1,17 +1,24 @@
 """Internal API endpoints for MCP tool calls (used by stdio proxy and direct API)."""
 
+import json
 import time
 
 import structlog
-from django.conf import settings
+from drf_yasg.utils import swagger_auto_schema
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from ai_tools.base import ToolContext
-from ai_tools.registry import registry
-from mcp_server.constants import CATEGORY_TO_GROUP
+from mcp_server.api_executor import APIExecutionError, MCPRequestContext, executor
 from mcp_server.exceptions import RateLimitExceededError
+from mcp_server.generated_registry import registry
 from mcp_server.rate_limiter import check_rate_limit, get_rate_limit_tier
+from mcp_server.serializers.contracts import (
+    MCPErrorResponseSerializer,
+    MCPToolCallRequestSerializer,
+    MCPToolCallResponseSerializer,
+    MCPToolListResponseSerializer,
+)
 from mcp_server.usage_helpers import (
     get_enabled_tools,
     get_or_create_connection,
@@ -19,6 +26,8 @@ from mcp_server.usage_helpers import (
     record_usage,
     update_session_counters,
 )
+from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_errors import build_error_envelope
 
 logger = structlog.get_logger(__name__)
 
@@ -26,16 +35,24 @@ logger = structlog.get_logger(__name__)
 class MCPToolCallView(APIView):
     """Execute a tool call via internal API (used by stdio proxy)."""
 
-    def post(self, request):
-        tool_name = request.data.get("tool_name")
-        params = request.data.get("params", {})
-        session_id = request.data.get("session_id")
+    permission_classes = [IsAuthenticated]
 
-        if not tool_name:
-            return Response(
-                {"status": False, "error": "tool_name is required"},
-                status=400,
-            )
+    @validated_request(
+        request_serializer=MCPToolCallRequestSerializer,
+        responses={
+            200: MCPToolCallResponseSerializer,
+            400: MCPErrorResponseSerializer,
+            403: MCPErrorResponseSerializer,
+            404: MCPErrorResponseSerializer,
+            429: MCPErrorResponseSerializer,
+            500: MCPErrorResponseSerializer,
+        },
+        reject_unknown_fields=True,
+    )
+    def post(self, request):
+        tool_name = request.validated_data["tool_name"]
+        params = request.validated_data.get("params", {})
+        session_id = request.validated_data.get("session_id")
 
         user = request.user
         organization = getattr(request, "organization", None) or getattr(
@@ -45,7 +62,7 @@ class MCPToolCallView(APIView):
 
         if not organization:
             return Response(
-                {"status": False, "error": "No organization context"},
+                build_error_envelope("No organization context", status_code=403),
                 status=403,
             )
 
@@ -53,7 +70,7 @@ class MCPToolCallView(APIView):
         tool = registry.get(tool_name)
         if not tool:
             return Response(
-                {"status": False, "error": f"Tool not found: {tool_name}"},
+                build_error_envelope(f"Tool not found: {tool_name}", status_code=404),
                 status=404,
             )
 
@@ -67,7 +84,11 @@ class MCPToolCallView(APIView):
             check_rate_limit(str(organization.id), tier)
         except RateLimitExceededError as e:
             return Response(
-                {"status": False, "error": str(e), "retry_after": e.retry_after},
+                build_error_envelope(
+                    str(e),
+                    status_code=429,
+                    extra={"retry_after": e.retry_after},
+                ),
                 status=429,
                 headers={"Retry-After": str(e.retry_after)},
             )
@@ -76,48 +97,69 @@ class MCPToolCallView(APIView):
         enabled_tools = get_enabled_tools(connection)
         if tool_name not in enabled_tools:
             return Response(
-                {"status": False, "error": f"Tool is disabled: {tool_name}"},
+                build_error_envelope(
+                    f"Tool is disabled: {tool_name}",
+                    status_code=403,
+                ),
                 status=403,
             )
 
-        # Build context and execute
-        context = ToolContext(
+        # Build context and execute through the existing Django API boundary.
+        context = MCPRequestContext(
             user=user,
             organization=organization,
             workspace=workspace,
+            api_key=getattr(request, "org_api_key", None),
         )
 
         start_time = time.time()
         try:
-            result = tool.run(params, context)
+            data = executor.execute_sync(tool, params, context)
             latency_ms = int((time.time() - start_time) * 1000)
 
             # Update session counters
-            update_session_counters(session, result.is_error)
+            update_session_counters(session, is_error=False)
 
             # Record usage
-            tool_group = CATEGORY_TO_GROUP.get(tool.category, "")
             record_usage(
                 session=session,
                 tool_name=tool_name,
-                tool_group=tool_group,
+                tool_group=tool.group,
                 params=params,
-                status="error" if result.is_error else "success",
-                error_msg=result.content if result.is_error else "",
+                status="success",
+                error_msg="",
                 latency_ms=latency_ms,
             )
 
             return Response(
                 {
-                    "status": not result.is_error,
+                    "status": True,
                     "result": {
-                        "content": result.content,
-                        "data": result.data,
-                        "is_error": result.is_error,
-                        "error_code": result.error_code,
+                        "content": json.dumps(data, default=str),
+                        "data": data,
+                        "is_error": False,
+                        "error_code": None,
                     },
                     "session_id": str(session.id),
                 }
+            )
+        except APIExecutionError as e:
+            latency_ms = int((time.time() - start_time) * 1000)
+            update_session_counters(session, is_error=True)
+            record_usage(
+                session=session,
+                tool_name=tool_name,
+                tool_group=tool.group,
+                params=params,
+                status="error",
+                error_msg=str(e),
+                latency_ms=latency_ms,
+            )
+            return Response(
+                build_error_envelope(
+                    str(e), status_code=e.status_code, extra={"details": e.data}
+                ),
+                status=e.status_code,
             )
         except Exception as e:
             latency_ms = int((time.time() - start_time) * 1000)
@@ -125,11 +167,10 @@ class MCPToolCallView(APIView):
 
             update_session_counters(session, is_error=True)
 
-            tool_group = CATEGORY_TO_GROUP.get(tool.category, "")
             record_usage(
                 session=session,
                 tool_name=tool_name,
-                tool_group=tool_group,
+                tool_group=tool.group,
                 params=params,
                 status="error",
                 error_msg=str(e),
@@ -137,7 +178,7 @@ class MCPToolCallView(APIView):
             )
 
             return Response(
-                {"status": False, "error": str(e)},
+                build_error_envelope(str(e), status_code=500),
                 status=500,
             )
 
@@ -145,6 +186,14 @@ class MCPToolCallView(APIView):
 class MCPToolListView(APIView):
     """List available tools for the authenticated user."""
 
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        responses={
+            200: MCPToolListResponseSerializer,
+            403: MCPErrorResponseSerializer,
+        },
+    )
     def get(self, request):
         user = request.user
         organization = getattr(request, "organization", None) or getattr(
@@ -154,7 +203,7 @@ class MCPToolListView(APIView):
 
         if not organization:
             return Response(
-                {"status": False, "error": "No organization context"},
+                build_error_envelope("No organization context", status_code=403),
                 status=403,
             )
 
@@ -164,7 +213,7 @@ class MCPToolListView(APIView):
         tools = []
         for tool in registry.list_all():
             if tool.name in enabled_tools:
-                tools.append(tool.to_dict())
+                tools.append(tool.to_discovery_dict())
 
         return Response(
             {

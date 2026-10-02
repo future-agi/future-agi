@@ -64,8 +64,10 @@ export default function GroupsGrid({ isEvalsView, onGroupSelect }) {
     });
 
   // Flatten all pages data into a single array
-  const allGroups = data?.pages?.flatMap((page) => page?.result?.data) || [];
-  const totalCount = data?.pages?.[0]?.result?.total_count || 0;
+  const allGroups =
+    data?.pages?.flatMap((page) => evalGroupsPagePayload(page)?.data || []) ||
+    [];
+  const totalCount = evalGroupsPagePayload(data?.pages?.[0])?.total_count || 0;
 
   const scrollContainerRef = useScrollEnd(() => {
     if (!isLoading && !isFetchingNextPage && hasNextPage) {
@@ -308,3 +310,7 @@ GroupsGrid.propTypes = {
   isEvalsView: PropTypes.bool,
   onGroupSelect: PropTypes.func,
 };
+
+function evalGroupsPagePayload(page) {
+  return page?.result || page;
+}

@@ -1,56 +1,92 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   buildConditionsForRule,
+  getTraceRulePanelMode,
   isScopeReady,
+  removeSubmittableFilterAtIndex,
   ruleConditionsToFilters,
-} from "../create-rule-dialog";
-
-vi.mock("src/api/annotation-queues/annotation-queues", () => ({
-  extractErrorMessage: (_error, fallback) => fallback,
-  useCreateAutomationRule: () => ({ mutate: vi.fn(), isPending: false }),
-}));
-
-vi.mock("src/api/develop/develop-detail", () => ({
-  getDatasetQueryOptions: () => ({}),
-}));
-
-vi.mock("src/api/project/project-detail", () => ({
-  useGetProjectDetails: () => ({ data: null, isLoading: false }),
-}));
+} from "../../utils/automation-rule-utils";
 
 describe("create rule Observe filter serialization", () => {
+  it("uses the same trace, voice, span, and session panel modes as Observe", () => {
+    expect(getTraceRulePanelMode("trace")).toEqual({
+      source: "traces",
+      tab: "trace",
+      isSpansView: false,
+    });
+    expect(getTraceRulePanelMode("trace", { isVoiceProject: true })).toEqual({
+      source: "traces",
+      tab: "voiceCalls",
+      isSpansView: false,
+    });
+    expect(getTraceRulePanelMode("observation_span")).toEqual({
+      source: "traces",
+      tab: "spans",
+      isSpansView: true,
+    });
+    expect(getTraceRulePanelMode("trace_session")).toEqual({
+      source: "sessions",
+      tab: undefined,
+      isSpansView: false,
+    });
+  });
+
+  it("removes only the selected duplicate chip", () => {
+    const duplicate = {
+      column_id: "status",
+      filter_config: {
+        filter_type: "text",
+        filter_op: "in",
+        filter_value: ["OK"],
+      },
+    };
+    const filters = [
+      { ...duplicate, id: "first" },
+      { id: "draft", column_id: "", filter_config: {} },
+      {
+        ...duplicate,
+        id: "second",
+        filter_config: { ...duplicate.filter_config, filter_value: ["ERROR"] },
+      },
+    ];
+
+    expect(
+      removeSubmittableFilterAtIndex(filters, 1).map((row) => row.id),
+    ).toEqual(["first", "draft"]);
+  });
+
   it("preserves trace Observe filter col_type values and voice scope", () => {
     const filters = [
       {
         id: "attr",
-        columnId: "customer_tier",
-        displayName: "Customer Tier",
-        filterConfig: {
-          filterType: "text",
-          filterOp: "equals",
-          filterValue: "vip",
+        column_id: "customer_tier",
+        display_name: "Customer Tier",
+        filter_config: {
+          filter_type: "text",
+          filter_op: "equals",
+          filter_value: "vip",
           col_type: "SPAN_ATTRIBUTE",
         },
       },
       {
         id: "eval",
-        columnId: "quality_eval",
-        displayName: "Quality Eval",
-        filterConfig: {
-          filterType: "number",
-          filterOp: "greater_than_or_equal",
-          filterValue: 80,
+        column_id: "quality_eval",
+        display_name: "Quality Eval",
+        filter_config: {
+          filter_type: "number",
+          filter_op: "greater_than_or_equal",
+          filter_value: 80,
           col_type: "EVAL_METRIC",
         },
       },
       {
         id: "annotation",
-        columnId: "quality_label",
-        displayName: "Quality Label",
-        filterConfig: {
-          filterType: "number",
-          filterOp: "between",
-          filterValue: [70, 100],
+        column_id: "quality_label",
+        display_name: "Quality Label",
+        filter_config: {
+          filter_type: "number",
+          filter_op: "between",
+          filter_value: [70, 100],
           col_type: "ANNOTATION",
         },
       },
@@ -127,27 +163,82 @@ describe("create rule Observe filter serialization", () => {
 
     expect(filters).toHaveLength(1);
     expect(filters[0]).toMatchObject({
-      columnId: "quality_eval",
-      displayName: "Quality Eval",
-      filterConfig: {
-        filterType: "number",
-        filterOp: "greater_than",
-        filterValue: 80,
+      column_id: "quality_eval",
+      display_name: "Quality Eval",
+      filter_config: {
+        filter_type: "number",
+        filter_op: "greater_than",
+        filter_value: 80,
         col_type: "EVAL_METRIC",
       },
     });
     expect(filters[0].id).toBeTruthy();
   });
 
+  it("preserves annotation property identity when a saved rule is edited", () => {
+    const savedFilter = {
+      column_id: "quality_label",
+      property_id: "annotation:quality-label-id",
+      display_name: "Quality Label",
+      filter_config: {
+        filter_type: "categorical",
+        filter_op: "in",
+        filter_value: ["Passed"],
+        col_type: "ANNOTATION",
+      },
+    };
+
+    const [editableFilter] = ruleConditionsToFilters({
+      source_type: "trace",
+      conditions: { filter: [savedFilter] },
+    });
+    expect(editableFilter.property_id).toBe("annotation:quality-label-id");
+
+    const conditions = buildConditionsForRule(
+      "trace",
+      [editableFilter],
+      { project_id: "project-1" },
+      {},
+    );
+    expect(conditions.filter).toEqual([savedFilter]);
+  });
+
+  it("round-trips mixed typed attribute values without changing their storage family", () => {
+    const savedFilter = {
+      column_id: "mixed_attribute",
+      display_name: "Mixed Attribute",
+      filter_config: {
+        filter_type: "text",
+        filter_op: "in",
+        filter_value: ["vip", 2, true],
+        col_type: "SPAN_ATTRIBUTE",
+        attribute_value_types: ["string", "number", "boolean"],
+      },
+    };
+
+    const [editableFilter] = ruleConditionsToFilters({
+      source_type: "trace",
+      conditions: { filter: [savedFilter] },
+    });
+    const conditions = buildConditionsForRule(
+      "trace",
+      [editableFilter],
+      { project_id: "project-1" },
+      {},
+    );
+
+    expect(conditions.filter).toEqual([savedFilter]);
+  });
+
   it("uses queue project scope for span and session rules when no override is set", () => {
     const filters = [
       {
         id: "span-name",
-        columnId: "span_name",
-        filterConfig: {
-          filterType: "text",
-          filterOp: "contains",
-          filterValue: "tool",
+        column_id: "span_name",
+        filter_config: {
+          filter_type: "text",
+          filter_op: "contains",
+          filter_value: "tool",
           col_type: "SYSTEM_METRIC",
         },
       },
@@ -175,11 +266,11 @@ describe("create rule Observe filter serialization", () => {
     const filters = [
       {
         id: "status",
-        columnId: "status",
-        filterConfig: {
-          filterType: "categorical",
-          filterOp: "equals",
-          filterValue: "completed",
+        column_id: "status",
+        filter_config: {
+          filter_type: "categorical",
+          filter_op: "equals",
+          filter_value: "completed",
         },
       },
     ];
@@ -207,12 +298,12 @@ describe("create rule Observe filter serialization", () => {
       "trace",
       [
         {
-          id: "latency",
-          columnId: "latency",
-          filterConfig: {
-            filterType: "number",
-            filterOp: "greater_than",
-            filterValue: 500,
+          id: "latency-ms",
+          column_id: "latency_ms",
+          filter_config: {
+            filter_type: "number",
+            filter_op: "greater_than",
+            filter_value: 500,
             col_type: "SYSTEM_METRIC",
           },
         },
@@ -221,7 +312,7 @@ describe("create rule Observe filter serialization", () => {
       {},
     );
 
-    expect(conditions.rules[0].field).toBe("latency_ms");
+    expect(conditions).not.toHaveProperty("rules");
     expect(conditions.filter[0].column_id).toBe("latency_ms");
   });
 
@@ -229,11 +320,11 @@ describe("create rule Observe filter serialization", () => {
     const filters = [
       {
         id: "status",
-        columnId: "status",
-        filterConfig: {
-          filterType: "categorical",
-          filterOp: "in",
-          filterValue: ["OK"],
+        column_id: "status",
+        filter_config: {
+          filter_type: "categorical",
+          filter_op: "in",
+          filter_value: ["OK"],
           col_type: "SYSTEM_METRIC",
         },
       },
@@ -255,7 +346,7 @@ describe("create rule Observe filter serialization", () => {
     expect(
       buildConditionsForRule(
         "dataset_row",
-        filters,
+        [],
         { dataset_id: "wrong-dataset" },
         { dataset: { id: "queue-dataset" }, is_default: false },
       ).scope,
@@ -275,11 +366,11 @@ describe("create rule Observe filter serialization", () => {
     const filters = [
       {
         id: "status",
-        columnId: "status",
-        filterConfig: {
-          filterType: "categorical",
-          filterOp: "in",
-          filterValue: ["OK"],
+        column_id: "status",
+        filter_config: {
+          filter_type: "categorical",
+          filter_op: "in",
+          filter_value: ["OK"],
           col_type: "SYSTEM_METRIC",
         },
       },
@@ -301,7 +392,7 @@ describe("create rule Observe filter serialization", () => {
     expect(
       buildConditionsForRule(
         "dataset_row",
-        filters,
+        [],
         { dataset_id: "selected-dataset" },
         { dataset: { id: "queue-dataset" }, is_default: true },
       ).scope,

@@ -56,7 +56,7 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
   } = useForm({
     defaultValues: {
       projectName: projectDetail?.name || "",
-      samplingRate: projectDetail?.samplingRate * 100,
+      samplingRate: getSamplingRatePercent(projectDetail, module),
     },
     resolver: zodResolver(projectSchema),
     mode: "onChange",
@@ -105,10 +105,10 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
     if (projectDetail) {
       reset({
         projectName: projectDetail.name || "",
-        samplingRate: projectDetail.samplingRate * 100,
+        samplingRate: getSamplingRatePercent(projectDetail, module),
       });
     }
-  }, [projectDetail, reset]);
+  }, [module, projectDetail, reset]);
 
   const handleDeleteClick = () => {
     handleClose();
@@ -232,8 +232,9 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
                         fontWeight={"fontWeightRegular"}
                         color={"text.secondary"}
                       >
-                        Defines the percentage of data processed for agent
-                        compass
+                        Controls Error Feed only. Eval tasks have their own
+                        sampling rate and are not affected by this. Error Feed
+                        uses very few credits.
                       </Typography>
                       <a
                         href="https://docs.futureagi.com/docs/error-feed/features/sampling"
@@ -280,7 +281,7 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
                   control={control}
                   name={"samplingRate"}
                   helperText={errors.samplingRate?.message}
-                  defaultValue={projectDetail?.samplingRate * 100}
+                  defaultValue={getSamplingRatePercent(projectDetail, module)}
                   min={0}
                   valueLabelDisplay="auto"
                   max={100}
@@ -352,12 +353,11 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
               aria-label="Cancel-configure-project"
               variant="outlined"
               color="inherit"
+              size="small"
               onClick={handleClose}
               sx={{
                 width: "90px",
-                height: "30px",
-                fontSize: "12px",
-                color: "text.disabled",
+                textTransform: "none",
               }}
             >
               Cancel
@@ -366,11 +366,11 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
               aria-label="delete-project"
               variant="outlined"
               color="inherit"
+              size="small"
               onClick={handleDeleteClick}
               sx={{
+                minWidth: "90px",
                 textTransform: "none",
-                fontSize: "14px",
-                color: "text.disabled",
               }}
             >
               Delete
@@ -378,12 +378,12 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
             <LoadingButton
               aria-label="update-project"
               type="submit"
+              size="small"
               loading={isUpdating}
               disabled={!isValid}
               sx={{
-                textTransform: "none",
-                fontSize: "14px",
                 minWidth: "90px",
+                textTransform: "none",
               }}
               variant="contained"
               color="primary"
@@ -414,3 +414,10 @@ ConfigureProject.propTypes = {
   refreshGrid: PropTypes.func,
   module: PropTypes.oneOf(["prototype", "observe"]),
 };
+
+export function getSamplingRatePercent(projectDetail, module) {
+  if (projectDetail == null) {
+    return module === "observe" ? 0 : undefined;
+  }
+  return projectDetail.sampling_rate * 100;
+}

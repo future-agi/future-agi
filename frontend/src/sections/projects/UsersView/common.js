@@ -4,6 +4,11 @@ import EvaluateCellRenderer from "./UserCellRenderers/EvaluateCellRenderer";
 import { GeneralStatCellRenderer } from "./UserCellRenderers/GenericMetricCellRenderer";
 import ActionsCellRenderer from "./UserCellRenderers/ActionsCellRenderer";
 import {
+  formatNumberWithCommas,
+  formatUserSessionCount,
+  formatUserSessionCountTooltip,
+} from "./sessionCountHonesty";
+import {
   endOfToday,
   sub,
   format,
@@ -18,6 +23,12 @@ import {
 } from "date-fns";
 import logger from "src/utils/logger";
 import { canonicalEntries, formatMs } from "../../../utils/utils";
+import { serializeFilterListForApi } from "src/api/contracts/filter-contract";
+
+export const buildUsersRequestFilters = (filters) =>
+  serializeFilterListForApi(filters || []);
+
+export { formatNumberWithCommas, formatUserSessionCount };
 
 export const initialSessionVisibility = {
   session_id: true,
@@ -90,11 +101,11 @@ export const transformDateFilterToBackendFilters = (dateFilter) => {
 
   return [
     {
-      columnId: "created_at",
-      filterConfig: {
-        filterType: "datetime",
-        filterOp: "between",
-        filterValue: dateFilter.dateFilter.map((d) =>
+      column_id: "created_at",
+      filter_config: {
+        filter_type: "datetime",
+        filter_op: "between",
+        filter_value: dateFilter.dateFilter.map((d) =>
           new Date(d).toISOString(),
         ),
       },
@@ -143,11 +154,11 @@ export const transformGraphDataToChartData = (response) => {
 };
 
 export const userDefaultFilter = {
-  columnId: "",
-  filterConfig: {
-    filterType: "",
-    filterOp: "",
-    filterValue: "",
+  column_id: "",
+  filter_config: {
+    filter_type: "",
+    filter_op: "",
+    filter_value: "",
   },
 };
 
@@ -198,7 +209,8 @@ export const getUsersColumnConfig = () => {
       field: "num_sessions",
       minWidth: 200,
       flex: 1,
-      valueFormatter: (params) => formatNumberWithCommas(params.value),
+      valueFormatter: formatUserSessionCount,
+      tooltipValueGetter: formatUserSessionCountTooltip,
     },
     {
       headerName: "Avg Session Duration (s)",
@@ -571,13 +583,6 @@ export const timeFilters = [
   { label: "Last 30 days", value: 30 },
   { label: "Last 90 days", value: 90 },
 ];
-
-export const formatNumberWithCommas = (value) => {
-  if (value == null || isNaN(value)) return value;
-  const [intPart, decPart] = value.toString().split(".");
-  const formattedInt = Number(intPart).toLocaleString();
-  return decPart ? `${formattedInt}.${decPart}` : formattedInt;
-};
 
 export const LAST_ACTIVE_STYLES = {
   fontFamily: "IBM Plex Sans",

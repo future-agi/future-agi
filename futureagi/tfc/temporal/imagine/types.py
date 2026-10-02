@@ -29,6 +29,7 @@ class FetchTraceInput:
 class RunAnalysisInput:
     prompt: str
     trace_context: str  # formatted trace data for LLM
+    org_id: str  # organization for capability gating
 
 
 @dataclass

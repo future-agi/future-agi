@@ -9,13 +9,8 @@ The view layer should use:
   - simulate.serializers.response.run_test  — response/output serializers
 """
 
-import traceback
-
 import structlog
-from django.db.models import Count, Q
 from rest_framework import serializers
-
-logger = structlog.get_logger(__name__)
 
 from simulate.models import (
     AgentDefinition,
@@ -23,12 +18,13 @@ from simulate.models import (
     Scenarios,
     SimulateEvalConfig,
 )
-from simulate.models.test_execution import CallExecution
 from simulate.serializers.response.agent_definition import (
     AgentDefinitionResponseSerializer,
 )
 from simulate.serializers.response.scenarios import ScenarioResponseSerializer
 from simulate.serializers.simulator_agent import SimulatorAgentSerializer
+
+logger = structlog.get_logger(__name__)
 
 
 class SimulateEvalConfigSimpleSerializer(serializers.ModelSerializer):
@@ -64,6 +60,87 @@ class SimulateEvalConfigSimpleSerializer(serializers.ModelSerializer):
         if obj.eval_group:
             return obj.eval_group.name
         return None
+
+
+class RunTestListAgentSerializer(serializers.ModelSerializer):
+    """Agent fields rendered by the paginated run-test list."""
+
+    class Meta:
+        model = AgentDefinition
+        fields = ["id", "agent_name", "agent_type", "provider", "contact_number"]
+        read_only_fields = fields
+
+
+class RunTestListScenarioSerializer(serializers.ModelSerializer):
+    """Scenario fields rendered by the paginated run-test list."""
+
+    scenario_type_display = serializers.CharField(
+        source="get_scenario_type_display", read_only=True
+    )
+    dataset_rows = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Scenarios
+        fields = [
+            "id",
+            "name",
+            "description",
+            "scenario_type",
+            "scenario_type_display",
+            "dataset_rows",
+        ]
+        read_only_fields = fields
+
+    def get_dataset_rows(self, obj):
+        return getattr(obj, "_dataset_row_count", 0) or 0
+
+
+class RunTestListEvalSerializer(serializers.ModelSerializer):
+    """Evaluation fields rendered by the paginated run-test list."""
+
+    eval_group = serializers.CharField(
+        source="eval_group.name", read_only=True, allow_null=True
+    )
+    model_type = serializers.CharField(source="model", read_only=True, allow_null=True)
+
+    class Meta:
+        model = SimulateEvalConfig
+        fields = ["id", "name", "model_type", "status", "eval_group"]
+        read_only_fields = fields
+
+
+class RunTestListSummarySerializer(serializers.ModelSerializer):
+    """Bounded list-card shape; detail views keep using RunTestSerializer."""
+
+    agent_definition_detail = RunTestListAgentSerializer(
+        source="agent_definition", read_only=True, allow_null=True
+    )
+    scenarios_detail = RunTestListScenarioSerializer(
+        source="scenarios", many=True, read_only=True
+    )
+    evals_detail = RunTestListEvalSerializer(
+        source="simulate_eval_configs", many=True, read_only=True
+    )
+    source_type_display = serializers.CharField(
+        source="get_source_type_display", read_only=True
+    )
+    last_run_at = serializers.DateTimeField(
+        read_only=True, default=None, allow_null=True
+    )
+
+    class Meta:
+        model = RunTest
+        fields = [
+            "id",
+            "name",
+            "source_type",
+            "source_type_display",
+            "agent_definition_detail",
+            "scenarios_detail",
+            "evals_detail",
+            "last_run_at",
+        ]
+        read_only_fields = fields
 
 
 class RunTestSerializer(serializers.ModelSerializer):
@@ -187,11 +264,17 @@ class RunTestSerializer(serializers.ModelSerializer):
                             **snapshot,
                             "agent_type": instance.agent_definition.agent_type,
                         }
-                    data["agent_version"] = {
+                    agent_version_data = {
                         "id": instance.agent_version.id,
                         "name": instance.agent_version.version_name,
                         "configuration_snapshot": snapshot,
                     }
+                    try:
+                        creds = instance.agent_version.credentials
+                        agent_version_data["api_key"] = creds.get_masked_api_key()
+                    except Exception:
+                        pass
+                    data["agent_version"] = agent_version_data
                 else:
                     # Try to use prefetched versions first to avoid N+1.
                     # _prefetched_versions is set by RunTestListView.get() using:
@@ -215,11 +298,17 @@ class RunTestSerializer(serializers.ModelSerializer):
                                 **snapshot,
                                 "agent_type": instance.agent_definition.agent_type,
                             }
-                        data["agent_version"] = {
+                        agent_version_data = {
                             "id": latest_version.id,
                             "name": latest_version.version_name,
                             "configuration_snapshot": snapshot,
                         }
+                        try:
+                            creds = latest_version.credentials
+                            agent_version_data["api_key"] = creds.get_masked_api_key()
+                        except Exception:
+                            pass
+                        data["agent_version"] = agent_version_data
         except Exception as e:
             logger.exception(
                 f"Error getting agent version: {e} for run test {instance.id}"

@@ -29,10 +29,13 @@ export const getSuffixForCharts = (header, considerIndex = null) => {
   //this is a temporary implementation
   let newHeader = header;
   if (considerIndex || Array.isArray(header)) {
+    const target = header?.[considerIndex || 0];
     newHeader = {
-      ...header?.[considerIndex || 0],
+      ...target,
       isNumericEval:
-        header?.[considerIndex || 0]?.outputType === OutputTypes.NUMERIC,
+        (target?.outputType ?? target?.output_type) === OutputTypes.NUMERIC,
+      isNumericEvalPercentage:
+        target?.isNumericEvalPercentage ?? target?.is_numeric_eval_percentage,
     };
   }
 

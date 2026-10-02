@@ -61,6 +61,7 @@ func (h *Handlers) CreateSpeech(w http.ResponseWriter, r *http.Request) {
 	rc.SpeechRequest = &req
 
 	setAuthMetadataFromRequest(rc, r)
+	applyCallerMetadata(rc, r, nil)
 
 	// Resolve timeout and apply.
 	timeout := h.resolveTimeout(rc, r)
@@ -197,6 +198,7 @@ func (h *Handlers) CreateTranslation(w http.ResponseWriter, r *http.Request) {
 	rc.TranslationReq = &req
 
 	setAuthMetadataFromRequest(rc, r)
+	applyCallerMetadata(rc, r, nil)
 
 	// Resolve timeout and apply.
 	timeout := h.resolveTimeout(rc, r)
@@ -327,6 +329,7 @@ func (h *Handlers) CreateTranscription(w http.ResponseWriter, r *http.Request) {
 	rc.TranscriptionReq = &req
 
 	setAuthMetadataFromRequest(rc, r)
+	applyCallerMetadata(rc, r, nil)
 
 	// Resolve timeout and apply.
 	timeout := h.resolveTimeout(rc, r)
@@ -503,6 +506,7 @@ func (h *Handlers) StreamSpeech(w http.ResponseWriter, r *http.Request) {
 	rc.SpeechRequest = &req
 
 	setAuthMetadataFromRequest(rc, r)
+	applyCallerMetadata(rc, r, nil)
 
 	// Resolve timeout and apply.
 	timeout := h.resolveTimeout(rc, r)

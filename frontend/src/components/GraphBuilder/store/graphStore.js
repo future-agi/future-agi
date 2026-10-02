@@ -7,6 +7,7 @@ import {
 } from "@xyflow/react";
 import { getRandomId } from "src/utils/utils";
 import logger from "src/utils/logger";
+import { validateGraphConnectivity } from "../connectivity";
 
 export const NODE_TYPES = {
   CONVERSATION: "conversation",
@@ -62,6 +63,7 @@ const getInitialNodes = () => {
       id: `Conversation_${randomId}`,
       type: NODE_TYPES.CONVERSATION,
       position: { x: 250, y: 50 },
+      deletable: false,
       data: {
         ...getDefaultNodeData(NODE_TYPES.CONVERSATION, randomId),
         isStart: true,
@@ -75,6 +77,7 @@ const initialEdges = [];
 export const useGraphStore = create((set, get) => ({
   nodes: getInitialNodes(),
   edges: initialEdges,
+  orphanFocusSignal: 0,
 
   onNodesChange: (changes) => {
     set({
@@ -96,12 +99,38 @@ export const useGraphStore = create((set, get) => ({
         type: MarkerType.ArrowClosed,
       },
       data: {
-        condition: "Default condition",
+        prompt: "Default condition",
       },
     };
 
+    const edges = addEdge(edge, get().edges);
+    const currentNodes = get().nodes;
+    const hasErrorHighlight = currentNodes.some(
+      (node) => node.data?.highlightColor === "error",
+    );
+    if (!hasErrorHighlight) {
+      set({ edges });
+      return;
+    }
+
+    const { orphanIds } = validateGraphConnectivity(currentNodes, edges);
+    const stillOrphan = new Set(orphanIds);
+    let clearedHighlight = false;
+    const nodes = currentNodes.map((node) => {
+      if (node.data?.highlightColor !== "error" || stillOrphan.has(node.id)) {
+        return node;
+      }
+      clearedHighlight = true;
+      const data = { ...node.data };
+      delete data.highlightColor;
+      return { ...node, data };
+    });
     set({
-      edges: addEdge(edge, get().edges),
+      edges,
+      ...(clearedHighlight && {
+        nodes,
+        orphanFocusSignal: get().orphanFocusSignal + 1,
+      }),
     });
   },
 
@@ -139,6 +168,25 @@ export const useGraphStore = create((set, get) => ({
             : { ...node, ...newData }
           : node,
       ),
+    });
+  },
+
+  setOrphanHighlights: (orphanIds) => {
+    const idSet = new Set(orphanIds ?? []);
+    set({
+      orphanFocusSignal: get().orphanFocusSignal + 1,
+      nodes: get().nodes.map((node) => {
+        const shouldHighlight = idSet.has(node.id);
+        const isHighlighted = node.data?.highlightColor === "error";
+        if (shouldHighlight === isHighlighted) return node;
+        const data = { ...node.data };
+        if (shouldHighlight) {
+          data.highlightColor = "error";
+        } else {
+          delete data.highlightColor;
+        }
+        return { ...node, data };
+      }),
     });
   },
 
@@ -194,6 +242,7 @@ export const useGraphStore = create((set, get) => ({
       position: { x: node.position.x + 200, y: node.position.y + 200 },
       data: {
         ...node.data,
+        ...(node.data?.isStart && { isStart: false }),
         name: newNodeName,
       },
       // Explicitly reset React Flow properties that might cause grouping

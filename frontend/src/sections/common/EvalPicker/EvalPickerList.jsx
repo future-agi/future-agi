@@ -1,6 +1,7 @@
 import {
   Box,
   Button,
+  Checkbox,
   Chip,
   CircularProgress,
   IconButton,
@@ -16,10 +17,12 @@ import {
   Tooltip,
   Avatar,
   Skeleton,
+  Collapse,
+  ButtonBase,
   useTheme,
 } from "@mui/material";
 // date-fns available if needed for timestamps
-import { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import Iconify from "src/components/iconify";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
@@ -35,7 +38,7 @@ import {
 import EvalFilterPanel from "src/sections/evals/components/EvalFilterPanel";
 import { EVAL_TAGS } from "src/sections/evals/constant";
 import PropTypes from "prop-types";
-import axios, { endpoints } from "src/utils/axios";
+import { evalDetailQuery } from "src/sections/evals/hooks/useEvalDetail";
 import { useEvalPickerData } from "./hooks/useEvalPickerData";
 import { useEvalPickerContext } from "./context/EvalPickerContext";
 import { useCompositeDetail } from "src/sections/evals/hooks/useCompositeEval";
@@ -178,24 +181,18 @@ const EvalDetailPanel = ({ evalData }) => {
     evalData?.templateId || evalData?.template_id || evalData?.id;
 
   const { data: configData, isLoading } = useQuery({
-    queryKey: ["evals", "detail", templateId],
-    queryFn: async () => {
-      const { data } = await axios.get(
-        endpoints.develop.eval.getEvalDetail(templateId),
-      );
-      return data?.result;
-    },
+    ...evalDetailQuery(templateId),
     enabled: !!templateId,
     staleTime: 30000,
   });
 
-  // `templateType` tells us single vs composite; `evalType` splits single
+  // `template_type` tells us single vs composite; `eval_type` splits single
   // into llm / agent / code. Fall back to the row data (evalData) when the
   // detail fetch hasn't resolved yet so the panel still renders something.
   const templateType =
     configData?.template_type ||
     configData?.templateType ||
-    evalData?.templateType ||
+    evalData?.template_type ||
     "single";
   const isComposite = templateType === "composite";
 
@@ -454,11 +451,16 @@ EvalDetailPanel.propTypes = { evalData: PropTypes.object.isRequired };
 // ── Loading skeleton rows ──
 
 const SkeletonRows = (
-  { count = 8 }, // eslint-disable-line react/prop-types
+  { count = 8, multiSelect = false }, // eslint-disable-line react/prop-types
 ) => (
   <>
     {Array.from({ length: count }).map((_, i) => (
       <TableRow key={i}>
+        {multiSelect && (
+          <TableCell sx={{ width: 36, p: 0.5 }}>
+            <Skeleton variant="rectangular" width={18} height={18} />
+          </TableCell>
+        )}
         <TableCell sx={{ width: 40, p: 0.5 }}>
           <Skeleton variant="circular" width={24} height={24} />
         </TableCell>
@@ -485,10 +487,219 @@ const SkeletonRows = (
   </>
 );
 
+// ── Added evals ──
+
+/*
+  The evals already on the caller, in their own box under the category chips.
+  Collapsed by default with a count, so the list below is only what can still
+  be added. A search that matches an added eval opens the box and narrows it
+  too — looking for an eval you already have should say so, not come back empty.
+*/
+const AddedEvalsSection = ({ addedEvals, searchQuery, action }) => {
+  // `open` is a tri-state override: null lets the search decide (expanded
+  // whenever it matches something); true/false is the user's last click on
+  // the header. A plain boolean toggle would do nothing while a search match
+  // forces the box open, and would leave it stuck open after the search that
+  // opened it was cleared.
+  const [open, setOpen] = useState(null);
+  const q = (searchQuery || "").trim().toLowerCase();
+  const shown = q
+    ? addedEvals.filter((e) =>
+        `${e.name} ${e.meta || ""}`.toLowerCase().includes(q),
+      )
+    : addedEvals;
+  const expanded = open ?? Boolean(q && shown.length > 0);
+
+  // A new search re-arms auto-expand only when the user had closed the box;
+  // a box they opened stays open and says when nothing matches.
+  useEffect(() => {
+    setOpen((v) => (v === false ? null : v));
+  }, [q]);
+
+  if (!addedEvals.length) return null;
+  return (
+    <Box
+      sx={{
+        flexShrink: 0,
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: 1,
+        overflow: "hidden",
+        mb: 1.5,
+      }}
+    >
+      <ButtonBase
+        onClick={() => setOpen(!expanded)}
+        aria-expanded={expanded}
+        sx={{
+          width: "100%",
+          display: "flex",
+          alignItems: "center",
+          gap: 1,
+          px: 1.5,
+          py: 1,
+          justifyContent: "flex-start",
+          textAlign: "left",
+          "&:hover": { bgcolor: "action.hover" },
+        }}
+      >
+        <Iconify
+          icon="solar:alt-arrow-right-linear"
+          width={14}
+          sx={{
+            color: "text.secondary",
+            transition: "transform 150ms",
+            transform: expanded ? "rotate(90deg)" : "none",
+          }}
+        />
+        <Iconify
+          icon="solar:check-circle-linear"
+          width={16}
+          sx={{ color: "text.secondary" }}
+        />
+        <Typography sx={{ fontSize: "13px", fontWeight: 600 }}>
+          Added evaluations
+        </Typography>
+        <Box
+          sx={{
+            px: 0.75,
+            height: 18,
+            minWidth: 18,
+            borderRadius: 0.75,
+            display: "grid",
+            placeItems: "center",
+            bgcolor: "action.selected",
+          }}
+        >
+          <Typography
+            sx={{
+              fontSize: "11px",
+              fontWeight: 700,
+              fontVariantNumeric: "tabular-nums",
+            }}
+          >
+            {q ? `${shown.length}/${addedEvals.length}` : addedEvals.length}
+          </Typography>
+        </Box>
+      </ButtonBase>
+      <Collapse in={expanded} timeout={150} unmountOnExit>
+        <Box
+          sx={{
+            borderTop: "1px solid",
+            borderColor: "divider",
+            maxHeight: 188,
+            overflowY: "auto",
+          }}
+        >
+          {shown.length === 0 ? (
+            <Typography
+              sx={{
+                px: 1.5,
+                py: 1.25,
+                fontSize: "12px",
+                color: "text.secondary",
+              }}
+            >
+              None of the added evaluations match your search.
+            </Typography>
+          ) : (
+            shown.map((e, i) => (
+              <Box
+                key={`${e.id ?? ""}::${e.name ?? ""}`}
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 1,
+                  px: 1.5,
+                  py: 0.875,
+                  borderTop: i ? "1px solid" : "none",
+                  borderColor: "divider",
+                }}
+              >
+                <Iconify
+                  icon="solar:check-read-linear"
+                  width={14}
+                  sx={{ color: "success.main", flexShrink: 0 }}
+                />
+                <Typography
+                  noWrap
+                  sx={{ fontSize: "13px", fontWeight: 500, minWidth: 0 }}
+                >
+                  {e.name}
+                </Typography>
+                <Box sx={{ flex: 1 }} />
+                {e.meta && (
+                  <Typography
+                    noWrap
+                    sx={{
+                      fontSize: "12px",
+                      color: "text.secondary",
+                      flexShrink: 0,
+                    }}
+                  >
+                    {e.meta}
+                  </Typography>
+                )}
+                {action && (!action.show || action.show(e)) && (
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    disabled={action.disabled}
+                    onClick={() => action.onClick(e)}
+                    startIcon={
+                      action.busyName === e.name ? (
+                        <CircularProgress size={12} color="inherit" />
+                      ) : null
+                    }
+                    sx={{
+                      flexShrink: 0,
+                      height: 24,
+                      fontSize: 11,
+                      textTransform: "none",
+                      px: 1,
+                    }}
+                  >
+                    {action.label}
+                  </Button>
+                )}
+              </Box>
+            ))
+          )}
+        </Box>
+      </Collapse>
+    </Box>
+  );
+};
+
+AddedEvalsSection.propTypes = {
+  addedEvals: PropTypes.array.isRequired,
+  searchQuery: PropTypes.string,
+  action: PropTypes.shape({
+    label: PropTypes.string.isRequired,
+    onClick: PropTypes.func.isRequired,
+    // Name of the added eval whose action is in flight; its row shows a spinner.
+    // Matched by name because one template can back several added evals.
+    busyName: PropTypes.string,
+    disabled: PropTypes.bool,
+    show: PropTypes.func,
+  }),
+};
+
 // ── Main Component ──
 
 const EvalPickerList = ({ onSelectEval }) => {
-  const { existingEvals, sourceId, lockedFilters } = useEvalPickerContext();
+  const {
+    existingEvals,
+    source,
+    sourceId,
+    lockedFilters,
+    multiSelect,
+    selectedIds,
+    onToggleSelect,
+    addedEvals,
+    addedEvalAction,
+  } = useEvalPickerContext();
+  const useScopedEvals = source === "dataset" || source === "experiment";
   const {
     items,
     total,
@@ -504,7 +715,11 @@ const EvalPickerList = ({ onSelectEval }) => {
     setSorting,
     filters,
     setFilters,
-  } = useEvalPickerData({ sourceId, lockedFilters });
+  } = useEvalPickerData({
+    sourceId: useScopedEvals ? sourceId : null,
+    enabled: true,
+    lockedFilters,
+  });
 
   const [filterAnchorEl, setFilterAnchorEl] = useState(null);
   const [expandedEvalId, setExpandedEvalId] = useState(null);
@@ -521,6 +736,30 @@ const EvalPickerList = ({ onSelectEval }) => {
     [existingEvals],
   );
 
+  // With the box on, added evals live there and are left out of the list —
+  // matched by template id, or by name for rows the caller knows only by name.
+  const listItems = useMemo(() => {
+    if (!Array.isArray(addedEvals)) return items;
+    const addedIds = new Set(addedEvals.map((e) => e.id));
+    const addedNames = new Set(
+      addedEvals.map((e) =>
+        String(e.name || "")
+          .trim()
+          .toLowerCase(),
+      ),
+    );
+    return items.filter(
+      (e) =>
+        !isAlreadyAdded(e.id) &&
+        !addedIds.has(e.id) &&
+        !addedNames.has(
+          String(e.name || "")
+            .trim()
+            .toLowerCase(),
+        ),
+    );
+  }, [items, addedEvals, isAlreadyAdded]);
+
   const activeFilterCount = useMemo(() => {
     if (!filters) return 0;
     let count = 0;
@@ -535,7 +774,7 @@ const EvalPickerList = ({ onSelectEval }) => {
     setExpandedEvalId((prev) => (prev === evalId ? null : evalId));
   }, []);
 
-  const sortField = sorting[0]?.id || "lastUpdated";
+  const sortField = sorting[0]?.id || "last_updated";
   const sortDesc = sorting[0]?.desc ?? true;
   const handleSort = useCallback(
     (field) => {
@@ -613,104 +852,111 @@ const EvalPickerList = ({ onSelectEval }) => {
             }
           />
 
-            <Button
-              size="small"
-              variant="outlined"
-              startIcon={<Iconify icon="mage:filter" width={14} />}
-              onClick={(e) => setFilterAnchorEl(e.currentTarget)}
-              sx={{
-                textTransform: "none",
-                fontSize: "12px",
-                height: "32px",
-                borderColor: activeFilterCount > 0 ? "primary.main" : "divider",
-                color:
-                  activeFilterCount > 0 ? "primary.main" : "text.secondary",
-              }}
-            >
-              Filter{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}
-            </Button>
-  
+          <Button
+            size="small"
+            variant="outlined"
+            startIcon={<Iconify icon="mage:filter" width={14} />}
+            onClick={(e) => setFilterAnchorEl(e.currentTarget)}
+            sx={{
+              textTransform: "none",
+              fontSize: "12px",
+              height: "32px",
+              borderColor: activeFilterCount > 0 ? "primary.main" : "divider",
+              color: activeFilterCount > 0 ? "primary.main" : "text.secondary",
+            }}
+          >
+            Filter{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}
+          </Button>
         </Box>
       </Box>
 
       {/* Quick tag filters */}
-    
-        <Box
-          sx={{
-            display: "flex",
-            gap: 0.5,
-            flexWrap: "wrap",
-            alignItems: "center",
-          }}
-        >
-          {EVAL_TAGS.map((tag) => {
-            const activeTagValues = filters?.tags || [];
-            const tagValues = tag.match || [tag.value];
-            const isActive = tagValues.some((v) => activeTagValues.includes(v));
-            return (
-              <Chip
-                key={tag.value}
-                icon={<Iconify icon={tag.icon} width={14} />}
-                label={tag.label}
-                size="small"
-                variant={isActive ? "filled" : "outlined"}
-                color={isActive ? "primary" : "default"}
-                onClick={() => {
-                  if (isActive) {
-                    const toRemove = new Set(tagValues);
-                    setFilters((prev) => {
-                      const safe = prev || {};
-                      const remaining = (safe.tags || []).filter(
-                        (v) => !toRemove.has(v),
-                      );
-                      if (!remaining.length) {
-                        const next = { ...safe };
-                        delete next.tags;
-                        return Object.keys(next).length ? next : null;
-                      }
-                      return { ...safe, tags: remaining };
-                    });
-                  } else {
-                    setFilters((prev) => {
-                      const safe = prev || {};
-                      return {
-                        ...safe,
-                        tags: [...(safe.tags || []), ...tagValues],
-                      };
-                    });
-                  }
-                  setPage(0);
-                  setExpandedEvalId(null);
-                }}
-                sx={{ fontSize: "11px", height: 26, cursor: "pointer" }}
-              />
-            );
-          })}
-          {filters?.tags?.length ? (
+
+      <Box
+        sx={{
+          display: "flex",
+          gap: 0.5,
+          flexWrap: "wrap",
+          alignItems: "center",
+        }}
+      >
+        {EVAL_TAGS.map((tag) => {
+          const activeTagValues = filters?.tags || [];
+          const tagValues = tag.match || [tag.value];
+          const isActive = tagValues.some((v) => activeTagValues.includes(v));
+          return (
             <Chip
-              label="Clear"
+              key={tag.value}
+              icon={<Iconify icon={tag.icon} width={14} />}
+              label={tag.label}
               size="small"
-              variant="outlined"
-              onDelete={() => {
-                setFilters((prev) => {
-                  const safe = prev || {};
-                  const next = { ...safe };
-                  delete next.tags;
-                  return Object.keys(next).length ? next : null;
-                });
+              variant={isActive ? "filled" : "outlined"}
+              color={isActive ? "primary" : "default"}
+              onClick={() => {
+                if (isActive) {
+                  const toRemove = new Set(tagValues);
+                  setFilters((prev) => {
+                    const safe = prev || {};
+                    const remaining = (safe.tags || []).filter(
+                      (v) => !toRemove.has(v),
+                    );
+                    if (!remaining.length) {
+                      const next = { ...safe };
+                      delete next.tags;
+                      return Object.keys(next).length ? next : null;
+                    }
+                    return { ...safe, tags: remaining };
+                  });
+                } else {
+                  setFilters((prev) => {
+                    const safe = prev || {};
+                    return {
+                      ...safe,
+                      tags: [...(safe.tags || []), ...tagValues],
+                    };
+                  });
+                }
                 setPage(0);
                 setExpandedEvalId(null);
               }}
-              sx={{ fontSize: "11px", height: 26 }}
+              sx={{ fontSize: "11px", height: 26, cursor: "pointer" }}
             />
-          ) : null}
-        </Box>
+          );
+        })}
+        {filters?.tags?.length ? (
+          <Chip
+            label="Clear"
+            size="small"
+            variant="outlined"
+            onDelete={() => {
+              setFilters((prev) => {
+                const safe = prev || {};
+                const next = { ...safe };
+                delete next.tags;
+                return Object.keys(next).length ? next : null;
+              });
+              setPage(0);
+              setExpandedEvalId(null);
+            }}
+            sx={{ fontSize: "11px", height: 26 }}
+          />
+        ) : null}
+      </Box>
+
+      {Array.isArray(addedEvals) && (
+        <AddedEvalsSection
+          addedEvals={addedEvals}
+          searchQuery={searchQuery}
+          action={addedEvalAction}
+        />
+      )}
 
       {/* Scrollable Table */}
       <TableContainer sx={{ flex: 1, overflow: "auto", minHeight: 0 }}>
         <Table size="small" stickyHeader sx={{ tableLayout: "fixed" }}>
           <TableHead>
             <TableRow>
+              {multiSelect && <TableCell sx={{ ...headerCellSx, width: 36 }} />}
               <TableCell sx={{ ...headerCellSx, width: 36 }} />
               <TableCell sx={{ ...headerCellSx, width: 72 }} />
               <TableCell sx={{ ...headerCellSx }}>
@@ -744,22 +990,24 @@ const EvalPickerList = ({ onSelectEval }) => {
           </TableHead>
           <TableBody>
             {isLoading ? (
-              <SkeletonRows />
-            ) : items.length === 0 ? (
+              <SkeletonRows multiSelect={multiSelect} />
+            ) : listItems.length === 0 ? (
               <TableRow>
                 <TableCell
-                  colSpan={7}
+                  colSpan={multiSelect ? 8 : 7}
                   align="center"
                   sx={{ py: 6, color: "text.disabled" }}
                 >
-                  No evaluations found
+                  {items.length > 0
+                    ? "Every matching evaluation on this page is already added."
+                    : "No evaluations found"}
                 </TableCell>
               </TableRow>
             ) : (
-              items.map((evalItem) => {
+              listItems.map((evalItem) => {
                 const isExpanded = expandedEvalId === evalItem.id;
                 const added = isAlreadyAdded(evalItem.id);
-                const createdBy = evalItem.createdByName || "Unknown";
+                const createdBy = evalItem.created_by_name || "Unknown";
                 const isSystem = createdBy === "System";
 
                 return [
@@ -774,6 +1022,20 @@ const EvalPickerList = ({ onSelectEval }) => {
                       "&:hover": { bgcolor: "action.hover" },
                     }}
                   >
+                    {/* Multi-select checkbox */}
+                    {multiSelect && (
+                      <TableCell sx={{ ...bodyCellSx, width: 36, px: 0.5 }}>
+                        <Checkbox
+                          size="small"
+                          disabled={added}
+                          checked={added || !!selectedIds?.has(evalItem.id)}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={() => onToggleSelect?.(evalItem)}
+                          sx={{ p: 0.25 }}
+                        />
+                      </TableCell>
+                    )}
+
                     {/* Expand chevron */}
                     <TableCell sx={{ ...bodyCellSx, width: 36, px: 0.5 }}>
                       <IconButton size="small" sx={{ p: 0.25 }}>
@@ -831,22 +1093,22 @@ const EvalPickerList = ({ onSelectEval }) => {
                         >
                           {evalItem.name}
                         </Typography>
-                        {evalItem.currentVersion &&
-                          !evalItem.isDraft &&
-                          evalItem.currentVersion !== "draft" && (
-                            <VersionBadge version={evalItem.currentVersion} />
+                        {evalItem.current_version &&
+                          !evalItem.is_draft &&
+                          evalItem.current_version !== "draft" && (
+                            <VersionBadge version={evalItem.current_version} />
                           )}
                       </Box>
                     </TableCell>
 
                     {/* Type */}
                     <TableCell sx={{ ...bodyCellSx, width: 80 }}>
-                      <TypeBadge type={evalItem.templateType} />
+                      <TypeBadge type={evalItem.template_type} />
                     </TableCell>
 
                     {/* Eval Type */}
                     <TableCell sx={{ ...bodyCellSx, width: 80 }}>
-                      <EvalTypeBadge type={evalItem.evalType} />
+                      <EvalTypeBadge type={evalItem.eval_type} />
                     </TableCell>
 
                     {/* Output */}
@@ -856,8 +1118,8 @@ const EvalPickerList = ({ onSelectEval }) => {
                         noWrap
                         sx={{ fontSize: "12px" }}
                       >
-                        {OUTPUT_TYPE_LABELS[evalItem.outputType] ||
-                          evalItem.outputType}
+                        {OUTPUT_TYPE_LABELS[evalItem.output_type] ||
+                          evalItem.output_type}
                       </Typography>
                     </TableCell>
 
@@ -910,7 +1172,7 @@ const EvalPickerList = ({ onSelectEval }) => {
                   isExpanded && (
                     <TableRow key={`${evalItem.id}-detail`}>
                       <TableCell
-                        colSpan={7}
+                        colSpan={multiSelect ? 8 : 7}
                         sx={{
                           p: 0,
                           borderBottom: "1px solid",

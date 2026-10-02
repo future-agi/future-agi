@@ -13,10 +13,9 @@ import uuid
 from io import BytesIO
 from urllib.parse import urlparse
 
-import av
 import numpy as np
-import requests
-import soundfile as sf
+from tfc.utils.lazy_extras import av
+from tfc.utils.lazy_extras import soundfile as sf
 import structlog
 from PIL import Image
 
@@ -26,7 +25,106 @@ from requests.exceptions import ChunkedEncodingError, ConnectionError, RequestEx
 logger = structlog.get_logger(__name__)
 from tfc.settings.settings import MINIO_URL, UPLOAD_BUCKET_NAME
 from tfc.utils.error_codes import get_error_message
-from tfc.utils.storage_client import ensure_bucket, get_object_url, get_storage_client
+from tfc.utils.ssrf_guard import SsrfBlocked, safe_fetch
+from tfc.utils.storage_client import (
+    ensure_bucket,
+    extract_object_key,
+    get_object_url,
+    get_storage_client,
+)
+
+MAX_VIDEO_FILE_SIZE = 200 * 1024 * 1024
+# safe_fetch default max_bytes is 25 MiB (a general safety cap); real
+# images/documents are routinely larger, so pass explicit caps to preserve
+# pre-SSRF-refactor behavior without leaving payloads unbounded.
+MAX_IMAGE_FILE_SIZE = 50 * 1024 * 1024
+MAX_DOCUMENT_FILE_SIZE = 100 * 1024 * 1024
+
+
+def is_own_storage_url(value, bucket_name):
+    """True if the URL is a well-formed reference to our own S3/GCS/MinIO
+    bucket.
+
+    Matches only the URL shapes produced by :func:`get_object_url` (AWS S3
+    virtual-hosted, GCS path-style, or path-style on the configured MinIO
+    endpoint). Attacker-controlled hostnames that merely contain the bucket
+    name as a substring (e.g. ``https://<bucket>.attacker.com/x`` or
+    ``https://evil.com/<bucket>/x``) do NOT match.
+    """
+    if not isinstance(value, str) or not bucket_name:
+        return False
+    try:
+        parsed = urlparse(value)
+    except Exception:
+        return False
+    if parsed.scheme not in ("http", "https"):
+        return False
+    host = (parsed.hostname or "").lower()
+    path = parsed.path or ""
+    bucket = bucket_name.lower()
+    bucket_path = "/" + bucket
+
+    # AWS S3 virtual-hosted style: `<bucket>.s3.<region?>.amazonaws.com`.
+    # Parent MUST be amazonaws.com — matching arbitrary parents lets
+    # `<bucket>.attacker.com` spoof.
+    if host == bucket + ".s3.amazonaws.com":
+        return True
+    if host.startswith(bucket + ".s3.") and host.endswith(".amazonaws.com"):
+        return True
+
+    # GCS path style on the fixed googleapis.com host.
+    if host == "storage.googleapis.com" and (
+        path.startswith(bucket_path + "/") or path == bucket_path
+    ):
+        return True
+
+    # MinIO / custom S3-compatible endpoints: trust only the explicitly
+    # configured browser-facing and server-facing endpoints. Stored artifact
+    # URLs can use either form (for example ``localhost:9005`` outside Docker
+    # and ``minio:9000`` between services).
+    configured_endpoints = (MINIO_URL, os.getenv("S3_ENDPOINT_URL", ""))
+    for endpoint in configured_endpoints:
+        try:
+            own_host = (urlparse(endpoint).hostname or "").lower()
+        except Exception:
+            own_host = ""
+        if own_host and host == own_host and (
+            path.startswith(bucket_path + "/") or path == bucket_path
+        ):
+            return True
+
+    return False
+
+
+def _ssrf_safe_get(url, *, headers=None, timeout=20, max_bytes=None):
+    """SSRF-guarded GET.
+
+    SsrfBlocked (permanent rejection: private IP, bad scheme, blocked redirect)
+    propagates unchanged so retry loops can catch it and fail fast. Other
+    ValueErrors from safe_fetch (transient network / body-size / bad redirect)
+    become RequestException so existing retry blocks treat them as transient.
+    """
+    kwargs = {"method": "GET", "timeout": timeout, "headers": headers}
+    if max_bytes is not None:
+        kwargs["max_bytes"] = max_bytes
+    try:
+        return safe_fetch(url, **kwargs)
+    except SsrfBlocked:
+        raise
+    except ValueError as e:
+        raise RequestException(str(e)) from e
+
+
+def get_compare_local_root():
+    return os.getenv("COMPARE_DATASET_LOCAL_ROOT") or os.path.join("media", "compare")
+
+
+def get_compare_local_dir(compare_id):
+    return os.path.join(get_compare_local_root(), str(compare_id))
+
+
+def get_compare_metadata_path(compare_id):
+    return os.path.join(get_compare_local_dir(compare_id), "metadata.json")
 
 # Map raw format names from detect_audio_format() (ffmpeg) to proper MIME types.
 # Shared by upload_audio_to_s3() and upload_audio_to_s3_duration().
@@ -252,7 +350,12 @@ def download_document_from_url(doc_url, max_retries=5, timeout=20):
 
     for attempt in range(max_retries):
         try:
-            response = requests.get(doc_url, headers=headers, timeout=timeout)
+            response = _ssrf_safe_get(
+                doc_url,
+                headers=headers,
+                timeout=timeout,
+                max_bytes=MAX_DOCUMENT_FILE_SIZE,
+            )
 
             if response.status_code == 200:
                 # Get the content
@@ -309,6 +412,11 @@ def download_document_from_url(doc_url, max_retries=5, timeout=20):
                     f"Unable to process link. Status Code: {response.status_code}"
                 )
 
+        except SsrfBlocked as e:
+            # Permanent rejection (private IP, bad scheme, redirect to blocked
+            # target). Retrying will not help — surface immediately.
+            logger.warning(f"SSRF-blocked URL, not retrying: {e}")
+            raise ValueError(f"ERROR_DOWNLOADING_DOCUMENT: {e}") from e
         except RequestException as e:
             logger.error(f"Attempt {attempt + 1} failed with error: {e}")
             if attempt < max_retries - 1:
@@ -332,7 +440,7 @@ def upload_document_to_s3(
 
         bucket_name = UPLOAD_BUCKET_NAME
 
-        if bucket_name in file_url:
+        if is_own_storage_url(file_url, bucket_name):
             return file_url
 
         # Supported document formats
@@ -497,7 +605,7 @@ def upload_image_to_s3(
             img_bytes = in_mem_file.getvalue()
 
         else:
-            if bucket_name in img_base64_str:
+            if is_own_storage_url(img_base64_str, bucket_name):
                 return img_base64_str
 
             # Check if the input is already a URL
@@ -524,7 +632,11 @@ def upload_image_to_s3(
                     traceback.print_exc()
                     raise ValueError(get_error_message("INVALID_BASE64_STRING")) from e
 
-        img = Image.open(BytesIO(img_bytes))
+        try:
+            img = Image.open(BytesIO(img_bytes))
+        except Image.UnidentifiedImageError as e:
+            logger.warning(f"Skipping image upload: payload is not a valid image file: {str(e)}")
+            raise ValueError(get_error_message("INVALID_IMAGE")) from e
         format_detected = img.format
         if format_detected:
             format_detected = format_detected.lower()
@@ -687,7 +799,7 @@ def upload_audio_to_s3_duration(
                 audio_bytes, audio_format = convert_to_mp3(audio_bytes)
 
         else:
-            if bucket_name in audio_base64_str:
+            if is_own_storage_url(audio_base64_str, bucket_name):
                 if not duration_seconds:
                     if is_valid_url(audio_base64_str):
                         audio_bytes = download_audio_from_url(audio_base64_str)
@@ -882,7 +994,12 @@ def download_image_from_url(image_url, max_retries=5, timeout=20):
             logger.info(
                 f"[DEBUG] Attempt {attempt + 1}/{max_retries} for URL: {image_url}"
             )
-            with requests.get(image_url, headers=headers, timeout=timeout) as response:
+            with _ssrf_safe_get(
+                image_url,
+                headers=headers,
+                timeout=timeout,
+                max_bytes=MAX_IMAGE_FILE_SIZE,
+            ) as response:
                 logger.info(
                     f"[DEBUG] Response status: {response.status_code}, URL: {image_url}"
                 )
@@ -916,6 +1033,9 @@ def download_image_from_url(image_url, max_retries=5, timeout=20):
                         f"Unable to process link. Status Code: {response.status_code}"
                     )
 
+        except SsrfBlocked as e:
+            logger.warning(f"SSRF-blocked URL, not retrying: {e}")
+            raise ValueError(f"ERROR_DOWNLOADING_IMAGE: {e}") from e
         except RequestException as e:
             logger.error(
                 f"[DEBUG] Attempt {attempt + 1} failed with RequestException: {e}, URL: {image_url}"
@@ -929,7 +1049,9 @@ def download_image_from_url(image_url, max_retries=5, timeout=20):
 def convert_image_from_url_to_base64(image_url, max_retries=5, timeout=120):
     for attempt in range(max_retries):
         try:
-            response = requests.get(image_url, timeout=timeout)
+            response = _ssrf_safe_get(
+                image_url, timeout=timeout, max_bytes=MAX_IMAGE_FILE_SIZE
+            )
 
             if response.status_code == 200:
                 # Attempt to verify if the response is an image by using Pillow
@@ -959,6 +1081,9 @@ def convert_image_from_url_to_base64(image_url, max_retries=5, timeout=120):
                     f"Unable to process link. Status Code: {response.status_code}"
                 )
 
+        except SsrfBlocked as e:
+            logger.warning(f"SSRF-blocked URL, not retrying: {e}")
+            raise ValueError(f"ERROR_DOWNLOADING_IMAGE: {e}") from e
         except RequestException as e:
             logger.error(f"Attempt {attempt + 1} failed with error: {e}")
             time.sleep(2**attempt)  # Exponential backoff
@@ -1233,8 +1358,8 @@ def audio_bytes_from_url_or_base64(
             elif audio_input.get("data"):
                 audio_bytes = base64.b64decode(str(audio_input["data"]))
             elif audio_input.get("url"):
-                audio_bytes = download_audio_from_url(
-                    audio_url=str(audio_input["url"]),
+                audio_bytes = _audio_bytes_from_url(
+                    str(audio_input["url"]),
                     min_duration_seconds=min_duration_seconds,
                     pad_silence=pad_silence,
                     timeout=timeout,
@@ -1242,8 +1367,8 @@ def audio_bytes_from_url_or_base64(
         elif isinstance(audio_input, str):
             s = audio_input.strip()
             if s.startswith(("http://", "https://")):
-                audio_bytes = download_audio_from_url(
-                    audio_url=s,
+                audio_bytes = _audio_bytes_from_url(
+                    s,
                     min_duration_seconds=min_duration_seconds,
                     pad_silence=pad_silence,
                     timeout=timeout,
@@ -1295,30 +1420,108 @@ def audio_bytes_from_url_or_base64(
     return audio_bytes
 
 
+def _read_own_storage_object(file_url: str, bucket_name: str) -> bytes:
+    """Read a verified first-party object without making an HTTP request.
+
+    Internal object-store hostnames correctly fail the generic SSRF guard.
+    For URLs that match one of our configured storage endpoints and the exact
+    upload bucket, use the authenticated storage client instead. This keeps
+    arbitrary/private URLs behind ``safe_fetch`` while allowing workers to
+    consume artifacts that the platform itself produced.
+    """
+    if not is_own_storage_url(file_url, bucket_name):
+        raise ValueError("URL is not a trusted platform storage URL")
+
+    object_key = extract_object_key(file_url, bucket_name)
+    if not object_key:
+        raise ValueError("Storage URL does not contain an object key")
+
+    response = get_storage_client().get_object(bucket_name, object_key)
+    chunks = []
+    total = 0
+    try:
+        while True:
+            chunk = response.read(8192)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > MAX_AUDIO_FILE_SIZE:
+                raise ValueError(
+                    f"Audio file exceeds maximum size of {MAX_AUDIO_FILE_SIZE / (1024 * 1024):.1f}MB"
+                )
+            chunks.append(chunk)
+    finally:
+        response.close()
+        release_conn = getattr(response, "release_conn", None)
+        if callable(release_conn):
+            release_conn()
+    return b"".join(chunks)
+
+
+def _audio_bytes_from_url(
+    audio_url: str,
+    *,
+    min_duration_seconds: float | None,
+    pad_silence: bool,
+    timeout: int,
+) -> bytes:
+    if is_own_storage_url(audio_url, UPLOAD_BUCKET_NAME):
+        return _read_own_storage_object(audio_url, UPLOAD_BUCKET_NAME)
+    return download_audio_from_url(
+        audio_url=audio_url,
+        min_duration_seconds=min_duration_seconds,
+        pad_silence=pad_silence,
+        timeout=timeout,
+    )
+
+
 def download_audio_from_url(
     audio_url,
     max_retries=5,
     timeout=200,
     min_duration_seconds: float | None = 1.0,
     pad_silence: bool = True,
+    *,
+    provider: str | None = None,
+    api_key: str | None = None,
+    call_id: str | None = None,
+    artifact_type: str | None = None,
 ):
-    # PYTHONWARNINGS="error::AssertionError"
-    """
-    Downloads an audio file from the provided URL with retries and error handling.
-    Processes audio data in memory and converts to MP3 format if needed.
-    """
-    # headers = {
-    #     "User-Agent": (
-    #         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    #         "AppleWebKit/537.36 (KHTML, like Gecko) "
-    #         "Chrome/91.0.4472.124 Safari/537.36"
-    #     )
-    # }
+    """Download an audio file and return MP3 bytes; routes Vapi through the auth endpoint."""
+    from tracer.utils.vapi_recording import (
+        VapiArtifactNotReadyError,
+        VapiAuthError,
+        VapiRateLimitError,
+        VapiRecordingService,
+    )
+
+    if VapiRecordingService.is_authenticated_download(
+        provider, api_key, call_id, artifact_type
+    ):
+        try:
+            return VapiRecordingService.download_artifact_sync(
+                call_id=call_id,
+                artifact_type=artifact_type,
+                api_key=api_key,
+                timeout_seconds=timeout,
+            )
+        except (VapiAuthError, VapiArtifactNotReadyError, VapiRateLimitError):
+            raise
+        except Exception as exc:
+            logger.warning(
+                "vapi_authenticated_download_failed_falling_back",
+                audio_url=audio_url,
+                call_id=call_id,
+                artifact_type=artifact_type,
+                error=str(exc),
+            )
 
     for attempt in range(max_retries):
         audio_data = b""  # Reset audio_data for each attempt
         try:
-            with requests.get(audio_url, timeout=timeout, stream=True) as response:
+            with _ssrf_safe_get(
+                audio_url, timeout=timeout, max_bytes=MAX_AUDIO_FILE_SIZE
+            ) as response:
                 if response.status_code == 200:
                     # Stream the content in chunks to handle large files and avoid IncompleteRead errors
                     try:
@@ -1467,6 +1670,9 @@ def download_audio_from_url(
                         f"Failed to download audio. Status Code: {response.status_code}"
                     )
 
+        except SsrfBlocked as e:
+            logger.warning(f"SSRF-blocked audio URL, not retrying: {e}")
+            raise ValueError(f"ERROR_DOWNLOADING_AUDIO: {e}") from e
         except RequestException as e:
             logger.exception(
                 f"download_audio_retry - Attempt {attempt + 1}/{max_retries}, audio_url={audio_url}, error={e}"
@@ -1480,7 +1686,9 @@ def download_audio_from_url(
 
 def _ensure_min_duration(audio_bytes: bytes, min_duration_seconds: float) -> bytes:
     """Pads audio with silence to ensure at least min_duration_seconds. Returns MP3 bytes."""
-    import librosa  # Lazy load - pulls scipy/sklearn (~300MB)
+    from tfc.utils.lazy_extras import load_extra
+
+    librosa = load_extra("librosa", "audio")  # lazy — pulls scipy (~300MB)
 
     buf = None
     wav_buf = None
@@ -1556,8 +1764,19 @@ def upload_audio_to_s3(
         _generated_object_key = object_key is None
 
         bucket_name = UPLOAD_BUCKET_NAME
+        logger.info(
+            "upload_audio_to_s3: ENTRY",
+            resolved_bucket=bucket_name,
+            upload_bucket_name_env=os.getenv("UPLOAD_BUCKET_NAME"),
+            minio_bucket_name_env=os.getenv("MINIO_BUCKET_NAME"),
+            object_key=object_key,
+            audio_data_type=type(audio_data).__name__,
+            org_id=org_id,
+            storage_backend=os.getenv("STORAGE_BACKEND"),
+            s3_endpoint=os.getenv("S3_ENDPOINT") or os.getenv("S3_ENDPOINT_URL"),
+        )
 
-        if bucket_name in str(audio_data):
+        if isinstance(audio_data, str) and is_own_storage_url(audio_data, bucket_name):
             return audio_data
 
         # Handle string representation of dictionary
@@ -1686,9 +1905,17 @@ def upload_audio_to_s3(
             object_key = f"tempcust/{uuid.uuid4()}.{ext}"
 
         minio_client = get_storage_client()
+        logger.info(
+            "upload_audio_to_s3: about to ensure_bucket + put_object",
+            bucket=bucket_name,
+            object_key=object_key,
+            bytes=len(audio_bytes),
+            client_host=getattr(minio_client, "_base_url", None),
+        )
         ensure_bucket(minio_client, bucket_name)
 
         # Upload the audio bytes to S3
+        logger.info("s3_upload_start", bucket=bucket_name, object_key=object_key, bytes=len(audio_bytes))
         with BytesIO(audio_bytes) as audio_buffer:
             minio_client.put_object(
                 bucket_name=bucket_name,
@@ -1697,6 +1924,11 @@ def upload_audio_to_s3(
                 length=len(audio_bytes),
                 content_type=content_type,
             )
+        logger.info(
+            "upload_audio_to_s3: put_object OK",
+            bucket=bucket_name,
+            object_key=object_key,
+        )
 
         if org_id:
             try:
@@ -1728,7 +1960,8 @@ def upload_audio_to_s3(
         return url
 
     except Exception as e:
-        logger.exception(f"Error uploading audio to S3: {str(e)}")
+        error_code = str(e.code) if hasattr(e, "code") else str(e)
+        logger.error("s3_upload_failed", bucket=bucket_name, object_key=object_key, error_code=error_code, exc_info=True)
         raise ValueError(get_error_message("ERROR_AUDIO_UPLOAD").format(str(e))) from e
 
 
@@ -1802,7 +2035,9 @@ def open_audio_from_url(audio_url):
     Returns:
         tuple: (audio_waveform, sampling_rate) from librosa, or None if there's an error
     """
-    import librosa  # Lazy load - pulls scipy/sklearn (~300MB)
+    from tfc.utils.lazy_extras import load_extra
+
+    librosa = load_extra("librosa", "audio")  # lazy — pulls scipy (~300MB)
 
     try:
         # Process audio input using the existing download_audio_from_url function
@@ -1838,14 +2073,16 @@ def upload_video_to_s3(
 
         bucket_name = UPLOAD_BUCKET_NAME
 
-        if bucket_name in str(video_data):
+        if isinstance(video_data, str) and is_own_storage_url(video_data, bucket_name):
             return video_data
 
         if isinstance(video_data, bytes):
             video_bytes = video_data
             content_type = "video/mp4"
         elif is_valid_url(video_data):
-            response = requests.get(video_data, stream=True, timeout=30)
+            response = _ssrf_safe_get(
+                video_data, timeout=30, max_bytes=MAX_VIDEO_FILE_SIZE
+            )
             response.raise_for_status()
             video_bytes = response.content
             content_type = response.headers.get("Content-Type", "video/mp4")

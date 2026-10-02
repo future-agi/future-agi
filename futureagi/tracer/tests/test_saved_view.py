@@ -6,13 +6,32 @@ import uuid
 
 import pytest
 
+from accounts.models.workspace import Workspace
+from model_hub.models.ai_model import AIModel
+from tracer.models.project import Project
 from tracer.models.saved_view import SavedView
 
 BASE_URL = "/tracer/saved-views"
 
 
+def _filter(column_id="status", filter_type="text", filter_op="equals", value="ERROR"):
+    return {
+        "column_id": column_id,
+        "filter_config": {
+            "col_type": "SYSTEM_METRIC",
+            "filter_type": filter_type,
+            "filter_op": filter_op,
+            "filter_value": value,
+        },
+    }
+
+
 def _view_url(view, action=""):
     return f"{BASE_URL}/{view.id}/{action}?project_id={view.project_id}"
+
+
+def _workspace_view_url(view, action=""):
+    return f"{BASE_URL}/{view.id}/{action}"
 
 
 @pytest.fixture
@@ -27,7 +46,7 @@ def saved_view(db, project, workspace, user):
         visibility="personal",
         position=0,
         config={
-            "filters": [{"field": "status", "operator": "=", "value": "ERROR"}],
+            "filters": [_filter()],
             "columns": [{"key": "name", "width": 300}],
             "sort": {"field": "start_time", "direction": "desc"},
         },
@@ -74,6 +93,29 @@ def other_auth_client(other_user, workspace):
     client.set_workspace(workspace)
     yield client
     client.stop_workspace_injection()
+
+
+@pytest.fixture
+def other_workspace(db, organization, user):
+    """Create a same-org non-default workspace for isolation tests."""
+    return Workspace.no_workspace_objects.create(
+        name="Other Workspace",
+        organization=organization,
+        is_default=False,
+        is_active=True,
+        created_by=user,
+    )
+
+
+@pytest.fixture
+def other_workspace_project(db, organization, other_workspace):
+    return Project.no_workspace_objects.create(
+        name="Other Workspace Project",
+        organization=organization,
+        workspace=other_workspace,
+        model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+        trace_type="observe",
+    )
 
 
 # =====================================================================
@@ -148,7 +190,12 @@ class TestSavedViewCreate:
                 "visibility": "personal",
                 "config": {
                     "filters": [
-                        {"field": "latency_ms", "operator": ">", "value": 5000}
+                        _filter(
+                            "latency_ms",
+                            filter_type="number",
+                            filter_op="greater_than",
+                            value=5000,
+                        )
                     ],
                 },
             },
@@ -159,7 +206,7 @@ class TestSavedViewCreate:
         assert data["name"] == "Slow Traces"
         assert data["tab_type"] == "traces"
         assert data["visibility"] == "personal"
-        assert data["config"]["filters"][0]["field"] == "latency_ms"
+        assert data["config"]["filters"][0]["column_id"] == "latency_ms"
         assert data["project"] == str(project.id)
 
     @pytest.mark.django_db
@@ -245,6 +292,149 @@ class TestSavedViewCreate:
         assert response.status_code == 200
         assert response.json()["result"]["tab_type"] == "voice"
 
+    # -----------------------------------------------------------------
+    # Duplicate-name rejection
+    # -----------------------------------------------------------------
+
+    @pytest.mark.django_db
+    def test_create_rejects_duplicate_name(self, auth_client, project, saved_view):
+        """Re-using a name in the same project returns 400, not a silent upsert."""
+        response = auth_client.post(
+            f"{BASE_URL}/",
+            {
+                "project_id": str(project.id),
+                "name": saved_view.name,  # "Error Traces"
+                "tab_type": "traces",
+            },
+            format="json",
+        )
+        assert response.status_code == 400
+        assert "already exists" in str(response.json())
+
+    @pytest.mark.django_db
+    def test_create_duplicate_does_not_overwrite_existing(
+        self, auth_client, project, saved_view
+    ):
+        """Regression: the rejected create must leave the original view intact
+        (the old handler silently overwrote its config)."""
+        original_config = dict(saved_view.config)
+        response = auth_client.post(
+            f"{BASE_URL}/",
+            {
+                "project_id": str(project.id),
+                "name": saved_view.name,
+                "tab_type": "spans",
+                "config": {"filters": []},
+            },
+            format="json",
+        )
+        assert response.status_code == 400
+        saved_view.refresh_from_db()
+        assert saved_view.config == original_config
+        assert saved_view.tab_type == "traces"
+        # No second row was created.
+        assert (
+            SavedView.objects.filter(
+                project=project, created_by=saved_view.created_by, name=saved_view.name
+            ).count()
+            == 1
+        )
+
+    @pytest.mark.django_db
+    def test_create_rejects_duplicate_name_across_tab_types(
+        self, auth_client, project, saved_view
+    ):
+        """Project-scoped names are unique per project regardless of tab_type
+        (mirrors unique_saved_view_name_per_user_project)."""
+        response = auth_client.post(
+            f"{BASE_URL}/",
+            {
+                "project_id": str(project.id),
+                "name": saved_view.name,  # exists as a "traces" view
+                "tab_type": "voice",
+            },
+            format="json",
+        )
+        assert response.status_code == 400
+        assert "already exists" in str(response.json())
+
+    @pytest.mark.django_db
+    def test_create_allows_same_name_for_different_user(
+        self, other_auth_client, project, saved_view
+    ):
+        """Uniqueness is scoped per user — a different user may reuse the name.
+        (Documents current per-user scope; cross-user dedup is out of scope.)"""
+        response = other_auth_client.post(
+            f"{BASE_URL}/",
+            {
+                "project_id": str(project.id),
+                "name": saved_view.name,
+                "tab_type": "traces",
+            },
+            format="json",
+        )
+        assert response.status_code == 200
+
+    @pytest.mark.django_db
+    def test_create_allows_reusing_name_after_soft_delete(
+        self, auth_client, project, saved_view
+    ):
+        """A soft-deleted view's name is free to reuse (constraint is deleted=False)."""
+        saved_view.delete()  # soft delete
+        response = auth_client.post(
+            f"{BASE_URL}/",
+            {
+                "project_id": str(project.id),
+                "name": saved_view.name,
+                "tab_type": "traces",
+            },
+            format="json",
+        )
+        assert response.status_code == 200
+
+    @pytest.mark.django_db
+    def test_create_workspace_scoped_rejects_duplicate_same_tab_type(
+        self, auth_client, workspace, user
+    ):
+        SavedView.objects.create(
+            project=None,
+            workspace=workspace,
+            created_by=user,
+            name="Power Users",
+            tab_type="users",
+            visibility="personal",
+            position=0,
+        )
+        response = auth_client.post(
+            f"{BASE_URL}/",
+            {"name": "Power Users", "tab_type": "users"},
+            format="json",
+        )
+        assert response.status_code == 400
+        assert "already exists" in str(response.json())
+
+    @pytest.mark.django_db
+    def test_create_workspace_scoped_allows_duplicate_across_tab_types(
+        self, auth_client, workspace, user
+    ):
+        """Workspace-scoped uniqueness IS per tab_type
+        (unique_saved_view_name_per_user_workspace)."""
+        SavedView.objects.create(
+            project=None,
+            workspace=workspace,
+            created_by=user,
+            name="My View",
+            tab_type="users",
+            visibility="personal",
+            position=0,
+        )
+        response = auth_client.post(
+            f"{BASE_URL}/",
+            {"name": "My View", "tab_type": "user_detail"},
+            format="json",
+        )
+        assert response.status_code == 200
+
     @pytest.mark.django_db
     def test_config_accepts_all_valid_keys(self, auth_client, project):
         response = auth_client.post(
@@ -254,7 +444,7 @@ class TestSavedViewCreate:
                 "name": "Full Config",
                 "tab_type": "traces",
                 "config": {
-                    "filters": [{"field": "status", "operator": "=", "value": "OK"}],
+                    "filters": [_filter(value="OK")],
                     "columns": [{"key": "name", "width": 200}],
                     "sort": {"field": "cost", "direction": "asc"},
                     "display": {"density": "compact"},
@@ -268,6 +458,117 @@ class TestSavedViewCreate:
         assert "columns" in config
         assert "sort" in config
         assert "display" in config
+
+    @pytest.mark.django_db
+    def test_create_rejects_legacy_filter_shape(self, auth_client, project):
+        response = auth_client.post(
+            f"{BASE_URL}/",
+            {
+                "project_id": str(project.id),
+                "name": "Legacy Filter Shape",
+                "tab_type": "traces",
+                "config": {
+                    "filters": [
+                        {
+                            "columnId": "status",
+                            "filterConfig": {
+                                "colType": "SYSTEM_METRIC",
+                                "filterType": "text",
+                                "filterOp": "equals",
+                                "filterValue": "ERROR",
+                            },
+                        }
+                    ],
+                },
+            },
+            format="json",
+        )
+
+        assert response.status_code == 400
+        assert "config" in str(response.json())
+
+    @pytest.mark.django_db
+    def test_create_accepts_canonical_compare_filter_keys(self, auth_client, project):
+        response = auth_client.post(
+            f"{BASE_URL}/",
+            {
+                "project_id": str(project.id),
+                "name": "Compare View",
+                "tab_type": "traces",
+                "config": {
+                    "extra_filters": [_filter("status")],
+                    "compare_filters": [
+                        _filter("latency_ms", "number", "greater_than", 1)
+                    ],
+                    "compare_date_filter": {"start": "2026-01-01", "end": "2026-01-02"},
+                    "compare_extra_filters": [],
+                },
+            },
+            format="json",
+        )
+
+        assert response.status_code == 200
+        config = response.json()["result"]["config"]
+        assert config["extra_filters"][0]["column_id"] == "status"
+        assert "extraFilters" not in config
+
+    @pytest.mark.django_db
+    def test_create_rejects_legacy_saved_view_config_keys(self, auth_client, project):
+        response = auth_client.post(
+            f"{BASE_URL}/",
+            {
+                "project_id": str(project.id),
+                "name": "Legacy Config",
+                "tab_type": "traces",
+                "config": {"extraFilters": [_filter("status")]},
+            },
+            format="json",
+        )
+
+        assert response.status_code == 400
+        assert "extraFilters" in str(response.json())
+
+    @pytest.mark.django_db
+    def test_create_rejects_legacy_user_view_filters_object(self, auth_client, project):
+        response = auth_client.post(
+            f"{BASE_URL}/",
+            {
+                "project_id": str(project.id),
+                "name": "Legacy User View",
+                "tab_type": "users",
+                "config": {
+                    "filters": {
+                        "extraFilters": [_filter("status")],
+                        "dateFilter": {"dateOption": "Last 7 days"},
+                    }
+                },
+            },
+            format="json",
+        )
+
+        assert response.status_code == 400
+        assert "Filters must be a list" in str(response.json())
+
+    @pytest.mark.django_db
+    def test_create_accepts_canonical_user_view_config(self, auth_client, project):
+        response = auth_client.post(
+            f"{BASE_URL}/",
+            {
+                "project_id": str(project.id),
+                "name": "Users View",
+                "tab_type": "users",
+                "config": {
+                    "display": {"dateFilter": {"dateOption": "Last 7 days"}},
+                    "extra_filters": [_filter("status")],
+                },
+            },
+            format="json",
+        )
+
+        assert response.status_code == 200
+        config = response.json()["result"]["config"]
+        assert config["extra_filters"][0]["column_id"] == "status"
+        assert config["display"]["dateFilter"]["dateOption"] == "Last 7 days"
 
 
 class TestSavedViewRetrieve:
@@ -296,8 +597,13 @@ class TestSavedViewUpdate:
                 "name": "Critical Errors",
                 "config": {
                     "filters": [
-                        {"field": "status", "operator": "=", "value": "ERROR"},
-                        {"field": "latency_ms", "operator": ">", "value": 10000},
+                        _filter(),
+                        _filter(
+                            "latency_ms",
+                            filter_type="number",
+                            filter_op="greater_than",
+                            value=10000,
+                        ),
                     ],
                 },
             },
@@ -327,6 +633,129 @@ class TestSavedViewUpdate:
         )
         assert response.status_code == 200
         assert response.json()["result"]["visibility"] == "project"
+
+    @pytest.mark.django_db
+    def test_update_rejects_create_only_fields(self, auth_client, saved_view):
+        response = auth_client.put(
+            _view_url(saved_view),
+            {
+                "name": "Critical Errors",
+                "tab_type": "spans",
+                "project_id": str(saved_view.project_id),
+            },
+            format="json",
+        )
+
+        assert response.status_code == 400
+        assert "tab_type" in str(response.json())
+
+    @pytest.mark.django_db
+    def test_update_rejects_rename_to_existing_name(
+        self, auth_client, project, workspace, user, saved_view
+    ):
+        """Renaming onto another view's name in the same scope returns 400."""
+        other = SavedView.objects.create(
+            project=project,
+            workspace=workspace,
+            created_by=user,
+            name="Latency View",
+            tab_type="traces",
+            visibility="personal",
+            position=2,
+        )
+        response = auth_client.patch(
+            _view_url(other),
+            {"name": saved_view.name},  # "Error Traces"
+            format="json",
+        )
+        assert response.status_code == 400
+        assert "already exists" in str(response.json())
+        other.refresh_from_db()
+        assert other.name == "Latency View"
+
+    @pytest.mark.django_db
+    def test_update_allows_rename_to_unique_name(self, auth_client, saved_view):
+        response = auth_client.patch(
+            _view_url(saved_view),
+            {"name": "Totally Unique Name"},
+            format="json",
+        )
+        assert response.status_code == 200
+        assert response.json()["result"]["name"] == "Totally Unique Name"
+
+    @pytest.mark.django_db
+    def test_update_same_name_is_allowed(self, auth_client, saved_view):
+        """Saving without changing the name (e.g. editing config) must not
+        trip the duplicate guard against the view's own row."""
+        response = auth_client.patch(
+            _view_url(saved_view),
+            {"name": saved_view.name, "visibility": "project"},
+            format="json",
+        )
+        assert response.status_code == 200
+        assert response.json()["result"]["visibility"] == "project"
+
+    @pytest.mark.django_db
+    def test_update_workspace_scoped_rejects_rename_to_existing_name(
+        self, auth_client, workspace, user
+    ):
+        """Workspace-scoped rename collision (per tab_type) returns 400."""
+        SavedView.objects.create(
+            project=None,
+            workspace=workspace,
+            created_by=user,
+            name="Power Users",
+            tab_type="users",
+            visibility="personal",
+            position=0,
+        )
+        target = SavedView.objects.create(
+            project=None,
+            workspace=workspace,
+            created_by=user,
+            name="Casual Users",
+            tab_type="users",
+            visibility="personal",
+            position=1,
+        )
+        response = auth_client.patch(
+            _workspace_view_url(target),
+            {"name": "Power Users"},
+            format="json",
+        )
+        assert response.status_code == 400
+        assert "already exists" in str(response.json())
+
+    @pytest.mark.django_db
+    def test_update_workspace_scoped_allows_rename_across_tab_types(
+        self, auth_client, workspace, user
+    ):
+        """A name taken in a different workspace tab_type bucket is free to use."""
+        SavedView.objects.create(
+            project=None,
+            workspace=workspace,
+            created_by=user,
+            name="Shared Name",
+            tab_type="users",
+            visibility="personal",
+            position=0,
+        )
+        target = SavedView.objects.create(
+            project=None,
+            workspace=workspace,
+            created_by=user,
+            name="Detail View",
+            tab_type="user_detail",
+            visibility="personal",
+            position=1,
+        )
+        response = auth_client.patch(
+            _workspace_view_url(target),
+            {"name": "Shared Name"},
+            format="json",
+        )
+        assert response.status_code == 200
+        assert response.json()["result"]["name"] == "Shared Name"
 
 
 class TestSavedViewDelete:
@@ -381,6 +810,69 @@ class TestSavedViewDuplicate:
         )
         assert response.status_code == 200
         assert response.json()["result"]["name"] == "Error Traces (Copy)"
+
+    @pytest.mark.django_db
+    def test_duplicate_twice_uniquifies_copy_name(self, auth_client, saved_view):
+        """Repeat duplicates auto-uniquify instead of colliding."""
+        first = auth_client.post(
+            _view_url(saved_view, "duplicate/"), {}, format="json"
+        )
+        assert first.status_code == 200
+        assert first.json()["result"]["name"] == "Error Traces (Copy)"
+
+        second = auth_client.post(
+            _view_url(saved_view, "duplicate/"), {}, format="json"
+        )
+        assert second.status_code == 200
+        assert second.json()["result"]["name"] == "Error Traces (Copy 2)"
+
+    @pytest.mark.django_db
+    def test_duplicate_with_explicit_taken_name_fails(self, auth_client, saved_view):
+        """An explicit requested name that collides is rejected like create/update."""
+        response = auth_client.post(
+            _view_url(saved_view, "duplicate/"),
+            {"name": saved_view.name},
+            format="json",
+        )
+        assert response.status_code == 400
+        assert "already exists" in str(response.json())
+
+    @pytest.mark.django_db
+    def test_duplicate_strips_requested_name_before_collision_check(
+        self, auth_client, saved_view
+    ):
+        """A padded name normalizes to the existing one and is rejected, not
+        saved as a look-alike duplicate."""
+        response = auth_client.post(
+            _view_url(saved_view, "duplicate/"),
+            {"name": f"  {saved_view.name}  "},
+            format="json",
+        )
+        assert response.status_code == 400
+        assert "already exists" in str(response.json())
+
+    @pytest.mark.django_db
+    def test_duplicate_rejects_blank_name(self, auth_client, saved_view):
+        response = auth_client.post(
+            _view_url(saved_view, "duplicate/"),
+            {"name": "   "},
+            format="json",
+        )
+        assert response.status_code == 400
+        assert "empty" in str(response.json()).lower()
+
+    @pytest.mark.django_db
+    def test_duplicate_rejects_non_string_name(self, auth_client, saved_view):
+        """A non-string name is rejected (mirrors create/update), not coerced
+        or crashed on the collision check."""
+        for bad in (123, [saved_view.name], {"x": 1}):
+            response = auth_client.post(
+                _view_url(saved_view, "duplicate/"),
+                {"name": bad},
+                format="json",
+            )
+            assert response.status_code == 400, bad
+            assert "string" in str(response.json()).lower(), bad
 
     @pytest.mark.django_db
     def test_duplicate_shared_view_becomes_personal(self, auth_client, shared_view):
@@ -479,6 +971,161 @@ class TestSavedViewPermissions:
         data = response.json()["result"]
         names = [v["name"] for v in data["custom_views"]]
         assert "Error Traces" not in names
+
+
+class TestSavedViewWorkspaceScope:
+    @pytest.mark.django_db
+    def test_workspace_scoped_views_remain_personal_on_update(
+        self, auth_client, workspace
+    ):
+        response = auth_client.post(
+            f"{BASE_URL}/",
+            {
+                "name": "Workspace Sessions",
+                "tab_type": "sessions",
+                "visibility": "project",
+                "config": {"display": {"density": "compact"}},
+            },
+            format="json",
+        )
+        assert response.status_code == 200
+        data = response.json()["result"]
+        assert data["project"] is None
+        assert data["visibility"] == "personal"
+
+        view_id = data["id"]
+        patch_response = auth_client.patch(
+            f"{BASE_URL}/{view_id}/",
+            {"name": "Workspace Sessions Updated", "visibility": "project"},
+            format="json",
+        )
+        assert patch_response.status_code == 200
+        updated = patch_response.json()["result"]
+        assert updated["name"] == "Workspace Sessions Updated"
+        assert updated["visibility"] == "personal"
+
+        saved_view = SavedView.no_workspace_objects.get(id=view_id)
+        assert saved_view.workspace_id == workspace.id
+        assert saved_view.project_id is None
+        assert saved_view.visibility == "personal"
+
+        list_response = auth_client.get(f"{BASE_URL}/?tab_type=sessions", format="json")
+        assert list_response.status_code == 200
+        ids = [view["id"] for view in list_response.json()["result"]["custom_views"]]
+        assert view_id in ids
+
+    @pytest.mark.django_db
+    def test_same_org_other_workspace_project_views_are_hidden_and_unchanged(
+        self, auth_client, other_workspace_project, other_workspace, user
+    ):
+        hidden_view = SavedView.no_workspace_objects.create(
+            project=other_workspace_project,
+            workspace=other_workspace,
+            created_by=user,
+            name="Hidden Other Workspace",
+            tab_type="traces",
+            visibility="personal",
+            position=0,
+            config={"display": {"viewMode": "list"}},
+        )
+
+        list_response = auth_client.get(
+            f"{BASE_URL}/?project_id={other_workspace_project.id}", format="json"
+        )
+        assert list_response.status_code == 404
+
+        create_response = auth_client.post(
+            f"{BASE_URL}/",
+            {
+                "project_id": str(other_workspace_project.id),
+                "name": "Should Not Create",
+                "tab_type": "traces",
+            },
+            format="json",
+        )
+        assert create_response.status_code == 404
+
+        detail_response = auth_client.get(_view_url(hidden_view), format="json")
+        assert detail_response.status_code in (400, 404)
+
+        patch_response = auth_client.patch(
+            _view_url(hidden_view),
+            {"name": "Leaked Update"},
+            format="json",
+        )
+        assert patch_response.status_code in (400, 404)
+
+        duplicate_response = auth_client.post(
+            _view_url(hidden_view, "duplicate/"),
+            {"name": "Leaked Duplicate"},
+            format="json",
+        )
+        assert duplicate_response.status_code in (400, 404)
+
+        reorder_response = auth_client.post(
+            f"{BASE_URL}/reorder/",
+            {
+                "project_id": str(other_workspace_project.id),
+                "order": [{"id": str(hidden_view.id), "position": 9}],
+            },
+            format="json",
+        )
+        assert reorder_response.status_code == 400
+
+        delete_response = auth_client.delete(_view_url(hidden_view), format="json")
+        assert delete_response.status_code in (400, 404)
+
+        hidden_view.refresh_from_db()
+        assert hidden_view.name == "Hidden Other Workspace"
+        assert hidden_view.position == 0
+        assert hidden_view.deleted is False
+        assert (
+            SavedView.no_workspace_objects.filter(
+                name="Should Not Create", project=other_workspace_project
+            ).count()
+            == 0
+        )
+        assert (
+            SavedView.no_workspace_objects.filter(
+                name="Leaked Duplicate", project=other_workspace_project
+            ).count()
+            == 0
+        )
+
+    @pytest.mark.django_db
+    def test_workspace_scoped_duplicate_position_uses_same_tab_bucket(
+        self, auth_client, workspace, user
+    ):
+        sessions_view = SavedView.objects.create(
+            project=None,
+            workspace=workspace,
+            created_by=user,
+            name="Sessions View",
+            tab_type="sessions",
+            visibility="personal",
+            position=0,
+        )
+        SavedView.objects.create(
+            project=None,
+            workspace=workspace,
+            created_by=user,
+            name="Traces View",
+            tab_type="traces",
+            visibility="personal",
+            position=5,
+        )
+
+        response = auth_client.post(
+            _workspace_view_url(sessions_view, "duplicate/"),
+            {"name": "Sessions View Copy"},
+            format="json",
+        )
+
+        assert response.status_code == 200
+        data = response.json()["result"]
+        assert data["position"] == 1
+        assert data["tab_type"] == "sessions"
+        assert data["visibility"] == "personal"
 
 
 # =====================================================================

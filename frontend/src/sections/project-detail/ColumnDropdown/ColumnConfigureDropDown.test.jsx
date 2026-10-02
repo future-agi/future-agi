@@ -109,7 +109,9 @@ describe("ColumnConfigureDropDown", () => {
       await waitFor(() =>
         expect(screen.getByText("No columns found")).toBeInTheDocument(),
       );
-      expect(screen.queryByLabelText("Toggle Select all")).not.toBeInTheDocument();
+      expect(
+        screen.queryByLabelText("Toggle Select all"),
+      ).not.toBeInTheDocument();
     });
   });
 });

@@ -627,7 +627,12 @@ const ConfigurationTab = ({ experiment }) => {
 // ── Helpers ──────────────────────────────────────────────────
 
 const DeltaText = ({ value }) => {
-  if (value === 0) return <span style={{ color: "#6B7280" }}>{"\u2014"}</span>;
+  if (value === 0)
+    return (
+      <Box component="span" sx={{ color: "accent.neutral" }}>
+        {"\u2014"}
+      </Box>
+    );
   const isImprovement = value < 0;
   const color = isImprovement ? "#10B981" : "#EF4444";
   const arrow = isImprovement ? "\u25BC" : "\u25B2";

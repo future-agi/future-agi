@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildTraceAnnotationSources,
   buildVoiceCallAnnotationSources,
   buildVoiceCallScoreSource,
 } from "../voiceAnnotationSources";
 
 describe("voice call annotation source selection", () => {
-  it("uses trace as the direct annotation source for observed calls", () => {
+  it("returns every level of source so trace, span and session queues are all visible", () => {
     expect(
       buildVoiceCallAnnotationSources({
         traceId: "trace-1",
@@ -17,6 +18,30 @@ describe("voice call annotation source selection", () => {
       {
         sourceType: "trace",
         sourceId: "trace-1",
+        spanNotesSourceId: "span-1",
+      },
+      { sourceType: "observation_span", sourceId: "span-1" },
+    ]);
+  });
+
+  it("includes trace_session when the voice call belongs to a session", () => {
+    expect(
+      buildVoiceCallAnnotationSources({
+        traceId: "trace-1",
+        rootSpanId: "span-1",
+        sessionId: "session-1",
+        module: "project",
+      }),
+    ).toEqual([
+      {
+        sourceType: "trace",
+        sourceId: "trace-1",
+        spanNotesSourceId: "span-1",
+      },
+      { sourceType: "observation_span", sourceId: "span-1" },
+      {
+        sourceType: "trace_session",
+        sourceId: "session-1",
         spanNotesSourceId: "span-1",
       },
     ]);
@@ -44,5 +69,79 @@ describe("voice call annotation source selection", () => {
         callExecutionId: "call-1",
       }),
     ).toEqual([{ sourceType: "call_execution", sourceId: "call-1" }]);
+  });
+});
+
+describe("buildTraceAnnotationSources", () => {
+  it("returns trace + span sources so trace-level queues are no longer hidden", () => {
+    expect(
+      buildTraceAnnotationSources({
+        traceId: "trace-1",
+        spanId: "span-1",
+      }),
+    ).toEqual([
+      {
+        sourceType: "trace",
+        sourceId: "trace-1",
+        spanNotesSourceId: "span-1",
+      },
+      { sourceType: "observation_span", sourceId: "span-1" },
+    ]);
+  });
+
+  it("includes trace_session when the trace belongs to a session", () => {
+    expect(
+      buildTraceAnnotationSources({
+        traceId: "trace-1",
+        spanId: "span-1",
+        sessionId: "session-1",
+      }),
+    ).toEqual([
+      {
+        sourceType: "trace",
+        sourceId: "trace-1",
+        spanNotesSourceId: "span-1",
+      },
+      { sourceType: "observation_span", sourceId: "span-1" },
+      {
+        sourceType: "trace_session",
+        sourceId: "session-1",
+        spanNotesSourceId: "span-1",
+      },
+    ]);
+  });
+
+  it("returns only what is available so partial trace data is handled gracefully", () => {
+    expect(buildTraceAnnotationSources({ traceId: "trace-1" })).toEqual([
+      { sourceType: "trace", sourceId: "trace-1" },
+    ]);
+    expect(buildTraceAnnotationSources({ spanId: "span-1" })).toEqual([
+      { sourceType: "observation_span", sourceId: "span-1" },
+    ]);
+    expect(buildTraceAnnotationSources({})).toEqual([]);
+  });
+});
+
+describe("annotation source project pin", () => {
+  it("carries the drawer project on every trace source", () => {
+    expect(
+      buildTraceAnnotationSources({
+        traceId: "trace-1",
+        spanId: "span-1",
+        sessionId: "session-1",
+        projectId: "project-1",
+      }).map((source) => source.projectId),
+    ).toEqual(["project-1", "project-1", "project-1"]);
+  });
+
+  it("carries the drawer project on every voice-call source", () => {
+    expect(
+      buildVoiceCallAnnotationSources({
+        traceId: "trace-1",
+        rootSpanId: "span-1",
+        module: "project",
+        projectId: "project-1",
+      }).map((source) => source.projectId),
+    ).toEqual(["project-1", "project-1"]);
   });
 });

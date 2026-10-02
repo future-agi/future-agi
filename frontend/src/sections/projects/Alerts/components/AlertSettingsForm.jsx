@@ -1,10 +1,11 @@
 import { Box, Button, Divider, Stack, Typography } from "@mui/material";
-import React, { useCallback, useEffect, useMemo } from "react";
-import { Controller, useFieldArray, useForm } from "react-hook-form";
+import React, { useCallback, useEffect, useMemo, useRef } from "react";
+import { Controller, useForm } from "react-hook-form";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import {
   AlertConfigValidationSchema,
   getDefaultAlertConfigValues,
+  getThresholdValueDefaults,
 } from "./validation";
 import { zodResolver } from "@hookform/resolvers/zod";
 import CardWrapper from "./CardWrapper";
@@ -20,15 +21,9 @@ import {
   isSpanAttrFilterValid,
 } from "../common";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
-import NewTaskFilterRow from "src/sections/common/EvalsTasks/NewTaskDrawer/NewTaskFilterRow";
+import AlertFilterBar from "./AlertFilterBar";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
-import { getRandomId } from "src/utils/utils";
-import {
-  FilterDefaultOperators,
-  FilterDefaultValues,
-} from "src/utils/constants";
-import Iconify from "src/components/iconify";
 import RadioField from "src/components/RadioField/RadioField";
 import { ShowComponent } from "src/components/show";
 import ChipsInput from "../../../../components/ChipsInput/ChipsInput";
@@ -40,6 +35,7 @@ import PropTypes from "prop-types";
 import { useDebounce } from "src/hooks/use-debounce";
 import { useAlertStore } from "../store/useAlertStore";
 import { useAlertSheetView } from "../store/useAlertSheetView";
+import { useOrganization } from "src/contexts/OrganizationContext";
 
 const isValidEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 
@@ -52,7 +48,7 @@ export default function AlertSettingsForm({
   onPayloadChange,
 }) {
   const {
-    selectedProject: observeId,
+    selectedProject,
     alertType,
     handleChangeAlertType,
     handleCloseCreateAlert,
@@ -65,10 +61,26 @@ export default function AlertSettingsForm({
   } = useAlertStore();
 
   const { alertRuleDetails, refreshGrid: refreshIssues } = useAlertSheetView();
+  const { currentOrganizationId } = useOrganization();
+  const observeId = selectedProject || alertRuleDetails?.project || null;
+
+  const buildFormValues = useCallback(
+    () =>
+      getDefaultAlertConfigValues({
+        ...(openSheetView && alertRuleDetails),
+        name: openSheetView
+          ? duplicateAlertName || alertRuleDetails?.name || ""
+          : "",
+        ...(alertType &&
+          !openSheetView && {
+            metricType: alertType,
+          }),
+      }),
+    [openSheetView, alertRuleDetails, duplicateAlertName, alertType],
+  );
 
   const {
     control,
-    getValues,
     watch,
     handleSubmit,
     setValue,
@@ -77,20 +89,32 @@ export default function AlertSettingsForm({
     trigger,
     formState: { errors, isDirty },
   } = useForm({
-    defaultValues: getDefaultAlertConfigValues({
-      ...(openSheetView && alertRuleDetails),
-      name: openSheetView
-        ? duplicateAlertName || alertRuleDetails?.name || ""
-        : "",
-      ...(alertType &&
-        !openSheetView && {
-          metricType: alertType,
-        }),
-    }),
+    defaultValues: buildFormValues(),
     resolver: zodResolver(AlertConfigValidationSchema),
     mode: "onChange",
     reValidateMode: "onChange",
   });
+
+  // defaultValues is mount-only, so an alert that arrives later has to be pushed in.
+  const hydratedKeyRef = useRef(null);
+
+  useEffect(() => {
+    if (!openSheetView) {
+      hydratedKeyRef.current = null;
+      return;
+    }
+    if (!alertRuleDetails?.id) return;
+    const key = `${alertRuleDetails.id}|${duplicateAlertName ?? ""}`;
+    if (hydratedKeyRef.current === key) return;
+    hydratedKeyRef.current = key;
+    reset(buildFormValues());
+  }, [
+    openSheetView,
+    alertRuleDetails,
+    duplicateAlertName,
+    buildFormValues,
+    reset,
+  ]);
 
   const metricType = watch("metric_type");
   const metric = watch("metric");
@@ -103,16 +127,6 @@ export default function AlertSettingsForm({
       setFormIsDirty(isDirty);
     }
   }, [isDirty, openSheetView, setFormIsDirty]);
-
-  const {
-    fields,
-    append,
-    update,
-    remove: removeFilter,
-  } = useFieldArray({
-    control,
-    name: "filters",
-  });
 
   const debouncedName = useDebounce(watch("name"), 300);
   const debouncedWarning = useDebounce(watch("warning_threshold_value"), 300);
@@ -140,6 +154,24 @@ export default function AlertSettingsForm({
     select: (res) => res?.data?.result,
     enabled: Boolean(observeId && metricType === "evaluation_metrics"),
   });
+
+  const selectedEvalOutputType = useMemo(() => {
+    if (!expandedEvaluations?.length || !metric) return null;
+    return (
+      expandedEvaluations.find((evaluation) => evaluation?.id === metric)
+        ?.output_type ?? null
+    );
+  }, [expandedEvaluations, metric]);
+  // Choice and Pass/Fail evals aggregate to a rate between 0 and 1; score
+  // evals are avg(output_float) with no upper bound, so only the bounded
+  // kinds get the fraction label. percentage_change divides this same field
+  // by 100 for every metric type (backend: 0-100 scale), so that mode is
+  // labelled as a percent instead.
+  const isEvalFractionScale =
+    metricType === "evaluation_metrics" &&
+    thresholdType === "static" &&
+    ["choices", "Pass/Fail"].includes(selectedEvalOutputType);
+  const isPercentScale = thresholdType === "percentage_change";
 
   const selectedMetricOptions = useMemo(() => {
     if (expandedEvaluations?.length > 0 && metric) {
@@ -216,8 +248,10 @@ export default function AlertSettingsForm({
       debouncedMetricType &&
       debouncedOperator &&
       debouncedType &&
-      debouncedCritical &&
-      debouncedWarning &&
+      // Presence, not truthiness — 0 is a valid threshold and would
+      // otherwise disable the preview graph for the whole form.
+      debouncedCritical !== undefined &&
+      debouncedWarning !== undefined &&
       debouncedFrequency &&
       !hasErrors &&
       (debouncedMetricType === "evaluation_metrics" ? debouncedMetric : true);
@@ -261,37 +295,6 @@ export default function AlertSettingsForm({
     }
   }, [queryPayload, setThresholdOperator, setWarningValue, setCriticalValue]);
 
-  const { data: evalAttributes } = useQuery({
-    queryKey: ["eval-attributes", observeId],
-    queryFn: () =>
-      axios.get(endpoints.project.getEvalAttributeList(), {
-        params: {
-          filters: JSON.stringify({
-            project_id: observeId,
-          }),
-        },
-      }),
-    enabled: !!observeId,
-    select: (data) =>
-      data.data?.result?.map((attr) => ({
-        label: attr,
-        value: attr,
-      })),
-  });
-
-  const addFilter = () => {
-    append({
-      id: getRandomId(),
-      propertyId: "",
-      property: "",
-      filterConfig: {
-        filterType: "text",
-        filterOp: FilterDefaultOperators["text"],
-        filterValue: FilterDefaultValues["text"],
-      },
-    });
-  };
-
   const { mutate: createAlert, isPending: isCreating } = useCreateAlertMutation(
     {
       metricType,
@@ -329,7 +332,6 @@ export default function AlertSettingsForm({
         },
       });
       handleCloseCreateAlert();
-      reset(getDefaultAlertConfigValues());
       refreshGrid();
       refreshIssues();
     },
@@ -339,16 +341,14 @@ export default function AlertSettingsForm({
     const { observation_type, span_attributes_filters } =
       convertFiltersToPayload(data?.filters);
 
-    const notificationPayload = {};
-    if (data?.notification?.method === "email") {
-      notificationPayload.notification_emails =
-        data?.notification?.emails ?? [];
-    }
-    if (data?.notification?.method === "slack") {
-      notificationPayload.slack_webhook_url =
-        data?.notification?.slack?.webhookUrl ?? "";
-      notificationPayload.slack_notes = data?.notification?.slack?.notes ?? "";
-    }
+    const isSlack = data?.notification?.method === "slack";
+    const notificationPayload = {
+      notification_emails: isSlack ? [] : data?.notification?.emails ?? [],
+      slack_webhook_url: isSlack
+        ? data?.notification?.slack?.webhookUrl ?? ""
+        : "",
+      slack_notes: isSlack ? data?.notification?.slack?.notes ?? "" : "",
+    };
     if (
       selectedMetricOptions?.length > 0 &&
       data?.metric_type === "evaluation_metrics" &&
@@ -364,6 +364,7 @@ export default function AlertSettingsForm({
       name: data?.name,
       metric_type: data?.metric_type,
       project: observeId,
+      ...(currentOrganizationId && { organization: currentOrganizationId }),
       alert_frequency: data?.alert_frequency,
       filters: {
         ...(observation_type.length > 0 && { observation_type }),
@@ -441,13 +442,7 @@ export default function AlertSettingsForm({
           Create alert to get notification
         </Typography>
       </Stack>
-      <form
-        noValidate
-        onSubmit={(e) => {
-          e.preventDefault();
-          handleSubmit(handleCreateAlert)();
-        }}
-      >
+      <form noValidate onSubmit={handleSubmit(handleCreateAlert)}>
         <Box
           sx={{
             mt: 3,
@@ -464,6 +459,7 @@ export default function AlertSettingsForm({
             label="Name"
             size="small"
             fullWidth
+            inputProps={{ "data-alert-field": "name" }}
           />
           <CardWrapper order={0} title="Define Metrics & Interval">
             <Box
@@ -481,8 +477,43 @@ export default function AlertSettingsForm({
                 label="Metric"
                 size="small"
                 fullWidth
+                inputProps={{ "data-alert-field": "metric-type" }}
                 onChange={(e) => {
                   handleChangeAlertType(e?.target?.value);
+                  // FormSearchSelectFieldControl calls this onChange BEFORE
+                  // react-hook-form's own field.onChange, so metric_type in
+                  // form state is still the old value at this point. Set it
+                  // here so the zod re-validation below (and the scale
+                  // lookup) both see the metric the user just picked, not
+                  // the one they're leaving.
+                  setValue("metric_type", e?.target?.value);
+                  // Reset the thresholds only when the switch actually moves
+                  // them onto a different scale. Overwriting unconditionally
+                  // would destroy a saved value (e.g. a stored 250) on a
+                  // switch between two metrics that read the field the same
+                  // way.
+                  const previous = getThresholdValueDefaults(
+                    metricType,
+                    thresholdType,
+                  );
+                  const next = getThresholdValueDefaults(
+                    e?.target?.value,
+                    thresholdType,
+                  );
+                  if (previous.critical !== next.critical) {
+                    // Set both before validating — the cross-field
+                    // (critical > warning) check in the zod schema needs both
+                    // new values in place together, or validating right after
+                    // the first setValue checks it against the other field's
+                    // stale value and raises a spurious error.
+                    setValue("critical_threshold_value", next.critical);
+                    setValue("warning_threshold_value", next.warning);
+                  }
+                  trigger([
+                    "metric",
+                    "critical_threshold_value",
+                    "warning_threshold_value",
+                  ]);
                 }}
                 options={alertTypes.flatMap((group, groupIndex) => [
                   {
@@ -509,6 +540,7 @@ export default function AlertSettingsForm({
                   control={control}
                   fieldName={"metric"}
                   label="Metric"
+                  required
                   size="small"
                   options={expandedEvaluations?.map((evaluation) => ({
                     label: evaluation?.name,
@@ -532,6 +564,7 @@ export default function AlertSettingsForm({
                 size="small"
                 options={intervalOptions}
                 fullWidth
+                inputProps={{ "data-alert-field": "interval" }}
                 // sx={{
                 //   flex: 1,
                 //   maxWidth: { sm: "300px", md: "400px", lg: "600px" },
@@ -549,40 +582,11 @@ export default function AlertSettingsForm({
                 gap: 2,
               }}
             >
-              {fields.map((filter, index) => (
-                <NewTaskFilterRow
-                  key={filter.id}
-                  index={index}
-                  removeFilter={removeFilter}
-                  control={control}
-                  attributes={evalAttributes}
-                  update={update}
-                  getValues={getValues}
-                  compact={false}
-                />
-              ))}
-              <Box>
-                <Button
-                  startIcon={
-                    <Iconify color="text.primary" icon="material-symbols:add" />
-                  }
-                  onClick={addFilter}
-                  variant="text"
-                  color="primary"
-                  size="small"
-                  sx={{
-                    fontSize: "12px",
-                    color: "text.disabled",
-                    border: "1px solid",
-                    borderColor: "divider",
-                    borderRadius: "8px",
-                    width: "126px",
-                    height: "30px",
-                  }}
-                >
-                  Add Filter
-                </Button>
-              </Box>
+              <AlertFilterBar
+                control={control}
+                setValue={setValue}
+                projectId={observeId}
+              />
             </Box>
           </CardWrapper>
           <CardWrapper order={2} title="Define Alert">
@@ -600,6 +604,25 @@ export default function AlertSettingsForm({
                   optionColor="text.primary"
                   onChange={(e) => {
                     onThresholdTypeChange(e?.target?.value);
+                    // Same scale-guarded re-derivation as the metric-type
+                    // switch above — static and percentage_change read this
+                    // field on different scales (fraction vs percent) for
+                    // eval metrics, but a switch that keeps the same scale
+                    // must leave a saved value alone.
+                    const previous = getThresholdValueDefaults(
+                      metricType,
+                      thresholdType,
+                    );
+                    const next = getThresholdValueDefaults(
+                      metricType,
+                      e?.target?.value,
+                    );
+                    if (previous.critical !== next.critical) {
+                      // Set both before validating — see the same note on the
+                      // metric_type handler above.
+                      setValue("critical_threshold_value", next.critical);
+                      setValue("warning_threshold_value", next.warning);
+                    }
                     if (
                       debouncedWarning !== undefined ||
                       debouncedCritical !== undefined ||
@@ -691,13 +714,6 @@ export default function AlertSettingsForm({
                             color={"text.primary"}
                             fontWeight={"fontWeightRegular"}
                           >
-                            %
-                          </Typography>
-                          <Typography
-                            variant="s1"
-                            color={"text.primary"}
-                            fontWeight={"fontWeightRegular"}
-                          >
                             of
                           </Typography>
                         </Stack>
@@ -722,6 +738,9 @@ export default function AlertSettingsForm({
                         label="Threshold"
                         size="small"
                         options={thresholdOptions}
+                        inputProps={{
+                          "data-alert-field": "critical-threshold-operator",
+                        }}
                         sx={{
                           flex: 1,
                           maxWidth: "400px",
@@ -743,10 +762,24 @@ export default function AlertSettingsForm({
                             ]);
                           }
                         }}
-                        label="Value"
+                        label={
+                          isEvalFractionScale
+                            ? "Value (0-1)"
+                            : isPercentScale
+                              ? "Percentage"
+                              : "Value"
+                        }
+                        helperText={
+                          isEvalFractionScale
+                            ? "Fraction between 0 and 1, e.g. 0.095 for 9.5%"
+                            : undefined
+                        }
                         size="small"
                         fullWidth
                         fieldType="number"
+                        inputProps={{
+                          "data-alert-field": "critical-threshold-value",
+                        }}
                         sx={{
                           maxWidth: "400px",
                         }}
@@ -797,13 +830,6 @@ export default function AlertSettingsForm({
                             color={"text.primary"}
                             fontWeight={"fontWeightRegular"}
                           >
-                            %
-                          </Typography>
-                          <Typography
-                            variant="s1"
-                            color={"text.primary"}
-                            fontWeight={"fontWeightRegular"}
-                          >
                             of
                           </Typography>
                         </Stack>
@@ -829,6 +855,9 @@ export default function AlertSettingsForm({
                         size="small"
                         options={thresholdOptions}
                         showClear={false}
+                        inputProps={{
+                          "data-alert-field": "warning-threshold-operator",
+                        }}
                         sx={{
                           flex: 1,
                           maxWidth: "400px",
@@ -850,10 +879,24 @@ export default function AlertSettingsForm({
                             ]);
                           }
                         }}
-                        label="Value"
+                        label={
+                          isEvalFractionScale
+                            ? "Value (0-1)"
+                            : isPercentScale
+                              ? "Percentage"
+                              : "Value"
+                        }
+                        helperText={
+                          isEvalFractionScale
+                            ? "Fraction between 0 and 1, e.g. 0.095 for 9.5%"
+                            : undefined
+                        }
                         size="small"
                         fullWidth
                         fieldType="number"
+                        inputProps={{
+                          "data-alert-field": "warning-threshold-value",
+                        }}
                         sx={{
                           maxWidth: "400px",
                         }}
@@ -952,13 +995,6 @@ export default function AlertSettingsForm({
                                 maxWidth: "400px",
                               }}
                             />
-                            <Typography
-                              variant="s1"
-                              color={"text.primary"}
-                              fontWeight={"fontWeightRegular"}
-                            >
-                              %
-                            </Typography>
                             <Typography
                               variant="s1"
                               color={"text.primary"}
@@ -1086,6 +1122,13 @@ export default function AlertSettingsForm({
               loading={isCreating || isUpdating}
               disabled={isCreating || isUpdating}
               type="submit"
+              data-alert-form-submit={
+                openSheetView
+                  ? duplicateAlertName
+                    ? "duplicate"
+                    : "update"
+                  : "create"
+              }
               sx={{
                 minWidth: "191px",
               }}

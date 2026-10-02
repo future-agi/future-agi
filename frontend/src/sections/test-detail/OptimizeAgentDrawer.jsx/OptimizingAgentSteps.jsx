@@ -121,12 +121,18 @@ const OptimizingAgentSteps = ({ status, optimizationId }) => {
               },
             }}
           >
-            {steps?.map(({ status, name, description, updatedAt }, index) => {
+            {steps?.map(({ status, name, description, updated_at: updatedAt }, index) => {
               const isFailedStep =
                 steps
                   .slice(0, index)
                   .some((step) => step?.status === "failed") || //check if any previous step has failed or current step is failed then render failed status
                 status === "failed";
+
+              const updatedDate = updatedAt ? new Date(updatedAt) : null;
+              const formattedUpdatedAt =
+                updatedDate && isValid(updatedDate)
+                  ? format(updatedDate, "dd/MM/yyyy,HH:mm:ss")
+                  : null;
 
               return (
                 <Step key={index} completed={status === "completed"} expanded>
@@ -191,8 +197,7 @@ const OptimizingAgentSteps = ({ status, optimizationId }) => {
 
                     <ShowComponent
                       condition={
-                        Boolean(updatedAt) &&
-                        isValid(new Date(updatedAt)) &&
+                        Boolean(formattedUpdatedAt) &&
                         [
                           AgentPromptOptimizerStatus.COMPLETED,
                           AgentPromptOptimizerStatus.FAILED,
@@ -204,7 +209,7 @@ const OptimizingAgentSteps = ({ status, optimizationId }) => {
                         color="text.disabled"
                         fontSize="13px"
                       >
-                        {format(new Date(updatedAt), "dd/MM/yyyy,HH:mm:ss")}
+                        {formattedUpdatedAt}
                       </Typography>
                     </ShowComponent>
                   </StepContent>

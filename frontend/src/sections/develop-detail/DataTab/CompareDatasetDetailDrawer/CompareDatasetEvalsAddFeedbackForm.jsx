@@ -263,7 +263,7 @@ const FeedBackForm = ({ control, data, feedbackData }) => {
         </Typography>
       </Stack>
 
-      {feedbackData?.outputType === "reason" && (
+      {feedbackData?.output_type === "reason" && (
         <AllInputField
           label="Write a right value"
           placeholder="Improve the tone and grammar of the prompt"
@@ -275,7 +275,7 @@ const FeedBackForm = ({ control, data, feedbackData }) => {
           rows={3}
         />
       )}
-      {feedbackData?.outputType === "score" && (
+      {feedbackData?.output_type === "score" && (
         <AllInputField
           label="Write a right value"
           placeholder="Add Number"
@@ -308,8 +308,8 @@ const FeedBackForm = ({ control, data, feedbackData }) => {
         </Box>
       )}
 
-      {(feedbackData?.outputType === "Pass/Fail" ||
-        feedbackData?.outputType === "choices") && (
+      {(feedbackData?.output_type === "Pass/Fail" ||
+        feedbackData?.output_type === "choices") && (
         <RadioField
           label="Select a right value"
           control={control}
@@ -320,7 +320,7 @@ const FeedBackForm = ({ control, data, feedbackData }) => {
           }))}
         />
       )}
-      {feedbackData?.outputType === "select" && (
+      {feedbackData?.output_type === "select" && (
         <AllSelectField
           label="Select a right value"
           control={control}
@@ -526,7 +526,7 @@ export default function CompareDatasetEvalsAddFeedbackForm({
     if (existingFeedback && open) {
       setValue("value", existingFeedback?.value);
       setValue("explanation", existingFeedback?.comment);
-      setSubmittedFeedBackValue("value", existingFeedback?.actionType);
+      setSubmittedFeedBackValue("value", existingFeedback?.action_type);
     }
   }, [existingFeedback, open, setSubmittedFeedBackValue, setValue]);
 
@@ -538,6 +538,7 @@ export default function CompareDatasetEvalsAddFeedbackForm({
       action_type: formData.value,
       user_eval_metric_id: evalDetail?.sourceId,
       feedback_id: feedbackId,
+      row_id: evalDetail?.cellRowId,
     };
     if (newFeedback?.current?.value) {
       payload.value = newFeedback?.current?.value;

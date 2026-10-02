@@ -25,6 +25,7 @@ const EditableText = React.forwardRef(
       defaultValue = "",
       onSubmit = () => {},
       reset = () => {},
+      readOnly = false,
       ...rest
     },
     ref,
@@ -35,6 +36,7 @@ const EditableText = React.forwardRef(
     const isSubmittingRef = useRef(false);
 
     const handleEditClick = () => {
+      if (readOnly) return;
       shouldFocusRef.current = true;
       setIsEditing(true);
     };
@@ -74,7 +76,7 @@ const EditableText = React.forwardRef(
             .reduce((obj, key) => obj?.[key], errors);
           const hasError = !!fieldError;
 
-          if (isEditing) {
+          if (isEditing && !readOnly) {
             return (
               <Box
                 sx={{
@@ -158,25 +160,27 @@ const EditableText = React.forwardRef(
                   {displayValue || placeholder}
                 </Typography>
               </CustomTooltip>
-              <IconButton
-                size="small"
-                title="Edit"
-                onClick={handleEditClick}
-                className="editable-text-icon"
-                sx={{
-                  padding: 0.5,
-                  ...iconSx,
-                }}
-              >
-                <SvgColor
-                  src="/assets/icons/ic_edit.svg"
+              {!readOnly && (
+                <IconButton
+                  size="small"
+                  title="Edit"
+                  onClick={handleEditClick}
+                  className="editable-text-icon"
                   sx={{
-                    width: 16,
-                    height: 16,
-                    color: "text.secondary",
+                    padding: 0.5,
+                    ...iconSx,
                   }}
-                />
-              </IconButton>
+                >
+                  <SvgColor
+                    src="/assets/icons/ic_edit.svg"
+                    sx={{
+                      width: 16,
+                      height: 16,
+                      color: "text.secondary",
+                    }}
+                  />
+                </IconButton>
+              )}
             </Stack>
           );
         }}
@@ -200,6 +204,7 @@ EditableText.propTypes = {
   defaultValue: PropTypes.string,
   onSubmit: PropTypes.func,
   reset: PropTypes.func,
+  readOnly: PropTypes.bool,
 };
 
 export default EditableText;

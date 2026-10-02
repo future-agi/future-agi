@@ -4,8 +4,8 @@ import {
   useTheme,
   Tab,
   Tabs,
-  CircularProgress,
 } from "@mui/material";
+import { LoadingScreen } from "src/components/loading-screen";
 import React, { useEffect } from "react";
 import AgentConfigurationView from "../AgentConfiguration/AgentConfigurationView";
 import CallLogsView from "../CallLogs/CallLogsView";
@@ -167,16 +167,7 @@ const VersionDetails = () => {
         {/* Scrollable content */}
         <Box sx={{ flex: 1, minHeight: 0, overflow: "auto", mt: 2 }}>
           {isLoading || !versionDetails ? (
-            <Box
-              sx={{
-                height: "100%",
-                pt: 5,
-                display: "flex",
-                justifyContent: "center",
-              }}
-            >
-              <CircularProgress />
-            </Box>
+            <LoadingScreen variant="orbit" sx={{ height: "100%", minHeight: "50vh" }} />
           ) : (
             renderContent(activeTab)
           )}

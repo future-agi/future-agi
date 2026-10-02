@@ -27,8 +27,8 @@ class GetSpanTreeTool(BaseTool):
 
     def execute(self, params: GetSpanTreeInput, context: ToolContext) -> ToolResult:
 
-        from tracer.models.observation_span import ObservationSpan
         from tracer.models.trace import Trace
+        from tracer.services.clickhouse.v2 import get_reader
 
         # Verify trace exists
         try:
@@ -38,11 +38,11 @@ class GetSpanTreeTool(BaseTool):
         except Trace.DoesNotExist:
             return ToolResult.not_found("Trace", str(params.trace_id))
 
-        spans = list(
-            ObservationSpan.objects.filter(trace=trace, deleted=False).order_by(
-                "start_time", "created_at"
-            )
-        )
+        # CH replaces ObservationSpan.objects.filter(trace=, deleted=False)
+        # .order_by("start_time", "created_at"). list_by_trace already
+        # filters is_deleted=0 and orders by start_time, id.
+        with get_reader() as reader:
+            spans = reader.list_by_trace(str(trace.id))
 
         if not spans:
             return ToolResult(

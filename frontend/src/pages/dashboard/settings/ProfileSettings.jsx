@@ -37,6 +37,11 @@ const ProfileSettings = () => {
   const [openProfileInfoModal, setOpenProfileInfoModal] = useState(false);
   const [refreshData, setRefreshData] = useState(false);
   const [resetPasswordDisabled, setResetPasswordDisabled] = useState(false);
+  const twoFactorEnabled =
+    twoFaStatus?.two_factor_enabled ?? twoFaStatus?.twoFactorEnabled;
+  const recoveryCodesRemaining =
+    twoFaStatus?.recovery_codes_remaining ??
+    twoFaStatus?.recoveryCodesRemaining;
 
   const { mutate: getUserInfo, isPending: isGetUserInfoLoading } = useMutation({
     mutationFn: async () => {
@@ -408,9 +413,9 @@ const ProfileSettings = () => {
                 passkey={twoFaStatus?.methods?.passkey}
                 onStatusChange={refetch2fa}
               />
-              {twoFaStatus?.twoFactorEnabled && (
+              {twoFactorEnabled && (
                 <RecoveryCodesSection
-                  remaining={twoFaStatus?.recoveryCodesRemaining}
+                  remaining={recoveryCodesRemaining}
                   hasTotp={twoFaStatus?.methods?.totp?.enabled}
                   onStatusChange={refetch2fa}
                 />

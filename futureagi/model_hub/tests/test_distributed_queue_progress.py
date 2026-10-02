@@ -1,5 +1,5 @@
 """
-Tests for distributed queue progress scoping (TH-3530).
+Tests for distributed queue progress scoping.
 
 Verifies that annotate-detail progress counts are scoped to the current
 user's assigned items when the queue uses a non-manual assignment strategy.
@@ -8,6 +8,8 @@ user's assigned items when the queue uses a non-manual assignment strategy.
 import pytest
 from django.conf import settings as django_settings
 from rest_framework import status
+
+from conftest import create_categorical_label
 
 from accounts.models.user import User
 from model_hub.models.annotation_queues import (
@@ -58,12 +60,19 @@ def second_user(organization, workspace):
     )
 
 
+
+
 @pytest.fixture
 def manual_queue(auth_client):
     """Create a queue with manual assignment strategy."""
+    label_id = create_categorical_label(auth_client, name="Manual Queue Label")
     resp = auth_client.post(
         QUEUE_URL,
-        {"name": "Manual Queue", "assignment_strategy": "manual"},
+        {
+            "name": "Manual Queue",
+            "assignment_strategy": "manual",
+            "label_ids": [str(label_id)],
+        },
         format="json",
     )
     return resp.data["id"]
@@ -72,9 +81,14 @@ def manual_queue(auth_client):
 @pytest.fixture
 def distributed_queue(auth_client):
     """Create a queue with round_robin assignment strategy."""
+    label_id = create_categorical_label(auth_client, name="Distributed Queue Label")
     resp = auth_client.post(
         QUEUE_URL,
-        {"name": "Distributed Queue", "assignment_strategy": "round_robin"},
+        {
+            "name": "Distributed Queue",
+            "assignment_strategy": "round_robin",
+            "label_ids": [str(label_id)],
+        },
         format="json",
     )
     return resp.data["id"]
@@ -90,7 +104,7 @@ def _add_rows_to_queue(auth_client, queue_id, rows):
 
 @pytest.mark.django_db
 class TestDistributedQueueProgress:
-    """TH-3530: Progress should be scoped to current user in distributed queues."""
+    """Progress should be scoped to current user in distributed queues."""
 
     def test_manual_queue_shows_total_count(
         self, auth_client, manual_queue, dataset_with_rows

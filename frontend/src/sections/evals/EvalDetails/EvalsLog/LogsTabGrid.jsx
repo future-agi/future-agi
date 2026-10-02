@@ -16,7 +16,7 @@ import axios, { endpoints } from "src/utils/axios";
 import { AGGridCellDataType } from "src/utils/constant";
 import { defaultRowHeightMapping } from "src/utils/constants";
 import DevelopFilterBox from "../../DevelopFilters/DevelopFilterBox";
-import { getRandomId, objectCamelToSnake } from "src/utils/utils";
+import { getRandomId } from "src/utils/utils";
 import {
   DefaultFilter,
   transformFilter,
@@ -41,6 +41,8 @@ import TableFilterOptions from "src/components/TableFilterOptions/TableFilterOpt
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { useAuthContext } from "src/auth/hooks";
 import { APP_CONSTANTS } from "src/utils/constants";
+import { QUERY_FAILED_RETRY_MESSAGE } from "src/utils/queryReadState";
+import { readEvalLogGridPage } from "../../utils/eval_log_grid_read";
 
 const FeedbackOverlay = () => (
   <NoResultsUI
@@ -135,6 +137,7 @@ const LogsTabGrid = ({
   const [columns, setColumns] = useState([]);
   const [selectedRow, setSelectedRow] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [readError, setReadError] = useState(null);
 
   const [filters, setFilters] = useState([
     { ...DefaultFilter, id: getRandomId() },
@@ -345,9 +348,12 @@ const LogsTabGrid = ({
         onSelectionChanged(null);
         setSelectedAll(false);
 
-        // Calculate page size dynamically from AG Grid request
-        const pageSize = request.endRow - request.startRow;
-        const pageNumber = Math.floor((request?.startRow ?? 0) / pageSize);
+        // Calculate page size dynamically from AG Grid request.
+        // onGridReady calls getRows without a `request`, so default safely.
+        const startRow = request?.startRow ?? 0;
+        const endRow = request?.endRow ?? startRow + 10;
+        const pageSize = endRow - startRow;
+        const pageNumber = Math.floor(startRow / pageSize);
         const source = isFeedback
           ? "feedback"
           : isEvalPlayGround
@@ -368,7 +374,7 @@ const LogsTabGrid = ({
         const createdAtFieldId = createdAtColumn?.field || "created_at";
         // Skip default dateFilter if user already has a Created At filter applied
         const hasCreatedAtFilter = debouncedFilters.some(
-          (f) => f.columnId === createdAtFieldId,
+          (f) => f.column_id === createdAtFieldId,
         );
         if (dateFilter && !hasCreatedAtFilter) {
           filters.push({
@@ -380,44 +386,49 @@ const LogsTabGrid = ({
           filters.push(...debouncedFilters);
         }
         try {
-          const { data } = await axios.get(
-            endpoints.develop.eval.getEvalsLogs,
-            {
-              params: {
-                eval_template_id: evalsId,
-                current_page_index: pageNumber,
-                page_size: pageSize,
-                filters: JSON.stringify(objectCamelToSnake(filters)),
-                search: search,
-                sort: JSON.stringify(
-                  request?.sortModel?.map(({ colId, sort }) => ({
-                    column_id: colId,
-                    type: sort === "asc" ? "ascending" : "descending",
-                  })),
-                ),
-                source: source,
-              },
-            },
+          const page = await readEvalLogGridPage(
+            ({ signal, timeout }) =>
+              axios.get(endpoints.develop.eval.getEvalsLogs, {
+                signal,
+                timeout,
+                params: {
+                  eval_template_id: evalsId,
+                  current_page_index: pageNumber,
+                  page_size: pageSize,
+                  filters: JSON.stringify(filters),
+                  search: search ? JSON.stringify(search) : undefined,
+                  sort: JSON.stringify(
+                    request?.sortModel?.map(({ colId, sort }) => ({
+                      column_id: colId,
+                      type: sort === "asc" ? "ascending" : "descending",
+                    })),
+                  ),
+                  source: source,
+                },
+              }),
+            { currentPageIndex: pageNumber, pageSize },
           );
 
-          setColumnDataNew(data?.result?.column_config);
-          const rows = data?.result?.table;
+          setColumnDataNew(page.columns);
+          const rows = page.rows;
+          setReadError(null);
 
           if (rows.length >= 1 || pageNumber > 0 || searchQuery) {
             setIsData(true);
           }
           params.success({
             rowData: rows,
-            rowCount: data?.result?.metadata?.total_rows || 0,
+            rowCount: page.totalRows,
           });
-          if (rows?.length === 0 && !data?.result?.metadata?.total_rows) {
+          if (rows?.length === 0 && !page.totalRows) {
             params.api?.showNoRowsOverlay();
           } else {
             params.api.hideOverlay();
           }
         } catch (error) {
+          setReadError(QUERY_FAILED_RETRY_MESSAGE);
           params.fail();
-          params.api?.showNoRowsOverlay();
+          params.api?.hideOverlay();
         } finally {
           setIsLoading(false);
         }
@@ -611,7 +622,7 @@ const LogsTabGrid = ({
             params.api.hideOverlay();
           }
         },
-        fail: () => params.api.showNoRowsOverlay(),
+        fail: () => params.api.hideOverlay(),
       });
     },
     [dataSource],
@@ -619,11 +630,16 @@ const LogsTabGrid = ({
 
   const NoRowOverLayComponent = useMemo(() => {
     if (isLoading) return null;
+    if (readError) return null;
     if (!isData) return isFeedback ? FeedbackOverlay : EvaluationOverlay;
     return null;
-  }, [isData, isLoading, isFeedback]);
+  }, [isData, isLoading, isFeedback, readError]);
 
   useEffect(() => {
+    if (gridRef.current?.api && readError) {
+      gridRef.current.api.hideOverlay();
+      return;
+    }
     if (gridRef.current?.api && !isData) {
       gridRef.current.api.showNoRowsOverlay();
       // hide overlay when data is being fetched
@@ -631,7 +647,7 @@ const LogsTabGrid = ({
         gridRef.current.api.hideOverlay();
       }
     }
-  }, [NoRowOverLayComponent, isData, isLoading]);
+  }, [NoRowOverLayComponent, isData, isLoading, readError]);
 
   return (
     <Box height="100%">
@@ -749,6 +765,33 @@ const LogsTabGrid = ({
           allColumns={allColumns}
         />
       </Box>
+      {readError && (
+        <Box
+          role="alert"
+          sx={{
+            px: 1.5,
+            py: 0.75,
+            fontSize: 12,
+            color: "warning.main",
+            bgcolor: "warning.lighter",
+            borderBottom: "1px solid",
+            borderColor: "warning.light",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
+        >
+          {readError}
+          <Button
+            size="small"
+            onClick={() =>
+              gridRef.current?.api?.refreshServerSide({ purge: false })
+            }
+          >
+            Retry
+          </Button>
+        </Box>
+      )}
       <Box className="ag-theme-quartz" style={{ height: "calc(100% - 65px)" }}>
         <SingleImageViewerProvider>
           <AgGridReact

@@ -59,9 +59,9 @@ class GetTraceTimelineTool(BaseTool):
     ) -> ToolResult:
         from datetime import datetime, timedelta, timezone
 
-        from django.db.models import Count, Q, Sum
+        from django.db.models import Count, Q
 
-        from tracer.models.observation_span import ObservationSpan
+        from tracer.services.clickhouse.v2 import get_reader
         from tracer.models.trace import Trace
 
         # Parse time range
@@ -117,14 +117,17 @@ class GetTraceTimelineTool(BaseTool):
                 Q(error__isnull=True) | Q(error={})
             ).count()
 
-            # Get token count for this bucket's spans
-            span_agg = ObservationSpan.objects.filter(
-                trace__in=bucket_traces, deleted=False
-            ).aggregate(
-                tokens=Sum("total_tokens"),
-            )
-
-            tokens = span_agg["tokens"] or 0
+            # Get token count for this bucket's spans from CH 25.3 — was
+            # ObservationSpan.objects.filter(trace__in=, deleted=False)
+            # .aggregate(tokens=Sum("total_tokens")). The reader's
+            # aggregate_by_trace_ids returns the same sum across all input
+            # trace_ids in one CH query.
+            bucket_trace_ids = list(bucket_traces.values_list("id", flat=True))
+            with get_reader() as reader:
+                span_agg = reader.aggregate_by_trace_ids(
+                    [str(t) for t in bucket_trace_ids]
+                )
+            tokens = span_agg.get("total_tokens", 0) or 0
             total_traces += count
             total_errors += error_count
 

@@ -43,9 +43,7 @@ export const extractCodeEvaluateParams = (code, language) => {
     const m = code.match(/function\s+evaluate\s*\(\s*\{([\s\S]*?)\}\s*\)/);
     if (!m) return [];
     // Strip JS line and block comments inside the destructuring pattern.
-    raw = m[1]
-      .replace(/\/\*[\s\S]*?\*\//g, "")
-      .replace(/\/\/[^\n]*/g, "");
+    raw = m[1].replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
   } else {
     return [];
   }

@@ -111,13 +111,15 @@ const extractEdgeData = (edge) => {
 // src/sections/scenarios/scenario-detail/common.js
 export const transformNode = (node, extraData = {}) => {
   const nodeType = getTypeFromNodeData(node);
+  const data = { ...extractNodeData(node, nodeType), ...extraData };
   return {
     id: node?.name ?? getRandomId(),
     type: nodeType,
     position: node?.metadata?.position
       ? node?.metadata?.position
       : { x: 250, y: 50 },
-    data: { ...extractNodeData(node, nodeType), ...extraData },
+    data,
+    ...(data.isStart && { deletable: false }),
   };
 };
 

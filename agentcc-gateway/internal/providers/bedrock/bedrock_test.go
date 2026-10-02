@@ -14,20 +14,28 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/models"
 )
 
+const (
+	testAWSAccessKeyID     = "AKIAIOSFODNN7EXAMPLE"
+	testAWSSecretAccessKey = "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"
+)
+
+func withTestAWSCredentials(cfg config.ProviderConfig) config.ProviderConfig {
+	cfg.AWSAccessKeyID = testAWSAccessKeyID
+	cfg.AWSSecretAccessKey = testAWSSecretAccessKey
+	return cfg
+}
+
 // ===========================================================================
 // New() tests
 // ===========================================================================
 
-func TestNew_WithEnvVars(t *testing.T) {
-	t.Setenv("AWS_ACCESS_KEY_ID", "AKIAIOSFODNN7EXAMPLE")
-	t.Setenv("AWS_SECRET_ACCESS_KEY", "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY")
-
+func TestNew_WithProviderConfigCredentials(t *testing.T) {
 	cfg := config.ProviderConfig{
 		BaseURL:   "https://bedrock-runtime.us-west-2.amazonaws.com",
 		APIFormat: "bedrock",
 	}
 
-	p, err := New("test-bedrock", cfg)
+	p, err := New("test-bedrock", withTestAWSCredentials(cfg))
 	if err != nil {
 		t.Fatalf("New() error: %v", err)
 	}
@@ -45,15 +53,12 @@ func TestNew_WithEnvVars(t *testing.T) {
 }
 
 func TestNew_DefaultTimeout(t *testing.T) {
-	t.Setenv("AWS_ACCESS_KEY_ID", "AKIAIOSFODNN7EXAMPLE")
-	t.Setenv("AWS_SECRET_ACCESS_KEY", "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY")
-
 	cfg := config.ProviderConfig{
 		BaseURL:   "https://bedrock-runtime.us-east-1.amazonaws.com",
 		APIFormat: "bedrock",
 	}
 
-	p, err := New("test-bedrock", cfg)
+	p, err := New("test-bedrock", withTestAWSCredentials(cfg))
 	if err != nil {
 		t.Fatalf("New() error: %v", err)
 	}
@@ -65,16 +70,13 @@ func TestNew_DefaultTimeout(t *testing.T) {
 }
 
 func TestNew_CustomTimeout(t *testing.T) {
-	t.Setenv("AWS_ACCESS_KEY_ID", "AKIAIOSFODNN7EXAMPLE")
-	t.Setenv("AWS_SECRET_ACCESS_KEY", "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY")
-
 	cfg := config.ProviderConfig{
 		BaseURL:        "https://bedrock-runtime.us-east-1.amazonaws.com",
 		APIFormat:      "bedrock",
 		DefaultTimeout: 30 * time.Second,
 	}
 
-	p, err := New("test-bedrock", cfg)
+	p, err := New("test-bedrock", withTestAWSCredentials(cfg))
 	if err != nil {
 		t.Fatalf("New() error: %v", err)
 	}
@@ -86,15 +88,12 @@ func TestNew_CustomTimeout(t *testing.T) {
 }
 
 func TestNew_DefaultConcurrency(t *testing.T) {
-	t.Setenv("AWS_ACCESS_KEY_ID", "AKIAIOSFODNN7EXAMPLE")
-	t.Setenv("AWS_SECRET_ACCESS_KEY", "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY")
-
 	cfg := config.ProviderConfig{
 		BaseURL:   "https://bedrock-runtime.us-east-1.amazonaws.com",
 		APIFormat: "bedrock",
 	}
 
-	p, err := New("test-bedrock", cfg)
+	p, err := New("test-bedrock", withTestAWSCredentials(cfg))
 	if err != nil {
 		t.Fatalf("New() error: %v", err)
 	}
@@ -106,16 +105,13 @@ func TestNew_DefaultConcurrency(t *testing.T) {
 }
 
 func TestNew_CustomConcurrency(t *testing.T) {
-	t.Setenv("AWS_ACCESS_KEY_ID", "AKIAIOSFODNN7EXAMPLE")
-	t.Setenv("AWS_SECRET_ACCESS_KEY", "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY")
-
 	cfg := config.ProviderConfig{
 		BaseURL:       "https://bedrock-runtime.us-east-1.amazonaws.com",
 		APIFormat:     "bedrock",
 		MaxConcurrent: 10,
 	}
 
-	p, err := New("test-bedrock", cfg)
+	p, err := New("test-bedrock", withTestAWSCredentials(cfg))
 	if err != nil {
 		t.Fatalf("New() error: %v", err)
 	}
@@ -127,15 +123,12 @@ func TestNew_CustomConcurrency(t *testing.T) {
 }
 
 func TestNew_TrimsTrailingSlash(t *testing.T) {
-	t.Setenv("AWS_ACCESS_KEY_ID", "AKIAIOSFODNN7EXAMPLE")
-	t.Setenv("AWS_SECRET_ACCESS_KEY", "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY")
-
 	cfg := config.ProviderConfig{
 		BaseURL:   "https://bedrock-runtime.us-east-1.amazonaws.com/",
 		APIFormat: "bedrock",
 	}
 
-	p, err := New("test-bedrock", cfg)
+	p, err := New("test-bedrock", withTestAWSCredentials(cfg))
 	if err != nil {
 		t.Fatalf("New() error: %v", err)
 	}
@@ -147,9 +140,6 @@ func TestNew_TrimsTrailingSlash(t *testing.T) {
 }
 
 func TestNew_MissingCredentials(t *testing.T) {
-	t.Setenv("AWS_ACCESS_KEY_ID", "")
-	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
-
 	cfg := config.ProviderConfig{
 		BaseURL:   "https://bedrock-runtime.us-east-1.amazonaws.com",
 		APIFormat: "bedrock",
@@ -162,9 +152,6 @@ func TestNew_MissingCredentials(t *testing.T) {
 }
 
 func TestNew_RegionFromHeaders(t *testing.T) {
-	t.Setenv("AWS_ACCESS_KEY_ID", "AKIAIOSFODNN7EXAMPLE")
-	t.Setenv("AWS_SECRET_ACCESS_KEY", "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY")
-
 	cfg := config.ProviderConfig{
 		BaseURL:   "https://bedrock-runtime.us-east-1.amazonaws.com",
 		APIFormat: "bedrock",
@@ -173,7 +160,7 @@ func TestNew_RegionFromHeaders(t *testing.T) {
 		},
 	}
 
-	p, err := New("test-bedrock", cfg)
+	p, err := New("test-bedrock", withTestAWSCredentials(cfg))
 	if err != nil {
 		t.Fatalf("New() error: %v", err)
 	}
@@ -189,15 +176,12 @@ func TestNew_RegionFromHeaders(t *testing.T) {
 // ===========================================================================
 
 func TestListModels_ReturnsNil(t *testing.T) {
-	t.Setenv("AWS_ACCESS_KEY_ID", "AKIAIOSFODNN7EXAMPLE")
-	t.Setenv("AWS_SECRET_ACCESS_KEY", "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY")
-
 	cfg := config.ProviderConfig{
 		BaseURL:   "https://bedrock-runtime.us-east-1.amazonaws.com",
 		APIFormat: "bedrock",
 	}
 
-	p, err := New("test-bedrock", cfg)
+	p, err := New("test-bedrock", withTestAWSCredentials(cfg))
 	if err != nil {
 		t.Fatalf("New() error: %v", err)
 	}
@@ -219,8 +203,6 @@ func TestListModels_ReturnsNil(t *testing.T) {
 // newTestProvider creates a Provider pointing at the given mock server URL.
 func newTestProvider(t *testing.T, serverURL string) *Provider {
 	t.Helper()
-	t.Setenv("AWS_ACCESS_KEY_ID", "AKIAIOSFODNN7EXAMPLE")
-	t.Setenv("AWS_SECRET_ACCESS_KEY", "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY")
 
 	cfg := config.ProviderConfig{
 		BaseURL:        serverURL,
@@ -229,7 +211,7 @@ func newTestProvider(t *testing.T, serverURL string) *Provider {
 		MaxConcurrent:  10,
 	}
 
-	p, err := New("integration-test", cfg)
+	p, err := New("integration-test", withTestAWSCredentials(cfg))
 	if err != nil {
 		t.Fatalf("New() error: %v", err)
 	}
@@ -697,15 +679,12 @@ func TestIntegration_AlreadyCancelledContext(t *testing.T) {
 // ===========================================================================
 
 func TestIntegration_ProviderID(t *testing.T) {
-	t.Setenv("AWS_ACCESS_KEY_ID", "AKIAIOSFODNN7EXAMPLE")
-	t.Setenv("AWS_SECRET_ACCESS_KEY", "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY")
-
 	cfg := config.ProviderConfig{
 		BaseURL:   "https://bedrock-runtime.us-east-1.amazonaws.com",
 		APIFormat: "bedrock",
 	}
 
-	p, err := New("my-bedrock-provider", cfg)
+	p, err := New("my-bedrock-provider", withTestAWSCredentials(cfg))
 	if err != nil {
 		t.Fatalf("New() error: %v", err)
 	}
@@ -805,15 +784,12 @@ func TestIntegration_RequestBodyFormat(t *testing.T) {
 // ===========================================================================
 
 func TestIntegration_Close(t *testing.T) {
-	t.Setenv("AWS_ACCESS_KEY_ID", "AKIAIOSFODNN7EXAMPLE")
-	t.Setenv("AWS_SECRET_ACCESS_KEY", "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY")
-
 	cfg := config.ProviderConfig{
 		BaseURL:   "https://bedrock-runtime.us-east-1.amazonaws.com",
 		APIFormat: "bedrock",
 	}
 
-	p, err := New("test-bedrock", cfg)
+	p, err := New("test-bedrock", withTestAWSCredentials(cfg))
 	if err != nil {
 		t.Fatalf("New() error: %v", err)
 	}

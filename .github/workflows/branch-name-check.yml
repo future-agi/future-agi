@@ -17,7 +17,7 @@ jobs:
           BRANCH: ${{ github.head_ref }}
         run: |
           # Skip validation for release branches and dependabot
-          if [[ "$BRANCH" =~ ^(main|dev|release/.+|dependabot/.+)$ ]]; then
+          if [[ "$BRANCH" =~ ^(main|dev|release/.+|release-please--.+|dependabot/.+)$ ]]; then
             echo "✅ Skipping validation for $BRANCH"
             exit 0
           fi

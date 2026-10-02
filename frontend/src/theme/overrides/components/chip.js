@@ -39,11 +39,15 @@ export function chip(theme) {
             ? theme.palette.common.white
             : theme.palette.grey[800],
           backgroundColor: theme.palette.text.primary,
-          "&:hover": {
-            backgroundColor: lightMode
-              ? theme.palette.grey[700]
-              : theme.palette.grey[100],
-          },
+          // Gated in JS, not via a class selector: the emitted rule must stay
+          // a plain `&:hover` or it outranks per-chip `sx` hover overrides.
+          ...(ownerState.clickable && {
+            "&:hover": {
+              backgroundColor: lightMode
+                ? theme.palette.grey[700]
+                : theme.palette.grey[100],
+            },
+          }),
           [`& .${chipClasses.icon}`]: {
             color: lightMode
               ? theme.palette.common.white
@@ -58,9 +62,11 @@ export function chip(theme) {
         ...(softVariant && {
           color: theme.palette.text.primary,
           backgroundColor: alpha(theme.palette.grey[500], 0.16),
-          "&:hover": {
-            backgroundColor: alpha(theme.palette.grey[500], 0.32),
-          },
+          ...(ownerState.clickable && {
+            "&:hover": {
+              backgroundColor: alpha(theme.palette.grey[500], 0.32),
+            },
+          }),
         }),
       }),
     };
@@ -73,17 +79,21 @@ export function chip(theme) {
         },
         // FILLED
         ...(filledVariant && {
-          "&:hover": {
-            backgroundColor: theme.palette[color].dark,
-          },
+          ...(ownerState.clickable && {
+            "&:hover": {
+              backgroundColor: theme.palette[color].dark,
+            },
+          }),
         }),
         // SOFT
         ...(softVariant && {
           color: theme.palette[color][lightMode ? "dark" : "light"],
           backgroundColor: alpha(theme.palette[color].main, 0.16),
-          "&:hover": {
-            backgroundColor: alpha(theme.palette[color].main, 0.32),
-          },
+          ...(ownerState.clickable && {
+            "&:hover": {
+              backgroundColor: alpha(theme.palette[color].main, 0.32),
+            },
+          }),
         }),
       }),
     }));

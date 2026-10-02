@@ -2,13 +2,13 @@ import os
 
 import structlog
 
-logger = structlog.get_logger(__name__)
-from agentic_eval.core_evals.run_prompt.available_models import AVAILABLE_MODELS
-# (available_models always available)
-from model_hub.models.api_key import ApiKey
-from model_hub.models.custom_models import CustomAIModel
 from accounts.models.organization import Organization
 from accounts.models.workspace import Workspace
+from agentic_eval.core_evals.run_prompt.available_models import AVAILABLE_MODELS
+from model_hub.models.api_key import ApiKey
+from model_hub.models.custom_models import CustomAIModel
+
+logger = structlog.get_logger(__name__)
 
 
 class LiteLLMModelManager:
@@ -83,6 +83,24 @@ class LiteLLMModelManager:
             # "whisper-1",  # STT model - keep filtered
             # "tts-1",     # allow
             # "tts-1-hd",  # allow
+            # Deprecated OpenAI image generation models
+            "256-x-256/dall-e-2",
+            "512-x-512/dall-e-2",
+            "1024-x-1024/dall-e-2",
+            "hd/1024-x-1792/dall-e-3",
+            "hd/1792-x-1024/dall-e-3",
+            "hd/1024-x-1024/dall-e-3",
+            "standard/1024-x-1792/dall-e-3",
+            "standard/1792-x-1024/dall-e-3",
+            "standard/1024-x-1024/dall-e-3",
+            # Deprecated Azure dall-e variants
+            "azure/standard/1024-x-1024/dall-e-3",
+            "azure/hd/1024-x-1024/dall-e-3",
+            "azure/standard/1024-x-1792/dall-e-3",
+            "azure/standard/1792-x-1024/dall-e-3",
+            "azure/hd/1024-x-1792/dall-e-3",
+            "azure/hd/1792-x-1024/dall-e-3",
+            "azure/standard/1024-x-1024/dall-e-2",
             # Anthropic legacy models
             "claude-instant-1",
             "claude-2",
@@ -141,36 +159,16 @@ class LiteLLMModelManager:
         if not provider:
             provider = self.get_provider(self.model_name)
 
-        # Build query with optional workspace filtering
-        query = {"organization_id": organization_id, "provider": provider}
-        if workspace_id:
-            query["workspace_id"] = workspace_id
-        else:
-            try:
-                org = Organization.objects.get(id=organization_id)
-                if org.ws_enabled:
-                    default_workspace = Workspace.objects.get(
-                        organization=org, is_default=True
-                    )
-                    query["workspace_id"] = default_workspace.id
-            except Organization.DoesNotExist:
-                pass
-            except Workspace.DoesNotExist:
-                pass
+        if not workspace_id:
+            workspace_id = self._resolve_default_workspace_id(organization_id)
 
-        try:
-            api_key_entry = ApiKey.objects.get(**query)
-        except ApiKey.DoesNotExist:
+        api_key_entry = self._find_api_key_entry(
+            organization_id, workspace_id, provider
+        )
+        if api_key_entry is None:
             raise ValueError(
                 f"API key not configured for {provider}. Please add your API key in settings."
             )
-        except ApiKey.MultipleObjectsReturned:
-            # Fallback to first match if multiple keys exist (e.g., workspace not specified)
-            api_key_entry = ApiKey.objects.filter(**query).first()
-            if not api_key_entry:
-                raise ValueError(
-                    f"API key not configured for {provider}. Please add your API key in settings."
-                )
 
         if api_key_entry.key:
             return api_key_entry.actual_key
@@ -181,6 +179,39 @@ class LiteLLMModelManager:
         raise ValueError(
             f"API key not configured for {provider}. Please add your API key in settings."
         )
+
+    def _resolve_default_workspace_id(self, organization_id):
+        try:
+            org = Organization.objects.get(id=organization_id)
+        except Organization.DoesNotExist:
+            return None
+        if not org.ws_enabled:
+            return None
+        try:
+            return Workspace.objects.get(organization=org, is_default=True).id
+        except Workspace.DoesNotExist:
+            return None
+
+    def _find_api_key_entry(self, organization_id, workspace_id, provider):
+        """Workspace-scoped key wins if present; falls back to the
+        org-level key (workspace unset). Keys can be saved without a
+        workspace (e.g. added before a workspace was selected), so a
+        strict workspace-only match would miss a key that's clearly
+        configured for the org."""
+        if workspace_id:
+            entry = ApiKey.objects.filter(
+                organization_id=organization_id,
+                workspace_id=workspace_id,
+                provider=provider,
+            ).first()
+            if entry is not None:
+                return entry
+
+        return ApiKey.objects.filter(
+            organization_id=organization_id,
+            workspace_id__isnull=True,
+            provider=provider,
+        ).first()
 
     def get_provider(self, model_name, organization_id=None, workspace_id=None):
         provider = None
@@ -202,13 +233,13 @@ class LiteLLMModelManager:
         except CustomAIModel.MultipleObjectsReturned:
             raise ValueError(
                 f"Multiple custom models found for {model_name} for organization {organization_id} and workspace {workspace_id}"
-            )
+            ) from None
 
         except CustomAIModel.DoesNotExist:
             raise ValueError(
                 f"Model '{model_name}' is not available in the current model catalog. "
                 "It may be deprecated or retired. Please select a supported model from the latest available models list."
-            )
+            ) from None
 
     def get_model_by_provider(self, provider):
         model_name = []

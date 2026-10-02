@@ -33,6 +33,30 @@ from tracer.models.observation_span import (
 )
 from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession
+from tracer.tests._ch_seed import (
+    seed_ch_eval_loggers_v2,
+    truncate_ch_eval_logger_v2,
+)
+
+AUTH_REQUIRED_STATUS_CODES = (
+    status.HTTP_401_UNAUTHORIZED,
+    status.HTTP_403_FORBIDDEN,
+)
+
+
+@pytest.fixture(autouse=True)
+def _ch_eval_logger(settings):
+    """Seed only the direct-write table read by the production endpoint."""
+    settings.CH25_EVAL_LOGGER_TABLE = "tracer_eval_logger_v2"
+    truncate_ch_eval_logger_v2()
+    yield
+    truncate_ch_eval_logger_v2()
+
+
+def _seed(*rows):
+    """Seed the given EvalLogger rows into CH. Call right before the request,
+    after any soft-delete mutation, so each row's ``deleted`` flag is final."""
+    seed_ch_eval_loggers_v2([r for r in rows if r is not None])
 
 
 def _result(response):
@@ -77,17 +101,17 @@ def _make_session_eval(session, custom_eval_config, **overrides):
     NULL span/trace and a populated ``trace_session`` for session rows;
     passing extra FKs here will rightly fail at save() — that's by design.
     """
-    fields = dict(
-        target_type=EvalTargetType.SESSION,
-        trace_session=session,
-        observation_span=None,
-        trace=None,
-        custom_eval_config=custom_eval_config,
-        eval_task_id=str(uuid.uuid4()),
-        output_bool=True,
-        eval_explanation="ok",
-        error=False,
-    )
+    fields = {
+        "target_type": EvalTargetType.SESSION,
+        "trace_session": session,
+        "observation_span": None,
+        "trace": None,
+        "custom_eval_config": custom_eval_config,
+        "eval_task_id": str(uuid.uuid4()),
+        "output_bool": True,
+        "eval_explanation": "ok",
+        "error": False,
+    }
     fields.update(overrides)
     return EvalLogger.objects.create(**fields)
 
@@ -100,7 +124,7 @@ class TestSessionEvalLogsAuth:
         response = api_client.get(
             f"/tracer/trace-session/{trace_session.id}/eval_logs/"
         )
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
 
 @pytest.mark.integration
@@ -131,7 +155,7 @@ class TestSessionEvalLogsFiltering:
             session, custom_eval_config, eval_explanation="session-level"
         )
         # Span-target on a span inside the session
-        EvalLogger.objects.create(
+        span_row = EvalLogger.objects.create(
             target_type=EvalTargetType.SPAN,
             observation_span=span,
             trace=trace,
@@ -142,7 +166,7 @@ class TestSessionEvalLogsFiltering:
             eval_explanation="span-level",
         )
         # Trace-target anchored to the root span of the session's trace
-        EvalLogger.objects.create(
+        trace_row = EvalLogger.objects.create(
             target_type=EvalTargetType.TRACE,
             observation_span=span,
             trace=trace,
@@ -153,9 +177,10 @@ class TestSessionEvalLogsFiltering:
             eval_explanation="trace-level",
         )
 
-        response = auth_client.get(
-            f"/tracer/trace-session/{session.id}/eval_logs/"
-        )
+        # Seed all three so the wall-off is proven at the CH read layer
+        # (target_type='session' filter), not just by absence of data.
+        _seed(session_row, span_row, trace_row)
+        response = auth_client.get(f"/tracer/trace-session/{session.id}/eval_logs/")
         assert response.status_code == status.HTTP_200_OK
         result = _result(response)
         assert result["total"] == 1
@@ -167,17 +192,16 @@ class TestSessionEvalLogsFiltering:
         self, auth_client, observe_project, custom_eval_config
     ):
         session = _make_session(observe_project, name="S1")
-        live = _make_session_eval(
-            session, custom_eval_config, eval_explanation="live"
-        )
+        live = _make_session_eval(session, custom_eval_config, eval_explanation="live")
         deleted = _make_session_eval(
             session, custom_eval_config, eval_explanation="deleted"
         )
         EvalLogger.objects.filter(id=deleted.id).update(deleted=True)
+        deleted.refresh_from_db()
 
-        response = auth_client.get(
-            f"/tracer/trace-session/{session.id}/eval_logs/"
-        )
+        # Seed AFTER the soft-delete so CH captures deleted=1 for that row.
+        _seed(live, deleted)
+        response = auth_client.get(f"/tracer/trace-session/{session.id}/eval_logs/")
         assert response.status_code == status.HTTP_200_OK
         result = _result(response)
         assert result["total"] == 1
@@ -190,8 +214,9 @@ class TestSessionEvalLogsFiltering:
         s1 = _make_session(observe_project, name="S1")
         s2 = _make_session(observe_project, name="S2")
         s1_row = _make_session_eval(s1, custom_eval_config)
-        _make_session_eval(s2, custom_eval_config)
+        s2_row = _make_session_eval(s2, custom_eval_config)
 
+        _seed(s1_row, s2_row)
         response = auth_client.get(f"/tracer/trace-session/{s1.id}/eval_logs/")
         assert response.status_code == status.HTTP_200_OK
         result = _result(response)
@@ -216,9 +241,8 @@ class TestSessionEvalLogsShape:
             eval_explanation="passed",
         )
 
-        response = auth_client.get(
-            f"/tracer/trace-session/{session.id}/eval_logs/"
-        )
+        _seed(row)
+        response = auth_client.get(f"/tracer/trace-session/{session.id}/eval_logs/")
         assert response.status_code == status.HTTP_200_OK
         item = _result(response)["items"][0]
 
@@ -242,7 +266,14 @@ class TestSessionEvalLogsShape:
         assert detail["target_type"] == "session"
         assert detail["session_id"] == str(session.id)
         assert detail["session_name"] == "My Session"
-        assert detail["output_bool"] is True
+        # CH stores output_bool as Nullable(UInt8) → the read path surfaces the
+        # int 1/0, not Python True/False (matches prod). Pin the int-ness
+        # explicitly: `True == 1` in Python, so `== 1` alone wouldn't catch a
+        # regression that surfaced a bool here.
+        assert detail["output_bool"] == 1
+        # `type() is int` (not isinstance): bool subclasses int, so isinstance
+        # would pass for True too — this pins the surfaced value as a plain int.
+        assert type(detail["output_bool"]) is int
         assert detail["error_message"] is None
         assert "span_id" not in detail
         assert "trace_id" not in detail
@@ -252,7 +283,7 @@ class TestSessionEvalLogsShape:
         self, auth_client, observe_project, custom_eval_config
     ):
         session = _make_session(observe_project, name="Errored")
-        _make_session_eval(
+        row = _make_session_eval(
             session,
             custom_eval_config,
             error=True,
@@ -261,9 +292,8 @@ class TestSessionEvalLogsShape:
             eval_explanation=None,
         )
 
-        response = auth_client.get(
-            f"/tracer/trace-session/{session.id}/eval_logs/"
-        )
+        _seed(row)
+        response = auth_client.get(f"/tracer/trace-session/{session.id}/eval_logs/")
         item = _result(response)["items"][0]
         assert item["status"] == "error"
         assert item["result"] == "Error"
@@ -280,9 +310,9 @@ class TestSessionEvalLogsPagination:
         self, auth_client, observe_project, custom_eval_config
     ):
         session = _make_session(observe_project, name="Pagey")
-        for _ in range(5):
-            _make_session_eval(session, custom_eval_config)
+        rows = [_make_session_eval(session, custom_eval_config) for _ in range(5)]
 
+        _seed(*rows)
         response = auth_client.get(
             f"/tracer/trace-session/{session.id}/eval_logs/",
             {"page": 0, "page_size": 2},
@@ -298,9 +328,9 @@ class TestSessionEvalLogsPagination:
         self, auth_client, observe_project, custom_eval_config
     ):
         session = _make_session(observe_project, name="Pagey")
-        for _ in range(5):
-            _make_session_eval(session, custom_eval_config)
+        rows = [_make_session_eval(session, custom_eval_config) for _ in range(5)]
 
+        _seed(*rows)
         response = auth_client.get(
             f"/tracer/trace-session/{session.id}/eval_logs/",
             {"page": 2, "page_size": 2},
@@ -316,7 +346,7 @@ class TestSessionEvalLogsPagination:
     ):
         """Ridiculous page_size requests are clamped, not honoured."""
         session = _make_session(observe_project, name="Pagey")
-        _make_session_eval(session, custom_eval_config)
+        _seed(_make_session_eval(session, custom_eval_config))
 
         response = auth_client.get(
             f"/tracer/trace-session/{session.id}/eval_logs/",
@@ -329,10 +359,8 @@ class TestSessionEvalLogsPagination:
         self, auth_client, observe_project, custom_eval_config
     ):
         session = _make_session(observe_project, name="Pagey")
-        _make_session_eval(session, custom_eval_config)
+        _seed(_make_session_eval(session, custom_eval_config))
 
-        response = auth_client.get(
-            f"/tracer/trace-session/{session.id}/eval_logs/"
-        )
+        response = auth_client.get(f"/tracer/trace-session/{session.id}/eval_logs/")
         assert response.status_code == status.HTTP_200_OK
         assert _result(response)["page_size"] == 25

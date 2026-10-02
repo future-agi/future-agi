@@ -1,0 +1,7 @@
+# Read by the pre-commit root formatter (scripts/lint-staged-root-format.mjs).
+# Helm templates are Go templates, not YAML: Prettier cannot parse them.
+deploy/helm/*/templates/
+# Written by hack/values_docs.py; `values_docs.py --check` (hack/check.sh,
+# helm-ci) fails on any other formatting.
+deploy/helm/futureagi/values.schema.json
+deploy/helm/futureagi/README.md

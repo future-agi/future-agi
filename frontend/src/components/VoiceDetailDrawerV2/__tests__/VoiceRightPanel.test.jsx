@@ -54,4 +54,211 @@ describe("VoiceRightPanel", () => {
     expect(screen.getByText("raw_log")).toBeInTheDocument();
     expect(screen.getByText("vapi.call_id")).toBeInTheDocument();
   });
+
+  it("shows utterance-level error localization when an environment eval is expanded", async () => {
+    renderWithQueryClient(
+      <VoiceRightPanel
+        data={{
+          id: "call-1",
+          module: "simulate",
+          status: "completed",
+          provider: "livekit",
+          transcript: [],
+          eval_metrics: {
+            "eval-1": {
+              id: "eval-1",
+              name: "Greeting quality",
+              value: "Failed",
+              type: "Pass/Fail",
+              reason: "The greeting was not appropriate.",
+              error_localizer: true,
+              error_localizer_status: "completed",
+              selected_input_key: "conversation",
+              input_data: {
+                conversation:
+                  "Simulator: Hello.\nAgent: Stop wasting my time.\nSimulator: Goodbye.",
+              },
+              input_types: { conversation: "text" },
+              error_analysis: {
+                conversation: [
+                  {
+                    orgSen: { startIdx: 25, endIdx: 46 },
+                    reason: "The agent utterance is hostile.",
+                  },
+                ],
+              },
+            },
+          },
+        }}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("tab", { name: "Evals" }));
+    await userEvent.click(screen.getByText("Greeting quality"));
+
+    expect(screen.getByText("Possible Error")).toBeInTheDocument();
+    expect(screen.getByText("Stop wasting my time.")).toBeInTheDocument();
+  });
+
+  it("shows image-region error localization when an image eval is expanded", async () => {
+    const getContext = vi
+      .spyOn(HTMLCanvasElement.prototype, "getContext")
+      .mockReturnValue({ clearRect: vi.fn() });
+
+    renderWithQueryClient(
+      <VoiceRightPanel
+        data={{
+          id: "call-image",
+          module: "simulate",
+          status: "completed",
+          provider: "browser",
+          transcript: [],
+          eval_metrics: {
+            "eval-image": {
+              id: "eval-image",
+              name: "Screenshot quality",
+              value: "Failed",
+              type: "Pass/Fail",
+              error_localizer: true,
+              error_localizer_status: "completed",
+              selected_input_key: "screenshot",
+              input_data: {
+                screenshot:
+                  "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==",
+              },
+              input_types: { screenshot: "image" },
+              error_analysis: {
+                screenshot: [
+                  {
+                    orgPatch: {
+                      coordinates: {
+                        topLeft: [0, 0],
+                        bottomRight: [1, 1],
+                      },
+                    },
+                    reason: "The button is obscured.",
+                  },
+                ],
+              },
+            },
+          },
+        }}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("tab", { name: "Evals" }));
+    await userEvent.click(screen.getByText("Screenshot quality"));
+
+    expect(screen.getByText("Possible Error")).toBeInTheDocument();
+    expect(screen.getByAltText("Overlayed")).toHaveAttribute(
+      "src",
+      expect.stringContaining("data:image/gif;base64"),
+    );
+    getContext.mockRestore();
+  });
+
+  describe("Fix with Falcon on the Evals tab", () => {
+    const failingEval = {
+      id: "call-2",
+      module: "simulate",
+      status: "completed",
+      provider: "livekit",
+      transcript: [],
+      eval_metrics: {
+        "eval-1": {
+          id: "eval-1",
+          name: "Concise replies",
+          value: "Failed",
+          type: "Pass/Fail",
+          reason: "Four sentences where three were allowed.",
+        },
+      },
+    };
+
+    it("shows by default, on the summary bar and on the expanded failing eval", async () => {
+      renderWithQueryClient(<VoiceRightPanel data={failingEval} />);
+      await userEvent.click(screen.getByRole("tab", { name: "Evals" }));
+      expect(screen.getAllByText("Fix with Falcon")).toHaveLength(1);
+      await userEvent.click(screen.getByText("Concise replies"));
+      expect(screen.getAllByText("Fix with Falcon")).toHaveLength(2);
+    });
+
+    it("hides when the host has no Falcon flow wired", async () => {
+      renderWithQueryClient(<VoiceRightPanel data={failingEval} showFixWithFalcon={false} />);
+      await userEvent.click(screen.getByRole("tab", { name: "Evals" }));
+      await userEvent.click(screen.getByText("Concise replies"));
+      expect(screen.queryByText("Fix with Falcon")).not.toBeInTheDocument();
+    });
+  });
+
+  it("shows the Scenario tab for a call with a persona but no scenario columns", () => {
+    renderWithQueryClient(
+      <VoiceRightPanel
+        data={{
+          id: "call-3",
+          module: "simulate",
+          status: "completed",
+          provider: "livekit",
+          transcript: [],
+          scenario_columns: {},
+          persona_details: { name: "Siddharth Nair", voice: null, age: null, traits: [] },
+        }}
+      />,
+    );
+    expect(screen.getByRole("tab", { name: "Scenario" })).toBeInTheDocument();
+  });
+
+  describe("stop latency on Call Analytics", () => {
+    const renderCall = (extra) =>
+      renderWithQueryClient(
+        <VoiceRightPanel
+          data={{
+            id: "call-5",
+            module: "simulate",
+            status: "completed",
+            provider: "livekit",
+            transcript: [],
+            user_interruption_count: 1,
+            ai_interruption_count: 0,
+            ...extra,
+          }}
+        />,
+      );
+
+    it("shows the agent's stop time after the user interrupts, in ms", () => {
+      renderCall({ avg_stop_time_after_interruption: 640 });
+      expect(screen.getByText("Stop latency")).toBeInTheDocument();
+      expect(screen.getByText("640ms")).toBeInTheDocument();
+    });
+
+    it("keeps a measured zero", () => {
+      renderCall({ avg_stop_time_after_interruption: 0 });
+      expect(screen.getByText("Stop latency")).toBeInTheDocument();
+      expect(screen.getByText("0ms")).toBeInTheDocument();
+    });
+
+    it("shows a dash when the call has no stop time", () => {
+      renderCall({ avg_stop_time_after_interruption: null });
+      expect(screen.getByText("Stop latency").parentElement).toHaveTextContent(
+        "Stop latency—",
+      );
+    });
+  });
+
+  it("still has no Scenario tab when there is neither", () => {
+    renderWithQueryClient(
+      <VoiceRightPanel
+        data={{
+          id: "call-4",
+          module: "simulate",
+          status: "completed",
+          provider: "livekit",
+          transcript: [],
+          scenario_columns: {},
+          persona_details: { name: null, voice: null, age: null, traits: [] },
+        }}
+      />,
+    );
+    expect(screen.queryByRole("tab", { name: "Scenario" })).not.toBeInTheDocument();
+  });
 });

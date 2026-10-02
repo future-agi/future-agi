@@ -13,7 +13,7 @@ import Iconify from "src/components/iconify";
 import SvgColor from "src/components/svg-color";
 import { CREATE_PROMPT_OPTIONS } from "../common";
 import { useNavigate, useParams } from "react-router";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { enqueueSnackbar } from "notistack";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
@@ -79,6 +79,7 @@ export default function CreateNewPrompt({ open, onClose, isLoading }) {
   const theme = useTheme();
   const { folder } = useParams();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [selectedOption, setSelectedOption] = useState(null);
   const { setSelectTemplateDrawerOpen, selectTemplateDrawerOpen } =
     usePromptStore();
@@ -90,11 +91,13 @@ export default function CreateNewPrompt({ open, onClose, isLoading }) {
       enqueueSnackbar("Prompt created successfully.", {
         variant: "success",
       });
+      queryClient.invalidateQueries({ queryKey: ["folder-items"] });
+      queryClient.invalidateQueries({ queryKey: ["prompt-templates"] });
       trackEvent(Events.promptCreateClicked, {
         [PropertyName.click]: true,
       });
       navigate(
-        `/dashboard/workbench/create/${data?.data?.result?.rootTemplate}`,
+        `/dashboard/workbench/create/${data?.data?.result?.root_template}`,
         {
           state: { fromOption: selectedOption },
         },

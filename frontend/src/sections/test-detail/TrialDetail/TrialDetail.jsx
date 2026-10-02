@@ -53,12 +53,12 @@ const TrialDetail = () => {
               href: `/dashboard/simulate/test/${testId}/${executionId}/optimization_runs`,
             },
             {
-              label: optimizationData?.optimiserName ?? optimizationId,
+              label: optimizationData?.optimiser_name ?? optimizationId,
               isLoading: isLoadingOptimization,
               href: `/dashboard/simulate/test/${testId}/${executionId}/${optimizationId}`,
             },
             {
-              label: trailPromptData?.trialName ?? trialId,
+              label: trailPromptData?.trial_name ?? trialId,
               isLoading: isLoadingTrial,
             },
           ]}

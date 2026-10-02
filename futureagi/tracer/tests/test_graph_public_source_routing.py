@@ -1,0 +1,608 @@
+"""Public-wire graph routing and ownership regressions, entirely offline.
+
+Only transport/cache/metadata are mocked. Public dispatch, graph compilers,
+trace candidate classification, and v2 SQL rewriting remain real. These are
+SQL contracts, not ClickHouse execution or latency qualification.
+"""
+
+from datetime import datetime, timedelta
+from types import SimpleNamespace
+from unittest.mock import Mock
+
+import pytest
+from clickhouse_connect.driver.binding import finalize_query
+from django.db import DatabaseError
+
+from tracer.serializers.project import (
+    ProjectGraphDataQuerySerializer,
+    ProjectUsersAggregateGraphDataRequestSerializer,
+)
+from tracer.services.clickhouse import exact_graph_reads as exact
+from tracer.services.clickhouse import graph_dispatch as dispatch
+from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
+from tracer.services.clickhouse.query_builders.exact_graph_predicates import (
+    compile_exact_graph_row_predicates,
+)
+from tracer.services.clickhouse.v2.query_builders.trace_list import (
+    TraceListQueryBuilderV2,
+)
+from tracer.services.clickhouse.v2.query_builders.user_list import (
+    UserListQueryBuilderV2,
+)
+
+pytestmark = pytest.mark.unit
+PROJECT = "11111111-1111-4111-8111-111111111111"
+CONFIG = "22222222-2222-4222-8222-222222222222"
+USER = "33333333-3333-4333-8333-333333333333"
+END = datetime(2026, 9, 4)
+RAW_NAMES = (
+    "has_eval",
+    "has_annotation",
+    "annotator",
+    "my_annotations",
+    "user",
+    "user_id",
+    "user_id_type",
+)
+COLUMNS = [
+    "time_bucket",
+    "avg_latency",
+    "total_tokens",
+    "avg_cost",
+    "traffic_count",
+    "prompt_tokens",
+    "completion_tokens",
+    "error_rate",
+]
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _drop_legacy_ch_spans_mvs():
+    yield
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _ensure_test_score_tenant_column():
+    yield
+
+
+@pytest.fixture(autouse=True)
+def offline(monkeypatch, settings):
+    import socket
+
+    from django.db.backends.base.base import BaseDatabaseWrapper
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("offline graph regression attempted external access")
+
+    monkeypatch.setattr(socket.socket, "connect", forbidden)
+    monkeypatch.setattr(socket, "create_connection", forbidden)
+    monkeypatch.setattr(BaseDatabaseWrapper, "ensure_connection", forbidden)
+    monkeypatch.setattr(exact, "get_annotation_labels_for_project", forbidden)
+    monkeypatch.setattr(exact.CustomEvalConfig.objects, "filter", forbidden)
+    monkeypatch.setattr(
+        exact.CustomEvalConfig.no_workspace_objects, "filter", forbidden
+    )
+    monkeypatch.setattr(
+        dispatch, "read_or_schedule_exact_snapshot", lambda *a, **k: None
+    )
+    settings.DASHBOARD_TRACE_REPLICA_SHARD_CLUSTER = ""
+
+
+def leaf(key, value, *, kind="text", op="equals", family="SPAN_ATTRIBUTE"):
+    return {
+        "column_id": key,
+        "filter_config": {
+            "col_type": family,
+            "filter_type": kind,
+            "filter_op": op,
+            "filter_value": value,
+        },
+    }
+
+
+def window(days=7):
+    return leaf(
+        "created_at",
+        [(END - timedelta(days=days)).isoformat(), END.isoformat()],
+        kind="datetime",
+        op="between",
+        family="SYSTEM_METRIC",
+    )
+
+
+def public(filters, *, users=False):
+    cls = (
+        ProjectUsersAggregateGraphDataRequestSerializer
+        if users
+        else ProjectGraphDataQuerySerializer
+    )
+    serializer = cls(data={"project_id": PROJECT, "filters": filters})
+    serializer.is_valid(raise_exception=True)
+    return serializer.validated_data["filters"]
+
+
+class RecordingAnalytics:
+    supports_per_query_read_settings = True
+    # An affordable scan, so the routing gate hands these reads to the
+    # interactive lane and every assertion below is about the SQL that lane
+    # issues. A cost probe that answers nothing means "not costed", and an
+    # uncosted read is deliberately not issued inline any more - so a fake that
+    # cannot answer it would move every case here onto the background lane and
+    # stop testing the statements at all.
+    cost_estimate_rows = 1_000_000
+
+    def __init__(self):
+        self.calls = []
+
+    def cost_estimate(self):
+        return SimpleNamespace(
+            data=[
+                {
+                    "database": "default",
+                    "table": "spans",
+                    "parts": 4,
+                    "rows": self.cost_estimate_rows,
+                    "marks": 128,
+                }
+            ],
+            columns=["database", "table", "parts", "rows", "marks"],
+            query_time_ms=1,
+        )
+
+    def execute_ch_query(self, query, params, **kwargs):
+        self.calls.append((query, dict(params), kwargs))
+        if "graph_cost_project_id" in query:
+            return self.cost_estimate()
+        return SimpleNamespace(data=[], columns=COLUMNS, query_time_ms=1)
+
+
+class SeedAdmittingAnalytics(RecordingAnalytics):
+    """Answer the seed probe with a selective estimate instead of nothing.
+
+    ``RecordingAnalytics`` returns ``data=[]`` for every statement, so its
+    candidate is always rejected and every ``direct()`` case below exercises
+    the UNSEEDED graph statement. This variant admits the candidate so the
+    seeded SQL is covered on the same public route.
+    """
+
+    def execute_ch_query(self, query, params, **kwargs):
+        self.calls.append((query, dict(params), kwargs))
+        if "graph_cost_project_id" in query:
+            return self.cost_estimate()
+        if "EXPLAIN ESTIMATE" in query:
+            return SimpleNamespace(
+                data=[{"rows": 1_600_000, "marks": 259}],
+                columns=["parts", "rows", "marks"],
+                query_time_ms=1,
+            )
+        return SimpleNamespace(data=[], columns=COLUMNS, query_time_ms=1)
+
+
+def direct(filters, observe_type):
+    analytics = RecordingAnalytics()
+    result = dispatch.fetch_system_metric_graph_ch(
+        analytics=analytics,
+        project_id=PROJECT,
+        filters=public(filters),
+        interval="day",
+        metric_id="traffic",
+        observe_type=observe_type,
+    )
+    assert result["query_complete"] is True
+    # Every filtered graph first costs its own scan from the part index, and a
+    # trace graph may then spend bounded EXPLAIN ESTIMATE probes choosing a
+    # candidate seed. The graph statement is always the last one. A span graph
+    # compiles no trace witness, so its one probe is the cost probe alone.
+    if observe_type == "span":
+        assert len(analytics.calls) == 2
+        assert "graph_cost_project_id" in analytics.calls[0][0]
+    assert all("EXPLAIN ESTIMATE" in call[0] for call in analytics.calls[:-1])
+    assert "EXPLAIN ESTIMATE" not in analytics.calls[-1][0]
+    return analytics.calls[-1]
+
+
+@pytest.mark.parametrize("key", RAW_NAMES)
+def test_public_dispatch_admitted_seed_prunes_with_a_plain_trace_set(key):
+    """An ADMITTED candidate keeps the raw map routing inside the seed too."""
+    analytics = SeedAdmittingAnalytics()
+    result = dispatch.fetch_system_metric_graph_ch(
+        analytics=analytics,
+        project_id=PROJECT,
+        filters=public([window(), leaf(key, "raw-value")]),
+        interval="day",
+        metric_id="traffic",
+        observe_type="trace",
+    )
+    assert result["query_complete"] is True
+    # query_count reports the statements the READ issued: one seed probe and
+    # the graph statement. The cost probe in front of them is a routing
+    # decision, not a read, and is deliberately not counted as one.
+    assert result["query_count"] == 2
+    assert len(analytics.calls) == 3
+    cost_query, _, _ = analytics.calls[0]
+    probe_query, _, _ = analytics.calls[1]
+    query, params, _ = analytics.calls[2]
+    assert "graph_cost_project_id" in cost_query
+    assert "EXPLAIN ESTIMATE" in probe_query
+    assert "trace_id IN (" in query
+    assert "FROM spans AS graph_seed_spans" in query
+    assert "GLOBAL IN" not in query
+    assert "cluster(" not in query
+    assert "attrs_string[%(graph_filter_1_attr_key_1)s]" in query
+    assert params["graph_filter_1_attr_key_1"] == key
+    assert params["graph_seed_1_latest_filter_key_0"] == key
+    assert "spans_hourly_rollup" not in query
+    assert "tracer_eval_logger" not in query
+    assert "model_hub_score" not in query
+    # The seed only prunes: the outer read still classifies every candidate.
+    assert "graph_match_0 = 1" in query
+    assert "FINAL" not in query.upper()
+    assert any(value == "raw-value" for value in params.values())
+
+
+CLUSTER_ROUTING_SHAPES = [
+    *[
+        ({"key": key, "value": value, "kind": kind}, 1)
+        for key in RAW_NAMES
+        for kind, value in (("text", "raw-value"), ("number", 0.01), ("boolean", True))
+    ],
+    *[
+        ({"key": key, "value": value, "op": op}, probes)
+        for key in ("created_at", "start_time")
+        for op, value, probes in (
+            ("equals", "clock", 1),
+            # Negative/exclusion witnesses are not candidates, so these shapes
+            # issue no probe at all - on this release and on the previous one.
+            ("not_equals", "clock", 0),
+            ("is_null", None, 0),
+        )
+    ],
+]
+
+
+@pytest.mark.parametrize(
+    "shape,expected_probes",
+    CLUSTER_ROUTING_SHAPES,
+    ids=[
+        f"{shape['key']}-{shape.get('kind', 'text')}-{shape.get('op', 'equals')}"
+        for shape, _ in CLUSTER_ROUTING_SHAPES
+    ],
+)
+def test_cluster_env_routing_shapes_keep_the_prior_release_schedule(
+    monkeypatch,
+    shape,
+    expected_probes,
+):
+    """Un-gating the seed moves nothing on a deployment that already seeds.
+
+    These are the 27 trace-mode shapes the ``direct()`` cases below cover,
+    replayed with ``DASHBOARD_TRACE_REPLICA_SHARD_CLUSTER`` set - the path this
+    PR does not un-gate. The probe count, the per-probe grant and the rendered
+    statement must equal what the previous release produced for each shape:
+    one probe at ``min(1500, 2500)`` ms for a positive scalar witness, none
+    for an exclusion witness, and the ``cluster(...)`` + ``GLOBAL IN``
+    rendering whenever a candidate is admitted.
+    """
+    monkeypatch.setattr(
+        dispatch.settings,
+        "DASHBOARD_TRACE_REPLICA_SHARD_CLUSTER",
+        "all-sharded",
+    )
+    analytics = SeedAdmittingAnalytics()
+    result = dispatch.fetch_system_metric_graph_ch(
+        analytics=analytics,
+        project_id=PROJECT,
+        filters=public([window(), leaf(**shape)]),
+        interval="day",
+        metric_id="traffic",
+        observe_type="trace",
+    )
+
+    estimates = [call for call in analytics.calls if "EXPLAIN ESTIMATE" in call[0]]
+    # One of them is the routing cost probe every filtered graph now runs
+    # before it picks a lane. It is not a seed probe: it carries no witness,
+    # takes the request's remaining wall rather than the seed grant, and its
+    # count is fixed at one for every shape here.
+    cost_probes = [call for call in estimates if "graph_cost_project_id" in call[0]]
+    probes = [call for call in estimates if "graph_cost_project_id" not in call[0]]
+    assert len(cost_probes) == 1
+    assert len(probes) == expected_probes
+    assert all(call[2]["timeout_ms"] == 1_500 for call in probes)
+    query = analytics.calls[-1][0]
+    assert ("trace_id GLOBAL IN (" in query) is bool(expected_probes)
+    assert "cluster('all-sharded'" in query
+    assert result["query_count"] == expected_probes + 1
+
+
+@pytest.mark.parametrize("key", RAW_NAMES)
+@pytest.mark.parametrize(
+    "kind,value,column",
+    [
+        ("text", "raw-value", "attrs_string"),
+        ("number", 0.01, "attrs_number"),
+        ("boolean", True, "attrs_bool"),
+    ],
+)
+@pytest.mark.parametrize("observe_type", ["trace", "span"])
+def test_public_dispatch_raw_alias_compiles_map_not_native_relation(
+    key,
+    kind,
+    value,
+    column,
+    observe_type,
+):
+    query, params, _ = direct([window(), leaf(key, value, kind=kind)], observe_type)
+    assert key in params.values()
+    assert f"{column}['{key}']" not in query
+    assert f"{column}['{key}']" in finalize_query(query, params)
+    assert "FROM spans" in query
+    assert "tracer_eval_logger" not in query
+    assert "model_hub_score" not in query
+    assert "FROM end_users" not in query
+    assert "spans_hourly_rollup" not in query
+
+
+@pytest.mark.parametrize("key", ["created_at", "start_time"])
+@pytest.mark.parametrize("days", [7, 30, 365])
+@pytest.mark.parametrize(
+    "op,value", [("equals", "clock"), ("not_equals", "clock"), ("is_null", None)]
+)
+@pytest.mark.parametrize("observe_type", ["trace", "span"])
+def test_public_dispatch_raw_date_is_not_date_only_rollup(
+    key, days, op, value, observe_type
+):
+    query, params, _ = direct([window(days), leaf(key, value, op=op)], observe_type)
+    assert "spans_hourly_rollup" not in query
+    assert key in params.values()
+    assert f"mapContains(attrs_string, '{key}')" not in query
+    rendered = finalize_query(query, params)
+    assert f"mapContains(attrs_string, '{key}')" in rendered
+    if op != "is_null":
+        assert f"attrs_string['{key}']" in rendered
+    assert params["start_date"] == END - timedelta(days=days)
+    assert params["end_date"] == END
+
+
+@pytest.mark.parametrize("key", ["created_at", "start_time"])
+@pytest.mark.parametrize(
+    "op,value", [("equals", "clock"), ("not_equals", "clock"), ("is_null", None)]
+)
+@pytest.mark.parametrize("extra_leaf", [False, True])
+def test_exact_trace_reader_preserves_raw_date_in_real_identity_classifier(
+    monkeypatch,
+    key,
+    op,
+    value,
+    extra_leaf,
+):
+    raw = leaf(key, value, op=op)
+    filters = public(
+        [window(), raw] + ([leaf("company_id", "company")] if extra_leaf else [])
+    )
+    captured = []
+
+    def enumerate_ids(**kwargs):
+        # Exercise the real classifier at the enumeration boundary, without
+        # pretending that an offline fake can execute its ClickHouse SQL.
+        frozen = kwargs["filters"]
+        assert raw in frozen
+        assert BaseQueryBuilder.parse_time_range(frozen) == (
+            END - timedelta(days=7),
+            END,
+        )
+        builder = TraceListQueryBuilderV2(
+            project_id=PROJECT,
+            filters=frozen,
+            bounded_internal_scan=True,
+            bounded_identity_only=True,
+            bounded_bulk_scan=True,
+            bounded_include_filter_witnesses=False,
+            bounded_global_span_witnesses=True,
+        )
+        query, params = builder.build_filter_identity_match_query_from_seed_rows(
+            [{"trace_id": "trace-1", "start_time": END - timedelta(hours=1)}]
+        )
+        assert "attrs_string" in query and key in params.values()
+        assert "latest_is_deleted = 0" in query
+        assert "FROM spans FINAL" not in query
+        captured.append((query, params))
+        return ["trace-1"], 1, 1
+
+    monkeypatch.setattr(exact, "_enumerate_exact_trace_ids", enumerate_ids)
+    analytics = RecordingAnalytics()
+    result = exact.read_exact_system_graph(
+        analytics=analytics,
+        project_id=PROJECT,
+        filters=filters,
+        interval="day",
+        metric_id="traffic",
+        observe_type="trace",
+    )
+    assert captured and result["query_complete"] is True
+    query, params, _ = analytics.calls[0]
+    assert params["graph_candidate_trace_ids"] == ("trace-1",)
+    assert (
+        "attrs_string" not in query
+    )  # membership is classified, not reapplied to contributions
+
+
+@pytest.mark.parametrize("key", RAW_NAMES)
+def test_agent_graph_uses_raw_alias_map(monkeypatch, key):
+    analytics = RecordingAnalytics()
+    result = exact.read_exact_agent_graph(
+        analytics=analytics,
+        project_id=PROJECT,
+        filters=public([window(), leaf(key, "raw-value")]),
+    )
+    assert result["query_complete"] is True
+    query, params, _ = analytics.calls[0]
+    assert key in params.values()
+    assert f"attrs_string['{key}']" not in query
+    assert f"attrs_string['{key}']" in finalize_query(query, params)
+    assert "model_hub_score" not in query and "tracer_eval_logger" not in query
+    assert "FROM end_users" not in query
+
+
+@pytest.mark.parametrize("family", ["SYSTEM_METRIC", "NORMAL"])
+@pytest.mark.parametrize("key", ["has_eval", "has_annotation", "user_id"])
+def test_native_and_legacy_relations_are_not_demoted(monkeypatch, family, key):
+    monkeypatch.setattr(
+        exact.CustomEvalConfig.objects,
+        "filter",
+        lambda **kwargs: SimpleNamespace(values_list=lambda *a, **k: [CONFIG]),
+    )
+    config = leaf(
+        key,
+        "native-user" if key == "user_id" else True,
+        kind="text" if key == "user_id" else "boolean",
+        family=family,
+    )
+    plan = compile_exact_graph_row_predicates(
+        public([window(), config]),
+        project_id=PROJECT,
+        observe_type="span",
+        annotation_label_ids=[CONFIG],
+    )
+    predicate = " ".join(plan.predicates)
+    assert {
+        "has_eval": "tracer_eval_logger",
+        "has_annotation": "model_hub_score",
+        "user_id": "end_users",
+    }[key] in predicate
+    assert "attrs_string" not in predicate and "attrs_bool" not in predicate
+
+
+def test_native_datetime_complement_stays_contribution_constraint():
+    complement = leaf(
+        "start_time",
+        "2026-09-01T12:00:00Z",
+        kind="datetime",
+        op="not_equals",
+        family="SYSTEM_METRIC",
+    )
+    filters = public([window(), complement, leaf("start_time", "clock")])
+    plan = compile_exact_graph_row_predicates(
+        filters, project_id=PROJECT, observe_type="trace"
+    )
+    assert len(plan.predicates) == len(plan.contribution_predicates) == 1
+    frozen = exact._frozen_trace_membership_filters(
+        filters, start_date=END - timedelta(days=7), end_date=END
+    )
+    assert complement in frozen and filters[-1] in frozen
+
+
+def eval_filters(key="eval_score", value=80):
+    return public(
+        [
+            window(),
+            leaf(
+                key,
+                value,
+                kind="number",
+                op="greater_than_or_equal",
+                family="SYSTEM_METRIC",
+            ),
+        ],
+        users=True,
+    )
+
+
+@pytest.mark.parametrize("table", ["tracer_eval_logger", "tracer_eval_logger_v2"])
+@pytest.mark.parametrize(
+    "key", ["eval_score", "bool_eval_pass_rate", "avg_output_float"]
+)
+def test_user_graph_eval_ownership_matches_users_list_contract(
+    monkeypatch, settings, table, key
+):
+    settings.CH25_EVAL_LOGGER_TABLE = table
+    owned = Mock(return_value=SimpleNamespace(values_list=lambda *a, **k: [CONFIG]))
+    monkeypatch.setattr(exact.CustomEvalConfig.no_workspace_objects, "filter", owned)
+    analytics = RecordingAnalytics()
+    exact.read_exact_user_system_graph(
+        analytics=analytics,
+        project_id=PROJECT,
+        filters=eval_filters(key),
+        interval="day",
+        metric_id="active_users",
+    )
+    owned.assert_called_once_with(project_id=PROJECT, deleted=False)
+    query, params, _ = analytics.calls[0]
+    assert f"FROM {table} AS eval_scan FINAL" in query
+    assert "eval_scan.custom_eval_config_id IN %(user_eval_config_ids)s" in query
+    assert params["user_eval_config_ids"] == (CONFIG,)
+    assert (
+        "eval_scan.created_at" not in query
+    )  # retain full trace-linked eval semantics
+    live = (
+        "eval_scan.is_deleted = 0"
+        if table.endswith("_v2")
+        else "eval_scan._peerdb_is_deleted = 0"
+    )
+    assert live in query
+    list_sql, list_params = UserListQueryBuilderV2(
+        organization_id=USER, project_id=PROJECT
+    ).build_eval_query(
+        [USER],
+        allowed_eval_config_ids=[CONFIG],
+    )
+    assert "eval_scan.custom_eval_config_id IN %(allowed_eval_config_ids)s" in list_sql
+    assert list_params["allowed_eval_config_ids"] == params["user_eval_config_ids"]
+
+
+def test_user_eval_empty_owned_config_set_cannot_read_other_project(monkeypatch):
+    monkeypatch.setattr(
+        exact.CustomEvalConfig.no_workspace_objects,
+        "filter",
+        lambda **kwargs: SimpleNamespace(values_list=lambda *a, **k: []),
+    )
+    sql, params, _ = exact._user_aggregate_source_sql(
+        project_id=PROJECT,
+        filters=eval_filters(value=0),
+        start_date=END - timedelta(days=7),
+        end_date=END,
+        include_trace_ids=False,
+        all_snapshot_users=True,
+        started=exact.monotonic(),
+    )
+    eval_cte = sql.split("user_eval_metrics AS (", 1)[1].split(
+        "GROUP BY ut.end_user_id", 1
+    )[0]
+    assert "AND 0 = 1" in eval_cte
+    assert "coalesce(ue.bool_eval_pass_rate, 0)" in sql
+
+
+def test_user_eval_ownership_outage_fails_before_any_graph_query(monkeypatch):
+    monkeypatch.setattr(
+        exact.CustomEvalConfig.no_workspace_objects,
+        "filter",
+        Mock(side_effect=DatabaseError("private database detail")),
+    )
+    analytics = RecordingAnalytics()
+    with pytest.raises(exact.ExactGraphReadError, match="Evaluation metadata") as error:
+        exact.read_exact_user_system_graph(
+            analytics=analytics,
+            project_id=PROJECT,
+            filters=eval_filters(),
+            interval="day",
+            metric_id="active_users",
+        )
+    assert "private" not in str(error.value)
+    assert analytics.calls == []
+
+
+def test_raw_eval_score_does_not_resolve_native_eval_ownership():
+    analytics = RecordingAnalytics()
+    exact.read_exact_user_system_graph(
+        analytics=analytics,
+        project_id=PROJECT,
+        filters=public([window(), leaf("eval_score", 80, kind="number")], users=True),
+        interval="day",
+        metric_id="active_users",
+    )
+    query, params, _ = analytics.calls[0]
+    assert "attrs_number" in query
+    assert "eval_score" in params.values()
+    assert "attrs_number['eval_score']" not in query
+    assert "attrs_number['eval_score']" in finalize_query(query, params)
+    assert "user_eval_metrics AS" not in query

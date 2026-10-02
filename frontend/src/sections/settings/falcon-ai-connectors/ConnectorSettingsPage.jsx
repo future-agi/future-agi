@@ -4,7 +4,7 @@ import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
 import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
-import CircularProgress from "@mui/material/CircularProgress";
+import { LoadingScreen } from "src/components/loading-screen";
 import Alert from "@mui/material/Alert";
 import TextField from "@mui/material/TextField";
 import InputAdornment from "@mui/material/InputAdornment";
@@ -12,12 +12,21 @@ import ListItemButton from "@mui/material/ListItemButton";
 import ListItemIcon from "@mui/material/ListItemIcon";
 import ListItemText from "@mui/material/ListItemText";
 import Switch from "@mui/material/Switch";
+import CircularProgress from "@mui/material/CircularProgress";
 import Divider from "@mui/material/Divider";
 import MenuItem from "@mui/material/MenuItem";
 import Select from "@mui/material/Select";
 import FormControl from "@mui/material/FormControl";
 import { alpha, useTheme } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
+import ToolsSkeleton from "src/sections/falcon-ai/components/ToolsSkeleton";
+import {
+  LAST_ENABLED_TOOL_HINT,
+  isOnlyEnabledTool,
+  toolActionErrorMessage,
+} from "src/sections/falcon-ai/components/connectorTools";
+import { useConnectorToolPermissions } from "src/sections/falcon-ai/hooks/useConnectorToolPermissions";
 import {
   fetchConnectors,
   useConnector,
@@ -27,8 +36,8 @@ import {
   testConnector,
   discoverConnectorTools,
   authenticateConnector,
-  updateConnectorTools,
 } from "src/sections/falcon-ai/hooks/useFalconAPI";
+import { buildConnectorSavePayload } from "./utils";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -54,16 +63,6 @@ function getStatusInfo(connector) {
   return { label: "Pending", color: "warning" };
 }
 
-function getActionErrorMessage(error, fallback) {
-  return (
-    error?.response?.data?.detail ||
-    error?.response?.data?.error ||
-    error?.response?.data?.message ||
-    error?.message ||
-    fallback
-  );
-}
-
 // ---------------------------------------------------------------------------
 // Main Page
 // ---------------------------------------------------------------------------
@@ -76,10 +75,13 @@ export default function ConnectorSettingsPage() {
   const [selectedId, setSelectedId] = useState(null);
   const [isEditing, setIsEditing] = useState(false);
   const [isNew, setIsNew] = useState(false);
-  const { data: selectedConnector, refetch: refetchSelectedConnector } =
-    useConnector(selectedId, {
-      enabled: Boolean(selectedId) && !isNew,
-    });
+  const {
+    data: selectedConnector,
+    refetch: refetchSelectedConnector,
+    isLoading: isConnectorLoading,
+  } = useConnector(selectedId, {
+    enabled: Boolean(selectedId) && !isNew,
+  });
 
   const loadConnectors = useCallback(async ({ showSpinner = true } = {}) => {
     try {
@@ -190,11 +192,7 @@ export default function ConnectorSettingsPage() {
   };
 
   if (loading) {
-    return (
-      <Box display="flex" justifyContent="center" py={8}>
-        <CircularProgress />
-      </Box>
-    );
+    return <LoadingScreen sx={{ height: "100%", minHeight: "60vh" }} />;
   }
 
   return (
@@ -374,6 +372,7 @@ export default function ConnectorSettingsPage() {
           ) : selected ? (
             <ConnectorDetail
               connector={selected}
+              loading={isConnectorLoading}
               onEdit={() => setIsEditing(true)}
               onDelete={() => handleDelete(selected.id)}
               onRefresh={() => refreshSelected(selected.id)}
@@ -433,7 +432,7 @@ export default function ConnectorSettingsPage() {
 // ---------------------------------------------------------------------------
 // Connector Detail (read-only)
 // ---------------------------------------------------------------------------
-function ConnectorDetail({ connector, onEdit, onDelete, onRefresh }) {
+function ConnectorDetail({ connector, loading, onEdit, onDelete, onRefresh }) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const statusInfo = getStatusInfo(connector);
@@ -441,6 +440,18 @@ function ConnectorDetail({ connector, onEdit, onDelete, onRefresh }) {
   const [discovering, setDiscovering] = useState(false);
   const [reauthing, setReauthing] = useState(false);
   const [feedback, setFeedback] = useState(null);
+  // Ordering, the last-tool guard, optimistic display and rollback are shared
+  // with the Customize pane. The switch reads through the react-query cache
+  // this writes to, so no local copy of the record is needed here.
+  const {
+    toolError,
+    pendingNames,
+    handleToolToggle: toggleTool,
+  } = useConnectorToolPermissions({
+    connector,
+    onApply: () => {},
+    onDrained: onRefresh,
+  });
 
   const tools = connector.discovered_tools || [];
   const enabledTools = connector.enabled_tool_names || [];
@@ -476,7 +487,7 @@ function ConnectorDetail({ connector, onEdit, onDelete, onRefresh }) {
     } catch (error) {
       setFeedback({
         severity: "error",
-        message: getActionErrorMessage(error, "Connection test failed."),
+        message: toolActionErrorMessage(error, "Connection test failed."),
       });
     } finally {
       setTesting(false);
@@ -511,7 +522,7 @@ function ConnectorDetail({ connector, onEdit, onDelete, onRefresh }) {
     } catch (error) {
       setFeedback({
         severity: "error",
-        message: getActionErrorMessage(error, "Tool discovery failed."),
+        message: toolActionErrorMessage(error, "Tool discovery failed."),
       });
     } finally {
       setDiscovering(false);
@@ -543,30 +554,14 @@ function ConnectorDetail({ connector, onEdit, onDelete, onRefresh }) {
     } catch (error) {
       setFeedback({
         severity: "error",
-        message: getActionErrorMessage(error, "Authentication failed."),
+        message: toolActionErrorMessage(error, "Authentication failed."),
       });
     } finally {
       setReauthing(false);
     }
   };
 
-  const handleToolToggle = async (toolName) => {
-    let updated;
-    if (isToolEnabled(toolName)) {
-      updated = enabledTools.filter((t) => t !== toolName);
-    } else {
-      updated = [...enabledTools, toolName];
-    }
-    try {
-      await updateConnectorTools(connector.id, updated);
-      await onRefresh();
-    } catch (error) {
-      setFeedback({
-        severity: "error",
-        message: getActionErrorMessage(error, "Failed to update tools."),
-      });
-    }
-  };
+  const handleToolToggle = (toolName) => toggleTool(connector.id, toolName);
 
   return (
     <Box
@@ -700,6 +695,12 @@ function ConnectorDetail({ connector, onEdit, onDelete, onRefresh }) {
         </Alert>
       )}
 
+      {toolError && (
+        <Alert severity="warning" sx={{ mb: 2, fontSize: 12 }}>
+          {toolError}
+        </Alert>
+      )}
+
       {/* Actions */}
       <Box sx={{ display: "flex", gap: 1, mb: 3, flexWrap: "wrap" }}>
         <Button
@@ -779,7 +780,14 @@ function ConnectorDetail({ connector, onEdit, onDelete, onRefresh }) {
         )}
       </Typography>
 
-      {tools.length === 0 ? (
+      {loading ? (
+        <ToolsSkeleton
+          title={null}
+          subtitle={null}
+          groupHeader={false}
+          trailing="switch"
+        />
+      ) : tools.length === 0 ? (
         <Box sx={{ textAlign: "center", py: 4 }}>
           <Iconify
             icon="mdi:tools"
@@ -830,11 +838,29 @@ function ConnectorDetail({ connector, onEdit, onDelete, onRefresh }) {
                     </Typography>
                   )}
                 </Box>
-                <Switch
-                  size="small"
-                  checked={enabled}
-                  onChange={() => handleToolToggle(name)}
-                />
+                {/* The guard refuses this click; say so before it. */}
+                <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+                  {pendingNames.includes(name) && (
+                    <CircularProgress
+                      size={14}
+                      role="status"
+                      aria-label="Saving"
+                    />
+                  )}
+                  <CustomTooltip
+                    show={isOnlyEnabledTool(connector, name)}
+                    arrow
+                    size="small"
+                    placement="left"
+                    title={LAST_ENABLED_TOOL_HINT}
+                  >
+                    <Switch
+                      size="small"
+                      checked={enabled}
+                      onChange={() => handleToolToggle(name)}
+                    />
+                  </CustomTooltip>
+                </Box>
               </Box>
             );
           })}
@@ -845,6 +871,7 @@ function ConnectorDetail({ connector, onEdit, onDelete, onRefresh }) {
 }
 
 ConnectorDetail.propTypes = {
+  loading: PropTypes.bool,
   connector: PropTypes.shape({
     id: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
     name: PropTypes.string,
@@ -907,10 +934,13 @@ function ConnectorEditor({ connector, onSaved, onCancel }) {
     setSaving(true);
     setError(null);
     try {
+      const payload = buildConnectorSavePayload(form, {
+        preserveEmptySecret: isEdit,
+      });
       if (isEdit) {
-        await updateConnector(connector.id, form);
+        await updateConnector(connector.id, payload);
       } else {
-        await createConnector(form);
+        await createConnector(payload);
       }
       onSaved();
     } catch (err) {

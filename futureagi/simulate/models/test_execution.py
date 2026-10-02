@@ -68,6 +68,10 @@ class TestExecution(BaseModel):
         blank=True,
         help_text="List of scenario IDs that were executed in this run",
     )
+    trials = models.PositiveSmallIntegerField(
+        default=1,
+        help_text="Requested executions of each selected authored scenario",
+    )
 
     total_calls = models.IntegerField(
         default=0, help_text="Total number of calls to be made"
@@ -406,6 +410,8 @@ class CallExecution(BaseModel):
         help_text="Row ID from the dataset if this call is from a dataset scenario",
     )
 
+    # Snapshot keyed by eval-config id; not pruned on eval delete, so readers
+    # must filter keys against the live (non-deleted) eval configs.
     eval_outputs = models.JSONField(
         null=True, blank=True, help_text="Evaluation output"
     )

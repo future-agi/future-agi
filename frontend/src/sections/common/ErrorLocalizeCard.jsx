@@ -168,8 +168,11 @@ const ImageWithOverlay = ({ imageUrl, value, boxWidth, boxHeight }) => {
         const highlightAreas = [];
 
         value.forEach((item) => {
-          const { topLeft, bottomRight } = item.orgPatch.coordinates;
-          const weight = item.weight;
+          const coords = item?.orgPatch?.coordinates;
+          const topLeft = coords?.topLeft || coords?.top_left;
+          const bottomRight = coords?.bottomRight || coords?.bottom_right;
+          if (!topLeft || !bottomRight) return;
+          const weight = item.weight ?? item.rank;
           const opacity = 0.2; // Base opacity for highlights
           const color = getMarkColor(weight, false, opacity);
 
@@ -264,7 +267,10 @@ const ImageWithOverlay = ({ imageUrl, value, boxWidth, boxHeight }) => {
           const mouseY = e.clientY - canvasRect.top;
 
           value.forEach((item) => {
-            const { topLeft, bottomRight } = item.orgPatch.coordinates;
+            const coords = item?.orgPatch?.coordinates;
+            const topLeft = coords?.topLeft || coords?.top_left;
+            const bottomRight = coords?.bottomRight || coords?.bottom_right;
+            if (!topLeft || !bottomRight) return;
 
             if (isInsideRect(mouseX, mouseY, topLeft, bottomRight)) {
               handleMouseEnter(item.reason, mouseX, mouseY);
@@ -274,12 +280,14 @@ const ImageWithOverlay = ({ imageUrl, value, boxWidth, boxHeight }) => {
         onMouseLeave={handleMouseLeave}
       />
 
-      <CustomTooltipImage
-        show={Boolean(hoveredData)}
-        title={hoveredData}
-        x={tooltipPosition.x}
-        y={tooltipPosition.y}
-      />
+      {hoveredData && (
+        <CustomTooltipImage
+          show
+          title={hoveredData}
+          x={tooltipPosition.x}
+          y={tooltipPosition.y}
+        />
+      )}
     </Box>
   );
 };
@@ -489,6 +497,7 @@ const ErrorLocalizeCard = ({ value, datapoint, column, sx = {} }) => {
                       value.map((i, index) => (
                         <React.Fragment key={i.unitKey || i.unit_key || index}>
                           <Typography
+                            component="div"
                             sx={{ marginY: theme.spacing(1.5), ...sx }}
                             variant="body2"
                           >
@@ -510,7 +519,7 @@ const ErrorLocalizeCard = ({ value, datapoint, column, sx = {} }) => {
                                 ],
                                 i?.orgSen?.startIdx ?? i?.orgSen?.start_idx,
                                 i?.orgSen?.endIdx ?? i?.orgSen?.end_idx,
-                                i.weight,
+                                i.weight ?? i.rank,
                                 i,
                               )}
                             </Box>
@@ -538,12 +547,13 @@ const ErrorLocalizeCard = ({ value, datapoint, column, sx = {} }) => {
                             key={item.unitKey || item.unit_key || index}
                           >
                             <Typography
+                              component="div"
                               sx={{ marginY: theme.spacing(1.5), ...sx }}
                               variant="s2"
                             >
                               <span
                                 style={{
-                                  backgroundColor: getMarkColor(item.weight),
+                                  backgroundColor: getMarkColor(item.weight ?? item.rank),
                                   display: "inline",
                                 }}
                               >
@@ -710,10 +720,6 @@ ErrorLocalizeCard.propTypes = {
 
 ImageWithOverlay.propTypes = {
   imageUrl: PropTypes.string.isRequired,
-  coordinates: PropTypes.shape({
-    topLeft: PropTypes.arrayOf(PropTypes.number).isRequired,
-    bottomRight: PropTypes.arrayOf(PropTypes.number).isRequired,
-  }).isRequired,
   value: PropTypes.array,
   boxWidth: PropTypes.number,
   boxHeight: PropTypes.number,

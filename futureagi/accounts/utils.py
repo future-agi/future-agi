@@ -2,23 +2,29 @@ import os
 import re
 import secrets
 import string
+import threading
+import urllib.parse
 
 import requests
 import structlog
 from django.conf import settings
+from django.contrib.auth.password_validation import validate_password
 from django.contrib.auth.tokens import default_token_generator
+from django.core.exceptions import ValidationError
+from django.core.validators import validate_email
+from django.db import close_old_connections, transaction
+from django.db.models.functions import Lower
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
+from rest_framework.exceptions import ValidationError as DRFValidationError
 from slack_sdk import WebhookClient
 
+from accounts.disposable_domains import DISPOSABLE_EMAIL_DOMAINS
 from accounts.models.organization import Organization
+from accounts.models.organization_invite import InviteStatus, OrganizationInvite
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import OrgApiKey, User
 from accounts.serializers.user import UserSignupSerializer
-from accounts.user_onboard import (
-    create_demo_traces_and_spans,
-    upload_demo_dataset,
-)
 from analytics.mixpanel_util import mixpanel_tracker
 from analytics.utils import (
     MixpanelEvents,
@@ -28,11 +34,36 @@ from analytics.utils import (
 )
 from saml2_auth.models import SAMLMetadataModel
 from tfc.constants.email import FREE_EMAIL_DOMAINS
+from tfc.constants.levels import Level
+from tfc.ee_loader import is_cloud_env
 from tfc.settings.settings import ssl
 from tfc.utils.email import email_helper
 from tfc.utils.parse_errors import parse_serialized_errors
 
 logger = structlog.get_logger(__name__)
+
+
+def _fire_deployment_telemetry_registration():
+    import threading
+
+    try:
+        from tfc.deployment_telemetry.config import is_self_hosted_deployment
+
+        if not is_self_hosted_deployment():
+            return
+
+        def _register():
+            close_old_connections()
+            try:
+                from tfc.deployment_telemetry.sender import attempt_registration
+
+                attempt_registration()
+            finally:
+                close_old_connections()
+
+        threading.Thread(target=_register).start()
+    except Exception:
+        logger.warning("deployment_telemetry_signup_hook_failed", exc_info=True)
 
 
 def resolve_org(request):
@@ -130,6 +161,48 @@ def generate_password(
     return "".join(password)
 
 
+WORK_EMAIL_REQUIRED_MESSAGE = "Please sign up with your work email address."
+
+
+class WorkEmailRequired(Exception):
+    """Raised when a managed-cloud signup uses a free email provider."""
+
+    def __init__(self, message=WORK_EMAIL_REQUIRED_MESSAGE):
+        super().__init__(message)
+
+
+# Throwaway providers we have seen at signup but upstream has not picked up.
+# accounts/disposable_domains.py is regenerated wholesale every Thursday, so an
+# entry added there by hand disappears at the next refresh -- this set is the
+# durable place for them. Drop one once upstream ships it; keeping it is
+# harmless, just noise.
+EXTRA_DISPOSABLE_EMAIL_DOMAINS = frozenset(
+    {
+        "insight-travel.my.id",
+        "uberip.com",
+    }
+)
+
+
+def is_disposable_email_domain(domain):
+    """True if the domain, or any parent of it, is a known throwaway provider.
+
+    Walks the suffixes so a single blocklist entry also covers a provider's
+    subdomains -- Mailinator hands out `anything.mailinator.com`, and an exact
+    match on `mailinator.com` would miss every one of them. The bare TLD is
+    never tested, so a stray entry there can't take out a whole namespace.
+    """
+    domain_parts = domain.split(".")
+    for i in range(len(domain_parts) - 1):
+        suffix = ".".join(domain_parts[i:])
+        if (
+            suffix in DISPOSABLE_EMAIL_DOMAINS
+            or suffix in EXTRA_DISPOSABLE_EMAIL_DOMAINS
+        ):
+            return True
+    return False
+
+
 def is_work_email(email):
     """
     Returns True if the email appears to be a work email,
@@ -151,6 +224,24 @@ def is_work_email(email):
         "live.com",
         "msn.com",
         "yahoo.com",
+        "aol.com",
+        "icloud.com",
+        "me.com",
+        "protonmail.com",
+        "proton.me",
+        "zoho.com",
+        "yandex.com",
+        "mail.com",
+        "gmx.com",
+        "rediffmail.com",
+        "qq.com",
+        "foxmail.com",
+        "rocketmail.com",
+        "yandex.ru",
+        "mailinator.com",
+        "yopmail.com",
+        "web-library.net",
+        "example.com",
         "noreply.github.com",  # GitHub's no-reply emails
         "github.com",  # In case GitHub emails are used
     }
@@ -169,8 +260,10 @@ def is_work_email(email):
     # Extract the domain part from the email
     domain = email.split("@")[-1]
 
-    # Return False if the domain is in the free domains list
-    return domain not in free_domains
+    if domain in free_domains:
+        return False
+
+    return not is_disposable_email_domain(domain)
 
 
 def first_signup(data, mode=None):
@@ -193,20 +286,20 @@ def first_signup(data, mode=None):
     domain = email_parts[1]
 
     if domain in FREE_EMAIL_DOMAINS:
-        # For free email providers, use the username part and create org name
-        username = email_parts[0]
-        # Remove numbers and special characters, capitalize first letter of each word
-        # org_name = re.sub(r'[0-9._-]+', ' ', username)
-        # org_name = ' '.join(word.capitalize() for word in org_name.split())
-        # data["company_name"] = org_name + " Org"
         data["company_name"] = ""
     else:
         # For work emails, use domain as before
         data["company_name"] = domain.split(".")[0]
 
-    allow_any_email = os.getenv("ALLOW_ANY_EMAIL", "false").lower() == "true"
+    # Only managed cloud requires a work address. A self-hosted install — EE
+    # licensed or not — is run by people signing up on whatever address they
+    # have, and the operator already controls who can reach the instance.
+    is_cloud = is_cloud_env(settings.CLOUD_DEPLOYMENT)
+    allow_any_email = (
+        os.getenv("ALLOW_ANY_EMAIL", "false" if is_cloud else "true").lower() == "true"
+    )
     if not allow_any_email and not is_work_email(data.get("email")):
-        raise Exception("Provided Email is not work email")
+        raise WorkEmailRequired()
 
     serializer = UserSignupSerializer(data=data)
     if serializer.is_valid():
@@ -244,7 +337,7 @@ def first_signup(data, mode=None):
         except ImportError:
             pass
     else:
-        raise Exception(f"Invalid data: {serializer.errors}")
+        raise DRFValidationError(serializer.errors)
 
     email = data.get("email", None)
     organization = get_user_organization(user)
@@ -269,11 +362,108 @@ def first_signup(data, mode=None):
         if generated_password:
             process_post_registration(user.id, generated_password)
 
+        transaction.on_commit(_fire_deployment_telemetry_registration)
         return user
 
     else:
         error_messages = parse_serialized_errors(serializer)
         raise Exception(str(error_messages))
+
+
+def create_owner_account(email, full_name, password):
+    """An account that owns a new organization, as a first signup creates it:
+    ``manage.py create_user`` and the Helm chart's first admin
+    (``bootstrap_install``). Raises ValidationError, with messages for the
+    operator, for a missing field, a malformed or taken email, or a password
+    AUTH_PASSWORD_VALIDATORS reject, before anything is created."""
+    if not email or not full_name or not password:
+        raise ValidationError("Email, name, and password are all required.")
+    validate_email(email)
+    # Before the password: ./bin/install counts "already exists" as success.
+    if User.objects.filter(email__iexact=email).exists():
+        raise ValidationError(f"A user with the email {email} already exists.")
+    # UserSignupSerializer trims the password before it validates and stores it.
+    validate_password(password.strip())
+    return first_signup(
+        {
+            "email": email,
+            "full_name": full_name,
+            "password": password,
+            "allow_email": True,
+        }
+    )
+
+
+def persist_pending_org_invite(
+    organization, target_email, org_role, workspace_role, workspaces, invited_by
+):
+    """Create or refresh the PENDING OrganizationInvite for a newly invited user.
+
+    The accept-invite flow (accept_invitation_mail) rejects any link that has
+    no pending invite, and invite.accept() materializes the org + workspace
+    memberships from level/workspace_access. Without this row the invite email
+    link always renders as "expired or invalid".
+
+    Keyed on (organization, target_email, status=PENDING) to match the
+    unique_pending_invite_per_org_email constraint. org_role may be None for
+    workspace-only invites (falls back to Level.VIEWER).
+    """
+    org_level = Level.from_string(org_role) if org_role else Level.VIEWER
+    ws_level = Level.from_string(Level.normalize_ws_role(workspace_role))
+    OrganizationInvite.objects.update_or_create(
+        organization=organization,
+        target_email=target_email,
+        status=InviteStatus.PENDING,
+        defaults={
+            "level": org_level,
+            "workspace_access": [
+                {"workspace_id": str(w.id), "level": ws_level} for w in workspaces
+            ],
+            "invited_by": invited_by,
+        },
+    )
+
+
+def build_invite_accept_link(user):
+    """Build the accept-invite link for an inactive invited user.
+
+    Same URL that goes out in invite_user.html — OSS deployments surface it in
+    the API so an admin can share it manually when SMTP isn't configured.
+    """
+    uid = urlsafe_base64_encode(force_bytes(user.pk))
+    token = default_token_generator.make_token(user)
+    return f"{settings.APP_BASE_URL}/auth/jwt/invitation/accept/{uid}/{token}"
+
+
+def build_invite_links(emails):
+    """Map lowercased email -> accept-invite link, OSS only.
+
+    Shared by invite creation and both member lists so they cannot disagree
+    about who gets a link.
+    """
+    from tfc.ee_gating import is_oss
+
+    if not emails or not is_oss():
+        return {}
+
+    lowered = {email.lower() for email in emails}
+    return {
+        user.email.lower(): build_invite_accept_link(user)
+        for user in User.objects.annotate(email_lower=Lower("email")).filter(
+            email_lower__in=lowered,
+            is_active=False,
+        )
+    }
+
+
+def build_password_reset_link(uidb64, token):
+    """Build the password-reset link for an already-issued uid/token pair.
+
+    Same URL reset_password.html renders. The uid and token are passed in rather
+    than derived here because the caller has already minted the AuthToken that
+    the token encodes — building a second one would leave a stray active token.
+    """
+    return f"{settings.APP_BASE_URL}/auth/jwt/verify/{uidb64}/{token}"
 
 
 def send_invite_email(email, organization, inviter):
@@ -287,10 +477,8 @@ def send_invite_email(email, organization, inviter):
             extra_context = {}
         elif existing:
             # Inactive user — send invite with activation token
-            uid = urlsafe_base64_encode(force_bytes(existing.pk))
-            token = default_token_generator.make_token(existing)
             template = "invite_user.html"
-            extra_context = {"uid": uid, "token": token}
+            extra_context = {"invite_link": build_invite_accept_link(existing)}
         else:
             # No user record yet; email will be sent once the user signs up.
             logger.info("invite_email_skipped_no_user", email=email)
@@ -326,7 +514,40 @@ def send_signup_email(generated_password, user_email, user_name):
     )
 
 
+def hubspot_is_configured(url_setting="HUBSPOT_URL"):
+    """Whether HubSpot lead sync may run on this deployment.
+
+    Lead sync (a contact on signup, ``logged_in`` on login) is a Future AGI
+    Cloud integration. It runs only when the operator sets HUBSPOT_API_TOKEN;
+    self-hosted installs leave it empty, so signup and login never contact
+    HubSpot, log nothing above debug and add no latency. ``url_setting`` names
+    the endpoint setting the caller is about to use; an empty one also turns
+    the call off.
+    """
+    token = str(getattr(settings, "HUBSPOT_API_TOKEN", "") or "").strip()
+    url = str(getattr(settings, url_setting, "") or "").strip()
+    return bool(token and url)
+
+
+def hubspot_contact_url(email):
+    """HUBSPOT_UPDATE_URL for one contact. The address goes into the URL path,
+    and a valid one may hold ``?``, ``#`` or ``/``, which would otherwise end
+    the path and point the PATCH at another contact."""
+    return settings.HUBSPOT_UPDATE_URL.format(urllib.parse.quote(email, safe="@"))
+
+
+def slack_signup_webhook_is_configured():
+    """Whether new-signup Slack notifications have a webhook to post to."""
+    return bool(str(getattr(settings, "SLACK_WEBHOOK_CHANNEL", "") or "").strip())
+
+
 def send_slack_notification(user, updated=False, err=None):
+    if not slack_signup_webhook_is_configured():
+        logger.debug(
+            "signup_slack_notification_skipped",
+            reason="SLACK_WEBHOOK_CHANNEL not set",
+        )
+        return
     try:
         org = get_user_organization(user)
         org_name = (org.display_name or org.name) if org else "Unknown"
@@ -335,7 +556,7 @@ def send_slack_notification(user, updated=False, err=None):
             data += "\n✅ Contact Updated in HubSpot"
         if err:
             data += f"\n❌ Error (HUBSPOT): {err}"
-        webhook = WebhookClient(settings.SLACK_WEBHOOK_CHANNEL)
+        webhook = WebhookClient(settings.SLACK_WEBHOOK_CHANNEL, timeout=10)
         webhook.send(text=data)
         logger.info("Slack notification sent successfully")
     except Exception as e:
@@ -343,8 +564,17 @@ def send_slack_notification(user, updated=False, err=None):
 
 
 def send_hubspot_notification(user):
+    """Create the new user's HubSpot contact, or update it if it already exists.
+
+    Returns ``(updated, err)``. Without HubSpot configured it returns
+    ``(False, None)`` and makes no network call.
+    """
     updated = False
     err = None
+
+    if not hubspot_is_configured():
+        logger.debug("hubspot_contact_sync_skipped", reason="HUBSPOT_API_TOKEN not set")
+        return updated, err
 
     headers = {
         "Authorization": f"Bearer {settings.HUBSPOT_API_TOKEN}",
@@ -388,7 +618,7 @@ def send_hubspot_notification(user):
         }
     }
 
-    logger.info(f"CONTACT: {contact}")
+    logger.debug("hubspot_contact_create", lead_type=contact["properties"]["lead_type"])
     response_text = "No Response"
     response = (
         None  # Initialize before try block to avoid NameError in exception handler
@@ -419,6 +649,10 @@ def send_hubspot_notification(user):
             err = f"Create failed: {str(e)}, Response: {response_text}"
             return updated, err
 
+        if not hubspot_is_configured("HUBSPOT_UPDATE_URL"):
+            err = f"Create failed: {str(e)}, and HUBSPOT_UPDATE_URL is not set"
+            return updated, err
+
         update_contact = {
             "properties": {
                 "email": user.email,
@@ -440,7 +674,7 @@ def send_hubspot_notification(user):
         # Get response text before checking status
         try:
             response = requests.patch(
-                settings.HUBSPOT_UPDATE_URL.format(user.email),
+                hubspot_contact_url(user.email),
                 json=update_contact,
                 headers=headers,
                 timeout=10,
@@ -465,24 +699,80 @@ def send_hubspot_notification(user):
     return updated, err
 
 
+def _send_hubspot_login_update(email, lead_type):
+    """PATCH the contact's ``logged_in`` flag. Runs on a background thread."""
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {settings.HUBSPOT_API_TOKEN}",
+    }
+    contact = {"properties": {"lead_type": lead_type, "logged_in": "Yes"}}
+    try:
+        response = requests.patch(
+            hubspot_contact_url(email),
+            json=contact,
+            headers=headers,
+            timeout=10,
+        )
+        response.raise_for_status()
+        logger.info("hubspot_login_recorded")
+    except requests.exceptions.RequestException as e:
+        logger.error("hubspot_login_update_failed", error=str(e))
+
+
+def record_hubspot_login(user):
+    """Mark the user's HubSpot contact as logged in, off the request path.
+
+    Without HubSpot configured this returns None straight away: no thread, no
+    network call, nothing logged above debug. Otherwise the PATCH runs on a
+    daemon thread so a slow or unreachable HubSpot never delays the login, and
+    the started thread is returned. Never raises.
+    """
+    try:
+        if not hubspot_is_configured("HUBSPOT_UPDATE_URL"):
+            logger.debug(
+                "hubspot_login_update_skipped", reason="HUBSPOT_API_TOKEN not set"
+            )
+            return None
+        thread = threading.Thread(
+            target=_send_hubspot_login_update,
+            args=(user.email, getattr(user, "organization_role", None)),
+            name="hubspot-login-update",
+            daemon=True,
+        )
+        thread.start()
+        return thread
+    except Exception:
+        logger.warning("hubspot_login_update_not_started", exc_info=True)
+        return None
+
+
 def _run_post_registration(user_id, generated_password):
     """Process post-registration steps in a separate thread"""
     user = User.objects.get(id=user_id)
     if user:
         send_signup_email(generated_password, user.email, user.name)
 
+        # Each of these returns without a network call unless its key is set
+        # (HUBSPOT_API_TOKEN, SLACK_WEBHOOK_CHANNEL), so a self-hosted install
+        # with ENV_TYPE=production still never contacts HubSpot or Slack.
         if os.getenv("ENV_TYPE") not in ["local"]:
             updated, err = send_hubspot_notification(user)
             send_slack_notification(user, updated=updated, err=err)
 
         org = get_user_organization(user)
         if org:
+            from accounts.user_onboard import (
+                create_demo_traces_and_spans,
+                upload_demo_dataset,
+            )
+
             upload_demo_dataset(org.id, str(user.id))
-            # create_demo_prompt_template(str(org.id), str(user.id))
             create_demo_traces_and_spans(str(org.id))
 
 
-def existing_member_access_will_change(existing_user, organization, org_level, workspace_access):
+def existing_member_access_will_change(
+    existing_user, organization, org_level, workspace_access
+):
     """Check if re-inviting an existing active member would actually grant new access."""
     from accounts.models.workspace import WorkspaceMembership
     from tfc.constants.levels import Level

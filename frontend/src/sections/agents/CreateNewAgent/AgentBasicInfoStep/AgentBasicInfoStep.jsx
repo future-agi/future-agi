@@ -4,14 +4,14 @@ import React from "react";
 import { languageOptions } from "src/components/agent-definitions/helper";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
-import { useDeploymentMode } from "src/hooks/useDeploymentMode";
+import { useFeatureAllowed } from "src/hooks/useCapabilities";
 import LanguageMultiSelect from "./LanguageMultiSelect";
 import HeadingAndSubHeading from "src/components/HeadingAndSubheading/HeadingAndSubheading";
 
 const AgentBasicInfo = ({ control }) => {
-  const { isOSS } = useDeploymentMode();
+  const { allowed: voiceAllowed } = useFeatureAllowed("voice_sim");
   const agentTypeOptions = [
-    ...(!isOSS
+    ...(voiceAllowed
       ? [
           {
             label: "Voice",

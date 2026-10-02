@@ -274,14 +274,14 @@ const CustomPropertySection = () => {
                       />
                     </TableCell>
                     <TableCell>
-                      {prop.allowedValues?.length > 0 ? (
+                      {prop.allowed_values?.length > 0 ? (
                         <Stack
                           direction="row"
                           spacing={0.5}
                           flexWrap="wrap"
                           useFlexGap
                         >
-                          {prop.allowedValues.slice(0, 3).map((v) => (
+                          {prop.allowed_values.slice(0, 3).map((v) => (
                             <Chip
                               key={v}
                               label={v}
@@ -289,9 +289,9 @@ const CustomPropertySection = () => {
                               sx={{ fontSize: "0.7rem" }}
                             />
                           ))}
-                          {prop.allowedValues.length > 3 && (
+                          {prop.allowed_values.length > 3 && (
                             <Chip
-                              label={`+${prop.allowedValues.length - 3}`}
+                              label={`+${prop.allowed_values.length - 3}`}
                               size="small"
                               variant="outlined"
                             />
@@ -309,8 +309,8 @@ const CustomPropertySection = () => {
                         color="text.secondary"
                         sx={{ fontFamily: "monospace" }}
                       >
-                        {prop.defaultValue != null
-                          ? String(prop.defaultValue)
+                        {prop.default_value != null
+                          ? String(prop.default_value)
                           : "\u2014"}
                       </Typography>
                     </TableCell>
@@ -378,8 +378,8 @@ const CustomPropertySection = () => {
                   Object.fromEntries(
                     filteredProperties.map((p) => [
                       p.name,
-                      p.defaultValue != null
-                        ? p.defaultValue
+                      p.default_value != null
+                        ? p.default_value
                         : `<${p.property_type}>`,
                     ]),
                   ),

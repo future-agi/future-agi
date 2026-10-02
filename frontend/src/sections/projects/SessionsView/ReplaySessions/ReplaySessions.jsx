@@ -45,8 +45,8 @@ const ReplaySessions = ({ isCollapsed, setIsCollapsed, gridApi }) => {
   // Fetch scenarioDetail in parent component for use in confirmation dialog
   // The select function returns d.data, so scenarioDetail will be the data object
   const { data: scenarioDetail, isLoading: isScenarioDetailLoading } =
-    useGetScenarioDetail(createdScenario?.scenarioId, {
-      enabled: !!createdScenario?.scenarioId && currentStep === 1,
+    useGetScenarioDetail(createdScenario?.scenario_id, {
+      enabled: !!createdScenario?.scenario_id && currentStep === 1,
     });
 
   const handleCloseReplaySessionDrawer = () => {

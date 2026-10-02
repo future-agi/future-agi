@@ -4,7 +4,7 @@ import { Box, Divider, Typography } from "@mui/material";
 import SvgColor from "src/components/svg-color";
 import { GRAPH_NODES } from "../common";
 
-const NodeHeader = ({ type, title }) => {
+const NodeHeader = ({ type, title, badge }) => {
   const node = GRAPH_NODES.find((n) => n.type === type);
   if (!node) return null;
   const { color, backgroundColor, icon, name } = node;
@@ -42,6 +42,7 @@ const NodeHeader = ({ type, title }) => {
         <Typography typography="s2" fontWeight="fontWeightMedium">
           {title || name}
         </Typography>
+        {badge && <Box sx={{ marginLeft: "auto" }}>{badge}</Box>}
       </Box>
       <Divider />
     </>
@@ -51,6 +52,7 @@ const NodeHeader = ({ type, title }) => {
 NodeHeader.propTypes = {
   type: PropTypes.string,
   title: PropTypes.string,
+  badge: PropTypes.node,
 };
 
 export default NodeHeader;

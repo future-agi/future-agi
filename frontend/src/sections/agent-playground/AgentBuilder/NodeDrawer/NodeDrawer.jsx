@@ -31,6 +31,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import PanelErrorBoundary from "../../components/PanelErrorBoundary";
 import { useSaveDraftContext } from "../saveDraftContext";
+import useCanEditAgent from "../../hooks/useCanEditAgent";
 
 const MIN_WIDTH = 450;
 const MAX_WIDTH = 800;
@@ -53,6 +54,7 @@ export default function NodeDrawer({
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
 
   const isWorkflowRunning = useWorkflowRunStoreShallow((s) => s.isRunning);
+  const { isReadOnly } = useCanEditAgent();
 
   const {
     setSelectedNode,
@@ -129,10 +131,17 @@ export default function NodeDrawer({
     if (hadInitialConfigRef.current) {
       // Imported node: form already populated with model/messages from _initialConfig.
       // Only update IDs from the backend — don't overwrite imported data.
-      const pt = nodeDetailData.promptTemplate;
+      const pt =
+        nodeDetailData.promptTemplate || nodeDetailData.prompt_template;
       if (pt) {
-        setValue("prompt_version_id", pt.promptVersionId || null);
-        setValue("prompt_template_id", pt.promptTemplateId || null);
+        setValue(
+          "prompt_version_id",
+          pt.promptVersionId || pt.prompt_version_id || null,
+        );
+        setValue(
+          "prompt_template_id",
+          pt.promptTemplateId || pt.prompt_template_id || null,
+        );
       }
       hadInitialConfigRef.current = false;
     } else {
@@ -144,10 +153,11 @@ export default function NodeDrawer({
     updateNodeData(activeNode.id, enrichedNode.data);
 
     // Invalidate prompt versions cache so PromptNameRow fetches fresh versions
-    const pt = nodeDetailData.promptTemplate;
-    if (pt?.promptTemplateId) {
+    const pt = nodeDetailData.promptTemplate || nodeDetailData.prompt_template;
+    const promptTemplateId = pt?.promptTemplateId || pt?.prompt_template_id;
+    if (promptTemplateId) {
       queryClient.invalidateQueries({
-        queryKey: ["prompt-versions", pt.promptTemplateId],
+        queryKey: ["prompt-versions", promptTemplateId],
       });
     }
   }, [
@@ -286,7 +296,7 @@ export default function NodeDrawer({
 
   // Delete node — follows the same pattern as useBaseNodeActions.handleDeleteClick
   const handleDeleteNode = useCallback(async () => {
-    if (!activeNode || isWorkflowRunning) return;
+    if (!activeNode || isWorkflowRunning || isReadOnly) return;
     setShowDeleteDialog(false);
 
     const nodeId = activeNode.id;
@@ -314,7 +324,7 @@ export default function NodeDrawer({
     try {
       await deleteNodeApi({
         graphId: agent?.id,
-        versionId: agent?.versionId,
+        versionId: agent?.version_id,
         nodeId,
       });
     } catch {
@@ -324,6 +334,7 @@ export default function NodeDrawer({
   }, [
     activeNode,
     isWorkflowRunning,
+    isReadOnly,
     deleteNode,
     onClose,
     ensureDraft,
@@ -393,40 +404,44 @@ export default function NodeDrawer({
             >
               <NodeCard node={NODE_TYPE_CONFIG[activeNode?.type]} readOnly />
               <Stack direction="row" spacing={0.25} alignItems="center">
-                <CustomTooltip
-                  show
-                  title="Delete node"
-                  size="small"
-                  arrow
-                  placement="bottom"
-                >
-                  <span>
-                    <IconButton
+                {!isReadOnly && (
+                  <>
+                    <CustomTooltip
+                      show
+                      title="Delete node"
                       size="small"
-                      onClick={() => setShowDeleteDialog(true)}
-                      disabled={isWorkflowRunning}
-                      sx={{
-                        color: "red.500",
-                        "&:hover": {
-                          bgcolor: (theme) =>
-                            theme.palette.mode === "dark"
-                              ? "rgba(255,70,70,0.08)"
-                              : "red.50",
-                        },
-                      }}
+                      arrow
+                      placement="bottom"
                     >
-                      <SvgColor
-                        src="/assets/icons/ic_delete.svg"
-                        sx={{ height: 18, width: 18 }}
-                      />
-                    </IconButton>
-                  </span>
-                </CustomTooltip>
-                <Divider
-                  orientation="vertical"
-                  flexItem
-                  sx={{ mx: 0.25, height: 20, alignSelf: "center" }}
-                />
+                      <span>
+                        <IconButton
+                          size="small"
+                          onClick={() => setShowDeleteDialog(true)}
+                          disabled={isWorkflowRunning}
+                          sx={{
+                            color: "red.500",
+                            "&:hover": {
+                              bgcolor: (theme) =>
+                                theme.palette.mode === "dark"
+                                  ? "rgba(255,70,70,0.08)"
+                                  : "red.50",
+                            },
+                          }}
+                        >
+                          <SvgColor
+                            src="/assets/icons/ic_delete.svg"
+                            sx={{ height: 18, width: 18 }}
+                          />
+                        </IconButton>
+                      </span>
+                    </CustomTooltip>
+                    <Divider
+                      orientation="vertical"
+                      flexItem
+                      sx={{ mx: 0.25, height: 20, alignSelf: "center" }}
+                    />
+                  </>
+                )}
                 <IconButton
                   size="small"
                   onClick={handleClose}
@@ -456,10 +471,20 @@ export default function NodeDrawer({
                 {isLoadingNodeDetail ? (
                   <NodeDrawerSkeleton />
                 ) : (
-                  <NodeConfigurationForm
-                    nodeType={activeNode.type}
-                    nodeId={activeNode.id}
-                  />
+                  // Read-only users can view config but not edit it. Blocking
+                  // pointer events here (rather than disabling each input)
+                  // covers custom controls like Monaco too; scrolling still
+                  // works because the outer Box owns the overflow.
+                  <Box
+                    sx={{
+                      ...(isReadOnly && { pointerEvents: "none" }),
+                    }}
+                  >
+                    <NodeConfigurationForm
+                      nodeType={activeNode.type}
+                      nodeId={activeNode.id}
+                    />
+                  </Box>
                 )}
               </PanelErrorBoundary>
             </Box>

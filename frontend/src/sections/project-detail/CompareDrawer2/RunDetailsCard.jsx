@@ -46,7 +46,9 @@ const RunDetailsCard = ({ value, column, allowCopy = false }) => {
       // LLM evals may pass {score, choice} (object) or a Python-repr string.
       const normalized = normalizeEvalCellValue(value?.cellValue);
       const rawScore =
-        normalized && typeof normalized === "object" && !Array.isArray(normalized)
+        normalized &&
+        typeof normalized === "object" &&
+        !Array.isArray(normalized)
           ? typeof normalized.score === "number"
             ? normalized.score
             : NaN

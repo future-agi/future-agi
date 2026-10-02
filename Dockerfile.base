@@ -1,0 +1,52 @@
+FROM python:3.11-slim-bookworm
+
+# Set environment variables for production
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_DEFAULT_TIMEOUT=300 \
+    UV_TIMEOUT=900 \
+    PROJECT_ROOT=/app/backend
+
+# Create non-root user for security
+RUN groupadd --gid 1000 appuser && \
+    useradd --uid 1000 --gid appuser --shell /bin/bash --create-home appuser
+
+# Install system dependencies in a single layer
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    supervisor \
+    nginx \
+    git \
+    build-essential \
+    libxml2-dev \
+    libxmlsec1-dev \
+    libxmlsec1-openssl \
+    pkg-config \
+    xmlsec1 \
+    ffmpeg \
+    libavformat-dev \
+    libavcodec-dev \
+    libavdevice-dev \
+    libavutil-dev \
+    libavfilter-dev \
+    libswscale-dev \
+    libswresample-dev \
+    libcom-err2 \
+    libkrb5-3 \
+    libgssapi-krb5-2 \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Set up working directory and install uv
+WORKDIR $PROJECT_ROOT
+RUN pip install uv && \
+    mkdir -p media && \
+    chown -R appuser:appuser /app
+
+# Copy requirements first for better layer caching
+COPY ./futureagi/requirements.txt ./
+
+# Install Python dependencies
+# Use --only-binary for av to avoid building from source (requires FFmpeg 7)
+RUN uv pip install --system -r requirements.txt --compile-bytecode --no-cache --only-binary av

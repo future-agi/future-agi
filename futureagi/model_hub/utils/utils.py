@@ -3,24 +3,23 @@ import difflib
 import json
 import time
 from collections import Counter
+from http import HTTPStatus
 from typing import Literal
 
 import litellm
-import nltk
 import requests
 import structlog
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
-from datasets import load_dataset
 from django.core.cache import cache
+from django.utils.functional import SimpleLazyObject
 from huggingface_hub.errors import HfHubHTTPError
 from litellm.llms.custom_llm import CustomLLM, ModelResponse
-from nltk.corpus import stopwords, wordnet
-from nltk.stem import WordNetLemmatizer
 
 logger = structlog.get_logger(__name__)
 
 from agentic_eval.core_evals.run_prompt.available_models import AVAILABLE_MODELS
+
 # (available_models always available)
 from model_hub.models.ai_model import AIModel
 from model_hub.models.api_key import ApiKey
@@ -36,6 +35,32 @@ from tfc.settings.settings import (
 from tfc.utils.clickhouse import ClickHouseClientSingleton
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.types import ClickhouseDatatypes
+
+
+# The HuggingFace Hub now emits the `List` feature type (datasets 4.0) in dataset
+# metadata, which pinned datasets 3.6.0 can't parse: load_dataset() raises
+# "Feature type 'List' not found" and streaming ingestion loads zero rows. Alias it
+# to the 3.6.0 equivalent (LargeList); setdefault leaves a future upgrade untouched.
+def _alias_hf_list_feature_type() -> None:
+    try:
+        from datasets.features import features as _hf_features
+
+        if hasattr(_hf_features, "_FEATURE_TYPES") and hasattr(
+            _hf_features, "LargeList"
+        ):
+            _hf_features._FEATURE_TYPES.setdefault("List", _hf_features.LargeList)
+    except ModuleNotFoundError as exc:
+        # The slim backend (and the standalone image) leave `datasets` out:
+        # nothing to patch. A module missing inside datasets stays loud.
+        if exc.name != "datasets":
+            logger.warning("hf List feature-type shim did not install", exc_info=True)
+        else:
+            logger.debug("hf List feature-type shim skipped: datasets is not installed")
+    except Exception:  # defensive: datasets internals moved
+        logger.warning("hf List feature-type shim did not install", exc_info=True)
+
+
+_alias_hf_list_feature_type()
 
 
 class MyCustomLLM(CustomLLM):
@@ -193,7 +218,7 @@ def check_valid_metrics(metric_type, ai_model_id):
         LIMIT 10
 
     """
-    clickhouse_data = client.execute(filter_query)
+    clickhouse_data = client.execute_read(filter_query)
     node_ids = [d[0] for d in clickhouse_data]
     prompt_template = False
     context = False
@@ -238,7 +263,7 @@ def check_data_valid_for_model(model_type, ai_model_id, conversation):
         LIMIT 10
 
     """
-    clickhouse_data = client.execute(filter_query)
+    clickhouse_data = client.execute_read(filter_query)
     node_ids = [d[0] for d in clickhouse_data]
     if node_ids:
         variables = False
@@ -403,6 +428,21 @@ def validate_model_working(model_name, api_key, provider):
                         json=payload,
                         timeout=30,  # 30 seconds timeout
                     )
+                    # The model's own calls POST to this URL as given too, so
+                    # a bare base such as .../v1 is wrong, not just this check.
+                    # OpenAI-compatible servers also 404 an unknown model.
+                    # Never repeat response.text: it could be an internal page.
+                    if response.status_code in (404, 405):
+                        reason = (
+                            response.reason or HTTPStatus(response.status_code).phrase
+                        )
+                        raise Exception(
+                            f"{url} answered {response.status_code} "
+                            f"{reason}. API Base URL must be the full "
+                            "chat-completions URL, such as "
+                            "https://your-host/v1/chat/completions, and the "
+                            f"server must serve model '{model_name}'."
+                        )
                     response.raise_for_status()
                     return response.text
                 except Exception as e:
@@ -410,7 +450,13 @@ def validate_model_working(model_name, api_key, provider):
             return response.choices[0].message.content
 
     except Exception as e:
-        logger.exception(f"An error occurred: {str(e)}")
+        # Expected user-input/connectivity validation failure (e.g. a bad
+        # Vertex/Bedrock credential or an invalid private key). This function
+        # only validates user-supplied model credentials and always returns the
+        # error to the caller as an Exception (-> clean 400), so log at WARNING
+        # to keep it out of Sentry (event_level=ERROR) while preserving a
+        # breadcrumb. See CORE-BACKEND-119X.
+        logger.warning(f"An error occurred: {str(e)}")
         status = False
         try:
             error_message = str(e).split("litellm.")[1].split("Traceback")[0]
@@ -668,6 +714,9 @@ def load_hf_dataset_with_retries(
                 response.raise_for_status()
                 return response.json()
             else:
+                from tfc.utils.lazy_extras import load_extra
+
+                load_dataset = load_extra("datasets", "ml").load_dataset
                 hf_dataset = load_dataset(
                     dataset_name,
                     name=config_name,
@@ -724,6 +773,11 @@ def get_data_type_huggingface(column_info):
         "datetime": DataTypeChoices.DATETIME.value,
         "Image": DataTypeChoices.IMAGE.value,
         "Audio": DataTypeChoices.AUDIO.value,
+        "Pdf": DataTypeChoices.DOCUMENT.value,
+        "PDF": DataTypeChoices.DOCUMENT.value,
+        "pdf": DataTypeChoices.DOCUMENT.value,
+        "Document": DataTypeChoices.DOCUMENT.value,
+        "document": DataTypeChoices.DOCUMENT.value,
         "date32": DataTypeChoices.DATETIME.value,
         "date64": DataTypeChoices.DATETIME.value,
         "date": DataTypeChoices.DATETIME.value,
@@ -900,23 +954,25 @@ def track_running_eval_count(
 
 class AnnotationCorpusBuilder:
     def __init__(self):
-        # Download necessary resources once
-        # Catch FileExistsError in case NLTK data directory already exists
-        try:
-            nltk.download("punkt", quiet=True)
-            nltk.download("averaged_perceptron_tagger", quiet=True)
-            nltk.download("wordnet", quiet=True)
-            nltk.download("omw-1.4", quiet=True)
-            nltk.download("stopwords", quiet=True)
-        except FileExistsError:
-            # Directory already exists, downloads can proceed
-            pass
+        # nltk is imported lazily: it drags scipy + scikit-learn in.
+        from nltk.corpus import stopwords
+        from nltk.stem import WordNetLemmatizer
 
+        from tfc.utils.nltk_data import ensure_nltk_data
+
+        # The images bake these into NLTK_DATA (bin/install_nltk_data.py) and
+        # turn run-time downloads off; a dev/CI checkout downloads them here,
+        # on first use, instead of on every process start.
+        ensure_nltk_data(
+            "stopwords", "wordnet", "punkt_tab", "averaged_perceptron_tagger_eng"
+        )
         self.lemmatizer = WordNetLemmatizer()
         self.stop_words = set(stopwords.words("english"))
 
     def get_wordnet_pos(self, tag):
         """Map POS tag to WordNet POS tag for lemmatization."""
+        from nltk.corpus import wordnet  # lazy
+
         if tag.startswith("J"):
             return wordnet.ADJ
         elif tag.startswith("V"):
@@ -929,6 +985,8 @@ class AnnotationCorpusBuilder:
             return wordnet.NOUN  # default to noun
 
     def build_annotation_corpus(self, sentences):
+        import nltk  # lazy: keep heavy import off the startup path
+
         lemmatized_words = []
         sentence_words = []
 
@@ -960,7 +1018,10 @@ class AnnotationCorpusBuilder:
         return vocab, top_20, min_sen_len, max_sen_len, avg_len
 
 
-corpus_builder = AnnotationCorpusBuilder()
+# Lazy: constructing AnnotationCorpusBuilder imports nltk (which drags in
+# scipy + scikit-learn, ~80 MB RSS) and loads its corpora. Only the
+# annotation-summary views use it.
+corpus_builder = SimpleLazyObject(AnnotationCorpusBuilder)
 
 
 def get_model_mode(model_name: str) -> str:

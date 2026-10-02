@@ -127,6 +127,9 @@ const RequestExplorerSection = () => {
         if (filters.search) params.search = filters.search;
         if (filters.model) params.model = filters.model;
         if (filters.provider) params.provider = filters.provider;
+        if (filters.application) params.application = filters.application;
+        if (filters.service) params.service = filters.service;
+        if (filters.tags) params.tags = filters.tags;
         if (filters.startedAfter) params.started_after = filters.startedAfter;
         if (filters.startedBefore)
           params.started_before = filters.startedBefore;
@@ -149,6 +152,10 @@ const RequestExplorerSection = () => {
         if (filters.fallbackUsed) params.fallback_used = filters.fallbackUsed;
         if (filters.sort) params.ordering = filters.sort;
         if (filters.statusCode) params.status_code = filters.statusCode;
+        if (filters.statusCodeMin)
+          params.min_status_code = filters.statusCodeMin;
+        if (filters.statusCodeMax)
+          params.max_status_code = filters.statusCodeMax;
 
         params.export_format = format;
 

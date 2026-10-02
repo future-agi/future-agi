@@ -3,6 +3,7 @@ import PropTypes from "prop-types";
 import React, { forwardRef, useCallback, useRef } from "react";
 import Iconify from "../iconify";
 import { useCombinedRefs } from "src/hooks/use-combined-refs";
+import { isBlackBackgroundLogo } from "./common";
 
 const SearchField = forwardRef(
   (
@@ -23,6 +24,9 @@ const SearchField = forwardRef(
       logoUrl,
       multiple,
       onClick,
+      // Used by the dropdown menu, not the TextField input.
+      // eslint-disable-next-line no-unused-vars
+      hideCreateLabel: _hideCreateLabel,
       // Filter ``shrink`` out of ``rest`` — see rhf-text-field.jsx note.
       // eslint-disable-next-line no-unused-vars
       shrink: _shrink,
@@ -157,7 +161,7 @@ const SearchField = forwardRef(
                     width: theme.spacing(2.5),
                     objectFit: "cover",
                     ...(theme.palette.mode === "dark" &&
-                      logoUrl?.includes("provider-logos") && {
+                      isBlackBackgroundLogo(logoUrl) && {
                         filter: "invert(1) brightness(2)",
                       }),
                   })}
@@ -227,11 +231,12 @@ SearchField.propTypes = {
   setIsFocus: PropTypes.func,
   sx: PropTypes.object,
   setOpenDropdown: PropTypes.func,
-  modelRef: PropTypes.object,
+  modelRef: PropTypes.oneOfType([PropTypes.object, PropTypes.func]),
   showIcon: PropTypes.bool,
   logoUrl: PropTypes.string,
   multiple: PropTypes.bool,
   openDropdown: PropTypes.bool,
   onClick: PropTypes.func,
+  hideCreateLabel: PropTypes.bool,
   shrink: PropTypes.bool,
 };

@@ -30,11 +30,9 @@ class GetSessionAnalyticsTool(BaseTool):
     def execute(
         self, params: GetSessionAnalyticsInput, context: ToolContext
     ) -> ToolResult:
-        from django.db.models import Avg, Count, Sum
-
-        from tracer.models.observation_span import ObservationSpan
         from tracer.models.trace import Trace
         from tracer.models.trace_session import TraceSession
+        from tracer.services.clickhouse.v2 import get_reader
 
         try:
             session = TraceSession.objects.select_related("project").get(
@@ -43,24 +41,38 @@ class GetSessionAnalyticsTool(BaseTool):
         except TraceSession.DoesNotExist:
             return ToolResult.not_found("Session", str(params.session_id))
 
-        # Trace-level stats
+        # Trace-level stats (still PG; Trace model not migrated yet)
         traces = Trace.objects.filter(session=session)
         trace_count = traces.count()
         error_traces = traces.exclude(error__isnull=True).exclude(error={}).count()
 
-        # Span-level aggregations
-        spans = ObservationSpan.objects.filter(trace__session=session, deleted=False)
+        # Span-level aggregations — read from CH 25.3. Was:
+        #   spans = ObservationSpan.objects.filter(trace__session=session,
+        #                                          deleted=False)
+        #   spans.aggregate(Sum/Avg/Count over multiple fields)
+        # CHSpanReader's session_aggregate returns the same shape via a
+        # single SQL aggregation. Per-model and per-type breakdowns below
+        # compute in Python from the loaded span list (sessions are
+        # bounded; load cost is acceptable).
+        with get_reader() as reader:
+            spans_list = reader.list_by_session(str(session.id))
 
-        agg = spans.aggregate(
-            total_tokens=Sum("total_tokens"),
-            total_prompt_tokens=Sum("prompt_tokens"),
-            total_completion_tokens=Sum("completion_tokens"),
-            total_cost=Sum("cost"),
-            avg_latency=Avg("latency_ms"),
-            span_count=Count("id"),
-        )
-
-        error_spans = spans.filter(status="ERROR").count()
+        span_count = len(spans_list)
+        total_prompt_tokens = sum(s.prompt_tokens or 0 for s in spans_list)
+        total_completion_tokens = sum(s.completion_tokens or 0 for s in spans_list)
+        total_tokens = sum(s.total_tokens or 0 for s in spans_list)
+        total_cost = sum(s.cost or 0.0 for s in spans_list)
+        latencies = [s.latency_ms for s in spans_list if s.latency_ms]
+        avg_latency = (sum(latencies) / len(latencies)) if latencies else 0.0
+        agg = {
+            "total_tokens": total_tokens,
+            "total_prompt_tokens": total_prompt_tokens,
+            "total_completion_tokens": total_completion_tokens,
+            "total_cost": total_cost,
+            "avg_latency": avg_latency,
+            "span_count": span_count,
+        }
+        error_spans = sum(1 for s in spans_list if (s.status or "").upper() == "ERROR")
 
         info = key_value_block(
             [
@@ -85,19 +97,35 @@ class GetSessionAnalyticsTool(BaseTool):
 
         content = section(f"Session Analytics: {session.name or str(session.id)}", info)
 
-        # Per-model breakdown
-        model_stats = (
-            spans.exclude(model__isnull=True)
-            .exclude(model="")
-            .values("model")
-            .annotate(
-                count=Count("id"),
-                tokens=Sum("total_tokens"),
-                cost=Sum("cost"),
-                avg_lat=Avg("latency_ms"),
-            )
-            .order_by("-count")[:15]
+        # Per-model breakdown — group the loaded span list in Python.
+        # Equivalent to:
+        #   spans.exclude(model__isnull=True).exclude(model="")
+        #        .values("model").annotate(count, tokens, cost, avg_lat)
+        #        .order_by("-count")[:15]
+        from collections import defaultdict as _dd
+        _by_model: dict[str, dict[str, float]] = _dd(
+            lambda: {"count": 0, "tokens": 0, "cost": 0.0, "_lat_sum": 0.0, "_lat_n": 0}
         )
+        for s in spans_list:
+            if not s.model:
+                continue
+            m = _by_model[s.model]
+            m["count"] += 1
+            m["tokens"] += s.total_tokens or 0
+            m["cost"] += s.cost or 0.0
+            if s.latency_ms:
+                m["_lat_sum"] += s.latency_ms
+                m["_lat_n"] += 1
+        model_stats = [
+            {
+                "model": model,
+                "count": int(m["count"]),
+                "tokens": int(m["tokens"]),
+                "cost": float(m["cost"]),
+                "avg_lat": (m["_lat_sum"] / m["_lat_n"]) if m["_lat_n"] else 0.0,
+            }
+            for model, m in sorted(_by_model.items(), key=lambda kv: -kv[1]["count"])[:15]
+        ]
 
         if model_stats:
             content += "\n\n### Per-Model Breakdown\n\n"
@@ -116,16 +144,24 @@ class GetSessionAnalyticsTool(BaseTool):
                 ["Model", "Spans", "Tokens", "Cost", "Avg Latency"], model_rows
             )
 
-        # Per-type breakdown
-        type_stats = (
-            spans.values("observation_type")
-            .annotate(
-                count=Count("id"),
-                tokens=Sum("total_tokens"),
-                cost=Sum("cost"),
-            )
-            .order_by("-count")
+        # Per-type breakdown — same in-Python pattern.
+        _by_type: dict[str, dict[str, float]] = _dd(
+            lambda: {"count": 0, "tokens": 0, "cost": 0.0}
         )
+        for s in spans_list:
+            t = s.observation_type or ""
+            _by_type[t]["count"] += 1
+            _by_type[t]["tokens"] += s.total_tokens or 0
+            _by_type[t]["cost"] += s.cost or 0.0
+        type_stats = [
+            {
+                "observation_type": t or None,
+                "count": int(d["count"]),
+                "tokens": int(d["tokens"]),
+                "cost": float(d["cost"]),
+            }
+            for t, d in sorted(_by_type.items(), key=lambda kv: -kv[1]["count"])
+        ]
 
         if type_stats:
             content += "\n\n### Per-Type Breakdown\n\n"

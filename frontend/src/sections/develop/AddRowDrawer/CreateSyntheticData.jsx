@@ -78,7 +78,7 @@ const SyntheticDataDrawer = ({
   const navigate = useNavigate();
 
   const { data: knowledgeBaseList, refetch: refetchKnowledgeBaseList } =
-    useKnowledgeBaseList("", { enabled: !!open }, { status: true });
+    useKnowledgeBaseList("", { enabled: !!open });
 
   const knowledgeBaseOptions = useMemo(
     () =>
@@ -175,6 +175,7 @@ const SyntheticDataDrawer = ({
       reset();
       refreshGrid(null, true);
     },
+    meta: { errorHandled: true },
     onError: (error) => {
       enqueueSnackbar(
         getRequestErrorMessage(error, "Failed to create synthetic dataset", {

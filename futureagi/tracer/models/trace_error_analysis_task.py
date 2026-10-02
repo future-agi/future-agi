@@ -53,6 +53,7 @@ class TraceErrorAnalysisTask(BaseModel):
         null=True,
         blank=True,
         related_name="last_analyzed_by_task",
+        db_constraint=False,  # CH scale: SCALE_ARCHITECTURE.md §9a
     )
 
     # Statistics

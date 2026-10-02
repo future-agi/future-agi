@@ -1,0 +1,294 @@
+#!/usr/bin/env python3
+"""Generate AgentCC gateway admin contract DTOs from the shared JSON schema."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import keyword
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+
+ROOT = Path(__file__).resolve().parents[1]
+SCHEMA_PATH = ROOT / "api_contracts/gateway/agentcc-admin.schema.json"
+PY_OUT = ROOT / "futureagi/agentcc/contracts/gateway_admin.py"
+GO_OUT = ROOT / "agentcc-gateway/internal/contracts/generated/gateway_admin.go"
+
+ACRONYMS = {
+    "a2a": "A2A",
+    "acl": "ACL",
+    "api": "API",
+    "aws": "AWS",
+    "db": "DB",
+    "gcs": "GCS",
+    "id": "ID",
+    "ip": "IP",
+    "mcp": "MCP",
+    "mtok": "MTok",
+    "pdf": "PDF",
+    "pii": "PII",
+    "redis": "Redis",
+    "rpm": "RPM",
+    "sas": "SAS",
+    "s3": "S3",
+    "tls": "TLS",
+    "tpm": "TPM",
+    "ttl": "TTL",
+    "url": "URL",
+}
+
+
+def load_schema() -> dict[str, Any]:
+    return json.loads(SCHEMA_PATH.read_text())
+
+
+def ref_name(schema: dict[str, Any]) -> str:
+    return schema["$ref"].rsplit("/", 1)[-1]
+
+
+def py_type(schema: dict[str, Any]) -> str:
+    if "$ref" in schema:
+        return ref_name(schema)
+
+    schema_type = schema.get("type")
+    if schema_type == "string":
+        return "str"
+    if schema_type == "integer":
+        return "int"
+    if schema_type == "number":
+        return "float"
+    if schema_type == "boolean":
+        return "bool"
+    if schema_type == "array":
+        return f"list[{py_type(schema.get('items', {}))}]"
+    if schema_type == "object":
+        additional = schema.get("additionalProperties")
+        if additional is True or additional is None:
+            return "dict[str, Any]"
+        return f"dict[str, {py_type(additional)}]"
+    return "Any"
+
+
+def go_ref_type(schema: dict[str, Any], optional: bool = False) -> str:
+    name = ref_name(schema)
+    return f"*{name}" if optional else name
+
+
+def go_type(
+    schema: dict[str, Any], optional: bool = False, map_value: bool = False
+) -> str:
+    if "$ref" in schema:
+        name = ref_name(schema)
+        if map_value:
+            return f"*{name}"
+        return f"*{name}" if optional else name
+
+    schema_type = schema.get("type")
+    if schema_type == "string":
+        return "*string" if optional else "string"
+    if schema_type == "integer":
+        return "*int" if optional else "int"
+    if schema_type == "number":
+        return "*float64" if optional else "float64"
+    if schema_type == "boolean":
+        return "*bool" if optional else "bool"
+    if schema_type == "array":
+        return f"[]{go_type(schema.get('items', {}), map_value=True)}"
+    if schema_type == "object":
+        additional = schema.get("additionalProperties")
+        if additional is True or additional is None:
+            return "map[string]interface{}"
+        return f"map[string]{go_type(additional, map_value=True)}"
+    return "interface{}"
+
+
+def go_field_name(json_name: str) -> str:
+    parts = json_name.split("_")
+    rendered = []
+    for part in parts:
+        lower = part.lower()
+        if lower in ACRONYMS:
+            rendered.append(ACRONYMS[lower])
+        else:
+            rendered.append(part[:1].upper() + part[1:])
+    return "".join(rendered)
+
+
+def py_field_name(json_name: str) -> str:
+    if keyword.iskeyword(json_name):
+        return f"{json_name}_"
+    return json_name
+
+
+def lower_camel_name(json_name: str) -> str:
+    head, *tail = json_name.split("_")
+    return head + "".join(part[:1].upper() + part[1:] for part in tail)
+
+
+def acronym_camel_name(json_name: str) -> str:
+    parts = json_name.split("_")
+    if not parts:
+        return json_name
+
+    rendered = [parts[0]]
+    for part in parts[1:]:
+        lower = part.lower()
+        if lower in ACRONYMS:
+            rendered.append(ACRONYMS[lower])
+        else:
+            rendered.append(part[:1].upper() + part[1:])
+    return "".join(rendered)
+
+
+def validation_aliases(json_name: str) -> list[str]:
+    aliases = []
+    for alias in (
+        json_name,
+        lower_camel_name(json_name),
+        acronym_camel_name(json_name),
+    ):
+        if alias not in aliases:
+            aliases.append(alias)
+    return aliases
+
+
+def py_field_line(name: str, schema: dict[str, Any], required: bool) -> str:
+    field = py_field_name(name)
+    annotation = py_type(schema)
+    if required:
+        default = "..."
+    else:
+        annotation = f"{annotation} | None"
+        default = "None"
+
+    field_args = []
+    if field != name:
+        field_args.append(f'alias="{name}"')
+
+    aliases = validation_aliases(name)
+    if len(aliases) > 1 or field != name:
+        choices = ", ".join(repr(alias) for alias in aliases)
+        field_args.append(f"validation_alias=AliasChoices({choices})")
+
+    if field_args:
+        default = f"Field({default}, {', '.join(field_args)})"
+    return f"    {field}: {annotation} = {default}"
+
+
+def generate_python(schema: dict[str, Any]) -> str:
+    lines = [
+        "# Code generated by scripts/generate-agentcc-gateway-contracts.py; DO NOT EDIT.",
+        "from __future__ import annotations",
+        "",
+        "from typing import Any",
+        "",
+        "from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator",
+        "",
+        "",
+        "class GatewayAdminContractModel(BaseModel):",
+        '    model_config = ConfigDict(extra="forbid", populate_by_name=True)',
+        "",
+        '    @model_validator(mode="before")',
+        "    @classmethod",
+        "    def _normalize_input_aliases(cls, data):",
+        "        if not isinstance(data, dict):",
+        "            return data",
+        "",
+        "        result = dict(data)",
+        "        for field_name, field in cls.model_fields.items():",
+        "            validation_alias = field.validation_alias",
+        "            if validation_alias is None:",
+        "                continue",
+        "",
+        '            choices = getattr(validation_alias, "choices", (validation_alias,))',
+        "            present = [choice for choice in choices if isinstance(choice, str) and choice in result]",
+        "            if not present:",
+        "                continue",
+        "",
+        "            result[field_name] = result[present[0]]",
+        "            for alias in present:",
+        "                if alias != field_name:",
+        "                    result.pop(alias, None)",
+        "        return result",
+        "",
+    ]
+    for name, definition in schema["$defs"].items():
+        properties = definition.get("properties", {})
+        required = set(definition.get("required", []))
+        lines.append("")
+        lines.append(f"class {name}(GatewayAdminContractModel):")
+        if not properties:
+            lines.append("    pass")
+        else:
+            for field_name, field_schema in properties.items():
+                lines.append(
+                    py_field_line(field_name, field_schema, field_name in required)
+                )
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def generate_go(schema: dict[str, Any]) -> str:
+    lines = [
+        "// Code generated by scripts/generate-agentcc-gateway-contracts.py; DO NOT EDIT.",
+        "",
+        "package generated",
+        "",
+    ]
+    for name, definition in schema["$defs"].items():
+        properties = definition.get("properties", {})
+        required = set(definition.get("required", []))
+        lines.append(f"type {name} struct {{")
+        for field_name, field_schema in properties.items():
+            is_required = field_name in required
+            field_type = go_type(field_schema, optional=not is_required)
+            tag = field_name if is_required else f"{field_name},omitempty"
+            lines.append(f'\t{go_field_name(field_name)} {field_type} `json:"{tag}"`')
+        lines.append("}")
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def format_go(contents: str) -> str:
+    proc = subprocess.run(
+        ["gofmt"],
+        input=contents,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    return proc.stdout
+
+
+def write_or_check(path: Path, contents: str, check: bool) -> bool:
+    if check:
+        existing = path.read_text() if path.exists() else ""
+        if existing != contents:
+            print(f"{path.relative_to(ROOT)} is out of date", file=sys.stderr)
+            return False
+        return True
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(contents)
+    return True
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--check", action="store_true", help="fail if generated files differ"
+    )
+    args = parser.parse_args()
+
+    schema = load_schema()
+    ok = True
+    ok &= write_or_check(PY_OUT, generate_python(schema), args.check)
+    ok &= write_or_check(GO_OUT, format_go(generate_go(schema)), args.check)
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

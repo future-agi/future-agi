@@ -9,8 +9,8 @@ import FilterChipsRenderer from "../../../common/EvalsTasks/Renderers/FilterChip
 import EvalsAndTasksCustomTooltip from "../../../common/EvalsTasks/Renderers/EvalsAndTasksCustomToolTip";
 import { enqueueSnackbar } from "notistack";
 import axios, { endpoints } from "../../../../utils/axios";
-import _ from "lodash";
 import { formatNumberWithCommas } from "../../UsersView/common";
+import { getAlertFilterValue, isAlertMuted } from "../common";
 
 const initialColumnDefs = [
   {
@@ -82,26 +82,7 @@ const initialColumnDefs = [
     },
     tooltipComponent: EvalsAndTasksCustomTooltip,
     hide: true,
-    valueGetter: (params) => {
-      const filters = [];
-      const observationTypes = params?.data?.filters?.observationType ?? [];
-      if (observationTypes?.length > 0) {
-        filters.push(
-          `Span Type is ${_.toUpper(params?.data?.filters?.observationType)}`,
-        );
-      }
-
-      const spanAttributes = params?.data?.filters?.spanAttributesFilters ?? [];
-
-      if (spanAttributes.length > 0) {
-        const customAttributeString = `Custom attribute is ${spanAttributes
-          .map((f) => `(${f.columnId})`)
-          .join(",")}`;
-
-        filters.push(customAttributeString);
-      }
-      return filters;
-    },
+    valueGetter: (params) => getAlertFilterValue(params?.data),
   },
 ];
 
@@ -157,8 +138,8 @@ export const useAlertStore = create((set, get) => ({
   setDuplicateAlertName: (name) => set({ duplicateAlertName: name }),
 
   handleStartCreatingAlerts: () => {
-    const { selectedProject, mainPage } = get();
-    if (mainPage && !selectedProject) {
+    const { selectedProject, mainPage, openSheetView } = get();
+    if (mainPage && !selectedProject && !openSheetView) {
       set({ openSelectProjectModal: true });
       return;
     }
@@ -219,7 +200,7 @@ export const useAlertStore = create((set, get) => ({
 
   hasUnMutedAlerts: () => {
     const { selectedRows } = get();
-    return selectedRows?.some((row) => !row?.isMute);
+    return selectedRows?.some((row) => !isAlertMuted(row));
   },
 
   handleSelectAll: () => {
@@ -327,7 +308,7 @@ export const useAlertStore = create((set, get) => ({
 
   currentPageHasMutedAlerts: () => {
     const { currentPageAlertList } = get();
-    return currentPageAlertList?.some((alert) => alert.isMute === true);
+    return currentPageAlertList?.some((alert) => isAlertMuted(alert));
   },
 
   // ========== API ACTIONS ==========

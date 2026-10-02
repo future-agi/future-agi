@@ -8,7 +8,7 @@ from decimal import Decimal
 from difflib import SequenceMatcher
 from itertools import chain
 from typing import Any, Dict, Optional
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import structlog
 
@@ -34,7 +34,49 @@ except ImportError:
     VoiceServiceManager = None
 from tracer.models.observability_provider import ProviderChoices
 
+from tfc.utils.storage_client import server_reachable_url
+
 logger = structlog.get_logger(__name__)
+
+
+def build_eval_configs_map(call_execution) -> dict[str, "SimulateEvalConfig"]:
+    """The configs behind this call's verdicts, removed ones included.
+
+    Uses ``all_objects`` (not ``objects``) so a verdict produced by an eval
+    later removed from the environment stays visible in call details, marked
+    ``"removed": true``. ``select_related("eval_template")`` avoids a
+    per-config FK fetch in ``get_eval_metrics``'s ``template_type`` lookup.
+
+    ``eval_config_ids`` is filtered to well-formed UUIDs first (``_is_uuid``):
+    a raw ``eval_outputs`` key that isn't a UUID would otherwise raise
+    ``ValidationError`` out of ``id__in``. A key that fails the check is
+    simply absent from the returned map, same as any id with no matching
+    config.
+    """
+    eval_config_ids = [
+        eval_config_id
+        for eval_config_id in (call_execution.eval_outputs or {}).keys()
+        if _is_uuid(eval_config_id)
+    ]
+    if not eval_config_ids:
+        return {}
+    return {
+        str(c.id): c
+        for c in SimulateEvalConfig.all_objects.filter(
+            id__in=eval_config_ids
+        ).select_related("eval_template")
+    }
+
+
+def _is_uuid(value) -> bool:
+    """True when ``value`` parses as a UUID -- keeps a malformed
+    ``eval_outputs`` key out of ``id__in`` filters instead of raising
+    ``ValidationError``."""
+    try:
+        UUID(str(value))
+    except (ValueError, AttributeError, TypeError):
+        return False
+    return True
 
 
 def _empty_call_log_summary(reason: str) -> dict:
@@ -48,9 +90,9 @@ def _empty_call_log_summary(reason: str) -> dict:
 
 
 try:
-    from ee.evals.futureagi.eval_deterministic.evaluator import DeterministicEvaluator
+    from ee.evals.llm.agent_evaluator.evaluator import AgentEvaluator
 except ImportError:
-    DeterministicEvaluator = _ee_stub("DeterministicEvaluator")
+    AgentEvaluator = _ee_stub("AgentEvaluator")
 
 from model_hub.models.choices import StatusType
 from model_hub.models.develop_dataset import Cell, Column, Row
@@ -100,12 +142,21 @@ except ImportError:
     ConversationMetricsCalculator = None
     PhoneNumberService = None
     decide_processing_skip = None
+from simulate.temporal.activities.xl import (
+    PATH_MISSING,
+    TRANSCRIPT_DOT_ALIASES,
+    assert_recording_slot_available,
+    build_simulation_context_map,
+    stringify_leaf,
+    walk_subject_path,
+)
 from simulate.utils.eval_summary import derive_kpi_output_type
 from simulate.utils.processing_outcomes import (
     build_skipped_eval_output_payload,
     set_processing_skip_metadata,
 )
 from simulate.utils.test_execution_utils import generate_simulator_agent_prompt
+from simulate.utils.verdicts import has_stored_verdict
 from tfc.settings.settings import VAPI_INDIAN_PHONE_NUMBER_ID
 from tfc.temporal.drop_in import temporal_activity
 
@@ -116,16 +167,28 @@ from tfc.constants.api_calls import APICallStatusChoices
 try:
     from ee.usage.models.usage import APICallType
 except ImportError:
-    APICallType = None
+    class APICallType:
+        class objects:
+            @classmethod
+            def get_or_create(cls, name=None, defaults=None, **kwargs):
+                from types import SimpleNamespace
+
+                return SimpleNamespace(id=f"oss-noop-{name or 'unspecified'}"), False
 try:
     from ee.usage.services.metering import check_usage
 except ImportError:
-    check_usage = None
+    def check_usage(*args, **kwargs):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(allowed=True, reason=None)
 try:
     from ee.usage.utils.usage_entries import deduct_cost_for_request, log_and_deduct_cost_for_api_request
 except ImportError:
-    deduct_cost_for_request = None
-    log_and_deduct_cost_for_api_request = None
+    def deduct_cost_for_request(*args, **kwargs):
+        return None
+
+    def log_and_deduct_cost_for_api_request(*args, **kwargs):
+        return None
 
 
 class TestExecutor:
@@ -138,20 +201,24 @@ class TestExecutor:
     """
 
     def __init__(
-        self, monitor_interval: int = 30, system_voice_provider=ProviderChoices.VAPI
+        self,
+        monitor_interval: int = 30,
+        system_voice_provider=ProviderChoices.VAPI,
+        initialize_voice_service: bool = True,
     ):
         """
         Initialize the test executor
 
         Args:
             monitor_interval: How often to check test progress (seconds)
+            initialize_voice_service: Whether to initialize voice-provider services.
         """
         self.monitor_interval = monitor_interval
         self.running = False
         self.monitor_thread = None
         self.voice_service_manager = (
             VoiceServiceManager(system_voice_provider=system_voice_provider)
-            if VoiceServiceManager
+            if initialize_voice_service and VoiceServiceManager
             else None
         )
         self.system_voice_provider = system_voice_provider
@@ -3243,7 +3310,6 @@ class TestExecutor:
                                     )
                                 )
 
-                            recording_url = [s3_url]
                             csat = {
                                 "name": "csat_score",
                                 "description": "Evaluates the Customer Satisfaction (CSAT) score for a call between the customer and the agent.",
@@ -3262,24 +3328,33 @@ class TestExecutor:
                                 ],
                                 "multi_choice": False,
                             }
-                            evaluator = DeterministicEvaluator(
-                                multi_choice=csat["multi_choice"],
-                                choices=csat["choices"],
-                                rule_prompt=csat["criteria"],
-                                input=recording_url,
-                                input_type=["audio"],
-                            )
-                            result = evaluator._evaluate()
                             try:
-                                csat_score = result.get("data", [])[0]
-                                call_execution.overall_score = float(csat_score)
+                                csat_rule_prompt = (
+                                    csat["criteria"]
+                                    + "\n\n## Inputs\n\n<output>{{output}}</output>"
+                                )
+                                evaluator = AgentEvaluator(
+                                    rule_prompt=csat_rule_prompt,
+                                    model="turing_large",
+                                    output_type="choices",
+                                    choices=csat["choices"],
+                                    agent_mode="agent",
+                                )
+                                batch_result = evaluator.run(
+                                    output=s3_url,
+                                    required_keys=["output"],
+                                )
+                                csat_score = float(
+                                    batch_result.eval_results[0]["data"]["result"]
+                                )
+                                call_execution.overall_score = csat_score
                                 logger.debug(
                                     "csat_evaluation_result",
                                     call_execution_id=str(call_execution.id),
                                     csat_score=csat_score,
                                 )
 
-                            except:
+                            except Exception:
                                 logger.warning(
                                     "csat_evaluation_parse_failed",
                                     call_execution_id=str(call_execution.id),
@@ -3864,8 +3939,10 @@ class TestExecutor:
             if not run_test:
                 run_test = call_execution.test_execution.run_test
 
-            # Get expected eval configs - either specific ones or all for the run test
-            if eval_config_ids:
+            # Get expected eval configs - either specific ones or all for the run test.
+            # `is not None`: an explicitly-empty `eval_config_ids=[]` must not
+            # widen to "every config on the run test".
+            if eval_config_ids is not None:
                 expected_eval_configs = SimulateEvalConfig.objects.filter(
                     id__in=eval_config_ids, deleted=False
                 )
@@ -4035,29 +4112,51 @@ class TestExecutor:
 
     def _check_and_update_test_execution_completion(self, test_execution_id):
         """
-        Check if all call executions in a test_execution have eval_completed = True,
-        and update test_execution status to COMPLETED if so.
+        Mark an execution completed once all calls are terminal and every
+        successful call has finished evaluation.
+
+        Failed and cancelled calls do not run evaluations, so requiring an
+        ``eval_completed`` flag on them leaves mixed-result executions stuck in
+        EVALUATING forever.
 
         Args:
             test_execution_id: TestExecution ID to check
         """
         try:
-            all_calls_completed = (
-                not CallExecution.objects.filter(
-                    test_execution_id=test_execution_id, deleted=False
-                )
-                .filter(
-                    Q(call_metadata__isnull=True)
-                    | Q(call_metadata__eval_completed__isnull=True)
-                    | Q(call_metadata__eval_completed=False)
-                )
-                .exists()
+            calls = CallExecution.objects.filter(
+                test_execution_id=test_execution_id, deleted=False
             )
+            has_non_terminal_calls = calls.exclude(
+                status__in=[
+                    CallExecution.CallStatus.COMPLETED,
+                    CallExecution.CallStatus.FAILED,
+                    CallExecution.CallStatus.CANCELLED,
+                ]
+            ).exists()
+            completed_calls = calls.filter(status=CallExecution.CallStatus.COMPLETED)
+            has_completed_calls = completed_calls.exists()
+            has_incomplete_evaluations = completed_calls.filter(
+                Q(call_metadata__isnull=True)
+                | Q(call_metadata__eval_completed__isnull=True)
+                | Q(call_metadata__eval_completed=False)
+            ).exists()
 
-            if all_calls_completed:
-                # Update test_execution status
+            if (
+                not has_non_terminal_calls
+                and has_completed_calls
+                and not has_incomplete_evaluations
+            ):
+                total_call_count = calls.count()
+                completed_call_count = completed_calls.count()
+                failed_call_count = calls.filter(
+                    status=CallExecution.CallStatus.FAILED
+                ).count()
                 updated = TestExecution.objects.filter(id=test_execution_id).update(
-                    status=TestExecution.ExecutionStatus.COMPLETED
+                    status=TestExecution.ExecutionStatus.COMPLETED,
+                    completed_at=timezone.now(),
+                    total_calls=total_call_count,
+                    completed_calls=completed_call_count,
+                    failed_calls=failed_call_count,
                 )
                 if updated:
                     logger.info(
@@ -4085,6 +4184,13 @@ class TestExecutor:
             skip_existing: If True, skip evaluations that already exist for this call execution
             skip_status_update: If True, do not transition status to COMPLETED. Used when
                 the caller (e.g. Temporal workflow) manages the status transition itself.
+
+        Known gap: the ``skip_existing`` guard reads ``eval_outputs`` from the
+        in-memory snapshot taken by ``call_execution.refresh_from_db()``
+        above, and every save writes the whole ``eval_outputs`` column, so a
+        verdict landed by another worker between that read and this task's
+        save is silently lost; a row lock or merge-before-save is a
+        follow-up, not fixed here.
         """
         try:
             close_old_connections()
@@ -4101,8 +4207,10 @@ class TestExecutor:
             call_execution.save(update_fields=["call_metadata"])
             logger.info(f"Starting evaluations for call {call_execution.id}")
 
-            # Get eval configs - either specific ones or all for the run test
-            if eval_config_ids:
+            # Get eval configs - either specific ones or all for the run test.
+            # An explicitly-empty selection must stay empty, never widen to
+            # "every config".
+            if eval_config_ids is not None:
                 eval_configs = SimulateEvalConfig.objects.filter(
                     id__in=eval_config_ids, deleted=False
                 )
@@ -4113,6 +4221,21 @@ class TestExecutor:
 
             if not eval_configs.exists():
                 logger.info(f"No evaluation configs found for run test {run_test.id}")
+                # The tool-call judge switch is independent of the eval
+                # catalogue, so zero SimulateEvalConfig rows must still reach
+                # the judge when enable_tool_evaluation is on -- but only for
+                # an explicit (harness) dispatch, not a native run test's
+                # undispatched call.
+                if run_test.enable_tool_evaluation and eval_config_ids is not None:
+                    try:
+                        self._run_tool_evaluation(
+                            call_execution, call_execution.test_execution
+                        )
+                    except Exception as e:
+                        logger.error(
+                            f"Error running tool evaluation for call {call_execution.id}: {str(e)}"
+                        )
+                        traceback.print_exc()
                 if not call_execution.call_metadata:
                     call_execution.call_metadata = {}
                 call_execution.call_metadata["eval_completed"] = True
@@ -4149,6 +4272,7 @@ class TestExecutor:
                     eval_configs=eval_configs,
                     reason=skip_decision.processing_skip_reason,
                     skip_status_update=skip_status_update,
+                    skip_existing=skip_existing,
                 )
                 return
 
@@ -4165,6 +4289,7 @@ class TestExecutor:
                     eval_configs=eval_configs,
                     reason="Call transcript is unavailable, so processing was skipped.",
                     skip_status_update=skip_status_update,
+                    skip_existing=skip_existing,
                 )
                 return
 
@@ -4178,12 +4303,16 @@ class TestExecutor:
             # Run each evaluation
             for eval_config in eval_configs:
                 try:
-                    # # Skip if evaluation already exists and skip_existing is True
-                    # if skip_existing and call_execution.eval_outputs and str(eval_config.id) in call_execution.eval_outputs:
-                    #     logger.info(
-                    #         f"Skipping evaluation {eval_config.id} for call {call_execution.id} - already exists"
-                    #     )
-                    #     continue
+                    # A stored verdict is sealed: with skip-existing on, this
+                    # eval is not re-graded and nothing is written for it.
+                    if skip_existing and has_stored_verdict(
+                        call_execution, eval_config.id
+                    ):
+                        logger.info(
+                            f"Skipping evaluation {eval_config.id} for call "
+                            f"{call_execution.id} - already exists"
+                        )
+                        continue
 
                     # Log if we're overwriting an existing evaluation
                     if (
@@ -4252,8 +4381,23 @@ class TestExecutor:
         eval_configs,
         reason: str,
         skip_status_update: bool,
+        skip_existing: bool = False,
     ) -> None:
-        """Persist skipped processing outcomes for eval-only reruns."""
+        """Persist skipped processing outcomes for eval-only reruns.
+
+        With ``skip_existing`` on, a config that already holds a verdict on
+        this call keeps it: the "skipped" payload is written only for configs
+        whose row is empty. With it off, behaviour is unchanged -- every
+        config in the batch gets the payload.
+
+        The guard matters because the inputs to the skip decision aren't
+        immutable: a receipt re-ingest can delete and recreate the transcript
+        rows, so a call that once earned a real verdict can later be judged
+        "too short". The call-level bookkeeping (``processing_skipped``,
+        ``processing_skip_reason``, ``eval_started``, ``eval_completed``) is
+        written either way; only the per-config ``eval_outputs`` rows are
+        sealed.
+        """
         call_execution.call_metadata = call_execution.call_metadata or {}
 
         call_execution.call_metadata = set_processing_skip_metadata(
@@ -4268,6 +4412,12 @@ class TestExecutor:
             call_execution.eval_outputs = {}
 
         for eval_config in eval_configs:
+            if skip_existing and has_stored_verdict(call_execution, eval_config.id):
+                logger.info(
+                    f"Keeping the stored verdict for {eval_config.id} on call "
+                    f"{call_execution.id} - skipped payload not written"
+                )
+                continue
             call_execution.eval_outputs[str(eval_config.id)] = (
                 build_skipped_eval_output_payload(
                     eval_name=eval_config.name,
@@ -4326,26 +4476,17 @@ class TestExecutor:
                     if has_content and role_lower in customer_roles:
                         has_customer_message = True
         else:
-            try:
-                from ee.voice.utils.transcript_roles import SpeakerRoleResolver
-            except ImportError:
-                logger.warning(
-                    "speaker_role_resolver_unavailable_for_voice_presence",
-                    call_execution_id=str(call_execution.id),
-                )
-                agent_roles = frozenset({CallTranscript.SpeakerRole.ASSISTANT})
-                customer_roles = frozenset({CallTranscript.SpeakerRole.USER})
-            else:
-                provider = SpeakerRoleResolver.detect_provider(
-                    call_execution.provider_call_data
-                )
-                (
-                    agent_roles,
-                    customer_roles,
-                ) = SpeakerRoleResolver.get_skip_decision_role_sets(
+            from simulate.utils.speaker_roles import SpeakerRoleResolver
+
+            provider = SpeakerRoleResolver.detect_provider(
+                call_execution.provider_call_data
+            )
+            agent_roles, customer_roles = (
+                SpeakerRoleResolver.get_skip_decision_role_sets(
                     provider=provider,
                     is_outbound=is_outbound,
                 )
+            )
 
             for role, content in call_execution.transcripts.values_list(
                 "speaker_role", "content"
@@ -4371,12 +4512,15 @@ class TestExecutor:
         Returns:
             dict: Transcript and voice recording data
         """
+        # Addressed for a server-side fetch; an unreachable URL is sniffed as text.
         transcript_data = {
             "transcript": "",
-            "voice_recording": "",
+            "voice_recording": server_reachable_url(call_execution.recording_url or ""),
             "assistant_recording": "",
             "customer_recording": "",
-            "stereo_recording": "",
+            "stereo_recording": server_reachable_url(
+                call_execution.stereo_recording_url or ""
+            ),
             "user_chat_transcript": "",
             "assistant_chat_transcript": "",
         }
@@ -4459,42 +4603,35 @@ class TestExecutor:
                                         assistant_chat_transcript_text.append(message)
 
                     else:
-                        try:
-                            from ee.voice.utils.transcript_roles import (
-                                SpeakerRoleResolver,
-                            )
-                        except ImportError:
-                            SpeakerRoleResolver = None
-                            logger.warning(
-                                "speaker_role_resolver_unavailable_for_voice_transcript",
-                                call_execution_id=str(call_execution.id),
-                            )
-                        else:
-                            eval_provider = SpeakerRoleResolver.detect_provider(
-                                call_execution.provider_call_data
-                            )
-                            eval_dir = (call_execution.call_metadata or {}).get(
-                                "call_direction", ""
-                            )
-                            eval_is_outbound = (
-                                str(eval_dir).strip().lower() == "outbound"
-                            )
+                        from simulate.utils.speaker_roles import (
+                            SpeakerRoleResolver,
+                        )
 
+                        eval_provider = SpeakerRoleResolver.detect_provider(
+                            call_execution.provider_call_data
+                        )
+                        eval_dir = (call_execution.call_metadata or {}).get(
+                            "call_direction", ""
+                        )
+                        eval_is_outbound = (
+                            str(eval_dir).strip().lower() == "outbound"
+                        )
+                        conversational_roles = (
+                            SpeakerRoleResolver.get_conversational_roles()
+                        )
                         for transcript in transcripts:
-                            if transcript.content.strip():
-                                if SpeakerRoleResolver is None:
-                                    eval_role = transcript.speaker_role
-                                else:
-                                    eval_role = (
-                                        SpeakerRoleResolver.get_eval_role_label(
-                                            transcript.speaker_role,
-                                            provider=eval_provider,
-                                            is_outbound=eval_is_outbound,
-                                        )
-                                    )
-                                transcript_text.append(
-                                    f"{eval_role}: {transcript.content}"
-                                )
+                            if not transcript.content.strip():
+                                continue
+                            if transcript.speaker_role not in conversational_roles:
+                                continue
+                            eval_role = SpeakerRoleResolver.get_eval_role_label(
+                                transcript.speaker_role,
+                                provider=eval_provider,
+                                is_outbound=eval_is_outbound,
+                            )
+                            transcript_text.append(
+                                f"{eval_role}: {transcript.content}"
+                            )
                     transcript_data["transcript"] = "\n".join(transcript_text)
                     transcript_data["user_chat_transcript"] = "\n".join(
                         user_chat_transcript_text
@@ -4546,9 +4683,41 @@ class TestExecutor:
                 else None
             )
 
-            recording_urls = self.voice_service_manager.get_recording_urls(
-                provider_payload
-            )
+            for provider_data in (call_execution.provider_call_data or {}).values():
+                if not isinstance(provider_data, dict):
+                    continue
+                normalized_recording = provider_data.get("recording", {})
+                if not isinstance(normalized_recording, dict):
+                    continue
+                for key, transcript_key in (
+                    ("assistant", "assistant_recording"),
+                    ("customer", "customer_recording"),
+                    ("stereo", "stereo_recording"),
+                    ("combined", "voice_recording"),
+                ):
+                    if (
+                        normalized_recording.get(key)
+                        and not transcript_data[transcript_key]
+                    ):
+                        transcript_data[transcript_key] = normalized_recording[key]
+
+            # Hosted/ALK ingestion persists recording URLs directly on the call
+            # row (and may also provide normalized recording entries above).
+            # Evaluation must not require a provider client merely to consume
+            # those already-persisted artifacts.  Provider lookup is only an
+            # optional enrichment path for legacy calls that still carry a
+            # provider payload.
+            recording_urls = {}
+            if self.voice_service_manager is not None and provider_payload:
+                recording_urls = self.voice_service_manager.get_recording_urls(
+                    provider_payload
+                )
+            elif provider_payload:
+                logger.info(
+                    "Skipping provider recording lookup for call %s because "
+                    "the voice service manager is not initialized",
+                    call_execution.id,
+                )
             if recording_urls:
                 recording_object = {}
 
@@ -4593,7 +4762,7 @@ class TestExecutor:
                         call_execution.stereo_recording_url = s3_url
                         needs_save = True
                         fields_to_update.append("stereo_recording_url")
-                    transcript_data["stereo_recording"] = s3_url
+                    transcript_data["stereo_recording"] = server_reachable_url(s3_url)
                     recording_object["stereo"] = s3_url
 
                 # Convert and save main recording URL (combined)
@@ -4610,15 +4779,8 @@ class TestExecutor:
                         call_execution.recording_url = s3_url
                         needs_save = True
                         fields_to_update.append("recording_url")
-                    transcript_data["voice_recording"] = s3_url
+                    transcript_data["voice_recording"] = server_reachable_url(s3_url)
                     recording_object["combined"] = s3_url
-
-                if recording_object:
-                    call_execution.provider_call_data.get(
-                        self.system_voice_provider.value
-                    )["recording"] = recording_object
-                    fields_to_update.append("provider_call_data")
-                    needs_save = True
 
             # Save the call_execution if any URLs were converted
             if needs_save:
@@ -4678,12 +4840,19 @@ class TestExecutor:
             # Get agent_version with fallback to latest_version if not set on call_execution
             agent_version = call_execution.agent_version
             if not agent_version:
-                agent_def = call_execution.test_execution.run_test.agent_definition
+                agent_def = (
+                    call_execution.test_execution.agent_definition
+                    or call_execution.test_execution.run_test.agent_definition
+                )
                 if agent_def:
                     agent_version = agent_def.latest_version
                     logger.debug(
                         f"Using fallback agent_version (latest_version) for call_execution {call_execution.id}"
                     )
+
+            context_map, subjects = build_simulation_context_map(
+                call_execution, agent_version
+            )
 
             logger.info(
                 f"Eval mapping validation for call_execution {call_execution.id}: "
@@ -4716,6 +4885,18 @@ class TestExecutor:
                     updated_mapping[key] = transcript_data["user_chat_transcript"]
                 elif value == "assistant_chat_transcript":
                     updated_mapping[key] = transcript_data["assistant_chat_transcript"]
+                elif value in TRANSCRIPT_DOT_ALIASES:
+                    legacy_key = TRANSCRIPT_DOT_ALIASES[value]
+                    if legacy_key == "agent_prompt":
+                        if agent_version and agent_version.configuration_snapshot:
+                            snapshot = agent_version.configuration_snapshot
+                            updated_mapping[key] = snapshot.get("description", "")
+                        else:
+                            updated_mapping[key] = ""
+                    else:
+                        updated_mapping[key] = transcript_data.get(legacy_key, "")
+                elif value in context_map:
+                    updated_mapping[key] = context_map[value]
                 else:
                     if value == "agent_prompt":
                         if agent_version and agent_version.configuration_snapshot:
@@ -4749,6 +4930,10 @@ class TestExecutor:
                                 f"in call_execution {call_execution.id}, using empty string"
                             )
                             updated_mapping[key] = ""
+                    elif (
+                        walked := walk_subject_path(subjects, value)
+                    ) is not PATH_MISSING:
+                        updated_mapping[key] = stringify_leaf(walked)
                     else:
                         # Build informative error message with column, dataset, and scenario details
                         column_name = None
@@ -4831,6 +5016,14 @@ class TestExecutor:
                         call_execution.save(update_fields=["eval_outputs"])
                         raise ValueError(error_message)
 
+            # A recording variable that resolved empty (e.g. stereo on a
+            # combined-only provider) fails here with an actionable message
+            # instead of an opaque "No input received" from the eval engine.
+            for map_key, map_value in mapping.items():
+                assert_recording_slot_available(
+                    map_key, map_value, updated_mapping.get(map_key), transcript_data
+                )
+
             # Prepare config
             config = eval_config.config.copy() if eval_config.config else {}
             # Don't add mapping to config - it's passed separately as 'mappings' parameter
@@ -4839,6 +5032,32 @@ class TestExecutor:
 
             # Get organization
             organization = call_execution.test_execution.run_test.organization
+
+            from common.utils.data_injection import is_enabled as _di_enabled
+
+            _di_cfg = (
+                (config or {}).get("run_config", {}).get("data_injection")
+                or (config or {}).get("data_injection")
+                or {}
+            )
+            _call_context = None
+            if _di_enabled(_di_cfg, "call_context"):
+                _call_context = {
+                    "id": str(call_execution.id),
+                    "status": call_execution.status,
+                    "call_type": call_execution.call_type,
+                    "simulation_call_type": call_execution.simulation_call_type,
+                    "phone_number": call_execution.phone_number,
+                    "started_at": str(call_execution.started_at) if call_execution.started_at else None,
+                    "ended_at": str(call_execution.ended_at) if call_execution.ended_at else None,
+                    "duration_seconds": call_execution.duration_seconds,
+                    "recording_url": call_execution.recording_url,
+                    "call_summary": call_execution.call_summary,
+                    "ended_reason": call_execution.ended_reason,
+                    "error_message": call_execution.error_message,
+                    "message_count": call_execution.message_count,
+                    "overall_score": float(call_execution.overall_score) if call_execution.overall_score is not None else None,
+                }
 
             # Run the evaluation
             logger.info(
@@ -4855,6 +5074,7 @@ class TestExecutor:
                 error_localizer=eval_config.error_localizer,
                 workspace=call_execution.test_execution.run_test.workspace,
                 source="simulate",
+                call_context=_call_context,
             )
 
             if isinstance(eval_result, str):
@@ -4887,37 +5107,29 @@ class TestExecutor:
                 }
                 call_execution.save(update_fields=["eval_outputs"])
 
-                # Trigger error localization if enabled
-                if eval_config.error_localizer and eval_output is not None:
-                    try:
-                        # Determine if evaluation failed (assuming boolean or numeric output)
-                        eval_failed = False
-                        if isinstance(eval_output, bool):
-                            eval_failed = not eval_output
-                        elif isinstance(eval_output, int | float):
-                            # Consider it failed if score is less than 0.5 (assuming 0-1 scale)
-                            eval_failed = eval_output < 0.8
-                        else:
-                            # For string outputs, check if it contains failure indicators
-                            eval_failed = True
+                from model_hub.services.error_localizer_service import (
+                    error_localizer_enabled,
+                )
 
-                        if eval_failed:
-                            trigger_error_localization_for_simulate(
-                                eval_template=eval_template,
-                                call_execution=call_execution,
-                                eval_config=eval_config,
-                                value=eval_output,
-                                mapping=updated_mapping,
-                                eval_explanation=eval_reason,
-                                log_id=None,  # You can add log_id if available
-                            )
-                            logger.info(
-                                f"Triggered error localization for failed evaluation {eval_config.id}"
-                            )
+                el_enabled = error_localizer_enabled(eval_config)
+                if el_enabled and eval_output is not None:
+                    try:
+                        trigger_error_localization_for_simulate(
+                            eval_template=eval_template,
+                            call_execution=call_execution,
+                            eval_config=eval_config,
+                            value=eval_output,
+                            mapping=updated_mapping,
+                            eval_explanation=eval_reason,
+                            log_id=None,
+                        )
                     except Exception as e:
                         logger.error(
                             f"Error triggering error localization for evaluation {eval_config.id}: {str(e)}"
                         )
+
+                eval_config.status = StatusType.COMPLETED.value
+                eval_config.save()
 
                 logger.info(f"Successfully completed evaluation {eval_config.id}")
             else:
@@ -4943,6 +5155,9 @@ class TestExecutor:
                 "status"
             ] = StatusType.FAILED.value
             call_execution.save(update_fields=["eval_outputs"])
+
+            eval_config.status = StatusType.FAILED.value
+            eval_config.save()
             raise
 
     def _aggregate_tool_columns_to_test_execution(self, test_execution):
@@ -5144,7 +5359,10 @@ class TestExecutor:
             else:
                 agent_version = agent_definition.get_version(selected_version.id)
 
-            snapshot = agent_version.configuration_snapshot
+            # A harness `AgentDefinition` has no `AgentVersion`, so
+            # `latest_version` is None. Only the voice branch reads
+            # `snapshot`, and it already treats `{}` as absent.
+            snapshot = agent_version.configuration_snapshot if agent_version else {}
             # Check if this is a TEXT (chat) agent
             agent_type = agent_definition.agent_type
             is_text_agent = agent_type == AgentDefinition.AgentTypeChoices.TEXT
@@ -5163,6 +5381,13 @@ class TestExecutor:
                 # Extract tool calls from chat messages
                 tool_calls_data = agent._extract_tool_calls(call_data)
             else:
+                if not snapshot:
+                    logger.info(
+                        f"Skipping tool evaluation for voice call {call_execution.id} - "
+                        "agent definition has no version snapshot"
+                    )
+                    return
+
                 customer_api_key = (
                     snapshot.get("api_key")
                     if snapshot and snapshot.get("api_key")
@@ -5526,7 +5751,11 @@ def _run_simulate_evaluations_task(
             "test_execution__run_test",
         ).get(id=call_execution_id)
 
-        test_executor = TestExecutor()
+        # Evaluation only needs transcript/eval helpers. Initializing the
+        # configured voice provider here makes otherwise provider-neutral
+        # evaluations fail when, for example, Vapi credentials are absent for
+        # a LiveKit, Retell, chat, or connect-only run.
+        test_executor = TestExecutor(initialize_voice_service=False)
         test_executor._run_simulate_evaluations(
             call_execution, eval_config_ids=eval_config_ids, skip_existing=skip_existing
         )

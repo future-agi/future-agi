@@ -26,7 +26,6 @@ import uuid
 from unittest.mock import patch
 
 import pytest
-from django.conf import settings as django_settings
 
 from accounts.models.user import OrgApiKey
 from tracer.models.observation_span import ObservationSpan
@@ -430,6 +429,7 @@ def build_openllmetry_payload(call_data, project_name="e2e-adapter-test"):
         _kv("gen_ai.usage.output_tokens", d["completion_tokens"]),
         _kv("gen_ai.request.temperature", 1.0),
         _kv("gen_ai.request.max_tokens", 20),
+        _kv("traceloop.entity.name", "chat.completion"),
         _kv("llm.request.type", "chat"),
         _kv("llm.is_streaming", False),
     ]
@@ -549,16 +549,18 @@ def ingest_payload_sync(payload, organization_id, user_id, workspace_id=None):
     from tracer.utils.trace_ingestion import (
         _bulk_insert_observation_spans,
         _bulk_update_traces,
-        _fetch_or_create_end_users,
-        _fetch_or_create_sessions,
         _fetch_or_create_traces,
         _fetch_prompt_versions,
         _prepare_observation_spans_and_trace_updates,
+        _resolve_end_user_ids,
+        _resolve_session_ids,
     )
 
     all_traces = _fetch_or_create_traces(parsed_data_list)
-    all_sessions = _fetch_or_create_sessions(parsed_data_list)
-    all_end_users = _fetch_or_create_end_users(parsed_data_list, organization_id)
+    all_end_users, _ch_end_users = _resolve_end_user_ids(
+        parsed_data_list, organization_id
+    )
+    all_sessions, _ch_sessions = _resolve_session_ids(parsed_data_list)
     all_prompt_versions = _fetch_prompt_versions(parsed_data_list, organization_id)
 
     spans_to_create, traces_to_update = _prepare_observation_spans_and_trace_updates(
@@ -583,30 +585,31 @@ def ingest_payload_sync(payload, organization_id, user_id, workspace_id=None):
 
 def assert_llm_span(span, expected, adapter_name):
     """Assert core fields on a persisted ObservationSpan (model instance)."""
-    assert (
-        span.observation_type == "llm"
-    ), f"[{adapter_name}] observation_type: expected 'llm', got '{span.observation_type}'"
-    assert expected["model"] in (
-        span.model or ""
-    ), f"[{adapter_name}] model: expected '{expected['model']}' in '{span.model}'"
+    assert span.observation_type == "llm", (
+        f"[{adapter_name}] observation_type: expected 'llm', got '{span.observation_type}'"
+    )
+    assert expected["model"] in (span.model or ""), (
+        f"[{adapter_name}] model: expected '{expected['model']}' in '{span.model}'"
+    )
     if span.prompt_tokens is not None:
-        assert (
-            int(span.prompt_tokens) == expected["prompt_tokens"]
-        ), f"[{adapter_name}] prompt_tokens: {span.prompt_tokens} != {expected['prompt_tokens']}"
+        assert int(span.prompt_tokens) == expected["prompt_tokens"], (
+            f"[{adapter_name}] prompt_tokens: {span.prompt_tokens} != {expected['prompt_tokens']}"
+        )
     if span.completion_tokens is not None:
-        assert (
-            int(span.completion_tokens) == expected["completion_tokens"]
-        ), f"[{adapter_name}] completion_tokens: {span.completion_tokens} != {expected['completion_tokens']}"
+        assert int(span.completion_tokens) == expected["completion_tokens"], (
+            f"[{adapter_name}] completion_tokens: {span.completion_tokens} != {expected['completion_tokens']}"
+        )
     assert span.input is not None, f"[{adapter_name}] input is None"
     assert span.output is not None, f"[{adapter_name}] output is None"
 
-    # Verify foreign keys are stripped from eval_attributes
+    # Verify vendor-specific source keys are stripped from eval_attributes.
+    # gen_ai.* keys are the normalized semantic-convention surface and may remain.
     ea = span.eval_attributes or {}
-    for prefix in ["langfuse.", "openinference.", "gen_ai.", "traceloop."]:
+    for prefix in ["langfuse.", "openinference.", "traceloop."]:
         leaked = [k for k in ea if k.startswith(prefix)]
-        assert (
-            not leaked
-        ), f"[{adapter_name}] Foreign keys leaked in eval_attributes: {leaked[:5]}"
+        assert not leaked, (
+            f"[{adapter_name}] Foreign keys leaked in eval_attributes: {leaked[:5]}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -614,17 +617,18 @@ def assert_llm_span(span, expected, adapter_name):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skip(reason="OTLP trace routes migrated to fi-collector — pending PII scrubbing port")
 @pytest.mark.e2e
 @pytest.mark.django_db(transaction=True)
 class TestOTLPEndpointAuth:
     """Verify that the OTLP endpoint authenticates via OrgApiKey headers."""
 
-    @patch("tracer.views.http_otlp.bulk_create_observation_span_task")
-    @patch("tracer.views.http_otlp.payload_storage")
+    @patch("tracer.views.otlp.bulk_create_observation_span_task.apply_async")
+    @patch("tracer.views.otlp.payload_storage")
     def test_post_returns_200_with_valid_api_key(
         self,
         mock_storage,
-        mock_task,
+        mock_apply_async,
         api_client,
         org_api_key,
         e2e_project,
@@ -644,7 +648,7 @@ class TestOTLPEndpointAuth:
         )
         assert response.status_code == 200
         mock_storage.store.assert_called_once()
-        mock_task.apply_async.assert_called_once()
+        mock_apply_async.assert_called_once()
 
     def test_post_rejects_invalid_api_key(self, api_client, simple_chat_data):
         """POST with bad API key should fail with 401/403."""
@@ -674,6 +678,7 @@ class TestOTLPEndpointAuth:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skip(reason="OTLP trace routes migrated to fi-collector — pending PII scrubbing port")
 @pytest.mark.e2e
 @pytest.mark.django_db(transaction=True)
 class TestLangfuseBasicAuth:
@@ -694,16 +699,16 @@ class TestLangfuseBasicAuth:
     @staticmethod
     def _basic_auth_header(api_key, secret_key):
         """Build the Authorization header exactly as the Langfuse SDK does."""
-        return "Basic " + base64.b64encode(
-            f"{api_key}:{secret_key}".encode("utf-8")
-        ).decode("ascii")
+        return "Basic " + base64.b64encode(f"{api_key}:{secret_key}".encode()).decode(
+            "ascii"
+        )
 
-    @patch("tracer.views.http_otlp.bulk_create_observation_span_task")
-    @patch("tracer.views.http_otlp.payload_storage")
+    @patch("tracer.views.otlp.bulk_create_observation_span_task.apply_async")
+    @patch("tracer.views.otlp.payload_storage")
     def test_basic_auth_accepted_on_tracer_endpoint(
         self,
         mock_storage,
-        mock_task,
+        mock_apply_async,
         api_client,
         org_api_key,
         e2e_project,
@@ -721,18 +726,18 @@ class TestLangfuseBasicAuth:
             content_type="application/json",
             HTTP_AUTHORIZATION=auth,
         )
-        assert (
-            response.status_code == 200
-        ), f"Expected 200, got {response.status_code}: {response.content}"
+        assert response.status_code == 200, (
+            f"Expected 200, got {response.status_code}: {response.content}"
+        )
         mock_storage.store.assert_called_once()
-        mock_task.apply_async.assert_called_once()
+        mock_apply_async.assert_called_once()
 
-    @patch("tracer.views.http_otlp.bulk_create_observation_span_task")
+    @patch("tracer.views.http_otlp.bulk_create_observation_span_task.apply_async")
     @patch("tracer.views.http_otlp.payload_storage")
     def test_basic_auth_accepted_on_compat_url(
         self,
         mock_storage,
-        mock_task,
+        mock_apply_async,
         api_client,
         org_api_key,
         e2e_project,
@@ -750,16 +755,18 @@ class TestLangfuseBasicAuth:
             content_type="application/json",
             HTTP_AUTHORIZATION=auth,
         )
-        assert (
-            response.status_code == 200
-        ), f"Expected 200, got {response.status_code}: {response.content}"
+        assert response.status_code == 200, (
+            f"Expected 200, got {response.status_code}: {response.content}"
+        )
+        mock_storage.store.assert_called_once()
+        mock_apply_async.assert_called_once()
 
-    @patch("tracer.views.http_otlp.bulk_create_observation_span_task")
-    @patch("tracer.views.http_otlp.payload_storage")
+    @patch("tracer.views.otlp.bulk_create_observation_span_task.apply_async")
+    @patch("tracer.views.otlp.payload_storage")
     def test_basic_auth_case_insensitive(
         self,
         mock_storage,
-        mock_task,
+        mock_apply_async,
         api_client,
         org_api_key,
         e2e_project,
@@ -779,9 +786,11 @@ class TestLangfuseBasicAuth:
             content_type="application/json",
             HTTP_AUTHORIZATION=f"BASIC {encoded}",
         )
-        assert (
-            response.status_code == 200
-        ), f"Expected 200, got {response.status_code}: {response.content}"
+        assert response.status_code == 200, (
+            f"Expected 200, got {response.status_code}: {response.content}"
+        )
+        mock_storage.store.assert_called_once()
+        mock_apply_async.assert_called_once()
 
     def test_basic_auth_rejects_invalid_credentials(self, api_client, simple_chat_data):
         """Basic auth with wrong credentials returns 401."""
@@ -818,12 +827,12 @@ class TestLangfuseBasicAuth:
         )
         assert response.status_code == 401
 
-    @patch("tracer.views.http_otlp.bulk_create_observation_span_task")
-    @patch("tracer.views.http_otlp.payload_storage")
+    @patch("tracer.views.otlp.bulk_create_observation_span_task.apply_async")
+    @patch("tracer.views.otlp.payload_storage")
     def test_bearer_jwt_still_works_alongside_basic(
         self,
         mock_storage,
-        mock_task,
+        mock_apply_async,
         auth_client,
         e2e_project,
         simple_chat_data,
@@ -840,6 +849,8 @@ class TestLangfuseBasicAuth:
             content_type="application/json",
         )
         assert response.status_code == 200
+        mock_storage.store.assert_called_once()
+        mock_apply_async.assert_called_once()
 
     def test_full_pipeline_with_basic_auth(
         self, organization, user, workspace, e2e_project, simple_chat_data
@@ -857,14 +868,14 @@ class TestLangfuseBasicAuth:
         assert llm_span is not None, "No LLM span found"
         assert_llm_span(llm_span, simple_chat_data, "langfuse-basic-auth")
 
-        # Verify eval_attributes contain expected fi.* keys
+        # Verify eval_attributes contain expected normalized keys
         ea = llm_span.eval_attributes or {}
-        assert (
-            ea.get("fi.span.kind") == "LLM"
-        ), f"fi.span.kind: {ea.get('fi.span.kind')}"
-        assert (
-            "llm.model_name" in ea
-        ), f"Missing llm.model_name in: {list(ea.keys())[:10]}"
+        assert ea.get("gen_ai.span.kind") == "LLM", (
+            f"gen_ai.span.kind: {ea.get('gen_ai.span.kind')}"
+        )
+        assert "llm.model_name" in ea, (
+            f"Missing llm.model_name in: {list(ea.keys())[:10]}"
+        )
         assert "llm.token_count.prompt" in ea
         assert "llm.token_count.completion" in ea
 
@@ -907,9 +918,9 @@ class TestLangfuseE2E:
         spans = ObservationSpan.objects.filter(trace_id=trace_id)
         assert spans.exists(), "No spans persisted"
         llm_spans = spans.filter(observation_type="llm")
-        assert (
-            llm_spans.exists()
-        ), f"No LLM span. Types: {list(spans.values_list('observation_type', flat=True))}"
+        assert llm_spans.exists(), (
+            f"No LLM span. Types: {list(spans.values_list('observation_type', flat=True))}"
+        )
         assert_llm_span(llm_spans.first(), simple_chat_data, "langfuse")
 
     def test_tool_calling(
@@ -926,9 +937,9 @@ class TestLangfuseE2E:
         # Tool calls should appear in eval_attributes
         ea = span.eval_attributes or {}
         tool_keys = [k for k in ea if "tool_call" in k or "tool_calls" in k]
-        assert (
-            tool_keys
-        ), f"No tool_call keys in eval_attributes: {list(ea.keys())[:10]}"
+        assert tool_keys, (
+            f"No tool_call keys in eval_attributes: {list(ea.keys())[:10]}"
+        )
 
     def test_multi_turn(
         self, organization, user, workspace, e2e_project, multi_turn_data
@@ -1062,9 +1073,9 @@ class TestFiNativeE2E:
         # Verify tool calls in eval_attributes
         ea = span.eval_attributes or {}
         tool_keys = [k for k in ea if "tool_call" in k]
-        assert (
-            tool_keys
-        ), f"No tool_call keys in eval_attributes: {list(ea.keys())[:10]}"
+        assert tool_keys, (
+            f"No tool_call keys in eval_attributes: {list(ea.keys())[:10]}"
+        )
 
     def test_multi_turn(
         self, organization, user, workspace, e2e_project, multi_turn_data
@@ -1110,33 +1121,33 @@ class TestCrossAdapterEquivalence:
         for adapter_name, span in results.items():
             if adapter_name == "fi_native":
                 continue
-            assert (
-                span.observation_type == ref.observation_type
-            ), f"{adapter_name} observation_type mismatch"
-            assert span.model == ref.model or ref.model in (
-                span.model or ""
-            ), f"{adapter_name} model mismatch: {span.model} vs {ref.model}"
-            assert (
-                span.prompt_tokens == ref.prompt_tokens
-            ), f"{adapter_name} prompt_tokens: {span.prompt_tokens} vs {ref.prompt_tokens}"
-            assert (
-                span.completion_tokens == ref.completion_tokens
-            ), f"{adapter_name} completion_tokens: {span.completion_tokens} vs {ref.completion_tokens}"
+            assert span.observation_type == ref.observation_type, (
+                f"{adapter_name} observation_type mismatch"
+            )
+            assert span.model == ref.model or ref.model in (span.model or ""), (
+                f"{adapter_name} model mismatch: {span.model} vs {ref.model}"
+            )
+            assert span.prompt_tokens == ref.prompt_tokens, (
+                f"{adapter_name} prompt_tokens: {span.prompt_tokens} vs {ref.prompt_tokens}"
+            )
+            assert span.completion_tokens == ref.completion_tokens, (
+                f"{adapter_name} completion_tokens: {span.completion_tokens} vs {ref.completion_tokens}"
+            )
             assert span.input is not None, f"{adapter_name} input is None"
             assert span.output is not None, f"{adapter_name} output is None"
 
-            # Verify no foreign keys leaked
+            # Verify no vendor-specific source keys leaked.
+            # gen_ai.* keys are the normalized semantic-convention surface.
             ea = span.eval_attributes or {}
             for prefix in [
                 "langfuse.",
                 "openinference.",
-                "gen_ai.",
                 "traceloop.",
             ]:
                 leaked = [k for k in ea if k.startswith(prefix)]
-                assert (
-                    not leaked
-                ), f"{adapter_name}: foreign key prefix '{prefix}' leaked: {leaked[:3]}"
+                assert not leaked, (
+                    f"{adapter_name}: foreign key prefix '{prefix}' leaked: {leaked[:3]}"
+                )
 
 
 # ---------------------------------------------------------------------------
@@ -1504,12 +1515,14 @@ class TestLangfuseSdkLiveE2E:
         db_span = gen_spans.first()
         ea = db_span.eval_attributes or {}
 
-        # Core fi.* key set by langfuse adapter
-        assert "fi.span.kind" in ea, f"Missing fi.span.kind in {list(ea.keys())[:15]}"
+        # Core normalized key set by langfuse adapter
+        assert "gen_ai.span.kind" in ea, (
+            f"Missing gen_ai.span.kind in {list(ea.keys())[:15]}"
+        )
         # llm.* keys from langfuse adapter
-        assert (
-            "llm.model_name" in ea
-        ), f"Missing llm.model_name in {list(ea.keys())[:15]}"
+        assert "llm.model_name" in ea, (
+            f"Missing llm.model_name in {list(ea.keys())[:15]}"
+        )
         # No foreign langfuse.* keys should leak
         leaked = [k for k in ea if k.startswith("langfuse.")]
         assert not leaked, f"langfuse.* keys leaked: {leaked}"
@@ -1566,6 +1579,6 @@ class TestLangfuseSdkLiveE2E:
 
         spans = ObservationSpan.objects.filter(project=e2e_project)
         # At least 3 spans: parent span + 2 generation spans
-        assert (
-            spans.count() >= 3
-        ), f"Expected >=3 spans for multi-turn, got {spans.count()}"
+        assert spans.count() >= 3, (
+            f"Expected >=3 spans for multi-turn, got {spans.count()}"
+        )

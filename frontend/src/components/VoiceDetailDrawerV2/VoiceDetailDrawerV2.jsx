@@ -23,6 +23,7 @@ import {
 import VoiceDrawerHeader from "./VoiceDrawerHeader";
 import VoiceLeftPanel from "./VoiceLeftPanel";
 import VoiceRightPanel from "./VoiceRightPanel";
+import { shareResourceFor } from "./shareResource";
 
 const VOICE_IMAGINE_PROMPTS = [
   { label: "Summarize this call", icon: "mdi:text-box-outline" },
@@ -69,11 +70,15 @@ const VoiceDetailDrawerV2 = ({
   // the VoiceDrawerHeader (close/nav/fullscreen bar) — and just render
   // the call body so it fits the host's layout.
   embedded = false,
+  hiddenActionIds = [],
+  hidePathTabs = false,
   hideAnnotationTab = false,
+  showFixWithFalcon = true,
 }) => {
   const queryClient = useQueryClient();
   const { observeId } = useParams();
   const projectId = observeId || data?.project_id;
+  const shareResource = shareResourceFor(data);
 
   const [leftPanelWidth, setLeftPanelWidth] = useState(50); // percentage
   const [isFullscreen, setIsFullscreen] = useState(initialFullscreen);
@@ -450,7 +455,11 @@ const VoiceDetailDrawerV2 = ({
                 borderColor: "divider",
               }}
             >
-              <VoiceLeftPanel data={data} scenarioId={scenarioId} />
+              <VoiceLeftPanel
+                data={data}
+                scenarioId={scenarioId}
+                hidePathTabs={hidePathTabs}
+              />
             </Box>
 
             {/* Resizable divider */}
@@ -500,25 +509,27 @@ const VoiceDetailDrawerV2 = ({
                 data={data}
                 onCompareBaseline={onCompareBaseline}
                 onAction={handleVoiceAction}
+                hiddenActionIds={hiddenActionIds}
                 hideAnnotationTab={hideAnnotationTab}
+                showFixWithFalcon={showFixWithFalcon}
               />
             </Box>
           </>
         )}
       </Box>
 
-      {/* Share dialog — voice calls share via trace_id, same backend as
-          the trace drawer. The fallback URL points at the voice full-page
-          route so authenticated recipients land directly on the voice UI. */}
-      {(data?.trace_id || data?.id) && (
+      {/* Share dialog — Observe voice calls share their trace and fall back
+          to the voice full-page route; simulation calls share their
+          CallExecution and fall back to the current page URL. */}
+      {shareResource && (
         <ShareDialog
           open={shareDialogOpen}
           onClose={() => setShareDialogOpen(false)}
-          resourceType="trace"
-          resourceId={data?.trace_id || data?.id}
+          resourceType={shareResource.resourceType}
+          resourceId={shareResource.resourceId}
           fallbackShareUrl={
-            projectId && (data?.trace_id || data?.id)
-              ? `${window.location.origin}/dashboard/observe/${projectId}/voice/${data?.trace_id || data?.id}`
+            shareResource.resourceType === "trace" && projectId
+              ? `${window.location.origin}/dashboard/observe/${projectId}/voice/${shareResource.resourceId}`
               : undefined
           }
         />
@@ -621,7 +632,10 @@ VoiceDetailDrawerV2.propTypes = {
   isLoading: PropTypes.bool,
   initialFullscreen: PropTypes.bool,
   embedded: PropTypes.bool,
+  hiddenActionIds: PropTypes.arrayOf(PropTypes.string),
+  hidePathTabs: PropTypes.bool,
   hideAnnotationTab: PropTypes.bool,
+  showFixWithFalcon: PropTypes.bool,
 };
 
 export default VoiceDetailDrawerV2;

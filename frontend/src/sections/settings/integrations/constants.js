@@ -70,7 +70,8 @@ export const PLATFORMS = [
     id: "datadog",
     name: "Datadog",
     description: "APM, metrics, logs, and distributed traces",
-    wizardDescription: "Export Agent Command Center metrics, logs, and traces to Datadog",
+    wizardDescription:
+      "Export Agent Command Center metrics, logs, and traces to Datadog",
     logo: "/assets/icons/integrations/datadog.svg",
     available: true,
   },
@@ -86,7 +87,8 @@ export const PLATFORMS = [
     id: "pagerduty",
     name: "PagerDuty",
     description: "Incident management and on-call alerting",
-    wizardDescription: "Route Agent Command Center alerts to PagerDuty incidents",
+    wizardDescription:
+      "Route Agent Command Center alerts to PagerDuty incidents",
     logo: "/assets/icons/integrations/pagerduty.svg",
     available: true,
   },

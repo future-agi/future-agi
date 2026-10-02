@@ -1,0 +1,30 @@
+slug: compare-models
+name: Compare Models
+icon: mdi:compare-arrows
+description: Set up and analyze model comparisons with cost/quality/latency tradeoffs.
+trigger_phrases:
+- compare models
+- model comparison
+- a/b test
+- which model
+- gpt vs claude
+tool_names:
+- list_experiments
+- create_experiment
+- get_experiment_results
+- get_experiment_comparison
+- compare_evaluations
+- list_eval_templates
+instructions: |-
+  Help the user set up and analyze model comparisons.
+
+  Approach:
+  1. Understand what models/variants to compare and on what metrics
+  2. Find or create a suitable dataset
+  3. Set up an experiment with variants
+  4. Run evaluations if needed
+  5. Present results as a comparison table with cost/quality/latency tradeoffs
+
+  Always frame results as tradeoffs, not absolute winners.
+  Include cost analysis alongside quality metrics.
+example_trajectories: []

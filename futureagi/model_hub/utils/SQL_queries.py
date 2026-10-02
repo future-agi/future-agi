@@ -81,6 +81,19 @@ MODEL_COST_CALCULATION_SQL = """
 """
 
 
+# Sort column ids the Evaluations > Usage grid sends, mapped to the fixed
+# expression ``get_all_templates`` orders by. No other value reaches its SQL.
+EVAL_TEMPLATE_SORT_COLUMNS = {
+    "last_30_run": "last30run",
+    "updated_at": "updated_at",
+    "eval_template_name": "template_name",
+    # Legacy camelCase support
+    "last30Run": "last30run",
+    "updatedAt": "updated_at",
+    "evalTemplateName": "template_name",
+}
+
+
 def build_sql_filters(filters=[], column_map={}):
     filter_clauses = []
     params = []
@@ -127,7 +140,7 @@ def build_sql_filters(filters=[], column_map={}):
             if op == "between":
                 filter_clauses.append(f"{col} BETWEEN %s AND %s")
                 params.extend([values[0], values[1]])
-            elif op == "not_in_between":
+            elif op == "not_between":
                 filter_clauses.append(f"{col} NOT BETWEEN %s AND %s")
                 params.extend([values[0], values[1]])
             elif op == "equals":
@@ -203,7 +216,7 @@ def build_datetime_filter_sql(
     }
 
     try:
-        if filter_op in ["between", "not_in_between"]:
+        if filter_op in ["between", "not_between"]:
             parts = value.split(",")
             if len(parts) != 2:
                 raise ValueError("Between operation requires two datetime values")
@@ -312,9 +325,7 @@ class SQLQueryHandler:
             AND status = 'pass';
         """
 
-        return cls.execute_query(
-            query, (search_key, search_key, pattern, dataset_id)
-        )
+        return cls.execute_query(query, (search_key, search_key, pattern, dataset_id))
 
     @classmethod
     def get_all_templates(
@@ -328,22 +339,13 @@ class SQLQueryHandler:
         offset,
         workspace_id=None,
     ):
-        sort_dict = {
-            "last_30_run": "last30run",
-            "updated_at": "updated_at",
-            "eval_template_name": "template_name",
-            # Legacy camelCase support
-            "last30Run": "last30run",
-            "updatedAt": "updated_at",
-            "evalTemplateName": "template_name",
-        }
-
         sort_order = sort_order if sort_order else "DESC"
-        sort_by = (
-            sort_dict.get(sort_by, sort_by)
-            if sort_dict.get(sort_by, sort_by)
-            else "last30run"
-        )
+        if sort_order not in ("ASC", "DESC"):
+            raise ValueError("Unsupported eval template sort order")
+        sort_by = sort_by if sort_by else "last_30_run"
+        if sort_by not in EVAL_TEMPLATE_SORT_COLUMNS:
+            raise ValueError("Unsupported eval template sort column")
+        sort_by = EVAL_TEMPLATE_SORT_COLUMNS[sort_by]
         limit = limit if limit else 10
         offset = offset if offset else 0
         query = f"""
@@ -354,6 +356,7 @@ class SQLQueryHandler:
             AND name != 'deterministic_evals'
             AND (%s IS NULL OR name ILIKE '%%' || %s || '%%')
             AND (%s IS NULL OR id = ANY(%s))
+            AND (owner = 'system' OR organization_id = %s)
         ),
         filtered_logs AS (
             SELECT *
@@ -366,6 +369,7 @@ class SQLQueryHandler:
                 OR (%s::boolean = TRUE AND workspace_id IS NULL)
             )
             AND created_at >= (CURRENT_DATE - INTERVAL '30 days')
+            AND status = 'success'
         ),
         joined AS (
             SELECT
@@ -414,6 +418,7 @@ class SQLQueryHandler:
                 used_template_ids if used_template_ids else None
             ),  # Check if the list is empty
             used_template_ids if used_template_ids else None,
+            org_id,  # template org scope
             org_id,  # org_id
             workspace_id,  # ws filter: parameter 1
             workspace_id,  # ws filter: parameter 2
@@ -746,8 +751,9 @@ class SQLQueryHandler:
             row_ids_condition = "AND c.row_id = ANY(%s)"
             params.append(row_ids)
 
-        # Convert choices list to SQL array format
-        choices_array = "ARRAY[" + ",".join([f"'{choice}'" for choice in choices]) + "]"
+        # Choices are template-authored text: bind them for the unnest() below,
+        # each as its text, as the query compared them before it bound them.
+        params.append([str(choice) for choice in choices])
 
         # Check if the function exists first
         check_function_sql = """
@@ -878,7 +884,7 @@ class SQLQueryHandler:
                     ELSE 0
                 END as choice_present
             FROM valid_json_cells
-            CROSS JOIN unnest({choices_array}::text[]) as choice
+            CROSS JOIN unnest(%s::text[]) as choice
             WHERE json_array IS NOT NULL
         ),
         column_choice_stats AS (

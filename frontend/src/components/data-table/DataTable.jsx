@@ -30,13 +30,24 @@ export default function DataTable({
   // Convert our column format → MUI DataGrid columns
   const muiColumns = useMemo(() => {
     return columns.map((col) => {
+      const field = col.id || col.accessorKey;
+      const dataKey = col.accessorKey || col.id;
       const muiCol = {
-        field: col.id || col.accessorKey,
+        field,
         headerName: col.header,
         sortable: col.enableSorting !== false,
         disableColumnMenu: true,
         resizable: true,
       };
+      if (dataKey !== field) {
+        muiCol.valueGetter = (params) => params.row[dataKey];
+      }
+
+      // Opt-in custom header node. `headerName` stays a string (aria-label /
+      // sort tooltip); a column that needs a rich header supplies renderHeader.
+      if (col.renderHeader) {
+        muiCol.renderHeader = col.renderHeader;
+      }
 
       // Width
       if (col.meta?.flex) {

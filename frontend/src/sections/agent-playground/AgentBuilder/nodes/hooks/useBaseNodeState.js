@@ -3,6 +3,7 @@ import {
   useAgentPlaygroundStoreShallow,
   useWorkflowRunStoreShallow,
 } from "../../../store";
+import useCanEditAgent from "../../../hooks/useCanEditAgent";
 
 const NODE_MIN_HEIGHT = 40;
 const EMPTY_CONNECTIONS = [];
@@ -43,6 +44,7 @@ export default function useBaseNodeState({ id, data }) {
         },
   );
   const isWorkflowRunning = useWorkflowRunStoreShallow((s) => s.isRunning);
+  const { isReadOnly } = useCanEditAgent();
   const executionStateVal = executionState || "idle";
   const isRunning = executionStateVal === "running";
   const isCompleted = executionStateVal === "completed";
@@ -62,6 +64,7 @@ export default function useBaseNodeState({ id, data }) {
     hasIncomingEdge,
     hasOutgoingEdge,
     isWorkflowRunning,
+    isReadOnly,
     preview,
     // Passed through for actions hook
     setSelectedNode,

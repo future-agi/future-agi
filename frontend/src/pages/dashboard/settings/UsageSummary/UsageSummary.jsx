@@ -1,17 +1,26 @@
 import React from "react";
 import { Helmet } from "react-helmet-async";
-import OSSUpgradeGate from "src/components/oss-upgrade-gate";
+import { Navigate } from "react-router";
 import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 import UsageSummaryV2 from "src/sections/settings/UsageSummaryV2/UsageSummaryV2";
 
 export default function UsageSummary() {
-  const { isOSS } = useDeploymentMode();
+  const { isCloud, isLoading } = useDeploymentMode();
+
+  if (isLoading) {
+    return null;
+  }
+
+  if (!isCloud) {
+    return <Navigate to="/dashboard/settings/profile-settings" replace />;
+  }
+
   return (
     <>
       <Helmet>
         <title>Usage & Billing</title>
       </Helmet>
-      {isOSS ? <OSSUpgradeGate feature="usageSummary" /> : <UsageSummaryV2 />}
+      <UsageSummaryV2 />
     </>
   );
 }

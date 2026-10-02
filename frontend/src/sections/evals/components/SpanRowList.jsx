@@ -220,9 +220,7 @@ const SpanRowList = ({
               )}
               {/* Tokens */}
               {span.total_tokens > 0 && (
-                <Typography
-                  sx={{ fontSize: "10px", color: "text.disabled" }}
-                >
+                <Typography sx={{ fontSize: "10px", color: "text.disabled" }}>
                   {span.total_tokens}tok
                 </Typography>
               )}
@@ -270,7 +268,9 @@ const SpanRowList = ({
                     return sortEntries(raw);
                   }
                   const topKeys = new Set(raw.map(([k]) => k));
-                  const flattened = raw.filter(([k]) => k !== "span_attributes");
+                  const flattened = raw.filter(
+                    ([k]) => k !== "span_attributes",
+                  );
                   for (const [k, v] of canonicalEntries(spanAttrs)) {
                     if (!topKeys.has(k)) {
                       flattened.push([k, v]);
@@ -281,22 +281,16 @@ const SpanRowList = ({
                   .filter(([k, v]) => {
                     if (!tableSearch.trim()) return true;
                     const q = tableSearch.toLowerCase();
-                    return (
-                      k.toLowerCase().includes(q) || deepMatch(v, q)
-                    );
+                    return k.toLowerCase().includes(q) || deepMatch(v, q);
                   })
                   .map(([k, v]) => {
                     const isO =
-                      v !== null &&
-                      v !== undefined &&
-                      typeof v === "object";
+                      v !== null && v !== undefined && typeof v === "object";
                     const emp =
                       v === null ||
                       v === undefined ||
                       v === "" ||
-                      (isO &&
-                        !Array.isArray(v) &&
-                        Object.keys(v).length === 0);
+                      (isO && !Array.isArray(v) && Object.keys(v).length === 0);
                     return (
                       <Box
                         key={k}
@@ -343,8 +337,7 @@ const SpanRowList = ({
                               onToggle={() =>
                                 setExpandedCols((prev) => ({
                                   ...prev,
-                                  [`${spanKey}-${k}`]:
-                                    !prev[`${spanKey}-${k}`],
+                                  [`${spanKey}-${k}`]: !prev[`${spanKey}-${k}`],
                                 }))
                               }
                             />

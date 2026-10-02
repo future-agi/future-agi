@@ -53,6 +53,14 @@ function formatPctDirect(val) {
   return `${Number(val).toFixed(1)}%`;
 }
 
+function getOverviewValue(overview, camelKey, snakeKey) {
+  return overview?.[camelKey] ?? overview?.[snakeKey];
+}
+
+function getRuleCount(rule, camelKey, snakeKey) {
+  return rule?.[camelKey] ?? rule?.[snakeKey] ?? 0;
+}
+
 const GuardrailAnalyticsTab = ({ gatewayId }) => {
   const [range, setRange] = useState("7d");
   const theme = useTheme();
@@ -68,6 +76,10 @@ const GuardrailAnalyticsTab = ({ gatewayId }) => {
   });
 
   const trendList = Array.isArray(trends) ? trends : [];
+  const avgLatency =
+    overview?.avg_guardrail_latency_ms ??
+    overview?.avgGuardrailLatencyMs ??
+    overview?.avg_latency;
 
   const chartOptions = useMemo(
     () => ({
@@ -118,11 +130,15 @@ const GuardrailAnalyticsTab = ({ gatewayId }) => {
     () => [
       {
         name: "Blocked",
-        data: trendList.map((t) => t.blockCount || t.blocked || 0),
+        data: trendList.map(
+          (t) => t.blockCount ?? t.block_count ?? t.blocked ?? 0,
+        ),
       },
       {
         name: "Warned",
-        data: trendList.map((t) => t.warnCount || t.warned || 0),
+        data: trendList.map(
+          (t) => t.warnCount ?? t.warn_count ?? t.warned ?? 0,
+        ),
       },
       {
         name: "Total Triggered",
@@ -175,7 +191,9 @@ const GuardrailAnalyticsTab = ({ gatewayId }) => {
                 Trigger Rate
               </Typography>
               <Typography variant="h4">
-                {formatPctDirect(overview?.triggerRate)}
+                {formatPctDirect(
+                  getOverviewValue(overview, "triggerRate", "trigger_rate"),
+                )}
               </Typography>
             </CardContent>
           </Card>
@@ -187,7 +205,7 @@ const GuardrailAnalyticsTab = ({ gatewayId }) => {
                 Blocked
               </Typography>
               <Typography variant="h4" color="error.main">
-                {overview?.blockCount ?? 0}
+                {getOverviewValue(overview, "blockCount", "block_count") ?? 0}
               </Typography>
             </CardContent>
           </Card>
@@ -199,7 +217,7 @@ const GuardrailAnalyticsTab = ({ gatewayId }) => {
                 Warned
               </Typography>
               <Typography variant="h4" color="warning.main">
-                {overview?.warnCount ?? 0}
+                {getOverviewValue(overview, "warnCount", "warn_count") ?? 0}
               </Typography>
             </CardContent>
           </Card>
@@ -211,9 +229,8 @@ const GuardrailAnalyticsTab = ({ gatewayId }) => {
                 Avg Latency
               </Typography>
               <Typography variant="h4">
-                {(overview?.avg_guardrail_latency_ms ??
-                  overview?.avg_latency) != null
-                  ? `${Number(overview.avg_guardrail_latency_ms ?? overview.avg_latency).toFixed(0)}ms`
+                {avgLatency != null
+                  ? `${Number(avgLatency).toFixed(0)}ms`
                   : "\u2014"}
               </Typography>
             </CardContent>
@@ -286,6 +303,16 @@ const GuardrailAnalyticsTab = ({ gatewayId }) => {
                       0,
                     );
                     const count = rule.trigger_count || rule.count || 0;
+                    const blockCount = getRuleCount(
+                      rule,
+                      "blockCount",
+                      "block_count",
+                    );
+                    const warnCount = getRuleCount(
+                      rule,
+                      "warnCount",
+                      "warn_count",
+                    );
                     const share = totalTriggers > 0 ? count / totalTriggers : 0;
                     const ruleName = rule.rule || rule.name;
                     return (
@@ -300,7 +327,7 @@ const GuardrailAnalyticsTab = ({ gatewayId }) => {
                         </TableCell>
                         <TableCell align="right">
                           <Chip
-                            label={rule.blockCount || 0}
+                            label={blockCount}
                             color="error"
                             size="small"
                             variant="outlined"
@@ -308,7 +335,7 @@ const GuardrailAnalyticsTab = ({ gatewayId }) => {
                         </TableCell>
                         <TableCell align="right">
                           <Chip
-                            label={rule.warnCount || 0}
+                            label={warnCount}
                             color="warning"
                             size="small"
                             variant="outlined"

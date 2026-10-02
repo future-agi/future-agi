@@ -7,7 +7,7 @@ import {
   extractChoiceLabel,
 } from "src/sections/develop-detail/DataTab/common";
 
-const getEvaluationMetricColor = ( normalized) => {
+const getEvaluationMetricColor = (normalized) => {
   const numericValue = extractScore(normalized);
   if (numericValue < 50) {
     return { backgroundColor: "red.o10", borderColor: "red.500" };

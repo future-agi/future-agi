@@ -29,7 +29,7 @@ const ShowModelToolsChild = ({ onClose, handleApply, tools }) => {
   const [openEdit, setOpenEdit] = useState(null);
   const [createNew, setCreateNew] = useState(false);
   const { data: runPromptOptions, isLoading } = useRunPromptOptions();
-  const availableTools = runPromptOptions?.availableTools;
+  const availableTools = runPromptOptions?.available_tools;
 
   // useMemo(() => {
   //   if (tools?.length > 0) {

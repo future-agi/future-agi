@@ -3,10 +3,13 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -18,6 +21,7 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/files"
 	"github.com/futureagi/agentcc-gateway/internal/guardrails"
 	"github.com/futureagi/agentcc-gateway/internal/guardrails/policy"
+	"github.com/futureagi/agentcc-gateway/internal/middleware"
 	"github.com/futureagi/agentcc-gateway/internal/modeldb"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
@@ -42,6 +46,10 @@ type Handlers struct {
 	healthMonitor  *routing.HealthMonitor
 	maxBodySize    int64
 	defaultTimeout time.Duration
+
+	// captureStreamContent reassembles streamed completions so post-plugins
+	// see the text. Set when a sink is configured to record bodies.
+	captureStreamContent bool
 
 	// Streaming guardrail support.
 	guardrailEngine    *guardrails.Engine
@@ -165,33 +173,8 @@ func mergeModelObjects(globalModels, orgModels []models.ModelObject) []models.Mo
 }
 
 func (h *Handlers) resolveProviderWithOrgFallback(ctx context.Context, rc *models.RequestContext, orgID string, orgCfg *tenant.OrgConfig, model string) (providers.Provider, error) {
-	if orgCfg != nil && orgID != "" && h.orgProviderCache != nil {
-		for providerID, provCfg := range orgCfg.Providers {
-			if provCfg == nil || !provCfg.Enabled || !provCfg.HasCredentials() {
-				continue
-			}
-			for _, m := range provCfg.Models {
-				if orgModelMatches(m, model, providerID) {
-					orgProvider, err := h.orgProviderCache.GetOrCreateWithTenantConfig(orgID, providerID, provCfg.APIKey, provCfg)
-					if err == nil {
-						rc.Provider = providerID
-						rc.Metadata["org_provider_model_match"] = model
-						return orgProvider, nil
-					}
-				}
-			}
-		}
-	}
-
-	provider, err := h.resolveProvider(ctx, rc, model)
+	provider, err := h.resolveProviderOrgFirst(ctx, rc, orgID, orgCfg, model)
 	if err != nil {
-		if orgCfg != nil && orgID != "" && h.orgProviderCache != nil {
-			if orgP, providerID := h.resolveOrgProvider(orgID, orgCfg, model); orgP != nil {
-				rc.Provider = providerID
-				rc.Metadata["org_provider"] = "true"
-				return orgP, nil
-			}
-		}
 		return nil, err
 	}
 
@@ -200,6 +183,29 @@ func (h *Handlers) resolveProviderWithOrgFallback(ctx context.Context, rc *model
 	}
 	return provider, nil
 }
+
+// resolveProviderOrgFirst resolves model to the org's own provider for it when
+// there is one, and otherwise through resolveProvider. When the org's
+// providers for the model all fail to build and the key may use only those,
+// it reports that failure without trying them again.
+func (h *Handlers) resolveProviderOrgFirst(ctx context.Context, rc *models.RequestContext, orgID string, orgCfg *tenant.OrgConfig, model string) (providers.Provider, error) {
+	if orgID != "" {
+		p, providerID, err := h.orgProviderFor(orgID, orgCfg, model)
+		if p != nil {
+			rc.Provider = providerID
+			rc.Metadata["org_provider_model_match"] = model
+			return p, nil
+		}
+		if err != nil && h.orgProvidersOnly(ctx, rc) {
+			return nil, orgProviderError(model, providerID, err)
+		}
+	}
+	return h.resolveProvider(ctx, rc, model)
+}
+
+// SetCaptureStreamContent enables reassembly of streamed completions. Off by
+// default: without a sink that records bodies, the assembly is wasted work.
+func (h *Handlers) SetCaptureStreamContent(v bool) { h.captureStreamContent = v }
 
 // NewHandlers creates a Handlers instance.
 func NewHandlers(registry *providers.Registry, engine *pipeline.Engine, maxBodySize int64, defaultTimeout time.Duration, failover *routing.Failover, modelFallbacks *routing.ModelFallbacks, conditionalRouter *routing.ConditionalRouter, healthMonitor *routing.HealthMonitor, modelTimeouts map[string]time.Duration, mirror *routing.Mirror, guardrailEngine *guardrails.Engine, policyStore *policy.Store, streamGuardrailCfg config.StreamingGuardrailConfig, mdbPtr *atomic.Pointer[modeldb.ModelDB], tenantStore *tenant.Store, orgProviderCache *providers.OrgProviderCache, keyStore *authpkg.KeyStore) *Handlers {
@@ -387,9 +393,21 @@ func (h *Handlers) applyOrgProviderOverride(orgID string, orgCfg *tenant.OrgConf
 // provider config. It checks each enabled provider's model list and creates a
 // cached provider instance with the org's API key.
 func (h *Handlers) resolveOrgProvider(orgID string, orgCfg *tenant.OrgConfig, model string) (providers.Provider, string) {
-	if orgCfg == nil || h.orgProviderCache == nil {
-		return nil, ""
+	if p, providerID, _ := h.orgProviderFor(orgID, orgCfg, model); p != nil {
+		return p, providerID
 	}
+	return nil, ""
+}
+
+// orgProviderFor returns the first of the org's enabled providers that lists
+// model and can be built. When every one that lists it fails to build, it
+// returns the first failure and that provider's ID instead.
+func (h *Handlers) orgProviderFor(orgID string, orgCfg *tenant.OrgConfig, model string) (providers.Provider, string, error) {
+	if orgCfg == nil || h.orgProviderCache == nil {
+		return nil, "", nil
+	}
+	var failedID string
+	var firstErr error
 	for providerID, pcfg := range orgCfg.Providers {
 		if pcfg == nil || !pcfg.Enabled || !pcfg.HasCredentials() {
 			continue
@@ -400,13 +418,16 @@ func (h *Handlers) resolveOrgProvider(orgID string, orgCfg *tenant.OrgConfig, mo
 				if err != nil {
 					slog.Warn("failed to create org provider for model",
 						"org_id", orgID, "provider", providerID, "model", model, "error", err)
+					if firstErr == nil {
+						failedID, firstErr = providerID, err
+					}
 					continue
 				}
-				return p, providerID
+				return p, providerID, nil
 			}
 		}
 	}
-	return nil, ""
+	return nil, failedID, firstErr
 }
 
 func (h *Handlers) effectiveFailover(orgCfg *tenant.OrgConfig) *routing.Failover {
@@ -863,18 +884,10 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 	// Pass Authorization header for auth plugin.
 	setAuthMetadataFromRequest(rc, r)
 
-	// Extract Agentcc metadata from headers (with security key blocklist).
-	if meta := r.Header.Get("x-agentcc-metadata"); meta != "" {
-		var m map[string]string
-		if err := json.Unmarshal([]byte(meta), &m); err == nil {
-			for k, v := range m {
-				if isBlockedMetadataKey(k) {
-					continue
-				}
-				rc.Metadata[k] = v
-			}
-		}
-	}
+	// Caller dimensions, from the x-agentcc-metadata header and the body's
+	// own metadata field (with security key blocklist).
+	applyCallerMetadata(rc, r, req.Extra["metadata"])
+	applyCallerExtras(rc, req.Extra)
 	if sid := r.Header.Get("x-agentcc-session-id"); sid != "" {
 		if len(sid) > maxSessionIDLen {
 			models.WriteError(w, models.ErrBadRequest("session_id_too_long",
@@ -947,6 +960,11 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 
 	// --- Phase 12A: Advanced routing pipeline ---
 
+	if middleware.IsLicenseAuthorized(r.Context()) && rc.Metadata["key_access_groups"] == "" {
+		rc.Metadata["key_access_groups"] = "internal"
+		rc.Metadata["key_type"] = "internal"
+	}
+
 	// 1. Model access group alias resolution and access check.
 	keyGroups := splitCSV(rc.Metadata["key_access_groups"])
 	if h.accessGroupChecker.IsEnabled() && len(keyGroups) > 0 {
@@ -1009,54 +1027,14 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 
 	// Resolve provider (with load balancing and failover if configured).
 	var provider providers.Provider
-	var orgModelResolved bool
-
-	// Check if the org has a provider that specifically registers this model.
-	if !providerLocked && orgCfg != nil && orgID != "" && h.orgProviderCache != nil {
-		slog.Info("checking org providers for model", "model", req.Model, "org_providers_count", len(orgCfg.Providers))
-		for providerID, provCfg := range orgCfg.Providers {
-			if provCfg == nil || !provCfg.Enabled || !provCfg.HasCredentials() {
-				slog.Info("skipping org provider", "provider", providerID, "nil", provCfg == nil, "enabled", provCfg != nil && provCfg.Enabled, "has_credentials", provCfg != nil && provCfg.HasCredentials())
-				continue
-			}
-			for _, m := range provCfg.Models {
-				if orgModelMatches(m, req.Model, providerID) {
-					slog.Info("org provider model match, creating override", "provider", providerID, "model", m)
-					orgProvider, err := h.orgProviderCache.GetOrCreateWithTenantConfig(orgID, providerID, provCfg.APIKey, provCfg)
-					if err == nil {
-						provider = orgProvider
-						rc.Provider = providerID
-						rc.Metadata["org_provider_model_match"] = req.Model
-						orgModelResolved = true
-						break
-					}
-				}
-			}
-			if orgModelResolved {
-				break
-			}
-		}
-	}
-
 	if providerLocked {
 		provider = lockedProvider
-	} else if !orgModelResolved {
+	} else {
 		var err error
-		provider, err = h.resolveProvider(ctx, rc, req.Model)
+		provider, err = h.resolveProviderOrgFirst(ctx, rc, orgID, orgCfg, req.Model)
 		if err != nil {
-			// Try org provider model lists before giving up.
-			if orgCfg != nil && orgID != "" && h.orgProviderCache != nil {
-				if orgP, providerID := h.resolveOrgProvider(orgID, orgCfg, req.Model); orgP != nil {
-					provider = orgP
-					rc.Provider = providerID
-					rc.Metadata["org_provider"] = "true"
-					err = nil
-				}
-			}
-			if err != nil {
-				models.WriteErrorFromError(w, err)
-				return
-			}
+			models.WriteErrorFromError(w, err)
+			return
 		}
 	}
 
@@ -1146,16 +1124,61 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// unavailableModelError explains why a non-internal key cannot use model. When
+// one of the org's own providers lists the model but cannot be built (its
+// base_url was refused, say) that is the reason to report: the generic
+// answer would send the caller looking at their API key instead.
+func (h *Handlers) unavailableModelError(rc *models.RequestContext, model string) error {
+	if orgID, orgCfg := h.resolveOrgConfig(rc); orgID != "" {
+		if _, providerID, err := h.orgProviderFor(orgID, orgCfg, model); err != nil {
+			return orgProviderError(model, providerID, err)
+		}
+	}
+	return models.ErrForbidden(fmt.Sprintf("model %q is not available for this API key", model))
+}
+
+// orgProviderError turns an org provider that could not be built into the
+// error the caller sees. Only a refused base_url is explained in detail; other
+// build errors can carry config the caller should not see (orgProviderFor
+// logs them).
+func orgProviderError(model, providerID string, err error) *models.APIError {
+	var urlErr *providers.BaseURLError
+	if errors.As(err, &urlErr) {
+		status, errType, code := http.StatusForbidden, models.ErrTypePermission, "provider_base_url_blocked"
+		if urlErr.Reason == providers.BaseURLInvalid || urlErr.Reason == providers.BaseURLUnresolvable {
+			status, errType, code = http.StatusBadGateway, models.ErrTypeServer, "provider_base_url_unusable"
+		}
+		return &models.APIError{
+			Status: status,
+			Type:   errType,
+			Code:   code,
+			Message: fmt.Sprintf("model %q is served by your organization's provider %q, but the gateway will not call it: %s.",
+				model, providerID, urlErr.PublicMessage()),
+		}
+	}
+	return &models.APIError{
+		Status:  http.StatusBadGateway,
+		Type:    models.ErrTypeServer,
+		Code:    "provider_unavailable",
+		Message: fmt.Sprintf("model %q is served by your organization's provider %q, but the gateway could not set that provider up; check its configuration.", model, providerID),
+	}
+}
+
+// orgProvidersOnly reports whether rc's key may use only its org's own
+// providers: any key but an internal one, unless a license authorized the
+// request.
+func (h *Handlers) orgProvidersOnly(ctx context.Context, rc *models.RequestContext) bool {
+	return h.keyStore != nil && rc.Metadata["key_type"] != "internal" && !middleware.IsLicenseAuthorized(ctx)
+}
+
 // resolveProvider resolves the provider for a model, with failover support for non-streaming.
 // For failover, it tries providers sequentially until one succeeds at the provider call level.
 func (h *Handlers) resolveProvider(ctx context.Context, rc *models.RequestContext, model string) (providers.Provider, error) {
 	// Non-internal keys must not resolve to global (FutureAGI-credentialed) providers.
 	// This guard runs first so no code path (model map, conditional routes, registry)
 	// can bypass it for user keys.
-	if h.keyStore != nil && rc.Metadata["key_type"] != "internal" {
-		return nil, models.ErrForbidden(
-			fmt.Sprintf("model %q is not available for this API key", model),
-		)
+	if h.orgProvidersOnly(ctx, rc) {
+		return nil, h.unavailableModelError(rc, model)
 	}
 
 	// Check per-org model map first — allows orgs to alias model names to providers.
@@ -1191,12 +1214,6 @@ func (h *Handlers) resolveProvider(ctx context.Context, rc *models.RequestContex
 	}
 
 	// Try primary model first.
-	// Non-internal keys must not resolve to global (FutureAGI-credentialed) providers —
-	// they should only use org-configured providers (resolved above) or be rejected.
-	if rc.Metadata["key_type"] != "internal" {
-		return nil, fmt.Errorf("model %q is not available for this API key: configure provider access via the control plane", model)
-	}
-
 	result, err := h.registry.ResolveWithRouting(model)
 	if err == nil {
 		rc.Provider = result.Provider.ID()
@@ -1562,6 +1579,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 	var lastUsage *models.Usage
 	var streamID string
 	var streamCreated int64
+	capture := newStreamCapture(h.captureStreamContent)
 
 	// finalizeStream populates rc.Response with accumulated usage and runs
 	// post-plugins (cost, credits, logging, otel, prometheus). Must be called
@@ -1569,9 +1587,13 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 	// a background context so post-plugins run even after client disconnect.
 	finalizeStream := func(detach bool) *models.StreamChunk {
 		rc.Response = &models.ChatCompletionResponse{
-			Model: rc.ResolvedModel,
-			Usage: lastUsage, // nil is OK — means provider didn't send usage
+			ID:      streamID,
+			Object:  "chat.completion",
+			Created: streamCreated,
+			Model:   rc.ResolvedModel,
+			Usage:   lastUsage, // nil is OK — means provider didn't send usage
 		}
+		capture.applyTo(rc.Response)
 		pluginCtx := ctx
 		if detach {
 			pluginCtx = context.Background()
@@ -1618,6 +1640,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 			if chunk.Usage != nil {
 				lastUsage = chunk.Usage
 			}
+			capture.observe(chunk)
 
 			if streamChecker != nil {
 				if res := streamChecker.ProcessChunk(streamCtx, chunk); res.Blocked {
@@ -1680,6 +1703,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 			if chunk.Usage != nil {
 				lastUsage = chunk.Usage
 			}
+			capture.observe(chunk)
 
 			// Run streaming guardrail check.
 			if streamChecker != nil {
@@ -1873,6 +1897,174 @@ func splitCSV(s string) []string {
 	return result
 }
 
+// applyCallerMetadata records the caller's own dimensions on the request
+// context, from both channels that carry them: the x-agentcc-metadata header
+// and the OpenAI-spec `metadata` body field. Either one is the gateway's
+// equivalent of calling span.SetAttribute() in a natively instrumented service.
+//
+// The header wins on conflict. It is set by the calling infrastructure, and
+// infrastructure tagging should not be overridable by the payload it forwards.
+//
+// body is the request body's own metadata object, or nil for endpoints whose
+// body has no such field.
+func applyCallerMetadata(rc *models.RequestContext, r *http.Request, body json.RawMessage) {
+	if len(body) > 0 {
+		mergeCallerMetadata(rc, body)
+	}
+	if meta := r.Header.Get("x-agentcc-metadata"); meta != "" {
+		mergeCallerMetadata(rc, json.RawMessage(meta))
+	}
+}
+
+// parseMetadataHeader records the dimensions carried by the x-agentcc-metadata
+// header alone, for endpoints that read the header before their body exists.
+func parseMetadataHeader(meta string, rc *models.RequestContext) {
+	mergeCallerMetadata(rc, json.RawMessage(meta))
+}
+
+// applyCallerExtras snapshots the request body's unknown top-level fields onto
+// the request context, so telemetry can export what the caller actually sent.
+//
+// These are not exotic: ChatCompletionRequest.UnmarshalJSON matches against a
+// fixed list of ~23 field names, so every OpenAI parameter added since —
+// reasoning_effort, parallel_tool_calls, store, prediction — arrives here too,
+// alongside whatever an SDK's extra_body carried.
+//
+// Taken at parse time on purpose. The translation layer writes its own state
+// into the same Extra map on the canonical request, and reading it later would
+// export gateway internals as if the caller had sent them. A snapshot taken
+// before any of that runs excludes them by provenance, with no list of our own
+// key names to keep correct.
+//
+// Scalars only. A nested object or array cannot be exported as a queryable
+// attribute anyway, and objects are where credentials live when someone passes
+// service-account JSON through extra_body.
+func applyCallerExtras(rc *models.RequestContext, extra map[string]json.RawMessage) {
+	for k, raw := range extra {
+		// metadata is the curated dimension channel and has already been read.
+		if k == "metadata" {
+			continue
+		}
+		recordCallerExtra(rc, k, raw)
+	}
+}
+
+// applyCallerExtrasFromBody is applyCallerExtras for dialects the gateway does
+// not unmarshal into a canonical struct — the Anthropic and Gemini endpoints.
+//
+// It reads the raw body instead of a parsed request because both of those
+// handlers have a native pass-through path that forwards the caller's bytes
+// untouched; there is no struct to hang unknown fields off, and adding one
+// would still miss the pass-through. `known` is the dialect's own field set.
+func applyCallerExtrasFromBody(rc *models.RequestContext, body []byte, known map[string]struct{}) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return
+	}
+	for k, v := range raw {
+		if _, isSpec := known[k]; isSpec {
+			continue
+		}
+		recordCallerExtra(rc, k, v)
+	}
+}
+
+// recordCallerExtra vets one caller-supplied body field and stores it.
+func recordCallerExtra(rc *models.RequestContext, key string, raw json.RawMessage) {
+	if isCredentialShapedKey(key) {
+		rc.CallerExtrasDropped++
+		return
+	}
+	v, ok := decodeScalar(raw)
+	if !ok {
+		rc.CallerExtrasDropped++
+		return
+	}
+	if rc.CallerExtras == nil {
+		rc.CallerExtras = make(map[string]any, 8)
+	}
+	rc.CallerExtras[key] = v
+}
+
+// decodeScalar returns a JSON string, number or bool as its Go value. Anything
+// else — object, array, null — is not a scalar and is reported as such.
+//
+// Numbers keep their type rather than becoming strings: an integer exported as
+// an int lands in the platform's numeric attribute column, where a range filter
+// works. That is worth more than matching how metadata stringifies everything.
+func decodeScalar(raw json.RawMessage) (any, bool) {
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return nil, false
+	}
+	switch t := v.(type) {
+	case string, bool:
+		return t, true
+	case float64:
+		// json.Unmarshal makes every number a float64. Integral values go back
+		// to int64 so they render as 3 rather than 3.0 in a trace UI.
+		if t == math.Trunc(t) && math.Abs(t) < 1<<53 {
+			return int64(t), true
+		}
+		return t, true
+	default:
+		return nil, false
+	}
+}
+
+// isCredentialShapedKey is the last line of defence over scalar-only filtering
+// and value redaction, not the only one. Over-blocking here costs an absent
+// attribute; under-blocking costs a leaked secret, so the match is deliberately
+// broad.
+func isCredentialShapedKey(key string) bool {
+	lower := strings.ToLower(key)
+	for _, needle := range []string{
+		"secret", "token", "credential", "password", "passwd",
+		"api_key", "apikey", "private_key", "bearer", "signature",
+		// Not a bare "auth": that also swallows author and authority, which
+		// are ordinary body fields. Separator-less forms like authtoken are
+		// caught by "token" above.
+		"authorization", "auth_", "auth-",
+	} {
+		if strings.Contains(lower, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+// mergeCallerMetadata merges one JSON object of caller dimensions into the
+// request context. Security-sensitive keys are blocked to prevent client-side
+// injection, and accepted keys are recorded on the context so telemetry can
+// tell them apart from the metadata plugins write themselves.
+//
+// Values are decoded leniently: a JSON string is unquoted, anything else keeps
+// its JSON text. Strict string-only decoding threw away the whole object over
+// one numeric value, which is a silent and very confusing way to lose every
+// dimension a caller sent.
+func mergeCallerMetadata(rc *models.RequestContext, raw json.RawMessage) {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return
+	}
+	for k, rv := range m {
+		if isBlockedMetadataKey(k) {
+			continue
+		}
+		var v string
+		if err := json.Unmarshal(rv, &v); err != nil {
+			v = string(rv)
+		}
+		// Dedup against the accepted list, not against rc.Metadata: that map
+		// also holds internal keys the plugins wrote, and a caller key that
+		// collides with one still has to be recorded as caller-supplied.
+		if !slices.Contains(rc.CustomMetadataKeys, k) {
+			rc.CustomMetadataKeys = append(rc.CustomMetadataKeys, k)
+		}
+		rc.Metadata[k] = v
+	}
+}
+
 // isBlockedMetadataKey returns true for metadata keys that must not be
 // set by external callers via x-agentcc-metadata header. These keys are
 // reserved for internal use by auth, budget, rate-limiting, and other plugins.
@@ -1880,15 +2072,20 @@ func isBlockedMetadataKey(key string) bool {
 	lower := strings.ToLower(key)
 	for _, prefix := range []string{
 		"auth_", "key_", "org_", "budget_", "ratelimit_",
-		"cost", "cache_", "guardrail_", "credit_",
+		"cache_", "guardrail_", "credit_", "credits_",
 	} {
 		if strings.HasPrefix(lower, prefix) {
 			return true
 		}
 	}
 	// Block specific keys that don't follow a prefix pattern.
+	//
+	// The cost family is listed exactly rather than by prefix. The plugins own
+	// "cost" and "cost_source" and nothing else, while any prefix wide enough
+	// to cover them also swallows cost_center and cost_code — ordinary business
+	// dimensions. A new internal cost_* key must be added here by hand.
 	switch lower {
-	case "authorization", "client_ip", "timeout_ms":
+	case "authorization", "client_ip", "timeout_ms", "cost", "cost_source":
 		return true
 	}
 	return false

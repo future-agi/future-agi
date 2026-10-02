@@ -21,6 +21,7 @@ import {
 import Iconify from "src/components/iconify";
 import useRequestLogs from "./hooks/useRequestLogs";
 import { formatCost } from "../utils/formatters";
+import { REQUEST_TAG } from "../constants/requestTags";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -30,6 +31,8 @@ const COLUMNS = [
   { id: "startedAt", label: "Timestamp", width: 180, sortable: true },
   { id: "model", label: "Model", width: 140, sortable: false },
   { id: "provider", label: "Provider", width: 120, sortable: false },
+  { id: "application", label: "Application", width: 130, sortable: false },
+  { id: "service", label: "Service", width: 130, sortable: false },
   { id: "statusCode", label: "Status", width: 80, sortable: true },
   { id: "latencyMs", label: "Latency", width: 100, sortable: true },
   { id: "cost", label: "Cost", width: 100, sortable: true },
@@ -80,6 +83,10 @@ function formatTimestamp(iso) {
 // ---------------------------------------------------------------------------
 
 const RequestRow = React.memo(function RequestRow({ log, onClick }) {
+  const startedAt = log.started_at;
+  const latencyMs = log.latency_ms;
+  const guardrailTriggered = log.guardrail_triggered;
+  const fallbackUsed = log.fallback_used;
   const isGuardrailBlock = log.status_code === 446;
   const isGuardrailWarn = log.status_code === 246;
   const isError =
@@ -118,9 +125,7 @@ const RequestRow = React.memo(function RequestRow({ log, onClick }) {
     >
       {/* Timestamp */}
       <TableCell sx={{ whiteSpace: "nowrap" }}>
-        <Typography variant="body2">
-          {formatTimestamp(log.startedAt)}
-        </Typography>
+        <Typography variant="body2">{formatTimestamp(startedAt)}</Typography>
       </TableCell>
 
       {/* Model */}
@@ -134,6 +139,20 @@ const RequestRow = React.memo(function RequestRow({ log, onClick }) {
       <TableCell>
         <Typography variant="body2" noWrap>
           {log.provider || "-"}
+        </Typography>
+      </TableCell>
+
+      {/* Application */}
+      <TableCell>
+        <Typography variant="body2" noWrap>
+          {log.metadata?.[REQUEST_TAG.APPLICATION] || "-"}
+        </Typography>
+      </TableCell>
+
+      {/* Service */}
+      <TableCell>
+        <Typography variant="body2" noWrap>
+          {log.metadata?.[REQUEST_TAG.SERVICE] || "-"}
         </Typography>
       </TableCell>
 
@@ -152,14 +171,11 @@ const RequestRow = React.memo(function RequestRow({ log, onClick }) {
         <Typography
           variant="body2"
           sx={{
-            color:
-              log.latencyMs != null
-                ? getLatencyColor(log.latencyMs)
-                : undefined,
+            color: latencyMs != null ? getLatencyColor(latencyMs) : undefined,
             fontWeight: 500,
           }}
         >
-          {log.latencyMs != null ? `${log.latencyMs}ms` : "-"}
+          {latencyMs != null ? `${latencyMs}ms` : "-"}
         </Typography>
       </TableCell>
 
@@ -198,7 +214,7 @@ const RequestRow = React.memo(function RequestRow({ log, onClick }) {
               />
             </Tooltip>
           )}
-          {log.guardrailTriggered && (
+          {guardrailTriggered && (
             <Tooltip title="Guardrail Triggered" arrow>
               <Iconify
                 icon="mdi:shield-outline"
@@ -207,7 +223,7 @@ const RequestRow = React.memo(function RequestRow({ log, onClick }) {
               />
             </Tooltip>
           )}
-          {log.fallbackUsed && (
+          {fallbackUsed && (
             <Tooltip title="Fallback Used" arrow>
               <Iconify
                 icon="mdi:swap-horizontal"
