@@ -10,6 +10,8 @@
 ╚═════════════════════════════════════════════════════════════════════════════╝
 -->
 
+**English** · [简体中文](README.zh-CN.md)
+
 > ⚠️ **Nightly release for early testing.** Expect rough edges. Stable version coming out soon — please open an issue if you hit anything.
 
 <div align="center">
