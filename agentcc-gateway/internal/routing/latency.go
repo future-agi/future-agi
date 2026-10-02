@@ -26,7 +26,7 @@ func NewLatencyTracker(alpha float64) *LatencyTracker {
 
 // Record updates the EWMA for a provider with a new latency observation.
 func (t *LatencyTracker) Record(providerID string, d time.Duration) {
-	ms := float64(d.Milliseconds())
+	ms := float64(d) / float64(time.Millisecond)
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
