@@ -529,6 +529,7 @@ import type {
   GatewayConfigPatchRequestApi,
   GatewayConfigResponseApi,
   GatewayDetailResponseApi,
+  GatewayHealthErrorResponseApi,
   GatewayHealthResponseApi,
   GatewayListResponseApi,
   GatewayMCPGuardrailsUpdateRequestApi,
@@ -13589,7 +13590,7 @@ export type agentccGatewaysHealthCheckResponse200 = {
 };
 
 export type agentccGatewaysHealthCheckResponse400 = {
-  data: AgentccErrorResponseApi;
+  data: GatewayHealthErrorResponseApi;
   status: 400;
 };
 

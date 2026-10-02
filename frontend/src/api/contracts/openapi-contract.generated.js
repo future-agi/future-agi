@@ -6046,7 +6046,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/GatewayHealthResponse",
           },
           400: {
-            $ref: "#/definitions/AgentccErrorResponse",
+            $ref: "#/definitions/GatewayHealthErrorResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -61152,6 +61152,78 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    GatewayHealthErrorResponse: {
+      required: ["result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: false,
+        },
+        type: {
+          title: "Type",
+          type: "string",
+          enum: [
+            "validation_error",
+            "authentication_error",
+            "payment_required",
+            "entitlement_error",
+            "permission_error",
+            "not_found",
+            "conflict",
+            "client_error",
+            "rate_limit",
+            "server_error",
+            "service_unavailable",
+            "timeout",
+            "api_error",
+          ],
+          "x-nullable": true,
+        },
+        code: {
+          title: "Code",
+          type: "string",
+          "x-nullable": true,
+        },
+        detail: {
+          title: "Detail",
+          type: "string",
+          "x-nullable": true,
+        },
+        result: {
+          $ref: "#/definitions/GatewayHealthErrorResult",
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          "x-nullable": true,
+        },
+        error: {
+          title: "Error",
+          type: "string",
+          "x-nullable": true,
+        },
+        attr: {
+          title: "Attr",
+          type: "string",
+          "x-nullable": true,
+        },
+        details: {
+          title: "Details",
+          type: "object",
+          additionalProperties: {
+            type: "array",
+            items: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+        },
+      },
+      description:
+        "Failed probes return a result object with status (unreachable), error, and last_health_check (ISO 8601 completion time). Request validation and other errors return a string result without a probe timestamp.",
+    },
     GatewayHealthResponse: {
       required: ["status", "result"],
       type: "object",
@@ -90266,7 +90338,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     GatewaySummaryResult: {
-      required: ["id", "name", "base_url", "status"],
+      required: ["id", "name", "base_url", "status", "last_health_check"],
       type: "object",
       properties: {
         id: {
@@ -90290,6 +90362,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           minLength: 1,
         },
+        last_health_check: {
+          title: "Last health check",
+          description:
+            "Completion time of this request's live health probe, including unreachable results.",
+          type: "string",
+          format: "date-time",
+        },
         provider_count: {
           title: "Provider count",
           type: "integer",
@@ -90300,14 +90379,49 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    GatewayHealthErrorResult: {
+      required: ["status", "error", "last_health_check"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["unreachable"],
+        },
+        error: {
+          title: "Error",
+          type: "string",
+        },
+        last_health_check: {
+          title: "Last health check",
+          description:
+            "Completion time of this request's failed live health probe.",
+          type: "string",
+          format: "date-time",
+        },
+      },
+      "x-string-or-object": true,
+    },
     GatewayHealthResult: {
-      required: ["status", "providers", "provider_count", "model_count"],
+      required: [
+        "status",
+        "last_health_check",
+        "providers",
+        "provider_count",
+        "model_count",
+      ],
       type: "object",
       properties: {
         status: {
           title: "Status",
           type: "string",
           minLength: 1,
+        },
+        last_health_check: {
+          title: "Last health check",
+          description: "Completion time of this request's live health probe.",
+          type: "string",
+          format: "date-time",
         },
         health: {
           title: "Health",

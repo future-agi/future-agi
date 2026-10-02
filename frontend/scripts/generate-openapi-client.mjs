@@ -400,6 +400,17 @@ async function runGeneration(schemaPath) {
       "x-string-or-object TS aliases → string | object",
     );
 
+    // This error-only x-string-or-object serializer has a typed object branch.
+    // Preserve Orval's generated fields instead of widening them to a record.
+    // Error responses are emitted as TS models, not response Zod validators;
+    // the runtime mapper already handles the extension on shaped definitions.
+    schemas = assertReplace(
+      schemas,
+      "export interface GatewayHealthErrorResultApi {",
+      "export type GatewayHealthErrorResultApi = string | {",
+      "GatewayHealthErrorResultApi → string | typed probe result",
+    );
+
     // Orval ignores x-json-value and narrows arbitrary JSON to object-only.
     // Define one recursive JSON type, then use it for every field carrying the
     // extension (including dynamic trace/span list row cells).

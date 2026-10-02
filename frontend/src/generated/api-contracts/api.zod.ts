@@ -5132,6 +5132,12 @@ export const AgentccGatewaysListResponse = zod.object({
       name: zod.string().min(1),
       base_url: zod.string().url().min(1),
       status: zod.string().min(1),
+      last_health_check: zod
+        .string()
+        .datetime({ offset: true })
+        .describe(
+          "Completion time of this request's live health probe, including unreachable results.",
+        ),
       provider_count: zod.number().optional(),
       model_count: zod.number().optional(),
     }),
@@ -5160,6 +5166,12 @@ export const AgentccGatewaysReadResponse = zod.object({
     name: zod.string().min(1),
     base_url: zod.string().url().min(1),
     status: zod.string().min(1),
+    last_health_check: zod
+      .string()
+      .datetime({ offset: true })
+      .describe(
+        "Completion time of this request's live health probe, including unreachable results.",
+      ),
     provider_count: zod.number().optional(),
     model_count: zod.number().optional(),
   }),
@@ -5290,6 +5302,10 @@ export const AgentccGatewaysHealthCheckResponse = zod.object({
   status: zod.boolean(),
   result: zod.object({
     status: zod.string().min(1),
+    last_health_check: zod
+      .string()
+      .datetime({ offset: true })
+      .describe("Completion time of this request's live health probe."),
     health: zod.object({}).passthrough().optional(),
     providers: zod.object({
       providers: zod.array(
