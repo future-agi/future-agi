@@ -1,8 +1,7 @@
 import PropTypes from "prop-types";
-import { Box } from "@mui/material";
 
 import { ENV_SHAPE, ENV_STATE_SHAPE } from "../../workspace/overview/overview.constants";
-import SectionCard from "../../components/SectionCard";
+import ChatSplitPane from "../../components/ChatSplitPane";
 import BuilderConsole from "../console/BuilderConsole";
 import PanelBoundary from "./PanelBoundary";
 import BuildingPane from "./BuildingPane";
@@ -28,13 +27,9 @@ export default function BuildingStage({ progress, chat, env, envState, patch, pr
   const p = progress || {};
   const console_ = chat || p;
   return (
-    <Box
-      sx={{
-        display: "grid", gap: 2, height: "100%", minHeight: 0,
-        gridTemplateColumns: { xs: "1fr", lg: "minmax(360px, 400px) 1fr" },
-      }}
-    >
-      <SectionCard sx={{ height: "100%", minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+    <ChatSplitPane
+      busy={!!(console_.running || console_.inFlight)}
+      chat={({ collapse, open, collapseRef }) => (
         <BuilderConsole
           turns={console_.turns}
           running={console_.running}
@@ -43,25 +38,26 @@ export default function BuildingStage({ progress, chat, env, envState, patch, pr
           canStop={console_.inFlight}
           frozen={console_.frozen}
           frozenReason={console_.frozenReason}
+          onCollapse={collapse}
+          collapseRef={collapseRef}
+          active={open}
         />
-      </SectionCard>
-
-      <SectionCard sx={{ minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden", px: 2.5 }}>
-        <PanelBoundary>
-          <BuildingPane
-            done={p.done}
-            running={p.running}
-            failure={p.failure}
-            env={env}
-            envState={envState}
-            patch={patch}
-            primed={primed}
-            source={source}
-            world={world}
-          />
-        </PanelBoundary>
-      </SectionCard>
-    </Box>
+      )}
+    >
+      <PanelBoundary>
+        <BuildingPane
+          done={p.done}
+          running={p.running}
+          failure={p.failure}
+          env={env}
+          envState={envState}
+          patch={patch}
+          primed={primed}
+          source={source}
+          world={world}
+        />
+      </PanelBoundary>
+    </ChatSplitPane>
   );
 }
 
