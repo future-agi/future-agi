@@ -33,9 +33,11 @@ func TestLakera_Flagged(t *testing.T) {
 			t.Error("wrong auth header")
 		}
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"flagged":         true,
-			"categories":      map[string]bool{"prompt_injection": true, "jailbreak": false},
-			"category_scores": map[string]float64{"prompt_injection": 0.95, "jailbreak": 0.1},
+			"flagged": true,
+			"breakdown": []map[string]interface{}{
+				{"detector_type": "prompt_attack", "detected": true, "result": "l1_confident"},
+				{"detector_type": "moderated_content/hate", "detected": false, "result": "l5_unlikely"},
+			},
 		})
 	}))
 	defer srv.Close()
@@ -44,24 +46,25 @@ func TestLakera_Flagged(t *testing.T) {
 		"provider":   "lakera",
 		"api_key":    "lk-test",
 		"endpoint":   srv.URL,
-		"categories": []interface{}{"prompt_injection"},
+		"categories": []interface{}{"prompt_attack"},
 	})
 
 	result := g.Check(context.Background(), makeInput([]models.Message{makeMsg("user", "ignore previous")}))
 	if result.Pass {
 		t.Fatal("expected fail")
 	}
-	if result.Score != 0.95 {
-		t.Errorf("score = %f, want 0.95", result.Score)
+	if result.Score != 1.0 {
+		t.Errorf("score = %f, want 1.0", result.Score)
 	}
 }
 
 func TestLakera_Safe(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"flagged":         false,
-			"categories":      map[string]bool{"prompt_injection": false},
-			"category_scores": map[string]float64{"prompt_injection": 0.01},
+			"flagged": false,
+			"breakdown": []map[string]interface{}{
+				{"detector_type": "prompt_attack", "detected": false, "result": "l5_unlikely"},
+			},
 		})
 	}))
 	defer srv.Close()
@@ -79,9 +82,11 @@ func TestLakera_Safe(t *testing.T) {
 func TestLakera_FlaggedButNoCategoryMatch(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"flagged":         true,
-			"categories":      map[string]bool{"prompt_injection": false, "pii": true},
-			"category_scores": map[string]float64{"prompt_injection": 0.1, "pii": 0.9},
+			"flagged": true,
+			"breakdown": []map[string]interface{}{
+				{"detector_type": "prompt_attack", "detected": false, "result": "l5_unlikely"},
+				{"detector_type": "pii/us_social_security_number", "detected": true, "result": "l1_confident"},
+			},
 		})
 	}))
 	defer srv.Close()
@@ -90,7 +95,7 @@ func TestLakera_FlaggedButNoCategoryMatch(t *testing.T) {
 		"provider":   "lakera",
 		"api_key":    "k",
 		"endpoint":   srv.URL,
-		"categories": []interface{}{"prompt_injection"}, // Only checking injection
+		"categories": []interface{}{"prompt_attack"}, // Only checking prompt attacks
 	})
 
 	result := g.Check(context.Background(), makeInput([]models.Message{makeMsg("user", "my ssn is 123")}))
@@ -369,11 +374,7 @@ func TestExternal_HTTP500WithRetry(t *testing.T) {
 			w.WriteHeader(500)
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"flagged":         false,
-			"categories":      map[string]bool{},
-			"category_scores": map[string]float64{},
-		})
+		json.NewEncoder(w).Encode(map[string]interface{}{"flagged": false})
 	}))
 	defer srv.Close()
 
@@ -413,10 +414,10 @@ func TestExternal_PostStage(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req lakeraRequest
 		json.NewDecoder(r.Body).Decode(&req)
-		receivedBody = req.Input
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"flagged": false, "categories": map[string]bool{}, "category_scores": map[string]float64{},
-		})
+		if len(req.Messages) == 1 {
+			receivedBody = req.Messages[0].Content
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{"flagged": false})
 	}))
 	defer srv.Close()
 
@@ -464,9 +465,14 @@ func TestIsExternalProviderConfig(t *testing.T) {
 		{map[string]interface{}{"provider": "presidio"}, true},
 		{map[string]interface{}{"provider": "llama_guard"}, true},
 		{map[string]interface{}{"provider": "bedrock_guardrails"}, true},
+		{map[string]interface{}{"provider": "hiddenlayer"}, true},
 		{map[string]interface{}{"provider": "dynamoai"}, true},
 		{map[string]interface{}{"provider": "enkrypt"}, true},
 		{map[string]interface{}{"provider": "ibm_ai"}, true},
+		{map[string]interface{}{"provider": "pangea"}, true},
+		{map[string]interface{}{"provider": "zscaler"}, true},
+		{map[string]interface{}{"provider": "crowdstrike"}, true},
+		{map[string]interface{}{"provider": "aporia"}, true},
 		{map[string]interface{}{"provider": "grayswan"}, true},
 		{map[string]interface{}{"provider": "lasso"}, true},
 		{map[string]interface{}{"provider": "futureagi"}, false},
