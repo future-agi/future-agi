@@ -36,6 +36,7 @@ from simulate.services.hosted_harness import (
     canonical_digest,
     hash_secret,
 )
+from simulate.utils.scenario_keys import canonical_scenario_key
 from tfc.settings.settings import UPLOAD_BUCKET_NAME
 from tfc.utils.storage_client import ensure_bucket, get_storage_client
 
@@ -1165,7 +1166,6 @@ def promote_conversation_checkpoint(
     """
     from simulate.services.harness_scenarios import index_scenarios
     from simulate.services.hosted_harness_gateway import (
-        _scenario_token,
         authoring_basis,
         authoring_content_digest,
         authoring_stage_outputs_from_archive,
@@ -1195,7 +1195,7 @@ def promote_conversation_checkpoint(
     }
     suite = (outputs.get("scenarios") or {}).get("data")
     tokens = [
-        _scenario_token(one.get("scenario_key") or one.get("name"))
+        canonical_scenario_key(one.get("scenario_key") or one.get("name"))
         for one in (suite if isinstance(suite, list) else [])
         if isinstance(one, dict)
     ]
@@ -1309,7 +1309,6 @@ def _rebase_conversation_workspace(
 ) -> None:
     """Replace a stale chat workspace with the environment's accepted files."""
     from simulate.services.hosted_harness_gateway import (
-        _scenario_token,
         authoring_stage_outputs_from_archive,
         replace_conversation_workspace,
         with_authoring_basis,
@@ -1336,7 +1335,7 @@ def _rebase_conversation_workspace(
         expected_key=expected_key,
         scenario_count=len(
             {
-                _scenario_token(one.get("scenario_key") or one.get("name"))
+                canonical_scenario_key(one.get("scenario_key") or one.get("name"))
                 for one in suite
                 if isinstance(one, dict)
             }
