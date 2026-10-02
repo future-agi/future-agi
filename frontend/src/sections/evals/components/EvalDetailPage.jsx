@@ -64,6 +64,7 @@ import VersionBadge from "./VersionBadge";
 import BulkDeleteDialog from "./BulkDeleteDialog";
 import { EVAL_TAGS } from "../constant";
 import { FAGI_MODEL_VALUES } from "./ModelSelector";
+import { getEvalTags } from "./evalTags";
 import { buildDataInjection } from "src/sections/common/EvalPicker/evalPickerConfigUtils";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
@@ -393,7 +394,7 @@ const EvalDetailPage = () => {
               config.error_localizer_enabled ??
               false,
           );
-          setTags(evalData.tags || evalData.eval_tags || []);
+          setTags(getEvalTags(evalData));
           if (config.messages && config.messages.length > 0) {
             setMessages(config.messages);
           } else if (evalData.eval_type === "llm" && promptText) {
@@ -415,10 +416,14 @@ const EvalDetailPage = () => {
       // Load version config into the form
       isPopulatingRef.current = true;
       setViewingVersion(versionToLoad);
+      setTags(getEvalTags(evalData));
       setSearchParams(
         (prev) => {
           const next = new URLSearchParams(prev);
-          next.set("v", String(versionToLoad.version_number));
+          next.set(
+            "v",
+            String(versionToLoad.version_number ?? versionToLoad.versionNumber),
+          );
           return next;
         },
         { replace: true },
@@ -650,7 +655,7 @@ const EvalDetailPage = () => {
             config.error_localizer_enabled ??
             false,
         );
-        setTags(evalData.tags || evalData.eval_tags || []);
+        setTags(getEvalTags(evalData));
         if (config.messages && config.messages.length > 0) {
           setMessages(config.messages);
         } else if (evalData.eval_type === "llm" && promptText) {
