@@ -5,6 +5,7 @@ import structlog
 from django.conf import settings
 from django.http import QueryDict
 from drf_yasg import openapi
+from drf_yasg.generators import OpenAPISchemaGenerator
 from drf_yasg.inspectors import SwaggerAutoSchema
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import serializers
@@ -12,6 +13,7 @@ from rest_framework.response import Response
 
 from tfc.utils.api_serializers import ManagementAPIErrorResponseSerializer
 from tfc.utils.general_methods import GeneralMethods
+from tfc.utils.openapi_contract import plan_operation_id_renames
 
 logger = structlog.get_logger(__name__)
 
@@ -91,6 +93,36 @@ class ExplicitQueryAutoSchema(ManagementAPIAutoSchema):
 
     def get_pagination_parameters(self):
         return []
+
+
+class ManagementAPISchemaGenerator(OpenAPISchemaGenerator):
+    """Schema generator that guarantees unique operationIds.
+
+    drf-yasg derives an operationId from the URL path and HTTP method, so one view
+    mounted on both a collection and a detail route (``users/`` and
+    ``users/<uuid:user_id>/``), or on two spellings of one route, yields the same
+    ID twice. Duplicate IDs make the document invalid Swagger 2.0 and let client
+    generators silently drop or overwrite one of the operations.
+
+    Only the losing member of each collision is renamed, so every ID that is
+    already unique keeps its exact value and existing generated SDK methods keep
+    their names. The route with the fewest path parameters (the collection route)
+    keeps the historic ID; each other member gets a suffix derived from what
+    distinguishes its route, e.g. ``accounts_appsmith_users_create_by_user_id``.
+    See :func:`tfc.utils.openapi_contract.plan_operation_id_renames` for the rule.
+    """
+
+    def get_paths(self, endpoints, components, request, public):
+        paths, prefix = super().get_paths(endpoints, components, request, public)
+        document = {
+            "paths": {
+                route: {method: dict(operation) for method, operation in item.items()}
+                for route, item in paths.items()
+            }
+        }
+        for (route, method), operation_id in plan_operation_id_renames(document).items():
+            paths[route][method]["operationId"] = operation_id
+        return paths, prefix
 
 
 def _serializer_name(serializer):
