@@ -1,19 +1,44 @@
-import React, { useState } from "react";
-import { Box, Button, Stack, Typography, useTheme } from "@mui/material";
+import React, { useCallback, useMemo, useState } from "react";
+import { Box, Button, Stack, Typography } from "@mui/material";
 import SvgColor from "src/components/svg-color";
-import Iconify from "src/components/iconify";
-import { useErrorFeedList } from "src/api/errorFeed/error-feed";
+import {
+  useErrorFeedList,
+  useObserveProjectList,
+} from "src/api/errorFeed/error-feed";
 import ErrorFeedFilters from "./components/ErrorFeedFilters";
 import ErrorFeedTable from "./components/ErrorFeedTable";
+import { deriveFeedPageState } from "./feedPageState";
 import { useErrorFeedApiParams } from "./store";
 
+// Re-read on every visit/focus: a first Observe project is created by SDK
+// instrumentation, not by a mutation this page could invalidate, so a user
+// coming back within the catalog's 5-minute freshness window must still see
+// it. Bounded to this page; no polling.
+const REVALIDATE_ON_ENTRY = {
+  refetchOnMount: "always",
+  refetchOnWindowFocus: "always",
+};
+
 export default function ErrorFeedView() {
-  const theme = useTheme();
   const [selected, setSelected] = useState([]);
 
   const apiParams = useErrorFeedApiParams();
-  const { data } = useErrorFeedList(apiParams);
-  const totalCount = data?.total ?? 0;
+  const feed = useErrorFeedList(apiParams, REVALIDATE_ON_ENTRY);
+  const catalog = useObserveProjectList(REVALIDATE_ON_ENTRY);
+
+  const pageState = deriveFeedPageState({ catalog, feed });
+  const rows = useMemo(() => feed.data?.data ?? [], [feed.data]);
+  const totalCount = feed.data?.total ?? 0;
+
+  const projectOptions = useMemo(
+    () => [{ value: "", label: "All Projects" }, ...(catalog.data ?? [])],
+    [catalog.data],
+  );
+
+  const handleRetry = useCallback(() => {
+    if (feed.isError) feed.refetch();
+    if (catalog.isError) catalog.refetch();
+  }, [feed, catalog]);
 
   const handleSelect = (clusterId, checked) => {
     setSelected((prev) =>
@@ -135,10 +160,16 @@ export default function ErrorFeedView() {
         <ErrorFeedFilters
           selected={selected}
           onClearSelection={handleClearSelection}
+          projectOptions={projectOptions}
         />
 
         {/* Table */}
         <ErrorFeedTable
+          rows={rows}
+          totalCount={totalCount}
+          isLoading={feed.isLoading}
+          pageState={pageState}
+          onRetry={handleRetry}
           selected={selected}
           onSelect={handleSelect}
           onSelectAll={handleSelectAll}
