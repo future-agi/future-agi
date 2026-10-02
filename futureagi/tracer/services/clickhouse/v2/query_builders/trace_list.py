@@ -181,9 +181,13 @@ def _short_text_prefix_classify_batch_size(prefix_needed: int) -> int:
 # parser limit. Keep only as much of it as the statement can afford. Every row
 # holding the whole value holds every substring of it, so a subset of the runs,
 # kept in order, is still a necessary condition: a shorter anchor can only
-# widen the granule set, never hide a matching row. The runs are ASCII by
-# construction above, so a character is a byte here.
+# widen the granule set, never hide a matching row. Runs may hold multi-byte
+# caseless-script characters, so the budget counts UTF-8 bytes.
 _MAX_NGRAM_ANCHOR_BYTES = 4 * 1024
+
+
+def _utf8_len(run: str) -> int:
+    return len(run.encode("utf-8"))
 
 
 def _runs_within_anchor_budget(runs: list[str]) -> list[str]:
@@ -194,20 +198,58 @@ def _runs_within_anchor_budget(runs: list[str]) -> list[str]:
     the whole budget keeps a prefix, which is still a substring of the value.
     """
 
-    if sum(len(run) + 1 for run in runs) <= _MAX_NGRAM_ANCHOR_BYTES:
+    if sum(_utf8_len(run) + 1 for run in runs) <= _MAX_NGRAM_ANCHOR_BYTES:
         return runs
     kept: set[int] = set()
     spent = 0
     for index, run in sorted(
         enumerate(runs), key=lambda pair: (-len(pair[1]), pair[0])
     ):
-        if spent + len(run) + 1 > _MAX_NGRAM_ANCHOR_BYTES:
+        if spent + _utf8_len(run) + 1 > _MAX_NGRAM_ANCHOR_BYTES:
             continue
         kept.add(index)
-        spent += len(run) + 1
+        spent += _utf8_len(run) + 1
     if not kept:
-        return [max(runs, key=len)[:_MAX_NGRAM_ANCHOR_BYTES]]
+        # Cut on a character boundary: a prefix of whole characters is still
+        # a substring of the value.
+        prefix = max(runs, key=len).encode("utf-8")[:_MAX_NGRAM_ANCHOR_BYTES]
+        return [prefix.decode("utf-8", errors="ignore")]
     return [run for index, run in enumerate(runs) if index in kept]
+
+
+# Non-ASCII blocks that may join an n-gram anchor run. Every code point in them
+# is (a) mapped to itself by lowerUTF8, and (b) produced by no other code point
+# under lowerUTF8, so a lowerUTF8 match on such a run implies the byte-identical
+# run in the ASCII-lowered index expression. Verified exhaustively over all
+# 1,112,064 scalar values against ClickHouse 24.8, 25.5 and 26.7 (the pinned
+# 25.3 lies between). Cased scripts (Latin-1, Greek, Cyrillic, fullwidth Latin,
+# ...) fail (b) and stay excluded: ASCII lower() does not fold them.
+_CASELESS_SCRIPT_RANGES = (
+    (0x0590, 0x05FF),  # Hebrew
+    (0x0600, 0x06FF),  # Arabic
+    (0x0750, 0x077F),  # Arabic Supplement
+    (0x08A0, 0x08FF),  # Arabic Extended-A
+    (0x0900, 0x0DFF),  # Devanagari .. Sinhala
+    (0x0E00, 0x0EFF),  # Thai, Lao
+    (0x1100, 0x11FF),  # Hangul Jamo
+    (0x2E80, 0x2FDF),  # CJK Radicals Supplement, Kangxi Radicals
+    (0x3000, 0x303F),  # CJK Symbols and Punctuation
+    (0x3040, 0x30FF),  # Hiragana, Katakana
+    (0x3100, 0x31FF),  # Bopomofo .. Katakana Phonetic Extensions
+    (0x3200, 0x4DBF),  # Enclosed CJK .. CJK Unified Ideographs Extension A
+    (0x4E00, 0x9FFF),  # CJK Unified Ideographs
+    (0xAC00, 0xD7AF),  # Hangul Syllables
+    (0xF900, 0xFAFF),  # CJK Compatibility Ideographs
+    (0xFF01, 0xFF20),  # Fullwidth punctuation and digits (not letters)
+    (0xFF3B, 0xFF40),  # Fullwidth punctuation between the letter blocks
+    (0xFF5B, 0xFF9F),  # Fullwidth brackets, halfwidth CJK punctuation, Katakana
+    (0x20000, 0x3FFFF),  # CJK Unified Ideographs Extension B and later
+)
+_NGRAM_ANCHOR_SEGMENT = re.compile(
+    "[\\x00-\\x7f"
+    + "".join(f"\\U{low:08x}-\\U{high:08x}" for low, high in _CASELESS_SCRIPT_RANGES)
+    + "]+"
+)
 
 
 def _caseless_ascii_ngram_anchor(value: str) -> str | None:
@@ -215,19 +257,25 @@ def _caseless_ascii_ngram_anchor(value: str) -> str | None:
 
     The index lowercases ASCII while exact matching uses lowerUTF8. Root-locale
     Unicode lowercasing has two non-ASCII sources of ASCII letters: dotted I
-    (which may also add a combining dot) and Kelvin sign. Split at i/k and all
-    non-ASCII characters; the remaining ASCII letters, digits and punctuation
-    have the same lowercase representation under both functions. This allows
-    ordinary prose, not just digit/punctuation runs, to use the existing index.
-    Retain every usable run in order: a long common phrase must not discard a
-    shorter selective identifier elsewhere in the same exact literal. Unknown
+    (which may also add a combining dot) and Kelvin sign. Split at i/k and at
+    every non-ASCII character outside ``_CASELESS_SCRIPT_RANGES``; the remaining
+    ASCII letters, digits and punctuation, and caseless-script characters, have
+    the same lowercase representation under both functions and no other source
+    under lowerUTF8. This allows ordinary prose, not just digit/punctuation
+    runs, to use the existing index, in CJK, Arabic, Hebrew and Indic scripts
+    too. Retain every usable run in order: a long common phrase must not discard
+    a shorter selective identifier elsewhere in the same exact literal. Unknown
     casing segments become wildcards, not guessed Unicode transformations.
     The hint remains a necessary condition only; exact Unicode comparison and
     complete latest-state replay still decide membership. No usable four-gram
-    means the ordinary exact route, never an empty result.
+    (the index tokenises code points, not bytes) means the ordinary exact
+    route, never an empty result.
     """
     runs = [
-        run for run in re.findall(r"[^IiKk\x80-\U0010ffff]+", value) if len(run) >= 4
+        run
+        for segment in _NGRAM_ANCHOR_SEGMENT.findall(value)
+        for run in re.split(r"[IiKk]+", segment)
+        if len(run) >= 4
     ]
     if not runs:
         return None
