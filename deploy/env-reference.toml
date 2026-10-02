@@ -1498,7 +1498,7 @@ database, override `PG_HOST`, `PGBOUNCER_HOST` or `CH_HOST` in a
     keys = ["AGENTCC_CONFIG_PATH"]
     default = "`agentcc-gateway/config.example.yaml`"
     setups = ["S", "D"]
-    text = "Gateway provider config, relative to the repository root, mounted into the gateway. Copy the example to enable Anthropic, Gemini, Bedrock, Vertex and others; the copy is git-ignored. A path that does not exist stops the stack from starting."
+    text = "Gateway provider config, relative to the repository root, mounted into the gateway. Copy the example to enable Anthropic, Gemini, Bedrock, Vertex and others; the copy is git-ignored. Keep `guardrails.enabled: true` in the copy (copies of an older example lack it), or the guardrails set up in the dashboard do not run. A path that does not exist stops the stack from starting."
 
     [[part.section.row]]
     keys = ["AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS"]
@@ -1940,6 +1940,12 @@ nothing. Change what they are derived from instead, or use a
     default = "the API (`http://127.0.0.1:8000` in S, `http://backend` in D), `AGENTCC_ADMIN_TOKEN`, `true`"
     setups = ["S", "D"]
     text = "The gateway loads the keys and org settings made in the UI from the app: on start, retrying while the app comes up, and then every minute (`AGENTCC_SYNC_INTERVAL`, on a gateway that reads it). It posts its request logs there too. Standalone starts its gateway after the bootstrap, so the app is up by then."
+
+    [[part.section.row]]
+    keys = ["FI_BASE_URL"]
+    default = "the API (`http://127.0.0.1:8000` in S, `http://backend` in D), on the gateway only"
+    setups = ["S", "D"]
+    text = "A Future AGI Eval guardrail whose Base URL is Future AGI Cloud's (`https://api.futureagi.com`, the dashboard's default) calls the app instead of sending the prompts it checks to Cloud. Helm sets it to the backend Service too. SDKs outside the stack take the collector's URL under the same name: `FI_COLLECTOR_PUBLIC_URL`."
 
 [[part]]
 heading = "Legacy and retired keys"

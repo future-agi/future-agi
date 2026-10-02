@@ -2429,7 +2429,7 @@
         },
         "existingConfigMap": {
           "type": "string",
-          "description": "Existing ConfigMap with the gateway configuration under the key `config.yaml`. Empty: rendered from `config`."
+          "description": "Existing ConfigMap with the gateway configuration under the key `config.yaml`. Empty: rendered from `config`. Without `guardrails.enabled: true` in it, the guardrails set up in the dashboard do not run."
         },
         "config": {
           "type": "object",
