@@ -22,3 +22,27 @@ const NODE_TYPE_CONFIG = {
 export const getNodeConfig = (type) => {
   return NODE_TYPE_CONFIG[type] || NODE_TYPE_CONFIG.default;
 };
+
+const getExecution = (node) => node?.nodeExecution || node?.node_execution;
+
+export const buildNodeOutputTree = (nodes = [], parentId = null) =>
+  nodes.reduce((result, node) => {
+    const execution = getExecution(node);
+    const id = parentId ? `${parentId}__${node.id}` : node.id;
+    const children = buildNodeOutputTree(node?.subGraph?.nodes || [], id);
+
+    if (!execution && children.length === 0) return result;
+
+    result.push({
+      id,
+      name: execution?.node_name || node.name || "Unnamed node",
+      type: execution?.node_type || (node?.subGraph ? "agent" : node.type),
+      ...(execution?.duration_seconds != null && {
+        duration: execution.duration_seconds * 1000,
+      }),
+      ...(execution?.cost != null && { cost: execution.cost }),
+      ...(execution?.tokens != null && { tokens: execution.tokens }),
+      children,
+    });
+    return result;
+  }, []);
