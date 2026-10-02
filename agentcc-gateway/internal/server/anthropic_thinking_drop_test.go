@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
@@ -40,12 +41,52 @@ func (p *thinkingDropObserver) ProcessResponse(_ context.Context, _ *models.Requ
 
 const thinkingDropReason = "thinking_unsupported_on_backend"
 
+// wireCapture holds the last request body the synthetic upstream received.
+// The upstream handler runs on the test server's goroutine, so access is
+// mutex-guarded rather than relying on the HTTP round-trip for ordering.
+type wireCapture struct {
+	mu   sync.Mutex
+	body map[string]json.RawMessage
+}
+
+func (c *wireCapture) set(b map[string]json.RawMessage) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.body = b
+}
+
+func (c *wireCapture) has(key string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	_, ok := c.body[key]
+	return ok
+}
+
+func (c *wireCapture) get(key string) (json.RawMessage, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	v, ok := c.body[key]
+	return v, ok
+}
+
+// thinkingDropFixtureOpts tunes the synthetic upstream.
+type thinkingDropFixtureOpts struct {
+	stream         bool
+	upstreamStatus int // 0 means 200
+	plugins        []pipeline.Plugin
+}
+
 // newThinkingDropFixture starts a local synthetic upstream speaking the given
-// API format and returns a gateway wired to it plus the observer and a pointer
-// to the last upstream request body captured on the wire.
-func newThinkingDropFixture(t *testing.T, format, model string, stream bool) (*Server, *thinkingDropObserver, *map[string]json.RawMessage) {
+// API format and returns a gateway wired to it plus the observer and the
+// upstream wire capture.
+func newThinkingDropFixture(t *testing.T, format, model string, stream bool) (*Server, *thinkingDropObserver, *wireCapture) {
+	return newThinkingDropFixtureWith(t, format, model, thinkingDropFixtureOpts{stream: stream})
+}
+
+func newThinkingDropFixtureWith(t *testing.T, format, model string, opts thinkingDropFixtureOpts) (*Server, *thinkingDropObserver, *wireCapture) {
 	t.Helper()
-	wire := &map[string]json.RawMessage{}
+	stream := opts.stream
+	wire := &wireCapture{}
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			w.Header().Set("Content-Type", "application/json")
@@ -56,7 +97,13 @@ func newThinkingDropFixture(t *testing.T, format, model string, stream bool) (*S
 		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
 			t.Errorf("decode upstream request: %v", err)
 		}
-		*wire = captured
+		wire.set(captured)
+		if opts.upstreamStatus != 0 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(opts.upstreamStatus)
+			_, _ = w.Write([]byte(`{"error":{"message":"synthetic upstream failure","type":"server_error"}}`))
+			return
+		}
 		switch format {
 		case "openai":
 			if stream {
@@ -101,7 +148,8 @@ func newThinkingDropFixture(t *testing.T, format, model string, stream bool) (*S
 		t.Fatalf("creating registry: %v", err)
 	}
 	observer := &thinkingDropObserver{}
-	srv := New(cfg, "", registry, pipeline.NewEngine(observer), nil, nil, nil, nil, testModelDBPtr(), nil, nil)
+	plugins := append([]pipeline.Plugin{observer}, opts.plugins...)
+	srv := New(cfg, "", registry, pipeline.NewEngine(plugins...), nil, nil, nil, nil, testModelDBPtr(), nil, nil)
 	srv.ready.Store(true)
 	return srv, observer, wire
 }
@@ -179,10 +227,10 @@ func TestAnthropicMessagesRecordsThinkingDropOnTranslatedBackends(t *testing.T) 
 			if observer.hasCarrier {
 				t.Fatal("anthropic_thinking_config must be removed before the pipeline sees the request")
 			}
-			if _, leaked := (*wire)["anthropic_thinking_config"]; leaked {
+			if wire.has("anthropic_thinking_config") {
 				t.Fatal("anthropic_thinking_config leaked to the upstream wire")
 			}
-			if _, invented := (*wire)["thinking"]; invented {
+			if wire.has("thinking") {
 				t.Fatal("translated route must not invent an upstream thinking field")
 			}
 			if strings.Contains(response.Body.String(), `"type":"thinking"`) {
@@ -238,7 +286,7 @@ func TestAnthropicMessagesNoThinkingDropWithoutConfig(t *testing.T) {
 			if observer.hasCarrier {
 				t.Fatal("no carrier expected without a thinking config")
 			}
-			if _, leaked := (*wire)["anthropic_thinking_config"]; leaked {
+			if wire.has("anthropic_thinking_config") {
 				t.Fatal("unexpected carrier on upstream wire")
 			}
 		})
@@ -259,14 +307,121 @@ func TestAnthropicMessagesNativeBackendKeepsThinking(t *testing.T) {
 	if observer.drops != "" {
 		t.Fatalf("native metadata = %q, want empty", observer.drops)
 	}
-	raw, ok := (*wire)["thinking"]
+	raw, ok := wire.get("thinking")
 	if !ok {
 		t.Fatal("native route must forward the raw thinking config upstream")
 	}
 	if !bytes.Contains(raw, []byte(`"enabled"`)) || !bytes.Contains(raw, []byte(`1024`)) {
 		t.Fatalf("native thinking config altered: %s", raw)
 	}
-	if _, leaked := (*wire)["anthropic_thinking_config"]; leaked {
+	if wire.has("anthropic_thinking_config") {
 		t.Fatal("native route must not carry the internal canonical field")
+	}
+}
+
+// shortCircuitPlugin answers every request itself, like a cache hit, so the
+// provider is never called.
+type shortCircuitPlugin struct{ calls int }
+
+func (p *shortCircuitPlugin) Name() string  { return "thinking-drop-short-circuit" }
+func (p *shortCircuitPlugin) Priority() int { return 20 }
+func (p *shortCircuitPlugin) ProcessRequest(_ context.Context, _ *models.RequestContext) pipeline.PluginResult {
+	p.calls++
+	return pipeline.ResultShortCircuit(&models.ChatCompletionResponse{
+		ID:     "short-circuit",
+		Object: "chat.completion",
+		Model:  "fixture-model",
+		Choices: []models.Choice{{
+			Index:        0,
+			Message:      models.Message{Role: "assistant", Content: json.RawMessage(`"SHORT_CIRCUIT_OK"`)},
+			FinishReason: "stop",
+		}},
+	})
+}
+func (p *shortCircuitPlugin) ProcessResponse(_ context.Context, _ *models.RequestContext) pipeline.PluginResult {
+	return pipeline.ResultContinue()
+}
+
+// TestAnthropicMessagesThinkingDropSurvivesPipelineShortCircuit verifies the
+// reason is determined before the pipeline runs: a plugin that answers a
+// streaming request itself still yields the header and metadata, the existing
+// JSON-for-short-circuit behavior is preserved, and the upstream is never hit.
+func TestAnthropicMessagesThinkingDropSurvivesPipelineShortCircuit(t *testing.T) {
+	sc := &shortCircuitPlugin{}
+	srv, observer, wire := newThinkingDropFixtureWith(t, "openai", "gpt-4o-mini", thinkingDropFixtureOpts{stream: true, plugins: []pipeline.Plugin{sc}})
+	body := anthropicRequest("gpt-4o-mini", json.RawMessage(`{"type":"enabled","budget_tokens":1024}`))
+	body["stream"] = true
+	response := postAnthropicMessages(t, srv, body)
+
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "SHORT_CIRCUIT_OK") {
+		t.Fatalf("short-circuit must still answer: status=%d body=%s", response.Code, response.Body.String())
+	}
+	if sc.calls != 1 {
+		t.Fatalf("short-circuit plugin calls = %d, want 1", sc.calls)
+	}
+	if got := response.Header().Get("x-agentcc-translation-drops"); got != thinkingDropReason {
+		t.Fatalf("header = %q, want %q", got, thinkingDropReason)
+	}
+	if observer.drops != thinkingDropReason {
+		t.Fatalf("metadata = %q, want %q", observer.drops, thinkingDropReason)
+	}
+	if observer.hasCarrier {
+		t.Fatal("carrier must be gone before the short-circuiting plugin runs")
+	}
+	if ct := response.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Fatalf("short-circuit on a stream request must keep the existing JSON answer, got Content-Type %q", ct)
+	}
+	if wire.has("model") {
+		t.Fatal("upstream must not be called on a pipeline short circuit")
+	}
+}
+
+// TestAnthropicMessagesThinkingDropSurvivesUpstreamError verifies an upstream
+// failure after the boundary keeps its existing error semantics and still
+// carries the already-determined reason once.
+func TestAnthropicMessagesThinkingDropSurvivesUpstreamError(t *testing.T) {
+	srv, observer, wire := newThinkingDropFixtureWith(t, "openai", "gpt-4o-mini", thinkingDropFixtureOpts{upstreamStatus: http.StatusBadGateway})
+	response := postAnthropicMessages(t, srv, anthropicRequest("gpt-4o-mini", json.RawMessage(`{"type":"enabled","budget_tokens":1024}`)))
+
+	if response.Code == http.StatusOK {
+		t.Fatalf("upstream 502 must not become a successful answer: body=%s", response.Body.String())
+	}
+	if response.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want %d (existing upstream error mapping)", response.Code, http.StatusBadGateway)
+	}
+	if !strings.Contains(response.Body.String(), `"type":"error"`) {
+		t.Fatalf("expected Anthropic-format error body, got %s", response.Body.String())
+	}
+	if got := response.Header().Get("x-agentcc-translation-drops"); got != thinkingDropReason {
+		t.Fatalf("header = %q, want %q", got, thinkingDropReason)
+	}
+	if observer.drops != thinkingDropReason {
+		t.Fatalf("metadata = %q, want %q", observer.drops, thinkingDropReason)
+	}
+	if wire.has("anthropic_thinking_config") {
+		t.Fatal("carrier leaked to upstream on the error path")
+	}
+}
+
+// TestAppendUniqueDrop pins the dedup branch: an already-present reason is not
+// appended again and the existing order is preserved.
+func TestAppendUniqueDrop(t *testing.T) {
+	cases := []struct {
+		name string
+		in   []string
+		want []string
+	}{
+		{"appends when absent", []string{"top_k_unsupported"}, []string{"top_k_unsupported", thinkingDropReason}},
+		{"nil input", nil, []string{thinkingDropReason}},
+		{"skips when present", []string{"a", thinkingDropReason}, []string{"a", thinkingDropReason}},
+		{"skips when present and later", []string{thinkingDropReason, "z"}, []string{thinkingDropReason, "z"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := appendUniqueDrop(tc.in, thinkingDropReason)
+			if strings.Join(got, ",") != strings.Join(tc.want, ",") {
+				t.Fatalf("appendUniqueDrop(%v) = %v, want %v", tc.in, got, tc.want)
+			}
+		})
 	}
 }
