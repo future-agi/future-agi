@@ -1,8 +1,12 @@
+from django.utils import timezone
+
+
 class PromptBuilder:
     def build(self, mode, skill, memories, tools, context, workspace_name, user_email):
         sections = [
             self._identity(),
             self._workspace(workspace_name, user_email),
+            self._current_time(),
             self._page_context(context),
             self._skill(skill),
             self._memories(memories),
@@ -36,6 +40,29 @@ class PromptBuilder:
 
     def _workspace(self, workspace_name, user_email):
         return f"Current workspace: {workspace_name}\nCurrent user: {user_email}"
+
+    def _current_time(self):
+        """Anchor relative time windows.
+
+        Every time filter in the tool catalog is absolute, so without the
+        current date the model cannot resolve "the last seven days" and
+        guesses at relative syntax the schemas reject.
+        """
+        now = timezone.now()
+        return (
+            f"Current date and time: {now.strftime('%Y-%m-%dT%H:%M:%SZ')} (UTC).\n"
+            "Tool time filters are ABSOLUTE — there is no relative syntax. "
+            "Convert the user's phrasing yourself before calling a tool:\n"
+            "- Date-time filters (start, end, started_after, started_before, created_after) "
+            "take full ISO 8601, e.g. 2026-09-24T00:00:00Z. "
+            "'Last 7 days' means start = now minus 7 days, end = now.\n"
+            "- get_usage_overview is different: period and period_end take a calendar "
+            "MONTH as YYYY-MM. It cannot express a day range — use the gateway or trace "
+            "tools for windows shorter than a month.\n"
+            "Never pass shorthand like '7d', '7D', 'last_week' or a bare date where a "
+            "date-time is required, and never invent a parameter such as 'period' or "
+            "'range' on a tool that does not define it — the schemas reject unknown fields."
+        )
 
     def _page_context(self, context):
         if not context:
