@@ -1,0 +1,55 @@
+apiVersion: v2
+name: futureagi
+description: >-
+  Future AGI on Kubernetes: the Distributed setup (one Deployment per service,
+  Temporal workers, fi-collector, agentcc-gateway) with external datastores,
+  or bundled single-replica ones for evaluation.
+type: application
+# The chart is released with the platform: release-please rewrites both
+# marked lines in every release PR (release-please-config.json, extra-files),
+# and helm-ci.yml fails when they drift from .release-please-manifest.json.
+# .github/workflows/helm-release.yml publishes each version once, to
+# oci://ghcr.io/future-agi/charts/futureagi, after that tag's images exist.
+version: 1.44.0 # x-release-please-version
+# Default tag of every Future AGI image (image.tag overrides it).
+appVersion: "v1.44.0" # x-release-please-version
+kubeVersion: ">=1.27.0-0"
+home: https://futureagi.com
+icon: https://raw.githubusercontent.com/future-agi/future-agi/main/frontend/public/logo/logo_single.svg
+sources:
+  - https://github.com/future-agi/future-agi
+  - https://github.com/future-agi/future-agi/tree/main/deploy/helm/futureagi
+keywords:
+  - llm
+  - ai
+  - evaluation
+  - observability
+  - opentelemetry
+  - tracing
+  - llm-gateway
+  - agents
+maintainers:
+  - name: Future AGI
+    email: team@futureagi.com
+    url: https://github.com/future-agi/future-agi
+# Artifact Hub (https://artifacthub.io/docs/topics/annotations/helm/).
+# hack/package.sh adds artifacthub.io/images (with digests) and
+# artifacthub.io/changes, and sets artifacthub.io/containsSecurityUpdates, in
+# the packaged copy only. There is deliberately no artifacthub.io/signKey: it
+# describes a GPG key for a .prov file, and this chart is signed keylessly with
+# cosign (GitHub OIDC, no key to publish). Artifact Hub finds the cosign
+# signature in the registry on its own and shows the Signed badge.
+annotations:
+  artifacthub.io/license: Apache-2.0
+  artifacthub.io/category: ai-machine-learning
+  artifacthub.io/prerelease: "false"
+  artifacthub.io/containsSecurityUpdates: "false"
+  artifacthub.io/links: |
+    - name: Documentation
+      url: https://docs.futureagi.com
+    - name: Chart source
+      url: https://github.com/future-agi/future-agi/tree/main/deploy/helm/futureagi
+    - name: support
+      url: https://github.com/future-agi/future-agi/issues
+    - name: Discord
+      url: https://discord.com/invite/n2tCUKBkAw

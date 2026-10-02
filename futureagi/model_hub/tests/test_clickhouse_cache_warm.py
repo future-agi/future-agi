@@ -1,0 +1,485 @@
+import sys
+from unittest.mock import Mock
+
+import pytest
+
+from model_hub.apps import (
+    ModelHubConfig,
+    explicit_management_mutation_authorized,
+    guarded_management_command,
+    operator_startup_mutation_authorized,
+    startup_db_mutations_disabled,
+)
+
+
+@pytest.fixture(autouse=True)
+def _local_mutation_guard_environment(monkeypatch):
+    monkeypatch.setenv("ENV_TYPE", "local")
+    monkeypatch.delenv("CLOUD_DEPLOYMENT", raising=False)
+    monkeypatch.delenv("NO_STARTUP_DB_MUTATIONS", raising=False)
+    monkeypatch.delenv("STARTUP_DB_MUTATION_MODE", raising=False)
+    monkeypatch.delenv("SERVICE_TYPE", raising=False)
+
+
+def test_startup_db_mutation_guard_defaults_to_fail_closed(monkeypatch):
+    assert startup_db_mutations_disabled() is True
+
+
+@pytest.mark.parametrize("value", ["false", "true"])
+def test_startup_db_mutation_guard_literals_cannot_enable_implicit_mutations(
+    monkeypatch, value
+):
+    monkeypatch.setenv("NO_STARTUP_DB_MUTATIONS", value)
+
+    assert startup_db_mutations_disabled() is True
+
+
+@pytest.mark.parametrize("value", ["", "TRUE", "False", " true ", "1", "yes"])
+def test_startup_db_mutation_guard_rejects_ambiguous_values(monkeypatch, value):
+    monkeypatch.setenv("NO_STARTUP_DB_MUTATIONS", value)
+
+    with pytest.raises(RuntimeError, match="must be exactly 'true' or 'false'"):
+        startup_db_mutations_disabled()
+
+
+def test_python_c_without_deployment_env_skips_every_startup_mutation_path(monkeypatch):
+    monkeypatch.delenv("ENV_TYPE", raising=False)
+    monkeypatch.delenv("CLOUD_DEPLOYMENT", raising=False)
+    monkeypatch.delenv("NO_STARTUP_DB_MUTATIONS", raising=False)
+    monkeypatch.setenv("CH25_DROP_LEGACY_CDC_CHAIN", "true")
+    monkeypatch.setattr(sys, "argv", ["python", "-I", "/sos/run_clickhouse_only_ab.py"])
+    connect = Mock()
+    monkeypatch.setattr("model_hub.apps.post_migrate.connect", connect)
+
+    ModelHubConfig("model_hub", sys.modules["model_hub"]).ready()
+
+    connect.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "backfill_legacy_scans",
+        "backfill_score_tracer_project",
+        "ch25_apply_schema",
+        "createcachetable",
+        "future_schema_command",
+        "makemigrations",
+        "migrate",
+        "provision_grouping_features",
+        "register_temporal_schedules",
+        "seed_system_evals",
+    ],
+)
+def test_mutation_guard_rejects_unsafe_management_commands(command):
+    assert guarded_management_command(["manage.py", command]) == command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "backfill_legacy_scans",
+        "backfill_score_tracer_project",
+        "ch25_apply_schema",
+        "ch25_remove_pg",
+        "createcachetable",
+        "drop_legacy_observation_span",
+        "migrate",
+        "provision_grouping_features",
+        "register_temporal_schedules",
+        "seed_system_evals",
+    ],
+)
+def test_operator_bootstrap_authorizes_only_explicit_commands(monkeypatch, command):
+    monkeypatch.setenv("SERVICE_TYPE", "bootstrap")
+    monkeypatch.setenv("STARTUP_DB_MUTATION_MODE", "operator")
+
+    assert operator_startup_mutation_authorized(["manage.py", command]) is True
+
+
+@pytest.mark.parametrize("command", ["createcachetable", "migrate"])
+def test_local_entrypoint_authorizes_explicit_database_commands(monkeypatch, command):
+    monkeypatch.setenv("ENV_TYPE", "development")
+    monkeypatch.setenv("NO_STARTUP_DB_MUTATIONS", "false")
+
+    assert explicit_management_mutation_authorized(["manage.py", command]) is True
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["manage.py", "makemigrations", "tracer"],
+        ["manage.py", "makemigrations", "--check", "--dry-run"],
+        ["manage.py", "shell"],
+        ["manage.py", "shell", "-c", "print(1)"],
+    ],
+)
+def test_bin_dev_manage_runs_developer_commands(monkeypatch, argv):
+    # ./bin/dev manage: `docker compose exec -e NO_STARTUP_DB_MUTATIONS=false`
+    # in the app container, whose ENV_TYPE is local.
+    monkeypatch.setenv("NO_STARTUP_DB_MUTATIONS", "false")
+    monkeypatch.setattr(sys, "argv", argv)
+    connect = Mock()
+    monkeypatch.setattr("model_hub.apps.post_migrate.connect", connect)
+
+    assert explicit_management_mutation_authorized(argv) is True
+    ModelHubConfig("model_hub", sys.modules["model_hub"]).ready()
+    connect.assert_not_called()
+
+
+@pytest.mark.parametrize("command", ["makemigrations", "shell"])
+@pytest.mark.parametrize(
+    "environment",
+    [
+        # A plain `docker compose exec` session.
+        {"NO_STARTUP_DB_MUTATIONS": "true"},
+        # A hosted process, even when it asks for the local mode.
+        {"NO_STARTUP_DB_MUTATIONS": "false", "ENV_TYPE": "production"},
+        {"NO_STARTUP_DB_MUTATIONS": "false", "ENV_TYPE": "staging"},
+        {"NO_STARTUP_DB_MUTATIONS": "false", "CLOUD_DEPLOYMENT": "US"},
+        # An operator job runs only its allowlisted commands.
+        {
+            "NO_STARTUP_DB_MUTATIONS": "false",
+            "ENV_TYPE": "production",
+            "SERVICE_TYPE": "bootstrap",
+            "STARTUP_DB_MUTATION_MODE": "operator",
+        },
+    ],
+)
+def test_developer_commands_need_the_explicit_local_mode(
+    monkeypatch, command, environment
+):
+    for name, value in environment.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr(sys, "argv", ["manage.py", command])
+
+    assert explicit_management_mutation_authorized(["manage.py", command]) is False
+    with pytest.raises(RuntimeError, match=f"^{command} is disabled"):
+        ModelHubConfig("model_hub", sys.modules["model_hub"]).ready()
+
+
+@pytest.mark.parametrize("env_type", ["prod", "production", "staging"])
+def test_hosted_backend_cannot_use_local_explicit_database_mode(monkeypatch, env_type):
+    monkeypatch.setenv("ENV_TYPE", env_type)
+    monkeypatch.setenv("NO_STARTUP_DB_MUTATIONS", "false")
+
+    assert explicit_management_mutation_authorized(["manage.py", "migrate"]) is False
+
+
+def test_local_migrate_registers_only_post_migrate_seed(monkeypatch):
+    monkeypatch.setenv("ENV_TYPE", "development")
+    monkeypatch.setenv("NO_STARTUP_DB_MUTATIONS", "false")
+    monkeypatch.setattr(sys, "argv", ["manage.py", "migrate"])
+    connect = Mock()
+    monkeypatch.setattr("model_hub.apps.post_migrate.connect", connect)
+
+    ModelHubConfig("model_hub", sys.modules["model_hub"]).ready()
+
+    connect.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["manage.py", "shell"],
+        ["manage.py", "future_schema_command"],
+        ["granian", "--interface", "asgi", "tfc.asgi:application"],
+        ["celery", "-A", "tfc", "worker"],
+    ],
+)
+def test_operator_bootstrap_does_not_authorize_open_ended_processes(monkeypatch, argv):
+    monkeypatch.setenv("SERVICE_TYPE", "bootstrap")
+    monkeypatch.setenv("STARTUP_DB_MUTATION_MODE", "operator")
+
+    assert operator_startup_mutation_authorized(argv) is False
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["manage.py", "check", "--database", "default"],
+        ["manage.py", "collectstatic", "--noinput"],
+        ["manage.py", "showmigrations", "tracer"],
+        ["manage.py", "sqlmigrate", "tracer", "0001"],
+        ["manage.py", "generate_swagger", "/tmp/swagger.json"],
+        ["/app/backend/manage.py", "grpcrunaioserver"],
+        ["/usr/lib/python3/site-packages/django/__main__.py", "runserver"],
+        ["python", "-m", "django", "start_temporal_worker"],
+        ["python", "-I", "/sos/run_clickhouse_only_ab.py"],
+        ["granian", "--interface", "asgi", "tfc.asgi:application"],
+        ["celery", "-A", "tfc", "worker"],
+    ],
+)
+def test_mutation_guard_allows_required_read_only_and_server_commands(argv):
+    assert guarded_management_command(argv) is None
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        ["manage.py"],
+        ["/app/backend/manage.py"],
+        ["django-admin"],
+        ["django-admin.py"],
+        ["/usr/lib/python3/site-packages/django/__main__.py"],
+        ["python", "-m", "django"],
+    ],
+)
+@pytest.mark.parametrize(
+    "options", [["--check"], ["--check", "--noinput"], ["--no-input", "--check"]]
+)
+def test_migrate_check_is_read_only_without_mutation_authority(prefix, options):
+    argv = [*prefix, "migrate", *options]
+
+    assert guarded_management_command(argv) is None
+    assert operator_startup_mutation_authorized(argv) is False
+    assert explicit_management_mutation_authorized(argv) is False
+
+
+@pytest.mark.parametrize("mode", ["guarded", "local-mutations", "hosted-operator"])
+def test_migrate_check_ready_never_authorizes_mutations_or_connects_seed(
+    monkeypatch, mode
+):
+    monkeypatch.setenv("NO_STARTUP_DB_MUTATIONS", "true")
+    if mode == "local-mutations":
+        monkeypatch.setenv("NO_STARTUP_DB_MUTATIONS", "false")
+    elif mode == "hosted-operator":
+        monkeypatch.setenv("ENV_TYPE", "production")
+        monkeypatch.setenv("SERVICE_TYPE", "bootstrap")
+        monkeypatch.setenv("STARTUP_DB_MUTATION_MODE", "operator")
+    monkeypatch.setattr(sys, "argv", ["manage.py", "migrate", "--check", "--noinput"])
+    authorize = Mock(
+        side_effect=AssertionError("check must not seek mutation authority")
+    )
+    connect = Mock()
+    monkeypatch.setattr(
+        "model_hub.apps.explicit_management_mutation_authorized", authorize
+    )
+    monkeypatch.setattr("model_hub.apps.post_migrate.connect", connect)
+
+    ModelHubConfig("model_hub", sys.modules["model_hub"]).ready()
+
+    assert startup_db_mutations_disabled() is True
+    authorize.assert_not_called()
+    connect.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        [],
+        ["--noinput"],
+        ["--check", "--prune", "model_hub"],
+        ["--prune", "model_hub", "--check"],
+        ["--check", "--pr"],
+        ["--check", "--fake"],
+        ["--check", "--fake-initial"],
+        ["--check", "--run-syncdb"],
+        ["--check", "--run-s"],
+        ["--check", "model_hub", "zero"],
+        ["--check", "--database", "default"],
+        ["--check", "--settings=other.settings"],
+        ["--check", "--future-option"],
+        ["--che"],
+        ["--check=true"],
+        ["--", "--check"],
+    ],
+)
+def test_migrate_check_does_not_bypass_guard_for_other_arguments(monkeypatch, options):
+    monkeypatch.setenv("NO_STARTUP_DB_MUTATIONS", "true")
+    argv = ["manage.py", "migrate", *options]
+    monkeypatch.setattr(sys, "argv", argv)
+    connect = Mock()
+    monkeypatch.setattr("model_hub.apps.post_migrate.connect", connect)
+
+    assert guarded_management_command(argv) == "migrate"
+    assert explicit_management_mutation_authorized(argv) is False
+    with pytest.raises(RuntimeError, match="^migrate is disabled"):
+        ModelHubConfig("model_hub", sys.modules["model_hub"]).ready()
+    connect.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        ["--check", "--dry-run"],
+        ["--dry-run", "--check"],
+        ["--check", "--dry-run", "--noinput"],
+    ],
+)
+@pytest.mark.parametrize(
+    "environment",
+    [
+        # A plain `docker compose exec` session.
+        {"NO_STARTUP_DB_MUTATIONS": "true"},
+        {"NO_STARTUP_DB_MUTATIONS": "true", "ENV_TYPE": "production"},
+        {"NO_STARTUP_DB_MUTATIONS": "true", "CLOUD_DEPLOYMENT": "US"},
+    ],
+)
+def test_makemigrations_check_dry_run_is_read_only_anywhere(
+    monkeypatch, options, environment
+):
+    # The migration review check: it reports and writes no migration file.
+    for name, value in environment.items():
+        monkeypatch.setenv(name, value)
+    argv = ["manage.py", "makemigrations", *options]
+    monkeypatch.setattr(sys, "argv", argv)
+
+    assert guarded_management_command(argv) is None
+    ModelHubConfig("model_hub", sys.modules["model_hub"]).ready()
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        ["--check"],
+        ["--dry-run"],
+        ["--check", "--dry-run", "tracer"],
+        ["--check", "--dry-run", "--merge"],
+        ["--check", "--dry-run", "--update"],
+        ["--check", "--dry-run", "--empty"],
+        ["--check", "--dry-run", "--name", "x"],
+        ["--check", "--dry"],
+        ["--check", "--dry-run", "--settings=other.settings"],
+        ["--", "--check", "--dry-run"],
+    ],
+)
+def test_makemigrations_check_does_not_bypass_guard_for_other_arguments(
+    monkeypatch, options
+):
+    monkeypatch.setenv("NO_STARTUP_DB_MUTATIONS", "true")
+    argv = ["manage.py", "makemigrations", *options]
+    monkeypatch.setattr(sys, "argv", argv)
+
+    assert guarded_management_command(argv) == "makemigrations"
+    with pytest.raises(RuntimeError, match="^makemigrations is disabled"):
+        ModelHubConfig("model_hub", sys.modules["model_hub"]).ready()
+
+
+def test_ready_rejects_unsafe_management_command_before_pytest_shortcut(monkeypatch):
+    monkeypatch.setenv("NO_STARTUP_DB_MUTATIONS", "true")
+    monkeypatch.setattr(sys, "argv", ["manage.py", "migrate"])
+
+    with pytest.raises(RuntimeError, match="^migrate is disabled"):
+        ModelHubConfig("model_hub", sys.modules["model_hub"]).ready()
+
+
+def test_cloud_ready_blocks_manage_py_shell_before_any_startup_mutation(monkeypatch):
+    monkeypatch.setenv("ENV_TYPE", "production")
+    monkeypatch.setenv("CH25_DROP_LEGACY_CDC_CHAIN", "true")
+    monkeypatch.setattr(sys, "argv", ["manage.py", "shell"])
+    with pytest.raises(RuntimeError, match="^shell is disabled"):
+        ModelHubConfig("model_hub", sys.modules["model_hub"]).ready()
+
+
+def test_cloud_operator_schema_command_skips_appconfig_mutations(monkeypatch):
+    monkeypatch.setenv("ENV_TYPE", "production")
+    monkeypatch.setenv("SERVICE_TYPE", "bootstrap")
+    monkeypatch.setenv("STARTUP_DB_MUTATION_MODE", "operator")
+    monkeypatch.setattr(sys, "argv", ["manage.py", "ch25_apply_schema"])
+    connect = Mock()
+    monkeypatch.setattr("model_hub.apps.post_migrate.connect", connect)
+
+    ModelHubConfig("model_hub", sys.modules["model_hub"]).ready()
+
+    connect.assert_not_called()
+
+
+def test_cloud_operator_migrate_registers_prompt_label_seed(monkeypatch):
+    monkeypatch.setenv("ENV_TYPE", "production")
+    monkeypatch.setenv("SERVICE_TYPE", "bootstrap")
+    monkeypatch.setenv("STARTUP_DB_MUTATION_MODE", "operator")
+    monkeypatch.setattr(sys, "argv", ["manage.py", "migrate"])
+    connect = Mock()
+    monkeypatch.setattr("model_hub.apps.post_migrate.connect", connect)
+
+    ModelHubConfig("model_hub", sys.modules["model_hub"]).ready()
+
+    connect.assert_called_once()
+    assert connect.call_args.kwargs["dispatch_uid"] == (
+        "model_hub_seed_default_prompt_labels"
+    )
+
+
+def test_appconfig_exposes_no_implicit_database_bootstrap_hooks():
+    assert not hasattr(ModelHubConfig, "_ensure_analytics_schema")
+    assert not hasattr(ModelHubConfig, "check_and_create_clickhouse_tables")
+    assert not hasattr(ModelHubConfig, "_warm_ch_cache")
+
+
+def _hosted_schedule_registrar(monkeypatch, service_type="temporal-schedules"):
+    # The production chart's application env: mutation-free, not the operator.
+    monkeypatch.setenv("ENV_TYPE", "prod")
+    monkeypatch.setenv("CLOUD_DEPLOYMENT", "US")
+    monkeypatch.setenv("NO_STARTUP_DB_MUTATIONS", "true")
+    monkeypatch.setenv("STARTUP_DB_MUTATION_MODE", "disabled")
+    monkeypatch.setenv("SERVICE_TYPE", service_type)
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [["manage.py"], ["/app/backend/manage.py"], ["python", "-m", "django"]],
+)
+def test_hosted_schedule_registrar_may_register_schedules(monkeypatch, prefix):
+    _hosted_schedule_registrar(monkeypatch)
+    argv = [*prefix, "register_temporal_schedules"]
+    monkeypatch.setattr(sys, "argv", argv)
+
+    assert explicit_management_mutation_authorized(argv) is True
+    ModelHubConfig("model_hub", sys.modules["model_hub"]).ready()
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        ["--delete-all"],
+        ["--cleanup-orphans"],
+        ["--model-hub-only"],
+        ["--pause", "sweep-stranded-eval-tasks"],
+        ["--unpause", "sweep-stranded-eval-tasks"],
+        ["--trigger", "sweep-stranded-eval-tasks"],
+        ["--settings=other.settings"],
+    ],
+)
+def test_schedule_registrar_cannot_delete_pause_or_narrow_schedules(
+    monkeypatch, options
+):
+    _hosted_schedule_registrar(monkeypatch)
+    argv = ["manage.py", "register_temporal_schedules", *options]
+    monkeypatch.setattr(sys, "argv", argv)
+
+    assert explicit_management_mutation_authorized(argv) is False
+    with pytest.raises(RuntimeError, match="^register_temporal_schedules is disabled"):
+        ModelHubConfig("model_hub", sys.modules["model_hub"]).ready()
+
+
+@pytest.mark.parametrize("action", ["--pause", "--unpause"])
+def test_hosted_operator_job_may_pause_or_unpause_a_schedule(monkeypatch, action):
+    # Registration keeps a schedule's paused state, so this is how an operator
+    # turns one off or back on for good.
+    _hosted_schedule_registrar(monkeypatch, "bootstrap")
+    monkeypatch.setenv("STARTUP_DB_MUTATION_MODE", "operator")
+    argv = ["manage.py", "register_temporal_schedules", action, "recover-stale-work"]
+    monkeypatch.setattr(sys, "argv", argv)
+
+    assert explicit_management_mutation_authorized(argv) is True
+    ModelHubConfig("model_hub", sys.modules["model_hub"]).ready()
+
+
+@pytest.mark.parametrize(
+    "command", ["migrate", "seed_system_evals", "createcachetable", "shell"]
+)
+def test_schedule_registrar_grants_no_database_command(monkeypatch, command):
+    _hosted_schedule_registrar(monkeypatch)
+
+    assert explicit_management_mutation_authorized(["manage.py", command]) is False
+
+
+@pytest.mark.parametrize("service_type", ["backend", "temporal-worker", "worker"])
+def test_hosted_application_processes_still_cannot_register_schedules(
+    monkeypatch, service_type
+):
+    _hosted_schedule_registrar(monkeypatch, service_type)
+    argv = ["manage.py", "register_temporal_schedules"]
+
+    assert explicit_management_mutation_authorized(argv) is False

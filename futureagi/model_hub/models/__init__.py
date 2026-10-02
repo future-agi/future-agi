@@ -22,6 +22,7 @@ from .dataset_optimization_trial_item import (
 )
 from .dataset_properties import DatasetProperties
 from .develop import DevelopAI
+from .eval_summary_template import EvalSummaryTemplate
 from .evaluation import Evaluation
 from .insight import Insight
 from .insight_status import InsightStatus
@@ -33,3 +34,4 @@ from .optimize_dataset import OptimizeDataset
 from .performance_report import PerformanceReport
 from .prompt import Prompt
 from .score import Score
+from .tts_voices import TTSVoice

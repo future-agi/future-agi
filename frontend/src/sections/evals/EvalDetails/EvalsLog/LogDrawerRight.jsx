@@ -53,6 +53,7 @@ const LogDrawerRight = ({
       <Box
         sx={{
           flex: 1,
+          display: "flex",
           flexDirection: "column",
           gap: "15px",
           overflowY: "auto",
@@ -131,6 +132,8 @@ const LogDrawerRight = ({
               border: `1px solid ${alpha(theme.palette.text.disabled, 0.2)}`,
               padding: "16px",
               borderRadius: "4px",
+              maxHeight: "300px",
+              overflowY: "auto",
             }}
           >
             <Typography fontWeight={400} fontSize={14} color="text.primary">

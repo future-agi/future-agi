@@ -1,0 +1,55 @@
+resolver 127.0.0.11 valid=5s ipv6=off;
+
+# Resolve Compose service names continuously. The backend and collector are
+# routinely recreated during DEV deploys; resolving only when nginx starts
+# leaves the proxy pinned to the retired container IP and returns 502s until
+# the proxy is restarted manually.
+upstream dev_backend {
+    zone dev_backend 64k;
+    server backend:80 resolve;
+}
+
+upstream dev_fi_collector {
+    zone dev_fi_collector 64k;
+    server fi-collector:4318 resolve;
+}
+
+server {
+    listen 8000;
+    server_name _;
+
+    # The public DEV API accepts only the two exact OTLP/HTTP trace paths.
+    # The collector itself remains loopback-only on the host.
+    location ~ ^/(?:tracer/)?v1/traces$ {
+        client_max_body_size ${DEV_API_PROXY_OTLP_MAX_BODY_SIZE};
+
+        proxy_pass http://dev_fi_collector;
+        proxy_connect_timeout ${DEV_API_PROXY_CONNECT_TIMEOUT};
+        proxy_read_timeout ${DEV_API_PROXY_READ_TIMEOUT};
+        proxy_send_timeout ${DEV_API_PROXY_SEND_TIMEOUT};
+        proxy_request_buffering off;
+
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Authorization $http_authorization;
+        proxy_set_header Content-Type $http_content_type;
+        proxy_set_header Content-Encoding $http_content_encoding;
+    }
+
+    location / {
+        # Preserve the backend's existing request-size behavior. The bounded
+        # edge limit above applies only to OTLP/HTTP ingestion.
+        client_max_body_size 0;
+
+        proxy_pass http://dev_backend;
+        proxy_connect_timeout ${DEV_API_PROXY_CONNECT_TIMEOUT};
+        proxy_read_timeout ${DEV_API_PROXY_READ_TIMEOUT};
+        proxy_send_timeout ${DEV_API_PROXY_SEND_TIMEOUT};
+
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}

@@ -22,6 +22,7 @@ const CustomModelOptions = ({
   modelConfig,
   disabledHover = false,
   disabledClick = false,
+  viewOnly = false,
   hoverPlacement = "bottom",
   isDirty,
   onClick = () => {},
@@ -56,6 +57,7 @@ const CustomModelOptions = ({
   }, [modelConfig]);
 
   const handleOpenDropdown = () => {
+    if (viewOnly) return;
     if (!openDropdown) {
       onClick?.();
       setValue("config", setToolValue());
@@ -130,9 +132,11 @@ const CustomModelOptions = ({
       >
         <IconButton
           disabled={disabledClick}
+          disableRipple={viewOnly}
           sx={{
             height: "24px",
             color: "text.primary",
+            ...(viewOnly && { cursor: "default" }),
             ...(isModalContainer
               ? {
                   borderRadius: "4px",
@@ -192,6 +196,7 @@ CustomModelOptions.propTypes = {
   modelConfig: PropTypes.object,
   disabledHover: PropTypes.bool,
   disabledClick: PropTypes.bool,
+  viewOnly: PropTypes.bool,
   hoverPlacement: PropTypes.string,
   isDirty: PropTypes.bool,
   onClick: PropTypes.func,

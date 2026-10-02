@@ -73,7 +73,11 @@ class Command(BaseCommand):
         )
 
         for membership in memberships:
-            roles = normalize_annotator_roles(membership.roles or membership.role)
+            stored_roles = normalize_annotator_roles(
+                membership.roles,
+                default=None,
+            )
+            roles = stored_roles or normalize_annotator_roles(membership.role)
             if (
                 membership.queue_id
                 and membership.user_id
@@ -82,7 +86,7 @@ class Command(BaseCommand):
                 roles = merge_roles(roles, CREATOR_FULL_ACCESS_ROLES)
 
             primary_role = primary_annotator_role(roles)
-            if membership.role == primary_role and membership.normalized_roles == roles:
+            if membership.role == primary_role and stored_roles == roles:
                 continue
 
             updated += 1

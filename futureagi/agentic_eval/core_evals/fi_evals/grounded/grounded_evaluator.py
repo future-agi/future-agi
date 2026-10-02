@@ -1,5 +1,3 @@
-
-
 import time
 
 from agentic_eval.core_evals.fi_metrics.metric_type import MetricType
@@ -13,6 +11,7 @@ from .similarity import (
     JaccardSimilarity,
     JaroWincklerSimilarity,
     NormalisedLevenshteinSimilarity,
+    PhoneticSimilarity,
     SorensenDiceSimilarity,
 )
 
@@ -65,6 +64,8 @@ class GroundedEvaluator(BaseEvaluator):
                 self._comparator = SorensenDiceSimilarity()
             elif comparator_str == "cosinesimilarity":
                 self._comparator = CosineSimilarity()
+            elif comparator_str == "phoneticsimilarity":
+                self._comparator = PhoneticSimilarity()
             else:
                 raise ValueError(f"Invalid comparator: {comparator_str}")
         if failure_threshold is not None and isinstance(failure_threshold, dict):
@@ -76,7 +77,11 @@ class GroundedEvaluator(BaseEvaluator):
 
     def _process_kwargs(self, required_args, **kwargs):
         required_args_map = {
-            key: "\n".join(kwargs[key]) if key == "context" and isinstance(kwargs[key], list) else kwargs[key]
+            key: (
+                "\n".join(kwargs[key])
+                if key == "context" and isinstance(kwargs[key], list)
+                else kwargs[key]
+            )
             for key in required_args
         }
         if len(required_args_map) == 2:
@@ -97,9 +102,12 @@ class GroundedEvaluator(BaseEvaluator):
             config["failure_threshold"] = self._failure_threshold
         return config
 
-
     def is_failure(self, score) -> bool | None:
-        return bool(score < self._failure_threshold) if self._failure_threshold is not None else None
+        return (
+            bool(score < self._failure_threshold)
+            if self._failure_threshold is not None
+            else None
+        )
 
     def _evaluate(self, **kwargs) -> EvalResult:
         """
@@ -114,7 +122,11 @@ class GroundedEvaluator(BaseEvaluator):
             string1, string2 = self._process_kwargs(self.required_args, **kwargs)
             # Calculate the similarity score using the comparator
             similarity_score = self._comparator.compare(string1, string2)
-            metrics.append(EvalResultMetric(id=MetricType.SIMILARITY_SCORE.value, value=similarity_score))
+            metrics.append(
+                EvalResultMetric(
+                    id=MetricType.SIMILARITY_SCORE.value, value=similarity_score
+                )
+            )
             if self._failure_threshold is None:
                 explanation = f"Successfully calculated similarity score of {similarity_score} using {self.display_name}"
             elif bool(similarity_score < self._failure_threshold):
@@ -142,4 +154,3 @@ class GroundedEvaluator(BaseEvaluator):
             datapoint_field_annotations=None,
         )
         return eval_result
-

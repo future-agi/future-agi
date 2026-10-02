@@ -174,14 +174,14 @@ export const WorkspaceChipsCell = ({ value }) => {
     <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5, py: 0.5 }}>
       {value.map((ws) => (
         <Box
-          key={ws.workspace_id ?? ws.workspaceId}
+          key={ws.workspace_id}
           sx={{ display: "flex", alignItems: "center", gap: 1 }}
         >
           <Typography variant="caption" fontWeight="fontWeightMedium">
-            {ws.workspace_name ?? ws.workspaceName}
+            {ws.workspace_name}
           </Typography>
           <Typography variant="caption" color="inherit" sx={{ opacity: 0.7 }}>
-            {ws.ws_role ?? ws.wsRole}
+            {ws.ws_role}
           </Typography>
         </Box>
       ))}
@@ -222,7 +222,7 @@ export const WorkspaceChipsCell = ({ value }) => {
         }}
       >
         <Chip
-          label={first.workspace_name ?? first.workspaceName}
+          label={first.workspace_name}
           size="small"
           sx={{
             maxWidth: 160,
@@ -261,8 +261,8 @@ export const ActionRender = (props) => {
   const status = data.status;
   const { user, orgLevel } = useAuthContext();
 
-  const targetOrgLevel = data?.org_level ?? data?.orgLevel;
-  const actorOrgLevel = orgLevel ?? user?.org_level ?? user?.orgLevel;
+  const targetOrgLevel = data?.org_level;
+  const actorOrgLevel = orgLevel ?? user?.org_level;
   const loggedInUserEmail = user?.email;
   const selectedUserEmail = data?.email;
 

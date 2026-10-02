@@ -145,7 +145,7 @@ const UploadFileModal = ({
               }}
               onDrop={handleFileChange}
               heading="Choose a file or drag & drop it here"
-              description="Supports JSONL, JSON, and CSV file format up to 10 MB"
+              description="Supports JSONL, JSON, and CSV file format up to 25 MB"
               sx={{
                 flex: 1,
                 display: "flex",

@@ -31,6 +31,7 @@ import {
   deleteNodeApi,
 } from "src/api/agent-playground/agent-playground";
 import useAddNodeOptimistic from "./hooks/useAddNodeOptimistic";
+import useCanEditAgent from "../hooks/useCanEditAgent";
 import logger from "src/utils/logger";
 
 const nodeTypes = {
@@ -81,6 +82,8 @@ export default function GraphView() {
   }));
   const { ensureDraft } = useSaveDraftContext();
   const isRunning = useWorkflowRunStoreShallow((s) => s.isRunning);
+  const { isReadOnly } = useCanEditAgent();
+  const isLocked = isRunning || isReadOnly;
 
   // --- Position update (debounced with rollback) ---
   // Saves the original position of each dragged node before the drag begins.
@@ -114,7 +117,7 @@ export default function GraphView() {
 
   const onBeforeDelete = useCallback(
     ({ nodes: deletingNodes, edges: deletingEdges }) => {
-      if (isRunning) return Promise.resolve(false);
+      if (isLocked) return Promise.resolve(false);
       if (deletingNodes.length === 0 && deletingEdges.length === 0)
         return Promise.resolve(true);
 
@@ -135,7 +138,7 @@ export default function GraphView() {
         });
       });
     },
-    [isRunning],
+    [isLocked],
   );
 
   const handleConfirmDelete = useCallback(async () => {
@@ -291,7 +294,7 @@ export default function GraphView() {
 
   const onConnect = useCallback(
     async (connection) => {
-      if (isRunning) return;
+      if (isLocked) return;
 
       const edgeId = crypto.randomUUID();
 
@@ -336,7 +339,7 @@ export default function GraphView() {
         enqueueSnackbar("Failed to save connection", { variant: "error" });
       }
     },
-    [storeOnConnect, ensureDraft, setGraphData, isRunning, queryClient],
+    [storeOnConnect, ensureDraft, setGraphData, isLocked, queryClient],
   );
 
   const onNodeDragStop = useCallback(
@@ -396,7 +399,7 @@ export default function GraphView() {
   const onDrop = useCallback(
     (event) => {
       event.preventDefault();
-      if (isRunning) return;
+      if (isLocked) return;
 
       const type = event.dataTransfer.getData("application/reactflow");
 
@@ -418,7 +421,7 @@ export default function GraphView() {
         node_template_id: nodeTemplateId,
       });
     },
-    [screenToFlowPosition, addNode, isRunning],
+    [screenToFlowPosition, addNode, isLocked],
   );
 
   const onConnectStart = useCallback(
@@ -446,9 +449,9 @@ export default function GraphView() {
   return (
     <>
       <ReactFlow
-        deleteKeyCode={isRunning ? null : ["Backspace", "Delete"]}
-        nodesDraggable={!isRunning}
-        nodesConnectable={!isRunning}
+        deleteKeyCode={isLocked ? null : ["Backspace", "Delete"]}
+        nodesDraggable={!isLocked}
+        nodesConnectable={!isLocked}
         elementsSelectable={!isRunning}
         nodes={nodes}
         edges={edges}

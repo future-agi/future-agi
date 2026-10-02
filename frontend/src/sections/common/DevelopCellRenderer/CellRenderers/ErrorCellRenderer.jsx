@@ -11,16 +11,21 @@ import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
 import { useNavigate } from "react-router-dom";
 
-// Error codes emitted by backend's usage pre-check (see CheckResult.error_code
-// in core-backend/usage/schemas/events.py). Mapping to a single "needs upgrade"
-// category keeps the UI decoupled from the exact billing taxonomy.
-const USAGE_LIMIT_ERROR_CODES = new Set([
-  "FREE_TIER_LIMIT",
-  "BUDGET_PAUSED",
-  "PAYMENT_REQUIRED",
-  "ENTITLEMENT_LIMIT",
-  "USAGE_LIMIT_EXCEEDED",
-]);
+// Error codes emitted by backend's usage pre-check (see CheckResult.error_code).
+const USAGE_LIMIT_CTA = {
+  FREE_TIER_LIMIT: "Upgrade for more usage",
+  RATE_LIMITED: "Upgrade to raise rate limit",
+  ENTITLEMENT_LIMIT: "Upgrade to increase limits",
+  ENTITLEMENT_DENIED: "Upgrade plan to unlock",
+  BUDGET_PAUSED: "Increase budget to resume",
+  PAYMENT_REQUIRED: "Add payment method to continue",
+  ACCOUNT_SUSPENDED: "Clear dues to reactivate",
+  LICENSE_EXPIRED: "Renew license to continue",
+  LICENSE_FEATURE_DENIED: "Contact sales to unlock",
+  USAGE_LIMIT_EXCEEDED: "Upgrade for more usage",
+};
+
+const USAGE_LIMIT_ERROR_CODES = new Set(Object.keys(USAGE_LIMIT_CTA));
 
 const parseValueInfos = (raw) => {
   if (!raw) return null;
@@ -54,11 +59,11 @@ const ErrorCellRenderer = ({
   const valueInfos = parseValueInfos(
     cellData?.value_infos ?? cellData?.valueInfos,
   );
-  const isUsageLimit = USAGE_LIMIT_ERROR_CODES.has(
-    valueInfos?.error_code || valueInfos?.errorCode,
-  );
+  const errorCode = valueInfos?.error_code;
+  const isUsageLimit = USAGE_LIMIT_ERROR_CODES.has(errorCode);
   const upgradeCta = valueInfos?.upgrade_cta || valueInfos?.upgradeCta;
-  const upgradeText = upgradeCta?.text || "Upgrade plan";
+  const ctaText =
+    USAGE_LIMIT_CTA[errorCode] || upgradeCta?.text || "Upgrade for more usage";
   const limitMessage =
     valueInfos?.reason ||
     (typeof cellData?.value === "string" ? cellData.value : "Limit reached");
@@ -75,7 +80,7 @@ const ErrorCellRenderer = ({
         title={limitMessage}
         enterDelay={300}
         arrow
-        type="info"
+        type="black"
         size="small"
         slotProps={tooltipSlotProp}
       >
@@ -83,31 +88,19 @@ const ErrorCellRenderer = ({
           sx={{
             display: "flex",
             alignItems: "center",
-            gap: 0.75,
+            justifyContent: "center",
+            gap: 0.5,
             height: "100%",
             width: "100%",
             padding: "4px 8px",
-            color: "warning.dark",
           }}
         >
           <Iconify
-            icon="mdi:alert-circle-outline"
+            icon="mdi:lock-outline"
             width={16}
-            sx={{ flexShrink: 0, color: "warning.main" }}
+            sx={{ flexShrink: 0, color: "text.primary" }}
           />
-          <Typography
-            variant="body2"
-            sx={{
-              flex: 1,
-              minWidth: 0,
-              fontWeight: 500,
-              whiteSpace: "nowrap",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-            }}
-          >
-            Limit reached
-          </Typography>
+          <Typography typography="s2">{ctaText}</Typography>
           <Button
             size="small"
             variant="text"
@@ -115,14 +108,17 @@ const ErrorCellRenderer = ({
             sx={{
               textTransform: "none",
               minWidth: 0,
-              padding: "2px 6px",
-              fontSize: 12,
-              fontWeight: 600,
+              padding: 0,
               color: "primary.main",
-              "&:hover": { backgroundColor: "action.hover" },
+              textDecoration: "underline",
+              whiteSpace: "nowrap",
+              "&:hover": {
+                backgroundColor: "transparent",
+                textDecoration: "underline",
+              },
             }}
           >
-            {upgradeText}
+            Upgrade
           </Button>
         </Box>
       </CustomTooltip>

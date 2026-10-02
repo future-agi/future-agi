@@ -4,10 +4,13 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 
 	"github.com/futureagi/agentcc-gateway/internal/auth"
+	gatewayadmin "github.com/futureagi/agentcc-gateway/internal/contracts/generated"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 )
 
@@ -75,15 +78,10 @@ func (h *KeyHandlers) CreateKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req struct {
-		Name      string            `json:"name"`
-		Owner     string            `json:"owner"`
-		Models    []string          `json:"models"`
-		Providers []string          `json:"providers"`
-		Metadata  map[string]string `json:"metadata"`
-	}
-
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	var req gatewayadmin.CreateKeyRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
 		models.WriteError(w, models.ErrBadRequest("invalid_json", "Invalid JSON: "+err.Error()))
 		return
 	}
@@ -93,7 +91,11 @@ func (h *KeyHandlers) CreateKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	key, rawKey := h.keyStore.Create(req.Name, req.Owner, req.Models, req.Providers, req.Metadata)
+	owner := ""
+	if req.Owner != nil {
+		owner = *req.Owner
+	}
+	key, rawKey := h.keyStore.Create(req.Name, owner, req.Models, req.Providers, req.Metadata)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -108,6 +110,40 @@ func (h *KeyHandlers) CreateKey(w http.ResponseWriter, r *http.Request) {
 		"providers":  key.AllowedProviders,
 		"created_at": key.CreatedAt,
 	})
+}
+
+// ImportKeys handles POST /-/keys/sync: the control plane pushes keys it holds
+// that this gateway lacks, such as after a restart without startup sync. Keys
+// travel by hash; the raw key never leaves the control plane. Additive: a key
+// whose hash is already loaded is left as it is, revoked or not.
+func (h *KeyHandlers) ImportKeys(w http.ResponseWriter, r *http.Request) {
+	if !h.requireAdmin(w, r) {
+		return
+	}
+
+	var req gatewayadmin.ImportKeysRequest
+	decoder := json.NewDecoder(io.LimitReader(r.Body, 10<<20))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
+		models.WriteError(w, models.ErrBadRequest("invalid_json", "Invalid JSON: "+err.Error()))
+		return
+	}
+	keys := make([]auth.SyncedKey, len(req.Keys))
+	for i, k := range req.Keys {
+		key, err := auth.SyncedKeyFromContract(k)
+		if err != nil {
+			models.WriteError(w, models.ErrBadRequest("invalid_key", fmt.Sprintf("keys[%d]: %v", i, err)))
+			return
+		}
+		keys[i] = key
+	}
+
+	loaded := h.keyStore.LoadFromHashes(keys)
+	slog.Info("keys imported from control plane", "received", len(keys), "loaded", loaded)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(gatewayadmin.ImportKeysResponse{Received: len(keys), Loaded: loaded})
 }
 
 // GetKey handles GET /-/keys/{key_id}.
@@ -197,15 +233,10 @@ func (h *KeyHandlers) UpdateKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req struct {
-		Name      *string           `json:"name"`
-		Owner     *string           `json:"owner"`
-		Models    []string          `json:"models"`
-		Providers []string          `json:"providers"`
-		Metadata  map[string]string `json:"metadata"`
-	}
-
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	var req gatewayadmin.UpdateKeyRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
 		models.WriteError(w, models.ErrBadRequest("invalid_json", "Invalid JSON: "+err.Error()))
 		return
 	}

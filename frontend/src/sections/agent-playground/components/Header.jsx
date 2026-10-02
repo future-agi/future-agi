@@ -8,8 +8,10 @@ import {
   useWorkflowRunStoreShallow,
 } from "../store";
 import { DraftBadge } from "src/sections/workbench/createPrompt/SharedStyledComponents";
+import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import { ShowComponent } from "../../../components/show/ShowComponent";
 import useDraftConfirmation from "../hooks/useDraftConfirmation";
+import useCanEditAgent from "../hooks/useCanEditAgent";
 import { validateGraphForSave } from "../utils/workflowValidation";
 import { enqueueSnackbar } from "notistack";
 
@@ -17,6 +19,7 @@ export default function Header() {
   const navigate = useNavigate();
   const location = useLocation();
   const { isDraft } = useDraftConfirmation();
+  const { canEditAgent } = useCanEditAgent();
   const isBuilderTab = location.pathname.endsWith("/build");
   const { isRunning, openExecutionStopDialog } = useWorkflowRunStoreShallow(
     (s) => ({
@@ -140,15 +143,31 @@ export default function Header() {
           Docs
         </Button>
         */}
-        <Button
-          disabled={!isDraft || !isBuilderTab || isRunning || !isGraphReady}
+        <CustomTooltip
+          show={!canEditAgent}
+          type=""
           size="small"
-          variant="contained"
-          color="primary"
-          onClick={handleSaveClick}
+          title="You don't have permission to edit this agent."
+          arrow
         >
-          Save Agent
-        </Button>
+          <span>
+            <Button
+              disabled={
+                !canEditAgent ||
+                !isDraft ||
+                !isBuilderTab ||
+                isRunning ||
+                !isGraphReady
+              }
+              size="small"
+              variant="contained"
+              color="primary"
+              onClick={handleSaveClick}
+            >
+              Save Agent
+            </Button>
+          </span>
+        </CustomTooltip>
       </Stack>
     </Stack>
   );

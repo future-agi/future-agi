@@ -8,6 +8,12 @@ import copy
 import structlog
 from django.conf import settings as django_settings
 
+from agentcc.contracts.gateway_admin import (
+    OrgConfig as GatewayOrgConfig,
+)
+from agentcc.contracts.gateway_admin import (
+    ProviderConfig as GatewayProviderConfig,
+)
 from agentcc.models import AgentccOrgConfig
 from agentcc.org_config_defaults import normalize_cache_config
 from agentcc.services.gateway_client import GatewayClientError, get_gateway_client
@@ -52,6 +58,38 @@ _RULE_PROVIDER_DEFAULTS = {
     "mcp-security": "mcp_security",
 }
 
+_PROVIDER_CREDENTIAL_ALIASES = {
+    "access_key": "aws_access_key_id",
+    "secret_key": "aws_secret_access_key",
+    "region": "aws_region",
+}
+
+
+def _contract_input_names(contract_model):
+    names = set(contract_model.model_fields)
+    for field in contract_model.model_fields.values():
+        if field.alias:
+            names.add(field.alias)
+        validation_alias = field.validation_alias
+        if validation_alias is None:
+            continue
+        choices = getattr(validation_alias, "choices", (validation_alias,))
+        names.update(choice for choice in choices if isinstance(choice, str))
+    return frozenset(names)
+
+
+_PROVIDER_INPUT_FIELDS = _contract_input_names(GatewayProviderConfig)
+
+
+class UnsupportedProviderCredentialFields(ValueError):
+    def __init__(self, provider_name, fields):
+        self.provider_name = provider_name
+        self.fields = tuple(sorted(fields))
+        super().__init__(
+            "Unsupported gateway credential fields for provider "
+            f"{provider_name}: {', '.join(self.fields)}"
+        )
+
 
 def _normalize_eval_ids(cfg):
     """
@@ -85,8 +123,8 @@ def _inject_guardrail_credentials(checks):
     "__encrypted__" sentinel values with actual secrets from the policy's
     encrypted_check_configs blob.
     """
-    from integrations.services.credentials import CredentialManager
     from agentcc.models.guardrail_policy import AgentccGuardrailPolicy
+    from integrations.services.credentials import CredentialManager
 
     ENCRYPTED_SENTINEL = "__encrypted__"
 
@@ -327,10 +365,48 @@ def _inject_fi_credentials(checks, org_id):
         )
 
 
+def _normalize_provider_credentials(provider_name, decrypted):
+    normalized = {}
+    unsupported = []
+    for key, value in decrypted.items():
+        if value in (None, ""):
+            continue
+        canonical_key = _PROVIDER_CREDENTIAL_ALIASES.get(key, key)
+        if canonical_key in GatewayProviderConfig.model_fields:
+            normalized[canonical_key] = value
+        else:
+            unsupported.append(key)
+
+    if unsupported:
+        raise UnsupportedProviderCredentialFields(provider_name, unsupported)
+    return normalized
+
+
+def _normalize_provider_extra_config(provider_name, extra_config):
+    if not isinstance(extra_config, dict):
+        return {}
+
+    normalized = {}
+    ignored = []
+    for key, value in extra_config.items():
+        if key in _PROVIDER_INPUT_FIELDS:
+            normalized[key] = value
+        elif value not in (None, "", [], {}):
+            ignored.append(key)
+
+    if ignored:
+        logger.warning(
+            "provider_extra_config_ignored",
+            provider=provider_name,
+            keys=sorted(ignored),
+        )
+    return normalized
+
+
 def _assemble_providers(org_id):
     """Build providers dict from AgentccProviderCredential rows for an org."""
-    from integrations.services.credentials import CredentialManager
     from agentcc.models.provider_credential import AgentccProviderCredential
+    from integrations.services.credentials import CredentialManager
 
     credentials = AgentccProviderCredential.no_workspace_objects.filter(
         organization_id=org_id,
@@ -348,18 +424,32 @@ def _assemble_providers(org_id):
                 provider=cred.provider_name,
             )
             continue
-        providers[cred.provider_name] = {
-            **cred.extra_config,
-            "api_key": decrypted.get("api_key", ""),
-            **{k: v for k, v in decrypted.items() if k != "api_key"},
-            "base_url": cred.base_url,
-            "api_format": cred.api_format,
-            "models": cred.models_list,
-            "enabled": True,
-            "default_timeout": f"{cred.default_timeout_seconds}s",
-            "max_concurrent": cred.max_concurrent,
-            "conn_pool_size": cred.conn_pool_size,
-        }
+
+        try:
+            raw = {
+                **_normalize_provider_extra_config(
+                    cred.provider_name, cred.extra_config
+                ),
+                **_normalize_provider_credentials(cred.provider_name, decrypted),
+                "base_url": cred.base_url,
+                "api_format": cred.api_format,
+                "models": cred.models_list,
+                "enabled": True,
+                "timeout": cred.default_timeout_seconds,
+                "max_concurrent": cred.max_concurrent,
+                "conn_pool_size": cred.conn_pool_size,
+            }
+            providers[cred.provider_name] = GatewayProviderConfig.model_validate(
+                raw
+            ).model_dump(by_alias=True, exclude_none=True)
+        except UnsupportedProviderCredentialFields as e:
+            logger.warning(
+                "provider_credential_unsupported_fields",
+                org_id=str(org_id),
+                provider=cred.provider_name,
+                fields=list(e.fields),
+            )
+            continue
     return providers
 
 
@@ -382,7 +472,13 @@ def _extract_budget_action(entry):
     if not isinstance(entry, dict):
         return None
 
-    action = entry.get("action") or entry.get("action_mode") or entry.get("on_exceed")
+    action = (
+        entry.get("action")
+        or entry.get("action_mode")
+        or entry.get("actionMode")
+        or entry.get("on_exceed")
+        or entry.get("onExceed")
+    )
     if isinstance(action, str) and action:
         return action.lower()
     return None
@@ -479,7 +575,7 @@ def _transform_budgets(budgets):
 
 def _build_payload(org_id, config):
     """Build the config payload for the gateway, assembling providers from credentials."""
-    return {
+    payload = {
         "providers": _assemble_providers(org_id),
         "guardrails": _transform_guardrails(config.guardrails, org_id=org_id),
         "routing": config.routing,
@@ -497,6 +593,10 @@ def _build_payload(org_id, config):
         "model_database": config.model_database,
         "model_map": config.model_map,
     }
+    return GatewayOrgConfig.model_validate(payload).model_dump(
+        by_alias=True,
+        exclude_none=True,
+    )
 
 
 def push_org_config(org_id, config):
@@ -554,12 +654,15 @@ def push_all_org_configs():
     failed = 0
     for cfg in configs:
         org_id = str(cfg.organization_id)
-        payload = _build_payload(org_id, cfg)
         try:
+            payload = _build_payload(org_id, cfg)
             client.set_org_config(org_id, payload)
             success += 1
         except GatewayClientError as e:
             logger.warning("config_push_failed", org_id=org_id, error=str(e))
+            failed += 1
+        except Exception as e:
+            logger.warning("config_push_error", org_id=org_id, error=str(e))
             failed += 1
 
     logger.info("config_push_all_complete", success=success, failed=failed)

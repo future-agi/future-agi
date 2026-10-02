@@ -9,6 +9,7 @@ This module standardizes response formatting for LLM handlers:
 All formatters return consistent metadata and value_info structures.
 """
 
+import ast
 import json
 import time
 from dataclasses import dataclass
@@ -16,10 +17,10 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import structlog
 
+from agentic_eval.core.utils.json_utils import strip_code_fence
 from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
 
 logger = structlog.get_logger(__name__)
-
 
 @dataclass
 class UsageInfo:
@@ -220,23 +221,44 @@ class ResponseFormatter:
 
     @staticmethod
     def _apply_output_format(response: Any, output_format: str) -> Any:
+        """Parse `output_format` to a list/dict/float, else return raw content."""
+        content = response.choices[0].message.content
+
+        if output_format == "array":
+            parsed = ResponseFormatter._parse_structured(content)
+            return parsed if isinstance(parsed, list) else content
+        if output_format == "object":
+            parsed = ResponseFormatter._parse_structured(content)
+            return parsed if isinstance(parsed, dict) else content
+        if output_format == "number":
+            try:
+                return float(strip_code_fence(content))
+            except (TypeError, ValueError):
+                return content
+        return content
+
+    @staticmethod
+    def _parse_structured(content: Any) -> Any:
         """
-        Apply output format transformation to response.
+        Best-effort parse of model text into a Python object.
 
-        Currently returns raw content - output format handling is done
-        at the handler level via get_formatted_output().
-
-        Args:
-            response: LiteLLM response object
-            output_format: Output format specification
-
-        Returns:
-            Formatted response content
+        Unwraps a Markdown code fence some models emit, then tries JSON, then a
+        Python literal. Returns the raw content unchanged when neither parse
+        succeeds — the caller decides whether the resulting type is acceptable.
         """
-        # Output format transformations are currently handled by
-        # RunPrompt.get_formatted_output() - this is a placeholder
-        # for future centralization
-        return response.choices[0].message.content
+        if not isinstance(content, str):
+            return content
+        unfenced = strip_code_fence(content)
+        try:
+            return json.loads(unfenced)
+        except (json.JSONDecodeError, ValueError):
+            try:
+                return ast.literal_eval(unfenced)
+            except (ValueError, SyntaxError):
+                logger.warning(
+                    "response_format_parse_failed", preview=unfenced[:200]
+                )
+                return content
 
     @staticmethod
     def build_streaming_metadata(

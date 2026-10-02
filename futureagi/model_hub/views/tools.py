@@ -27,18 +27,20 @@ class ToolsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         self.perform_create(serializer)
 
-        return self._gm.create_response(serializer.validated_data)
+        return self._gm.create_response(serializer.data)
 
     def perform_create(self, serializer):
         serializer.save(
             organization=getattr(self.request, "organization", None)
-            or self.request.user.organization
+            or self.request.user.organization,
+            workspace=getattr(self.request, "workspace", None),
         )
 
     def update(self, request, *args, **kwargs):
+        partial = kwargs.pop("partial", False)
         instance = self.get_object()
         processed_data = self._process_config_based_on_format(request.data)
-        serializer = self.get_serializer(instance, data=processed_data)
+        serializer = self.get_serializer(instance, data=processed_data, partial=partial)
         serializer.is_valid(raise_exception=True)
         self.perform_update(serializer)
 
@@ -47,11 +49,13 @@ class ToolsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
     def perform_update(self, serializer):
         serializer.save(
             organization=getattr(self.request, "organization", None)
-            or self.request.user.organization
+            or self.request.user.organization,
+            workspace=getattr(self.request, "workspace", None),
         )
 
     def _process_config_based_on_format(self, data):
         """Process the config data based on the format key"""
+        data = data.copy()
         if "config_type" not in data:
             return data
 

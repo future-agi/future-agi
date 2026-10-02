@@ -6,9 +6,15 @@ lag, and per-query-type routing configuration.
 """
 
 import structlog
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from tfc.utils.api_errors import build_error_envelope
+from tracer.serializers.health import (
+    ClickHouseHealthErrorResponseSerializer,
+    ClickHouseHealthResponseSerializer,
+)
 from tracer.services.clickhouse.consistency import ConsistencyChecker
 
 logger = structlog.get_logger(__name__)
@@ -30,6 +36,12 @@ class ClickHouseHealthView(APIView):
     authentication_classes = []
     permission_classes = []
 
+    @swagger_auto_schema(
+        responses={
+            200: ClickHouseHealthResponseSerializer,
+            503: ClickHouseHealthErrorResponseSerializer,
+        },
+    )
     def get(self, request, *args, **kwargs):
         try:
             checker = ConsistencyChecker()
@@ -47,12 +59,16 @@ class ClickHouseHealthView(APIView):
         except Exception as e:
             logger.error("clickhouse_health_check_failed", error=str(e))
             return Response(
-                {
-                    "status": "unhealthy",
-                    "clickhouse_connected": False,
-                    "cdc_lag": {},
-                    "routing": {},
-                    "error": str(e),
-                },
+                build_error_envelope(
+                    str(e),
+                    status_code=503,
+                    code="service_unavailable",
+                    extra={
+                        "health_status": "unhealthy",
+                        "clickhouse_connected": False,
+                        "cdc_lag": {},
+                        "routing": {},
+                    },
+                ),
                 status=503,
             )

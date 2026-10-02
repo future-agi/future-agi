@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { addMonths, subMonths, format, parseISO, isValid } from "date-fns";
 import Calendar from "./Calender.jsx";
 import { Box, Button, Divider, Popover } from "@mui/material";
@@ -12,11 +12,27 @@ export default function CustomDateRangePicker({
   anchorEl,
   setDateFilter,
   setDateOption,
+  value,
 }) {
   const { control } = useForm();
   const [range, setRange] = useState({ start: null, end: null });
   const [currentDate1, setCurrentDate1] = useState(new Date());
   const [currentDate2, setCurrentDate2] = useState(addMonths(new Date(), 1));
+
+  // Seed only on the open false→true transition so a caller passing a fresh
+  // value array each render can't clobber an in-progress selection.
+  const prevOpenRef = useRef(false);
+  useEffect(() => {
+    const justOpened = open && !prevOpenRef.current;
+    prevOpenRef.current = open;
+    if (!justOpened || !value?.[0] || !value?.[1]) return;
+    const start = new Date(value[0]);
+    const end = new Date(value[1]);
+    if (!isValid(start) || !isValid(end)) return;
+    setRange({ start, end });
+    setCurrentDate1(start);
+    setCurrentDate2(addMonths(start, 1));
+  }, [open, value]);
 
   const handleSelectDate = (date) => {
     if (!range.start || (range.start && range.end)) {
@@ -198,4 +214,5 @@ CustomDateRangePicker.propTypes = {
   anchorEl: PropType.any,
   setDateFilter: PropType.func,
   setDateOption: PropType.func,
+  value: PropType.arrayOf(PropType.instanceOf(Date)),
 };

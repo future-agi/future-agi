@@ -11,39 +11,20 @@ network access or ML models inside the sandbox.
 import base64
 import json
 import os
-from urllib.parse import urlparse
 
-import requests
 import structlog
+
+from agentic_eval.core.embeddings.serving_client import (
+    ServingUnavailableError,
+    require_serving,
+    serving_base_url,
+)
+from tfc.utils.ssrf_guard import safe_fetch
 
 logger = structlog.get_logger(__name__)
 
 # Eval types that need preprocessing
 PREPROCESSORS = {}
-
-
-# Hosts that user-supplied URLs must never reach from the API server.
-# Mirrors the SSRF guard in agentic_eval/core/utils/functions.py so the
-# image-preprocessing path can't be turned into a port-scanner either.
-_BLOCKED_HOST_PREFIXES = (
-    "localhost",
-    "127.",
-    "10.",
-    "169.254.",
-    "192.168.",
-    "0.0.0.0",
-    "::1",
-    "metadata.google.internal",
-)
-_BLOCKED_HOST_172 = tuple(f"172.{i}." for i in range(16, 32))
-
-
-def _host_is_blocked(host: str) -> bool:
-    host = (host or "").lower().strip()
-    if not host:
-        return True
-    return host.startswith(_BLOCKED_HOST_PREFIXES) or host.startswith(_BLOCKED_HOST_172)
-
 
 # Browser-like UA so public hosts that block default `python-requests/X.X`
 # (Wikipedia, many CDNs) return 200 instead of 403.
@@ -53,51 +34,38 @@ _BROWSER_UA = (
     "Chrome/124.0 Safari/537.36"
 )
 
+# SVG can carry <script>; dropping the payload here keeps stored-XSS from
+# reaching downstream consumers that inline the resulting data: URI.
+_REJECTED_CONTENT_TYPES = frozenset({"image/svg+xml"})
+
 
 def _fetch_url_bytes(url):
-    """Fetch a user-supplied URL with SSRF guard + bounded body.
-
-    Returns (bytes, content_type) on success, None on any failure so the
-    caller can fall back. SSRF guard refuses private / loopback / metadata
-    hosts. 25 MB ceiling so this can never blow up gunicorn workers.
-    """
+    """SSRF-guarded fetch. Returns (bytes, content_type) or None on any failure."""
     if not isinstance(url, str):
         return None
     stripped = url.strip()
     if not stripped or not stripped.startswith(("http://", "https://")):
         return None
-    host = urlparse(stripped).hostname or ""
-    if _host_is_blocked(host):
-        logger.warning("image_preprocess_blocked_host", host=host)
-        return None
     try:
-        with requests.get(
-            stripped,
-            timeout=(2, 5),
-            stream=True,
-            allow_redirects=True,
-            headers={"User-Agent": _BROWSER_UA},
-        ) as resp:
-            if resp.status_code != 200:
-                logger.warning(
-                    "image_preprocess_bad_status",
-                    status=resp.status_code,
-                    url=stripped[:120],
-                )
-                return None
-            chunks = []
-            total = 0
-            for chunk in resp.iter_content(chunk_size=64 * 1024):
-                if not chunk:
-                    continue
-                total += len(chunk)
-                if total > 25 * 1024 * 1024:
-                    logger.warning("image_preprocess_oversize", url=stripped[:120])
-                    return None
-                chunks.append(chunk)
-            data = b"".join(chunks)
-            ct = (resp.headers.get("Content-Type", "") or "").split(";")[0].strip().lower()
-        return data, ct or "application/octet-stream"
+        response = safe_fetch(
+            stripped, method="GET", headers={"User-Agent": _BROWSER_UA}
+        )
+        if response.status_code != 200:
+            logger.warning(
+                "image_preprocess_bad_status",
+                status=response.status_code,
+                url=stripped[:120],
+            )
+            return None
+        ct = (response.headers.get("Content-Type", "") or "").split(";")[0].strip().lower()
+        if ct in _REJECTED_CONTENT_TYPES:
+            logger.warning(
+                "image_preprocess_rejected_content_type",
+                content_type=ct,
+                url=stripped[:120],
+            )
+            return None
+        return response.content, ct or "application/octet-stream"
     except Exception as e:
         logger.warning("image_preprocess_fetch_failed", url=stripped[:120], error=str(e))
         return None
@@ -208,9 +176,26 @@ def preprocess_inputs(eval_name, inputs):
 
     try:
         return preprocessor(inputs)
+    except ServingUnavailableError:
+        # Fail the eval with the reason, not a score computed without data.
+        raise
     except Exception as e:
         logger.warning(f"Preprocessing failed for {eval_name}: {e}")
         return inputs
+
+
+@register_preprocessor("embedding_similarity")
+@register_preprocessor("semantic_list_contains")
+def _preprocess_serving_embeddings(inputs):
+    """Evals whose sandbox code calls model serving directly.
+
+    Fails fast when serving is not running, instead of letting the sandbox
+    time out on it and report a 0 score, and hands the sandbox the configured
+    ``MODEL_SERVING_URL`` in place of its built-in ``http://serving:8080``.
+    """
+    require_serving()
+    inputs["_model_serving_url"] = serving_base_url()
+    return inputs
 
 
 @register_preprocessor("clip_score")
@@ -228,6 +213,8 @@ def _preprocess_clip(inputs):
 
     if not images or not text:
         return inputs
+
+    require_serving()
 
     try:
         # Parse image inputs
@@ -511,14 +498,18 @@ def _preprocess_meteor(inputs):
         return inputs
     try:
         from nltk.translate.meteor_score import meteor_score as _meteor
+
+        from tfc.utils.nltk_data import ensure_nltk_data
+
+        ensure_nltk_data("wordnet")
         inputs["_meteor_precomputed_score"] = float(_meteor([ref_tokens], hyp_tokens))
     except LookupError as e:
-        # WordNet / punkt missing on the backend image. Tell the eval body
-        # exactly what to ask for — beats a silent zero score.
+        # WordNet missing on the backend image. Tell the eval body exactly
+        # what is missing — beats a silent zero score.
         logger.warning("meteor_preprocess_corpora_missing", error=str(e))
         inputs["_meteor_error"] = (
             "METEOR requires NLTK WordNet on the backend image. "
-            "Add `python -m nltk.downloader wordnet omw-1.4` to backend Dockerfile."
+            "bin/install_nltk_data.py installs it (corpora/wordnet)."
         )
     except Exception as e:
         logger.warning("meteor_preprocess_failed", error=str(e))

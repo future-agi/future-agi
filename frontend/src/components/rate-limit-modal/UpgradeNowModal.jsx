@@ -15,8 +15,8 @@ import {
   useTheme,
   Chip,
   ListItemIcon,
-  CircularProgress,
 } from "@mui/material";
+import { LoadingScreen } from "src/components/loading-screen";
 import PropTypes from "prop-types";
 import Iconify from "../iconify";
 import { Events, trackEvent } from "src/utils/Mixpanel";
@@ -427,18 +427,10 @@ const PricingDialog = ({ open, onClose, title, description }) => {
       </DialogTitle>
 
       {plansLoading ? (
-        <Box
-          sx={{
-            p: 2,
-            minHeight: "30.4rem",
-            borderRadius: "12px",
-            display: "flex",
-            justifyContent: "center",
-            alignItems: "center",
-          }}
-        >
-          <CircularProgress />
-        </Box>
+        <LoadingScreen
+          variant="orbit"
+          sx={{ p: 2, minHeight: "30.4rem", borderRadius: "12px" }}
+        />
       ) : (
         <DialogContent>
           <Grid container spacing={1.5}>

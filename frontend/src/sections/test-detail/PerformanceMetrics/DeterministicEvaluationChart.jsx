@@ -12,8 +12,7 @@ const DeterministicEvaluationChart = ({ title, data }) => {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
 
-  // Empty-state placeholder: no data points (e.g. every call errored on this
-  // eval) — render the title with a muted message instead of an empty chart.
+  // Empty-state placeholder for a categorical eval with no chartable values.
   if (!data || data.length === 0) {
     return (
       <Box
@@ -46,7 +45,7 @@ const DeterministicEvaluationChart = ({ title, data }) => {
               fontStyle: "italic",
             }}
           >
-            No data — every eval run errored
+            No category data available
           </Typography>
         </Box>
       </Box>

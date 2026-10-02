@@ -4,7 +4,6 @@ import traceback
 from datetime import datetime
 
 import structlog
-from django.conf import settings as django_settings
 from django.contrib.auth.tokens import default_token_generator
 from django.core.cache import cache
 from django.db import IntegrityError, transaction
@@ -15,6 +14,7 @@ from django.db.models import (
     F,
     IntegerField,
     OuterRef,
+    Prefetch,
     Q,
     Subquery,
     Value,
@@ -31,21 +31,47 @@ from accounts.models.auth_token import AuthToken, AuthTokenType
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import User
 from accounts.models.workspace import OrganizationRoles, Workspace, WorkspaceMembership
-from accounts.serializers.user import CreateMemberSerializer, UserSerializer
+from accounts.serializers.contracts import (
+    ACCOUNTS_ERROR_RESPONSES,
+    DeactivateUserResponseSerializer,
+    DeleteUserResponseSerializer,
+    ResendInviteResponseSerializer,
+    SwitchWorkspaceResponseSerializer,
+    TeamCreateResponseSerializer,
+    TeamRemoveResponseSerializer,
+    TeamUsersResponseSerializer,
+    UserListPaginatedResponseSerializer,
+    UserRoleUpdateResponseSerializer,
+    WorkspaceInviteResponseSerializer,
+    WorkspaceListPaginatedResponseSerializer,
+)
+from accounts.serializers.user import (
+    CreateMemberSerializer,
+    TeamCreateRequestSerializer,
+    UserSerializer,
+)
 from accounts.serializers.workspace import (
     DeactivateUserSerializer,
     DeleteUserSerializer,
     ResendInviteSerializer,
     SwitchWorkspaceSerializer,
+    UserListRequestSerializer,
     UserListSerializer,
     UserRoleUpdateSerializer,
     WorkspaceInviteSerializer,
+    WorkspaceListRequestSerializer,
     WorkspaceListSerializer,
 )
-from accounts.utils import generate_password, resolve_org, resolve_org_role
-from tfc.middleware.workspace_context import get_current_workspace
-
-logger = structlog.get_logger(__name__)
+from accounts.services.workspace_membership import (
+    create_workspace_membership,
+    resolve_org_membership,
+)
+from accounts.utils import (
+    generate_password,
+    persist_pending_org_invite,
+    resolve_org,
+    resolve_org_role,
+)
 from analytics.mixpanel_util import mixpanel_tracker
 from analytics.utils import (
     MixpanelEvents,
@@ -53,18 +79,19 @@ from analytics.utils import (
     get_mixpanel_properties,
     track_mixpanel_event,
 )
+from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 from tfc.constants.levels import Level
 from tfc.constants.roles import RoleMapping, RolePermissions
+from tfc.middleware.workspace_context import get_current_workspace
 from tfc.permissions.utils import can_invite_at_level
 from tfc.settings import settings
 from tfc.settings.settings import ssl
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.email import email_helper
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
 from tfc.utils.parse_errors import parse_serialized_errors
-
-from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 
 try:
     from ee.usage.models.usage import (
@@ -78,6 +105,8 @@ try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_resource_request
 except ImportError:
     log_and_deduct_cost_for_resource_request = None
+
+logger = structlog.get_logger(__name__)
 
 
 def clear_user_redis_cache(user_id):
@@ -137,12 +166,22 @@ class WorkspaceListAPIView(APIView):
     _gm = GeneralMethods()
     pagination_class = ExtendedPageNumberPagination
 
+    @validated_request(
+        query_serializer=WorkspaceListRequestSerializer,
+        responses={
+            200: WorkspaceListPaginatedResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def get(self, request):
         """Get paginated list of workspaces"""
         try:
+            query = request.validated_query_data
             # Get query parameters instead of request data
-            search_query = request.query_params.get("search", "")
-            sort_params = request.query_params.getlist("sort", [])
+            search_query = query.get("search", "")
+            sort_value = query.get("sort", "")
+            sort_params = [sort_value] if sort_value else []
 
             user = request.user
             organization = resolve_org(request)
@@ -189,6 +228,25 @@ class WorkspaceListAPIView(APIView):
             else:
                 # Default sorting
                 workspaces = workspaces.order_by("-created_at")
+
+            # Prefetch admin memberships (+ their users) so the serializer's
+            # get_admin_names does not issue one query per workspace (N+1).
+            # Use no_workspace_objects to match the serializer's manager
+            # semantics (deleted=False only, no workspace-context filter).
+            workspaces = workspaces.prefetch_related(
+                Prefetch(
+                    "memberships",
+                    queryset=WorkspaceMembership.no_workspace_objects.filter(
+                        role__in=[
+                            OrganizationRoles.WORKSPACE_ADMIN,
+                            OrganizationRoles.OWNER,
+                            OrganizationRoles.ADMIN,
+                        ],
+                        is_active=True,
+                    ).select_related("user"),
+                    to_attr="admin_memberships_cache",
+                )
+            )
 
             # Use default pagination
             paginator = self.pagination_class()
@@ -244,14 +302,16 @@ class WorkspaceInviteAPIView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @validated_request(
+        request_serializer=WorkspaceInviteSerializer,
+        responses={200: WorkspaceInviteResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        reject_unknown_fields=True,
+    )
     @transaction.atomic
     def post(self, request):
         """Invite users to workspaces"""
         try:
-            # Validate request data
-            serializer = WorkspaceInviteSerializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            data = serializer.validated_data
+            data = request.validated_data
 
             user = request.user
             organization = resolve_org(request)
@@ -384,7 +444,6 @@ class WorkspaceInviteAPIView(APIView):
 
             results = []
             errors = []
-            added_users = []
 
             for email in emails:
                 email = email.lower()
@@ -441,6 +500,11 @@ class WorkspaceInviteAPIView(APIView):
                                         "role": workspace_role,
                                         "invited_by": user,
                                         "is_active": True,
+                                        "organization_membership": (
+                                            resolve_org_membership(
+                                                target_user, workspace.organization
+                                            )
+                                        ),
                                     },
                                 )
                             )
@@ -539,12 +603,21 @@ class WorkspaceInviteAPIView(APIView):
                                     existing_deleted_membership.invited_by = user
                                     existing_deleted_membership.save()
                                 else:
-                                    WorkspaceMembership.no_workspace_objects.create(
+                                    create_workspace_membership(
                                         workspace=workspace,
                                         user=new_member,
                                         role=workspace_role,
                                         invited_by=user,
                                     )
+
+                            persist_pending_org_invite(
+                                organization=organization,
+                                target_email=email,
+                                org_role=org_role,
+                                workspace_role=workspace_role,
+                                workspaces=workspaces,
+                                invited_by=user,
+                            )
 
                             # Send invitation email with credentials
                             # ssl_context = ssl.create_default_context()
@@ -610,29 +683,23 @@ class UserListAPIView(APIView):
     _gm = GeneralMethods()
     pagination_class = ExtendedPageNumberPagination
 
+    @validated_request(
+        query_serializer=UserListRequestSerializer,
+        responses={
+            200: UserListPaginatedResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def get(self, request):
         """Get paginated list of users with filtering at workspace level"""
         try:
+            query = request.validated_query_data
             # Get query parameters instead of request data
-            search_query = request.query_params.get("search", "")
-            filter_status = request.query_params.get(
-                "filter_status", []
-            ) or request.query_params.get("filterStatus", [])
-            filter_role = request.query_params.get(
-                "filter_role", []
-            ) or request.query_params.get("filterRole", [])
-            sort_params_raw = request.query_params.get("sort", "")
-
-            if filter_status:
-                filter_status = json.loads(filter_status)
-            if filter_role:
-                filter_role = json.loads(filter_role)
-            sort_params = None
-            if sort_params_raw:
-                try:
-                    sort_params = json.loads(sort_params_raw)
-                except Exception:
-                    sort_params = None
+            search_query = query.get("search", "")
+            filter_status = query.get("filter_status", [])
+            filter_role = query.get("filter_role", [])
+            ordering = query.get("sort", [])
 
             user = request.user
             organization = resolve_org(request)
@@ -643,9 +710,7 @@ class UserListAPIView(APIView):
                 )
 
             # Resolve workspace context: prefer explicit query param, else request-global, else org default
-            workspace_id = request.query_params.get(
-                "workspace_id"
-            ) or request.query_params.get("workspaceId")
+            workspace_id = query.get("workspace_id")
             current_workspace = None
             if workspace_id:
                 try:
@@ -875,104 +940,6 @@ class UserListAPIView(APIView):
             if filter_role:
                 users = users.filter(computed_workspace_role__in=filter_role)
 
-            # Parse bracket-style sort params if JSON not provided
-            if not sort_params:
-                sort_items = {}
-                for key in request.query_params.keys():
-                    # Matches sort[0][columnId] or sort[0][type]
-                    m = re.match(r"^sort\[(\d+)\]\[(columnId|type)\]$", key)
-                    if m:
-                        idx = int(m.group(1))
-                        subkey = m.group(2)
-                        sort_items.setdefault(idx, {})[subkey] = (
-                            request.query_params.get(key)
-                        )
-                if sort_items:
-                    sort_params = [sort_items[i] for i in sorted(sort_items.keys())]
-
-            # Apply sorting based on mapping
-            ordering = []
-            if sort_params:
-
-                def map_column_to_field(column_id: str) -> str:
-                    if not column_id:
-                        return None
-                    cid = str(column_id).strip()
-                    lc = cid.lower()
-                    mapping = {
-                        "name": "name",
-                        "email": "email",
-                        "role": "computed_role_rank",
-                        "status": "computed_status",
-                        "startdate": "created_at",
-                        "start_date": "created_at",
-                    }
-                    if lc in mapping:
-                        return mapping[lc]
-                    # handle camelCase
-                    if cid == "startDate":
-                        return "created_at"
-                    if cid == "lastUpdatedDate":
-                        return "created_at"
-                    return None
-
-                # Normalize JSON or bracket sort params into ordering list
-                if isinstance(sort_params, list):
-                    for item in sort_params:
-                        if isinstance(item, dict):
-                            column_id = (
-                                item.get("columnId")
-                                or item.get("id")
-                                or item.get("column")
-                            )
-                            sort_type = (
-                                item.get("type") or item.get("order") or item.get("dir")
-                            )
-                            field_name = map_column_to_field(column_id)
-                            if field_name:
-                                if str(sort_type).lower() in [
-                                    "desc",
-                                    "descending",
-                                    "down",
-                                    "false",
-                                ]:
-                                    ordering.append(f"-{field_name}")
-                                else:
-                                    ordering.append(field_name)
-                        elif isinstance(item, str):
-                            # e.g., "-name" or "name"
-                            if item.startswith("-"):
-                                base = item[1:]
-                                field_name = map_column_to_field(base)
-                                if field_name:
-                                    ordering.append(f"-{field_name}")
-                            else:
-                                field_name = map_column_to_field(item)
-                                if field_name:
-                                    ordering.append(field_name)
-                elif isinstance(sort_params, dict):
-                    column_id = (
-                        sort_params.get("columnId")
-                        or sort_params.get("id")
-                        or sort_params.get("column")
-                    )
-                    sort_type = (
-                        sort_params.get("type")
-                        or sort_params.get("order")
-                        or sort_params.get("dir")
-                    )
-                    field_name = map_column_to_field(column_id)
-                    if field_name:
-                        if str(sort_type).lower() in [
-                            "desc",
-                            "descending",
-                            "down",
-                            "false",
-                        ]:
-                            ordering.append(f"-{field_name}")
-                        else:
-                            ordering.append(field_name)
-
             if ordering:
                 users = users.order_by(*ordering)
             else:
@@ -1045,13 +1012,15 @@ class UserRoleUpdateAPIView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @validated_request(
+        request_serializer=UserRoleUpdateSerializer,
+        responses={200: UserRoleUpdateResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        reject_unknown_fields=True,
+    )
     def post(self, request):
         """Update user role at organization or workspace level"""
         try:
-            # Validate request data
-            serializer = UserRoleUpdateSerializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            data = serializer.validated_data
+            data = request.validated_data
 
             user = request.user
             organization = resolve_org(request)
@@ -1237,7 +1206,7 @@ class UserRoleUpdateAPIView(APIView):
                             existing_deleted_membership.save()
                         else:
                             # Create workspace membership if it doesn't exist
-                            WorkspaceMembership.no_workspace_objects.create(
+                            create_workspace_membership(
                                 workspace=current_workspace,
                                 user=target_user,
                                 role=workspace_role,
@@ -1301,7 +1270,7 @@ class UserRoleUpdateAPIView(APIView):
                         existing_deleted_membership.save()
                     else:
                         # Create workspace membership if it doesn't exist
-                        WorkspaceMembership.no_workspace_objects.create(
+                        create_workspace_membership(
                             workspace=current_workspace,
                             user=target_user,
                             role=new_role,
@@ -1331,13 +1300,15 @@ class ResendInviteAPIView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @validated_request(
+        request_serializer=ResendInviteSerializer,
+        responses={200: ResendInviteResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        reject_unknown_fields=True,
+    )
     def post(self, request):
         """Resend invitation email with workspace context"""
         try:
-            # Validate request data
-            serializer = ResendInviteSerializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            data = serializer.validated_data
+            data = request.validated_data
 
             user = request.user
             organization = resolve_org(request)
@@ -1437,13 +1408,15 @@ class DeleteUserAPIView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @validated_request(
+        request_serializer=DeleteUserSerializer,
+        responses={200: DeleteUserResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        reject_unknown_fields=True,
+    )
     def post(self, request):
         """Delete user or remove invite at organization or workspace level"""
         try:
-            # Validate request data
-            serializer = DeleteUserSerializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            data = serializer.validated_data
+            data = request.validated_data
 
             user = request.user
             organization = resolve_org(request)
@@ -1573,13 +1546,15 @@ class DeactivateUserAPIView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @validated_request(
+        request_serializer=DeactivateUserSerializer,
+        responses={200: DeactivateUserResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        reject_unknown_fields=True,
+    )
     def post(self, request):
         """Deactivate user by marking is_active as False"""
         try:
-            # Validate request data
-            serializer = DeactivateUserSerializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            data = serializer.validated_data
+            data = request.validated_data
 
             user = request.user
             organization = resolve_org(request)
@@ -1690,13 +1665,15 @@ class SwitchWorkspaceAPIView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @validated_request(
+        request_serializer=SwitchWorkspaceSerializer,
+        responses={200: SwitchWorkspaceResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        reject_unknown_fields=True,
+    )
     def post(self, request):
         """Switch to a different workspace with proper validation"""
         try:
-            # Validate request data
-            serializer = SwitchWorkspaceSerializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            data = serializer.validated_data
+            data = request.validated_data
 
             user = request.user
             organization = resolve_org(request)
@@ -1777,6 +1754,9 @@ class ManageTeamView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @validated_request(
+        responses={200: TeamUsersResponseSerializer, **ACCOUNTS_ERROR_RESPONSES}
+    )
     def get(self, request, *args, **kwargs):
         user = request.user
         organization = resolve_org(request)
@@ -1802,6 +1782,7 @@ class ManageTeamView(APIView):
             except Workspace.DoesNotExist:
                 return self._gm.bad_request("Invalid workspace ID")
 
+        member_id = kwargs.get("member_id")
         search_query = request.query_params.get("search_query", "")
         is_active = request.query_params.get("is_active", "true")
         if is_active == "false":
@@ -1823,11 +1804,19 @@ class ManageTeamView(APIView):
         # Get all organization members (primary + invited), deduplicated
         team_members_qs = User.objects.filter(
             Q(organization=organization) | Q(invited_organizations=organization),
-            name__icontains=search_query,
             is_active=is_active,
-        ).distinct()
+        )
+        if search_query:
+            team_members_qs = team_members_qs.filter(
+                Q(name__icontains=search_query) | Q(email__icontains=search_query)
+            )
+        if member_id:
+            team_members_qs = team_members_qs.filter(id=member_id)
+        team_members_qs = team_members_qs.distinct()
 
         total_count = team_members_qs.count()
+        if member_id and total_count == 0:
+            return self._gm.not_found("Member not found in organization")
 
         # Apply pagination
         start_idx = (page - 1) * page_size
@@ -1938,8 +1927,14 @@ class ManageTeamView(APIView):
 
         return self._gm.success_response(response)
 
+    @validated_request(
+        request_serializer=TeamCreateRequestSerializer,
+        responses={201: TeamCreateResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        reject_unknown_fields=True,
+    )
     def post(self, request, *args, **kwargs):
         try:
+            validated_data = request.validated_data
             user = request.user
             organization = resolve_org(request)
             org_role = resolve_org_role(user, organization)
@@ -1953,8 +1948,13 @@ class ManageTeamView(APIView):
                     get_error_message("USER_ORGANIZATION_CONNECTION_ERROR")
                 )
 
+            if kwargs.get("member_id"):
+                return self._gm.bad_request(
+                    "Member-specific team create is not supported. Use /accounts/team/users/."
+                )
+
             # Handle organization name update
-            org_display_name = request.data.get("org_name", None)
+            org_display_name = validated_data.get("org_name")
             if org_display_name:
                 organization.display_name = org_display_name
                 # Subscription tracking requires ee — skip the lookup and report
@@ -1977,7 +1977,7 @@ class ManageTeamView(APIView):
             organization.save()
 
             # Handle workspace creation/management
-            workspace_data = request.data.get("workspace", {})
+            workspace_data = validated_data.get("workspace", {})
             workspace = None
             if workspace_data:
                 workspace_name = workspace_data.get("name")
@@ -2007,7 +2007,7 @@ class ManageTeamView(APIView):
                         )
 
                         # Add organization owner to workspace with admin role
-                        WorkspaceMembership.no_workspace_objects.create(
+                        create_workspace_membership(
                             workspace=workspace,
                             user=user,
                             role=OrganizationRoles.WORKSPACE_ADMIN,
@@ -2032,14 +2032,14 @@ class ManageTeamView(APIView):
                     )
 
                     # Add organization owner to default workspace
-                    WorkspaceMembership.no_workspace_objects.create(
+                    create_workspace_membership(
                         workspace=workspace,
                         user=user,
                         role=OrganizationRoles.WORKSPACE_ADMIN,
                         invited_by=user,
                     )
 
-            members_data = request.data.get("members", [])
+            members_data = validated_data.get("members", [])
             if not isinstance(members_data, list):
                 return self._gm.bad_request(get_error_message("INVALID_DATA_TYPE"))
 
@@ -2098,6 +2098,7 @@ class ManageTeamView(APIView):
             ]
 
             for index, member_data in enumerate(members_data):
+                member_data = dict(member_data)
                 serializer = CreateMemberSerializer(data=member_data)
 
                 if serializer.is_valid():
@@ -2254,6 +2255,15 @@ class ManageTeamView(APIView):
                             request.user,
                         )
 
+                        persist_pending_org_invite(
+                            organization=organization,
+                            target_email=member_data["email"],
+                            org_role=org_role,
+                            workspace_role=workspace_role,
+                            workspaces=[workspace],
+                            invited_by=request.user,
+                        )
+
                         token = default_token_generator.make_token(new_member)
                         uidb64 = urlsafe_base64_encode(force_bytes(new_member.pk))
                         email_helper(
@@ -2343,7 +2353,7 @@ class ManageTeamView(APIView):
                     existing_deleted_membership.save()
                 else:
                     # Create new workspace membership
-                    WorkspaceMembership.no_workspace_objects.create(
+                    create_workspace_membership(
                         workspace=workspace,
                         user=user,
                         role=role,
@@ -2356,7 +2366,10 @@ class ManageTeamView(APIView):
             )
             raise
 
-    def delete(self, request, member_id, *args, **kwargs):
+    @validated_request(
+        responses={200: TeamRemoveResponseSerializer, **ACCOUNTS_ERROR_RESPONSES}
+    )
+    def delete(self, request, member_id=None, *args, **kwargs):
         user = request.user
         organization = resolve_org(request)
         org_role = resolve_org_role(user, organization)

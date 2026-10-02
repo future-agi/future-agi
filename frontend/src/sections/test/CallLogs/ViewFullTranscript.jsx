@@ -51,7 +51,7 @@ const ViewFullTranscript = ({
           {transcript?.map(
             ({
               id,
-              speakerRole,
+              speaker_role: speakerRole,
               content: rawContent,
               messages,
               createdAt,

@@ -111,6 +111,7 @@ class TestDeleteCompareFolderActivity:
         from tfc.temporal.background_tasks.activities import (
             delete_compare_folder_activity,
         )
+        from tfc.utils.storage import get_compare_local_dir
 
         # Create a temp directory structure
         temp_dir = tempfile.mkdtemp()
@@ -135,8 +136,9 @@ class TestDeleteCompareFolderActivity:
 
                 delete_compare_folder_activity(test_compare_id)
 
-                mock_isdir.assert_called_once_with(f"compare/{test_compare_id}")
-                mock_rmtree.assert_called_once_with(f"compare/{test_compare_id}")
+                expected_dir = get_compare_local_dir(test_compare_id)
+                mock_isdir.assert_called_once_with(expected_dir)
+                mock_rmtree.assert_called_once_with(expected_dir)
                 mock_s3_delete.assert_called_once_with(test_compare_id)
         finally:
             shutil.rmtree(temp_dir)

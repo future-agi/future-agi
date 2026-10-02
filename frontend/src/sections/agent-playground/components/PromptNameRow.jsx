@@ -60,7 +60,7 @@ export default function PromptNameRow({ control }) {
       seen.add(selectedVersionDetail.id);
       options.push({
         value: selectedVersionDetail.id,
-        label: selectedVersionDetail.templateVersion?.toUpperCase(),
+        label: selectedVersionDetail.template_version?.toUpperCase(),
         isDraft: selectedVersionDetail.is_draft,
       });
     }
@@ -71,7 +71,7 @@ export default function PromptNameRow({ control }) {
         seen.add(v.id);
         options.push({
           value: v.id,
-          label: v.templateVersion?.toUpperCase(),
+          label: v.template_version?.toUpperCase(),
           isDraft: v.is_draft,
         });
       }

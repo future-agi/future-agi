@@ -14,6 +14,8 @@ import AddToFeedBackModal, {
 import { ShowComponent } from "src/components/show/ShowComponent";
 import CellMarkdown from "src/sections/common/CellMarkdown";
 import NumericCell from "src/sections/common/DevelopCellRenderer/EvaluateCellRenderer/NumericCell";
+import EvalStatusIndicator from "src/components/eval/EvalStatusIndicator";
+import { getEvalNonScoreStatus } from "src/utils/evalStatus";
 
 const TooltipContent = ({
   explanation,
@@ -179,6 +181,9 @@ const EvalsCustomCellRenderer = (props) => {
   const loading = props.data?.loading;
   const error = props.data?.error;
   const outputType = props.data?.outputType;
+  // Lifecycle status (pending/running/skipped) from the eval read APIs.
+  const nonScoreStatus = getEvalNonScoreStatus(props.data?.status);
+  const skippedReason = props.data?.skippedReason;
   const showAddFeedback = props?.showAddFeedback;
   const showViewDetail = props?.showViewDetail;
 
@@ -257,14 +262,30 @@ const EvalsCustomCellRenderer = (props) => {
     // This is temporary change to show "-" when there is no value
 
     if (column.field === "score") {
-      if (loading) {
+      if (nonScoreStatus) {
         return (
-          <Box sx={{ width: "100%", padding: 1 }}>
-            <Skeleton
-              sx={{ width: "100%", height: "20px" }}
-              variant="rounded"
+          <Box sx={{ width: "100%", height: "100%" }}>
+            <EvalStatusIndicator
+              status={nonScoreStatus}
+              skippedReason={skippedReason}
             />
           </Box>
+        );
+      }
+
+      if (loading) {
+        return (
+          <Skeleton
+            variant="rectangular"
+            animation="wave"
+            sx={{
+              width: "100%",
+              height: "100%",
+              minHeight: 20,
+              borderRadius: 0,
+              transform: "none",
+            }}
+          />
         );
       }
 

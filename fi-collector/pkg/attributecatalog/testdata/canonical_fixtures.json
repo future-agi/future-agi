@@ -1,0 +1,85 @@
+{
+  "domain": "futureagi.span-attribute-catalog.scalar.v1",
+  "fixtures": [
+    {
+      "name": "empty_string",
+      "kind": "string",
+      "value": "",
+      "value_json": "\"\"",
+      "search_text": "",
+      "fingerprint": "eff9a9bd58016ff53c2c6229ae347820e2cdebd10aa81eb78f41e863871fcd69"
+    },
+    {
+      "name": "unicode_and_controls",
+      "kind": "string",
+      "value": "Whatfix\n\"voice\" ☃",
+      "value_json": "\"Whatfix\\n\\\"voice\\\" ☃\"",
+      "search_text": "Whatfix\n\"voice\" ☃",
+      "fingerprint": "7cd78d7c5c8e98608f08f37ae5798d1cd219975830da3337cfd7f3a199628ced"
+    },
+    {
+      "name": "integer",
+      "kind": "number",
+      "value": 42,
+      "value_json": "42",
+      "search_text": "42",
+      "fingerprint": "7ed0718bee97e87a0424e1bcf93fed288094d13beca7be92b3409d4e9f462f84"
+    },
+    {
+      "name": "negative_zero",
+      "kind": "number",
+      "value": -0.0,
+      "value_json": "0",
+      "search_text": "0",
+      "fingerprint": "c6325322ea20b3d4271fb3f2740205fc1b81651490f5ab84db3cb622b86a7810"
+    },
+    {
+      "name": "decimal_trailing_zero",
+      "kind": "number",
+      "value": 123.4500,
+      "value_json": "123.45",
+      "search_text": "123.45",
+      "fingerprint": "fab4e795721f3f0383c06fcfde1131d42d3ea3010307dfaaf11704c5318b9bd1"
+    },
+    {
+      "name": "small_exponent",
+      "kind": "number",
+      "value": 1e-7,
+      "value_json": "0.0000001",
+      "search_text": "0.0000001",
+      "fingerprint": "715d548cc845295b58bd3341e294eef0472dcd7c9974c8d62da432e179a649c2"
+    },
+    {
+      "name": "positive_exponent",
+      "kind": "number",
+      "value": 1e20,
+      "value_json": "100000000000000000000",
+      "search_text": "100000000000000000000",
+      "fingerprint": "40b9ef50d92bb78bd680a5a0cf30db91bbc5238c677f098b8148899258773652"
+    },
+    {
+      "name": "large_integer",
+      "kind": "number",
+      "value": 9007199254740993,
+      "value_json": "9007199254740993",
+      "search_text": "9007199254740993",
+      "fingerprint": "fb2e006f1220af94472b55e69ce7c0869bc3c2240e3726c69791c6a25e863fee"
+    },
+    {
+      "name": "true",
+      "kind": "boolean",
+      "value": true,
+      "value_json": "true",
+      "search_text": "true",
+      "fingerprint": "8a01aab0b28a538977e59a53820685135160300de4f38f931b3caa83a16726e5"
+    },
+    {
+      "name": "false",
+      "kind": "boolean",
+      "value": false,
+      "value_json": "false",
+      "search_text": "false",
+      "fingerprint": "3d91ae29434eab87512a46d12ee0f913373ce5f410d0df9e58a98b9e108987ce"
+    }
+  ]
+}

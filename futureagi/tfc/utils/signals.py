@@ -11,6 +11,10 @@ logger = structlog.get_logger(__name__)
 
 
 def _can_assign_workspace(instance, workspace):
+    if getattr(instance, "disable_auto_workspace_assignment", False):
+        return False
+    if getattr(instance._meta, "label_lower", "") == "usage.usageeventlog":
+        return False
     if not workspace:
         return False
     if not hasattr(instance, "organization_id"):

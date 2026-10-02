@@ -160,7 +160,7 @@ const UploadLimitNotification = () => {
                     color: "text.primary",
                     padding: "4px",
                     "&:hover": {
-                      backgroundColor: "rgba(0, 0, 0, 0.04)",
+                      backgroundColor: "action.hover",
                     },
                   }}
                 >

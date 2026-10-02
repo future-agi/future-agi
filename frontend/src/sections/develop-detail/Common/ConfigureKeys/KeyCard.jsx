@@ -381,7 +381,7 @@ const KeyCardComponent = ({ data, onDeleteClick }) => {
                   isJsonKey={false}
                   onFocusInput={onFocusInput}
                   onKeyDown={handleEscapeKey}
-                  disabled={!editMode && data?.maskedKey}
+                  disabled={Boolean(!editMode && data?.maskedKey)}
                 />
               </Box>
               {data?.hasKey && !editMode ? (
@@ -415,7 +415,6 @@ const KeyCardComponent = ({ data, onDeleteClick }) => {
 };
 
 KeyCardComponent.propTypes = {
-  key: PropTypes.any,
   data: PropTypes.object,
   onClose: PropTypes.func,
   isFetching: PropTypes.bool,

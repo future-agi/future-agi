@@ -115,6 +115,7 @@ const DuplicatePersonas = ({ open, onClose, personaId }) => {
               control={control}
               fieldName="name"
               fullWidth
+              inputProps={{ "aria-label": "Duplicate persona name" }}
             />
           </DialogContent>
           <DialogActions sx={{ padding: 0, marginTop: 4 }}>

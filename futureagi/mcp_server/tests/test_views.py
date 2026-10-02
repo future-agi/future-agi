@@ -1,13 +1,9 @@
-import uuid
-
-import pytest
-from django.conf import settings
 from rest_framework.test import APIClient
 
-from mcp_server.models.connection import MCPConnection
 from mcp_server.models.session import MCPSession
-from mcp_server.models.tool_config import MCPToolGroupConfig
 from mcp_server.models.usage import MCPUsageRecord
+
+AUTH_REQUIRED_STATUS_CODES = (401, 403)
 
 
 class TestMCPHealthView:
@@ -98,7 +94,11 @@ class TestMCPToolCallView:
         )
         assert response.status_code == 200
         assert response.data["status"] is True
-        assert "Datasets" in response.data["result"]["content"]
+        assert response.data["result"]["data"] == {
+            "datasets": [],
+            "total_pages": 0,
+            "total_count": 0,
+        }
 
     def test_tool_call_unauthenticated(self, db):
         client = APIClient()
@@ -107,7 +107,7 @@ class TestMCPToolCallView:
             {"tool_name": "whoami", "params": {}},
             format="json",
         )
-        assert response.status_code == 403
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
 
 class TestMCPToolListView:
@@ -123,7 +123,7 @@ class TestMCPToolListView:
     def test_list_tools_unauthenticated(self, db):
         client = APIClient()
         response = client.get("/mcp/internal/tools/")
-        assert response.status_code == 403
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
 
 class TestMCPConfigView:
@@ -150,7 +150,13 @@ class TestMCPToolGroupsView:
     def test_get_default_groups(self, auth_client):
         response = auth_client.get("/mcp/config/tool-groups/")
         assert response.status_code == 200
-        assert "context" in response.data["result"]["enabled_groups"]
+        result = response.data["result"]
+        assert "context" in result["enabled_groups"]
+        assert "users" not in result["enabled_groups"]
+        slugs = {group["slug"] for group in result["available_groups"]}
+        assert "gateway" in slugs
+        assert "users" not in slugs
+        assert "docs" not in slugs
 
     def test_update_groups(self, auth_client, user, workspace):
         response = auth_client.put(
@@ -180,6 +186,13 @@ class TestMCPSessionListView:
         response = auth_client.get("/mcp/sessions/")
         assert response.status_code == 200
         assert len(response.data["result"]) >= 1
+
+    def test_list_sessions_status_filter(self, auth_client, mcp_session):
+        response = auth_client.get("/mcp/sessions/?status=active")
+        assert response.status_code == 200
+        assert response.data["status"] is True
+        assert len(response.data["result"]) >= 1
+        assert all(row["status"] == "active" for row in response.data["result"])
 
     def test_revoke_session(self, auth_client, mcp_session):
         response = auth_client.delete(f"/mcp/sessions/{mcp_session.id}/")

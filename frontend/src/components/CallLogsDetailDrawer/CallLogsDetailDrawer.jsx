@@ -33,7 +33,7 @@ const CallLogSideDrawerChild = ({ data }) => {
   const { agentDefinitionId: urlAgentDefinitionId, observeId } = useParams();
   const resolvedProjectId = observeId || data?.projectId;
   const filteredTranscript = useMemo(() => {
-    return data?.transcript?.filter((item) => item.speakerRole !== "system");
+    return data?.transcript?.filter((item) => item.speaker_role !== "system");
   }, [data]);
   const theme = useTheme();
 
@@ -70,8 +70,9 @@ const CallLogSideDrawerChild = ({ data }) => {
         rootSpanId: rootObsSpan?.id,
         module: data?.module,
         callExecutionId: data?.id,
+        projectId: data?.project_id,
       }),
-    [traceId, rootObsSpan?.id, data?.module, data?.id],
+    [traceId, rootObsSpan?.id, data?.module, data?.id, data?.project_id],
   );
 
   return (

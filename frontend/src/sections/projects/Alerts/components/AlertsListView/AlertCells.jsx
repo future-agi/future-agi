@@ -16,6 +16,7 @@ import { useEffect, useRef } from "react";
 import ApexCharts from "apexcharts";
 import { ShowComponent } from "src/components/show";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
+import { isAlertMuted } from "../../common";
 
 export const IssueCell = ({ data }) => {
   if (!data) return null;
@@ -46,7 +47,7 @@ export const IssueCell = ({ data }) => {
         fontWeight={"fontWeightMedium"}
       >
         {data?.name}
-        <ShowComponent condition={!!data?.is_mute}>
+        <ShowComponent condition={isAlertMuted(data)}>
           <Typography
             component={"span"}
             sx={{
@@ -83,6 +84,7 @@ IssueCell.propTypes = {
     updated_at: PropTypes.string,
     name: PropTypes.string.isRequired,
     is_mute: PropTypes.bool,
+    isMute: PropTypes.bool,
   }),
 };
 

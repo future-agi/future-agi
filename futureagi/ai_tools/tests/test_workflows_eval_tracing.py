@@ -11,7 +11,12 @@ class TestEvalTemplateWorkflow:
         # 1. Create template
         create = run_tool(
             "create_eval_template",
-            {"name": "wf-eval-template", "description": "Workflow test eval"},
+            {
+                "name": "wf-eval-template",
+                "description": "Workflow test eval",
+                "criteria": "Evaluate {{response}}",
+                "required_keys": ["response"],
+            },
             tool_context,
         )
         assert not create.is_error
@@ -121,7 +126,12 @@ class TestEvalGroupMultiTemplate:
         for i in range(3):
             result = run_tool(
                 "create_eval_template",
-                {"name": f"group-tmpl-{i}", "description": f"Template {i}"},
+                {
+                    "name": f"group-tmpl-{i}",
+                    "description": f"Template {i}",
+                    "criteria": "Evaluate {{response}}",
+                    "required_keys": ["response"],
+                },
                 tool_context,
             )
             assert not result.is_error

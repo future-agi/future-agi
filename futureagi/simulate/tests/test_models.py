@@ -452,6 +452,23 @@ class TestScenarioGraphModel:
         assert active_graphs.count() == 1
         assert active_graphs.first().version == 2
 
+    def test_scenario_graph_does_not_declare_workspace_field(self):
+        """Workspace scoping flows transitively through the parent scenario."""
+        field_names = {f.name for f in ScenarioGraph._meta.get_fields()}
+        assert "workspace" not in field_names
+
+    def test_scenario_graph_rejects_workspace_kwarg(
+        self, db, organization, scenario
+    ):
+        """Passing workspace= to create raises so callers stay on the transitive path."""
+        with pytest.raises(TypeError, match="workspace"):
+            ScenarioGraph.objects.create(
+                scenario=scenario,
+                organization=organization,
+                name="Reject me",
+                workspace=scenario.workspace,
+            )
+
 
 # ============================================================================
 # NodeType Class Tests

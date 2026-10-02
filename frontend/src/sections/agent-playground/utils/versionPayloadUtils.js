@@ -225,7 +225,8 @@ export function buildDraftCreationPayload(nodes = [], edges = [], transformFn) {
 
 /**
  * Parse API version response into XYFlow nodes and edges.
- * Backend returns nodeConnections (camelCased from node_connections).
+ * Real API responses use snake_case, while some client-shaped fixtures/cache
+ * entries still use camelCase.
  *
  * @param {Object} apiData - API version detail response (result object)
  * @returns {{ nodes: Array, edges: Array }}
@@ -239,12 +240,17 @@ export function parseVersionResponse(apiData) {
   const xyNodes = apiData.nodes.map((node) => {
     const nodeType = mapApiTypeToNodeType(node);
     const isSubgraph = nodeType === NODE_TYPES.AGENT;
+    const promptTemplate = node.promptTemplate || node.prompt_template;
+    const refGraphVersionId =
+      node.refGraphVersionId ?? node.ref_graph_version_id ?? "";
+    const refGraphId = node.refGraphId ?? node.ref_graph_id ?? "";
+    const inputMappings = node.inputMappings || node.input_mappings || [];
 
     // For atomic nodes, read LLM config from promptTemplate (not config)
     const formConfig =
-      isSubgraph || !node.promptTemplate
+      isSubgraph || !promptTemplate
         ? null
-        : transformConfigFromApi(node.promptTemplate);
+        : transformConfigFromApi(promptTemplate);
 
     return {
       id: node.id,
@@ -271,35 +277,49 @@ export function parseVersionResponse(apiData) {
                 direction: p.direction,
                 data_schema: p.dataSchema || p.data_schema || {},
                 required: p.required,
-                ...(p.refPortId && { ref_port_id: p.refPortId }),
+                ...((p.refPortId || p.ref_port_id) && {
+                  ref_port_id: p.refPortId || p.ref_port_id,
+                }),
               })),
-              versionId: node.refGraphVersionId || "",
-              graphId: node.refGraphId || "",
+              versionId: refGraphVersionId,
+              graphId: refGraphId,
               config: {
-                graphId: node.refGraphId || "",
-                versionId: node.refGraphVersionId || "",
+                graphId: refGraphId,
+                versionId: refGraphVersionId,
                 payload: {
-                  inputMappings: node.inputMappings || [],
+                  inputMappings,
                 },
               },
-              ref_graph_version_id: node.refGraphVersionId || "",
+              ref_graph_version_id: refGraphVersionId,
             }
           : {
-              node_template_id: node.nodeTemplateId || null,
-              prompt_template_id: node.promptTemplate?.promptTemplateId || null,
-              prompt_version_id: node.promptTemplate?.promptVersionId || null,
+              node_template_id:
+                node.nodeTemplateId ?? node.node_template_id ?? null,
+              prompt_template_id:
+                promptTemplate?.promptTemplateId ??
+                promptTemplate?.prompt_template_id ??
+                null,
+              prompt_version_id:
+                promptTemplate?.promptVersionId ??
+                promptTemplate?.prompt_version_id ??
+                null,
               config: {
                 ...formConfig,
                 prompt_template_id:
-                  node.promptTemplate?.promptTemplateId || null,
-                prompt_version_id: node.promptTemplate?.promptVersionId || null,
+                  promptTemplate?.promptTemplateId ??
+                  promptTemplate?.prompt_template_id ??
+                  null,
+                prompt_version_id:
+                  promptTemplate?.promptVersionId ??
+                  promptTemplate?.prompt_version_id ??
+                  null,
                 payload: {
                   ...formConfig?.payload,
                   promptConfig: [
                     {
                       configuration: {
-                        ...(node.promptTemplate || {}),
-                        responseFormat: node.prompt_template?.response_format,
+                        ...(promptTemplate || {}),
+                        responseFormat: promptTemplate?.response_format,
                       },
                     },
                   ],
@@ -311,10 +331,12 @@ export function parseVersionResponse(apiData) {
   });
 
   // Node connections → React Flow edges (id, source, target)
-  const xyEdges = (apiData.nodeConnections || [])
+  const nodeConnections =
+    apiData.nodeConnections || apiData.node_connections || [];
+  const xyEdges = nodeConnections
     .map((nc) => {
-      const sourceNodeId = nc.sourceNodeId;
-      const targetNodeId = nc.targetNodeId;
+      const sourceNodeId = nc.sourceNodeId || nc.source_node_id;
+      const targetNodeId = nc.targetNodeId || nc.target_node_id;
       if (!sourceNodeId || !targetNodeId) return null;
       return {
         id: nc.id || `${sourceNodeId}-${targetNodeId}`,

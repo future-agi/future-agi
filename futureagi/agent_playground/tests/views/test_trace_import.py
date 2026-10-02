@@ -12,8 +12,8 @@ from django.urls import reverse
 from django.utils import timezone
 from rest_framework import status
 
-from agent_playground.models.choices import PortMode
-from agent_playground.models.node_template import NodeTemplate
+from accounts.models.workspace import Workspace
+from agent_playground.models.graph import Graph
 from tracer.models.observation_span import ObservationSpan
 from tracer.models.project import Project
 from tracer.models.trace import Trace
@@ -160,6 +160,60 @@ class TestTraceToGraphAPI:
             format="json",
         )
         assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_trace_same_org_other_workspace_returns_404(
+        self, authenticated_client, organization, user, llm_node_template
+    ):
+        """Should return 404 for same-org traces outside the active workspace."""
+        from model_hub.models.ai_model import AIModel
+
+        other_workspace = Workspace.no_workspace_objects.create(
+            name="Trace Import Hidden Workspace",
+            organization=organization,
+            is_default=False,
+            is_active=True,
+            created_by=user,
+        )
+        hidden_project = Project.objects.create(
+            name="Hidden Trace Import Project",
+            organization=organization,
+            workspace=other_workspace,
+            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+            trace_type="observe",
+        )
+        hidden_trace = Trace.no_workspace_objects.create(
+            project=hidden_project,
+            name="Hidden Agent Trace",
+            input={"prompt": "hidden"},
+            output={"response": "hidden"},
+        )
+        now = timezone.now()
+        ObservationSpan.no_workspace_objects.create(
+            id=f"span_{uuid.uuid4().hex[:16]}",
+            project=hidden_project,
+            trace=hidden_trace,
+            name="Hidden LLM",
+            observation_type="llm",
+            start_time=now,
+            end_time=now + timedelta(seconds=1),
+            input={"messages": [{"role": "user", "content": "Hidden"}]},
+            output={"choices": [{"message": {"content": "Nope"}}]},
+            model="gpt-4",
+            model_parameters={},
+            status="OK",
+            span_attributes={},
+        )
+
+        response = authenticated_client.post(
+            self.URL,
+            data={"trace_id": str(hidden_trace.id)},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        assert not Graph.no_workspace_objects.filter(
+            description=f"Created from trace {hidden_trace.id}"
+        ).exists()
 
     def test_trace_no_llm_spans(
         self, authenticated_client, trace_no_llm, llm_node_template

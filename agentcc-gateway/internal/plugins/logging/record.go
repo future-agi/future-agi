@@ -7,6 +7,7 @@ import (
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/payloads"
 	"github.com/futureagi/agentcc-gateway/internal/privacy"
 )
 
@@ -197,76 +198,13 @@ func buildRecord(rc *models.RequestContext, cfg config.RequestLoggingConfig) Tra
 	if cfg.IncludeBodies {
 		rec.RequestBody = rc.Request
 		rec.ResponseBody = rc.Response
-		rec.RequestBodyJSON, rec.ResponseBodyJSON = buildEndpointBodyJSON(rc)
+		rec.RequestBodyJSON, rec.ResponseBodyJSON = payloads.ForEndpoint(rc)
 		if rc.RequestHeaders != nil {
 			rec.RequestHeaders = sanitizeHeaders(rc.RequestHeaders)
 		}
 	}
 
 	return rec
-}
-
-func buildEndpointBodyJSON(rc *models.RequestContext) (json.RawMessage, json.RawMessage) {
-	marshal := func(v any) json.RawMessage {
-		if v == nil {
-			return nil
-		}
-		b, err := json.Marshal(v)
-		if err != nil {
-			return nil
-		}
-		return b
-	}
-
-	switch rc.EndpointType {
-	case "speech", "speech_stream":
-		if rc.SpeechRequest == nil {
-			return nil, nil
-		}
-		resp := map[string]any{
-			"binary":       true,
-			"content_type": rc.Metadata["response_content_type"],
-		}
-		if size := rc.Metadata["response_size_bytes"]; size != "" {
-			resp["size_bytes"] = size
-		}
-		return marshal(rc.SpeechRequest), marshal(resp)
-	case "transcription":
-		if rc.TranscriptionReq == nil {
-			return nil, marshal(rc.TranscriptionResp)
-		}
-		req := map[string]any{
-			"model":           rc.TranscriptionReq.Model,
-			"file_name":       rc.TranscriptionReq.FileName,
-			"file_size_bytes": len(rc.TranscriptionReq.FileData),
-			"language":        rc.TranscriptionReq.Language,
-			"response_format": rc.TranscriptionReq.ResponseFormat,
-		}
-		if rc.TranscriptionReq.Temperature != nil {
-			req["temperature"] = *rc.TranscriptionReq.Temperature
-		}
-		if audioSeconds := rc.Metadata["audio_seconds"]; audioSeconds != "" {
-			req["audio_seconds"] = audioSeconds
-		}
-		return marshal(req), marshal(rc.TranscriptionResp)
-	case "translation":
-		if rc.TranslationReq == nil {
-			return nil, marshal(rc.TranslationResp)
-		}
-		req := map[string]any{
-			"model":           rc.TranslationReq.Model,
-			"file_name":       rc.TranslationReq.FileName,
-			"file_size_bytes": len(rc.TranslationReq.FileData),
-			"prompt":          rc.TranslationReq.Prompt,
-			"response_format": rc.TranslationReq.ResponseFormat,
-		}
-		if rc.TranslationReq.Temperature != nil {
-			req["temperature"] = *rc.TranslationReq.Temperature
-		}
-		return marshal(req), marshal(rc.TranslationResp)
-	default:
-		return nil, nil
-	}
 }
 
 // redactRecord applies privacy redaction to message content in the trace record.

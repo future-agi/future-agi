@@ -1,260 +1,451 @@
 # ============================================================================
-# Future AGI — self-hosted OSS stack
+# Future AGI — Standalone, the default self-hosted install. Three containers:
 #
-# Project name is pinned to `futureagi` so volumes / containers are stable
-# regardless of the directory you cloned into and don't collide with other
-# `future-agi` worktrees on the same host.
+#   app         futureagi/standalone (deploy/standalone): API with the Temporal
+#               worker in one process, Temporal dev server, fi-collector,
+#               agentcc-gateway, UI, Redis, object storage and the code-evals
+#               sandbox, under supervisord
+#   postgres    postgres:16 with small-host settings
+#   clickhouse  clickhouse-server 25.3 with small-host settings
 #
-# Two modes, gated by COMPOSE_PROFILES (set in .env):
+# Optional services in this file:
+#   --profile ml        `serving`: embedding-based evals and knowledge bases
+#   --profile sandbox   privileged nsjail `code-executor` for code evals
 #
-#   • light (default, COMPOSE_PROFILES unset)
-#       Everything you need to run the app: frontend, backend, worker,
-#       agentcc-gateway, serving, code-executor, postgres, clickhouse, redis,
-#       minio, temporal. ~12 containers. Analytics views (Observe / Trace
-#       drilldowns) will show empty data — they're fed by PeerDB, which is
-#       only on in `full` mode.
+#   ./bin/install        or        docker compose up -d
 #
-#   • full (COMPOSE_PROFILES=full)
-#       Adds the PeerDB CDC stack (10 containers) so transactional Postgres
-#       data streams into ClickHouse and analytics views populate. ~22
-#       containers. Use this for a real self-host.
+# Code evals run inside `app` by default, as an unprivileged user with
+# resource limits but in the app's network namespace (see the sandbox program
+# in deploy/standalone/supervisord.conf). Installs whose users must not trust
+# one another should set COMPOSE_PROFILES=sandbox in .env: the nsjail
+# executor then starts with the stack and the app sends code evals to it.
 #
-# Quick start:
-#   cp .env.example .env       # optional — empty .env works fine
-#   docker compose up                                    # light
-#   COMPOSE_PROFILES=full docker compose up              # full
-#
-# Open http://localhost:3000 once the frontend logs "ready".
-# First boot pulls images from Docker Hub (~30s). No source builds.
-#
-# Each image is independently versioned. Defaults to `:latest`. Pin per
-# service in .env for production: FUTURE_AGI_VERSION (backend + worker),
-# FRONTEND_VERSION, AGENTCC_GATEWAY_VERSION, SERVING_VERSION,
-# CODE_EXECUTOR_VERSION.
-#
-# For hot-reload development (build from source, volume mounts, per-queue
-# workers, exposed DB ports, Temporal UI), layer the dev overlay:
-#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
-#
-# For production deployments, see ./deploy/README.md.
+# docker-compose.distributed.yml is the Distributed setup: one container per
+# service, PeerDB CDC, Kafka-backed observed attributes, per-queue workers.
 # ============================================================================
-
 name: futureagi
 
-# PeerDB CDC shared config — used by 5 PeerDB containers
-x-peerdb-catalog: &peerdb-catalog
-  PEERDB_CATALOG_HOST: peerdb-catalog
-  PEERDB_CATALOG_PORT: 5432
-  PEERDB_CATALOG_USER: postgres
-  PEERDB_CATALOG_PASSWORD: postgres
-  PEERDB_CATALOG_DATABASE: postgres
-
-x-peerdb-flow-env: &peerdb-flow-env
-  TEMPORAL_HOST_PORT: peerdb-temporal:7233
-  PEERDB_TEMPORAL_NAMESPACE: default
-
-x-peerdb-minio-env: &peerdb-minio-env
-  PEERDB_CLICKHOUSE_AWS_CREDENTIALS_AWS_ACCESS_KEY_ID: _peerdb_minioadmin
-  PEERDB_CLICKHOUSE_AWS_CREDENTIALS_AWS_SECRET_ACCESS_KEY: _peerdb_minioadmin
-  PEERDB_CLICKHOUSE_AWS_CREDENTIALS_AWS_REGION: us-east-1
-  PEERDB_CLICKHOUSE_AWS_CREDENTIALS_AWS_ENDPOINT_URL_S3: http://peerdb-minio:9000
-  PEERDB_CLICKHOUSE_AWS_S3_BUCKET_NAME: peerdbbucket
-
-x-backend-env: &backend-env
-  # Local-only defaults. deploy/docker-compose.production.yml re-binds these
-  # with ${VAR:?error} guards so prod refuses to boot on the dev values.
-  SECRET_KEY: ${SECRET_KEY:-local-dev-only-not-for-production-replace-me}
-  ENV_TYPE: ${ENV_TYPE:-development}
-  DJANGO_SETTINGS_MODULE: tfc.settings.settings
-  FAST_STARTUP: ${FAST_STARTUP:-false}
-  OTEL_ENABLED: ${OTEL_ENABLED:-false}
-
-  # LLM gateway + code sandbox + embedding service
-  AGENTCC_INTERNAL_URL: http://agentcc-gateway:8090
-  AGENTCC_GATEWAY_INTERNAL_URL: http://agentcc-gateway:8090
-  AGENTCC_INTERNAL_API_KEY: ${AGENTCC_INTERNAL_API_KEY:-local-dev-only-shared-secret-replace-me}
-  AGENTCC_ADMIN_TOKEN: ${AGENTCC_ADMIN_TOKEN:-local-dev-only-admin-token-replace-me}
-  RECAPTCHA_ENABLED: ${RECAPTCHA_ENABLED:-false}
-  RECAPTCHA_SECRET_KEY: ${RECAPTCHA_SECRET_KEY:-}
-  MAILGUN_API_KEY: ${MAILGUN_API_KEY:-}
-  MAILGUN_SENDER_DOMAIN: ${MAILGUN_SENDER_DOMAIN:-}
-  DEFAULT_FROM_EMAIL: ${DEFAULT_FROM_EMAIL:-}
-  SERVER_EMAIL: ${SERVER_EMAIL:-}
-  CODE_EXECUTOR_URL: http://code-executor:8060
-  SERVING_URL: http://serving:8080
-
-  # Database — point Django's pgbouncer-aware config at postgres directly.
-  # Single-instance self-host doesn't need connection pooling; layer pgbouncer
-  # back in for multi-backend production if you want it.
-  PG_HOST: postgres
-  PG_PORT: 5432
-  PG_USER: ${PG_USER:-futureagi}
-  PG_PASSWORD: ${PG_PASSWORD:-futureagi}
-  PG_DB: ${PG_DB:-futureagi}
-  PGBOUNCER_HOST: postgres
-  PGBOUNCER_PORT: 5432
-
-  # ClickHouse
-  CH_HOST: clickhouse
-  CH_PORT: 9000
-  CH_HTTP_PORT: 8123
-  CH_USER: default
-  CH_PASSWORD: ""
-  CH_DATABASE: default
-  CH_USE_REPLICATED_ENGINES: ${CH_USE_REPLICATED_ENGINES:-false}
-
-  # Redis
-  REDIS_HOST: redis
-  REDIS_PORT: 6379
-  REDIS_URL: redis://redis:6379/0
-  REDIS_CACHE_URL: redis://redis:6379/1
-  REDIS_LOCK_URL: redis://redis:6379/2
-  REDIS_STATE_URL: redis://redis:6379/2
-
-  # RabbitMQ for Django Channels / Celery compatibility
-  CELERY_BROKER_URL: amqp://${RABBITMQ_USER:-user}:${RABBITMQ_PASSWORD:-password}@rabbitmq:5672//
-
-  # Object storage (MinIO)
-  # STORAGE_BACKEND drives URL routing: "minio" for the OSS local stack,
-  # "s3" for AWS S3, "gcs" for GCS S3-interop.
-  # S3_ENDPOINT_URL is the internal hostname the backend uses to reach
-  # MinIO. MINIO_URL is what gets baked into URLs returned to the
-  # browser — must be reachable from the user's machine. Override
-  # MINIO_URL when accessing the host from outside localhost.
-  STORAGE_BACKEND: ${STORAGE_BACKEND:-minio}
-  S3_ENDPOINT_URL: http://minio:9000
-  MINIO_URL: ${MINIO_URL:-http://localhost:${MINIO_API_PORT:-9005}}
-  S3_ACCESS_KEY: ${MINIO_ROOT_USER:-futureagi}
-  S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-futureagi}
-  S3_BUCKET: futureagi
-
-  # Temporal
-  TEMPORAL_HOST: temporal:7233
-  TEMPORAL_NAMESPACE: ${TEMPORAL_NAMESPACE:-default}
-
-  # BYOK LLM provider keys (optional)
-  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-  GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
-  AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
-  AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
-  AWS_REGION: ${AWS_REGION:-us-east-1}
-
-  # Future AGI Cloud API (optional)
-  FUTURE_AGI_CLOUD_API_KEY: ${FUTURE_AGI_CLOUD_API_KEY:-}
-  FUTURE_AGI_CLOUD_API_URL: ${FUTURE_AGI_CLOUD_API_URL:-https://api.futureagi.com}
-
-
 services:
-  # ==========================================================================
-  # Application
-  # ==========================================================================
-
-  frontend:
-    image: futureagi/frontend:${FRONTEND_VERSION:-latest}
-    ports:
-      - "${FRONTEND_PORT:-3000}:80"
-    environment:
-      # Empty -> SPA falls back through src/config-global.js: import.meta.env
-      # -> API_HOST_MAP[hostname] -> http://localhost:8000. Override per
-      # deployment (e.g. https://api.example.com for split-domain).
-      VITE_HOST_API: ${VITE_HOST_API:-}
-    depends_on:
-      - backend
-    restart: unless-stopped
-
-  backend:
-    image: futureagi/future-agi:${FUTURE_AGI_VERSION:-latest}
-    ports:
-      - "${BACKEND_PORT:-8000}:80"
+  app:
+    image: futureagi/standalone:${FUTURE_AGI_VERSION:-latest}
     env_file:
       - path: .env
         required: false
     environment:
-      <<: *backend-env
-      SERVICE_TYPE: backend
-      GRANIAN_WORKERS: ${GRANIAN_WORKERS:-1}
+      # Local-only defaults, as in docker-compose.distributed.yml. On a fresh install
+      # ./bin/install generates real values for the secrets into .env.
+      SECRET_KEY: ${SECRET_KEY:-local-dev-only-not-for-production-replace-me}
+      # 'local' keeps settings.py's local fallbacks (e.g. a throwaway
+      # INTEGRATION_ENCRYPTION_KEY); DEBUG stays off for users.
+      ENV_TYPE: ${ENV_TYPE:-local}
+      DEBUG: ${DEBUG:-false}
+      EE_LICENSE_KEY: ${EE_LICENSE_KEY:-}
+      INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:-}
+      DJANGO_SETTINGS_MODULE: tfc.settings.settings
+      # Only the bootstrap process (deploy/standalone/bin/bootstrap.py) changes
+      # schema; the API and `docker compose exec` sessions never do.
+      NO_STARTUP_DB_MUTATIONS: "true"
+      FI_SKIP_CH25_MIGRATION: "1"
+      # Postgres -> ClickHouse change data capture: capture triggers plus a
+      # Temporal drain inside the app, no PeerDB.
+      FI_CDC_MODE: ${FI_CDC_MODE:-outbox}
+      OTEL_ENABLED: ${OTEL_ENABLED:-false}
+      FUTURE_AGI_VERSION: ${FUTURE_AGI_VERSION:-unknown}
+      FUTURE_AGI_DEPLOYMENT_TYPE: ${FUTURE_AGI_DEPLOYMENT_TYPE:-docker}
+      FUTURE_AGI_TELEMETRY_DISABLED: ${FUTURE_AGI_TELEMETRY_DISABLED:-false}
+      FUTURE_AGI_TELEMETRY_JITTER_SECONDS: ${FUTURE_AGI_TELEMETRY_JITTER_SECONDS:-1800}
+      # Root-only (bin/start); /tmp is writable by the code-evals sandbox.
+      FUTURE_AGI_TELEMETRY_BUFFER_DIR: ${FUTURE_AGI_TELEMETRY_BUFFER_DIR:-/data/telemetry}
+      FUTURE_AGI_TELEMETRY_URL: ${FUTURE_AGI_TELEMETRY_URL:-https://api.futureagi.com}
+      FUTURE_AGI_TELEMETRY_INTERVAL_HOURS: ${FUTURE_AGI_TELEMETRY_INTERVAL_HOURS:-6}
+      FUTURE_AGI_TELEMETRY_TIMEOUT_SECONDS: ${FUTURE_AGI_TELEMETRY_TIMEOUT_SECONDS:-5}
+
+      # --- processes -------------------------------------------------------
       GRANIAN_THREADS: ${GRANIAN_THREADS:-2}
-      ENABLE_HTTP: ${ENABLE_HTTP:-true}
-      ENABLE_GRPC: ${ENABLE_GRPC:-true}
+      ENABLE_GRPC: "false"
+      # Exact analytics keep a dedicated single-slot worker in the API process.
+      EXACT_AGGREGATION_TASK_QUEUE: ${EXACT_AGGREGATION_TASK_QUEUE:-exact_aggregation}
+      # The hosted simulation runner needs its own image (distributed topology).
+      TEMPORAL_EXCLUDED_QUEUES: ${TEMPORAL_EXCLUDED_QUEUES:-simulation_runner}
+      # Slots per queue of the one embedded worker. Own names: a .env written
+      # for the distributed stack sets TEMPORAL_MAX_CONCURRENT_* for its big workers,
+      # and this block wins over env_file.
+      TEMPORAL_MAX_CONCURRENT_ACTIVITIES: ${FI_APP_TEMPORAL_MAX_CONCURRENT_ACTIVITIES:-8}
+      TEMPORAL_MAX_CONCURRENT_WORKFLOW_TASKS: ${FI_APP_TEMPORAL_MAX_CONCURRENT_WORKFLOW_TASKS:-8}
+      # The worker drains on stop; this must fit in stop_grace_period below.
+      TEMPORAL_GRACEFUL_SHUTDOWN_TIMEOUT: "30"
+      REDIS_MAXMEMORY: ${REDIS_MAXMEMORY:-128mb}
+
+      # --- services inside this container ----------------------------------
+      TEMPORAL_HOST: 127.0.0.1:7233
+      TEMPORAL_NAMESPACE: default
+      # Redis requires this password: code evals share the container's
+      # network. ./bin/install generates it (URL-safe); bin/start writes it
+      # to Redis's root-only config.
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-local-dev-only-redis-password}
+      REDIS_HOST: 127.0.0.1
+      REDIS_PORT: "6379"
+      REDIS_URL: redis://:${REDIS_PASSWORD:-local-dev-only-redis-password}@127.0.0.1:6379/0
+      REDIS_CACHE_URL: redis://:${REDIS_PASSWORD:-local-dev-only-redis-password}@127.0.0.1:6379/1
+      REDIS_LOCK_URL: redis://:${REDIS_PASSWORD:-local-dev-only-redis-password}@127.0.0.1:6379/2
+      REDIS_STATE_URL: redis://:${REDIS_PASSWORD:-local-dev-only-redis-password}@127.0.0.1:6379/2
+      CHANNEL_LAYER_BACKEND: redis
+      CHANNEL_REDIS_URL: redis://:${REDIS_PASSWORD:-local-dev-only-redis-password}@127.0.0.1:6379/3
+      # Temporal activities relay live updates to the API; keep it in-container
+      # whatever BASE_URL says.
+      WEBSOCKET_ENDPOINT: http://127.0.0.1:8000/call-websocket/
+      AGENTCC_INTERNAL_URL: http://127.0.0.1:8080
+      AGENTCC_GATEWAY_INTERNAL_URL: http://127.0.0.1:8080
+      ALK_RUNNER_API_URL: ${ALK_RUNNER_API_URL:-http://127.0.0.1:8000}
+      # extra_hosts maps code-executor to the in-container sandbox. With
+      # COMPOSE_PROFILES=sandbox in .env, bin/start points this default at
+      # the nsjail executor (code-executor-nsjail) instead.
+      CODE_EXECUTOR_URL: ${CODE_EXECUTOR_URL:-http://code-executor:8060}
+      # Never fall back to running eval code inside the API process when the
+      # executor is down: that process holds every secret and /data.
+      CODE_EXECUTOR_LOCAL_FALLBACK: "false"
+      # Read by bin/start to pick the executor; passed through so a
+      # shell-exported value works as well as the one in .env.
+      COMPOSE_PROFILES: ${COMPOSE_PROFILES:-}
+      # Resolves only with --profile ml; without it serving counts as not
+      # deployed and the features that need it are unavailable.
+      MODEL_SERVING_URL: ${MODEL_SERVING_URL:-http://serving:8080}
+      # The setup screen probes the in-container collector. The environment
+      # wins over env_file, where FI_COLLECTOR_OTLP_PORT is the host port.
+      FI_COLLECTOR_HOST: 127.0.0.1
+      FI_COLLECTOR_OTLP_PORT: "4317"
+      # The OTLP/HTTP URL SDKs send traces to (their FI_BASE_URL), as the UI
+      # shows it.
+      FI_COLLECTOR_PUBLIC_URL: ${FI_COLLECTOR_PUBLIC_URL:-http://localhost:${FI_COLLECTOR_OTLP_HTTP_PORT:-4318}}
+      # The UI's host, without a scheme: invite and password-reset links.
+      APP_URL: ${APP_URL:-localhost:${FRONTEND_PORT:-3000}}
+      # The host ports, for the boot summary's URLs and the SPA's API URL
+      # (bin/start), also when they are set in the shell rather than in .env.
+      FRONTEND_PORT: ${FRONTEND_PORT:-3000}
+      BACKEND_PORT: ${BACKEND_PORT:-8000}
+      # List pages publish the rows found within this wall plus a cursor
+      # ("degraded" when the walk stopped early). Standalone's ClickHouse runs
+      # two threads a query (clickhouse/users.d/zz-small-host.xml), so it gets
+      # longer than the 5 s default before a page comes back partial.
+      SPAN_LIST_PAGE_WALL_MS: ${SPAN_LIST_PAGE_WALL_MS:-15000}
+      TRACE_LIST_PAGE_WALL_MS: ${TRACE_LIST_PAGE_WALL_MS:-15000}
+      SESSION_LIST_PAGE_WALL_MS: ${SESSION_LIST_PAGE_WALL_MS:-15000}
+      # S3_ENDPOINT_URL is the app's own view of object storage; MINIO_URL is
+      # baked into URLs handed to the browser and must be reachable from it.
+      STORAGE_BACKEND: ${STORAGE_BACKEND:-minio}
+      S3_ENDPOINT_URL: http://127.0.0.1:9005
+      MINIO_URL: ${MINIO_URL:-http://localhost:${MINIO_API_PORT:-9005}}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-futureagi}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-futureagi}
+      S3_ACCESS_KEY: ${MINIO_ROOT_USER:-futureagi}
+      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-futureagi}
+      S3_BUCKET: futureagi
+
+      # --- Postgres and ClickHouse -----------------------------------------
+      PG_HOST: postgres
+      PG_PORT: "5432"
+      PG_USER: ${PG_USER:-futureagi}
+      PG_PASSWORD: ${PG_PASSWORD:-futureagi}
+      PG_DB: ${PG_DB:-futureagi}
+      PGBOUNCER_HOST: postgres
+      PGBOUNCER_PORT: "5432"
+      CH_HOST: clickhouse
+      CH_PORT: "9000"
+      CH_HTTP_PORT: "8123"
+      CH_USER: default
+      CH_USERNAME: ${CH_USERNAME:-default}
+      # ./bin/install generates it on a fresh install (clickhouse below).
+      CH_PASSWORD: ${CH_PASSWORD:-}
+      CH_ENABLED: "true"
+      CH_DATABASE: ${CH_DATABASE:-default}
+      CH25_DATABASE: ${CH25_DATABASE:-${CH_DATABASE:-default}}
+      CH_USE_REPLICATED_ENGINES: "false"
+      CH25_DROP_LEGACY_CDC_CHAIN: ${CH25_DROP_LEGACY_CDC_CHAIN:-true}
+      CH25_EVAL_LOGGER_TABLE: ${CH25_EVAL_LOGGER_TABLE:-tracer_eval_logger}
+      CH25_QUERY_TYPES_V2_ONLY: ${CH25_QUERY_TYPES_V2_ONLY:-span_list,trace_list,session_list,voice_call_list,dashboard,monitor_metrics,eval_metrics,filter_builder,trace_detail,annotation_labels}
+      # Observed-attribute index (property and value suggestions in filters,
+      # widgets and tasks): the bootstrap creates it and its users; the
+      # collector writes it directly (FI_OBSERVED_CATALOG_* below), no Kafka.
+      PROPERTY_CATALOG_DATABASE: ${PROPERTY_CATALOG_DATABASE:-property_catalog}
+      PROPERTY_CATALOG_CH_HOST: clickhouse
+      PROPERTY_CATALOG_CH_PORT: "9000"
+      PROPERTY_CATALOG_CH_USER: observed_catalog_reader
+      PROPERTY_CATALOG_CH_PASSWORD: ${PROPERTY_CATALOG_API_PASSWORD:-oss-observed-reader-local-only}
+      PROPERTY_CATALOG_CONSUMER_PASSWORD: ${PROPERTY_CATALOG_CONSUMER_PASSWORD:-oss-observed-writer-local-only}
+
+      # --- fi-collector ----------------------------------------------------
+      FI_CH_URL: http://clickhouse:8123
+      FI_CH_DATABASE: ${FI_CH_DATABASE:-${CH25_DATABASE:-${CH_DATABASE:-default}}}
+      FI_CH_USERNAME: ${CH_USERNAME:-default}
+      FI_CH_PASSWORD: ${CH_PASSWORD:-}
+      # Collector releases before the split FI_PG_WRITE_{HOST,...} fields read
+      # only these DSNs; without them they fall back to a baked-in db:5432.
+      # bin/start percent-encodes PG_USER/PG_PASSWORD/PG_DB when they need it.
+      FI_PG_WRITE: postgres://${PG_USER:-futureagi}:${PG_PASSWORD:-futureagi}@postgres:5432/${PG_DB:-futureagi}?sslmode=disable
+      FI_PG_READ: postgres://${PG_USER:-futureagi}:${PG_PASSWORD:-futureagi}@postgres:5432/${PG_DB:-futureagi}?sslmode=disable
+      PGSSLMODE: ${PGSSLMODE:-prefer}
+      PGSSLROOTCERT: ${PGSSLROOTCERT:-}
+      PGSSLCERT: ${PGSSLCERT:-}
+      PGSSLKEY: ${PGSSLKEY:-}
+      FI_AUTH_REDIS_ADDR: 127.0.0.1:6379
+      # Billing usage events (collector and Django): only Future AGI Cloud
+      # drains the usage:events stream; here it would only fill Redis.
+      USAGE_EVENTS_ENABLED: ${USAGE_EVENTS_ENABLED:-false}
+      FI_AUTH_REDIS_PASSWORD: ${REDIS_PASSWORD:-local-dev-only-redis-password}
+      FI_GRPC_ADDR: ":4317"
+      FI_HTTP_ADDR: ":4318"
+      FI_ADMIN_ADDR: 127.0.0.1:9464
+      FI_DEAD_LETTER_FILE: /data/collector/dead_letter.jsonl
+      # Observed attributes go through a local spool straight into the index,
+      # as the index's writer (Distributed publishes them to Kafka instead).
+      FI_OBSERVED_CATALOG_MODE: direct
+      FI_OBSERVED_CATALOG_CH_URL: http://clickhouse:8123
+      FI_OBSERVED_CATALOG_CH_DATABASE: ${PROPERTY_CATALOG_DATABASE:-property_catalog}
+      FI_OBSERVED_CATALOG_CH_USERNAME: observed_catalog_writer
+      FI_OBSERVED_CATALOG_CH_PASSWORD: ${PROPERTY_CATALOG_CONSUMER_PASSWORD:-oss-observed-writer-local-only}
+      FI_OBSERVED_CATALOG_SPOOL_DIR: /data/collector/observed-catalog
+      # Obsolete; kept "disabled" so an old .env value cannot stop the collector.
+      FI_PROPERTY_CATALOG_MODE: disabled
+      FI_ERROR_FEED_KAFKA_BROKERS: ""
+
+      # --- LLM gateway, mail, captcha --------------------------------------
+      AGENTCC_INTERNAL_API_KEY: ${AGENTCC_INTERNAL_API_KEY:-local-dev-only-shared-secret-replace-me}
+      # Empty: bin/start makes one for this start (the gateway and the API
+      # it posts request logs to both run in this container).
+      AGENTCC_WEBHOOK_SECRET: ${AGENTCC_WEBHOOK_SECRET:-}
+      # The gateway loads UI-created keys and org settings from the API with
+      # the admin token, and posts its request logs there.
+      AGENTCC_CONTROL_PLANE_URL: http://127.0.0.1:8000
+      AGENTCC_CONTROL_PLANE_TOKEN: ${AGENTCC_ADMIN_TOKEN:-local-dev-only-admin-token-replace-me}
+      AGENTCC_SYNC_ON_STARTUP: "true"
+      # Re-read keys and org settings every minute too, so a gateway that
+      # started before the app (or missed an update) catches up. Which
+      # gateways read it:
+      # https://docs.futureagi.com/docs/self-hosting/configuration/reference#application-behaviour
+      AGENTCC_SYNC_INTERVAL: ${AGENTCC_SYNC_INTERVAL:-60s}
+      # Provider base URLs on private networks (a local Ollama or vLLM); read
+      # by the gateway and the API. Off: ClickHouse and the rest of the Docker
+      # network would be reachable through a provider URL. Which gateways and
+      # APIs read it:
+      # https://docs.futureagi.com/docs/self-hosting/configuration/reference#application-behaviour
+      AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS: ${AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS:-false}
+      AGENTCC_HARNESS_API_KEY: ${AGENTCC_HARNESS_API_KEY:-}
+      AGENTCC_BASE_URL: ${AGENTCC_BASE_URL:-}
+      AGENTCC_ADMIN_TOKEN: ${AGENTCC_ADMIN_TOKEN:-local-dev-only-admin-token-replace-me}
+      RECAPTCHA_ENABLED: ${RECAPTCHA_ENABLED:-false}
+      RECAPTCHA_SECRET_KEY: ${RECAPTCHA_SECRET_KEY:-}
+      MAILGUN_API_KEY: ${MAILGUN_API_KEY:-}
+      MAILGUN_SENDER_DOMAIN: ${MAILGUN_SENDER_DOMAIN:-}
+      DEFAULT_FROM_EMAIL: ${DEFAULT_FROM_EMAIL:-}
+      SERVER_EMAIL: ${SERVER_EMAIL:-}
+
+      # --- BYOK LLM provider keys (optional) -------------------------------
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+
+      TEMPORAL_TEST_EXECUTION_ENABLED: ${TEMPORAL_TEST_EXECUTION_ENABLED:-true}
+      # Error localization. The default claude_agent_sdk backend needs the
+      # `localizer` extra (claude-agent-sdk, ~100 MB), which the slim image the
+      # app is built on leaves out; the original localizer needs nothing more.
+      ERROR_LOCALIZER_BACKEND: ${ERROR_LOCALIZER_BACKEND:-legacy}
+
+      # --- hosted agent harness (same defaults as the distributed topology) --------
+      HARNESS_PUBLIC_BASE_URL: ${HARNESS_PUBLIC_BASE_URL:-}
+      HARNESS_PROVIDER: ${HARNESS_PROVIDER:-daytona}
+      HARNESS_MAX_ARTIFACT_BYTES: ${HARNESS_MAX_ARTIFACT_BYTES:-1073741824}
+      HOSTED_SANDBOX_PROVIDER: ${HOSTED_SANDBOX_PROVIDER:-daytona}
+      ALK_HOSTED_BASE_EGRESS_DOMAINS: ${ALK_HOSTED_BASE_EGRESS_DOMAINS:-}
+      ALK_HOSTED_EGRESS_UNRESTRICTED: ${ALK_HOSTED_EGRESS_UNRESTRICTED:-false}
+      ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS: ${ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS:-3600}
+      ALK_HOSTED_AUTHORING_TIMEOUT: ${ALK_HOSTED_AUTHORING_TIMEOUT:-}
+      ALK_HOSTED_SANDBOX_TTL_SECONDS: ${ALK_HOSTED_SANDBOX_TTL_SECONDS:-7200}
+      # Long-running guests can remain healthy during a transient provider control-plane outage.
+      ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS: ${ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS:-180}
+      ALK_HOSTED_CHAT_TTL_SECONDS: ${ALK_HOSTED_CHAT_TTL_SECONDS:-1800}
+      ALK_HOSTED_WEBRTC_EGRESS_CIDRS: ${ALK_HOSTED_WEBRTC_EGRESS_CIDRS:-}
+      ALK_HOSTED_BUNDLE_DIR: ${ALK_HOSTED_BUNDLE_DIR:-}
+      ALK_HARNESS: ${ALK_HARNESS:-}
+      ALK_HARNESS_MODEL: ${ALK_HARNESS_MODEL:-}
+      ALK_HOSTED_AGENTCC_BASE_URL: ${ALK_HOSTED_AGENTCC_BASE_URL:-}
+      ALK_HOSTED_AGENTCC_MODEL: ${ALK_HOSTED_AGENTCC_MODEL:-vertex_ai/gemini-3.7-flash}
+      SIMULATOR_LLM_PROVIDER: ${SIMULATOR_LLM_PROVIDER:-vertex}
+      SIMULATOR_LLM_MODEL: ${SIMULATOR_LLM_MODEL:-gemini-3.8-flash}
+      HARNESS_CALLER_BARGE_IN_RATE: ${HARNESS_CALLER_BARGE_IN_RATE:-0.4}
+      # Temporary, disabled-by-default Cab Guest Booking POC policy. The target value stays in
+      # deployment configuration and is sent only through the platform simulator-secret channel.
+      ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER: ${ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER:-}
+      ALK_CAB_GUEST_POC_PIN: ${ALK_CAB_GUEST_POC_PIN:-}
+      DAYTONA_API_KEY: ${DAYTONA_API_KEY:-}
+      DAYTONA_API_URL: ${DAYTONA_API_URL:-}
+      DAYTONA_TARGET: ${DAYTONA_TARGET:-}
+      DAYTONA_ORGANIZATION_ID: ${DAYTONA_ORGANIZATION_ID:-}
+      ALK_DAYTONA_SNAPSHOT: ${ALK_DAYTONA_SNAPSHOT:-}
+      ALK_DAYTONA_SNAPSHOT_DIGEST: ${ALK_DAYTONA_SNAPSHOT_DIGEST:-}
+      ALK_DAYTONA_DOCKERFILE: ${ALK_DAYTONA_DOCKERFILE:-}
+      E2B_API_KEY: ${E2B_API_KEY:-}
+      ALK_E2B_TEMPLATE_REFERENCE: ${ALK_E2B_TEMPLATE_REFERENCE:-}
+      ALK_E2B_TEMPLATE_BUILD_ID: ${ALK_E2B_TEMPLATE_BUILD_ID:-}
+      ALK_E2B_TEMPLATE_CPU_UNITS: ${ALK_E2B_TEMPLATE_CPU_UNITS:-4}
+      ALK_E2B_TEMPLATE_MEMORY_MB: ${ALK_E2B_TEMPLATE_MEMORY_MB:-8192}
+      ALK_E2B_TEMPLATE_DISK_GB: ${ALK_E2B_TEMPLATE_DISK_GB:-10}
+      ALK_E2B_MAX_TTL_SECONDS: ${ALK_E2B_MAX_TTL_SECONDS:-0}
+      # Platform-owned phone dialer; never supplied by a customer harness job.
+      # As on Distributed's backend service: the API hands these to phone runs.
+      LIVEKIT_URL: ${LIVEKIT_URL:-}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-}
+      DEEPGRAM_API_KEY: ${DEEPGRAM_API_KEY:-}
+      SIP_OUTBOUND_TRUNK_ID: ${SIP_OUTBOUND_TRUNK_ID:-}
+      SIP_OUTBOUND_FROM_NUMBER: ${SIP_OUTBOUND_FROM_NUMBER:-}
+      LIVEKIT_OUTBOUND_TRUNK_ID: ${LIVEKIT_OUTBOUND_TRUNK_ID:-}
+      PSTN_CALLER_NUMBER: ${PSTN_CALLER_NUMBER:-}
+
+      # --- UI runtime config (config.js, written at container start) --------
+      # Empty -> the SPA calls http://localhost:<BACKEND_PORT> (default set in
+      # deploy/standalone/bin/start). Set the public API URL when the UI is
+      # reached through another host name.
+      VITE_HOST_API: ${VITE_HOST_API:-}
+      VITE_HELP_LINK: ${VITE_HELP_LINK:-}
+    extra_hosts:
+      - "code-executor:127.0.0.1"
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+      - "${BACKEND_PORT:-8000}:8000"
+      - "127.0.0.1:${FI_COLLECTOR_OTLP_PORT:-4317}:4317"
+      - "127.0.0.1:${FI_COLLECTOR_OTLP_HTTP_PORT:-4318}:4318"
+      - "${AGENTCC_GATEWAY_PORT:-8090}:8080"
+      - "127.0.0.1:${MINIO_API_PORT:-9005}:9005"
+    volumes:
+      # Temporal (SQLite), object storage and the collector's dead-letter file.
+      - app-data:/data
+      # Secrets go under /etc/futureagi/secrets, a directory only root can
+      # enter: bind mounts keep the host's file mode (often world-readable),
+      # and code evals run in this container.
+      # LLM gateway providers; override with AGENTCC_CONFIG_PATH in .env.
+      - ./${AGENTCC_CONFIG_PATH:-agentcc-gateway/config.example.yaml}:/etc/futureagi/secrets/agentcc.yaml:ro
+      - ${GOOGLE_APPLICATION_CREDENTIALS:-/dev/null}:/etc/futureagi/secrets/vertex.json:ro
     depends_on:
       postgres:
         condition: service_healthy
       clickhouse:
         condition: service_healthy
-      redis:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
-      temporal:
-        condition: service_healthy
-      agentcc-gateway:
-        condition: service_started
+    healthcheck:
+      # The image's HEALTHCHECK (deploy/standalone/Dockerfile) probes the API
+      # plus every in-container service it relies on: collector, gateway, UI
+      # and object storage. Only its timings are repeated here.
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      # A first boot migrates an empty database before the API starts: minutes,
+      # or over half an hour on a slow or busy host. Failed probes do not
+      # count until then; a passing one marks the app healthy at once.
+      start_period: 3600s
+    # Covers the Temporal worker drain (supervisord stopwaitsecs=50).
+    stop_grace_period: 60s
+    # Caps a fork bomb in a code eval at the container, not the host.
+    pids_limit: 4096
     restart: unless-stopped
 
-  worker:
-    image: futureagi/future-agi:${FUTURE_AGI_VERSION:-latest}
-    env_file:
-      - path: .env
-        required: false
+  postgres:
+    # Same image as docker-compose.distributed.yml, so a volume works with either
+    # file: Debian (glibc) and Alpine (musl) images sort text differently,
+    # which silently corrupts indexes built by the other.
+    image: postgres:16
+    # Small-host settings. wal_level=logical and the slot limit are kept so a
+    # volume from a distributed install (PeerDB slots) still boots and the app can
+    # explain what to do, instead of Postgres refusing to start.
+    # max_connections covers the API (a connection per running sync view),
+    # the embedded worker's activity slots, the CDC drain and the collector.
+    command: >
+      postgres
+      -c max_connections=200
+      -c shared_buffers=64MB
+      -c effective_cache_size=256MB
+      -c work_mem=4MB
+      -c maintenance_work_mem=32MB
+      -c wal_buffers=4MB
+      -c max_wal_size=512MB
+      -c min_wal_size=64MB
+      -c wal_level=logical
+      -c max_replication_slots=25
     environment:
-      <<: *backend-env
-      SERVICE_TYPE: temporal-worker
-      TEMPORAL_ALL_QUEUES: ${TEMPORAL_ALL_QUEUES:-true}
-      TEMPORAL_MAX_CONCURRENT_ACTIVITIES: ${TEMPORAL_MAX_CONCURRENT_ACTIVITIES:-50}
-      TEMPORAL_MAX_CONCURRENT_WORKFLOW_TASKS: ${TEMPORAL_MAX_CONCURRENT_WORKFLOW_TASKS:-50}
-    depends_on:
-      temporal:
-        condition: service_healthy
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
-    restart: unless-stopped
-
-  # LLM gateway. Provider creds live in agentcc-gateway/config.yaml (override
-  # the shipped example via AGENTCC_CONFIG_PATH).
-  agentcc-gateway:
-    image: futureagi/agentcc-gateway:${AGENTCC_GATEWAY_VERSION:-latest}
-    ports:
-      - "${AGENTCC_GATEWAY_PORT:-8090}:8080"
-    env_file:
-      - path: .env
-        required: false
-    environment:
-      AGENTCC_INTERNAL_API_KEY: ${AGENTCC_INTERNAL_API_KEY:-local-dev-only-shared-secret-replace-me}
-      AGENTCC_ADMIN_TOKEN: ${AGENTCC_ADMIN_TOKEN:-local-dev-only-admin-token-replace-me}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      GEMINI_API_KEY: ${GOOGLE_API_KEY:-}
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      POSTGRES_USER: ${PG_USER:-futureagi}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:-futureagi}
+      POSTGRES_DB: ${PG_DB:-futureagi}
     volumes:
-      - ./${AGENTCC_CONFIG_PATH:-agentcc-gateway/config.example.yaml}:/app/config.yaml:ro
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${PG_USER:-futureagi} -d ${PG_DB:-futureagi}",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
     restart: unless-stopped
 
+  clickhouse:
+    # 25.3 is the floor for the v2 spans schema (typed-JSON columns).
+    image: clickhouse/clickhouse-server:25.3-alpine
+    environment:
+      # Keep the upstream default user (no IP allowlist), as in the distributed stack.
+      CLICKHOUSE_SKIP_USER_SETUP: "1"
+      CLICKHOUSE_DB: ${CH_DATABASE:-default}
+      # The default user's password (deploy/clickhouse/users.d), which the
+      # entrypoint also logs in with to create CLICKHOUSE_DB. Empty on
+      # installs made before ./bin/install generated one.
+      CLICKHOUSE_PASSWORD: ${CH_PASSWORD:-}
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - ./deploy/clickhouse/users.d/zz-default-password.xml:/etc/clickhouse-server/users.d/zz-default-password.xml:ro
+      # `tiered` storage policy required by the v2 spans schema.
+      - ./futureagi/.ci/clickhouse-storage-policy.xml:/etc/clickhouse-server/config.d/storage-policy.xml:ro
+      # Smaller caches and merge pools, no system log tables.
+      - ./deploy/standalone/clickhouse/config.d/zz-small-host.xml:/etc/clickhouse-server/config.d/zz-small-host.xml:ro
+      - ./deploy/standalone/clickhouse/users.d/zz-small-host.xml:/etc/clickhouse-server/users.d/zz-small-host.xml:ro
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      # IPv4 literal: `localhost` resolves IPv6 first on some hosts (Colima).
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8123/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # --profile ml: embedding model server for embedding-based evals and
+  # knowledge bases (a few GB of RAM once models load).
   serving:
     image: futureagi/serving:${SERVING_VERSION:-latest}
-    ports:
-      - "${SERVING_PORT:-8080}:8080"
+    profiles: ["ml"]
     env_file:
       - path: .env
         required: false
     environment:
-      <<: *backend-env
-    depends_on:
-      - backend
+      # No collector in this container to export traces to.
+      OTEL_ENABLED: ${OTEL_ENABLED:-false}
     restart: unless-stopped
 
-  # Requires privileged: true for nsjail namespaces — won't run on Fargate /
-  # managed platforms that disallow privileged containers.
+  # --profile sandbox: nsjail-isolated code evals for installs whose users
+  # must not trust one another. Needs privileged: true (Linux namespaces), so
+  # not every platform allows it. Enable it with COMPOSE_PROFILES=sandbox in
+  # .env: bin/start then routes code evals to code-executor-nsjail (the app's
+  # own `code-executor` name points at its built-in sandbox). nsjail allows
+  # network access, as in the distributed stack.
   code-executor:
     image: futureagi/code-executor:${CODE_EXECUTOR_VERSION:-latest}
-    ports:
-      - "${CODE_EXECUTOR_PORT:-8060}:8060"
+    profiles: ["sandbox"]
     privileged: true
+    networks:
+      default:
+        aliases: [code-executor-nsjail]
     deploy:
       resources:
         limits:
@@ -262,320 +453,7 @@ services:
           cpus: "2"
     restart: unless-stopped
 
-  # ==========================================================================
-  # Data stores — bound to 127.0.0.1 so only the host can reach them.
-  # Put a reverse proxy in front of `frontend` to expose publicly.
-  # ==========================================================================
-
-  postgres:
-    image: postgres:16
-    # wal_level=logical + slots enable PeerDB CDC replication.
-    command: >
-      postgres
-      -c wal_level=logical
-      -c max_wal_senders=25
-      -c max_replication_slots=25
-    environment:
-      POSTGRES_USER: ${PG_USER:-futureagi}
-      POSTGRES_PASSWORD: ${PG_PASSWORD:-futureagi}
-      POSTGRES_DB: ${PG_DB:-futureagi}
-    ports:
-      - "127.0.0.1:${PG_PORT:-5432}:5432"
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-futureagi} -d ${PG_DB:-futureagi}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
-
-  clickhouse:
-    image: clickhouse/clickhouse-server:24.10.2.80
-    ports:
-      - "127.0.0.1:${CH_HTTP_PORT:-8123}:8123"
-      - "127.0.0.1:${CH_PORT:-9000}:9000"
-    volumes:
-      - clickhouse-data:/var/lib/clickhouse
-    ulimits:
-      nofile:
-        soft: 262144
-        hard: 262144
-    healthcheck:
-      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
-
-  redis:
-    image: redis:7-alpine
-    command: redis-server --appendonly yes
-    ports:
-      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
-    volumes:
-      - redis-data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
-
-  rabbitmq:
-    image: rabbitmq:3-management
-    environment:
-      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-user}
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-password}
-    volumes:
-      - rabbitmq-data:/var/lib/rabbitmq
-    healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "check_running"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
-
-  minio:
-    image: minio/minio:RELEASE.2025-02-07T23-21-09Z
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-futureagi}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-futureagi}
-    ports:
-      - "127.0.0.1:${MINIO_API_PORT:-9005}:9000"
-      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9006}:9001"
-    volumes:
-      - minio-data:/data
-    healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
-
-  # ==========================================================================
-  # Temporal — durable workflow engine. Shares the main Postgres.
-  # ==========================================================================
-
-  temporal:
-    image: temporalio/auto-setup:1.29.1
-    environment:
-      DB: postgres12
-      DB_PORT: 5432
-      POSTGRES_USER: ${PG_USER:-futureagi}
-      POSTGRES_PWD: ${PG_PASSWORD:-futureagi}
-      POSTGRES_SEEDS: postgres
-      DBNAME: ${PG_DB:-futureagi}
-      ENABLE_ES: "false"
-      LOG_LEVEL: info
-    ports:
-      - "127.0.0.1:${TEMPORAL_PORT:-7233}:7233"
-    depends_on:
-      postgres:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "pgrep -x temporal-server"]
-      interval: 10s
-      timeout: 5s
-      # First-boot schema setup against postgres can take 60-90s on slow
-      # disks. start_period=90s + 15 retries × 10s = up to ~240s before
-      # marked unhealthy.
-      retries: 15
-      start_period: 90s
-    restart: unless-stopped
-
-  # ==========================================================================
-  # PeerDB — Postgres → ClickHouse change-data-capture. Syncs transactional
-  # data to the analytics store so Observe/Trace views work.
-  #
-  # After first `docker compose up`, register mirrors:
-  #   docker compose exec peerdb-init bash /setup.sh
-  # PeerDB UI → http://localhost:3001 (creds: peerdb / peerdb)
-  # ==========================================================================
-
-  peerdb-catalog:
-    image: postgres:16-alpine
-    profiles: ["full"]
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: postgres
-    volumes:
-      - peerdb-catalog-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD", "pg_isready", "-U", "postgres"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
-
-  peerdb-temporal:
-    image: temporalio/auto-setup:1.29
-    profiles: ["full"]
-    environment:
-      DB: postgres12
-      DB_PORT: 5432
-      POSTGRES_USER: postgres
-      POSTGRES_PWD: postgres
-      POSTGRES_SEEDS: peerdb-catalog
-      DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/development-sql.yaml
-    volumes:
-      - ./futureagi/config/peerdb/temporal-dynamicconfig.yaml:/etc/temporal/config/dynamicconfig/development-sql.yaml
-    depends_on:
-      peerdb-catalog:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "pgrep -x temporal-server"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 30s
-    restart: unless-stopped
-
-  peerdb-minio:
-    image: minio/minio:latest
-    profiles: ["full"]
-    environment:
-      MINIO_ROOT_USER: _peerdb_minioadmin
-      MINIO_ROOT_PASSWORD: _peerdb_minioadmin
-    volumes:
-      - peerdb-minio-data:/data
-    entrypoint: >
-      /bin/sh -c "
-      minio server /data --console-address=:36987 &
-      sleep 2;
-      mc alias set myminiopeerdb http://localhost:9000 _peerdb_minioadmin _peerdb_minioadmin;
-      mc mb --ignore-existing myminiopeerdb/peerdbbucket;
-      wait
-      "
-    restart: unless-stopped
-
-  peerdb-flow-api:
-    image: ghcr.io/peerdb-io/flow-api:stable-v0.36.9
-    profiles: ["full"]
-    environment:
-      <<: [*peerdb-catalog, *peerdb-flow-env, *peerdb-minio-env]
-      PEERDB_ALLOWED_TARGETS:
-    depends_on:
-      peerdb-temporal:
-        condition: service_healthy
-    restart: unless-stopped
-
-  peerdb-flow-worker:
-    image: ghcr.io/peerdb-io/flow-worker:stable-v0.36.9
-    profiles: ["full"]
-    environment:
-      <<: [*peerdb-catalog, *peerdb-flow-env, *peerdb-minio-env]
-    depends_on:
-      peerdb-temporal:
-        condition: service_healthy
-    restart: unless-stopped
-
-  peerdb-flow-snapshot-worker:
-    image: ghcr.io/peerdb-io/flow-snapshot-worker:stable-v0.36.9
-    profiles: ["full"]
-    environment:
-      <<: [*peerdb-catalog, *peerdb-flow-env, *peerdb-minio-env]
-    depends_on:
-      peerdb-temporal:
-        condition: service_healthy
-    restart: unless-stopped
-
-  peerdb-server:
-    image: ghcr.io/peerdb-io/peerdb-server:stable-v0.36.9
-    profiles: ["full"]
-    stop_signal: SIGINT
-    environment:
-      <<: *peerdb-catalog
-      PEERDB_PASSWORD: peerdb
-      PEERDB_FLOW_SERVER_ADDRESS: grpc://peerdb-flow-api:8112
-      RUST_LOG: info
-    ports:
-      - "127.0.0.1:${PEERDB_PORT:-9900}:9900"
-    depends_on:
-      peerdb-catalog:
-        condition: service_healthy
-    restart: unless-stopped
-
-  peerdb-ui:
-    image: ghcr.io/peerdb-io/peerdb-ui:stable-v0.36.9
-    profiles: ["full"]
-    environment:
-      <<: *peerdb-catalog
-      PEERDB_FLOW_SERVER_HTTP: http://peerdb-flow-api:8113
-      NEXTAUTH_SECRET: peerdb-local-dev
-      NEXTAUTH_URL: http://localhost:${PEERDB_UI_PORT:-3001}
-      PEERDB_ALLOWED_TARGETS:
-      PEERDB_CLICKHOUSE_ALLOWED_DOMAINS:
-    ports:
-      - "${PEERDB_UI_PORT:-3001}:3000"
-    depends_on:
-      - peerdb-flow-api
-    restart: unless-stopped
-
-  peerdb-temporal-init:
-    image: temporalio/admin-tools
-    profiles: ["full"]
-    restart: "no"
-    environment:
-      TEMPORAL_CLI_ADDRESS: peerdb-temporal:7233
-    depends_on:
-      peerdb-temporal:
-        condition: service_healthy
-    # Modern temporalio/admin-tools ships `temporal` CLI; `tctl` was removed.
-    # `|| true` keeps this idempotent across reboots (second run reports
-    # "already exists" and exits non-zero).
-    entrypoint: >
-      /bin/sh -c "
-      echo 'Registering MirrorName search attribute...' &&
-      temporal operator search-attribute create --name MirrorName --type Text --namespace default --address peerdb-temporal:7233 || true;
-      echo 'Done'
-      "
-
-  peerdb-init:
-    image: postgres:16-alpine
-    profiles: ["full"]
-    restart: "no"
-    environment:
-      SRC_PG_HOST: postgres
-      SRC_PG_PORT: 5432
-      SRC_PG_USER: ${PG_USER:-futureagi}
-      SRC_PG_PASSWORD: ${PG_PASSWORD:-futureagi}
-      SRC_PG_DB: ${PG_DB:-futureagi}
-      DST_CH_HOST: clickhouse
-      DST_CH_PORT: 9000
-      DST_CH_USER: default
-      DST_CH_PASSWORD: ""
-      DST_CH_DB: default
-      PEERDB_HOST: peerdb-server
-      PEERDB_PORT: 9900
-    volumes:
-      - ./futureagi/scripts/peerdb-setup-mirrors.sh:/setup.sh:ro
-    entrypoint: ["bash", "/setup.sh"]
-    depends_on:
-      peerdb-temporal-init:
-        condition: service_completed_successfully
-      peerdb-server:
-        condition: service_started
-      peerdb-flow-api:
-        condition: service_started
-      postgres:
-        condition: service_healthy
-      clickhouse:
-        condition: service_healthy
-
-
 volumes:
+  app-data:
   postgres-data:
   clickhouse-data:
-  redis-data:
-  rabbitmq-data:
-  minio-data:
-  peerdb-catalog-data:
-  peerdb-minio-data:
-
-
-# Compose auto-names the default network ${PROJECT_NAME}_default
-# (i.e. `futureagi_default`). Don't pin a custom name — it collides
-# with networks left over from older project-name configurations.

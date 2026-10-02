@@ -405,7 +405,8 @@ const AudioWaveformModal = ({ onClose, params, onCellValueChanged }) => {
                     justifyContent="center"
                     flexDirection="column"
                     sx={{
-                      border: `1px solid ${grey[300]}`,
+                      border: "1px solid",
+                      borderColor: "divider",
                       borderRadius: (theme) => theme.spacing(1),
                       position: "relative",
                       padding: (theme) => theme.spacing(2),
@@ -500,7 +501,8 @@ const AudioWaveformModal = ({ onClose, params, onCellValueChanged }) => {
               justifyContent="center"
               flexDirection="column"
               sx={{
-                border: `1px solid ${grey[300]}`,
+                border: "1px solid",
+                borderColor: "divider",
                 borderRadius: 1,
                 position: "relative",
                 padding: 2,

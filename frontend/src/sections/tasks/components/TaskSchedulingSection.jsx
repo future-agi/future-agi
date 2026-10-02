@@ -10,31 +10,9 @@ import {
 } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import { useController, useWatch } from "react-hook-form";
-import { differenceInDays, differenceInMonths, parseISO } from "date-fns";
 import Iconify from "src/components/iconify";
 import DateTimeRangePicker from "src/sections/projects/DateTimeRangePicker";
-
-// Map a [startDate, endDate] range to one of DateTimeRangePicker's preset
-// option keys, so the picker visually reflects a draft-prefilled time
-// window instead of always showing the "12M" default.
-function detectDateOption(start, end) {
-  if (!start || !end) return "12M";
-  try {
-    const s = typeof start === "string" ? parseISO(start) : start;
-    const e = typeof end === "string" ? parseISO(end) : end;
-    if (isNaN(s.getTime()) || isNaN(e.getTime())) return "12M";
-    const days = differenceInDays(e, s);
-    const months = differenceInMonths(e, s);
-    if (days >= 6 && days <= 8) return "7D";
-    if (days >= 29 && days <= 31) return "30D";
-    if (months >= 2.8 && months <= 3.2) return "3M";
-    if (months >= 5.5 && months <= 6.5) return "6M";
-    if (months >= 11 && months <= 13) return "12M";
-    return "Custom";
-  } catch {
-    return "12M";
-  }
-}
+import { formatTimeWindow } from "src/sections/projects/timeWindowPresets";
 
 // ───────────────────────────────────────────────────────────────
 // Run mode option cards (historical / continuous)
@@ -441,9 +419,10 @@ const TaskSchedulingSection = ({ control, isEdit = false }) => {
   });
 
   const runType = useWatch({ control, name: "runType" });
-  const [dateOption, setDateOption] = useState(() =>
-    detectDateOption(startDateField.value, endDateField.value),
-  );
+  const { field: datePresetField } = useController({
+    control,
+    name: "datePreset",
+  });
 
   const dateFilter = [startDateField.value, endDateField.value];
   const handleDateFilterChange = (next) => {
@@ -492,6 +471,18 @@ const TaskSchedulingSection = ({ control, isEdit = false }) => {
                 sx={{ fontSize: "12px", fontWeight: 600 }}
               >
                 Time window
+                {startDateField.value && endDateField.value && (
+                  <Box
+                    component="span"
+                    sx={{ fontSize: "10px", fontWeight: 500, ml: 0.5 }}
+                  >
+                    {`(${formatTimeWindow(
+                      startDateField.value,
+                      endDateField.value,
+                      { isCustom: datePresetField.value === "Custom" },
+                    )})`}
+                  </Box>
+                )}
               </Typography>
             </Box>
             <Typography
@@ -503,8 +494,8 @@ const TaskSchedulingSection = ({ control, isEdit = false }) => {
             </Typography>
             <DateTimeRangePicker
               setParentDateFilter={handleDateFilterChange}
-              dateOption={dateOption}
-              setDateOption={setDateOption}
+              dateOption={datePresetField.value}
+              setDateOption={datePresetField.onChange}
               dateFilter={dateFilter}
               isEdit={isEdit}
             />

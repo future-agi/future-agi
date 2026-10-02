@@ -5,6 +5,7 @@ import {
   POSTHOG_KEY,
   POSTHOG_HOST,
 } from "src/config-global";
+import { SESSION_REPLAY_URL_BLOCKLIST } from "src/utils/sessionReplayPolicy";
 
 const posthogHost = POSTHOG_HOST || "https://us.i.posthog.com";
 
@@ -25,8 +26,8 @@ export const initPostHog = () => {
       api_host: posthogHost,
       // Share cookie across *.futureagi.com so UTM/session survives marketing → app
       cross_subdomain_cookie: true,
-      cookie_domain:'.futureagi.com',
-      
+      cookie_domain: ".futureagi.com",
+
       // Autocapture — clicks, form submissions, pageviews
       autocapture: true,
       // Session replay
@@ -35,6 +36,10 @@ export const initPostHog = () => {
         maskInputOptions: {
           password: true,
         },
+        // PostHog is the retained replay provider. Pause replay on grids and
+        // dashboards where a large mutation stream can otherwise dominate the
+        // renderer heap. The SDK automatically resumes after leaving the route.
+        urlBlocklist: SESSION_REPLAY_URL_BLOCKLIST,
       },
       // Capture performance / web vitals
       capture_performance: true,
@@ -73,14 +78,13 @@ export const identifyPostHogUser = (userData = {}) => {
     email,
     name,
     organization,
-    defaultWorkspaceId,
-    defaultWorkspaceRole,
-    organizationRole,
+    default_workspace_id,
+    default_workspace_role,
+    organization_role,
   } = userData;
   if (!id) return;
 
   try {
-
     const setOnce = {};
     try {
       const utmString =
@@ -96,7 +100,10 @@ export const identifyPostHogUser = (userData = {}) => {
         if (utmCampaign) setOnce.$initial_utm_campaign = utmCampaign;
       }
     } catch (storageError) {
-      logger.debug("PostHog: could not read utm_params from storage", storageError);
+      logger.debug(
+        "PostHog: could not read utm_params from storage",
+        storageError,
+      );
     }
 
     // Identify user
@@ -105,9 +112,9 @@ export const identifyPostHogUser = (userData = {}) => {
       {
         email,
         name,
-        workspace_id: defaultWorkspaceId,
-        workspace_role: defaultWorkspaceRole,
-        organization_role: organizationRole,
+        workspace_id: default_workspace_id,
+        workspace_role: default_workspace_role,
+        organization_role,
       },
       Object.keys(setOnce).length ? setOnce : undefined,
     );
@@ -120,8 +127,8 @@ export const identifyPostHogUser = (userData = {}) => {
     }
 
     // Group: Workspace (type 1)
-    if (defaultWorkspaceId) {
-      posthog.group("workspace", defaultWorkspaceId, {
+    if (default_workspace_id) {
+      posthog.group("workspace", default_workspace_id, {
         organization_id: organization?.id,
       });
     }

@@ -14,6 +14,7 @@ from uuid import UUID
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
+from agentic_eval.core.utils.json_utils import strip_code_fence
 from ai_tools.base import BaseTool, ToolContext, ToolResult
 from ai_tools.formatting import section
 from ai_tools.registry import register_tool
@@ -47,10 +48,11 @@ class ExploreTraceTool(BaseTool):
     input_model = ExploreTraceInput
 
     def execute(self, params: ExploreTraceInput, context: ToolContext) -> ToolResult:
-        from tracer.models.observation_span import ObservationSpan
         from tracer.models.trace import Trace
+        from tracer.services.clickhouse.v2 import get_reader
 
-        # Verify trace access
+        # Verify trace access (Trace stays in PG; project__organization is the
+        # tenant scope check)
         try:
             trace = Trace.objects.select_related("project").get(
                 id=params.trace_id,
@@ -59,12 +61,10 @@ class ExploreTraceTool(BaseTool):
         except Trace.DoesNotExist:
             return ToolResult.not_found("Trace", str(params.trace_id))
 
-        # Load all spans
-        spans = list(
-            ObservationSpan.objects.filter(trace=trace, deleted=False).order_by(
-                "start_time", "created_at"
-            )
-        )
+        # Load all spans from CH 25.3 — was ObservationSpan.objects.filter(
+        # trace=, deleted=False).order_by("start_time", "created_at").
+        with get_reader() as reader:
+            spans = reader.list_by_trace(str(trace.id))
 
         if not spans:
             return ToolResult(
@@ -376,21 +376,23 @@ class ExploreTraceTool(BaseTool):
             )
             raw = response.choices[0].message.content
 
-            # Parse JSON from response
+            # Parse JSON from response — unwrap any ``` fence, else fall back
+            # to grabbing the first {...} object.
             parsed = None
-            if "```json" in raw:
-                match = re.search(r"```json\s*(.*?)\s*```", raw, re.DOTALL)
-                if match:
-                    parsed = json.loads(match.group(1))
-            elif "```" in raw:
-                match = re.search(r"```\s*(.*?)\s*```", raw, re.DOTALL)
-                if match:
-                    parsed = json.loads(match.group(1))
+            unwrapped = strip_code_fence(raw)
+            if unwrapped:
+                try:
+                    parsed = json.loads(unwrapped)
+                except json.JSONDecodeError:
+                    parsed = None
 
             if not parsed:
                 match = re.search(r"\{.*\}", raw, re.DOTALL)
                 if match:
-                    parsed = json.loads(match.group(0))
+                    try:
+                        parsed = json.loads(match.group(0))
+                    except (json.JSONDecodeError, ValueError):
+                        pass
 
             if not parsed:
                 return {"sub_flows": [], "trace_overview": ""}

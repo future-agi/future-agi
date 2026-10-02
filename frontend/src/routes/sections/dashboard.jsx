@@ -1,7 +1,7 @@
 /* eslint-disable react-refresh/only-export-components */
 import React from "react";
 import { Suspense } from "react";
-import { Navigate, Outlet, useLocation } from "react-router-dom";
+import { Navigate, Outlet, useLocation, useParams } from "react-router-dom";
 
 import { AuthGuard } from "src/auth/guard";
 import DashboardLayout from "src/layouts/dashboard";
@@ -13,6 +13,8 @@ import WorkspaceRoleProtection from "../components/workspace-role-protection";
 import { GatewayProvider } from "src/sections/gateway/context/GatewayContext";
 import GatewayGuard from "src/sections/gateway/components/GatewayGuard";
 import lazyWithRetry from "src/utils/lazyWithRetry";
+import CapabilityGate from "src/components/capability-gate";
+import { CAPABILITY } from "src/hooks/useCapabilities";
 // Lazy load all route components (with retry for chunk errors after deploys)
 const DevKeysPage = lazyWithRetry(
   () => import("src/pages/dashboard/keys/dev-keys"),
@@ -91,8 +93,8 @@ const UserManagementV2 = lazyWithRetry(
 const BillingPageV2 = lazyWithRetry(
   () => import("src/sections/settings/BillingV2/BillingPage"),
 );
-const EELicensesPage = lazyWithRetry(
-  () => import("src/sections/settings/EELicenses/EELicensesPage"),
+const LicensePage = lazyWithRetry(
+  () => import("src/sections/settings/License/LicensePage"),
 );
 const ProfileSettings = lazyWithRetry(
   () => import("src/pages/dashboard/settings/ProfileSettings"),
@@ -108,9 +110,6 @@ const EvalsUsage = lazyWithRetry(
 const EvalCreate = lazyWithRetry(
   () => import("src/pages/dashboard/evals/EvalCreate"),
 );
-const EvalDetailView = lazyWithRetry(
-  () => import("src/sections/evals/EvalDetails/EvalDetailView"),
-);
 const EvalDetail = lazyWithRetry(
   () => import("src/pages/dashboard/evals/EvalDetail"),
 );
@@ -122,9 +121,6 @@ const EvalsIndividualGroup = lazyWithRetry(
 );
 const AddNewPrompt = lazyWithRetry(
   () => import("src/pages/dashboard/Prompt/AddNewPrompt"),
-);
-const ProjectList = lazyWithRetry(
-  () => import("src/pages/dashboard/projects/ProjectList"),
 );
 const GatewayOverview = lazyWithRetry(
   () => import("src/pages/dashboard/gateway/GatewayOverview"),
@@ -174,11 +170,42 @@ const ObserveList = lazyWithRetry(
 const ProjectWrapper = lazyWithRetry(
   () => import("src/pages/dashboard/projects/ProjectWrapper"),
 );
-const ProjectDetail = lazyWithRetry(
-  () => import("src/pages/dashboard/projects/ProjectDetail"),
-);
 const HuggingFacePage = lazyWithRetry(
   () => import("src/pages/dashboard/huggingface/HuggingFace"),
+);
+const Models = lazyWithRetry(() => import("src/pages/dashboard/models/Models"));
+const ModelDetail = lazyWithRetry(
+  () => import("src/pages/dashboard/models/ModelDetail"),
+);
+const Performance = lazyWithRetry(
+  () => import("src/pages/dashboard/models/Performance/Performance"),
+);
+const CustomMetric = lazyWithRetry(
+  () => import("src/pages/dashboard/models/CustomMetric/CustomMetric"),
+);
+const Datasets = lazyWithRetry(
+  () => import("src/sections/model/datasets/Datasets"),
+);
+const DatasetDetail = lazyWithRetry(
+  () => import("src/pages/dashboard/models/DatasetDetail"),
+);
+const OptimizeList = lazyWithRetry(
+  () => import("src/sections/model/optimize/OptimizeList"),
+);
+const OptimizeDetail = lazyWithRetry(
+  () => import("src/pages/dashboard/models/OptimizeDetail"),
+);
+const PerformanceReport = lazyWithRetry(
+  () =>
+    import("src/pages/dashboard/models/PerformanceReport/PerformanceReport"),
+);
+const ModeConfig = lazyWithRetry(
+  () => import("src/pages/dashboard/models/ModelConfig/ModeConfig"),
+);
+const DatasetContextProvider = lazyWithRetry(() =>
+  import("src/pages/dashboard/models/DatasetContext").then((module) => ({
+    default: module.DatasetContextProvider,
+  })),
 );
 const IndividualExperimentWrapper = lazyWithRetry(
   () => import("src/pages/dashboard/Develop/IndividualExperimentWrapper"),
@@ -191,9 +218,6 @@ const IndividualExperimentSummary = lazyWithRetry(
 );
 const PreviewScreen = lazyWithRetry(
   () => import("src/sections/develop-detail/AnnotationsTab/PreviewScreen"),
-);
-const RunInsidePage = lazyWithRetry(
-  () => import("src/pages/dashboard/run-inside/run-inside"),
 );
 const ObserverWrapper = lazyWithRetry(
   () => import("src/pages/dashboard/observe/ObserverWrapper"),
@@ -288,6 +312,33 @@ const CreateNewAgentDefinition = lazyWithRetry(
 const RunTests = lazyWithRetry(
   () => import("src/pages/dashboard/run-tests/RunTests"),
 );
+const HarnessList = lazyWithRetry(
+  () => import("src/pages/dashboard/harness/HarnessList"),
+);
+const HarnessCreate = lazyWithRetry(
+  () => import("src/pages/dashboard/harness/HarnessCreate"),
+);
+const HarnessDetail = lazyWithRetry(
+  () => import("src/pages/dashboard/harness/HarnessDetail"),
+);
+const SimulateEnvironmentsHome = lazyWithRetry(
+  () => import("src/pages/dashboard/simulate/environments/EnvironmentsHome"),
+);
+const SimulatePrebuiltEnvironments = lazyWithRetry(
+  () => import("src/pages/dashboard/simulate/environments/PrebuiltEnvironments"),
+);
+const SimulateUseTemplate = lazyWithRetry(
+  () => import("src/pages/dashboard/simulate/environments/UseTemplate"),
+);
+const SimulateEnvironmentWorkspace = lazyWithRetry(
+  () => import("src/pages/dashboard/simulate/environments/EnvironmentWorkspace"),
+);
+const WorkspaceExecutionDetail = lazyWithRetry(
+  () =>
+    import(
+      "src/sections/simulate/environments/workspace/runs/WorkspaceExecutionDetail"
+    ),
+);
 const RunTestDetail = lazyWithRetry(
   () => import("src/pages/dashboard/run-tests/RunTestDetail"),
 );
@@ -363,10 +414,6 @@ const WorkspaceGeneral = lazyWithRetry(
 const FalconAIPage = lazyWithRetry(
   () => import("src/pages/dashboard/falcon-ai/FalconAI"),
 );
-const Feed = lazyWithRetry(() => import("src/pages/dashboard/feed/Feed"));
-const FeedDetail = lazyWithRetry(
-  () => import("src/pages/dashboard/feed/FeedDetail"),
-);
 const ErrorFeed = lazyWithRetry(
   () => import("src/pages/dashboard/error-feed/ErrorFeed"),
 );
@@ -379,6 +426,15 @@ const AnnotationLabelsPage = lazyWithRetry(
 const AnnotationQueuesPage = lazyWithRetry(
   () => import("src/pages/dashboard/annotations/queues"),
 );
+
+function LegacyFeedDetailRedirect() {
+  const { id } = useParams();
+  return <Navigate to={`/dashboard/error-feed/${id}`} replace />;
+}
+function ModelDetailDefaultRedirect() {
+  const { id } = useParams();
+  return <Navigate to={`/dashboard/models/${id}/performance`} replace />;
+}
 const QueueDetailPage = lazyWithRetry(
   () => import("src/pages/dashboard/annotations/queue-detail"),
 );
@@ -426,10 +482,6 @@ const Executions = lazyWithRetry(
   () => import("src/sections/agent-playground/Executions/Executions"),
 );
 
-// TODO: Remove after verifying the error boundary
-const ErrorBoundaryTest = () => {
-  throw new Error("This is a test error to preview the error boundary UI");
-};
 
 const DashboardRoutes = () => {
   const location = useLocation();
@@ -456,11 +508,10 @@ const DashboardRoutes = () => {
 export const dashboardRoutes = (
   user,
   workspaceRole,
-  { isOSS = false } = {},
+  { isCloud = false } = {},
 ) => {
-  const userOrgRole = user?.organization_role ?? user?.organizationRole;
-  const userDefaultWsRole =
-    user?.default_workspace_role ?? user?.defaultWorkspaceRole;
+  const userOrgRole = user?.organization_role;
+  const userDefaultWsRole = user?.default_workspace_role;
   const isOwner = user === null ? true : userOrgRole === "Owner";
   const effectiveWsRole = workspaceRole || userDefaultWsRole;
   const isAdmin =
@@ -638,26 +689,22 @@ export const dashboardRoutes = (
         </RoleProtection>
       ),
     },
-    ...(!isOSS
-      ? [
-          {
-            path: "falcon-ai-connectors",
-            element: (
-              <RoleProtection
-                allowedRoles={[
-                  "Owner",
-                  "Admin",
-                  "Member",
-                  "workspace_admin",
-                  "workspace_member",
-                ]}
-              >
-                <FalconAIConnectorsPage />
-              </RoleProtection>
-            ),
-          },
-        ]
-      : []),
+    {
+      path: "falcon-ai-connectors",
+      element: (
+        <RoleProtection
+          allowedRoles={[
+            "Owner",
+            "Admin",
+            "Member",
+            "workspace_admin",
+            "workspace_member",
+          ]}
+        >
+          <FalconAIConnectorsPage />
+        </RoleProtection>
+      ),
+    },
   ];
 
   // Conditionally include billing routes:
@@ -665,7 +712,7 @@ export const dashboardRoutes = (
   // - Role-gated in Cloud/EE mode
   const billingAllowedRoles = ["Owner", "Admin", "workspace_admin"];
   const hasBillingAccess =
-    !isOSS && (isOwner || billingAllowedRoles.includes(effectiveWsRole));
+    isCloud && (isOwner || billingAllowedRoles.includes(effectiveWsRole));
 
   if (hasBillingAccess) {
     settingsRoute.push(
@@ -682,7 +729,7 @@ export const dashboardRoutes = (
           path: "ee-licenses",
           element: (
             <RoleProtection allowedRoles={billingAllowedRoles}>
-              <EELicensesPage />
+              <LicensePage />
             </RoleProtection>
           ),
         },
@@ -698,7 +745,23 @@ export const dashboardRoutes = (
     );
   }
 
-  if (user === null || (user?.ws_enabled ?? user?.wsEnabled)) {
+  // License management is available on self-hosted (EE) deployments too. The
+  // nav shows Settings → License for org admins off-cloud, so the route must
+  // register there or it 404s. (billing/pricing above stay cloud-only.)
+  const hasLicenseAccess =
+    !isCloud && (isOwner || billingAllowedRoles.includes(effectiveWsRole));
+  if (hasLicenseAccess) {
+    settingsRoute.push({
+      path: "ee-licenses",
+      element: (
+        <RoleProtection allowedRoles={billingAllowedRoles}>
+          <LicensePage />
+        </RoleProtection>
+      ),
+    });
+  }
+
+  if (user === null || user?.ws_enabled) {
     settingsRoute.push({
       path: "workspace",
       children: [
@@ -764,6 +827,16 @@ export const dashboardRoutes = (
               ),
             },
             {
+              path: "integrations/:connectionId",
+              element: (
+                <WorkspaceRoleProtection
+                  allowedRoles={["workspace_admin", "workspace_member"]}
+                >
+                  <IntegrationDetailPage />
+                </WorkspaceRoleProtection>
+              ),
+            },
+            {
               path: "ai-providers",
               element: (
                 <WorkspaceRoleProtection
@@ -782,7 +855,7 @@ export const dashboardRoutes = (
   const dashboardChildren = [
     {
       index: true,
-      element: <Navigate to="/dashboard/prototype" replace />,
+      element: <Navigate to="/dashboard/develop" replace />,
     },
     {
       path: "/dashboard/get-started",
@@ -793,61 +866,52 @@ export const dashboardRoutes = (
         },
       ],
     },
-    // {
-    //   path: "models",
-    //   children: [
-    //     { element: <Models />, index: true },
-    //     {
-    //       path: ":id",
-    //       element: (
-    //         <DatasetContextProvider>
-    //           <ModelDetail />
-    //         </DatasetContextProvider>
-    //       ),
-    //       children: [
-    //         {
-    //           index: true,
-    //           element: <Navigate to="/dashboard/models" replace />,
-    //         },
-    //         { path: "performance", element: <Performance /> },
-    //         { path: "custom-metrics", element: <CustomMetric /> },
-    //         {
-    //           path: "datasets",
+    {
+      path: "models",
+      children: [
+        { element: <Models />, index: true },
+        {
+          path: ":id",
+          element: (
+            <DatasetContextProvider>
+              <ModelDetail />
+            </DatasetContextProvider>
+          ),
+          children: [
+            { index: true, element: <ModelDetailDefaultRedirect /> },
+            { path: "performance", element: <Performance /> },
+            { path: "custom-metrics", element: <CustomMetric /> },
+            {
+              path: "datasets",
+              children: [
+                { index: true, element: <Datasets /> },
+                {
+                  path: ":dataset",
+                  element: <DatasetDetail />,
+                },
+              ],
+            },
+            {
+              path: "optimize",
+              children: [
+                { index: true, element: <OptimizeList /> },
+                {
+                  path: ":optimizeId",
+                  element: <OptimizeDetail />,
+                },
+              ],
+            },
+            { path: "report", element: <PerformanceReport /> },
+            { path: "config", element: <ModeConfig /> },
+          ],
+        },
+      ],
+    },
 
-    //           children: [
-    //             { index: true, element: <Datasets /> },
-
-    //             {
-    //               path: ":dataset",
-    //               element: <DatasetDetail />,
-    //             },
-    //           ],
-    //         },
-    //         {
-    //           path: "optimize",
-    //           children: [
-    //             { index: true, element: <OptimizeList /> },
-    //             {
-    //               path: ":optimizeId",
-    //               element: <OptimizeDetail />,
-    //             },
-    //           ],
-    //         },
-    //         { path: "report", element: <PerformanceReport /> },
-    //         { path: "config", element: <ModeConfig /> },
-    //       ],
-    //     },
-    //   ],
-    // },
-
-    ...(!isOSS
-      ? [
-          {
-            path: "falcon-ai/:conversationId?",
-            element: <FalconAIPage />,
-          },
-        ]
-      : []),
+    {
+      path: "falcon-ai/:conversationId?",
+      element: <FalconAIPage />,
+    },
     {
       path: "tasks",
       children: [
@@ -962,29 +1026,29 @@ export const dashboardRoutes = (
     //     },
     //   ],
     // },
-    {
-      path: "prototype",
-      element: <ProjectWrapper />,
-      children: [
-        {
-          index: true,
-          element: <ProjectList />,
-        },
-      ],
-    },
-    {
-      path: "prototype/:projectId",
-      children: [
-        {
-          index: true,
-          element: <ProjectDetail />,
-        },
-        {
-          path: ":runId",
-          element: <RunInsidePage />,
-        },
-      ],
-    },
+    // {
+    //   path: "prototype",
+    //   element: <ProjectWrapper />,
+    //   children: [
+    //     {
+    //       index: true,
+    //       element: <ProjectList />,
+    //     },
+    //   ],
+    // },
+    // {
+    //   path: "prototype/:projectId",
+    //   children: [
+    //     {
+    //       index: true,
+    //       element: <ProjectDetail />,
+    //     },
+    //     {
+    //       path: ":runId",
+    //       element: <RunInsidePage />,
+    //     },
+    //   ],
+    // },
     // {
     //   path: "projects",
     //   element: <ProjectWrapper />,
@@ -1083,18 +1147,26 @@ export const dashboardRoutes = (
           index: true,
           element: <Develop />,
         },
-        ...(!isOSS
-          ? [
-              {
-                path: "create-synthetic-dataset",
-                element: <CreateSyntheticData />,
-              },
-              {
-                path: "edit-synthetic-dataset/:dataset",
-                element: <EditSyntheticDataDrawer />,
-              },
-            ]
-          : []),
+        // Synthetic data ships open on self-hosted; cloud plans enforce via
+        // the backend capability check. Gate the routes too (not just the
+        // AddDatasetDrawer tile) so a deep-link on a deployment/plan without
+        // it shows the upgrade screen instead of a page that 402s on generate.
+        {
+          path: "create-synthetic-dataset",
+          element: (
+            <CapabilityGate feature={CAPABILITY.SYNTHETIC_DATA}>
+              <CreateSyntheticData />
+            </CapabilityGate>
+          ),
+        },
+        {
+          path: "edit-synthetic-dataset/:dataset",
+          element: (
+            <CapabilityGate feature={CAPABILITY.SYNTHETIC_DATA}>
+              <EditSyntheticDataDrawer />
+            </CapabilityGate>
+          ),
+        },
 
         {
           path: ":dataset",
@@ -1232,11 +1304,11 @@ export const dashboardRoutes = (
       children: [
         {
           index: true,
-          element: <Feed />,
+          element: <Navigate to="/dashboard/error-feed" replace />,
         },
         {
           path: ":id",
-          element: <FeedDetail />,
+          element: <LegacyFeedDetailRedirect />,
         },
       ],
     },
@@ -1245,11 +1317,19 @@ export const dashboardRoutes = (
       children: [
         {
           index: true,
-          element: <ErrorFeed />,
+          element: (
+            <CapabilityGate feature={CAPABILITY.ERROR_FEED}>
+              <ErrorFeed />
+            </CapabilityGate>
+          ),
         },
         {
           path: ":id",
-          element: <ErrorFeedDetail />,
+          element: (
+            <CapabilityGate feature={CAPABILITY.ERROR_FEED}>
+              <ErrorFeedDetail />
+            </CapabilityGate>
+          ),
         },
       ],
     },
@@ -1264,6 +1344,69 @@ export const dashboardRoutes = (
     {
       path: "simulate",
       children: [
+        {
+          path: "environments",
+          element: <SimulateEnvironmentsHome />,
+        },
+        {
+          path: "environments/templates",
+          element: <SimulatePrebuiltEnvironments />,
+        },
+        {
+          path: "environments/templates/:templateId",
+          element: <SimulateUseTemplate />,
+        },
+        {
+          // Build is no longer a page of its own — the source panels create the
+          // job and route straight to the workspace, which hosts the build. An
+          // old /build link lands back on the Build entry tab.
+          path: "environments/build",
+          element: <Navigate to="/dashboard/simulate/environments?tab=build" replace />,
+        },
+        {
+          path: "environments/:envId",
+          element: <SimulateEnvironmentWorkspace />,
+          children: [
+            {
+              path: "runs/:testId/:executionId",
+              element: <WorkspaceExecutionDetail />,
+              children: [
+                {
+                  index: true,
+                  element: <Navigate to="call-details" replace />,
+                },
+                {
+                  path: "call-details",
+                  element: <TestExecutionCallDetail />,
+                },
+                {
+                  path: "performance",
+                  element: <TestExecutionPerformanceDetail />,
+                },
+                {
+                  path: "analytics",
+                  element: <TestExecutionAnalyticsDetail />,
+                },
+                {
+                  path: "optimization_runs",
+                  element: <TestExecutionOptimizationRunsDetail />,
+                },
+              ],
+            },
+          ],
+        },
+        {
+          path: "harness",
+          element: <HarnessList />,
+        },
+        {
+          path: "harness/new",
+          element: <HarnessCreate />,
+        },
+        {
+          path: "harness/:jobId",
+          element: <HarnessDetail />,
+        },
         {
           path: "agent-definitions",
           element: <AgentDefinitions />,
@@ -1422,11 +1565,6 @@ export const dashboardRoutes = (
     {
       path: "dashboards/:dashboardId/widget/:widgetId",
       element: <WidgetEditorView />,
-    },
-    // TODO: Remove this test route after verifying the error boundary
-    {
-      path: "error-test",
-      element: <ErrorBoundaryTest />,
     },
   ];
 

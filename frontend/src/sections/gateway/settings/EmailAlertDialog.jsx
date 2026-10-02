@@ -44,12 +44,14 @@ const PROVIDER_OPTIONS = [
 export default function EmailAlertDialog({ open, onClose, alert }) {
   const isEdit = Boolean(alert);
 
-  const [name, setName] = useState("");
-  const [recipients, setRecipients] = useState([]);
-  const [events, setEvents] = useState([]);
-  const [provider, setProvider] = useState("sendgrid");
-  const [cooldownMinutes, setCooldownMinutes] = useState(5);
-  const [isActive, setIsActive] = useState(true);
+  const [name, setName] = useState(alert?.name || "");
+  const [recipients, setRecipients] = useState(alert?.recipients || []);
+  const [events, setEvents] = useState(alert?.events || []);
+  const [provider, setProvider] = useState(alert?.provider || "sendgrid");
+  const [cooldownMinutes, setCooldownMinutes] = useState(
+    alert?.cooldownMinutes ?? alert?.cooldown_minutes ?? 5,
+  );
+  const [isActive, setIsActive] = useState(alert?.is_active !== false);
 
   // Provider config
   const [apiKey, setApiKey] = useState("");
@@ -72,10 +74,10 @@ export default function EmailAlertDialog({ open, onClose, alert }) {
       setRecipients(alert.recipients || []);
       setEvents(alert.events || []);
       setProvider(alert.provider || "sendgrid");
-      setCooldownMinutes(alert.cooldownMinutes || 5);
+      setCooldownMinutes(alert.cooldownMinutes ?? alert.cooldown_minutes ?? 5);
       setIsActive(alert.is_active !== false);
       // Provider config is masked, so we don't pre-fill sensitive fields
-      const cfg = alert.providerConfig || {};
+      const cfg = alert.providerConfig || alert.provider_config || {};
       setFromEmail(cfg.from_email || "");
       if (alert.provider === "smtp") {
         setSmtpHost(cfg.host || "");

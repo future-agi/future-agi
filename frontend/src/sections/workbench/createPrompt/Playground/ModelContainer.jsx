@@ -19,26 +19,17 @@ import SvgColor from "src/components/svg-color";
 import CustomTooltip from "src/components/tooltip";
 import { getModelParamValues, transformModelParams } from "./common";
 import ModelParamsContainer from "./ModelParamsContainer";
-import { MODEL_TYPES } from "src/sections/develop-detail/RunPrompt/common";
+import {
+  MODEL_TYPES,
+  modelTypeByValueType,
+  getOutputFormatFromCatalogType,
+} from "src/sections/develop-detail/RunPrompt/common";
 import logger from "src/utils/logger";
 import { useModelParams } from "src/api/develop/prompt";
 import { useVoiceOptions } from "src/api/develop/develop-detail";
 import ResponseFormatSelector from "./ResponseFormatSelector";
 import TemplateFormatSelector from "./TemplateFormatSelector";
 import { ShowComponent } from "../../../../components/show";
-
-const modelTypeByValueType = {
-  chat: MODEL_TYPES.LLM,
-  tts: MODEL_TYPES.TTS,
-  stt: MODEL_TYPES.STT,
-  image_generation: MODEL_TYPES.IMAGE,
-};
-
-const getOutputFormatFromModelType = (responseFormat) => {
-  if (responseFormat === "tts") return "audio";
-  if (responseFormat === "image_generation") return "image";
-  return "string";
-};
 
 const ModelContainer = ({
   modelConfig,
@@ -114,7 +105,7 @@ const ModelContainer = ({
         defaultResponseFormat = "text";
       }
 
-      const outputFormat = getOutputFormatFromModelType(value?.type);
+      const outputFormat = getOutputFormatFromCatalogType(value?.type);
 
       setTransformedModelParamsValue({
         ...transformedValue,

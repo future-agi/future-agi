@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import React, { useState, useMemo, useCallback } from "react";
+import React, { useState, useMemo, useCallback, useRef } from "react";
 import {
   Avatar,
   AvatarGroup,
@@ -114,7 +114,10 @@ function StatusCellRenderer({ data }) {
   return (
     <Box sx={{ display: "flex", alignItems: "center", height: "100%" }}>
       <Stack direction="row" alignItems="center" spacing={0.5}>
-        <ItemStatusBadge status={workflowStatus} />
+        <ItemStatusBadge
+          status={workflowStatus}
+          label={data.workflow_status_label}
+        />
         {data.reserved_by && (
           <Tooltip title={`Reserved by ${data.reserved_by_name || "someone"}`}>
             <Iconify
@@ -140,39 +143,36 @@ function AssignedCellRenderer({ data, context }) {
   if (!data) return null;
 
   const assignedUsers = data.assigned_users || [];
-  const annotators = (context?.annotators || []).filter(isQueueAnnotatorRole);
+  const annotators = (context?.annotatorsRef?.current || []).filter(
+    isQueueAnnotatorRole,
+  );
   const assignItems = context?.onAssign;
   const isAutoAssign = Boolean(context?.autoAssign);
-  const canAssign = Boolean(assignItems) && !isAutoAssign;
-
-  if (isAutoAssign) {
-    const title =
-      annotators.length > 0
-        ? annotators.map((a) => a.name || a.email).join(", ")
-        : "All annotators";
-    return (
-      <Box sx={{ display: "flex", alignItems: "center", height: "100%" }}>
-        <Tooltip title={title}>
-          <Chip
-            label={
-              annotators.length === 1
-                ? annotators[0].name || annotators[0].email
-                : "All annotators"
-            }
-            size="small"
-            variant="outlined"
-            color="primary"
-            sx={{ height: 24, fontSize: 12 }}
-          />
-        </Tooltip>
-      </Box>
-    );
-  }
+  const canAssign = Boolean(assignItems);
+  const assignedUserIds = new Set(assignedUsers.map((u) => String(u.id)));
+  const annotatorIds = annotators.map((a) => String(a.user_id || a.id));
+  const allAnnotatorsAssigned =
+    isAutoAssign &&
+    (assignedUsers.length === 0 ||
+      (annotatorIds.length > 0 &&
+        annotatorIds.every((uid) => assignedUserIds.has(uid))));
+  const autoAssignTitle =
+    annotators.length > 0
+      ? annotators.map((a) => a.name || a.email).join(", ")
+      : "All annotators";
+  const autoAssignLabel =
+    annotators.length === 1
+      ? annotators[0].name || annotators[0].email
+      : "All annotators";
 
   const handleClick = (e) => {
     if (!canAssign) return;
     e.stopPropagation();
-    setLocalSelected(new Set(assignedUsers.map((u) => String(u.id))));
+    const selectedIds =
+      isAutoAssign && assignedUsers.length === 0
+        ? annotatorIds
+        : assignedUsers.map((u) => String(u.id));
+    setLocalSelected(new Set(selectedIds));
     setAnchorEl(e.currentTarget);
     setSearch("");
   };
@@ -219,13 +219,28 @@ function AssignedCellRenderer({ data, context }) {
 
   return (
     <Box sx={{ display: "flex", alignItems: "center", height: "100%" }}>
-      {assignedUsers.length > 0 ? (
+      {allAnnotatorsAssigned ? (
+        <Tooltip title={autoAssignTitle}>
+          <Chip
+            label={autoAssignLabel}
+            size="small"
+            variant="outlined"
+            color="primary"
+            onClick={canAssign ? handleClick : undefined}
+            sx={{
+              height: 24,
+              fontSize: 12,
+              cursor: canAssign ? "pointer" : "default",
+            }}
+          />
+        </Tooltip>
+      ) : assignedUsers.length > 0 ? (
         <Tooltip
           title={
             <Stack spacing={0.25} sx={{ py: 0.25 }}>
               {assignedUsers.map((u) => (
                 <Typography key={u.id} variant="caption">
-                  {u.name || "Unnamed"}
+                  {u.name || u.email || "Unnamed"}
                 </Typography>
               ))}
             </Stack>
@@ -251,22 +266,22 @@ function AssignedCellRenderer({ data, context }) {
             }}
           >
             {assignedUsers.map((u) => (
-              <Avatar key={u.id}>{getInitials(u.name, null)}</Avatar>
+              <Avatar key={u.id}>{getInitials(u.name, u.email)}</Avatar>
             ))}
           </AvatarGroup>
         </Tooltip>
       ) : (
         <Chip
-          label="+ Assign"
+          label={canAssign ? "+ Assign" : "Unassigned"}
           size="small"
           variant="outlined"
-          color="primary"
+          color={canAssign ? "primary" : "default"}
           onClick={canAssign ? handleClick : undefined}
           sx={{
             cursor: canAssign ? "pointer" : "default",
             height: 24,
             fontSize: 12,
-            borderStyle: "dashed",
+            borderStyle: canAssign ? "dashed" : "solid",
             "&:hover": canAssign
               ? {
                   bgcolor: (theme) => alpha(theme.palette.primary.main, 0.12),
@@ -404,6 +419,51 @@ ReviewCellRenderer.propTypes = {
   data: PropTypes.object,
 };
 
+function CommentsCellRenderer({ data }) {
+  if (!data) return null;
+  const comments = Number(data.comment_count || 0);
+  const openFeedback = Number(data.open_feedback_count || 0);
+  if (!comments && !openFeedback) {
+    return (
+      <Box sx={{ display: "flex", alignItems: "center", height: "100%" }}>
+        <Typography variant="caption" color="text.disabled">
+          —
+        </Typography>
+      </Box>
+    );
+  }
+
+  return (
+    <Box sx={{ display: "flex", alignItems: "center", height: "100%" }}>
+      <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+        {comments > 0 && (
+          <Chip
+            size="small"
+            variant="outlined"
+            icon={<Iconify icon="solar:chat-round-dots-bold" width={14} />}
+            label={comments}
+            sx={{ height: 22, fontSize: 11, fontWeight: 700 }}
+          />
+        )}
+        {openFeedback > 0 && (
+          <Chip
+            size="small"
+            color="warning"
+            variant="outlined"
+            icon={<Iconify icon="solar:flag-bold" width={14} />}
+            label={openFeedback}
+            sx={{ height: 22, fontSize: 11, fontWeight: 700 }}
+          />
+        )}
+      </Stack>
+    </Box>
+  );
+}
+
+CommentsCellRenderer.propTypes = {
+  data: PropTypes.object,
+};
+
 function AddedCellRenderer({ data }) {
   if (!data) return null;
   const date = data.created_at;
@@ -439,9 +499,7 @@ function ActionsCellRenderer({ data, context }) {
             context?.onRemoveConfirm(data);
           }}
           sx={{
-            opacity: 0,
-            color: "text.disabled",
-            ".ag-row:hover &": { opacity: 1 },
+            opacity: 1,
             "&:hover": { color: "error.main" },
           }}
         >
@@ -477,12 +535,16 @@ export default function QueueItemsTable({
   autoAssign = false,
   gridRef = null,
   canManageItems = true,
+  canSelectItems = canManageItems,
   addedSortDirection = "desc",
   onAddedSortChange,
 }) {
   const agTheme = useAgThemeWith(AG_THEME_OVERRIDES.noHeaderBorder);
 
   const [removeTarget, setRemoveTarget] = useState(null);
+
+  const annotatorsRef = useRef(annotators);
+  annotatorsRef.current = annotators;
 
   const columnDefs = useMemo(
     () =>
@@ -503,10 +565,21 @@ export default function QueueItemsTable({
         },
         {
           field: "status",
-          headerName: "Status",
+          headerName: "Item Status",
           flex: 1,
           minWidth: 130,
           cellRenderer: loading ? SkeletonCell : StatusCellRenderer,
+          valueGetter: (params) => {
+            const d = params.data;
+            return [
+              d.workflow_status,
+              d.review_status,
+              d.status,
+              d.workflow_status_label,
+              d.reserved_by,
+              d.reserved_by_name,
+            ].join("|");
+          },
         },
         {
           field: "assignedTo",
@@ -525,6 +598,13 @@ export default function QueueItemsTable({
           flex: 0.8,
           minWidth: 110,
           cellRenderer: loading ? SkeletonCell : ReviewCellRenderer,
+        },
+        {
+          field: "comment_count",
+          headerName: "Comments",
+          flex: 0.8,
+          minWidth: 116,
+          cellRenderer: loading ? SkeletonCell : CommentsCellRenderer,
         },
         {
           field: "created_at",
@@ -577,12 +657,12 @@ export default function QueueItemsTable({
   const gridContext = useMemo(
     () => ({
       onRemoveConfirm: canManageItems ? (item) => setRemoveTarget(item) : null,
-      annotators,
+      annotatorsRef,
       onAssign,
       autoAssign,
       gridRef,
     }),
-    [annotators, onAssign, autoAssign, gridRef, canManageItems],
+    [onAssign, autoAssign, gridRef, canManageItems],
   );
 
   const onCellClicked = useCallback(
@@ -680,7 +760,28 @@ export default function QueueItemsTable({
           overflow: "hidden",
         }}
       >
-        <Box sx={{ flex: 1, minHeight: 0, overscrollBehavior: "none" }}>
+        <Box
+          sx={{
+            flex: 1,
+            minHeight: 0,
+            overscrollBehavior: "none",
+            "& .ag-row": {
+              borderBottom: "1px solid",
+              borderBottomColor: "divider",
+            },
+            "& .ag-cell": {
+              borderRight: "1px solid",
+              borderRightColor: "divider",
+            },
+            "& .ag-cell:last-of-type": {
+              borderRight: 0,
+            },
+            "& .ag-header-cell": {
+              borderRight: "1px solid",
+              borderRightColor: "divider",
+            },
+          }}
+        >
           <AgGridReact
             ref={gridRef}
             theme={agTheme}
@@ -692,12 +793,12 @@ export default function QueueItemsTable({
             headerHeight={42}
             pagination={false}
             animateRows={false}
-            rowSelection={canManageItems ? { mode: "multiRow" } : undefined}
+            rowSelection={canSelectItems ? { mode: "multiRow" } : undefined}
             selectionColumnDef={selectionColumnDef}
-            suppressRowClickSelection={canManageItems}
+            suppressRowClickSelection={canSelectItems}
             rowStyle={{ cursor: onItemClick ? "pointer" : "default" }}
             onCellClicked={onCellClicked}
-            onSelectionChanged={canManageItems ? onSelectionChanged : undefined}
+            onSelectionChanged={canSelectItems ? onSelectionChanged : undefined}
             onSortChanged={onSortChanged}
             getRowId={getRowId}
             noRowsOverlayComponent={CustomNoRowsOverlay}
@@ -782,6 +883,7 @@ QueueItemsTable.propTypes = {
   autoAssign: PropTypes.bool,
   gridRef: PropTypes.object,
   canManageItems: PropTypes.bool,
+  canSelectItems: PropTypes.bool,
   addedSortDirection: PropTypes.oneOf(["asc", "desc"]),
   onAddedSortChange: PropTypes.func,
 };

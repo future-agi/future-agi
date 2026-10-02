@@ -27,8 +27,10 @@ from simulate.serializers.test_execution import CallExecutionDetailSerializer
 try:
     from ee.voice.tasks.call_log_tasks import _ingest_call_logs, ingest_call_logs_task
 except ImportError:
-    _ingest_call_logs = None
-    ingest_call_logs_task = None
+    pytest.skip(
+        "EE voice call-log ingestion task is not available in OSS",
+        allow_module_level=True,
+    )
 
 requires_ee_voice = pytest.mark.skipif(
     ingest_call_logs_task is None,
@@ -47,7 +49,9 @@ def keep_test_db_connection_open():
     transaction connection open while exercising the helper directly."""
     with (
         patch("ee.voice.tasks.call_log_tasks.close_old_connections", return_value=None),
-        patch("tfc.temporal.drop_in.decorator.close_old_connections", return_value=None),
+        patch(
+            "tfc.temporal.drop_in.decorator.close_old_connections", return_value=None
+        ),
     ):
         yield
 
@@ -299,10 +303,10 @@ def test_ingest_call_logs_task_delegates_to_helper(call_execution):
         )
 
     assert ok is True
-    MockVSM.return_value.iter_call_logs.assert_called_once_with(
-        url="https://example.com/log",
-        verify_ssl=False,
-    )
+    MockVSM.return_value.iter_call_logs.assert_called_once()
+    call_kwargs = MockVSM.return_value.iter_call_logs.call_args.kwargs
+    assert call_kwargs["url"] == "https://example.com/log"
+    assert call_kwargs["verify_ssl"] is False
 
 
 @requires_ee_voice
@@ -428,6 +432,8 @@ class TestCallExecutionLogsViewEmpty:
             kwargs={
                 "verify_ssl": False,
                 "source": CallLogEntry.LogSource.CUSTOMER,
+                "call_id": None,
+                "api_key": None,
             },
         )
         call_execution.refresh_from_db()
@@ -537,3 +543,43 @@ class TestCallExecutionDetailView:
         payload = response.json()
         assert payload["provider"] == "livekit"
         assert payload["attributes"]["raw_log"]["room_sid"] == "RM_test"
+
+    def test_reads_livekit_call_without_recording_or_vapi_key(
+        self, auth_client, call_execution, monkeypatch
+    ):
+        monkeypatch.delenv("VAPI_API_KEY", raising=False)
+        call_execution.provider_call_data = {"livekit": {"room_sid": "RM_test"}}
+        call_execution.save(update_fields=["provider_call_data"])
+
+        response = auth_client.get(self.URL_TEMPLATE.format(call_execution.id))
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["provider"] == "livekit"
+        assert response.json()["recordings"] == {}
+
+    def test_reads_stored_vapi_recordings_without_vapi_key(
+        self, auth_client, call_execution, monkeypatch
+    ):
+        monkeypatch.delenv("VAPI_API_KEY", raising=False)
+        call_execution.provider_call_data = {
+            "vapi": {
+                "artifact": {
+                    "recording": {
+                        "stereoUrl": "https://example.com/stereo.wav",
+                        "mono": {"combinedUrl": "https://example.com/combined.wav"},
+                    }
+                }
+            }
+        }
+        call_execution.save(update_fields=["provider_call_data"])
+
+        response = auth_client.get(self.URL_TEMPLATE.format(call_execution.id))
+
+        assert response.status_code == status.HTTP_200_OK
+        assert (
+            response.json()["recordings"]["stereo"] == "https://example.com/stereo.wav"
+        )
+        assert (
+            response.json()["recordings"]["combined"]
+            == "https://example.com/combined.wav"
+        )

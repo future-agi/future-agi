@@ -1,5 +1,28 @@
 from rest_framework import serializers
 
+from model_hub.models.choices import DatasetSourceChoices
+from model_hub.models.develop_dataset import Dataset
+
+
+class ObserveDatasetSerializer(serializers.ModelSerializer):
+    organization = serializers.PrimaryKeyRelatedField(read_only=True)
+    user = serializers.PrimaryKeyRelatedField(read_only=True)
+
+    class Meta:
+        model = Dataset
+        fields = ["id", "name", "organization", "model_type", "source", "user"]
+
+    def create(self, validated_data):
+        request = self.context.get("request")
+        if request is not None:
+            validated_data["organization"] = (
+                getattr(request, "organization", None) or request.user.organization
+            )
+            validated_data["workspace"] = getattr(request, "workspace", None)
+            validated_data["user"] = request.user
+        validated_data.setdefault("source", DatasetSourceChoices.OBSERVE.value)
+        return Dataset.no_workspace_objects.create(**validated_data)
+
 
 class AddToNewDatasetObserveSerializer(serializers.Serializer):
     span_ids = serializers.ListField(child=serializers.CharField(), required=False)

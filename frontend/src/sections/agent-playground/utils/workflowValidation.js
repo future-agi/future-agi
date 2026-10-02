@@ -120,9 +120,11 @@ function hasValidUserContent(message) {
     return false;
   return message.content.some((item) => {
     if (item.type === "text") return item.text?.trim().length > 0;
-    if (item.type === "image_url") return item.imageUrl?.url?.trim().length > 0;
-    if (item.type === "pdf_url") return item.pdfUrl?.url?.trim().length > 0;
-    if (item.type === "audio_url") return item.audioUrl?.url?.trim().length > 0;
+    if (item.type === "image_url")
+      return item.image_url?.url?.trim().length > 0;
+    if (item.type === "pdf_url") return item.pdf_url?.url?.trim().length > 0;
+    if (item.type === "audio_url")
+      return item.audio_url?.url?.trim().length > 0;
     return false;
   });
 }

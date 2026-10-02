@@ -1,0 +1,29 @@
+slug: analyze-costs
+name: Analyze Costs
+icon: mdi:currency-usd
+description: Understand and optimize AI spending with detailed cost breakdowns.
+trigger_phrases:
+- cost
+- spending
+- expensive
+- budget
+- optimize cost
+- save money
+tool_names:
+- get_cost_breakdown
+- search_traces
+- get_trace_analytics
+- whoami
+instructions: |-
+  Help the user understand and optimize their AI spending.
+
+  Approach:
+  1. Get cost breakdown by model, project, and time period
+  2. Identify the most expensive models/endpoints
+  3. Find optimization opportunities (cheaper models for simple tasks)
+  4. Calculate potential savings from model switching
+  5. Provide specific recommendations
+
+  Always show actual dollar amounts and percentages.
+  Compare current vs. previous period when possible.
+example_trajectories: []

@@ -56,7 +56,15 @@ RHFUploadBox.propTypes = {
 
 // ----------------------------------------------------------------------
 
-export function RHFUpload({ name, showIcon, multiple, helperText, uploadProgress, control, ...other }) {
+export function RHFUpload({
+  name,
+  showIcon,
+  multiple,
+  helperText,
+  uploadProgress,
+  control,
+  ...other
+}) {
   return (
     <Controller
       name={name}
@@ -106,5 +114,5 @@ RHFUpload.propTypes = {
   name: PropTypes.string,
   control: PropTypes.object,
   showIcon: PropTypes.bool,
-  uploadProgress: PropTypes.number
+  uploadProgress: PropTypes.number,
 };

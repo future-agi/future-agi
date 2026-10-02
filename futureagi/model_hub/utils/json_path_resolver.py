@@ -287,12 +287,21 @@ def parse_json_safely(value: Any) -> Tuple[Optional[Any], bool]:
     except (json.JSONDecodeError, ValueError):
         pass
 
+    # Only invoke tolerant parsers when the value looks like a JSON object/array.
+    # Otherwise json_repair/literal_eval can invent structures from prose.
+    first, last = stripped[0], stripped[-1]
+    looks_structured = (first == "{" and last == "}") or (
+        first == "[" and last == "]"
+    )
+    if not looks_structured:
+        return None, False
+
     # 2. Tolerant JSON repair (handles trailing commas, single quotes, etc.)
     try:
         data = json_repair.loads(stripped)
         if isinstance(data, (dict, list)):
             return data, True
-    except (json.JSONDecodeError, ValueError, TypeError):
+    except (json.JSONDecodeError, ValueError, TypeError, IndexError, RecursionError):
         pass
 
     # 3. Python literal eval (handles True/False/None, single-quoted keys)

@@ -7,6 +7,7 @@ import {
   IconButton,
   MenuItem,
   Popover,
+  Skeleton,
   TextField,
   Tooltip,
   Typography,
@@ -19,13 +20,24 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import PropTypes from "prop-types";
-import React, { useCallback, useMemo, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import Iconify from "src/components/iconify";
 import KeysDrawer from "src/components/custom-model-dropdown/KeysDrawer";
 import { useDebounce } from "src/hooks/use-debounce";
-import { useDeploymentMode } from "src/hooks/useDeploymentMode";
+import {
+  useFeatureAllowed,
+  useFeatureLocked,
+  CAPABILITY,
+} from "src/hooks/useCapabilities";
 import { useNavigate } from "react-router";
 import axios, { endpoints } from "src/utils/axios";
+import { getProviderLogoFilterSx } from "./modelLogo";
 
 // ---------------------------------------------------------------------------
 // Modes — how the evaluator runs
@@ -147,6 +159,9 @@ const FAGI_MODELS = [
 ];
 
 export const FAGI_MODEL_VALUES = new Set(FAGI_MODELS.map((m) => m.value));
+
+const FAGI_MODEL_LOCKED_TOOLTIP =
+  "Turing models aren't enabled for this workspace. Select your own model.";
 
 const CHIP_STYLES = {
   backgroundColor: (theme) =>
@@ -551,6 +566,21 @@ SummarySubmenu.propTypes = {
   onSelect: PropTypes.func.isRequired,
 };
 
+function KBSkeletonRows({ count }) {
+  return Array.from({ length: count }).map((_, i) => (
+    <Box
+      key={`kb-skeleton-${i}`}
+      sx={{ display: "flex", alignItems: "center", gap: 1, px: 2, py: 0.75 }}
+    >
+      <Skeleton variant="rounded" width={18} height={18} />
+      <Skeleton
+        variant="text"
+        sx={{ flex: 1, fontSize: (theme) => theme.typography.s2_1.fontSize }}
+      />
+    </Box>
+  ));
+}
+
 // Main Component — [∞ Mode ▾] [model-name ▾] [+]
 // ---------------------------------------------------------------------------
 const ModelSelector = ({
@@ -576,6 +606,11 @@ const ModelSelector = ({
   activeContextOptions: activeContextOptionsProp,
   onActiveContextOptionsChange,
   hideDatasetContextToggle = false,
+  // Bump this counter to pop the model menu open from the parent — used when
+  // an action is blocked because no model is picked, so the snackbar and the
+  // menu arrive together. A counter rather than a boolean so repeat attempts
+  // re-open it without the parent having to reset the flag.
+  openModelMenuSignal = 0,
 }) => {
   // For each field, pick "controlled" (parent-driven) or "uncontrolled" (local state).
   const [modeLocal, setModeLocal] = useState("agent");
@@ -587,6 +622,12 @@ const ModelSelector = ({
 
   const [modeAnchor, setModeAnchor] = useState(null);
   const [modelAnchor, setModelAnchor] = useState(null);
+  const modelPillRef = useRef(null);
+
+  useEffect(() => {
+    if (!openModelMenuSignal || disabled) return;
+    setModelAnchor(modelPillRef.current);
+  }, [openModelMenuSignal, disabled]);
   const [modelSearch, setModelSearch] = useState("");
   const debouncedModelSearch = useDebounce(modelSearch.trim(), 400);
   const [plusAnchor, setPlusAnchor] = useState(null);
@@ -646,21 +687,30 @@ const ModelSelector = ({
   };
 
   const [kbSearch, setKbSearch] = useState("");
+  const debouncedKbSearch = useDebounce(kbSearch.trim(), 400);
   const [keysDrawerModel, setKeysDrawerModel] = useState(null);
   const navigate = useNavigate();
-  const { isOSS } = useDeploymentMode();
+  // Fail closed while capabilities load: never flash Turing models as
+  // selectable during the fetch. `fagiModelsDenied` is the *confirmed* denial
+  // (loaded AND not allowed) used only to clear a seeded selection below — we
+  // must not wipe a legitimately-preselected Turing model mid-fetch.
+  const { locked: fagiModelsLocked, isLoading: capabilitiesLoading } =
+    useFeatureLocked(CAPABILITY.TURING_MODELS);
+  const fagiModelsDenied = fagiModelsLocked && !capabilitiesLoading;
+  const { allowed: falconAllowed } = useFeatureAllowed(CAPABILITY.FALCON_AI);
 
   const currentMode = MODES.find((m) => m.value === mode) || MODES[1];
 
-  // Fetch real MCP connectors from Falcon AI API. Falcon AI is EE-only;
-  // skip the call in OSS so the ee_stub 402 doesn't fire a snackbar.
+  // Fetch real MCP connectors from Falcon AI API. Falcon AI needs a
+  // license/plan; skip the call when locked so the 402 doesn't fire a
+  // snackbar.
   const { data: connectorsData } = useInfiniteQuery({
     queryKey: ["falcon-mcp-connectors"],
     queryFn: () => axios.get(endpoints.falconAI.connectors),
     getNextPageParam: () => null,
     initialPageParam: 1,
     staleTime: 60000,
-    enabled: !isOSS,
+    enabled: falconAllowed,
   });
 
   const connectors = useMemo(() => {
@@ -671,31 +721,40 @@ const ModelSelector = ({
     return Array.isArray(results) ? results : [];
   }, [connectorsData]);
 
-  // Fetch knowledge bases
-  const { data: kbData } = useInfiniteQuery({
-    queryKey: ["eval-knowledge-bases"],
-    queryFn: () => axios.get(endpoints.knowledge.list),
-    getNextPageParam: () => null,
-    initialPageParam: 1,
+  const {
+    data: kbData,
+    fetchNextPage: fetchNextKBPage,
+    hasNextPage: hasNextKBPage,
+    isFetchingNextPage: isFetchingNextKBPage,
+    isLoading: kbLoading,
+  } = useInfiniteQuery({
+    queryKey: ["eval-knowledge-bases", debouncedKbSearch],
+    queryFn: ({ pageParam }) =>
+      axios.get(endpoints.knowledge.list, {
+        params: {
+          search: debouncedKbSearch,
+          page_number: pageParam,
+          page_size: 25,
+        },
+      }),
+    getNextPageParam: (lastPage, allPages) => {
+      const loaded = allPages.reduce(
+        (n, p) => n + (p?.data?.result?.table_data?.length || 0),
+        0,
+      );
+      const total = lastPage?.data?.result?.total_rows || 0;
+      return loaded < total ? allPages.length : undefined;
+    },
+    initialPageParam: 0,
     staleTime: 60000,
   });
 
-  const knowledgeBases = useMemo(() => {
-    const page = kbData?.pages?.[0]?.data;
-    // API returns {status, result: {tableData: [...], totalRows}}
-    const items =
-      page?.result?.tableData || page?.results || page?.tableData || [];
-    return Array.isArray(items) ? items : [];
-  }, [kbData]);
-
-  const filteredKBs = useMemo(() => {
-    if (!kbSearch) return knowledgeBases;
-    return knowledgeBases.filter((kb) =>
-      (kb.name || kb.title || "")
-        .toLowerCase()
-        .includes(kbSearch.toLowerCase()),
-    );
-  }, [knowledgeBases, kbSearch]);
+  // API returns {status, result: {table_data: [...], total_rows}} per page.
+  const knowledgeBases = useMemo(
+    () =>
+      (kbData?.pages || []).flatMap((p) => p?.data?.result?.table_data || []),
+    [kbData],
+  );
 
   // Fetch BYOK models from API
   const {
@@ -707,7 +766,11 @@ const ModelSelector = ({
     queryKey: ["eval-model-list", debouncedModelSearch],
     queryFn: ({ pageParam }) =>
       axios.get(endpoints.develop.modelList, {
-        params: { page: pageParam, search: debouncedModelSearch, model_type: "llm" },
+        params: {
+          page: pageParam,
+          search: debouncedModelSearch,
+          model_type: "llm",
+        },
       }),
     getNextPageParam: (o) => (o.data.next ? o.data.current_page + 1 : null),
     initialPageParam: 1,
@@ -749,12 +812,21 @@ const ModelSelector = ({
     );
   }, [connectors, connectorSearch]);
 
-  // Filter FAGI models by search — always shown in both OSS and EE
-  const filteredFagiModels = modelSearch
-    ? FAGI_MODELS.filter((m) =>
-        m.label.toLowerCase().includes(modelSearch.toLowerCase()),
-      )
-    : FAGI_MODELS;
+  const filteredFagiModels = useMemo(() => {
+    if (!modelSearch) return FAGI_MODELS;
+    return FAGI_MODELS.filter((m) =>
+      m.label.toLowerCase().includes(modelSearch.toLowerCase()),
+    );
+  }, [modelSearch]);
+
+  // When Turing models aren't enabled, callers still seed `model` with
+  // "turing_large". Drop it so the pill reads "Select model" instead of
+  // preselecting something the backend would 402 on save. Gate on the
+  // *confirmed* denial, not the loading-time lock, or we'd clear a legitimate
+  // selection before capabilities resolve.
+  useEffect(() => {
+    if (fagiModelsDenied && FAGI_MODEL_VALUES.has(model)) onModelChange("");
+  }, [fagiModelsDenied, model, onModelChange]);
 
   return (
     <Box
@@ -804,6 +876,7 @@ const ModelSelector = ({
 
       {/* ── Model selector (right) ── */}
       <Box
+        ref={modelPillRef}
         onClick={(e) => !disabled && setModelAnchor(e.currentTarget)}
         sx={{
           display: "inline-flex",
@@ -926,10 +999,10 @@ const ModelSelector = ({
                 Knowledge Bases
               </Typography>
               {selectedKBs.map((kbId) => {
-                const kb = knowledgeBases.find((k) => (k.id || k.pk) === kbId);
+                const kb = knowledgeBases.find((k) => k.id === kbId);
                 return (
                   <Typography key={kbId} sx={{ fontSize: "11px" }}>
-                    • {kb?.name || kb?.title || "KB"}
+                    • {kb?.name || "KB"}
                   </Typography>
                 );
               })}
@@ -1121,48 +1194,73 @@ const ModelSelector = ({
                 FutureAGI Models
               </Typography>
               {filteredFagiModels.map((m) => (
-                <MenuItem
+                <Tooltip
                   key={m.value}
-                  selected={m.value === model}
-                  onClick={() => {
-                    onModelChange(m.value);
-                    setModelAnchor(null);
-                    setModelSearch("");
-                  }}
-                  sx={{ mx: 0.5, borderRadius: "6px", py: 0.75, gap: 1 }}
+                  title={fagiModelsLocked ? FAGI_MODEL_LOCKED_TOOLTIP : ""}
+                  placement="right"
+                  arrow
                 >
-                  <Iconify
-                    icon={m.icon}
-                    width={18}
-                    sx={{
-                      color:
-                        m.value === model ? "primary.main" : "text.secondary",
-                      flexShrink: 0,
-                    }}
-                  />
-                  <Box sx={{ flex: 1, minWidth: 0 }}>
-                    <Typography
-                      variant="body2"
-                      sx={{ fontSize: "13px", fontWeight: 500 }}
+                  <span>
+                    <MenuItem
+                      selected={m.value === model}
+                      disabled={fagiModelsLocked}
+                      onClick={() => {
+                        onModelChange(m.value);
+                        setModelAnchor(null);
+                        setModelSearch("");
+                      }}
+                      sx={{
+                        mx: 0.5,
+                        borderRadius: "6px",
+                        py: 0.75,
+                        gap: 1,
+                        width: "auto",
+                      }}
                     >
-                      {m.label}
-                    </Typography>
-                    <Typography
-                      variant="caption"
-                      color="text.secondary"
-                      sx={{ fontSize: "11px" }}
-                    >
-                      {m.description}
-                    </Typography>
-                  </Box>
-                  {m.value === model && (
-                    <Iconify
-                      icon="mdi:check"
-                      width={16}
-                      sx={{ color: "primary.main", flexShrink: 0 }}
-                    />
-                  )}
-                </MenuItem>
+                      <Iconify
+                        icon={m.icon}
+                        width={18}
+                        sx={{
+                          color:
+                            m.value === model
+                              ? "primary.main"
+                              : "text.secondary",
+                          flexShrink: 0,
+                        }}
+                      />
+                      <Box sx={{ flex: 1, minWidth: 0 }}>
+                        <Typography
+                          variant="body2"
+                          sx={{ fontSize: "13px", fontWeight: 500 }}
+                        >
+                          {m.label}
+                        </Typography>
+                        <Typography
+                          variant="caption"
+                          color="text.secondary"
+                          sx={{ fontSize: "11px" }}
+                        >
+                          {fagiModelsLocked ? "Not enabled" : m.description}
+                        </Typography>
+                      </Box>
+                      {fagiModelsLocked ? (
+                        <Iconify
+                          icon="mdi:lock-outline"
+                          width={16}
+                          sx={{ color: "text.disabled", flexShrink: 0 }}
+                        />
+                      ) : (
+                        m.value === model && (
+                          <Iconify
+                            icon="mdi:check"
+                            width={16}
+                            sx={{ color: "primary.main", flexShrink: 0 }}
+                          />
+                        )
+                      )}
+                    </MenuItem>
+                  </span>
+                </Tooltip>
               ))}
             </>
           )}
@@ -1192,7 +1290,8 @@ const ModelSelector = ({
                 Your Models
               </Typography>
               {apiModels.map((m) => {
-                const available = m.isAvailable !== false;
+                const available = m.is_available !== false;
+                const logoUrl = m.logo_url;
                 return (
                   <MenuItem
                     key={m.model_name}
@@ -1218,15 +1317,16 @@ const ModelSelector = ({
                       }),
                     }}
                   >
-                    {m.logoUrl ? (
+                    {logoUrl ? (
                       <Box
                         component="img"
-                        src={m.logoUrl}
+                        src={logoUrl}
                         sx={{
                           width: 18,
                           height: 18,
                           borderRadius: "4px",
                           flexShrink: 0,
+                          ...getProviderLogoFilterSx(m.providers),
                         }}
                       />
                     ) : (
@@ -1371,7 +1471,9 @@ const ModelSelector = ({
                   width: 12,
                   height: 12,
                   borderRadius: "50%",
-                  backgroundColor: "#fff",
+                  backgroundColor: useInternet
+                    ? "primary.contrastText"
+                    : "common.white",
                   position: "absolute",
                   top: 2,
                   left: useInternet ? 18 : 2,
@@ -1552,64 +1654,97 @@ const ModelSelector = ({
             )}
             {/* ══ Knowledge Base submenu ══ */}
             {plusSubmenu === "knowledge" && (
-              <Box sx={{ maxHeight: 350, overflowY: "auto" }}>
-                <Box sx={{ px: 1, pt: 0.5, pb: 0.5 }}>
-                  <TextField
-                    size="small"
-                    fullWidth
-                    autoFocus
-                    placeholder="Search knowledge bases..."
-                    value={kbSearch}
-                    onChange={(e) => setKbSearch(e.target.value)}
-                    InputProps={{
-                      startAdornment: (
-                        <Iconify
-                          icon="mdi:magnify"
-                          width={14}
-                          sx={{ mr: 0.5, color: "text.disabled" }}
-                        />
-                      ),
-                      sx: { fontSize: "12px", height: 28 },
-                    }}
-                  />
+              <Box
+                sx={{ width: 360, maxHeight: 360, overflowY: "auto" }}
+                onScroll={(e) => {
+                  const { scrollTop, scrollHeight, clientHeight } = e.target;
+                  if (
+                    scrollHeight - scrollTop - clientHeight < 50 &&
+                    hasNextKBPage &&
+                    !isFetchingNextKBPage
+                  ) {
+                    fetchNextKBPage();
+                  }
+                }}
+              >
+                <Box
+                  sx={{
+                    position: "sticky",
+                    top: 0,
+                    zIndex: 1,
+                    backgroundColor: "background.paper",
+                    borderBottom: "1px solid",
+                    borderColor: "divider",
+                  }}
+                >
+                  <Box sx={{ px: 1, pt: 0.75, pb: 0.75 }}>
+                    <TextField
+                      size="small"
+                      fullWidth
+                      autoFocus
+                      placeholder="Search knowledge bases..."
+                      value={kbSearch}
+                      onChange={(e) => setKbSearch(e.target.value)}
+                      InputProps={{
+                        startAdornment: (
+                          <Iconify
+                            icon="mdi:magnify"
+                            width={14}
+                            sx={{ mr: 0.5, color: "text.disabled" }}
+                          />
+                        ),
+                        sx: {
+                          fontSize: (theme) => theme.typography.s2.fontSize,
+                          height: 30,
+                        },
+                      }}
+                    />
+                  </Box>
+
+                  {selectedKBs.length > 0 && (
+                    <Box
+                      sx={{
+                        px: 1.25,
+                        pb: 0.75,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                      }}
+                    >
+                      <Typography
+                        variant="s3"
+                        sx={{
+                          fontWeight: "fontWeightSemiBold",
+                          color: "text.secondary",
+                          letterSpacing: "0.02em",
+                        }}
+                      >
+                        {selectedKBs.length} selected
+                      </Typography>
+                      <Typography
+                        component="button"
+                        variant="s3"
+                        onClick={() => setSelectedKBs([])}
+                        sx={{
+                          fontWeight: "fontWeightSemiBold",
+                          color: "primary.main",
+                          background: "none",
+                          border: "none",
+                          p: 0,
+                          cursor: "pointer",
+                          "&:hover": { textDecoration: "underline" },
+                        }}
+                      >
+                        Clear all
+                      </Typography>
+                    </Box>
+                  )}
                 </Box>
 
-                {selectedKBs.length > 0 && (
-                  <Box
-                    sx={{
-                      px: 1,
-                      pb: 0.5,
-                      display: "flex",
-                      flexWrap: "wrap",
-                      gap: 0.5,
-                    }}
-                  >
-                    {selectedKBs.map((kbId) => {
-                      const kb = knowledgeBases.find(
-                        (k) => (k.id || k.pk) === kbId,
-                      );
-                      return (
-                        <Chip
-                          key={kbId}
-                          size="small"
-                          label={kb?.name || kb?.title || "KB"}
-                          onDelete={() =>
-                            setSelectedKBs((prev) =>
-                              prev.filter((x) => x !== kbId),
-                            )
-                          }
-                          deleteIcon={DELETE_ICON}
-                          sx={{ ...CHIP_STYLES, height: 20 }}
-                        />
-                      );
-                    })}
-                  </Box>
-                )}
-
-                {filteredKBs.length > 0 ? (
-                  filteredKBs.map((kb) => {
-                    const kbId = kb.id || kb.pk;
-                    const kbName = kb.name || kb.title || "Untitled";
+                {knowledgeBases.length > 0 ? (
+                  knowledgeBases.map((kb) => {
+                    const kbId = kb.id;
+                    const kbName = kb.name;
                     const isSelected = selectedKBs.includes(kbId);
                     return (
                       <MenuItem
@@ -1621,7 +1756,19 @@ const ModelSelector = ({
                               : [...prev, kbId],
                           )
                         }
-                        sx={{ borderRadius: "6px", py: 0.5, gap: 1 }}
+                        sx={{
+                          borderRadius: "6px",
+                          mx: 0.5,
+                          py: 0.5,
+                          gap: 1,
+                          ...(isSelected && {
+                            backgroundColor: (theme) =>
+                              alpha(
+                                theme.palette.primary.main,
+                                theme.palette.mode === "dark" ? 0.16 : 0.08,
+                              ),
+                          }),
+                        }}
                       >
                         <Iconify
                           icon={
@@ -1638,15 +1785,25 @@ const ModelSelector = ({
                           }}
                         />
                         <Typography
-                          variant="body2"
+                          variant="s2_1"
                           noWrap
-                          sx={{ fontSize: "13px", flex: 1 }}
+                          sx={{
+                            flex: 1,
+                            fontWeight: isSelected
+                              ? "fontWeightSemiBold"
+                              : "fontWeightRegular",
+                            color: isSelected
+                              ? "text.primary"
+                              : "text.secondary",
+                          }}
                         >
                           {kbName}
                         </Typography>
                       </MenuItem>
                     );
                   })
+                ) : kbLoading ? (
+                  <KBSkeletonRows count={6} />
                 ) : (
                   <Box sx={{ py: 2, px: 1.5, textAlign: "center" }}>
                     <Typography
@@ -1667,6 +1824,7 @@ const ModelSelector = ({
                     />
                   </Box>
                 )}
+                {isFetchingNextKBPage && <KBSkeletonRows count={3} />}
               </Box>
             )}
 
@@ -1802,6 +1960,7 @@ ModelSelector.propTypes = {
   showMode: PropTypes.bool,
   showPlus: PropTypes.bool,
   hideDatasetContextToggle: PropTypes.bool,
+  openModelMenuSignal: PropTypes.number,
 };
 
 export default ModelSelector;

@@ -11,6 +11,10 @@ import { WORKFLOW_STATE } from "../../utils/workflowExecution";
 // Mock useWorkflowExecution
 const mockRunWorkflow = vi.fn();
 const mockStopWorkflow = vi.fn();
+vi.mock("../../hooks/useCanEditAgent", () => ({
+  default: () => ({ canEditAgent: true, isReadOnly: false }),
+}));
+
 vi.mock("../../hooks/useWorkflowExecution", () => ({
   default: () => ({
     runWorkflow: mockRunWorkflow,

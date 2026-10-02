@@ -1278,7 +1278,7 @@ class ExperimentRunner:
             if model_config.get("tools"):
                 tools = Tools.objects.filter(id__in=model_config.get("tools")).all()
                 for tool in tools:
-                    tools_config.append(tool.config)
+                    tools_config.append(tool.as_openai_tool())
 
             rf = model_config.get("response_format")
             if rf and not isinstance(rf, dict):
@@ -1327,7 +1327,13 @@ class ExperimentRunner:
             value_info["reason"] = value_info.get("data", {}).get("response")
 
         except Exception as e:
-            logger.exception(f"Error in processing the row: {str(e)}")
+            # Expected, handled validation failure (empty messages) is user
+            # misconfiguration; the row is persisted as a failed cell below.
+            # Downgrade only that case to warning so real failures stay errors.
+            if "Messages are required" in str(e):
+                logger.warning(f"Error in processing the row: {str(e)}")
+            else:
+                logger.exception(f"Error in processing the row: {str(e)}")
             # if unsupported_exception:
             response = str(e)
             value_info = {"reason": str(e)}
@@ -1551,7 +1557,7 @@ def _process_row_impl(
         if model_config.get("tools"):
             tools = Tools.objects.filter(id__in=model_config.get("tools")).all()
             for tool in tools:
-                tools_config.append(tool.config)
+                tools_config.append(tool.as_openai_tool())
 
         rf = model_config.get("response_format")
         if rf and not isinstance(rf, dict):
@@ -1599,7 +1605,13 @@ def _process_row_impl(
         value_info["reason"] = value_info.get("data", {}).get("response")
 
     except Exception as e:
-        logger.exception(f"Error in processing the row: {str(e)}")
+        # Expected, handled validation failure (empty messages) is user
+        # misconfiguration; the row is persisted as a failed cell below.
+        # Downgrade only that case to warning so real failures stay errors.
+        if "Messages are required" in str(e):
+            logger.warning(f"Error in processing the row: {str(e)}")
+        else:
+            logger.exception(f"Error in processing the row: {str(e)}")
         # if unsupported_exception:
         response = str(e)
         value_info = {"reason": str(e)}

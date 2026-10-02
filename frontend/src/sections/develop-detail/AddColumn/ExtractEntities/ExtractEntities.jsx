@@ -23,11 +23,11 @@ import { ShowComponent } from "../../../../components/show";
 
 const getDefaultValue = () => {
   return {
-    columnId: "",
+    column_id: "",
     instruction: "",
-    languageModelId: "",
+    language_model_id: "",
     concurrency: "",
-    newColumnName: "",
+    new_column_name: "",
   };
 };
 
@@ -40,13 +40,7 @@ export const ExtractEntitiesChild = ({
   const { refreshGrid } = useDevelopDetailContext();
 
   const { control, handleSubmit, reset } = useForm({
-    defaultValues: {
-      columnId: "",
-      instruction: "",
-      languageModelId: "",
-      concurrency: undefined,
-      newColumnName: "",
-    },
+    defaultValues: getDefaultValue(),
     resolver: zodResolver(
       ExtractEntitiesValidationSchema(!!onFormSubmit, !!editId),
     ),
@@ -59,7 +53,6 @@ export const ExtractEntitiesChild = ({
     if (initialData) {
       reset(initialData);
     } else if (!editId) {
-      // Reset to default values when opening for new column (no editId)
       reset(getDefaultValue());
     }
   }, [initialData, reset, editId]);
@@ -72,13 +65,10 @@ export const ExtractEntitiesChild = ({
         variant: "success",
       });
       reset();
-      // null for gridRef option and true for set column.
       refreshGrid(null, true);
       onClose();
     },
   });
-
-  // const onSubmit = (formValues) => addColumn(formValues);
 
   const {
     data: previewData,
@@ -113,20 +103,10 @@ export const ExtractEntitiesChild = ({
     },
   });
 
-  const transformFormToApi = (formValues) => {
-    const { columnId, newColumnName, languageModelId, ...rest } = formValues;
-    return {
-      ...rest,
-      column_id: columnId,
-      new_column_name: newColumnName,
-      language_model_id: languageModelId,
-    };
-  };
-
   const onSubmit = (formValues) => {
     if (editId) {
       updateColumn({
-        config: transformFormToApi(formValues),
+        config: formValues,
         operation_type: "extract_entities",
       });
       return;
@@ -134,13 +114,13 @@ export const ExtractEntitiesChild = ({
     if (onFormSubmit) {
       onFormSubmit({ ...formValues, type: "extract_entities" });
     } else {
-      addColumn(transformFormToApi(formValues));
+      addColumn(formValues);
     }
   };
 
   const handlePreview = handleSubmit((formValues) => {
     if (!onFormSubmit) {
-      preview(transformFormToApi(formValues));
+      preview(formValues);
     }
   });
 
@@ -198,13 +178,13 @@ export const ExtractEntitiesChild = ({
               size="small"
               placeholder="Enter column name"
               control={control}
-              fieldName="newColumnName"
+              fieldName="new_column_name"
               required={!onFormSubmit}
             />
           )}
           <FormSearchSelectFieldControl
             control={control}
-            fieldName="columnId"
+            fieldName="column_id"
             size="small"
             label="Column"
             required
@@ -235,7 +215,7 @@ export const ExtractEntitiesChild = ({
           </Box>
           <CustomModelDropdownControl
             control={control}
-            fieldName="languageModelId"
+            fieldName="language_model_id"
             label="Model"
             searchDropdown
             size="small"
@@ -310,7 +290,6 @@ ExtractEntitiesChild.propTypes = {
 };
 
 const ExtractEntities = ({ initialData, onFormSubmit }) => {
-  // Using individual store
   const { openExtractEntities, setOpenExtractEntities } =
     useExtractEntitiesStore();
 

@@ -43,28 +43,31 @@ function formatScoreValue(labelType, value) {
   return JSON.stringify(value);
 }
 
-/**
- * Displays a table of existing scores/annotations for a given source.
- * Supports an optional secondary source to merge scores from two levels
- * (e.g. observation_span + trace).
- * @param {string} sourceType - e.g. "dataset_row", "call_execution", "trace"
- * @param {string} sourceId - the source ID
- * @param {string} [secondarySourceType] - optional second source type
- * @param {string} [secondarySourceId] - optional second source ID
- * @param {string} [title] - optional section title
- */
+function normalizeEntityId(value) {
+  if (!value) return null;
+  if (typeof value === "object") return value.id || value.pk || null;
+  return value;
+}
+
+
+
 export default function ScoresListSection({
   sourceType,
   sourceId,
   secondarySourceType,
   secondarySourceId,
+  projectId,
   title = "Annotations",
   renderActions,
   openQueueItemOnRowClick = false,
 }) {
-  const { data: scores, isLoading } = useScoresForSource(sourceType, sourceId);
+  // The same trace / span id can exist in several projects; list only the
+  // scores of the copy this drawer shows.
+  const { data: scores, isLoading } = useScoresForSource(sourceType, sourceId, {
+    projectId,
+  });
   const { data: secondaryScores, isLoading: secondaryLoading } =
-    useScoresForSource(secondarySourceType, secondarySourceId);
+    useScoresForSource(secondarySourceType, secondarySourceId, { projectId });
   const spanNotesSourceId = useMemo(
     () =>
       sourceType === "observation_span"
@@ -74,7 +77,9 @@ export default function ScoresListSection({
           : null,
     [secondarySourceId, secondarySourceType, sourceId, sourceType],
   );
-  const { data: spanNotes = [] } = useSpanNotes(spanNotesSourceId);
+  const { data: spanNotes = [] } = useSpanNotes(spanNotesSourceId, {
+    projectId,
+  });
   const queueTargetSources = useMemo(
     () =>
       openQueueItemOnRowClick
@@ -94,6 +99,7 @@ export default function ScoresListSection({
   const { data: queueEntries = [] } = useQueueItemsForSource(
     queueTargetSources,
     {
+      projectId,
       enabled: openQueueItemOnRowClick && queueTargetSources.length > 0,
     },
   );
@@ -108,18 +114,18 @@ export default function ScoresListSection({
         seen.add(s.id);
         merged.push({
           id: s.id,
-          labelId: s.labelId || s.label_id,
-          sourceType: s.sourceType || s.source_type,
-          sourceId: s.sourceId || s.source_id,
-          labelName: s.labelName,
-          labelType: s.labelType,
+          labelId: s.label_id,
+          sourceType: s.source_type,
+          sourceId: s.source_id,
+          labelName: s.label_name || "—",
+          labelType: s.label_type,
           value: s.value,
-          annotatorName: s.annotatorName || s.annotatorEmail || "System",
-          scoreSource: s.scoreSource,
+          annotatorName: s.annotator_name || s.annotator_email || "System",
+          scoreSource: s.score_source,
           notes: s.notes,
           updatedAt: s.updated_at,
-          queueId: s.queueId || s.queue_id,
-          queueItemId: s.queueItem || s.queue_item,
+          queueId: normalizeEntityId(s.queue_id),
+          queueItemId: normalizeEntityId(s.queue_item),
         });
       }
     }
@@ -133,8 +139,8 @@ export default function ScoresListSection({
       const queueId = entry?.queue?.id;
       const queueItemId = entry?.item?.id;
       if (!queueId || !queueItemId) continue;
-      const itemSourceType = entry.item.sourceType || entry.item.source_type;
-      const itemSourceId = entry.item.sourceId || entry.item.source_id;
+      const itemSourceType = entry.item.source_type;
+      const itemSourceId = entry.item.source_id;
       for (const label of entry.labels || []) {
         const target = { queueId, queueItemId };
         if (itemSourceType && itemSourceId) {
@@ -511,6 +517,7 @@ ScoresListSection.propTypes = {
   sourceId: PropTypes.string.isRequired,
   secondarySourceType: PropTypes.string,
   secondarySourceId: PropTypes.string,
+  projectId: PropTypes.string,
   title: PropTypes.string,
   renderActions: PropTypes.node,
   openQueueItemOnRowClick: PropTypes.bool,

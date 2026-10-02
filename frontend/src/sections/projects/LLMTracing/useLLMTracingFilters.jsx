@@ -6,7 +6,7 @@ import { convertToISO } from "../ChartsView/ChartsViewProvider/common";
 // Helper to check if filters are in default state (no active filters)
 const isDefaultFilters = (filters) => {
   if (!Array.isArray(filters)) return true;
-  return filters.every((f) => !f?.columnId || f.columnId === "");
+  return filters.every((f) => !f?.column_id || f.column_id === "");
 };
 
 export const useLLMTracingFilters = (
@@ -40,11 +40,11 @@ export const useLLMTracingFilters = (
   const validatedFilters = useMemo(() => {
     // Build date filter once
     const dateFilterEntry = {
-      columnId: "created_at",
-      filterConfig: {
-        filterType: "datetime",
-        filterOp: "between",
-        filterValue: convertToISO([
+      column_id: "created_at",
+      filter_config: {
+        filter_type: "datetime",
+        filter_op: "between",
+        filter_value: convertToISO([
           new Date(dateFilter?.dateFilter[0]).toISOString(),
           new Date(dateFilter?.dateFilter[1]).toISOString(),
         ]),

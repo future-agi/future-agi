@@ -15,8 +15,8 @@ import time
 import wave
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-import av
 import structlog
+from tfc.utils.lazy_extras import av
 
 from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
 from tfc.utils.storage import (
@@ -163,7 +163,10 @@ class AudioProcessor:
                         logger.info("[STT] Found audio URL in 'audio_url' part.")
                         return audio_url_payload["url"]
 
-        logger.error(
+        # Expected user misconfiguration: an STT/audio eval received text-only
+        # input. Raw emitter before the ValueError the STT handler catches and
+        # persists as a failed result. Warning.
+        logger.warning(
             f"[STT] No audio input found in messages. Sample: {str(messages)[:500]}"
         )
         raise ValueError("No audio input found in messages for STT.")

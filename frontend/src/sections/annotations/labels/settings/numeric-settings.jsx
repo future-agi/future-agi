@@ -9,10 +9,31 @@ import {
   Typography,
 } from "@mui/material";
 import { Controller } from "react-hook-form";
+import { enqueueSnackbar } from "notistack";
+
+const MAX_VALUE = 10;
 
 NumericSettings.propTypes = {
   control: PropTypes.object.isRequired,
 };
+
+const handleNumberChange =
+  (field, max = Infinity) =>
+  (e) => {
+    const raw = e.target.value;
+    const cleaned = raw.replace(/^(-?)0+(?=\d)/, "$1");
+    if (cleaned !== raw) e.target.value = cleaned;
+    if (cleaned === "") {
+      field.onChange("");
+      return;
+    }
+    const num = Number(cleaned);
+    if (num > max) {
+      enqueueSnackbar(`Maximum value is ${max}`, { variant: "warning" });
+      return;
+    }
+    field.onChange(num);
+  };
 
 export default function NumericSettings({ control }) {
   return (
@@ -21,7 +42,11 @@ export default function NumericSettings({ control }) {
         <Controller
           name="settings.min"
           control={control}
-          rules={{ required: "Required" }}
+          rules={{
+            required: "Required",
+            validate: (value) =>
+              Number(value) >= 0 || "Minimum cannot be negative",
+          }}
           render={({ field, fieldState }) => (
             <TextField
               {...field}
@@ -32,7 +57,8 @@ export default function NumericSettings({ control }) {
               fullWidth
               error={!!fieldState.error}
               helperText={fieldState.error?.message}
-              onChange={(e) => field.onChange(Number(e.target.value))}
+              onChange={handleNumberChange(field)}
+              inputProps={{ min: 0 }}
             />
           )}
         />
@@ -41,9 +67,14 @@ export default function NumericSettings({ control }) {
           control={control}
           rules={{
             required: "Required",
-            validate: (value, formValues) =>
-              Number(value) > Number(formValues.settings?.min) ||
-              "Max must be greater than min",
+            max: { value: MAX_VALUE, message: `Maximum is ${MAX_VALUE}` },
+            validate: (value, formValues) => {
+              if (Number(value) < 0) return "Maximum cannot be negative";
+              return (
+                Number(value) > Number(formValues.settings?.min) ||
+                "Max must be greater than min"
+              );
+            },
           }}
           render={({ field, fieldState }) => (
             <TextField
@@ -55,7 +86,8 @@ export default function NumericSettings({ control }) {
               fullWidth
               error={!!fieldState.error}
               helperText={fieldState.error?.message}
-              onChange={(e) => field.onChange(Number(e.target.value))}
+              onChange={handleNumberChange(field, MAX_VALUE)}
+              inputProps={{ min: 0, max: MAX_VALUE }}
             />
           )}
         />
@@ -79,7 +111,8 @@ export default function NumericSettings({ control }) {
             fullWidth
             error={!!fieldState.error}
             helperText={fieldState.error?.message}
-            onChange={(e) => field.onChange(Number(e.target.value))}
+            onChange={handleNumberChange(field)}
+            inputProps={{ min: 0.000001, step: "any" }}
           />
         )}
       />

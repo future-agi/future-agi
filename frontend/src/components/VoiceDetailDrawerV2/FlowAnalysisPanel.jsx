@@ -35,14 +35,14 @@ const FlowAnalysisPanel = ({ scenarioId, openedExecutionId, enabled }) => {
     select: (res) => res.data,
   });
 
-  const scenarioGraphs = kpis?.scenarioGraphs;
+  const scenarioGraphs = kpis?.scenario_graphs;
   const scenarioGraph = scenarioGraphs?.[scenarioId];
 
   const { nodes, edges } = useMemo(() => {
-    const currentPath = flowAnalysis?.analysis?.currentPath;
-    const expectedPath = flowAnalysis?.analysis?.expectedPath;
-    const newNodes = flowAnalysis?.analysis?.newNodes;
-    const newEdges = flowAnalysis?.analysis?.newEdges;
+    const currentPath = flowAnalysis?.analysis?.current_path;
+    const expectedPath = flowAnalysis?.analysis?.expected_path;
+    const newNodes = flowAnalysis?.analysis?.new_nodes;
+    const newEdges = flowAnalysis?.analysis?.new_edges;
 
     if (
       !scenarioGraph?.nodes ||

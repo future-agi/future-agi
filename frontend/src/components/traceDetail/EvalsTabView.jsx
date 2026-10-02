@@ -6,6 +6,8 @@ import Markdown from "react-markdown";
 import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "notistack";
 import EvalErrorLocalization from "./EvalErrorLocalization";
+import EvalStatusIndicator from "src/components/eval/EvalStatusIndicator";
+import { EVAL_STATUS, getEvalNonScoreStatus } from "src/utils/evalStatus";
 
 // Kept locally so callers that don't supply an onFixWithFalcon handler still
 // see the informational toast — preserves pre-integration behavior.
@@ -111,10 +113,24 @@ export function scoreColor(score) {
 }
 
 /** Single eval row with collapsible explanation + optional "View span" */
-const EvalTableRow = ({ ev, onSelectSpan, showSpanColumn, onFixWithFalcon }) => {
+const EvalTableRow = ({
+  ev,
+  onSelectSpan,
+  showSpanColumn,
+  onFixWithFalcon,
+  showFixWithFalcon,
+}) => {
   const [expanded, setExpanded] = useState(false);
   const isSkipped = ev?.skipped === true;
   const hasError = ev?.error === true && !isSkipped;
+  // Every non-score state (queued / evaluating / skipped / errored) renders
+  // through the shared EvalStatusIndicator so the drawer matches the tables:
+  // Queued pill, full-cell Evaluating skeleton, Skipped chip, Error chip.
+  const indicatorStatus = isSkipped
+    ? EVAL_STATUS.SKIPPED
+    : hasError
+      ? EVAL_STATUS.ERRORED
+      : getEvalNonScoreStatus(ev?.status);
   const sc = isSkipped
     ? {
         bg: (theme) => alpha(theme.palette.text.disabled, 0.08),
@@ -142,13 +158,16 @@ const EvalTableRow = ({ ev, onSelectSpan, showSpanColumn, onFixWithFalcon }) => 
     ? "Skipped"
     : hasError
       ? "Error"
-      : (ev.score_label ??
+      : ev.score_label ??
         passFailLabel ??
-        (ev.score != null ? `${ev.score}%` : "—"));
+        (ev.score != null ? `${ev.score}%` : "—");
 
   // Error localization visibility — surfaced for every eval that has
   // enough identifiers to drive either the cell-based or trace-based
   // flow. Rows with just an explanation still expand without it.
+  // Composite evals have no localizable input of their own — skip the whole
+  // localization flow before computing any of its identifiers.
+  const isComposite = ev?.template_type === "composite";
   const initialAnalysis = ev.error_analysis || ev.errorAnalysis || null;
   const cellId = ev.cell_id || ev.cellId;
   const observationSpanId =
@@ -163,10 +182,12 @@ const EvalTableRow = ({ ev, onSelectSpan, showSpanColumn, onFixWithFalcon }) => 
   const initialStatus =
     ev.error_localizer_status || ev.errorLocalizerStatus || null;
   const hasErrorLocalization =
-    !!initialAnalysis ||
-    !!cellId ||
-    !!initialStatus ||
-    !!(observationSpanId && customEvalConfigId);
+    !isComposite &&
+    (ev?.error_localizer === true ||
+      !!initialAnalysis ||
+      !!cellId ||
+      !!initialStatus ||
+      !!(observationSpanId && customEvalConfigId));
   const canExpand = !!explanation || hasErrorLocalization;
 
   return (
@@ -179,7 +200,7 @@ const EvalTableRow = ({ ev, onSelectSpan, showSpanColumn, onFixWithFalcon }) => 
           py: 0.5,
           borderBottom: "1px solid",
           borderColor: "divider",
-          "&:hover": { bgcolor: "rgba(0,0,0,0.02)" },
+          "&:hover": { bgcolor: "action.hover" },
           minHeight: 32,
         }}
       >
@@ -202,22 +223,56 @@ const EvalTableRow = ({ ev, onSelectSpan, showSpanColumn, onFixWithFalcon }) => 
         </Box>
 
         {/* Eval name — widens to fill space when Span column is hidden */}
-        <Typography
-          noWrap
+        <Box
           onClick={() => canExpand && setExpanded((p) => !p)}
           sx={{
             width: showSpanColumn ? "30%" : "60%",
-            fontSize: 11.5,
-            fontWeight: 500,
+            display: "flex",
+            alignItems: "center",
+            gap: 0.5,
+            minWidth: 0,
             cursor: canExpand ? "pointer" : "default",
           }}
         >
-          {evalName}
-        </Typography>
+          <Typography noWrap sx={{ fontSize: 11.5, fontWeight: 500 }}>
+            {evalName}
+          </Typography>
+          {ev.removed && (
+            <Chip
+              data-testid="removed-eval-marker"
+              size="small"
+              label="Removed"
+              sx={{
+                height: 18,
+                flexShrink: 0,
+                fontSize: 10,
+                fontWeight: 600,
+                bgcolor: "background.neutral",
+                color: "text.subtitle",
+                "& .MuiChip-label": { px: 0.75 },
+              }}
+            />
+          )}
+        </Box>
 
-        {/* Score — choices render as violet chips, else a colored badge */}
-        <Box sx={{ width: "15%", display: "flex", flexWrap: "wrap", gap: 0.5 }}>
-          {ev.score_items?.length ? (
+        {/* Score — non-score states (queued/evaluating/skipped/errored) show
+            the shared indicator; choices render as violet chips; else a
+            colored badge */}
+        <Box
+          sx={{
+            width: "15%",
+            minHeight: 22,
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 0.5,
+          }}
+        >
+          {indicatorStatus ? (
+            <EvalStatusIndicator
+              status={indicatorStatus}
+              skippedReason={ev.skipped_reason}
+            />
+          ) : ev.score_items?.length ? (
             ev.score_items.map((item, i) => (
               <Chip
                 key={i}
@@ -351,6 +406,9 @@ const EvalTableRow = ({ ev, onSelectSpan, showSpanColumn, onFixWithFalcon }) => 
               projectVersionId={projectVersionId}
               initialAnalysis={initialAnalysis}
               initialStatus={initialStatus}
+              initialMessage={
+                ev.error_localizer_message || ev.errorLocalizerMessage
+              }
               datapoint={ev.datapoint}
               selectedInputKey={ev.selected_input_key || ev.selectedInputKey}
             />
@@ -358,7 +416,7 @@ const EvalTableRow = ({ ev, onSelectSpan, showSpanColumn, onFixWithFalcon }) => 
 
           {/* Fix with Falcon — hidden for passed evals (nothing to fix);
               shown for failed and unscored rows whenever expanded. */}
-          {!isPassedEval(ev) && (
+          {showFixWithFalcon && !isPassedEval(ev) && (
             <Box
               onClick={(e) => {
                 e.stopPropagation();
@@ -404,6 +462,7 @@ EvalTableRow.propTypes = {
   onSelectSpan: PropTypes.func,
   showSpanColumn: PropTypes.bool,
   onFixWithFalcon: PropTypes.func,
+  showFixWithFalcon: PropTypes.bool,
 };
 
 /**
@@ -418,6 +477,8 @@ const EvalsTabView = ({
   emptyMessage,
   showSpanColumn = true,
   onFixWithFalcon,
+  showFixWithFalcon = true,
+  showAddEvals = true,
 }) => {
   const [search, setSearch] = useState("");
   const list = useMemo(() => (Array.isArray(evals) ? evals : []), [evals]);
@@ -531,7 +592,7 @@ const EvalsTabView = ({
             label-based non-passes also keep the button visible (e.g. an
             eval with score=null and no Pass label still shows up as
             non-passing in the "X/N passed" text). */}
-        {list.some((e) => !isPassedEval(e)) && (
+        {showFixWithFalcon && list.some((e) => !isPassedEval(e)) && (
           <Box
             onClick={() => {
               if (onFixWithFalcon) {
@@ -617,7 +678,7 @@ const EvalsTabView = ({
             }}
           />
         </Box>
-        <Box
+        {showAddEvals && <Box
           sx={{
             display: "inline-flex",
             alignItems: "center",
@@ -658,7 +719,7 @@ const EvalsTabView = ({
           >
             Coming soon
           </Box>
-        </Box>
+        </Box>}
       </Box>
 
       {/* Table */}
@@ -723,6 +784,7 @@ const EvalsTabView = ({
             onSelectSpan={onSelectSpan}
             showSpanColumn={showSpanColumn}
             onFixWithFalcon={onFixWithFalcon}
+            showFixWithFalcon={showFixWithFalcon}
           />
         ))}
       </Box>
@@ -736,6 +798,8 @@ EvalsTabView.propTypes = {
   emptyMessage: PropTypes.string,
   showSpanColumn: PropTypes.bool,
   onFixWithFalcon: PropTypes.func,
+  showFixWithFalcon: PropTypes.bool,
+  showAddEvals: PropTypes.bool,
 };
 
 export default EvalsTabView;

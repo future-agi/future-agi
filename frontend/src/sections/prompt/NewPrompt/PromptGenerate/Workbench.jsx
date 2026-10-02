@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
-import { Box, Button, CircularProgress, Typography } from "@mui/material";
+import { Box, Button, Typography } from "@mui/material";
+import { LoadingScreen } from "src/components/loading-screen";
 import { useFieldArray } from "react-hook-form";
 import { getRandomId } from "src/utils/utils";
 import Iconify from "src/components/iconify";
@@ -78,16 +79,7 @@ const Workbench = ({
       </Box>
 
       {loading ? (
-        <Box
-          sx={{
-            alignItems: "center",
-            display: "flex",
-            flex: 1,
-            justifyContent: "center",
-          }}
-        >
-          <CircularProgress />
-        </Box>
+        <LoadingScreen variant="orbit" sx={{ flex: 1 }} />
       ) : (
         <Box sx={{ display: "flex", flexDirection: "column", gap: "16px" }}>
           {fields?.length > 0 &&

@@ -51,6 +51,7 @@ func (h *Handlers) OCR(w http.ResponseWriter, r *http.Request) {
 
 	// Pass Authorization header for auth plugin.
 	setAuthMetadataFromRequest(rc, r)
+	applyCallerMetadata(rc, r, nil)
 
 	// Resolve timeout (longer default for OCR).
 	timeout := h.resolveTimeout(rc, r)

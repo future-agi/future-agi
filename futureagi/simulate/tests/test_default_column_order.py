@@ -33,6 +33,14 @@ def test_default_columns_use_snake_case_ids(columns):
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("columns", [DEFAULT_VOICE_SIM_COL, DEFAULT_CHAT_SIM_COL])
+def test_csat_column_is_visible_by_default(columns):
+    csat = next(col for col in columns if col["id"] == "overall_score")
+    assert csat["column_name"] == "CSAT"
+    assert csat["visible"] is True
+
+
+@pytest.mark.unit
 def test_legacy_id_map_targets_known_snake_case_ids():
     known_ids = {col["id"] for col in DEFAULT_VOICE_SIM_COL}
     known_ids.update(col["id"] for col in DEFAULT_CHAT_SIM_COL)

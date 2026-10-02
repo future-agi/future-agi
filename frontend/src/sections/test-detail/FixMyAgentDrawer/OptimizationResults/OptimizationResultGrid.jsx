@@ -20,7 +20,6 @@ const defaultColDef = {
   filter: false,
   resizable: true,
   suppressMenu: true,
-  suppressMultiSort: true,
 };
 
 const OptimizationResultGrid = ({ optimizationId, isDrawer = true }) => {
@@ -43,7 +42,7 @@ const OptimizationResultGrid = ({ optimizationId, isDrawer = true }) => {
   }));
 
   const columnDefs = useMemo(() => {
-    return getOptimizationResultColumnConfig(optimizationData?.columnConfig);
+    return getOptimizationResultColumnConfig(optimizationData?.column_config);
   }, [optimizationData]);
 
   return (

@@ -93,7 +93,7 @@ const ImageEmbed = ({
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
         <ShowComponent condition={Boolean(onMagnify)}>
-          <button onClick={onMagnify} style={iconButtonStyle}>
+          <button type="button" onClick={onMagnify} style={iconButtonStyle}>
             <img
               src="/assets/icons/components/ic_magnify.svg"
               alt="magnify"
@@ -104,7 +104,7 @@ const ImageEmbed = ({
           </button>
         </ShowComponent>
         <ShowComponent condition={Boolean(onReplace)}>
-          <button onClick={onReplace} style={iconButtonStyle}>
+          <button type="button" onClick={onReplace} style={iconButtonStyle}>
             <img
               src="/assets/icons/components/ic_replace.svg"
               alt="replace"
@@ -115,7 +115,7 @@ const ImageEmbed = ({
           </button>
         </ShowComponent>
         <ShowComponent condition={Boolean(onDelete)}>
-          <button onClick={onDelete} style={iconButtonStyle}>
+          <button type="button" onClick={onDelete} style={iconButtonStyle}>
             <img
               src="/assets/icons/ic_delete.svg"
               alt="delete"

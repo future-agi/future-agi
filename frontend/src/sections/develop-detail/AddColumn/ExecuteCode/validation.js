@@ -3,7 +3,7 @@ import { z } from "zod";
 const ExecuteCodeValidation = (isConditionalNode = false, isEdit = false) => {
   return z.object({
     code: z.string().min(1, "Code is required"),
-    newColumnName:
+    new_column_name:
       isConditionalNode || isEdit
         ? z.string().optional()
         : z.string().min(1, "Column name is required"),

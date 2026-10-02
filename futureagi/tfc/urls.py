@@ -15,6 +15,7 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 
+from django.apps import apps
 from django.conf import settings
 from django.conf.urls.static import static
 from django.contrib import admin
@@ -24,17 +25,19 @@ from django.views.static import serve
 from drf_yasg import openapi
 from drf_yasg.views import get_schema_view
 
-from tfc.ee_loader import ee_feature_enabled, has_ee
+from tfc.capabilities.views import CapabilitiesView
+from tfc.ee_loader import has_ee
 from tfc.views.deployment import DeploymentInfoView
 from tfc.views.health import (
     AuthenticatedHealthView,
     HealthCheckView,
     LangfuseCompatTracesView,
 )
+from tfc.views.setup_checks import SetupChecksView
 from tfc.views.socket import CallWebsocketView
 from tracer.views.clickhouse_health import ClickHouseHealthView
 from tracer.views.langfuse_ingestion import LangfuseIngestionView
-from tracer.views.otlp import OTLPHealthView, OTLPTraceView
+from tracer.views.otlp import OTLPHealthView
 from tracer.views.span_attributes import (
     SpanAttributeDetailView,
     SpanAttributeKeysView,
@@ -42,10 +45,10 @@ from tracer.views.span_attributes import (
 )
 
 info_api = openapi.Info(
-    title="TFC Management API",
+    title="Future AGI Management API",
     default_version="v1",
-    description="The endpoints defined below allow users to programmatically carry out various actions on the tfc platform.",
-    terms_of_service="https://tfc.com/legal",
+    description="The endpoints defined below allow users to programmatically carry out various actions on the Future AGI platform.",
+    terms_of_service="https://futureagi.com/legal",
     contact=openapi.Contact(email="help@futureagi.com"),
     license=openapi.License(
         name="Apache 2.0", url="http://www.apache.org/licenses/LICENSE-2.0.html"
@@ -60,7 +63,8 @@ urlpatterns = [
     # Standard OTLP Endpoints (OpenTelemetry Protocol)
     # https://opentelemetry.io/docs/specs/otlp/
     # ===========================================
-    re_path(r"^v1/traces/?$", OTLPTraceView.as_view(), name="otlp-traces"),
+    # Migrated to fi-collector service (June 2026)
+    # re_path(r"^v1/traces/?$", OTLPTraceView.as_view(), name="otlp-traces"),
     path("v1/health", OTLPHealthView.as_view(), name="otlp-health"),
     # ===========================================
     # Application Routes
@@ -101,8 +105,13 @@ urlpatterns = [
     path(
         "falcon-ai/",
         include(
+            # Gate on the app registry, not the environment: env vars can be
+            # mutated after settings load (e.g. a stray load_dotenv() during
+            # app-ready), and re-deriving the mode here would let the URLconf
+            # disagree with INSTALLED_APPS and import models of an
+            # uninstalled app.
             "ee.falcon_ai.urls"
-            if ee_feature_enabled("ee.falcon_ai")
+            if apps.is_installed("ee.falcon_ai")
             else "tfc.ee_stub_urls"
         ),
     ),
@@ -135,10 +144,53 @@ urlpatterns = [
         DeploymentInfoView.as_view(),
         name="deployment-info",
     ),
+    path(
+        "api/capabilities/",
+        CapabilitiesView.as_view(),
+        name="capabilities",
+    ),
+    path(
+        "api/setup-checks/",
+        SetupChecksView.as_view(),
+        name="setup-checks",
+    ),
 ]
 
 if has_ee("ee.usage"):
     urlpatterns += [path("usage/", include("ee.usage.urls"))]
+    from tfc.deployment_telemetry.config import is_cloud_deployment
+
+    if is_cloud_deployment():
+        # Same registry-not-environment rule as the falcon-ai mount above:
+        # the control-plane app is only registered when settings saw a cloud
+        # deployment, so mounting must follow the registry.
+        if apps.is_installed("ee.cloud.control_plane"):
+            urlpatterns += [
+                path("", include("ee.cloud.control_plane.urls")),
+            ]
+
+        try:
+            if apps.is_installed("ee.cloud.control_plane"):
+                urlpatterns += [
+                    path("usage/", include("ee.cloud.urls")),
+                    path(
+                        "telemetry/",
+                        include("ee.cloud.telemetry.urls"),
+                    ),
+                ]
+            else:
+                urlpatterns += [
+                    path(
+                        "telemetry/",
+                        include("ee.usage.deployment_telemetry_urls"),
+                    )
+                ]
+        except ImportError:
+            import structlog
+
+            structlog.get_logger(__name__).warning(
+                "cloud_url_mount_skipped", exc_info=True
+            )
 
 urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
 

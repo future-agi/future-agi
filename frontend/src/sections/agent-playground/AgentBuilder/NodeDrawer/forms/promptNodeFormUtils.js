@@ -144,6 +144,10 @@ export function savePromptNode(formData, modelParameters, responseSchemaList) {
   return buildPromptNodePayload(formData, modelParameters, responseSchemaList);
 }
 
+function readConfigValue(config, camelKey, snakeKey = camelKey) {
+  return config?.[camelKey] ?? config?.[snakeKey];
+}
+
 /**
  * Transforms store-shaped nodeUpdate into contract-shaped PATCH payload.
  * @param {Object} nodeUpdate - { label, config: { messages, modelConfig, payload, ... } }
@@ -158,6 +162,11 @@ export function buildPatchPayload(nodeUpdate, config) {
   if (nodeUpdate.config?.messages) {
     const cfg = nodeUpdate.config;
     const promptPayloadConfig = cfg.payload?.promptConfig?.[0]?.configuration;
+    const responseFormat = readConfigValue(
+      promptPayloadConfig,
+      "responseFormat",
+      "response_format",
+    );
 
     patch.prompt_template = {
       prompt_template_id: config?.prompt_template_id,
@@ -172,18 +181,39 @@ export function buildPatchPayload(nodeUpdate, config) {
       model: cfg.modelConfig?.model || null,
       model_detail: cfg.modelConfig?.modelDetail || null,
       response_format:
-        promptPayloadConfig?.response_format ??
-        resolveResponseFormatForApi(cfg.modelConfig),
-      output_format: "string",
-      temperature: promptPayloadConfig?.temperature ?? null,
-      max_tokens: promptPayloadConfig?.max_tokens ?? null,
-      top_p: promptPayloadConfig?.top_p ?? null,
-      frequency_penalty: promptPayloadConfig?.frequencyPenalty ?? null,
-      presence_penalty: promptPayloadConfig?.presencePenalty ?? null,
-      tools: promptPayloadConfig?.tools || cfg.modelConfig?.tools || [],
+        responseFormat ?? resolveResponseFormatForApi(cfg.modelConfig),
+      output_format:
+        readConfigValue(promptPayloadConfig, "outputFormat", "output_format") ||
+        "string",
+      temperature: readConfigValue(promptPayloadConfig, "temperature") ?? null,
+      max_tokens:
+        readConfigValue(promptPayloadConfig, "maxTokens", "max_tokens") ?? null,
+      top_p: readConfigValue(promptPayloadConfig, "topP", "top_p") ?? null,
+      frequency_penalty:
+        readConfigValue(
+          promptPayloadConfig,
+          "frequencyPenalty",
+          "frequency_penalty",
+        ) ?? null,
+      presence_penalty:
+        readConfigValue(
+          promptPayloadConfig,
+          "presencePenalty",
+          "presence_penalty",
+        ) ?? null,
+      tools: promptPayloadConfig?.tools ?? cfg.modelConfig?.tools ?? [],
       tool_choice:
-        promptPayloadConfig?.tool_choice || cfg.modelConfig?.toolChoice || "",
-      template_format: promptPayloadConfig?.template_format || cfg.templateFormat || "mustache",
+        readConfigValue(promptPayloadConfig, "toolChoice", "tool_choice") ??
+        cfg.modelConfig?.toolChoice ??
+        "",
+      template_format:
+        readConfigValue(
+          promptPayloadConfig,
+          "templateFormat",
+          "template_format",
+        ) ||
+        cfg.templateFormat ||
+        "mustache",
       save_prompt_version: false,
     };
   }

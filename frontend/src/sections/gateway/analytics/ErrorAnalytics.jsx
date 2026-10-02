@@ -21,6 +21,7 @@ import {
 import { useTheme } from "@mui/material/styles";
 import Chart from "react-apexcharts";
 import { useAnalyticsErrors } from "./hooks/useAnalyticsErrors";
+import { REQUEST_DIMENSION_OPTIONS } from "../constants/requestTags";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -28,8 +29,7 @@ import { useAnalyticsErrors } from "./hooks/useAnalyticsErrors";
 
 const GROUP_BY_OPTIONS = [
   { value: "status_code", label: "Status Code" },
-  { value: "model", label: "Model" },
-  { value: "provider", label: "Provider" },
+  ...REQUEST_DIMENSION_OPTIONS,
 ];
 
 const TOP_N = 10;
@@ -224,8 +224,11 @@ const ErrorAnalytics = ({ start, end, gatewayId }) => {
     gatewayId,
   });
 
-  const breakdown = data?.breakdown || [];
-  const errorTimeseries = data?.errorTimeseries || [];
+  const breakdown = useMemo(() => data?.breakdown || [], [data?.breakdown]);
+  const errorTimeseries = useMemo(
+    () => data?.error_timeseries || [],
+    [data?.error_timeseries],
+  );
 
   // Error trend series
   const trendSeries = useMemo(
@@ -241,7 +244,7 @@ const ErrorAnalytics = ({ start, end, gatewayId }) => {
   );
   const barSeries = useMemo(
     () => [
-      { name: "Errors", data: breakdown.map((item) => item.errorCount ?? 0) },
+      { name: "Errors", data: breakdown.map((item) => item.error_count ?? 0) },
     ],
     [breakdown],
   );
@@ -265,7 +268,7 @@ const ErrorAnalytics = ({ start, end, gatewayId }) => {
             Total Errors:
           </Typography>
           <Typography variant="h5" fontWeight={700} color="error.main">
-            {data?.totalErrors?.toLocaleString() ?? "--"}
+            {data?.total_errors?.toLocaleString() ?? "--"}
           </Typography>
         </Stack>
         <Stack direction="row" alignItems="baseline" spacing={1}>
@@ -273,8 +276,8 @@ const ErrorAnalytics = ({ start, end, gatewayId }) => {
             Error Rate:
           </Typography>
           <Typography variant="h5" fontWeight={700} color="error.main">
-            {data?.overallErrorRate != null
-              ? `${Number(data.overallErrorRate).toFixed(2)}%`
+            {data?.overall_error_rate != null
+              ? `${Number(data.overall_error_rate).toFixed(2)}%`
               : "--"}
           </Typography>
         </Stack>
@@ -422,7 +425,7 @@ const ErrorAnalytics = ({ start, end, gatewayId }) => {
                           />
                         </TableCell>
                         <TableCell align="right">
-                          {row.errorCount?.toLocaleString() ?? 0}
+                          {row.error_count?.toLocaleString() ?? 0}
                         </TableCell>
                         <TableCell align="right">
                           <Typography

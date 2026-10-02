@@ -59,7 +59,7 @@ const EvaluationDatePicker = ({
           }),
           ...(isSelected && {
             backgroundColor: "primary.main",
-            color: "common.white",
+            color: "primary.contrastText",
             "&:hover": {
               backgroundColor: "primary.dark",
             },

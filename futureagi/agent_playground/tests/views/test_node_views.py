@@ -7,8 +7,18 @@ import pytest
 from django.urls import reverse
 from rest_framework import status
 
-from agent_playground.models.choices import NodeType, PortDirection
+from accounts.models.organization import Organization
+from accounts.models.organization_membership import OrganizationMembership
+from accounts.models.user import User
+from accounts.models.workspace import Workspace
+from agent_playground.models.choices import (
+    GraphVersionStatus,
+    NodeType,
+    PortDirection,
+)
 from agent_playground.models.edge import Edge
+from agent_playground.models.graph import Graph
+from agent_playground.models.graph_version import GraphVersion
 from agent_playground.models.node import Node
 from agent_playground.models.node_connection import NodeConnection
 from agent_playground.models.port import Port
@@ -779,9 +789,9 @@ class TestUpdateNodeAPI:
         create_response = authenticated_client.post(
             create_url, data=create_data, format="json"
         )
-        assert (
-            create_response.status_code == status.HTTP_201_CREATED
-        ), f"Create failed: {create_response.data}"
+        assert create_response.status_code == status.HTTP_201_CREATED, (
+            f"Create failed: {create_response.data}"
+        )
         node_id = create_response.data["result"]["id"]
 
         # Update with new output ports only
@@ -973,6 +983,278 @@ class TestCreateSubgraphWithoutRefAPI:
         result = response.data["result"]
         assert result["type"] == "subgraph"
         assert result["ref_graph_version_id"] is None
+
+
+@pytest.mark.unit
+class TestSubgraphReferenceScopeAPI:
+    def test_create_rejects_other_workspace_ref_version(
+        self, authenticated_client, graph, graph_version, user
+    ):
+        other_workspace = Workspace.objects.create(
+            name="Other Workspace",
+            organization=graph.organization,
+            is_active=True,
+            created_by=user,
+        )
+        other_graph = Graph.no_workspace_objects.create(
+            organization=graph.organization,
+            workspace=other_workspace,
+            name="Other Workspace Graph",
+            created_by=user,
+        )
+        other_version = GraphVersion.no_workspace_objects.create(
+            graph=other_graph,
+            version_number=1,
+            status=GraphVersionStatus.ACTIVE,
+        )
+
+        node_id = str(uuid.uuid4())
+        response = authenticated_client.post(
+            _node_create_url(graph, graph_version),
+            {
+                "id": node_id,
+                "type": "subgraph",
+                "name": "Cross Workspace Ref",
+                "ref_graph_version_id": str(other_version.id),
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        assert not Node.no_workspace_objects.filter(id=node_id).exists()
+
+    def test_patch_rejects_other_workspace_ref_version(
+        self, authenticated_client, graph, graph_version, user
+    ):
+        other_workspace = Workspace.objects.create(
+            name="Other Workspace",
+            organization=graph.organization,
+            is_active=True,
+            created_by=user,
+        )
+        other_graph = Graph.no_workspace_objects.create(
+            organization=graph.organization,
+            workspace=other_workspace,
+            name="Other Workspace Graph",
+            created_by=user,
+        )
+        other_version = GraphVersion.no_workspace_objects.create(
+            graph=other_graph,
+            version_number=1,
+            status=GraphVersionStatus.ACTIVE,
+        )
+        node_id = str(uuid.uuid4())
+        create_response = authenticated_client.post(
+            _node_create_url(graph, graph_version),
+            {"id": node_id, "type": "subgraph", "name": "Scoped Ref"},
+            format="json",
+        )
+        assert create_response.status_code == status.HTTP_201_CREATED
+
+        response = authenticated_client.patch(
+            _node_detail_url(graph, graph_version, node_id),
+            {"ref_graph_version_id": str(other_version.id)},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        node = Node.no_workspace_objects.get(id=node_id)
+        assert node.ref_graph_version_id is None
+
+    def test_create_rejects_other_org_ref_version(
+        self, authenticated_client, graph, graph_version
+    ):
+        other_org = Organization.objects.create(name="Other Org")
+        other_user = User.objects.create_user(
+            email="other-agent-ref@example.com",
+            password="testpass",
+            name="Other User",
+            organization=other_org,
+        )
+        OrganizationMembership.no_workspace_objects.get_or_create(
+            user=other_user,
+            organization=other_org,
+            defaults={"is_active": True},
+        )
+        other_workspace = Workspace.objects.create(
+            name="Other Org Workspace",
+            organization=other_org,
+            is_active=True,
+            created_by=other_user,
+        )
+        other_graph = Graph.no_workspace_objects.create(
+            organization=other_org,
+            workspace=other_workspace,
+            name="Other Org Graph",
+            created_by=other_user,
+        )
+        other_version = GraphVersion.no_workspace_objects.create(
+            graph=other_graph,
+            version_number=1,
+            status=GraphVersionStatus.ACTIVE,
+        )
+
+        response = authenticated_client.post(
+            _node_create_url(graph, graph_version),
+            {
+                "id": str(uuid.uuid4()),
+                "type": "subgraph",
+                "name": "Cross Org Ref",
+                "ref_graph_version_id": str(other_version.id),
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_create_rejects_draft_ref_version(
+        self, authenticated_client, graph, graph_version, referenced_graph_version
+    ):
+        response = authenticated_client.post(
+            _node_create_url(graph, graph_version),
+            {
+                "id": str(uuid.uuid4()),
+                "type": "subgraph",
+                "name": "Draft Ref",
+                "ref_graph_version_id": str(referenced_graph_version.id),
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+
+@pytest.mark.unit
+class TestPromptTemplateScopeAPI:
+    def test_create_rejects_other_workspace_prompt_template(
+        self, authenticated_client, graph, graph_version, llm_node_template, user
+    ):
+        from model_hub.models.run_prompt import PromptTemplate
+
+        other_workspace = Workspace.objects.create(
+            name="Other Prompt Workspace",
+            organization=graph.organization,
+            is_active=True,
+            created_by=user,
+        )
+        foreign_pt = PromptTemplate.no_workspace_objects.create(
+            name="Foreign Workspace Prompt",
+            organization=graph.organization,
+            workspace=other_workspace,
+            created_by=user,
+        )
+
+        node_id = str(uuid.uuid4())
+        response = authenticated_client.post(
+            _node_create_url(graph, graph_version),
+            {
+                "id": node_id,
+                "type": "atomic",
+                "name": "Cross Workspace Prompt",
+                "node_template_id": str(llm_node_template.id),
+                "prompt_template": {
+                    "messages": [
+                        {
+                            "id": "msg-0",
+                            "role": "user",
+                            "content": [{"type": "text", "text": "Hello"}],
+                        }
+                    ],
+                    "prompt_template_id": str(foreign_pt.id),
+                },
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert not Node.no_workspace_objects.filter(id=node_id).exists()
+
+    def test_patch_rejects_prompt_version_from_another_template(
+        self,
+        authenticated_client,
+        graph,
+        graph_version,
+        node,
+        llm_node_template,
+        prompt_template,
+        draft_prompt_version,
+        other_prompt_version,
+        prompt_template_node,
+    ):
+        node.node_template = llm_node_template
+        node.save(skip_validation=True)
+        prompt_template_node.prompt_version = draft_prompt_version
+        prompt_template_node.save()
+
+        response = authenticated_client.patch(
+            _node_detail_url(graph, graph_version, node.id),
+            {
+                "prompt_template": {
+                    "messages": [
+                        {
+                            "id": "msg-0",
+                            "role": "user",
+                            "content": [{"type": "text", "text": "Updated"}],
+                        }
+                    ],
+                    "prompt_template_id": str(prompt_template.id),
+                    "prompt_version_id": str(other_prompt_version.id),
+                }
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        prompt_template_node.refresh_from_db()
+        other_prompt_version.refresh_from_db()
+        assert prompt_template_node.prompt_version_id == draft_prompt_version.id
+        assert other_prompt_version.prompt_config_snapshot == []
+
+    def test_patch_name_rejects_other_workspace_prompt_link(
+        self,
+        authenticated_client,
+        graph,
+        graph_version,
+        node,
+        prompt_template_node,
+        user,
+    ):
+        from model_hub.models.run_prompt import PromptTemplate, PromptVersion
+
+        other_workspace = Workspace.objects.create(
+            name="Other Prompt Workspace",
+            organization=graph.organization,
+            is_active=True,
+            created_by=user,
+        )
+        foreign_pt = PromptTemplate.no_workspace_objects.create(
+            name="Foreign Workspace Prompt",
+            organization=graph.organization,
+            workspace=other_workspace,
+            created_by=user,
+        )
+        foreign_pv = PromptVersion.no_workspace_objects.create(
+            original_template=foreign_pt,
+            template_version="v1",
+            prompt_config_snapshot={"messages": []},
+            is_draft=True,
+        )
+        prompt_template_node.prompt_template = foreign_pt
+        prompt_template_node.prompt_version = foreign_pv
+        prompt_template_node.save()
+        original_name = node.name
+
+        response = authenticated_client.patch(
+            _node_detail_url(graph, graph_version, node.id),
+            {"name": "Renamed"},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        node.refresh_from_db()
+        foreign_pt.refresh_from_db()
+        assert node.name == original_name
+        assert foreign_pt.name == "Foreign Workspace Prompt"
 
 
 @pytest.mark.unit

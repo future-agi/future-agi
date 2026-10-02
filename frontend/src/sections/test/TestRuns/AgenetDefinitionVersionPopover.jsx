@@ -57,7 +57,7 @@ const AgentDefinitionVersionPopoverChild = ({ selectedAgent }) => {
     return agentDefVersions?.pages?.reduce((acc, curr) => {
       const newOptions = curr?.results
         ?.map((result) => ({
-          label: result?.versionNameDisplay,
+          label: result?.version_name_display,
           value: result?.id,
         }))
         ?.filter(

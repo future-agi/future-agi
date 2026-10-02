@@ -2,6 +2,7 @@ import React, { useEffect, useRef } from "react";
 import PropTypes from "prop-types";
 import { Box, Popover, Portal, Typography } from "@mui/material";
 import SvgColor from "src/components/svg-color";
+import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 import { actionMenusByStatus } from "./constant";
 
 const ShowActionMenus = ({
@@ -16,6 +17,8 @@ const ShowActionMenus = ({
   menusByStatus,
 }) => {
   const popperRef = useRef(null);
+  const { isOSS, isSuccess: modeConfirmed } = useDeploymentMode();
+  const hidesInviteEmail = modeConfirmed && isOSS;
 
   useEffect(() => {
     function handleClickOutside(event) {
@@ -40,6 +43,8 @@ const ShowActionMenus = ({
 
   const activeMenus = menusByStatus || actionMenusByStatus;
   const menuItems = (activeMenus[data.status] || []).filter((item) => {
+    // Self-hosted sends no mail, so resending delivers nothing.
+    if (item.action === "resend-invite" && hidesInviteEmail) return false;
     if (editActions.includes(item.action)) return canEdit;
     if (resendActions.includes(item.action)) return canResend;
     return true;

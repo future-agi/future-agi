@@ -94,7 +94,7 @@ const MOCK_LABELS = [
     name: "Accuracy",
     type: "categorical",
     description: "Accuracy label",
-    usage_count: 2,
+    annotation_count: 2,
     created_at: "2025-01-01T00:00:00Z",
   },
   {
@@ -102,7 +102,7 @@ const MOCK_LABELS = [
     name: "Quality",
     type: "numeric",
     description: "",
-    usage_count: 0,
+    annotation_count: 0,
     created_at: "2025-01-02T00:00:00Z",
   },
 ];
@@ -113,6 +113,9 @@ const mockListData = {
   count: 2,
 };
 
+const mockArchiveLabelMutate = vi.hoisted(() => vi.fn());
+const mockRestoreLabelMutate = vi.hoisted(() => vi.fn());
+
 vi.mock("src/api/annotation-labels/annotation-labels", () => ({
   useAnnotationLabelsList: vi.fn(() => ({
     data: mockListData,
@@ -120,8 +123,14 @@ vi.mock("src/api/annotation-labels/annotation-labels", () => ({
   })),
   useCreateAnnotationLabel: () => ({ mutate: vi.fn(), isPending: false }),
   useUpdateAnnotationLabel: () => ({ mutate: vi.fn(), isPending: false }),
-  useDeleteAnnotationLabel: () => ({ mutate: vi.fn(), isPending: false }),
-  useRestoreAnnotationLabel: () => ({ mutate: vi.fn(), isPending: false }),
+  useDeleteAnnotationLabel: () => ({
+    mutate: mockArchiveLabelMutate,
+    isPending: false,
+  }),
+  useRestoreAnnotationLabel: () => ({
+    mutate: mockRestoreLabelMutate,
+    isPending: false,
+  }),
   annotationLabelEndpoints: { restore: () => "/api/labels/restore" },
   annotationLabelKeys: { all: ["annotation-labels"] },
 }));
@@ -170,6 +179,10 @@ describe("AnnotationLabelsView", () => {
     render(<AnnotationLabelsView />);
 
     expect(screen.getByPlaceholderText("Search labels...")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Active" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Archived" }),
+    ).toBeInTheDocument();
     // Type filter select is rendered (MUI renders select with a combobox role)
     const selects = screen.getAllByRole("combobox");
     expect(selects.length).toBeGreaterThanOrEqual(1);
@@ -199,5 +212,39 @@ describe("AnnotationLabelsView", () => {
     render(<AnnotationLabelsView />);
 
     expect(screen.getByText("No labels created yet")).toBeInTheDocument();
+  });
+
+  it("loads archived labels and restores from the archived view", async () => {
+    const user = userEvent.setup();
+    const { useAnnotationLabelsList } = await import(
+      "src/api/annotation-labels/annotation-labels"
+    );
+    useAnnotationLabelsList.mockReturnValue({
+      data: {
+        results: [{ ...MOCK_LABELS[0], archived: true }],
+        count: 1,
+      },
+      isLoading: false,
+    });
+
+    render(<AnnotationLabelsView />);
+
+    await user.click(screen.getByRole("button", { name: "Archived" }));
+
+    await waitFor(() => {
+      expect(useAnnotationLabelsList).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          archived: true,
+          page: 1,
+        }),
+      );
+    });
+
+    await user.click(
+      screen.getByRole("button", { name: /restore label actions/i }),
+    );
+    await user.click(screen.getByRole("menuitem", { name: /restore/i }));
+
+    expect(mockRestoreLabelMutate).toHaveBeenCalledWith("1");
   });
 });

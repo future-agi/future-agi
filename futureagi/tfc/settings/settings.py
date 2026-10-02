@@ -10,12 +10,25 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/4.2/ref/settings/
 """
 
+import ipaddress
+import json
 import os
 from datetime import timedelta
 from pathlib import Path
+from urllib.parse import urlsplit
 
 # Structured logging configuration
 from tfc.logging import configure_structlog, get_logging_config, init_sentry
+from tfc.settings.runtime_setting_specs import (
+    RUNTIME_NUMERIC_SETTING_SPECS as _runtime_numeric_setting_specs,
+)
+from tfc.settings.runtime_setting_specs import NumericSettingSpec as _NumericSettingSpec
+from tfc.settings.runtime_setting_specs import (
+    load_numeric_settings as _load_numeric_settings,
+)
+from tfc.settings.runtime_setting_specs import (
+    validate_runtime_numeric_settings as _validate_runtime_numeric_settings,
+)
 
 configure_structlog()
 
@@ -34,11 +47,120 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 ENV_TYPE = os.getenv("ENV_TYPE", "local").lower()
 _IS_LOCAL = ENV_TYPE in ("local", "test")
 
+# Exact analytics continue to use the existing XL queue unless a deployment
+# explicitly provisions the dedicated single-slot worker.  This keeps local,
+# development, EU, and self-hosted installs compatible while allowing the US
+# ClickHouse cluster to opt into strict refresh admission. The standalone install's
+# embedded Temporal worker (tfc/temporal/embedded.py) polls the dedicated queue
+# with one slot, so it defaults there.
+EXACT_AGGREGATION_TASK_QUEUE = os.getenv(
+    "EXACT_AGGREGATION_TASK_QUEUE",
+    (
+        "exact_aggregation"
+        if os.getenv("FI_EMBEDDED_TEMPORAL_WORKER", "").strip().lower()
+        in ("1", "true", "yes", "on")
+        else "tasks_xl"
+    ),
+)
+
+# Eval-usage API reads use ClickHouse in deployed environments. Keep the
+# source selection explicit so contract tests and standalone installs can use
+# the existing PostgreSQL fallback without changing global ClickHouse routing.
+EVAL_USAGE_CLICKHOUSE_ENABLED = os.getenv(
+    "EVAL_USAGE_CLICKHOUSE_ENABLED",
+    "true",
+).lower() in ("true", "1", "t", "yes", "y")
+
 
 def _split_env(name: str, default: str = "") -> list[str]:
     """Parse a comma-separated env var into a list."""
     raw = os.getenv(name, default)
     return [x.strip() for x in raw.split(",") if x.strip()]
+
+
+def _bounded_env_int(
+    name: str,
+    default: int,
+    *,
+    minimum: int,
+    maximum: int,
+) -> int:
+    """Parse one setting whose default or bound depends on another setting."""
+
+    spec = _NumericSettingSpec(int, default, minimum, maximum)
+    return int(spec.parse(name, os.getenv(name)))
+
+
+def _admission_env_int(name: str, default: int) -> int:
+    """A hosted-runner admission ceiling from the environment. A missing,
+    empty, or non-integer value falls back to the default so a bad override can
+    never crash settings import (``_positive_setting`` in the service layer
+    documents the same lenient fallback and cannot help once import has already
+    failed). The service layer re-checks the bound and treats 0 as 'disabled'."""
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return int(raw.strip())
+    except ValueError:
+        return default
+
+
+# Numeric runtime knobs are declared once in runtime_setting_specs.py. Parse
+# and cross-validate them before database/cache configuration consumes them.
+_runtime_numeric_settings = _load_numeric_settings(
+    _runtime_numeric_setting_specs,
+    source=os.environ,
+)
+del _runtime_numeric_setting_specs
+_validate_runtime_numeric_settings(_runtime_numeric_settings)
+globals().update(_runtime_numeric_settings)
+
+# Optional ClickHouse cluster whose entries intentionally expose each physical
+# replica as one read shard. Dashboard heavy reads use it only after validating
+# the identifier in the query builder; an empty value keeps the local-table
+# fallback for OSS and single-node installations.
+DASHBOARD_TRACE_REPLICA_SHARD_CLUSTER = os.getenv(
+    "DASHBOARD_TRACE_REPLICA_SHARD_CLUSTER", ""
+).strip()
+
+SIMULATOR_PHONE_NUMBERS = tuple(
+    _split_env(
+        "SIMULATOR_PHONE_NUMBERS",
+        ",".join(
+            (
+                "+18568806998",
+                "+17755715840",
+                "+13463424590",
+                "+12175683677",
+                "+12175696753",
+                "+12175683493",
+                "+12175681887",
+                "+12176018447",
+                "+12176018280",
+                "+12175696862",
+                "+19168660414",
+                "+19163473349",
+                "+18563161617",
+                "+13463619738",
+                "+19847339395",
+            )
+        ),
+    )
+)
+
+# These three values are consumed in this module before application code
+# imports the remaining dynamically published Django settings. Explicit aliases
+# keep static analysis honest without duplicating their parsing or defaults.
+PG_CONNECT_TIMEOUT_SECONDS = int(
+    _runtime_numeric_settings["PG_CONNECT_TIMEOUT_SECONDS"]
+)
+REDIS_CACHE_SOCKET_CONNECT_TIMEOUT_SECONDS = float(
+    _runtime_numeric_settings["REDIS_CACHE_SOCKET_CONNECT_TIMEOUT_SECONDS"]
+)
+REDIS_CACHE_SOCKET_TIMEOUT_SECONDS = float(
+    _runtime_numeric_settings["REDIS_CACHE_SOCKET_TIMEOUT_SECONDS"]
+)
 
 
 # SECURITY WARNING: don't run with debug turned on in production!
@@ -94,6 +216,10 @@ CORS_ALLOW_HEADERS = (
         "x-workspace-slug",
         "x-project-id",
         "x-organization-id",
+        # Harness creates are idempotent. Browsers send an OPTIONS preflight
+        # before the POST because this is a non-simple header, so omitting it
+        # here prevents the create request from ever reaching Django.
+        "idempotency-key",
         "sentry-trace",
         "baggage",
         "traceparent",
@@ -129,13 +255,16 @@ INSTALLED_APPS = [
     "model_hub",
     "tracer",
     "simulate",
-    "agent_playground",
+    "agent_playground.apps.AgentPlaygroundConfig",
     "integrations",
     # AI tools shared layer (MCP + AI Assistant)
     "ai_tools",
     # MCP Server (protocol layer for external AI clients)
     "mcp_server",
     "agentcc",
+    "tfc.deployment_telemetry",
+    "tfc.licensing",
+    "tfc.capabilities",
     # gRPC framework
     "django_socio_grpc",
     # "djstripe"
@@ -147,12 +276,16 @@ INSTALLED_APPS = [
 # EE apps.
 #   - ee.usage: gated on presence only — it implements DeploymentMode.
 #   - ee feature modules: gated on presence AND deployment mode (EE/Cloud).
-from tfc.ee_loader import ee_feature_enabled, has_ee  # noqa: E402
+from tfc.ee_loader import ee_feature_enabled, has_ee, is_cloud_env  # noqa: E402
 
 if ee_feature_enabled("ee.falcon_ai"):
     INSTALLED_APPS.append("ee.falcon_ai.apps.FalconAIConfig")
 if has_ee("ee.usage"):
     INSTALLED_APPS.append("ee.usage")
+if has_ee("ee.licensing"):
+    INSTALLED_APPS.append("ee.licensing")
+if has_ee("ee.cloud.control_plane") and is_cloud_env():
+    INSTALLED_APPS.append("ee.cloud.control_plane.apps.CloudControlPlaneConfig")
 
 # Site ID for django.contrib.sites
 SITE_ID = 1
@@ -191,6 +324,7 @@ MIDDLEWARE += [
 # To check all the APIs
 SWAGGER_SETTINGS = {
     "DEFAULT_INFO": "tfc.urls.info_api",
+    "DEFAULT_AUTO_SCHEMA_CLASS": "tfc.utils.api_contracts.ManagementAPIAutoSchema",
     "SECURITY_DEFINITIONS": {
         "X-Api-Key": {"type": "apiKey", "in": "header", "name": "X-Api-Key"},
         "X-Secret-Key": {
@@ -226,31 +360,102 @@ WSGI_APPLICATION = "tfc.wsgi.application"
 # Database
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
 
-DATABASES = {
-    "default": {
+
+def _pg_config(host, port=None, *, name=None, disable_cursors=True, options=None):
+    """
+    Build a Postgres config dict for a Django DATABASES alias.
+
+    Mirrors PostHog's `postgres_config()` helper. The `default`, `replica`,
+    and `default_direct` aliases differ only by host/port and (for
+    default_direct) cursor + lock-timeout options, so we factor the shared
+    config here.
+
+    Behaviour note: an empty-string `port` or `name` falls back to the
+    PG_DB / PGBOUNCER_PORT defaults via `or` semantics. The previous
+    DATABASES block preserved empty strings verbatim — this is a small,
+    intentional behaviour change because an empty PORT / NAME would have
+    failed anyway at connection time.
+    """
+    connection_options = {
+        "connect_timeout": PG_CONNECT_TIMEOUT_SECONDS,
+        **(options or {}),
+    }
+    cfg = {
         "ENGINE": "django.db.backends.postgresql",
-        "NAME": os.getenv("PG_DB", "tfc"),
+        "NAME": name or os.getenv("PG_DB", "tfc"),
         "USER": os.getenv("PG_USER", "user"),
         "PASSWORD": os.getenv("PG_PASSWORD", "password"),
-        "HOST": os.getenv("PGBOUNCER_HOST", "pgbouncer"),
-        "PORT": os.getenv("PGBOUNCER_PORT", 6432),
+        "HOST": host,
+        "PORT": port or os.getenv("PGBOUNCER_PORT", 6432),
         "CONN_MAX_AGE": 0,
-        "CONN_HEALTH_CHECKS": True,  # Verify connection is alive before use (prevents stale PgBouncer connections)
-        "DISABLE_SERVER_SIDE_CURSORS": True,  # Required for PgBouncer transaction pooling
-    },
+        # Verify connection is alive before use (prevents stale PgBouncer connections)
+        "CONN_HEALTH_CHECKS": True,
+        # Required for PgBouncer transaction pooling (server-side cursors need session persistence)
+        "DISABLE_SERVER_SIDE_CURSORS": disable_cursors,
+        # CONN_MAX_AGE=0 opens a socket on every request. Keep that transport
+        # step inside the same sub-ten-second interactive budget as the
+        # endpoint's request-owned statement deadlines.
+        "OPTIONS": connection_options,
+    }
+    return cfg
+
+
+DATABASES = {
+    "default": _pg_config(os.getenv("PGBOUNCER_HOST", "pgbouncer")),
 }
 
 # Read replica — only enabled when PGBOUNCER_READ_HOST is set.
 # Falls back to default when not configured, so safe to deploy without a replica.
 _read_host = os.getenv("PGBOUNCER_READ_HOST")
 if _read_host:
-    DATABASES["replica"] = {
-        **DATABASES["default"],
-        "HOST": _read_host,
-        "PORT": os.getenv("PGBOUNCER_READ_PORT", os.getenv("PGBOUNCER_PORT", 6432)),
-        "NAME": os.getenv("PG_READ_DB", os.getenv("PG_DB", "tfc")),
-        "TEST": {"MIRROR": "default"},  # Tests use default DB, not a real replica
-    }
+    DATABASES["replica"] = _pg_config(
+        _read_host,
+        port=os.getenv("PGBOUNCER_READ_PORT", os.getenv("PGBOUNCER_PORT", 6432)),
+        name=os.getenv("PG_READ_DB", os.getenv("PG_DB", "tfc")),
+    )
+    DATABASES["replica"]["TEST"] = {
+        "MIRROR": "default"
+    }  # Tests use default DB, not a real replica
+
+# Direct connection (bypasses PgBouncer) — used for migrations that need
+# `lock_timeout` set at connection time. PgBouncer transaction-pool mode
+# does not persist session-level SET statements between transactions, so a
+# `SET lock_timeout` issued by the migration runner would not survive.
+# This connection has server-side cursors ENABLED (no PgBouncer to break
+# them) — useful for data-migration scripts that iterate over large tables.
+_direct_host = os.getenv("PG_DIRECT_HOST")
+if _direct_host:
+    # Defensive: malformed env var should not crash Django at import time.
+    try:
+        _lock_timeout_ms = int(os.getenv("PG_MIGRATION_LOCK_TIMEOUT_MS", "20000"))
+    except (TypeError, ValueError):
+        _lock_timeout_ms = 20000
+    DATABASES["default_direct"] = _pg_config(
+        _direct_host,
+        port=os.getenv("PG_DIRECT_PORT", "5432"),
+        disable_cursors=False,
+        options={"options": f"-c lock_timeout={_lock_timeout_ms}"},
+    )
+    DATABASES["default_direct"]["TEST"] = {"MIRROR": "default"}
+
+# Opt-in list for read-replica routing. Comma-separated.
+# Accepts TWO kinds of strings, NAMESPACED to avoid collision:
+#   - Bare model class names (e.g. "Dashboard", "SavedView") — ReadReplicaRouter
+#     routes those models to the replica.
+#   - Feature/path keys prefixed with "feature:" (e.g. "feature:dashboard_render")
+#     — hot-path code checks these and switches its `db_manager()` target
+#     manually. The router ignores prefixed keys.
+# Special value 'ALL_MODELS_USE_READ_REPLICA' routes every model — DO NOT use
+# outside a controlled load-shed experiment (we have ~245 atomic/locking
+# sites; routing everything is a consistency incident waiting to happen).
+#
+# IMPORTANT: env-var changes only take effect after worker restart. The
+# router re-reads settings per call, but feature-key constants in hot paths
+# are computed at import time.
+_opt_in_raw = os.getenv("READ_REPLICA_OPT_IN", "")
+READ_REPLICA_OPT_IN: list[str] = [
+    s.strip() for s in _opt_in_raw.split(",") if s.strip()
+]
 
 DATABASE_ROUTERS = ["tfc.routers.ReadReplicaRouter"]
 
@@ -268,34 +473,17 @@ CLICKHOUSE = {
     "CH_FLUSH_INTERVAL_SECONDS": int(os.getenv("CH_FLUSH_INTERVAL_SECONDS", "5")),
     "CH_MAX_RETRIES": int(os.getenv("CH_MAX_RETRIES", "3")),
     "CH_RETRY_DELAY_SECONDS": int(os.getenv("CH_RETRY_DELAY_SECONDS", "1")),
-    # Query routing: "clickhouse", "postgres", or "auto" (ClickHouse with PG fallback)
-    "CH_ANALYTICS_BACKEND": os.getenv("CH_ANALYTICS_BACKEND", "postgres"),
     # Connection pool settings
     "CH_POOL_SIZE": int(os.getenv("CH_POOL_SIZE", "10")),
     "CH_CONNECT_TIMEOUT": int(os.getenv("CH_CONNECT_TIMEOUT", "10")),
     "CH_SEND_TIMEOUT": int(os.getenv("CH_SEND_TIMEOUT", "300")),
     "CH_RECEIVE_TIMEOUT": int(os.getenv("CH_RECEIVE_TIMEOUT", "300")),
-    # Per-query-type routing for gradual rollout
-    # Values: "postgres", "clickhouse", "auto" (CH with PG fallback), "shadow" (both, compare, return PG)
-    "CH_ROUTE_TIME_SERIES": os.getenv("CH_ROUTE_TIME_SERIES", "postgres"),
-    "CH_ROUTE_TRACE_LIST": os.getenv("CH_ROUTE_TRACE_LIST", "postgres"),
-    "CH_ROUTE_SESSION_LIST": os.getenv("CH_ROUTE_SESSION_LIST", "postgres"),
-    "CH_ROUTE_EVAL_METRICS": os.getenv("CH_ROUTE_EVAL_METRICS", "postgres"),
-    "CH_ROUTE_ERROR_ANALYSIS": os.getenv("CH_ROUTE_ERROR_ANALYSIS", "postgres"),
-    "CH_ROUTE_SPAN_LIST": os.getenv("CH_ROUTE_SPAN_LIST", "postgres"),
-    "CH_ROUTE_TRACE_OF_SESSION_LIST": os.getenv(
-        "CH_ROUTE_TRACE_OF_SESSION_LIST", "postgres"
-    ),
-    "CH_ROUTE_SPAN_GRAPH": os.getenv("CH_ROUTE_SPAN_GRAPH", "postgres"),
-    "CH_ROUTE_VOICE_CALL_LIST": os.getenv("CH_ROUTE_VOICE_CALL_LIST", "postgres"),
-    "CH_ROUTE_SESSION_ANALYTICS": os.getenv("CH_ROUTE_SESSION_ANALYTICS", "postgres"),
-    "CH_ROUTE_ANNOTATION_GRAPH": os.getenv("CH_ROUTE_ANNOTATION_GRAPH", "postgres"),
-    "CH_ROUTE_TRACE_DETAIL": os.getenv("CH_ROUTE_TRACE_DETAIL", "postgres"),
-    "CH_ROUTE_MONITOR_METRICS": os.getenv("CH_ROUTE_MONITOR_METRICS", "postgres"),
-    "CH_ROUTE_ANNOTATION_DETAIL": os.getenv("CH_ROUTE_ANNOTATION_DETAIL", "postgres"),
-    "CH_ROUTE_VOICE_CALL_DETAIL": os.getenv("CH_ROUTE_VOICE_CALL_DETAIL", "postgres"),
-    # Shadow mode: run both PG+CH, compare results, return PG
-    "CH_SHADOW_MODE": os.getenv("CH_SHADOW_MODE", "false").lower()
+    # Dedicated SOS/read-replica profiles may lock readonly=1 and every
+    # resource ceiling server-side. Such profiles reject per-query setting
+    # overrides, so the client must transmit none.
+    "CH_SERVER_ENFORCED_READONLY": os.getenv(
+        "CH_SERVER_ENFORCED_READONLY", "false"
+    ).lower()
     in ("true", "1", "yes"),
 }
 
@@ -415,37 +603,170 @@ ANYMAIL = {
 }
 EMAIL_BACKEND = os.getenv(
     "EMAIL_BACKEND",
-    "anymail.backends.mailgun.EmailBackend"
-    if os.getenv("MAILGUN_API_KEY")
-    else "django.core.mail.backends.console.EmailBackend",
+    (
+        "anymail.backends.mailgun.EmailBackend"
+        if os.getenv("MAILGUN_API_KEY")
+        else "django.core.mail.backends.console.EmailBackend"
+    ),
 )
 DEFAULT_FROM_EMAIL = os.getenv(
     "DEFAULT_FROM_EMAIL"
 )  # if you don't already have this in settings
 SERVER_EMAIL = os.getenv("SERVER_EMAIL")  # ditto (default from-email for Django errors)
+# Reply-To of app emails (tfc.utils.email). Empty: no Reply-To header, so a
+# reply goes to the sender. Future AGI Cloud falls back to its support inbox.
+DEFAULT_REPLY_TO_EMAIL = os.getenv("DEFAULT_REPLY_TO_EMAIL", "").strip()
 
-APP_URL = os.getenv("APP_URL")
+
+def _split_app_url(value):
+    """APP_URL as ``(scheme, host[:port])``. It is documented as a bare host
+    (app.example.com); one written with a scheme (https://app.example.com)
+    is accepted too, and the scheme is returned separately."""
+    scheme, _, host = (value or "").strip().rstrip("/").rpartition("://")
+    return scheme, host or None
+
+
+# APP_URL is the UI's host[:port], without a scheme: every setting built from
+# it below adds its own. A scheme written into it is kept for APP_BASE_URL.
+_APP_URL_SCHEME, APP_URL = _split_app_url(os.getenv("APP_URL"))
 
 # ── Billing ───────────────────────────────────────────────────
+# Ships only with the cloud overlay, which is the future-agi/ee repo checked
+# out at futureagi/ee/cloud/. Absent on OSS/EE — BillingConfig falls open to
+# empty defaults there (and fails closed on cloud).
 BILLING_CONFIG_PATH = os.environ.get(
     "BILLING_CONFIG_PATH",
-    os.path.join(BASE_DIR, "..", "ee", "billing.yaml"),
+    os.path.join(BASE_DIR, "..", "ee", "cloud", "billing.yaml"),
 )
+
+# ── GCP Marketplace ─────────────────────────────────
+# Cloud-only. Absent everywhere else, and the integration no-ops without them.
+GCP_MARKETPLACE_PROJECT_ID = os.environ.get("GCP_MARKETPLACE_PROJECT_ID", "")
+GCP_MARKETPLACE_PROVIDER_ID = os.environ.get("GCP_MARKETPLACE_PROVIDER_ID", "")
+GCP_MARKETPLACE_SERVICE_NAME = os.environ.get("GCP_MARKETPLACE_SERVICE_NAME", "")
+GCP_MARKETPLACE_PUBSUB_SUBSCRIPTION = os.environ.get(
+    "GCP_MARKETPLACE_PUBSUB_SUBSCRIPTION", ""
+)
+
+# Accepted `aud` values on the sign-up token, comma separated. Google documents
+# the claim as PARTNER_DOMAIN_NAME, so it is a domain, not the Service Control
+# service name. No default, because the service name is the one value the
+# documentation rules out. Confirm against a real token.
+GCP_MARKETPLACE_TOKEN_AUDIENCES = [
+    value.strip()
+    for value in os.environ.get("GCP_MARKETPLACE_TOKEN_AUDIENCES", "").split(",")
+    if value.strip()
+]
+# Service account JSON for local dev. On GKE leave unset and use Workload Identity.
+GCP_MARKETPLACE_SA_JSON = os.environ.get("GCP_MARKETPLACE_SA_JSON", "")
+
+# Marketplace plan id -> (internal plan, billing interval). Read the live plan
+# ids from Producer Portal; adding or removing a plan there changes them.
+GCP_MARKETPLACE_PLAN_MAP = {
+    # PAYG is monthly only: a $0 platform fee leaves nothing to prepay annually.
+    "payg": ("payg", "monthly"),
+    "scale": ("scale", "monthly"),
+    "scale-P1Y": ("scale", "annual"),
+    # Enterprise is annual only on the portal.
+    "enterprise-P1Y": ("enterprise", "annual"),
+}
+
+# Metric ids are unique per product, so the same dimension has a different id on
+# every plan. Report against the id belonging to the plan on the entitlement.
+# Note payg gateway carries no plan prefix: the naming is not a pattern.
+# Tracing is absent throughout: excluded from Marketplace billing by decision.
+GCP_MARKETPLACE_METRIC_MAP = {
+    "payg": {
+        "ai_credits": "payg_credits",
+        "storage": "payg_storage",
+        "gateway_requests": "gateway_request",
+        "gateway_cache_hits": "payg_cache_hits",
+        "text_sim_tokens": "payg_text_simulation",
+        "voice_sim_minutes": "payg_voice_simulation",
+    },
+    "scale": {
+        "ai_credits": "scale_credits",
+        "storage": "scale_storage",
+        "gateway_requests": "scale_gateway_request",
+        "gateway_cache_hits": "scale_cache_hits",
+        "text_sim_tokens": "scale_text_simulation",
+        "voice_sim_minutes": "scale_voice_simulation",
+    },
+    "enterprise": {
+        "ai_credits": "enterprise_credits",
+        "storage": "enterprise_storage",
+        "gateway_requests": "enterprise_gateway_request",
+        "gateway_cache_hits": "enterprise_cache_hits",
+        "text_sim_tokens": "enterprise_text_simulation",
+        "voice_sim_minutes": "enterprise_voice_simulation",
+    },
+}
+
+# The six dimensions reported to Marketplace, in our ledger's vocabulary.
+GCP_MARKETPLACE_DIMENSIONS = [
+    "ai_credits",
+    "storage",
+    "gateway_requests",
+    "gateway_cache_hits",
+    "text_sim_tokens",
+    "voice_sim_minutes",
+]
+
+# Ledger semantics: these two dimensions are fractional, the other four are
+# whole counts and are floored before they are recorded as reported.
+GCP_MARKETPLACE_FLOAT_DIMENSIONS = {"storage", "voice_sim_minutes"}
+# Wire type is a property of the metric, not the dimension, and Service Control
+# rejects a value whose type differs from the service config ("Inconsistent
+# metric value type ... Expecting double, got int64"). Mirrors the config the
+# service is on -- note payg's gateway_request is DOUBLE while scale's and
+# enterprise's are INT64. Verify against:
+#   gcloud endpoints configs describe <id> \
+#     --service=futureagi.endpoints.futureagiprimary.cloud.goog --format="yaml(metrics)"
+GCP_MARKETPLACE_DOUBLE_METRICS = {
+    "gateway_request",
+    "payg_storage",
+    "payg_voice_simulation",
+    "scale_storage",
+    "scale_voice_simulation",
+    "enterprise_storage",
+    "enterprise_voice_simulation",
+}
 
 # EE license key (self-hosted only, JWT RS256)
 EE_LICENSE_KEY = os.environ.get("EE_LICENSE_KEY", "")
+EE_LICENSE_PUBLIC_KEY = os.environ.get("EE_LICENSE_PUBLIC_KEY", "").replace("\\n", "\n")
+EE_LICENSE_PUBLIC_KEYS = os.environ.get("EE_LICENSE_PUBLIC_KEYS", "")
+EE_LICENSE_CLOCK_SKEW_SECONDS = os.environ.get("EE_LICENSE_CLOCK_SKEW_SECONDS", "300")
+EE_LICENSE_KEY_ID = os.environ.get("EE_LICENSE_KEY_ID", "default")
+EE_LICENSE_PRIVATE_KEY = os.environ.get("EE_LICENSE_PRIVATE_KEY", "").replace(
+    "\\n", "\n"
+)
 
 # Cloud API key for managed AI features (self-hosted → cloud Agentcc gateway)
 FUTUREAGI_CLOUD_API_KEY = os.environ.get("FUTUREAGI_CLOUD_API_KEY", "")
+
+# Activation signing key (cloud control plane uses this to mint service tokens)
+ACTIVATION_PRIVATE_KEY = os.environ.get("ACTIVATION_PRIVATE_KEY", "").replace(
+    "\\n", "\n"
+)
+ACTIVATION_KEY_ID = os.environ.get("ACTIVATION_KEY_ID", "default")
+ACTIVATION_SIGNING_SERVICE_URL = os.environ.get("ACTIVATION_SIGNING_SERVICE_URL", "")
+ACTIVATION_TOKEN_ISSUER = os.environ.get(
+    "ACTIVATION_TOKEN_ISSUER", "https://licenses.futureagi.com"
+)
+ACTIVATION_TOKEN_AUDIENCE = os.environ.get(
+    "ACTIVATION_TOKEN_AUDIENCE", "futureagi-agentcc-gateway"
+)
+ACTIVATION_TOKEN_TYPE = os.environ.get(
+    "ACTIVATION_TOKEN_TYPE", "futureagi-managed-service-token"
+)
+ACTIVATION_TOKEN_TTL_SECONDS = os.environ.get("ACTIVATION_TOKEN_TTL_SECONDS", "3600")
+ACTIVATION_RUNTIME_STATE_REQUIRED = os.environ.get(
+    "ACTIVATION_RUNTIME_STATE_REQUIRED", "true"
+).lower() in ("1", "true", "yes")
 FUTUREAGI_CLOUD_GATEWAY_URL = os.environ.get(
     "FUTUREAGI_CLOUD_GATEWAY_URL", "https://gateway.futureagi.com"
 )
-
-# Internal Agentcc gateway (cloud deployment only)
-INTERNAL_GATEWAY_URL = os.environ.get(
-    "INTERNAL_GATEWAY_URL", "http://agentcc-internal:8090"
-)
-INTERNAL_GATEWAY_KEY = os.environ.get("INTERNAL_GATEWAY_KEY", "")
 
 # ── Multi-Region ──────────────────────────────────────────────
 REGION = os.environ.get("REGION", "us")
@@ -455,9 +776,11 @@ AVAILABLE_REGIONS = os.environ.get("AVAILABLE_REGIONS", "")
 
 # Celery Configuration Options
 
-CELERY_BROKER_URL = os.getenv(
-    "CELERY_BROKER_URL", "amqp://user:password@rabbitmq:5672//"
-)
+# Tasks run on Temporal (tfc.temporal.drop_in) and no compose file starts a
+# Celery worker. The in-process "memory://" default stops the app from resolving
+# a "rabbitmq" host that no longer ships; a legacy Celery worker needs
+# CELERY_BROKER_URL set explicitly. The Channels layer never reads it.
+CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "memory://")
 CELERY_RESULT_BACKEND = "django-db"  # If you want to use Django's ORM
 CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
@@ -481,6 +804,70 @@ TEMPORAL_TEST_EXECUTION_ENABLED = os.getenv(
     "TEMPORAL_TEST_EXECUTION_ENABLED", "false"
 ).lower() in ("true", "1", "yes")
 
+# Let the eval-task recovery sweep restart FAILED tasks as well as pending and
+# running ones. Default OFF, deliberately: a failed task's undrained entries are
+# re-evaluated when it restarts, and that spends evaluation calls the owner did
+# not ask for. Resuming a failed task stays an explicit choice (the Resume
+# button) unless a deployment opts in here.
+EVAL_TASK_SWEEP_RECOVER_FAILED = os.getenv(
+    "EVAL_TASK_SWEEP_RECOVER_FAILED", "false"
+).lower() in ("true", "1", "yes")
+
+# Run code evals inside the worker when the code-executor service cannot be
+# reached (DNS failure, connection refused, no route). Default OFF: code evals
+# then fail with "Code executor unavailable". Only for self-hosted installs that
+# cannot run the privileged code-executor container and where every user who
+# can author code evals is trusted. Ignored when CLOUD_DEPLOYMENT is US, EU or DEV.
+CODE_EXECUTOR_LOCAL_FALLBACK = os.getenv(
+    "CODE_EXECUTOR_LOCAL_FALLBACK", "false"
+).lower() in ("true", "1", "yes")
+
+# Hosted simulation runner (plan §9): when enabled, eligible runs are dispatched
+# to the simulation-runner worker which executes the released SDK, instead of the
+# native in-backend simulation path. Default off — no regression.
+HOSTED_RUNNER_ENABLED = os.getenv("HOSTED_RUNNER_ENABLED", "false").lower() in (
+    "true",
+    "1",
+    "yes",
+)
+
+# Route VOICE runs to the hosted simulation runner too (default off: voice stays
+# on the native path). Requires HOSTED_RUNNER_ENABLED.
+HOSTED_RUNNER_VOICE_ENABLED = os.getenv(
+    "HOSTED_RUNNER_VOICE_ENABLED", "false"
+).lower() in ("true", "1", "yes")
+
+# Sequential reuse of one leased simulator room across a multi-row phone run
+# (D10). Default OFF: only a runner whose simulator kit serves multiple
+# personas over a reused room can honour it; the released kit rejects such a
+# job at SDK hydration. Turn it on by env once that kit image is deployed and
+# verified, not before.
+HOSTED_RUNNER_LEASED_ROOM_REUSE = os.getenv(
+    "HOSTED_RUNNER_LEASED_ROOM_REUSE", "false"
+).lower() in ("true", "1", "yes")
+
+# Admission ceilings for hosted voice runs. Every run reserves a runner child
+# slot for its full wall-clock; a telephony or single-concurrency web run is
+# serial, so an arbitrary dataset otherwise reserves that slot without bound.
+# Refuse a run before the workflow is dispatched when it would reserve too many
+# cases or too much wall-clock. 0 disables that specific limit. Parsed leniently
+# so a bad override cannot crash settings import.
+#
+# Global cap — every hosted voice job.
+HOSTED_RUNNER_MAX_CASES = _admission_env_int("HOSTED_RUNNER_MAX_CASES", 500)
+HOSTED_RUNNER_MAX_WALLCLOCK_SECONDS = _admission_env_int(
+    "HOSTED_RUNNER_MAX_WALLCLOCK_SECONDS", 6 * 60 * 60
+)
+# Tighter cap for the leased-room phone path (the target dials our one scarce
+# leased number, so cases run strictly serially and hold that number for the
+# whole run).
+HOSTED_RUNNER_LEASED_ROOM_MAX_CASES = _admission_env_int(
+    "HOSTED_RUNNER_LEASED_ROOM_MAX_CASES", 25
+)
+HOSTED_RUNNER_LEASED_ROOM_MAX_WALLCLOCK_SECONDS = _admission_env_int(
+    "HOSTED_RUNNER_LEASED_ROOM_MAX_WALLCLOCK_SECONDS", 4 * 60 * 60
+)
+
 # Structured logging configuration with django-structlog
 # This provides:
 # - JSON output in production, colored console in development
@@ -494,8 +881,16 @@ LOGGING = get_logging_config(str(BASE_DIR))
 AIRBYTE_HOST = os.getenv("AIRBYTE_HOST")
 AIRBYTE_PORT = os.getenv("AIRBYTE_PORT")
 AIRBYTE_API_URL = f"http://{AIRBYTE_HOST}:{AIRBYTE_PORT}/api/v1"
-SLACK_WEBHOOK_CHANNEL = os.getenv("SLACK_WEBHOOK_CHANNEL", "")
-ERROR_LOGS_WEBHOOK = os.getenv("ERROR_LOGS_WEBHOOK", "")
+# ── Operator Slack webhooks (Future AGI Cloud; optional everywhere) ──
+# Empty means off: nothing is posted and nothing is logged above debug.
+# SLACK_WEBHOOK_CHANNEL — "new user joined" on email/SSO signup.
+# ERROR_LOGS_WEBHOOK    — internal alerts (analytics.utils.mixpanel_slack_notfy).
+SLACK_WEBHOOK_CHANNEL = os.getenv("SLACK_WEBHOOK_CHANNEL", "").strip()
+DEPLOYMENT_TELEMETRY_SLACK_WEBHOOK = os.getenv(
+    "DEPLOYMENT_TELEMETRY_SLACK_WEBHOOK",
+    SLACK_WEBHOOK_CHANNEL,
+)
+ERROR_LOGS_WEBHOOK = os.getenv("ERROR_LOGS_WEBHOOK", "").strip()
 
 AIRBYTE_HEADERS = {
     "Content-Type": "application/json",
@@ -524,11 +919,15 @@ AWS = {
 HUGGINGFACE_API_TOKEN = os.getenv("HUGGINGFACE_API_TOKEN", "")
 HUGGINGFACE_API_TOKEN_1 = os.getenv("HUGGINGFACE_API_TOKEN_1", "")
 HUGGINGFACE_API_TOKEN_2 = os.getenv("HUGGINGFACE_API_TOKEN_2", "")
+# ── HubSpot lead sync (Future AGI Cloud only) ──
+# Signup creates a HubSpot contact and login marks it logged in. Both run only
+# when HUBSPOT_API_TOKEN is set; self-hosted installs leave it empty and never
+# contact HubSpot (accounts.utils.hubspot_is_configured).
 HUBSPOT_URL = "https://api.hubapi.com/crm/v3/objects/contacts"
 HUBSPOT_UPDATE_URL = (
     "https://api.hubapi.com/crm/v3/objects/contacts/{}?idProperty=email"
 )
-HUBSPOT_API_TOKEN = os.getenv("HUBSPOT_API_TOKEN", "")
+HUBSPOT_API_TOKEN = os.getenv("HUBSPOT_API_TOKEN", "").strip()
 
 VAPI_INDIAN_PHONE_NUMBER_ID = os.getenv(
     "VAPI_INDIAN_PHONE_NUMBER_ID", "6fe53c53-99cc-4090-bf65-6ea4d8267a95"
@@ -542,6 +941,174 @@ VAPI_WEBHOOK_SECRET = os.getenv("VAPI_WEBHOOK_SECRET", "")
 
 # Internal API authentication (shared secret for service-to-service calls)
 INTERNAL_API_SECRET = os.getenv("INTERNAL_API_SECRET", "")
+ERROR_FEED_OMEGA_DELAY_SECONDS = int(os.getenv("ERROR_FEED_OMEGA_DELAY_SECONDS", "60"))
+ERROR_FEED_OMEGA_LEASE_SECONDS = int(os.getenv("ERROR_FEED_OMEGA_LEASE_SECONDS", "120"))
+ERROR_FEED_OMEGA_PROJECT_CONCURRENCY = int(
+    os.getenv("ERROR_FEED_OMEGA_PROJECT_CONCURRENCY", "2")
+)
+# Group completed Omega findings once all enforced budget caps are configured.
+ERROR_FEED_GROUPING_ENABLED = os.getenv("ERROR_FEED_GROUPING_ENABLED", "true") == "true"
+ERROR_FEED_GROUPING_ALL_PROJECTS = (
+    os.getenv("ERROR_FEED_GROUPING_ALL_PROJECTS", "true") == "true"
+)
+ERROR_FEED_GROUPING_PROJECT_IDS = tuple(
+    project_id.strip()
+    for project_id in os.getenv("ERROR_FEED_GROUPING_PROJECT_IDS", "").split(",")
+    if project_id.strip()
+)
+# Cumulative durable reservations plus known charges; no implicit daily reset.
+# Production can explicitly disable dollar caps; accounting/idempotency remain on.
+ERROR_FEED_GROUPING_BUDGET_ENFORCED = (
+    os.getenv("ERROR_FEED_GROUPING_BUDGET_ENFORCED", "true").lower() != "false"
+)
+# With enforcement enabled, authorize all three independent caps. $10 is a
+# local Compose setting, never a production default.
+ERROR_FEED_GROUPING_PROJECT_BUDGET_USD = os.getenv(
+    "ERROR_FEED_GROUPING_PROJECT_BUDGET_USD", "0"
+)
+ERROR_FEED_GROUPING_WORK_BUDGET_USD = os.getenv(
+    "ERROR_FEED_GROUPING_WORK_BUDGET_USD", "0"
+)
+ERROR_FEED_GROUPING_TENANT_BUDGET_USD = os.getenv(
+    "ERROR_FEED_GROUPING_TENANT_BUDGET_USD", "0"
+)
+# Brief batching delay is for grouping only; occurrence embeddings enqueue now.
+ERROR_FEED_GROUPING_DEBOUNCE_SECONDS = int(
+    os.getenv("ERROR_FEED_GROUPING_DEBOUNCE_SECONDS", "5")
+)
+
+# Hosted ALK control plane. HARNESS_PROVIDER chooses the public backend; the managed backend
+# selects its infrastructure implementation independently through HOSTED_SANDBOX_PROVIDER.
+HARNESS_PUBLIC_BASE_URL = os.getenv("HARNESS_PUBLIC_BASE_URL", "")
+HARNESS_PROVIDER = os.getenv("HARNESS_PROVIDER", "hosted")
+HARNESS_MAX_ARTIFACT_BYTES = int(os.getenv("HARNESS_MAX_ARTIFACT_BYTES", "1073741824"))
+HOSTED_SANDBOX_PROVIDER = os.getenv("HOSTED_SANDBOX_PROVIDER", "daytona")
+ALK_HARNESS_SANDBOX_URL = os.getenv("ALK_HARNESS_SANDBOX_URL", "")
+ALK_HARNESS_SANDBOX_TOKEN = os.getenv("ALK_HARNESS_SANDBOX_TOKEN", "")
+GITHUB_APP_ID = os.getenv("GITHUB_APP_ID", "")
+GITHUB_APP_PRIVATE_KEY = os.getenv("GITHUB_APP_PRIVATE_KEY", "")
+ALK_HOSTED_SOURCE_MAX_BYTES = int(
+    os.getenv("ALK_HOSTED_SOURCE_MAX_BYTES", str(256 * 1024 * 1024))
+)
+ALK_HOSTED_BASE_EGRESS_DOMAINS = [
+    domain.strip()
+    for domain in os.getenv("ALK_HOSTED_BASE_EGRESS_DOMAINS", "").split(",")
+    if domain.strip()
+]
+# Hosted simulator credentials are platform configuration, not customer job input. Values are
+# resolved only while launching the sandbox and are never persisted on HostedHarnessJob.
+ALK_HOSTED_SIMULATOR_SECRET_ENV = {
+    "SIMULATOR_LIVEKIT_URL": "LIVEKIT_URL",
+    "SIMULATOR_LIVEKIT_API_KEY": "LIVEKIT_API_KEY",
+    "SIMULATOR_LIVEKIT_API_SECRET": "LIVEKIT_API_SECRET",
+    "SIMULATOR_DEEPGRAM_API_KEY": "DEEPGRAM_API_KEY",
+    "SIMULATOR_CARTESIA_API_KEY": "CARTESIA_API_KEY",
+    "SIMULATOR_GEMINI_API_KEY": "GEMINI_API_KEY",
+    "SIMULATOR_GOOGLE_API_KEY": "GOOGLE_API_KEY",
+    "SIMULATOR_GOOGLE_APPLICATION_CREDENTIALS_JSON": (
+        "GOOGLE_APPLICATION_CREDENTIALS_JSON"
+    ),
+    "SIMULATOR_GOOGLE_CLOUD_PROJECT": "GOOGLE_CLOUD_PROJECT",
+    "SIMULATOR_GOOGLE_CLOUD_LOCATION": "GOOGLE_CLOUD_LOCATION",
+    "SIMULATOR_GOOGLE_GENAI_USE_VERTEXAI": "GOOGLE_GENAI_USE_VERTEXAI",
+    "SIMULATOR_OPENAI_API_KEY": "OPENAI_API_KEY",
+    "SIMULATOR_LLM_PROVIDER": "SIMULATOR_LLM_PROVIDER",
+    "SIMULATOR_LLM_MODEL": "SIMULATOR_LLM_MODEL",
+    "SIMULATOR_STT_PROVIDER": "SIMULATOR_STT_PROVIDER",
+    "SIMULATOR_STT_MODEL": "SIMULATOR_STT_MODEL",
+    "SIMULATOR_TTS_PROVIDER": "SIMULATOR_TTS_PROVIDER",
+    "SIMULATOR_TTS_MODEL": "SIMULATOR_TTS_MODEL",
+}
+# The platform's own outbound dialer: the LiveKit SIP trunk that places the PSTN call for a
+# phone target. Platform configuration, never customer input, so an empty value means no phone
+# run can be started and preflight says so rather than the run failing after authoring is paid for.
+ALK_HOSTED_SIP_OUTBOUND_TRUNK_ID = os.getenv("ALK_HOSTED_SIP_OUTBOUND_TRUNK_ID", "")
+ALK_HOSTED_AUTHORING_CLAUDE_REGION = os.getenv("CLOUD_ML_REGION", "us-east5")
+ALK_HOSTED_AUTHORING_GEMINI_LOCATION = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
+ALK_HOSTED_WEBRTC_EGRESS_CIDRS = [
+    cidr.strip()
+    for cidr in os.getenv("ALK_HOSTED_WEBRTC_EGRESS_CIDRS", "").split(",")
+    if cidr.strip()
+]
+# The OS user the hosted entrypoint runs as inside the sandbox. Must be "root" for the process
+# provisioner to drop privileges to the bundle's declared svc-agent/svc-tools/svc-data users
+# (Popen(user=) needs CAP_SETUID); "svc-control" runs every process uniformly instead.
+ALK_HOSTED_SANDBOX_OS_USER = os.getenv("ALK_HOSTED_SANDBOX_OS_USER", "svc-control")
+# Optional per-source pre-authored environment bundle store: <dir>/<owner>__<repo>/manifest.json.
+# A stopgap delivery path until in-sandbox bundle authoring lands; empty disables it.
+ALK_HOSTED_BUNDLE_DIR = os.getenv("ALK_HOSTED_BUNDLE_DIR", "")
+ALK_HOSTED_EGRESS_UNRESTRICTED = os.getenv(
+    "ALK_HOSTED_EGRESS_UNRESTRICTED", ""
+).lower() in ("1", "true", "yes")
+# Fresh hosted jobs perform contract, environment and scenario authoring before the call-runtime
+# budget begins. Keep that bounded work separate from the customer's maximum call duration.
+ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS = int(
+    os.getenv("ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS", "10800")
+)
+# Derived from the budget above so the two cannot disagree.
+ALK_HOSTED_AUTHORING_TIMEOUT = int(
+    os.getenv("ALK_HOSTED_AUTHORING_TIMEOUT", "")
+    or ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS + 300
+)
+# Sandbox lifetime is a separate infrastructure envelope. A customer's call-runtime limit must
+# never shorten fresh authoring; two hours is the hosted default/minimum.
+ALK_HOSTED_SANDBOX_TTL_SECONDS = int(
+    os.getenv("ALK_HOSTED_SANDBOX_TTL_SECONDS", "7200")
+)
+# Conversational sandboxes are replaceable warm caches. Their persistent ADK session and
+# workspace checkpoint survive deletion; this is the idle window after the user's latest
+# message before a post-run chat sandbox is reclaimed, and only trades cost against latency.
+ALK_HOSTED_CHAT_TTL_SECONDS = int(os.getenv("ALK_HOSTED_CHAT_TTL_SECONDS", "1800"))
+DAYTONA_API_KEY = os.getenv("DAYTONA_API_KEY", "")
+DAYTONA_API_URL = os.getenv("DAYTONA_API_URL") or None
+DAYTONA_TARGET = os.getenv("DAYTONA_TARGET") or None
+DAYTONA_ORGANIZATION_ID = os.getenv("DAYTONA_ORGANIZATION_ID") or None
+ALK_DAYTONA_SNAPSHOT = os.getenv("ALK_DAYTONA_SNAPSHOT", "")
+ALK_DAYTONA_SNAPSHOT_DIGEST = os.getenv("ALK_DAYTONA_SNAPSHOT_DIGEST", "")
+# Local certification escape hatch: Daytona builds an ephemeral sandbox directly from the
+# trusted hosted Dockerfile. Production leaves this empty and uses the immutable snapshot above.
+# This is intentionally a control-plane setting, never accepted from a customer job payload.
+ALK_DAYTONA_DOCKERFILE = os.getenv("ALK_DAYTONA_DOCKERFILE", "")
+E2B_API_KEY = os.getenv("E2B_API_KEY", "")
+ALK_E2B_TEMPLATE_REFERENCE = os.getenv("ALK_E2B_TEMPLATE_REFERENCE", "")
+ALK_E2B_TEMPLATE_BUILD_ID = os.getenv("ALK_E2B_TEMPLATE_BUILD_ID", "")
+# E2B allocates resources at template-build time. Admission fails closed when a request exceeds
+# the configured template profile. The continuous-runtime limit is plan-specific and therefore
+# has no implicit default; deployment must set it explicitly before selecting E2B.
+ALK_E2B_TEMPLATE_CPU_UNITS = int(os.getenv("ALK_E2B_TEMPLATE_CPU_UNITS", "4"))
+ALK_E2B_TEMPLATE_MEMORY_MB = int(os.getenv("ALK_E2B_TEMPLATE_MEMORY_MB", "8192"))
+ALK_E2B_TEMPLATE_DISK_GB = int(os.getenv("ALK_E2B_TEMPLATE_DISK_GB", "10"))
+ALK_E2B_MAX_TTL_SECONDS = int(os.getenv("ALK_E2B_MAX_TTL_SECONDS", "0"))
+ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS = int(
+    os.getenv("ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS", "180")
+)
+
+# Scenario parallelism (W>1) admission belt (C4 §5, decisions D12/D23/D24).
+# W>1 is admitted only when this flag is truthy AND the selected guest runtime
+# digest (Daytona snapshot digest or E2B template build ID) is certified. Both
+# default to the fail-closed state (disabled / empty) so an unset digest never
+# admits W>1. Production keeps the flag OFF until the deployed snapshot carries
+# the world-unique preflight guard and C1 port model; dev/E2E sets it ON. In the
+# dockerfile-mode dev lane (ALK_DAYTONA_DOCKERFILE set) the guard is flag-only —
+# the digest half is skipped because that lane carries no meaningful digest.
+HARNESS_PARALLELISM_ENABLED = os.getenv("HARNESS_PARALLELISM_ENABLED", "").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+HARNESS_MAX_WORLD_SLOTS = int(os.getenv("HARNESS_MAX_WORLD_SLOTS", "8"))
+# Most scenarios × trials one simulation Run may submit.
+HARNESS_MAX_EXECUTIONS_PER_RUN = int(os.getenv("HARNESS_MAX_EXECUTIONS_PER_RUN", "200"))
+# Each profile is an operator-certified size/connector/snapshot combination.
+HARNESS_RESOURCE_PROFILES = json.loads(os.getenv("HARNESS_RESOURCE_PROFILES", "[]"))
+# Comma-separated allowlist of provider runtime identifiers certified for W>1.
+# For Daytona these are snapshot digests; for E2B they are template build IDs.
+# Empty (the default) fails closed for pinned runtimes.
+HARNESS_PARALLEL_SNAPSHOT_DIGESTS = [
+    digest.strip()
+    for digest in os.getenv("HARNESS_PARALLEL_SNAPSHOT_DIGESTS", "").split(",")
+    if digest.strip()
+]
 
 # LiveKit credentials (used for webhook verification and API calls)
 LIVEKIT_URL = os.getenv("LIVEKIT_URL", "")
@@ -563,13 +1130,23 @@ RETELL_LIVEKIT_URL = os.getenv(
 )
 
 # Stripe
-WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
 STRIPE_REDIRECT_DOMAIN = os.getenv("STRIPE_REDIRECT_DOMAIN")
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY")
 BUSINESS_MONTHLY_STRIPE_PRICE_ID = os.getenv("BUSINESS_MONTHLY_STRIPE_PRICE_ID")
 BUSINESS_YEARLY_STRIPE_PRICE_ID = os.getenv("BUSINESS_YEARLY_STRIPE_PRICE_ID")
 
 STRIPE_LIVE = bool(STRIPE_SECRET_KEY and STRIPE_SECRET_KEY.startswith("sk_live"))
+
+# Signing secret for the billing webhook endpoint. Keyed off the same
+# live/test signal StripeService._is_live() uses, so the secret can never
+# disagree with the API key the events were generated against.
+STRIPE_WEBHOOK_SECRET = os.getenv(
+    "WEBHOOK_SECRET_LIVE" if STRIPE_LIVE else "WEBHOOK_SECRET_TEST", ""
+)
+# Compatibility for EE service images that still import the pre-rename symbol.
+# Keep one resolved value so OSS and EE billing routes cannot select different
+# webhook secrets during a rolling/local mixed-version deployment.
+WEBHOOK_SECRET = STRIPE_WEBHOOK_SECRET
 
 BUSINESS_MONTHLY_STRIPE_PRICE_IDS_ALL = [
     x
@@ -599,10 +1176,26 @@ _is_local = _IS_LOCAL
 _ssl = "http://" if _is_local else "https://"
 ssl = _ssl  # exported — used by accounts.utils, accounts.views.workspace_management
 
+# Only Future AGI Cloud defaults to its public API. A self-hosted install
+# defaults to its own, whatever its ENV_TYPE: WEBSOCKET_ENDPOINT and the
+# gateway's futureagi-eval guardrail derive from BASE_URL, and both authenticate
+# with the org's system API key and secret.
 BASE_URL = os.getenv(
-    "BASE_URL", "http://localhost:8000" if _is_local else f"https://api.futureagi.com"
+    "BASE_URL",
+    (
+        "https://api.futureagi.com"
+        if is_cloud_env(CLOUD_DEPLOYMENT) and not _is_local
+        else "http://localhost:8000"
+    ),
 )
 WEBSOCKET_ENDPOINT = os.getenv("WEBSOCKET_ENDPOINT", f"{BASE_URL}/call-websocket/")
+# fi-collector's OTLP/HTTP endpoint as an SDK outside the stack reaches it. The
+# SDKs default FI_BASE_URL to Future AGI Cloud, so the in-app SDK snippet and
+# the setup screen hand this out on a self-hosted install. Compose and the Helm
+# chart set it; the default is the port both compose files publish.
+FI_COLLECTOR_PUBLIC_URL = (
+    os.getenv("FI_COLLECTOR_PUBLIC_URL", "").strip() or "http://localhost:4318"
+).rstrip("/")
 MINIO_URL = os.getenv(
     "MINIO_URL", f"{_ssl}localhost:9005" if _is_local else f"{_ssl}{APP_URL}:9005"
 )
@@ -628,7 +1221,11 @@ sentry_sdk_enabled = (
 )
 
 # ── CSRF trusted origins (built dynamically from BASE_URL / APP_URL) ──
-CSRF_TRUSTED_ORIGINS = ["http://localhost:5173", "http://localhost:3031"]
+CSRF_TRUSTED_ORIGINS = [
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "http://localhost:3031",
+]
 if APP_URL:
     CSRF_TRUSTED_ORIGINS += [f"https://{APP_URL}", f"http://{APP_URL}"]
 if BASE_URL:
@@ -642,9 +1239,36 @@ AUTH0_CALLBACK_URL = f"{BASE_URL}/saml2_auth/auth/callback/"
 GITHUB_CALLBACK_URL = f"{BASE_URL}/saml2_auth/github/callback/"
 MICROSOFT_CALLBACK_URL = f"{BASE_URL}/saml2_auth/microsoft/callback/"
 get_assertion_url = f"{BASE_URL}/saml2_auth/acs/"
-default_next_url = f"{_ssl}{APP_URL}/dashboard/develop"
-get_started_url = f"{_ssl}{APP_URL}/dashboard/get-started"
-default_error_next_url = f"{_ssl}{APP_URL}/auth/jwt/login?denied=true"
+
+
+def _app_base_url(host, scheme, default_scheme):
+    """APP_URL as an absolute URL, for links that leave the app: emails, invite
+    and reset links. A scheme written into APP_URL wins. Otherwise a loopback
+    host is http, since nothing holds a certificate for localhost (a Helm
+    install reached through a port-forward runs with ENV_TYPE=production), and
+    any other host takes ``default_scheme``."""
+    if not host:
+        return ""
+    if not scheme:
+        name = (urlsplit(f"//{host}").hostname or "").lower()
+        try:
+            loopback = ipaddress.ip_address(name).is_loopback
+        except ValueError:
+            loopback = name == "localhost" or name.endswith(".localhost")
+        scheme = "http" if loopback else default_scheme.split(":", 1)[0]
+    return f"{scheme}://{host}"
+
+
+# Each region is its own deployment with its own APP_URL.
+APP_BASE_URL = _app_base_url(APP_URL, _APP_URL_SCHEME, _ssl)
+# The UI that links leaving the app point at (emails, the MCP OAuth consent
+# page): FRONTEND_URL when set, else APP_BASE_URL. Empty when neither is set.
+FRONTEND_BASE_URL = (os.getenv("FRONTEND_URL", "").strip() or APP_BASE_URL).rstrip("/")
+
+# Where SSO sends the browser back to the UI.
+default_next_url = f"{APP_BASE_URL}/dashboard/develop"
+get_started_url = f"{APP_BASE_URL}/dashboard/get-started"
+default_error_next_url = f"{APP_BASE_URL}/auth/jwt/login?denied=true"
 get_entity_id = f"{_ssl}{APP_URL}"
 
 get_name_id_format = "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress"
@@ -656,11 +1280,29 @@ GOOGLE_USERINFO_API = "https://www.googleapis.com/oauth2/v1/userinfo"
 MICROSOFT_OAUTH_URL = "https://login.microsoftonline.com/common/oauth2/v2.0"
 MICROSOFT_GRAPH_API = "https://graph.microsoft.com/v1.0"
 
-RECAPTCHA_SECRET_KEY = os.getenv("RECAPTCHA_SECRET_KEY", "")
-RECAPTCHA_ENABLED = os.getenv(
-    "RECAPTCHA_ENABLED",
-    "false" if env_type in {"local", "development"} else "true",
-).lower() in ("true", "1", "yes")
+
+# reCAPTCHA on signup, login and token refresh. Future AGI Cloud verifies by
+# default (and fails closed without a secret). A self-hosted install verifies
+# only once RECAPTCHA_SECRET_KEY is set, so a fresh install never calls Google
+# and never rejects a login it has no key to check. A non-empty
+# RECAPTCHA_ENABLED wins either way.
+def _recaptcha_enabled(explicit, env_type, cloud, secret_key):
+    if (explicit or "").strip():
+        return explicit.strip().lower() in ("true", "1", "yes")
+    if env_type in {"local", "development"}:
+        return False
+    if cloud:
+        return True
+    return bool(secret_key)
+
+
+RECAPTCHA_SECRET_KEY = os.getenv("RECAPTCHA_SECRET_KEY", "").strip()
+RECAPTCHA_ENABLED = _recaptcha_enabled(
+    os.getenv("RECAPTCHA_ENABLED"),
+    env_type,
+    is_cloud_env(CLOUD_DEPLOYMENT),
+    RECAPTCHA_SECRET_KEY,
+)
 
 # Integration encryption key (Fernet) for storing external platform credentials
 INTEGRATION_ENCRYPTION_KEY = os.getenv("INTEGRATION_ENCRYPTION_KEY", "")
@@ -676,32 +1318,58 @@ if not INTEGRATION_ENCRYPTION_KEY and env_type == "local":
     ).decode()
 ENABLE_INTEGRATIONS = os.getenv("ENABLE_INTEGRATIONS", "false").lower() == "true"
 
-CHANNEL_LAYERS = {
-    "default": {
-        "BACKEND": "channels_rabbitmq.core.RabbitmqChannelLayer",
-        "CONFIG": {
-            "host": CELERY_BROKER_URL,
-            "ssl_context": None,
-            "expiry": 300,
-            "local_capacity": 500,
-            "local_expiry": 300,
-            "remote_capacity": 500,
-        },
-    },
-}
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
-CACHES = {
-    "default": {
-        "BACKEND": "django_redis.cache.RedisCache",
-        "LOCATION": os.getenv("REDIS_CACHE_URL", f"{REDIS_URL}"),
-        "OPTIONS": {
-            "CLIENT_CLASS": "django_redis.client.DefaultClient",
-        },
-        "KEY_PREFIX": "futureagi",
-        "TIMEOUT": 600,  # Default timeout in seconds (10 minutes)
+# Billing usage events go to the Redis stream usage:events, which only the
+# UsageConsumerWorkflow of Future AGI Cloud (ee.cloud) drains. Without it the
+# stream only grows until Redis is full, so unset, events are on exactly when
+# that consumer ships with this code. fi-collector reads the same variables
+# and is on unless USAGE_EVENTS_ENABLED=false, which every self-hosted compose
+# file and the Helm chart set. The cap bounds the stream (~160 bytes an entry,
+# ~160 MB at the default) while its consumer is behind or stopped; XADD trims
+# unread events beyond it. A positive integer, as fi-collector requires.
+from tfc.ee_loader import usage_event_consumer_available  # noqa: E402
+from tfc.utils.env import env_int  # noqa: E402
+
+_usage_events = os.getenv("USAGE_EVENTS_ENABLED", "").strip().lower()
+USAGE_EVENTS_ENABLED = (
+    _usage_events in ("true", "1", "yes", "on")
+    if _usage_events
+    else usage_event_consumer_available()
+)
+USAGE_EVENTS_MAX_LEN = env_int("USAGE_EVENTS_MAX_LEN", 1_000_000, minimum=1)
+
+# Django Channels layer. CHANNEL_LAYER_BACKEND: auto (default) | memory | redis |
+# rabbitmq. With one web process the layer lives in memory and needs no broker;
+# tfc/channel_layers.py explains how auto chooses.
+from tfc.channel_layers import channel_layer_settings  # noqa: E402
+
+CHANNEL_LAYER_BACKEND, CHANNEL_LAYERS = channel_layer_settings(
+    os.environ, redis_url=REDIS_URL, cloud=is_cloud_env(CLOUD_DEPLOYMENT)
+)
+
+
+if os.getenv("DJANGO_CACHE_BACKEND") == "locmem":
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "futureagi-local-cache",
+        }
     }
-}
+else:
+    CACHES = {
+        "default": {
+            "BACKEND": "django_redis.cache.RedisCache",
+            "LOCATION": os.getenv("REDIS_CACHE_URL", f"{REDIS_URL}"),
+            "OPTIONS": {
+                "CLIENT_CLASS": "django_redis.client.DefaultClient",
+                "SOCKET_CONNECT_TIMEOUT": REDIS_CACHE_SOCKET_CONNECT_TIMEOUT_SECONDS,
+                "SOCKET_TIMEOUT": REDIS_CACHE_SOCKET_TIMEOUT_SECONDS,
+            },
+            "KEY_PREFIX": "futureagi",
+            "TIMEOUT": 600,  # Default timeout in seconds (10 minutes)
+        }
+    }
 
 # Authentication Security Settings
 MAX_LOGIN_ATTEMPTS = 10  # Maximum failed login attempts before account lockout
@@ -737,3 +1405,88 @@ WEBAUTHN_ORIGIN = os.getenv("WEBAUTHN_ORIGIN", "http://localhost:3031")
 # 2FA challenge token TTLs (seconds)
 TWO_FACTOR_CHALLENGE_TTL = 300  # 5 minutes
 WEBAUTHN_CHALLENGE_TTL = 120  # 2 minutes
+
+
+def _ch25_setting(env, name, fallback):
+    """``CH25_*`` when set to a non-empty value, else the single-cluster ``CH_*``
+    value, so one set of CH_* variables (all the Helm chart sets, CH_PASSWORD
+    included) configures the v2 client too. An empty CH25_PASSWORD used to win
+    over CH_PASSWORD and connect without one."""
+    value = env.get(name)
+    return value if value not in (None, "") else fallback
+
+
+def _clickhouse_v2_connection(env, legacy):
+    return {
+        "CH25_HOST": _ch25_setting(env, "CH25_HOST", legacy.get("CH_HOST")),
+        "CH25_HTTP_PORT": _ch25_setting(
+            env, "CH25_HTTP_PORT", env.get("CH_HTTP_PORT") or None
+        ),
+        "CH25_TCP_PORT": _ch25_setting(
+            env, "CH25_TCP_PORT", env.get("CH_PORT") or None
+        ),
+        "CH25_USER": _ch25_setting(env, "CH25_USER", legacy.get("CH_USERNAME")),
+        "CH25_PASSWORD": _ch25_setting(env, "CH25_PASSWORD", legacy.get("CH_PASSWORD")),
+        "CH25_DATABASE": _ch25_setting(env, "CH25_DATABASE", legacy.get("CH_DATABASE")),
+    }
+
+
+# ─── ClickHouse 25.3 (v2) span store ────────────────────────────────────────
+# The new spans cluster (typed Maps + typed JSON; PLAN_V2_NO_CDC). Falls back
+# to the legacy CLICKHOUSE dict above for connection details if not set
+# explicitly (_clickhouse_v2_connection) — see
+# tracer/services/clickhouse/v2/__init__.py:get_v2_config().
+CLICKHOUSE_V2 = {
+    **_clickhouse_v2_connection(os.environ, CLICKHOUSE),
+    # ``None`` means the v2-specific flag was not configured and lets
+    # ``get_v2_config`` inherit the legacy single-cluster setting.  A concrete
+    # False must be reserved for an explicit CH25 override; defaulting to False
+    # here silently disabled inheritance for server-locked read profiles.
+    "CH25_SERVER_ENFORCED_READONLY": (
+        None
+        if os.getenv("CH25_SERVER_ENFORCED_READONLY") is None
+        else os.getenv("CH25_SERVER_ENFORCED_READONLY", "").lower()
+        in ("true", "1", "yes")
+    ),
+    # ─── Per-query-type routing for the shadow-mode rollout ──────────────────
+    # Comma-separated query type names. See tracer/services/clickhouse/v2/shadow.py
+    # for RoutingMode definitions. Anything not listed defaults to V1_ONLY.
+    "QUERY_TYPES_V2_PRIMARY": os.getenv("CH25_QUERY_TYPES_V2_PRIMARY", ""),
+    "QUERY_TYPES_V2_ONLY": os.getenv("CH25_QUERY_TYPES_V2_ONLY", ""),
+    "QUERY_TYPES_SHADOW": os.getenv("CH25_QUERY_TYPES_SHADOW", ""),
+    "QUERY_TYPES_DISABLED": os.getenv("CH25_QUERY_TYPES_DISABLED", ""),
+}
+
+# Observed attributes use a separate additive index. Relational metadata keeps
+# its native readers; catalog access has no deployment label or activation gate.
+PROPERTY_CATALOG_DATABASE = os.getenv(
+    "PROPERTY_CATALOG_DATABASE", "property_catalog"
+).strip()
+PROPERTY_CATALOG_CH_HOST = os.getenv(
+    "PROPERTY_CATALOG_CH_HOST",
+    CLICKHOUSE_V2.get("CH25_HOST") or CLICKHOUSE.get("CH_HOST") or "localhost",
+).strip()
+PROPERTY_CATALOG_CH_PORT = int(os.getenv("PROPERTY_CATALOG_CH_PORT", "9000"))
+PROPERTY_CATALOG_CH_USER = os.getenv(
+    "PROPERTY_CATALOG_CH_USER", "observed_catalog_reader"
+).strip()
+PROPERTY_CATALOG_CH_PASSWORD = os.getenv("PROPERTY_CATALOG_CH_PASSWORD", "")
+del _runtime_numeric_settings
+
+# Eval-logger table read by the trace/voice/user eval-config discovery queries.
+# The CH25 spans cutover intentionally kept the legacy peerdb CDC table
+# `tracer_eval_logger` (`_peerdb_is_deleted`/`deleted` columns); the v2 table
+# `tracer_eval_logger_v2` (`is_deleted`) is its prepared replacement. Flip this
+# per-deployment (default = legacy so the peerdb-backed stacks are unaffected;
+# CH-direct stacks set it to `tracer_eval_logger_v2`). See
+# tracer/services/clickhouse/v2/schema/011_eval_logger_v2.sql + docs/CH25_MIGRATION.md.
+CH25_EVAL_LOGGER_TABLE = os.getenv("CH25_EVAL_LOGGER_TABLE", "tracer_eval_logger")
+
+# Where the eval runner reads span data from.
+#   "postgres"   — current behavior; reads from tracer_observation_span (Django ORM)
+#   "clickhouse" — reads span data from CH 25.3 via the hybrid loader
+#                  (tracer/services/clickhouse/v2/eval_loader.py). Django FK
+#                  navigation (project, trace, end_user, …) still hits PG.
+# Default is "postgres" so cutover is opt-in. Flip to "clickhouse" only after
+# the backfill + validator pass and a soak period.
+EVAL_SPAN_READ_SOURCE = os.getenv("EVAL_SPAN_READ_SOURCE", "postgres").lower()

@@ -139,6 +139,9 @@ func (t *HTTPTransport) applyAuth(req *http.Request) {
 
 // --- Stdio Transport ---
 
+// MCP responses can include large tool schemas and resource payloads.
+const maxStdioMessageSize = 1024 * 1024
+
 // StdioTransport communicates with an MCP server launched as a subprocess.
 type StdioTransport struct {
 	command string
@@ -195,7 +198,7 @@ func (t *StdioTransport) Start(ctx context.Context) error {
 	t.cmd = cmd
 	t.stdin = stdin
 	t.scanner = bufio.NewScanner(stdout)
-	t.scanner.Buffer(make([]byte, 0, 64*1024), 64*1024) // 64KB max line
+	t.scanner.Buffer(make([]byte, 0, 64*1024), maxStdioMessageSize)
 	t.stderrDone = make(chan struct{})
 	t.healthy.Store(true)
 

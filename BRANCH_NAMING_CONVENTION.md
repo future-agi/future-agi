@@ -89,12 +89,12 @@ feat/TICKET-123-implement-comprehensive-user-authentication-system-with-oauth-an
 ## 🚀 Branch Lifecycle
 
 ### Main Branch
-- `main` — production-ready code; PRs target this directly (see `CONTRIBUTING.md`).
+- `main` — production-ready code; PRs target `dev` (see `CONTRIBUTING.md`).
 
 ### Workflow
-1. Branch from `main` using a valid `type/short-description` name.
+1. Branch from `dev` using a valid `type/short-description` name.
 2. Make focused changes — keep the diff small.
-3. Open a PR against `main`.
+3. Open a PR against `dev`.
 4. After review and merge, delete the branch.
 
 ## 🛠️ Enforcement
@@ -136,13 +136,13 @@ Configure your IDE to suggest branch names:
 Use the provided script for easy branch creation:
 ```bash
 # Create a feat branch with ticket ID
-./scripts/create-branch.sh feat user-authentication AUTH-123
+./frontend/scripts/create-branch.sh feat user-authentication AUTH-123
 
 # Create a fix branch with ticket ID
-./scripts/create-branch.sh fix login-error BUG-456
+./frontend/scripts/create-branch.sh fix login-error BUG-456
 
 # Create a docs branch without ticket ID
-./scripts/create-branch.sh docs update-readme
+./frontend/scripts/create-branch.sh docs update-readme
 ```
 
 The script will:

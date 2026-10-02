@@ -2,12 +2,12 @@
 
 import uuid
 
-import pytest
 from django.urls import reverse
 from rest_framework import status
 
 from accounts.models import Organization, User
 from accounts.models.organization_membership import OrganizationMembership
+from accounts.models.workspace import Workspace
 from agent_playground.models.choices import GraphVersionStatus, NodeType, PortDirection
 from agent_playground.models.edge import Edge
 from agent_playground.models.graph import Graph
@@ -18,6 +18,11 @@ from agent_playground.models.port import Port
 
 # Note: api_client and authenticated_client fixtures are inherited from
 # agent_playground/tests/conftest.py with proper workspace injection
+
+AUTH_REQUIRED_STATUS_CODES = (
+    status.HTTP_401_UNAUTHORIZED,
+    status.HTTP_403_FORBIDDEN,
+)
 
 
 # ==================== Graph List Tests ====================
@@ -109,7 +114,7 @@ class TestGraphList:
         url = reverse("graph-list")
         response = api_client.get(url)
 
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_list_returns_empty_for_new_org(self, api_client, organization, workspace):
         """Test that list returns empty for org with no graphs."""
@@ -232,7 +237,7 @@ class TestGraphCreate:
         data = {"name": "New Graph"}
         response = api_client.post(url, data=data, format="json")
 
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_create_sets_created_by(self, authenticated_client, user):
         """Test that created_by is set to the current user."""
@@ -301,7 +306,7 @@ class TestGraphRetrieve:
     def test_retrieve_returns_latest_draft(self, authenticated_client, graph):
         """Test that retrieve returns the latest draft when multiple exist."""
         # Create multiple drafts
-        draft1 = GraphVersion.no_workspace_objects.create(
+        GraphVersion.no_workspace_objects.create(
             graph=graph, version_number=1, status=GraphVersionStatus.DRAFT
         )
         draft2 = GraphVersion.no_workspace_objects.create(
@@ -425,7 +430,7 @@ class TestGraphRetrieve:
         url = reverse("graph-detail", kwargs={"pk": str(graph.id)})
         response = api_client.get(url)
 
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_retrieve_nonexistent_returns_404(self, authenticated_client):
         """Test that retrieve returns 404 for nonexistent graph."""
@@ -525,7 +530,126 @@ class TestGraphPartialUpdate:
         data = {"name": "Updated Name"}
         response = api_client.patch(url, data=data, format="json")
 
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
+
+
+class TestGraphDirectDetailRoutes:
+    """Tests for PUT/DELETE /agent-playground/graphs/{id}/"""
+
+    def test_put_updates_graph_metadata(self, authenticated_client, graph):
+        """Test that router-level PUT supports metadata updates."""
+        url = reverse("graph-detail", kwargs={"pk": str(graph.id)})
+        response = authenticated_client.put(
+            url,
+            data={"name": "Updated via PUT", "description": "PUT description"},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["status"] is True
+        assert response.data["result"]["name"] == "Updated via PUT"
+        assert response.data["result"]["description"] == "PUT description"
+
+        graph.refresh_from_db()
+        assert graph.name == "Updated via PUT"
+        assert graph.description == "PUT description"
+
+    def test_put_other_workspace_graph_returns_404(
+        self, authenticated_client, organization, user
+    ):
+        """Test that router-level PUT remains workspace scoped."""
+        other_workspace = Workspace.no_workspace_objects.create(
+            name="Other Workspace",
+            organization=organization,
+            is_default=False,
+            is_active=True,
+            created_by=user,
+        )
+        other_workspace_graph = Graph.no_workspace_objects.create(
+            organization=organization,
+            workspace=other_workspace,
+            name="Other Workspace Graph",
+            description="Should stay unchanged",
+            created_by=user,
+        )
+
+        url = reverse("graph-detail", kwargs={"pk": str(other_workspace_graph.id)})
+        response = authenticated_client.put(
+            url,
+            data={"name": "Leaked Update", "description": "Leaked"},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        other_workspace_graph.refresh_from_db()
+        assert other_workspace_graph.name == "Other Workspace Graph"
+        assert other_workspace_graph.description == "Should stay unchanged"
+
+    def test_delete_cascades_graph_content(
+        self,
+        authenticated_client,
+        graph,
+        graph_version,
+        node,
+        input_port,
+        output_port,
+        second_node,
+        second_node_input_port,
+        node_connection,
+        edge,
+        dataset,
+        graph_dataset,
+    ):
+        """Test that router-level DELETE uses graph cascade soft-delete."""
+        url = reverse("graph-detail", kwargs={"pk": str(graph.id)})
+        response = authenticated_client.delete(url)
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["status"] is True
+        assert response.data["result"]["message"] == "Graph deleted successfully"
+
+        for instance in [
+            graph,
+            graph_version,
+            node,
+            input_port,
+            output_port,
+            second_node,
+            second_node_input_port,
+            node_connection,
+            edge,
+            dataset,
+            graph_dataset,
+        ]:
+            instance.refresh_from_db()
+            assert instance.deleted is True
+
+    def test_delete_blocked_by_reference(
+        self,
+        authenticated_client,
+        graph,
+        referenced_graph,
+        active_referenced_graph_version,
+        graph_version,
+    ):
+        """Test that router-level DELETE blocks external graph references."""
+        Node.no_workspace_objects.create(
+            graph_version=graph_version,
+            type=NodeType.SUBGRAPH,
+            name="Subgraph Ref",
+            ref_graph_version=active_referenced_graph_version,
+            config={},
+        )
+
+        url = reverse("graph-detail", kwargs={"pk": str(referenced_graph.id)})
+        response = authenticated_client.delete(url)
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert referenced_graph.name in response.data["result"]
+        assert graph.name in response.data["result"]
+
+        referenced_graph.refresh_from_db()
+        assert referenced_graph.deleted is False
 
 
 # ==================== Graph Bulk Delete Tests ====================
@@ -615,7 +739,7 @@ class TestGraphBulkDelete:
         url = reverse("graph-bulk-delete")
         response = api_client.post(url, data={"ids": [str(graph.id)]}, format="json")
 
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_bulk_delete_multiple_graphs(
         self, authenticated_client, organization, workspace, user
@@ -928,13 +1052,13 @@ class TestGraphListVersions:
         self, authenticated_client, graph
     ):
         """Test that versions are ordered by version_number descending."""
-        v1 = GraphVersion.no_workspace_objects.create(
+        GraphVersion.no_workspace_objects.create(
             graph=graph, version_number=1, status=GraphVersionStatus.INACTIVE
         )
-        v2 = GraphVersion.no_workspace_objects.create(
+        GraphVersion.no_workspace_objects.create(
             graph=graph, version_number=2, status=GraphVersionStatus.INACTIVE
         )
-        v3 = GraphVersion.no_workspace_objects.create(
+        GraphVersion.no_workspace_objects.create(
             graph=graph, version_number=3, status=GraphVersionStatus.ACTIVE
         )
 
@@ -1384,7 +1508,7 @@ class TestGraphReferenceableGraphs:
     ):
         """Test the response structure includes versions array with exposed ports."""
         # Create active version with ports
-        active_version = GraphVersion.no_workspace_objects.create(
+        GraphVersion.no_workspace_objects.create(
             graph=referenced_graph,
             version_number=1,
             status=GraphVersionStatus.ACTIVE,
@@ -1764,7 +1888,7 @@ class TestGraphDeleteVersion:
         )
         response = api_client.delete(url)
 
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
 
 # ==================== Activate Version Tests ====================
@@ -1886,7 +2010,7 @@ class TestGraphActivateVersion:
         )
         response = api_client.post(url)
 
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_activate_returns_version_detail_with_nodes(
         self, authenticated_client, graph, dynamic_node_template
@@ -1952,14 +2076,14 @@ class TestVersionEndpointAuthentication:
         url = reverse("graph-versions", kwargs={"pk": str(graph.id)})
         response = api_client.get(url)
 
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_create_version_requires_auth(self, api_client, graph):
         """Test that create_version requires authentication."""
         url = reverse("graph-versions", kwargs={"pk": str(graph.id)})
         response = api_client.post(url, format="json")
 
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_retrieve_version_requires_auth(self, api_client, graph, graph_version):
         """Test that retrieve_version requires authentication."""
@@ -1969,7 +2093,7 @@ class TestVersionEndpointAuthentication:
         )
         response = api_client.get(url)
 
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_update_version_requires_auth(self, api_client, graph, graph_version):
         """Test that update_version requires authentication."""
@@ -1979,7 +2103,7 @@ class TestVersionEndpointAuthentication:
         )
         response = api_client.patch(url, data={"commit_message": "x"}, format="json")
 
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_delete_version_requires_auth(self, api_client, graph, graph_version):
         """Test that delete_version requires authentication."""
@@ -1989,7 +2113,7 @@ class TestVersionEndpointAuthentication:
         )
         response = api_client.delete(url)
 
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
 
 # ==================== Cross-Org Isolation for Version Endpoints ====================

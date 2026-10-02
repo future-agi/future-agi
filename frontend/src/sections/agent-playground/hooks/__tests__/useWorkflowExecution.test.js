@@ -63,7 +63,7 @@ describe("useWorkflowExecution", () => {
         rows: [{ cells: [{ value: "ok" }] }],
       });
       mockExecuteDataset.mockResolvedValue({
-        data: { result: { executionIds: ["exec-1"] } },
+        data: { result: { execution_ids: ["exec-1"] } },
       });
 
       const { result } = renderHook(() => useWorkflowExecution());
@@ -170,7 +170,7 @@ describe("useWorkflowExecution", () => {
         rows: [{ cells: [{ value: "ok" }] }],
       });
       mockExecuteDataset.mockResolvedValue({
-        data: { result: { executionIds: ["exec-1"] } },
+        data: { result: { execution_ids: ["exec-1"] } },
       });
 
       const { result } = renderHook(() => useWorkflowExecution());

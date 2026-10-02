@@ -13,7 +13,7 @@ const statusColor = {
 };
 
 export const parseArrayString = (value) => {
-    const normalized = normalizeEvalCellValue(value);
+  const normalized = normalizeEvalCellValue(value);
   if (Array.isArray(normalized)) return normalized;
   if (typeof value === "string") {
     try {
@@ -95,7 +95,11 @@ export const getChipLabel = (data) => {
     return isNaN(rawScore) ? "Error" : `${(rawScore * 100).toFixed(0)}%`;
   }
 
-  if (normalized && typeof normalized === "object" && !Array.isArray(normalized)) {
+  if (
+    normalized &&
+    typeof normalized === "object" &&
+    !Array.isArray(normalized)
+  ) {
     const choiceLabel = extractChoiceLabel(normalized);
     if (choiceLabel != null) return choiceLabel;
     if (typeof normalized.score === "number") {

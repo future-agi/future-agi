@@ -3,7 +3,6 @@ Structlog configuration for Django/Celery logging.
 Uses a centralized django-structlog configuration.
 """
 
-import logging
 import os
 import sys
 
@@ -27,6 +26,17 @@ def is_production() -> bool:
     return get_env() in ("staging", "prod", "production")
 
 
+def _merge_temporal_context(logger, method_name: str, event_dict: dict) -> dict:
+    """Workflow/activity ids for log lines of the embedded Temporal worker, as
+    configure_temporal_logging() adds them in a standalone worker. A no-op
+    until temporalio has been imported."""
+    if "temporalio.activity" not in sys.modules:
+        return event_dict
+    from .temporal.logger import merge_temporal_context
+
+    return merge_temporal_context(logger, method_name, event_dict)
+
+
 def get_processors():
     """
     Get structlog processors.
@@ -48,6 +58,10 @@ def get_processors():
         structlog.processors.UnicodeDecoder(),
         add_otel_context,  # FutureAGI addition: OpenTelemetry context
     ]
+    embedded_worker = os.getenv("FI_EMBEDDED_TEMPORAL_WORKER", "").strip().lower()
+    if embedded_worker in ("1", "true", "yes", "on"):
+        # The API process also runs the Temporal worker (standalone install).
+        shared_processors.insert(1, _merge_temporal_context)
     return shared_processors
 
 
@@ -59,7 +73,7 @@ def get_renderer():
         return structlog.dev.ConsoleRenderer(colors=True)
 
 
-def configure_structlog():
+def configure_structlog(cache_logger_on_first_use: bool = True):
     """Configure structlog with proper processors."""
     structlog.configure(
         processors=get_processors()
@@ -68,7 +82,7 @@ def configure_structlog():
         ],
         logger_factory=structlog.stdlib.LoggerFactory(),
         wrapper_class=structlog.stdlib.BoundLogger,
-        cache_logger_on_first_use=True,
+        cache_logger_on_first_use=cache_logger_on_first_use,
     )
 
 
@@ -82,8 +96,14 @@ def get_logging_config(base_dir: str) -> dict:
     Returns:
         Django LOGGING dict
     """
-    env_type = get_env()
     log_level = os.getenv("LOG_LEVEL", "INFO")
+    # stdout, where every service's logs are collected. LOG_STREAM=stderr is for
+    # a one-off manage.py command whose stdout is its output (./bin/dev manage).
+    log_stream = (
+        "stderr"
+        if os.getenv("LOG_STREAM", "").strip().lower() == "stderr"
+        else "stdout"
+    )
     logs_dir = os.path.join(base_dir, "logs")
 
     # Ensure logs directory exists
@@ -129,7 +149,7 @@ def get_logging_config(base_dir: str) -> dict:
             "console": {
                 "class": "logging.StreamHandler",
                 "formatter": "structured",
-                "stream": "ext://sys.stdout",
+                "stream": f"ext://sys.{log_stream}",
             },
             "file": {
                 "class": "logging.handlers.RotatingFileHandler",
@@ -191,14 +211,17 @@ def get_logging_config(base_dir: str) -> dict:
         },
     }
 
-    # Add error tracking handler for staging/prod
-    if env_type in ("staging", "prod"):
-        sentry_level = os.getenv("SENTRY_LOG_LEVEL", "ERROR")
-        config["handlers"]["sentry"] = {
-            "class": "sentry_sdk.integrations.logging.EventHandler",
-            "level": sentry_level,
-            "formatter": "plain",
-        }
-        config["loggers"][""]["handlers"].append("sentry")
+    # NOTE: We deliberately do NOT attach a sentry EventHandler here.
+    #
+    # Sentry's LoggingIntegration (configured in tfc.logging.sentry.init_sentry)
+    # already captures every ERROR-level log record as an event by patching
+    # logging.Logger.callHandlers. Adding an explicit EventHandler on the root
+    # logger double-captured each error and, because the integration runs in
+    # Temporal/Celery too (which never load this Django LOGGING dict), split
+    # capture across two code paths. Routing all log->event capture through the
+    # single LoggingIntegration keeps behaviour consistent everywhere and lets
+    # noise control (ignore_logger + before_send) live in one place.
+    #
+    # SENTRY_LOG_LEVEL is still honoured by the LoggingIntegration's event_level.
 
     return config

@@ -21,8 +21,15 @@ const FormSearchSelectFieldState = React.forwardRef(
       showClear = true,
       createLabel,
       multiple = false,
+      multipleAllLabel,
       placeholder = "Select Option",
       sx,
+      noOptions,
+      emptyMessage,
+      onScrollEnd,
+      isFetchingNextPage,
+      onSearchChange,
+      selectAll,
       // Filter ``shrink`` out of ``rest`` — see rhf-text-field.jsx note.
       // eslint-disable-next-line no-unused-vars
       shrink: _shrink,
@@ -57,6 +64,7 @@ const FormSearchSelectFieldState = React.forwardRef(
     const onClose = () => {
       setOpenDropdown(false);
       setSearchedValue("");
+      onSearchChange?.("");
     };
 
     const handleOpen = useCallback(() => {
@@ -90,15 +98,20 @@ const FormSearchSelectFieldState = React.forwardRef(
       (e) => {
         e.stopPropagation();
         setSearchedValue("");
+        onSearchChange?.("");
         handleOpen();
         inputRef.current?.focus();
       },
-      [handleOpen],
+      [handleOpen, onSearchChange],
     );
 
-    const handleOnChange = useCallback((e) => {
-      setSearchedValue(e.target.value);
-    }, []);
+    const handleOnChange = useCallback(
+      (e) => {
+        setSearchedValue(e.target.value);
+        onSearchChange?.(e.target.value);
+      },
+      [onSearchChange],
+    );
 
     const handleDropdownIconClick = useCallback(
       (e) => {
@@ -116,6 +129,14 @@ const FormSearchSelectFieldState = React.forwardRef(
 
     const getValue = useMemo(() => {
       if (multiple) {
+        const selectedCount = Array.isArray(value) ? value.length : 0;
+        if (
+          multipleAllLabel &&
+          options?.length > 0 &&
+          selectedCount === options.length
+        ) {
+          return multipleAllLabel;
+        }
         const selectedOptions = options?.filter((item) =>
           value?.includes(item.value),
         );
@@ -126,7 +147,7 @@ const FormSearchSelectFieldState = React.forwardRef(
         const option = options?.find((item) => item.value === value);
         return option?.label || value || "";
       }
-    }, [value, options, multiple]);
+    }, [value, options, multiple, multipleAllLabel]);
 
     const id = useMemo(
       () => (openDropdown ? `${label}-popper` : undefined),
@@ -277,6 +298,11 @@ const FormSearchSelectFieldState = React.forwardRef(
           setSearchedValue={setSearchedValue}
           multiple={multiple}
           createLabel={createLabel}
+          noOptions={noOptions}
+          emptyMessage={emptyMessage}
+          onScrollEnd={onScrollEnd}
+          isFetchingNextPage={isFetchingNextPage}
+          selectAll={selectAll}
           {...rest}
         />
       </>
@@ -303,6 +329,13 @@ FormSearchSelectFieldState.propTypes = {
   sx: PropTypes.object,
   createLabel: PropTypes.string,
   multiple: PropTypes.bool,
+  multipleAllLabel: PropTypes.string,
   placeholder: PropTypes.string,
+  noOptions: PropTypes.string,
+  emptyMessage: PropTypes.string,
+  onScrollEnd: PropTypes.func,
+  isFetchingNextPage: PropTypes.bool,
+  onSearchChange: PropTypes.func,
+  selectAll: PropTypes.bool,
   shrink: PropTypes.bool,
 };

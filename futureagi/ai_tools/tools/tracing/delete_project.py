@@ -28,15 +28,9 @@ class DeleteProjectTool(BaseTool):
 
     def execute(self, params: DeleteProjectInput, context: ToolContext) -> ToolResult:
         from django.db.models import Count
-        from django.utils import timezone
 
-        from tracer.models.eval_task import EvalTask
-        from tracer.models.monitor import UserAlertMonitor
-        from tracer.models.observation_span import ObservationSpan
         from tracer.models.project import Project
-        from tracer.models.project_version import ProjectVersion
-        from tracer.models.trace import Trace
-        from tracer.models.trace_session import TraceSession
+        from tracer.services.project_deletion import soft_delete_projects
 
         try:
             project = Project.objects.annotate(trace_count=Count("traces")).get(
@@ -49,27 +43,10 @@ class DeleteProjectTool(BaseTool):
         project_id = str(project.id)
         trace_count = project.trace_count
 
-        # Cascade soft-delete related models before deleting the project
-        now = timezone.now()
-        if project.trace_type == "experiment":
-            ProjectVersion.objects.filter(project=project).update(
-                deleted=True, deleted_at=now
-            )
-        else:
-            TraceSession.objects.filter(project=project).update(
-                deleted=True, deleted_at=now
-            )
-        Trace.objects.filter(project=project).update(deleted=True, deleted_at=now)
-        ObservationSpan.objects.filter(project=project).update(
-            deleted=True, deleted_at=now
+        # Cascade soft-delete + publish collector cache-invalidation.
+        soft_delete_projects(
+            Project.objects.filter(id=project.id), project.trace_type
         )
-        UserAlertMonitor.objects.filter(project=project).update(
-            deleted=True, deleted_at=now
-        )
-        EvalTask.objects.filter(project=project).update(deleted=True, deleted_at=now)
-
-        # Soft delete the project itself
-        project.delete()
 
         info = key_value_block(
             [

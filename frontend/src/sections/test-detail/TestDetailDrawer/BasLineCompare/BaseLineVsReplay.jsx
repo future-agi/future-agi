@@ -56,6 +56,7 @@ const toPlayerRecordings = (rec) => {
     customer: rec.mono_customer || "",
     combined: rec.mono_combined || "",
     mono: rec.mono_combined || "",
+    stereoChannels: rec.stereo_channels ?? null,
   };
 };
 
@@ -143,7 +144,7 @@ export default function BaseLineVsReplay({ rowData }) {
       />
       <Suspense fallback={<PerformanceMetricsSkeleton />}>
         <PerformanceMetrics
-          data={baselineVsReplayData?.comparisonMetrics}
+          data={baselineVsReplayData?.comparison_metrics}
           isLoading={isLoadingBaselineVsReplay}
           simulationCallType={rowData?.simulation_call_type}
         />

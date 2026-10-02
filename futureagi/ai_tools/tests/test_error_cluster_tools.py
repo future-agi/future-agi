@@ -54,17 +54,17 @@ class TestToolRegistration:
     def test_list_error_clusters_registered(self):
         tool = registry.get("list_error_clusters")
         assert tool is not None
-        assert tool.category == "tracing"
+        assert tool.category == "error_feed"
 
     def test_get_error_cluster_detail_registered(self):
         tool = registry.get("get_error_cluster_detail")
         assert tool is not None
-        assert tool.category == "tracing"
+        assert tool.category == "error_feed"
 
     def test_analyze_error_cluster_registered(self):
         tool = registry.get("analyze_error_cluster")
         assert tool is not None
-        assert tool.category == "tracing"
+        assert tool.category == "error_feed"
 
     def test_input_schemas_are_valid(self):
         for name in [

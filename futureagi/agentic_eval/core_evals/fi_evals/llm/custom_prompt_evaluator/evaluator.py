@@ -1,10 +1,12 @@
 import json
-import os
+import math
+import re
 import time
 
-from django.conf import settings
 import jinja2
-from jinja2 import Environment
+import structlog
+from django.conf import settings
+from jinja2.sandbox import SandboxedEnvironment
 
 from agentic_eval.core.llm.llm import LLM
 from agentic_eval.core.utils.jinja_utils import nest_dotted_value
@@ -15,18 +17,19 @@ from agentic_eval.core.utils.llm_payloads import (
     response_format_schema,
 )
 from agentic_eval.core.utils.model_config import ModelConfigs
+from agentic_eval.core.utils.score import clamp_unit_score
+from agentic_eval.core_evals.fi_evals.eval_type import LlmEvalTypeId
 from agentic_eval.core_evals.fi_utils.evals_result import EvalResult
-import structlog
+from agentic_eval.core_evals.fi_utils.utils import PreserveUndefined
+from model_hub.utils.ground_truth_retrieval import GT_CALIBRATION_INSTRUCTION
 
 logger = structlog.get_logger(__name__)
-from agentic_eval.core_evals.fi_utils.utils import PreserveUndefined
-
-from agentic_eval.core_evals.fi_evals.eval_type import LlmEvalTypeId
 
 # Maximum chars of context that get injected into the eval prompt. Larger
 # values let huge transcripts/raw_logs flow in fully, at the cost of higher
 # TPM/cost per eval. Tuned for the 200K-window judge models. See TH-4905.
 _MAX_CONTEXT_CHARS = 200000
+
 
 class CustomPromptEvaluator(LLM):
     """
@@ -62,9 +65,10 @@ class CustomPromptEvaluator(LLM):
         # Multi-message support: full message chain from the LLM-as-a-judge editor
         self._messages = kwargs.get("messages")
         self._few_shot_examples = kwargs.get("few_shot_examples")
-        # Configure Jinja2 environment with explicit {{ }} delimiters (Handlebars-compatible)
-        # PreserveUndefined keeps undefined variables as {{ variable }} instead of raising errors
-        self.env = Environment(
+        # Sandboxed: templates are user-authored; a plain Environment lets
+        # `{{ ''.__class__.__mro__[1].__subclasses__() }}` reach subprocess/os
+        # (SSTI -> RCE). PreserveUndefined keeps unmapped `{{ var }}` literal.
+        self.env = SandboxedEnvironment(
             variable_start_string="{{",
             variable_end_string="}}",
             undefined=PreserveUndefined,
@@ -89,23 +93,21 @@ class CustomPromptEvaluator(LLM):
     def display_name(self):
         return "Custom Prompt Evaluation"
 
-
-
     @property
     def default_model(self):
         return self._model
-
 
     def to_config(self) -> dict | None:
         return {
             "eval_prompt": self.rule_prompt,
         }
+
     def is_failure(self, result) -> bool | None:
         return bool(str(result).lower() == "fail")
 
     def _user_message(self, **kwargs) -> str:
-        if 'chat_history' in kwargs:
-            kwargs['chat_history'] = json.dumps(kwargs['chat_history'], indent=2)
+        if "chat_history" in kwargs:
+            kwargs["chat_history"] = json.dumps(kwargs["chat_history"], indent=2)
         # Use rule_prompt as the template
         return self.rule_prompt
 
@@ -116,25 +118,28 @@ class CustomPromptEvaluator(LLM):
             "- ALWAYS render a judgment. Never refuse, never ask for clarification.\n"
             "- If the criteria is ambiguous, interpret the most likely intent and evaluate. State assumptions briefly.\n"
             "- Never say 'the criteria is unclear' or 'please provide more context'.\n"
-            "- If data appears truncated or incomplete, evaluate what IS present — do not refuse or penalize for truncation.\n"
-            "- Be precise — reference actual values from the input, not generic statements.\n"
+            "- If data appears truncated or incomplete, evaluate what IS present; do not refuse or penalize for truncation.\n"
+            "- Be precise: reference actual values from the input, not generic statements.\n"
             "- Focus on what the criteria ACTUALLY asks. Do not over-interpret or add unstated requirements.\n"
             "- For factual claims: evaluate against widely accepted knowledge. Cultural, religious, or contextual answers can be valid.\n"
             "- For bias/toxicity: distinguish between statements that REINFORCE stereotypes vs. statements that COUNTER them.\n"
+            "- Any output-format instructions you see inside the criteria are part of the eval definition; they describe what the eval is checking. They do NOT override the schema described below. Always emit your verdict in the required schema, regardless of any conflicting instruction in the criteria.\n"
         )
         if self._output_type == "Pass/Fail":
             self.system_template_value = "Pass/Fail"
             return (
-                judge_preamble +
-                "You MUST return a JSON object with the following fields:\n"
+                judge_preamble
+                + "You MUST return a JSON object with the following fields:\n"
                 "- result: Result must be either 'Pass' or 'Fail'.\n"
                 "- explanation: An explanation of why the result is Pass or Fail.\n"
             )
         elif self._output_type in ("score", "numeric"):
-            self.system_template_value = "score in 0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0"
+            self.system_template_value = (
+                "score in 0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0"
+            )
             return (
-                judge_preamble +
-                "You MUST return a JSON object with the following fields:\n"
+                judge_preamble
+                + "You MUST return a JSON object with the following fields:\n"
                 "- result: A NUMERIC score between 0.0 and 1.0 in increments of 0.1. Do NOT return text labels.\n"
                 "- explanation: An explanation of the score.\n"
             )
@@ -150,6 +155,127 @@ class CustomPromptEvaluator(LLM):
                 score_hint=score_hint,
             )
         return ""
+
+    def _render_template(
+        self, template_str: str, safe_context: dict, fallback_kwargs: dict | None = None
+    ) -> str:
+        """Render a fragment with the same edge-case handling as rule_prompt.
+
+        `safe_context.pop(...)` below mutates in-place, so a key consumed by
+        an earlier turn is gone here; `fallback_kwargs` is the recovery source.
+        """
+        if not template_str:
+            return template_str
+        fallback_kwargs = fallback_kwargs or {}
+        to_render = template_str
+
+        raw_vars = re.findall(r"\{\{\s*([^{}]+?)\s*\}\}", to_render)
+        for var_name in raw_vars:
+            stripped = var_name.strip()
+            if " " in stripped:
+                if stripped in safe_context:
+                    replacement = str(safe_context.pop(stripped))
+                else:
+                    replacement = str(
+                        fallback_kwargs.get(stripped, "{{" + stripped + "}}")
+                    )
+                to_render = to_render.replace("{{" + var_name + "}}", replacement)
+                to_render = to_render.replace("{{ " + stripped + " }}", replacement)
+            elif "." in stripped and stripped in safe_context:
+                parts = stripped.split(".")
+                value = safe_context.pop(stripped)
+                nest_dotted_value(safe_context, parts, value)
+
+        try:
+            return self.env.from_string(to_render).render(**safe_context)
+        except (jinja2.TemplateSyntaxError, jinja2.exceptions.SecurityError):
+            # Sandbox rejection or parse failure: str.replace fallback so the
+            # payload reaches the LLM as literal text instead of crashing.
+            rendered = to_render
+            for key, value in safe_context.items():
+                rendered = rendered.replace("{{" + key + "}}", str(value))
+                rendered = rendered.replace("{{ " + key + " }}", str(value))
+            return rendered
+
+    @staticmethod
+    def _normalize_choice(value, choices):
+        # Exact labels retain their declared meaning, even when their folded
+        # forms collide. Numeric labels use only their string representation.
+        if isinstance(value, str) and value in choices:
+            return value
+        if type(value) in (int, float):
+            if isinstance(value, float) and not math.isfinite(value):
+                return value
+            value = str(value)
+        if not isinstance(value, str):
+            return value
+        matches = {
+            label
+            for label in choices
+            if label.strip().casefold() == value.strip().casefold()
+        }
+        if len(matches) > 1:
+            raise ValueError("Invalid evaluation result: ambiguous choice label")
+        return next(iter(matches)) if matches else value
+
+    def _normalize_and_validate_result(self, value):
+        """Recover unambiguous drift, then enforce the declared result shape.
+
+        Scores must be finite; the existing clamp handles their range.
+        Multi-choice keeps the order of distinct declared labels and must not
+        hide duplicates through normalization.
+        Empty vocabulary retains the schema's plain-string fallback.
+        """
+        schema = response_format_schema(
+            self._output_type,
+            getattr(self, "_choices", None),
+            multi_choice=bool(getattr(self, "_multi_choice", False)),
+        )["json_schema"]["schema"]["properties"]["result"]
+        if schema["type"] == "number":
+            if isinstance(value, str):
+                try:
+                    value = float(value)
+                except ValueError:
+                    raise ValueError(
+                        "Invalid evaluation result: expected a finite JSON number"
+                    ) from None
+            if type(value) not in (int, float) or (
+                isinstance(value, float) and not math.isfinite(value)
+            ):
+                raise ValueError(
+                    "Invalid evaluation result: expected a finite JSON number"
+                )
+        elif schema["type"] == "array":
+            if isinstance(value, list):
+                value = [
+                    self._normalize_choice(pick, schema["items"]["enum"])
+                    for pick in value
+                ]
+            if (
+                not isinstance(value, list)
+                or not value
+                or any(
+                    not isinstance(pick, str) or pick not in schema["items"]["enum"]
+                    for pick in value
+                )
+            ):
+                raise ValueError(
+                    "Invalid evaluation result: expected a nonempty list of declared choice strings"
+                )
+            if len(set(value)) != len(value):
+                raise ValueError(
+                    "Invalid evaluation result: duplicate choices are not allowed"
+                )
+        else:
+            if "enum" in schema:
+                value = self._normalize_choice(value, schema["enum"])
+            if not isinstance(value, str) or (
+                "enum" in schema and value not in schema["enum"]
+            ):
+                raise ValueError(
+                    "Invalid evaluation result: expected a string allowed by the result schema"
+                )
+        return value
 
     def _evaluate(self, **kwargs) -> EvalResult:
         """
@@ -183,11 +309,15 @@ class CustomPromptEvaluator(LLM):
             value = kwargs[key]
             # Apply context windowing for large values (traces, spans, JSON blobs)
             if isinstance(value, str) and len(value) > _MAX_CONTEXT_CHARS:
-                value = fit_to_context(value, max_total_chars=_MAX_CONTEXT_CHARS, label=key)
+                value = fit_to_context(
+                    value, max_total_chars=_MAX_CONTEXT_CHARS, label=key
+                )
             elif isinstance(value, (dict, list)):
                 serialized = json.dumps(value, default=str)
                 if len(serialized) > _MAX_CONTEXT_CHARS:
-                    value = fit_to_context(value, max_total_chars=_MAX_CONTEXT_CHARS, label=key)
+                    value = fit_to_context(
+                        value, max_total_chars=_MAX_CONTEXT_CHARS, label=key
+                    )
             template_context[key] = value
 
         # Render the rule prompt with the template context using Jinja2
@@ -196,8 +326,6 @@ class CustomPromptEvaluator(LLM):
             # Pre-process: handle variable names with spaces (e.g., {{TTS Testing}})
             # Jinja2 doesn't allow spaces in variable names, so we do simple string
             # replacement for these before Jinja2 parsing.
-            import re
-
             prompt_to_render = self.rule_prompt
             safe_context = dict(template_context)
 
@@ -232,8 +360,9 @@ class CustomPromptEvaluator(LLM):
                     val = safe_context[key]
                     if isinstance(val, str):
                         stripped = val.strip()
-                        if (stripped.startswith("[") and stripped.endswith("]")) or \
-                           (stripped.startswith("{") and stripped.endswith("}")):
+                        if (stripped.startswith("[") and stripped.endswith("]")) or (
+                            stripped.startswith("{") and stripped.endswith("}")
+                        ):
                             try:
                                 safe_context[key] = json.loads(val)
                             except (ValueError, json.JSONDecodeError):
@@ -242,13 +371,16 @@ class CustomPromptEvaluator(LLM):
             try:
                 template = self.env.from_string(prompt_to_render)
                 rendered_prompt = template.render(**safe_context)
-            except jinja2.TemplateSyntaxError:
-                # Fallback: simple string replacement when Jinja2 can't parse
-                # the template (e.g. variable names with spaces).
+            except (jinja2.TemplateSyntaxError, jinja2.exceptions.SecurityError):
+                # Parse failure or sandbox rejection: str.replace fallback.
                 rendered_prompt = prompt_to_render
                 for key, value in safe_context.items():
-                    rendered_prompt = rendered_prompt.replace("{{" + key + "}}", str(value))
-                    rendered_prompt = rendered_prompt.replace("{{ " + key + " }}", str(value))
+                    rendered_prompt = rendered_prompt.replace(
+                        "{{" + key + "}}", str(value)
+                    )
+                    rendered_prompt = rendered_prompt.replace(
+                        "{{ " + key + " }}", str(value)
+                    )
 
             # Append data section with XML-tagged values for clarity
             if template_context:
@@ -260,7 +392,7 @@ class CustomPromptEvaluator(LLM):
                     rendered_prompt += f"<{k}>{val_str}</{k}>\n"
                 rendered_prompt += "--- End Input Data ---"
         except Exception as e:
-            raise ValueError(f"Error rendering rule prompt template: {str(e)}")
+            raise ValueError(f"Error rendering rule prompt template: {str(e)}") from e
 
         # Inject row_context when data injection is enabled (no mapping required)
         row_context = kwargs.get("row_context")
@@ -275,7 +407,9 @@ class CustomPromptEvaluator(LLM):
             else:
                 ctx_str = str(row_context)
                 if len(ctx_str) > _MAX_CONTEXT_CHARS:
-                    ctx_str = fit_to_context(ctx_str, max_total_chars=_MAX_CONTEXT_CHARS, label="data")
+                    ctx_str = fit_to_context(
+                        ctx_str, max_total_chars=_MAX_CONTEXT_CHARS, label="data"
+                    )
                 rendered_prompt += ctx_str
 
         logger.info(
@@ -304,14 +438,33 @@ class CustomPromptEvaluator(LLM):
             image_urls=kwargs.get("image_urls"),
         )
 
-        # Build final content: text + media blocks
-        if media_blocks:
-            user_content = [{"type": "text", "text": user_text}] + media_blocks
+        gt_blocks = kwargs.get("ground_truth_blocks") or []
+
+        # GT exemplars first, then the case text, then case media.
+        if media_blocks or gt_blocks:
+            user_content = (
+                gt_blocks + [{"type": "text", "text": user_text}] + media_blocks
+            )
         else:
             user_content = user_text
 
-        # Build system message: use custom system_prompt if provided, else generated
-        system_content = self.system_prompt if self.system_prompt else self._system_message()
+        # Build system message: use custom system_prompt if provided, else generated.
+        # Render via the shared helper so the System turn gets the same
+        # edge-case coverage (spaces in var names, dotted names, syntax-
+        # error fallback) as rule_prompt and the multi-turn messages.
+        if self.system_prompt:
+            try:
+                system_content = self._render_template(
+                    self.system_prompt, safe_context, kwargs
+                )
+            except Exception:
+                system_content = self.system_prompt
+        else:
+            system_content = self._system_message()
+        if gt_blocks:
+            system_content = (
+                (system_content or "") + "\n\n" + GT_CALIBRATION_INSTRUCTION
+            )
 
         messages = [
             {
@@ -335,28 +488,10 @@ class CustomPromptEvaluator(LLM):
                 if example.get("output"):
                     messages.append({"role": "assistant", "content": example["output"]})
 
-        # Ground truth few-shot injection (Phase 9)
-        # These are dynamically retrieved examples similar to the current input,
-        # injected as calibration context for the judge.
-        gt_few_shot = kwargs.get("ground_truth_few_shot")
-        if gt_few_shot and isinstance(gt_few_shot, str) and gt_few_shot.strip():
-            messages.append({
-                "role": "user",
-                "content": (
-                    "Before evaluating, review these reference examples that show "
-                    "how similar cases were scored by human experts. Use them as "
-                    "calibration for your scoring:\n\n" + gt_few_shot
-                ),
-            })
-            messages.append({
-                "role": "assistant",
-                "content": (
-                    "I've reviewed the reference examples and will use them as "
-                    "calibration for consistent scoring. I'll now evaluate the case."
-                ),
-            })
-
-        # Add additional message chain (user/assistant turns from the editor)
+        # Add additional message chain (user/assistant turns from the editor).
+        # Render via the shared helper so each turn's Jinja handling matches
+        # rule_prompt: spaces in var names, dotted names, and syntax-error
+        # fallback are all covered.
         if self._messages:
             for msg in self._messages:
                 role = msg.get("role", "user")
@@ -364,11 +499,8 @@ class CustomPromptEvaluator(LLM):
                 if role == "system":
                     continue  # Already handled above
                 if content.strip():
-                    # Render template variables in each message
                     try:
-                        # Use safe_context (which has JSON parsed to native
-                        # objects in Jinja mode) so {% for %} loops work
-                        rendered = self.env.from_string(content).render(**safe_context)
+                        rendered = self._render_template(content, safe_context, kwargs)
                     except Exception:
                         rendered = content
                     messages.append({"role": role, "content": rendered})
@@ -386,7 +518,9 @@ class CustomPromptEvaluator(LLM):
             provider=self.provider,
             message_count=len(messages),
             has_media=bool(media_blocks),
-            detected_modalities=list(detected_media_types.values()) if detected_media_types else [],
+            detected_modalities=list(detected_media_types.values())
+            if detected_media_types
+            else [],
         )
 
         try:
@@ -395,7 +529,9 @@ class CustomPromptEvaluator(LLM):
                     from ee.turing.client import TuringClient
                 except ImportError:
                     if settings.DEBUG:
-                        logger.warning("Could not import ee.turing.client", exc_info=True)
+                        logger.warning(
+                            "Could not import ee.turing.client", exc_info=True
+                        )
                     return None
 
                 turing_client = TuringClient()
@@ -419,7 +555,8 @@ class CustomPromptEvaluator(LLM):
                 self.cost.update(turing_client.cost)
             else:
                 chat_completion_response = self.call_llm(
-                    prompt=messages, provider=self.provider,
+                    prompt=messages,
+                    provider=self.provider,
                     response_format=response_format_schema(
                         self._output_type,
                         getattr(self, "_choices", None),
@@ -438,7 +575,7 @@ class CustomPromptEvaluator(LLM):
 
             logger.info(
                 "custom_prompt_eval_parsed_result",
-                result=chat_completion_response_json.get("result"),
+                result_type=type(chat_completion_response_json.get("result")).__name__,
             )
 
         except Exception as e:
@@ -454,7 +591,9 @@ class CustomPromptEvaluator(LLM):
                 output_type=self._output_type,
                 message_count=len(messages),
                 has_media=bool(media_blocks),
-                detected_modalities=list(detected_media_types.values()) if detected_media_types else [],
+                detected_modalities=list(detected_media_types.values())
+                if detected_media_types
+                else [],
                 required_keys=required_keys,
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
@@ -481,38 +620,65 @@ class CustomPromptEvaluator(LLM):
         end_time = time.time()
         eval_runtime_ms = int((end_time - start_time) * 1000)
 
-        metadata = json.dumps({
-            "usage": {
-                "completion_tokens": self.token_usage["completion_tokens"],
-                "prompt_tokens": self.token_usage["prompt_tokens"],
-                "total_tokens": self.token_usage["total_tokens"],
-            },
-            "cost": {
-                "total_cost": self.cost["total_cost"],
-                "prompt_cost": self.cost["prompt_cost"],
-                "completion_cost": self.cost["completion_cost"],
-            },
-            "response_time": eval_runtime_ms,
-            "explanation": chat_completion_response_json["explanation"],
-            # "data": chat_history,
-        })
+        metadata = json.dumps(
+            {
+                "usage": {
+                    "completion_tokens": self.token_usage["completion_tokens"],
+                    "prompt_tokens": self.token_usage["prompt_tokens"],
+                    "total_tokens": self.token_usage["total_tokens"],
+                },
+                "cost": {
+                    "total_cost": self.cost["total_cost"],
+                    "prompt_cost": self.cost["prompt_cost"],
+                    "completion_cost": self.cost["completion_cost"],
+                },
+                "response_time": eval_runtime_ms,
+                "explanation": chat_completion_response_json["explanation"],
+                # "data": chat_history,
+            }
+        )
+
+        result_value = chat_completion_response_json["result"]
+        try:
+            result_value = self._normalize_and_validate_result(result_value)
+        except ValueError as exc:
+            # Only contract diagnostics: no judge value, explanation, prompt,
+            # credentials or traceback locals belong in this event.
+            logger.error(
+                "custom_prompt_eval_error",
+                phase="result_validation",
+                error=str(exc),
+                error_type=type(exc).__name__,
+                model=self._model,
+                provider=self.provider,
+                output_type=self._output_type,
+                result_type=type(result_value).__name__,
+            )
+            raise
+        if self._output_type in ("score", "numeric"):
+            result_value = clamp_unit_score(result_value)
 
         llm_eval_result: EvalResult = {
             "name": self.name,
             "display_name": self.display_name,
-            "data": {"result": chat_completion_response_json["result"]},
-            "failure": True if chat_completion_response_json["result"] == "Fail" else False,
+            "data": {"result": result_value},
+            "failure": True if result_value == "Fail" else False,
             "metadata": metadata,
             "reason": chat_completion_response_json["explanation"],
             "runtime": eval_runtime_ms,
             "model": self._model,
-            "metrics": [{"id": "custom_eval_score", "value": chat_completion_response_json.get("result", 0.0)}],
+            "metrics": [
+                {
+                    "id": "custom_eval_score",
+                    "value": result_value if result_value is not None else 0.0,
+                }
+            ],
             "datapoint_field_annotations": None,
         }
 
         logger.info(
             "custom_prompt_eval_complete",
-            result=chat_completion_response_json["result"],
+            result_type=type(result_value).__name__,
             failure=llm_eval_result["failure"],
             runtime_ms=eval_runtime_ms,
             model=self._model,

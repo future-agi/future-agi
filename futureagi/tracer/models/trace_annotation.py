@@ -17,6 +17,7 @@ class TraceAnnotation(BaseModel):
         related_name="annotation_labels",
         null=True,
         blank=True,
+        db_constraint=False,  # CH scale: SCALE_ARCHITECTURE.md §9a
     )
     annotation_label = models.ForeignKey(
         AnnotationsLabels,
@@ -32,6 +33,7 @@ class TraceAnnotation(BaseModel):
         related_name="trace_annotation",
         null=True,
         blank=True,
+        db_constraint=False,  # CH scale: SCALE_ARCHITECTURE.md §9a
     )
     user = models.ForeignKey(
         User,

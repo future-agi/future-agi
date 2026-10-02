@@ -117,6 +117,7 @@ export const GeneratedScenarios = React.memo(({ scenarioDetail: scenario }) => {
                 showDrawer: false,
                 bottomRow: false,
                 showCheckbox: false,
+                showEvals: false,
               }}
             />
           </Box>

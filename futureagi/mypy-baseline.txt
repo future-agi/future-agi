@@ -1,0 +1,7 @@
+agent_playground/utils/graph.py: error: Duplicate module named "graph" (also at "./agent_playground/serializers/graph.py")
+agent_playground/utils/graph.py: note: See https://mypy.readthedocs.io/en/stable/running_mypy.html#mapping-file-paths-to-modules for more info
+agent_playground/utils/graph.py: note: Common resolutions include:
+agent_playground/utils/graph.py: note:     a) using `--exclude` to avoid checking one of them,
+agent_playground/utils/graph.py: note:     b) adding `__init__.py` somewhere,
+agent_playground/utils/graph.py: note:     c) using `--explicit-package-bases` or adjusting `MYPYPATH`
+Found 1 error in 1 file (errors prevented further checking)

@@ -6,8 +6,8 @@ import CustomTooltip from "src/components/tooltip/CustomTooltip";
 
 const FixedTab = ({ tabKey, label, icon, shortcut, isActive, onClick }) => (
   <CustomTooltip
-    show
-    title={`${label} (${shortcut})`}
+    show={!isActive}
+    title={`Press ${shortcut}`}
     placement="bottom"
     arrow
     size="small"

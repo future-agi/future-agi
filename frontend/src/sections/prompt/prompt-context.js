@@ -12,7 +12,7 @@ import { getRandomId } from "src/utils/utils";
  * @property {"user" | "system" | "assistant"} promptConfigSnapshot.messages[].role
  * @property {Object[]} promptConfigSnapshot.messages[].content
  * @property {string} [promptConfigSnapshot.messages[].content[].text] - Optional
- * @property {{url: string}} [promptConfigSnapshot.messages[].content[].imageUrl] - Optional
+ * @property {{url: string}} [promptConfigSnapshot.messages[].content[].image_url] - Optional
  * @property {"text" | "image_url"} promptConfigSnapshot.messages[].content[].type
  * @property {Object} promptConfigSnapshot.configuration
  * @property {string} promptConfigSnapshot.configuration.model

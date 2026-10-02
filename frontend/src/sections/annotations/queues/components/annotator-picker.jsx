@@ -1,8 +1,10 @@
 import PropTypes from "prop-types";
 import { useCallback, useMemo, useRef, useState } from "react";
 import {
+  alpha,
   Box,
   Checkbox,
+  Chip,
   CircularProgress,
   FormControlLabel,
   InputAdornment,
@@ -11,7 +13,7 @@ import {
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
-import { useAuthContext } from "src/auth/hooks";
+import { useOrganization } from "src/contexts/OrganizationContext";
 import { useOrgMembersInfinite } from "src/api/annotation-queues/annotation-queues";
 import { useDebounce } from "src/hooks/use-debounce";
 import { QUEUE_ROLES, ROLE_PRIORITY } from "../constants";
@@ -56,6 +58,7 @@ AnnotatorPicker.propTypes = {
   ),
   onChange: PropTypes.func.isRequired,
   creatorId: PropTypes.string,
+  highlightAutoAssigned: PropTypes.bool,
   isManager: PropTypes.bool,
 };
 
@@ -63,11 +66,17 @@ export default function AnnotatorPicker({
   value = [],
   onChange,
   creatorId,
+  highlightAutoAssigned = false,
   isManager = true,
 }) {
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounce(search.trim(), 300);
-  const { user } = useAuthContext();
+  // Use the live active org (sessionStorage-backed, same source as the
+  // X-Organization-Id header axios sends) rather than the cached
+  // user.organization.id, which can drift from the active context and made the
+  // members request 404 with "No users found for the specified organization."
+  // (TH-6156).
+  const { currentOrganizationId } = useOrganization();
   const scrollRef = useRef(null);
 
   const {
@@ -75,7 +84,7 @@ export default function AnnotatorPicker({
     fetchNextPage,
     hasNextPage,
     isFetchingNextPage,
-  } = useOrgMembersInfinite(user?.organization?.id, debouncedSearch);
+  } = useOrgMembersInfinite(currentOrganizationId, debouncedSearch);
 
   const selectedMap = useMemo(
     () => new Map(value.map((a) => [a.userId, normalizeRoles(a)])),
@@ -171,6 +180,9 @@ export default function AnnotatorPicker({
           const isCreator = creatorId && m.id === creatorId;
           const currentRoles =
             selectedMap.get(m.id) || (isCreator ? CREATOR_DEFAULT_ROLES : []);
+          const isAutoAssigned =
+            highlightAutoAssigned &&
+            currentRoles.includes(QUEUE_ROLES.ANNOTATOR);
           const rowReadOnly = !isManager;
           return (
             <Box
@@ -185,13 +197,31 @@ export default function AnnotatorPicker({
                 borderBottom: "1px solid",
                 borderColor: "divider",
                 "&:last-child": { borderBottom: 0 },
-                bgcolor: isSelected ? "action.selected" : "transparent",
-                "&:hover": {
-                  bgcolor: isSelected
-                    ? "action.selected"
-                    : !rowReadOnly
-                      ? "action.hover"
+                bgcolor: (theme) =>
+                  isAutoAssigned
+                    ? alpha(
+                        theme.palette.primary.main,
+                        theme.palette.mode === "dark" ? 0.18 : 0.1,
+                      )
+                    : isSelected
+                      ? "action.selected"
                       : "transparent",
+                boxShadow: (theme) =>
+                  isAutoAssigned
+                    ? `inset 3px 0 0 ${theme.palette.primary.main}`
+                    : "none",
+                "&:hover": {
+                  bgcolor: (theme) =>
+                    isAutoAssigned
+                      ? alpha(
+                          theme.palette.primary.main,
+                          theme.palette.mode === "dark" ? 0.24 : 0.14,
+                        )
+                      : isSelected
+                        ? "action.selected"
+                        : !rowReadOnly
+                          ? "action.hover"
+                          : "transparent",
                 },
               }}
             >
@@ -224,6 +254,15 @@ export default function AnnotatorPicker({
                   </Typography>
                 )}
               </Box>
+              {isAutoAssigned && (
+                <Chip
+                  label="Auto-assigned"
+                  size="small"
+                  color="primary"
+                  variant="soft"
+                  sx={{ height: 20, fontSize: 11, flexShrink: 0 }}
+                />
+              )}
 
               <Stack
                 direction="row"

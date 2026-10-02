@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, userEvent, waitFor } from "src/utils/test-utils";
+import { useQueueItemsForSource } from "src/api/annotation-queues/annotation-queues";
 import AnnotationSidebarContent from "../AnnotationSidebarContent";
 
 const { mockBulkCreate, mockRefetch } = vi.hoisted(() => ({
@@ -45,16 +46,16 @@ vi.mock("src/api/annotation-queues/annotation-queues", () => ({
             allow_notes: true,
           },
         ],
-        existingScores: {
+        existing_scores: {
           "label-thumbs": { value: "up" },
           "label-text": { text: "existing summary" },
         },
-        existingNotes: "existing whole-item note",
-        existingLabelNotes: {
+        existing_notes: "existing whole-item note",
+        existing_label_notes: {
           "label-thumbs": "thumbs note",
           "label-text": "summary note",
         },
-        spanNotesSourceId: "span-1",
+        span_notes_source_id: "span-1",
       },
     ],
     isLoading: false,
@@ -119,5 +120,54 @@ describe("AnnotationSidebarContent", () => {
       }),
       expect.objectContaining({ onSuccess: expect.any(Function) }),
     );
+  });
+
+  it("forwards the drawer project with the save", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <AnnotationSidebarContent
+        sources={[
+          {
+            sourceType: "trace",
+            sourceId: "trace-1",
+            spanNotesSourceId: "span-1",
+            projectId: "project-1",
+          },
+        ]}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /update/i })).toBeEnabled();
+    });
+    await user.click(screen.getByRole("button", { name: /update/i }));
+
+    expect(mockBulkCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ sourceId: "trace-1", projectId: "project-1" }),
+      expect.anything(),
+    );
+  });
+
+  it("lists only the drawer project's queues", () => {
+    const sources = [
+      {
+        sourceType: "trace",
+        sourceId: "trace-1",
+        spanNotesSourceId: "span-1",
+        projectId: "project-1",
+      },
+      {
+        sourceType: "observation_span",
+        sourceId: "span-1",
+        projectId: "project-1",
+      },
+    ];
+
+    render(<AnnotationSidebarContent sources={sources} />);
+
+    expect(useQueueItemsForSource).toHaveBeenCalledWith(sources, {
+      projectId: "project-1",
+    });
   });
 });
