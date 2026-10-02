@@ -1,0 +1,46 @@
+%% TH-8088 sequence: submit, poll, result (happy path, Seedance). Mermaid.
+sequenceDiagram
+  autonumber
+  participant C as Client
+  participant H as Handler (any replica)
+  participant E as pipeline.Engine
+  participant R as Redis store
+  participant W as lifecycle.Worker (any replica)
+  participant A as byteplus adapter
+  participant P as BytePlus ModelArk
+  participant B as Blob store
+
+  C->>H: POST /v1/videos (Idempotency-Key, model, prompt, inputs)
+  H->>H: validate against capability record, fetch+sniff media (netguard), fingerprint, estimate
+  H->>E: Process(rc EndpointType=video)
+  E->>E: auth, rbac models:<model>, quota, budget check, ratelimit
+  E->>R: Lua accept: SET idem NX, RecordSpend(+estimate), HSET job status=submitting phase=prepared, ZADD org/submit/expire
+  R-->>E: job id (new) | existing id
+  E-->>H: ok
+  H->>R: wait <= submit.sync_wait for phase != prepared
+  W->>R: claim submit entry + SET lease NX PX (fence++)
+  W->>A: Prepare -> safety_identifier (HMAC)
+  W->>R: HSET phase=calling attempt_id correlation_token (fence check)
+  W->>P: POST /api/v3/contents/generations/tasks
+  P-->>W: 200 {id: cgt-...}
+  W->>R: HSET phase=received status=queued provider_job_id submitted_at run_by next_poll_at; ZADD due; ZREM submit
+  R-->>H: job now queued
+  H-->>C: 202 {id, status: queued, provider_state: queued, estimate, deadlines}
+  loop bounded polling (lease renewed, per-provider semaphore, backoff+jitter, Retry-After)
+    W->>R: claim due entry
+    W->>P: GET /contents/generations/tasks/{id}
+    P-->>W: {status: running|succeeded, usage.completion_tokens, content.video_url}
+    W->>R: HSET provider_state/status/last_checked_at (no regress from terminal)
+  end
+  W->>P: GET video_url (stream, 24h / 100 downloads)
+  P-->>W: mp4 bytes
+  W->>B: Put video/{org}/{job}/0.mp4 (cap, sniff, moov check)
+  W->>R: HSET artifacts available expires_at=+24h status=completed
+  W->>R: settle: RecordSpend(actual - estimate), settlement_state=settled
+  W->>E: RunPostPlugins(settlement rc: cost/credits/logging/otel/audit)
+  C->>H: GET /v1/videos/{id}
+  H->>R: HGETALL (org-scoped)
+  H-->>C: 200 {status: completed, artifacts[0].state: available, usage, cost}
+  C->>H: GET /v1/videos/{id}/content?artifact_index=0
+  H->>B: Open (range)
+  H-->>C: 200 video/mp4 stream
