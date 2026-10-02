@@ -38,6 +38,9 @@ class TaskRunnerOutput:
     error: Optional[str] = None
 
 
+# Crash-detection bound; locks/leases a dead worker leaves must expire before this.
+ACTIVITY_HEARTBEAT_TIMEOUT = timedelta(minutes=5)
+
 # Default retry policy (matches common Celery patterns)
 DEFAULT_RETRY_POLICY = RetryPolicy(
     initial_interval=timedelta(seconds=5),
@@ -99,10 +102,8 @@ class TaskRunnerWorkflow:
                     "kwargs": input.kwargs,
                 },
                 start_to_close_timeout=timedelta(seconds=time_limit),
-                schedule_to_start_timeout=timedelta(
-                    seconds=schedule_to_start_seconds
-                ),
-                heartbeat_timeout=timedelta(minutes=5),
+                schedule_to_start_timeout=timedelta(seconds=schedule_to_start_seconds),
+                heartbeat_timeout=ACTIVITY_HEARTBEAT_TIMEOUT,
                 retry_policy=retry_policy,
                 versioning_intent=VersioningIntent.DEFAULT,
             )
