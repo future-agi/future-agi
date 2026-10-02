@@ -161,10 +161,10 @@ describe("ShareDialog", () => {
       screen.getByRole("button", { name: /Anyone with the link/i }),
     );
 
-    expect(updateMutate).toHaveBeenCalledWith({
-      id: "link-created",
-      access_type: "public",
-    });
+    expect(updateMutate).toHaveBeenCalledWith(
+      { id: "link-created", access_type: "public" },
+      expect.objectContaining({ onSuccess: expect.any(Function) }),
+    );
   });
 
   it("removes server access through the active shared link id", async () => {
