@@ -239,11 +239,11 @@ def _extract_llm_and_token_details(log: dict, eval_attributes: dict):
 
     for cost_item in costs:
         if cost_item.get("type") == "model":
+            # Only the model: this is the call's root, whose provider is Vapi
+            # (gen_ai.system). The collector ranks gen_ai.provider.name above
+            # gen_ai.system, so the model's provider there would replace it.
             if model_info := cost_item.get("model"):
                 eval_attributes[SpanAttributes.REQUEST_MODEL] = model_info.get("model")
-                eval_attributes[SpanAttributes.PROVIDER_NAME] = model_info.get(
-                    "provider"
-                )
             prompt_tokens = cost_item.get("promptTokens", 0)
             completion_tokens = cost_item.get("completionTokens", 0)
             eval_attributes[SpanAttributes.USAGE_INPUT_TOKENS] = prompt_tokens
