@@ -2,7 +2,6 @@ import {
   Box,
   Button,
   IconButton,
-  Skeleton,
   Stack,
   Typography,
 } from "@mui/material";
@@ -22,6 +21,9 @@ import { VERSION_STATUS } from "src/sections/agent-playground/utils/constants";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import { useDebounce } from "src/hooks/use-debounce";
 import SearchableSelectControl from "src/components/searchable-select-control/SearchableSelectControl";
+import TemplateFormatSelector from "src/sections/workbench/createPrompt/Playground/TemplateFormatSelector";
+import { getTemplateFormat } from "../utils";
+
 const AgentPromptRenderer = ({
   prompt,
   onRemove,
@@ -191,6 +193,32 @@ const AgentPromptRenderer = ({
     });
   }, [type, watchedPromptVersion, versionsOptions, setValue, fieldPrefix]);
 
+  // Carry the syntax saved with the selected prompt version into the
+  // experiment payload. Older versions without this field use Mustache.
+  useEffect(() => {
+    if (type !== PROMPT_CONFIG_TYPE.PROMPT) return;
+
+    const selected = versionsOptions?.find(
+      (v) => v?.id === watchedPromptVersion,
+    );
+    if (!selected) return;
+
+    const snapshot = Array.isArray(selected.prompt_config_snapshot)
+      ? selected.prompt_config_snapshot[0]
+      : selected.prompt_config_snapshot;
+    setValue(
+      `${fieldPrefix}.configuration.template_format`,
+      getTemplateFormat(snapshot?.configuration),
+      { shouldDirty: false, shouldValidate: false },
+    );
+  }, [
+    type,
+    watchedPromptVersion,
+    versionsOptions,
+    setValue,
+    fieldPrefix,
+  ]);
+
   // Set initial agent version
   useEffect(() => {
     if (type !== "agent") return;
@@ -237,6 +265,11 @@ const AgentPromptRenderer = ({
     control,
     name: `${fieldPrefix}.model`,
   });
+  const templateFormat =
+    useWatch({
+      control,
+      name: `${fieldPrefix}.configuration.template_format`,
+    }) || "mustache";
   const matched = variablesInfo.total - variablesInfo.notMapped;
   const errorMessage =
     (variablesInfo.notMapped > 0
@@ -384,6 +417,18 @@ const AgentPromptRenderer = ({
         </Stack>
 
         <ShowComponent condition={type === PROMPT_CONFIG_TYPE.PROMPT}>
+          <Box sx={{ display: "flex", justifyContent: "flex-end" }}>
+            <TemplateFormatSelector
+              value={templateFormat}
+              onChange={(value) =>
+                setValue(
+                  `${fieldPrefix}.configuration.template_format`,
+                  value,
+                  { shouldDirty: true, shouldValidate: true },
+                )
+              }
+            />
+          </Box>
           <FormSearchSelectFieldControl
             fullWidth
             label="Output Format"
