@@ -2145,3 +2145,198 @@ func TestTranslateResponse_PreservesCachedTokensWithoutInventingCacheHits(t *tes
 		t.Fatal("cached tokens must be retained without subtracting input context")
 	}
 }
+
+func TestTranslateRequest_ToolStrictPreservation(t *testing.T) {
+	bTrue := true
+	bFalse := false
+
+	tests := []struct {
+		name        string
+		strict      *bool
+		toolChoice  any
+		wantMode    string
+		wantNilTC   bool
+		wantAllowed []string
+	}{
+		{
+			name:       "strict=true + no tool choice -> VALIDATED",
+			strict:     &bTrue,
+			toolChoice: nil,
+			wantMode:   "VALIDATED",
+		},
+		{
+			name:       "strict=true + auto -> VALIDATED",
+			strict:     &bTrue,
+			toolChoice: "auto",
+			wantMode:   "VALIDATED",
+		},
+		{
+			name:       "strict=true + required -> ANY",
+			strict:     &bTrue,
+			toolChoice: "required",
+			wantMode:   "ANY",
+		},
+		{
+			name:       "strict=true + none -> NONE",
+			strict:     &bTrue,
+			toolChoice: "none",
+			wantMode:   "NONE",
+		},
+		{
+			name:   "strict=true + specific function -> ANY with allowedFunctionNames",
+			strict: &bTrue,
+			toolChoice: map[string]any{
+				"type": "function",
+				"function": map[string]string{
+					"name": "my_func",
+				},
+			},
+			wantMode:    "ANY",
+			wantAllowed: []string{"my_func"},
+		},
+		{
+			name:       "strict=false + no tool choice -> toolConfig nil",
+			strict:     &bFalse,
+			toolChoice: nil,
+			wantNilTC:  true,
+		},
+		{
+			name:       "strict=nil + auto -> AUTO",
+			strict:     nil,
+			toolChoice: "auto",
+			wantMode:   "AUTO",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := &models.ChatCompletionRequest{
+				Model: "gemini-2.5-flash",
+				Messages: []models.Message{
+					{Role: "user", Content: mustJSON("hello")},
+				},
+				Tools: []models.Tool{
+					{
+						Type: "function",
+						Function: models.ToolFunction{
+							Name:       "my_func",
+							Parameters: json.RawMessage(`{"type":"object"}`),
+							Strict:     tc.strict,
+						},
+					},
+				},
+			}
+			if tc.toolChoice != nil {
+				b, _ := json.Marshal(tc.toolChoice)
+				req.ToolChoice = b
+			}
+
+			gr, _ := translateRequest(req)
+			if gr == nil {
+				t.Fatalf("translateRequest returned nil")
+			}
+			if tc.wantNilTC {
+				if gr.ToolConfig != nil {
+					t.Errorf("expected ToolConfig to be nil, got %+v", gr.ToolConfig)
+				}
+				return
+			}
+			if gr.ToolConfig == nil || gr.ToolConfig.FunctionCallingConfig == nil {
+				t.Fatalf("expected ToolConfig.FunctionCallingConfig to be non-nil, got nil")
+			}
+			gotMode := gr.ToolConfig.FunctionCallingConfig.Mode
+			if gotMode != tc.wantMode {
+				t.Errorf("got mode %q, want %q", gotMode, tc.wantMode)
+			}
+			if len(tc.wantAllowed) > 0 {
+				gotAllowed := gr.ToolConfig.FunctionCallingConfig.AllowedFunctionNames
+				if len(gotAllowed) != len(tc.wantAllowed) {
+					t.Fatalf("allowedFunctionNames len = %d, want %d", len(gotAllowed), len(tc.wantAllowed))
+				}
+				for i, name := range tc.wantAllowed {
+					if gotAllowed[i] != name {
+						t.Errorf("allowedFunctionNames[%d] = %q, want %q", i, gotAllowed[i], name)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestValidateToolStrictness(t *testing.T) {
+	bTrue := true
+	bFalse := false
+
+	tests := []struct {
+		name    string
+		tools   []models.Tool
+		wantErr bool
+	}{
+		{
+			name: "all strict=true",
+			tools: []models.Tool{
+				{Type: "function", Function: models.ToolFunction{Name: "a", Strict: &bTrue}},
+				{Type: "function", Function: models.ToolFunction{Name: "b", Strict: &bTrue}},
+			},
+			wantErr: false,
+		},
+		{
+			name: "all strict=false",
+			tools: []models.Tool{
+				{Type: "function", Function: models.ToolFunction{Name: "a", Strict: &bFalse}},
+				{Type: "function", Function: models.ToolFunction{Name: "b", Strict: &bFalse}},
+			},
+			wantErr: false,
+		},
+		{
+			name: "all strict=nil",
+			tools: []models.Tool{
+				{Type: "function", Function: models.ToolFunction{Name: "a", Strict: nil}},
+				{Type: "function", Function: models.ToolFunction{Name: "b", Strict: nil}},
+			},
+			wantErr: false,
+		},
+		{
+			name: "mixed strict=false and strict=nil is not considered conflicting",
+			tools: []models.Tool{
+				{Type: "function", Function: models.ToolFunction{Name: "a", Strict: &bFalse}},
+				{Type: "function", Function: models.ToolFunction{Name: "b", Strict: nil}},
+			},
+			wantErr: false,
+		},
+		{
+			name: "mixed strict=true and strict=false conflicts",
+			tools: []models.Tool{
+				{Type: "function", Function: models.ToolFunction{Name: "a", Strict: &bTrue}},
+				{Type: "function", Function: models.ToolFunction{Name: "b", Strict: &bFalse}},
+			},
+			wantErr: true,
+		},
+		{
+			name: "mixed strict=true and strict=nil conflicts",
+			tools: []models.Tool{
+				{Type: "function", Function: models.ToolFunction{Name: "a", Strict: &bTrue}},
+				{Type: "function", Function: models.ToolFunction{Name: "b", Strict: nil}},
+			},
+			wantErr: true,
+		},
+		{
+			name: "non-function tools are ignored",
+			tools: []models.Tool{
+				{Type: "custom", Function: models.ToolFunction{Name: "c"}},
+				{Type: "function", Function: models.ToolFunction{Name: "a", Strict: &bTrue}},
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateToolStrictness(tc.tools)
+			if (err != nil) != tc.wantErr {
+				t.Errorf("validateToolStrictness() error = %v, wantErr = %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+

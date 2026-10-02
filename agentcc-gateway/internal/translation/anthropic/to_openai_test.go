@@ -511,3 +511,75 @@ func TestRequestToCanonical_InvalidJSON(t *testing.T) {
 		t.Error("expected error for invalid JSON")
 	}
 }
+
+func TestRequestToCanonical_ToolStrictPreservation(t *testing.T) {
+	tests := []struct {
+		name       string
+		toolJSON   string
+		wantStrict *bool
+	}{
+		{
+			name: "strict=true preserved to canonical",
+			toolJSON: `{
+				"name": "search",
+				"description": "search tool",
+				"input_schema": {"type": "object"},
+				"strict": true
+			}`,
+			wantStrict: func() *bool { b := true; return &b }(),
+		},
+		{
+			name: "strict=false preserved to canonical",
+			toolJSON: `{
+				"name": "search",
+				"description": "search tool",
+				"input_schema": {"type": "object"},
+				"strict": false
+			}`,
+			wantStrict: func() *bool { b := false; return &b }(),
+		},
+		{
+			name: "omitted remains nil",
+			toolJSON: `{
+				"name": "search",
+				"description": "search tool",
+				"input_schema": {"type": "object"}
+			}`,
+			wantStrict: nil,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			body := []byte(`{
+				"model": "claude-3-sonnet-20240229",
+				"max_tokens": 100,
+				"messages": [{"role": "user", "content": "hi"}],
+				"tools": [` + tc.toolJSON + `]
+			}`)
+
+			req, _, err := tr.RequestToCanonical(body)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(req.Tools) != 1 {
+				t.Fatalf("expected 1 tool, got %d", len(req.Tools))
+			}
+			fn := req.Tools[0].Function
+			if tc.wantStrict == nil {
+				if fn.Strict != nil {
+					t.Errorf("expected Strict == nil, got %v", *fn.Strict)
+				}
+			} else {
+				if fn.Strict == nil {
+					t.Fatalf("expected Strict == %v, got nil", *tc.wantStrict)
+				}
+				if *fn.Strict != *tc.wantStrict {
+					t.Errorf("got Strict = %v, want %v", *fn.Strict, *tc.wantStrict)
+				}
+			}
+		})
+	}
+}
+
+

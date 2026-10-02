@@ -300,11 +300,17 @@ func translateRequest(req *models.ChatCompletionRequest) (*geminiRequest, string
 	gr.GenerationConfig = gc
 
 	// Translate tools.
+	var hasFuncTools bool
+	var allStrict = true
 	if len(req.Tools) > 0 {
 		var decls []geminiFuncDecl
 		for _, t := range req.Tools {
 			if t.Type != "function" {
 				continue
+			}
+			hasFuncTools = true
+			if t.Function.Strict == nil || !*t.Function.Strict {
+				allStrict = false
 			}
 			decls = append(decls, geminiFuncDecl{
 				Name:                 t.Function.Name,
@@ -318,7 +324,11 @@ func translateRequest(req *models.ChatCompletionRequest) (*geminiRequest, string
 	}
 
 	// Translate tool_choice → toolConfig.functionCallingConfig.
-	if len(req.ToolChoice) > 0 {
+	if hasFuncTools && allStrict {
+		if tc := translateToolChoiceStrict(req.ToolChoice); tc != nil {
+			gr.ToolConfig = &geminiToolConfig{FunctionCallingConfig: tc}
+		}
+	} else if len(req.ToolChoice) > 0 {
 		if tc := translateToolChoice(req.ToolChoice); tc != nil {
 			gr.ToolConfig = &geminiToolConfig{FunctionCallingConfig: tc}
 		}
@@ -911,6 +921,47 @@ func translateToolChoice(raw json.RawMessage) *geminiFunctionCallingConfig {
 	}
 
 	return nil
+}
+
+// validateToolStrictness checks that function tools have consistent strictness.
+// Gemini toolConfig.functionCallingConfig.mode applies request-wide, so mixing
+// strict and non-strict tools cannot be represented per-tool.
+func validateToolStrictness(tools []models.Tool) error {
+	var hasFuncTools bool
+	var allStrict = true
+	var anyStrict = false
+
+	for _, t := range tools {
+		if t.Type != "function" {
+			continue
+		}
+		hasFuncTools = true
+		if t.Function.Strict != nil && *t.Function.Strict {
+			anyStrict = true
+		} else {
+			allStrict = false
+		}
+	}
+	if hasFuncTools && anyStrict && !allStrict {
+		return fmt.Errorf("conflicting tool strictness: all function tools must have the same strict setting because Gemini functionCallingConfig.mode applies to all tools")
+	}
+	return nil
+}
+
+// translateToolChoiceStrict maps OpenAI tool_choice to Gemini functionCallingConfig
+// when strict schema validation is enabled across tools.
+func translateToolChoiceStrict(raw json.RawMessage) *geminiFunctionCallingConfig {
+	if len(raw) == 0 {
+		return &geminiFunctionCallingConfig{Mode: "VALIDATED"}
+	}
+	tc := translateToolChoice(raw)
+	if tc == nil {
+		return nil
+	}
+	if tc.Mode == "AUTO" {
+		tc.Mode = "VALIDATED"
+	}
+	return tc
 }
 
 // --- Helpers ---

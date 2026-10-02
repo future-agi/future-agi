@@ -162,6 +162,18 @@ func (t *Translator) RequestToCanonical(body []byte) (*models.ChatCompletionRequ
 				out.ToolChoice = choice
 				drops = append(drops, "allowed_function_names_subset_unsupported")
 			}
+		case "VALIDATED":
+			choice, _ := json.Marshal("auto")
+			out.ToolChoice = choice
+			strictTrue := true
+			for i := range out.Tools {
+				if out.Tools[i].Type == "function" {
+					out.Tools[i].Function.Strict = &strictTrue
+				}
+			}
+			if len(allowed) > 0 {
+				drops = append(drops, "allowed_function_names_in_auto_unsupported")
+			}
 		case "AUTO", "":
 			choice, _ := json.Marshal("auto")
 			out.ToolChoice = choice
