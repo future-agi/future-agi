@@ -323,6 +323,75 @@ func TestMultimodalContent_ArrayForm(t *testing.T) {
 	}
 }
 
+func TestMultimodalContent_RemediationKeepsParts(t *testing.T) {
+	parts := []map[string]interface{}{
+		{"type": "text", "text": "My email is alice@example.com"},
+		{"type": "image_url", "image_url": map[string]string{"url": "https://img.example.com/pic.png"}},
+		{"type": "text", "text": "SSN: 123-45-6789"},
+	}
+	raw, _ := json.Marshal(parts)
+	g := New(map[string]interface{}{
+		"remediation": "redact",
+		"entities":    []interface{}{"email", "ssn"},
+	})
+	input := &guardrails.CheckInput{
+		Request: &models.ChatCompletionRequest{
+			Model:    "gpt-4o",
+			Messages: []models.Message{{Role: "user", Content: raw}},
+		},
+		Metadata: map[string]string{},
+	}
+	r := g.Check(context.Background(), input)
+	if r.Pass {
+		t.Fatal("expected PII detection in array content")
+	}
+
+	// Each text part is rewritten on its own; the image part is kept.
+	var got []map[string]interface{}
+	content := input.Request.Messages[0].Content
+	if err := json.Unmarshal(content, &got); err != nil || len(got) != 3 {
+		t.Fatalf("expected the 3 content parts to be kept, got %s", content)
+	}
+	if got[0]["text"] != "My email is [REDACTED:email]" {
+		t.Errorf("first text part: got %q", got[0]["text"])
+	}
+	image, _ := got[1]["image_url"].(map[string]interface{})
+	if got[1]["type"] != "image_url" || image["url"] != "https://img.example.com/pic.png" {
+		t.Errorf("image part changed: %v", got[1])
+	}
+	if got[2]["text"] != "SSN: [REDACTED:ssn]" {
+		t.Errorf("second text part: got %q", got[2]["text"])
+	}
+}
+
+func TestMultimodalContent_RemediationFallsBackToWholeContent(t *testing.T) {
+	// Keys in another case still decode for detection, but the per-part
+	// rewrite can't read them: the content must still leave masked.
+	raw := json.RawMessage(`[{"Type":"text","Text":"My email is alice@example.com"}]`)
+	g := New(map[string]interface{}{
+		"remediation": "redact",
+		"entities":    []interface{}{"email"},
+	})
+	input := &guardrails.CheckInput{
+		Request: &models.ChatCompletionRequest{
+			Model:    "gpt-4o",
+			Messages: []models.Message{{Role: "user", Content: raw}},
+		},
+		Metadata: map[string]string{},
+	}
+	if r := g.Check(context.Background(), input); r.Pass {
+		t.Fatal("expected PII detection in array content")
+	}
+
+	content := string(input.Request.Messages[0].Content)
+	if strings.Contains(content, "alice@example.com") {
+		t.Fatalf("PII reached the provider: %s", content)
+	}
+	if !strings.Contains(content, "[REDACTED:email]") {
+		t.Errorf("expected redacted content, got %s", content)
+	}
+}
+
 func TestMultimodalContent_ImageOnly(t *testing.T) {
 	parts := []map[string]interface{}{
 		{"type": "image_url", "image_url": map[string]string{"url": "https://img.example.com/pic.png"}},
