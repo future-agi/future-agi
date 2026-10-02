@@ -51,7 +51,7 @@ One binary. One config. No proprietary control plane.
 
 ## 📈 Benchmarks
 
-> **Methodology:** gateway routes to a **mock OpenAI upstream** (returns a canned response instantly) so we measure pure gateway processing, not provider latency. Load driven by [`hey`](https://github.com/rakyll/hey) with an authenticated internal key. Every run is reproducible — mock upstream, configs, and commands are committed under [`bench/`](./bench/).
+> **Methodology:** gateway routes to a **mock OpenAI upstream** (returns a canned response instantly) so we measure pure gateway processing, not provider latency. In-process microbenchmarks are committed and reproducible in-repo via Go test suites (`./internal/routing/` and `./internal/server/`). End-to-end and real-provider load testing is provided via [`cmd/loadtest`](./cmd/loadtest). Synthetic cluster stress numbers (t3.xlarge / M4 Max) were measured using `hey` against local gateway instances.
 
 ### 🏋️ t3.xlarge (4 vCPU / 16 GB)
 
@@ -105,7 +105,7 @@ These numbers measure **what the gateway itself does per request** — fed throu
 - A complete auth-checked read endpoint flows through in **~5 µs** — that is the floor on end-to-end gateway overhead when there is no upstream call.
 - A full chat-completion proxy — route, auth, resolve model, run plugins, rewrite the request, round-trip to the upstream, parse and rewrite the response — runs in **~66 µs** of gateway-internal wall time. Any external latency on top is provider latency, not ours.
 
-Reproduce: `go test -bench=. -benchmem -run=^$ ./internal/server/`
+Reproduce: `go test -bench=. -benchmem -run=^$ ./internal/server/` and `go test -bench=. -benchmem ./internal/routing/`
 
 ### 🏁 How we compare to the rest
 
@@ -225,7 +225,7 @@ Every row below uses the **same methodology** each vendor uses for their own cla
 </tr>
 <tr>
 <td>Reproducible harness committed in-repo</td>
-<td align="right">✅</td>
+<td align="right">✅ (Microbenchmarks + `cmd/loadtest`)</td>
 <td align="right">⚠️ partial</td>
 <td align="right">❌</td>
 <td align="right">❌</td>
@@ -254,7 +254,7 @@ Every row below uses the **same methodology** each vendor uses for their own cla
 - **Gateway-internal wall time at ns precision** — full `ServeHTTP` pipeline in-process via `httptest.NewRecorder()`, no loopback TCP.
 - **End-to-end latency under load** — `hey`-driven, P50/P95/P99 across 50 / 100 / 200 concurrency.
 
-Every number above is reproducible by running [`bench/run.sh`](./bench/run.sh) or `docker run --rm --cpuset-cpus="0-3" --memory=16g acc-bench`. PRs with your own machine's numbers welcome.
+Internal nanosecond routing and pipeline latencies are reproducible via the in-repo Go benchmark suites (`go test -bench=. -benchmem ./internal/server/` and `./internal/routing/`). Real-world throughput and latency can be measured using [`cmd/loadtest`](./cmd/loadtest).
 
 
 ---
@@ -632,7 +632,7 @@ Every guardrail runs in the pipeline with configurable request/response/streamin
 | 17 | `webhook` | Call your own HTTP endpoint for custom checks |
 | 18 | `futureagi` | Future AGI platform integration (90+ evals + Protect scanners) |
 
-<sup>Per-guardrail latency varies by payload, provider, and scanner. Run [`bench/`](./bench/) to measure against your workload.</sup>
+<sup>Per-guardrail latency varies by payload, provider, and scanner. Run [`cmd/loadtest`](./cmd/loadtest) to measure against your workload.</sup>
 
 #### 🤝 External guardrail vendors — 15 first-class adapters
 
@@ -985,45 +985,55 @@ See [`config.example.yaml`](./config.example.yaml) for the full reference.
 
 ## 🔬 Reproduce the benchmarks
 
-Numbers above are fully reproducible. Two modes:
+Performance figures can be verified through the committed Go benchmark suites and load testing harness.
 
-### Containerised (matches the t3.xlarge-equivalent numbers)
+### 1. In-process microbenchmarks (routing & dispatch)
+
+Measures gateway-internal wall clock time without network I/O:
 
 ```bash
-# Build the self-contained bench image
-docker build -f bench/Dockerfile.bench -t acc-bench .
+# Weighted target selection (~9.9 ns for 3 targets, ~22 ns for 16 targets):
+go test -bench=. -benchmem ./internal/routing/
 
-# Pin to 4 vCPU / 16 GB (t3.xlarge resource profile)
-docker run --rm --cpuset-cpus="0-3" --memory=16g acc-bench
-
-# Or unconstrained (uses all host cores)
-docker run --rm acc-bench
+# HTTP router dispatch (36 ns), /v1/models (5 µs), and chat completions pipeline (66 µs):
+go test -bench=. -benchmem -run=^$ ./internal/server/
 ```
 
-The image bundles the gateway, mock upstream, `hey`, the configs, and a runner script. Output prints throughput and P50/P95/P99 for every profile to stdout in ~30 seconds.
+### 2. End-to-end load testing (`cmd/loadtest`)
 
-### Host-direct (matches the unconstrained numbers)
+The gateway includes a dedicated load testing tool under [`cmd/loadtest`](./cmd/loadtest):
 
 ```bash
-brew install hey            # or: go install github.com/rakyll/hey@latest
+# Start the gateway locally
+go run ./cmd/server
 
-bash bench/run.sh           # full suite
-bash bench/run.sh --quick   # short (5k reqs per profile)
+# In another terminal, drive concurrent load through the gateway:
+go run ./cmd/loadtest -url http://localhost:8080 -c 10 -n 100 -models gpt-4o-mini
 ```
 
-What the harness does:
+Supported flags for `cmd/loadtest`:
+- `-url`: Gateway base URL (default `http://localhost:8080`)
+- `-c`: Number of concurrent workers (default `10`)
+- `-n`: Total number of requests (default `50`)
+- `-models`: Comma-separated list of models to test
+- `-stream`: Test streaming responses (`true`/`false`)
+- `-warmup`: Number of warmup requests not counted in stats
 
-1. Builds a minimal OpenAI-compatible **mock upstream** ([`bench/mock-upstream.go`](./bench/mock-upstream.go)) that returns a canned chat-completion instantly — so measurements reflect gateway processing, not provider latency.
-2. Starts **two gateway instances** side by side: bare ([`bench/bench.config.yaml`](./bench/bench.config.yaml)) and guardrails-on ([`bench/bench-guardrails.config.yaml`](./bench/bench-guardrails.config.yaml)).
-3. Drives load with `hey` at 50 / 100 / 200 concurrent against each profile.
-4. Runs `go test -bench=./internal/server/` for the Go microbenchmarks.
-5. Reports throughput + P50/P95/P99 for every profile.
+### 3. External synthetic load generation (`hey`)
 
-Real-provider smoke test (needs an actual API key):
+To replicate the t3.xlarge headline throughput figures (~29 k req/s):
+
+1. Configure an upstream mock endpoint returning instant 200 OK responses.
+2. Start the gateway pointing at the mock upstream.
+3. Drive load using [`hey`](https://github.com/rakyll/hey):
 
 ```bash
-# Point at any provider in your config and hit it through the loadtest binary
-bin/loadtest -c 10 -n 50 -models gpt-4o-mini
+hey -n 10000 -c 200 \
+  -m POST \
+  -H "Authorization: Bearer test-key" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gpt-4o","messages":[{"role":"user","content":"ping"}]}' \
+  http://localhost:8080/v1/chat/completions
 ```
 
 **Commit your numbers** — we aggregate community results across hardware. PRs welcome.

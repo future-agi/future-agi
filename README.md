@@ -90,7 +90,7 @@ Apache 2.0 core. Every evaluator, every prompt, every trace is inspectable — *
 <td width="33%" valign="top">
 
 ###  Built for production
-Go-based gateway with **~9.9 ns weighted routing**, **~29 k req/s on t3.xlarge**, **P99 ≤ 21 ms with guardrails on**. OpenTelemetry-native traces. 50+ framework instrumentors. Every claim reproducible via the committed benchmark harness.
+Go-based gateway with **~9.9 ns weighted routing**, **~29 k req/s on t3.xlarge**, **P99 ≤ 21 ms with guardrails on**. OpenTelemetry-native traces. 50+ framework instrumentors. Microbenchmarks committed in-repo (`go test -bench`), with end-to-end load testing via `cmd/loadtest`.
 
 </td>
 </tr>
