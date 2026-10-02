@@ -47,6 +47,7 @@ from .run_test_evals import (
 from .scenarios import (
     ScenarioAddColumnsResponseSerializer,
     ScenarioAddRowsResponseSerializer,
+    ScenarioBulkDeleteResponseSerializer,
     ScenarioCreateResponseSerializer,
     ScenarioDeleteResponseSerializer,
     ScenarioDetailResponseSerializer,
@@ -101,6 +102,7 @@ __all__ = [
     "ScenarioCreateResponseSerializer",
     "ScenarioEditResponseSerializer",
     "ScenarioDeleteResponseSerializer",
+    "ScenarioBulkDeleteResponseSerializer",
     "ScenarioAddRowsResponseSerializer",
     "ScenarioAddColumnsResponseSerializer",
     "ScenarioMultiDatasetResponseSerializer",
