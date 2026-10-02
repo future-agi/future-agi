@@ -14,3 +14,12 @@ Status: **proposed design, implementation in progress on branch `feat/TH-8088-ga
 Product requirements (PRD r2, decision log, provider matrix) are in the company brain under `engineering/gateway-video-generation/` (company-brain PR #47).
 
 Hard stops reserved for the product owner: managed tariff / credits charging for video, any paid smoke run or provider account activation, supplier default-public output exposure exceptions (fal/PixVerse), and Nova Reel AWS account/bucket/billing.
+
+Developer and operator pages (as designed, not yet verified against a running build):
+
+| Page | Purpose |
+|---|---|
+| [api-reference.md](api-reference.md) | `/v1/videos` contract: submit, status, content, list, cancel, local delete, error codes, idempotency |
+| [configuration.md](configuration.md) | `video:` config block, BytePlus/ModelArk setup, credentials, Redis prerequisites, artifact storage |
+| [operator-runbook.md](operator-runbook.md) | Levers, rollout/rollback, alerts, unresolved submissions, unsettled reservations, Redis outage |
+| [implementation-pins.md](implementation-pins.md) | Rick's binding pins N1–N10 / C1–C3 taken after the docs stage |
