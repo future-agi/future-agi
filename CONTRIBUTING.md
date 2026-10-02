@@ -65,14 +65,17 @@ troubleshooting.
 # From repo root — installs husky hooks and lint-staged tooling.
 yarn install
 
-# For Python hooks (black, isort, mypy, Django system checks):
-cd futureagi && make pre-commit-install
+# Python tooling used by the hooks below:
+pip install pre-commit
 ```
 
-On every commit, `lint-staged` auto-formats and lints the staged files:
+`yarn install` points `core.hooksPath` at husky's hooks, so don't also run
+`pre-commit install` — it detects `core.hooksPath` and refuses to install.
+Husky drives both toolchains: on every commit its `pre-commit` hook runs
+`lint-staged` for frontend files and `pre-commit run` for Python files:
 
-- `frontend/src/**` → ESLint + Prettier
-- `futureagi/**/*.py` → `black`, `isort`, `mypy` (via pre-commit)
+- `frontend/src/**` → ESLint + Prettier (via lint-staged)
+- `futureagi/**/*.py` → `black`, `isort`, `mypy` (via `pre-commit run`, staged files only)
 
 Branch names are validated on `git push`.
 
