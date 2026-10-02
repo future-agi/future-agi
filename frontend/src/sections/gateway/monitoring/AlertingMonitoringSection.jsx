@@ -18,7 +18,10 @@ import {
   TableRow,
   Chip,
   Skeleton,
+  IconButton,
+  Tooltip,
 } from "@mui/material";
+import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import SectionHeader from "../components/SectionHeader";
 import { GATEWAY_ICONS } from "../constants/gatewayIcons";
@@ -26,6 +29,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import {
   useGatewayConfig,
   useProviderHealth,
+  useUpdateConfig,
 } from "../providers/hooks/useGatewayConfig";
 import { useAnalyticsOverview } from "../analytics/hooks/useAnalyticsOverview";
 import { useGatewayContext } from "../context/useGatewayContext";
@@ -82,7 +86,7 @@ function getSeverityColor(severity) {
 // Alert Rules Tab
 // ---------------------------------------------------------------------------
 
-const AlertRulesTab = ({ rules }) => (
+const AlertRulesTab = ({ rules, onDelete, isDeleting }) => (
   <Card>
     <TableContainer>
       <Table size="small">
@@ -95,6 +99,7 @@ const AlertRulesTab = ({ rules }) => (
             <TableCell>Window</TableCell>
             <TableCell>Severity</TableCell>
             <TableCell>Status</TableCell>
+            <TableCell align="right">Actions</TableCell>
           </TableRow>
         </TableHead>
         <TableBody>
@@ -140,11 +145,26 @@ const AlertRulesTab = ({ rules }) => (
                   variant="outlined"
                 />
               </TableCell>
+              <TableCell align="right">
+                <Tooltip title="Delete rule">
+                  <span>
+                    <IconButton
+                      size="small"
+                      color="error"
+                      disabled={isDeleting}
+                      onClick={() => onDelete(idx)}
+                      aria-label={`Delete rule ${rule.name || idx + 1}`}
+                    >
+                      <Iconify icon="mdi:delete-outline" width={18} />
+                    </IconButton>
+                  </span>
+                </Tooltip>
+              </TableCell>
             </TableRow>
           ))}
           {rules.length === 0 && (
             <TableRow>
-              <TableCell colSpan={7} align="center">
+              <TableCell colSpan={8} align="center">
                 <Typography variant="body2" color="text.secondary" py={4}>
                   No alert rules configured. Click &quot;Create Rule&quot; to
                   add your first alert rule.
@@ -482,6 +502,34 @@ const AlertingMonitoringSection = () => {
   const rules = useMemo(() => extractAlertRules(config), [config]);
   const channels = useMemo(() => extractChannels(config), [config]);
 
+  const updateConfig = useUpdateConfig();
+
+  // The patch endpoint replaces `alerting.rules` when it is given an array, so
+  // deleting is "save the list without this one". `rules` is already normalised
+  // to an array by extractAlertRules, whichever shape the config was stored in.
+  const handleDeleteRule = useCallback(
+    (idx) => {
+      const rule = rules[idx];
+      updateConfig.mutate(
+        {
+          gatewayId,
+          config: { alerting: { rules: rules.filter((_, i) => i !== idx) } },
+        },
+        {
+          onSuccess: () =>
+            enqueueSnackbar(`Alert rule "${rule?.name || idx + 1}" deleted`, {
+              variant: "success",
+            }),
+          onError: () =>
+            enqueueSnackbar("Failed to delete alert rule", {
+              variant: "error",
+            }),
+        },
+      );
+    },
+    [rules, gatewayId, updateConfig],
+  );
+
   if (gwLoading || configLoading) {
     return (
       <Box p={3}>
@@ -545,13 +593,20 @@ const AlertingMonitoringSection = () => {
           gatewayId={gatewayId}
         />
       )}
-      {tab === 1 && <AlertRulesTab rules={rules} />}
+      {tab === 1 && (
+        <AlertRulesTab
+          rules={rules}
+          onDelete={handleDeleteRule}
+          isDeleting={updateConfig.isPending}
+        />
+      )}
       {tab === 2 && <ChannelsTab channels={channels} />}
 
       <CreateAlertRuleDialog
         open={createRuleOpen}
         onClose={() => setCreateRuleOpen(false)}
         gatewayId={gatewayId}
+        existingRules={rules}
       />
       <CreateChannelDialog
         open={createChannelOpen}
