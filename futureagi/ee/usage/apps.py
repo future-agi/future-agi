@@ -18,6 +18,15 @@ class UsageConfig(AppConfig):
         # This ensures tables exist before we try to insert data
         post_migrate.connect(self.create_usage_entries_after_migrate, sender=self)
 
+        # Usage rows abandoned in ``processing`` close with the other stale work.
+        from ee.usage.services.stale_usage import (
+            STALE_AFTER_BY_SOURCE,
+            recover_stale_usage_work,
+        )
+        from model_hub.services.stale_work import register_stale_work_recoverer
+
+        register_stale_work_recoverer(STALE_AFTER_BY_SOURCE, recover_stale_usage_work)
+
     def create_usage_entries_after_migrate(self, sender, **kwargs):
         """
         Create usage entries after migrations are complete.

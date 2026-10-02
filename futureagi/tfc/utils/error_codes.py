@@ -847,6 +847,9 @@ err_dict = {
         "Prompt evaluation configuration IDs are required."
     ],
     "EVALUATION_NOT_FOR_ERROR_CELL": ["Evaluation not possible on error cell."],
+    "RUN_INTERRUPTED": [
+        "This run was interrupted before it finished. Please run it again."
+    ],
     "MEMBER_ALREADY_ACTIVE": ["Cannot Update Role of Active User."],
     "ROLE_NOT_MENTIONED": ["Please mention the updated role of the user."],
     "USER_CANNOT_CHANGE_ROLE": ["You cannot change your own role."],

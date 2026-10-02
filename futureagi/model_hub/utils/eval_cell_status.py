@@ -8,6 +8,7 @@ layers can both import it without pulling in the heavy runner imports
 from __future__ import annotations
 
 import json
+from collections.abc import Collection
 
 import structlog
 from django.db.models import Q
@@ -17,10 +18,25 @@ from model_hub.models.develop_dataset import Cell, Column
 
 logger = structlog.get_logger(__name__)
 
+# A cell with no value to show. A rerun flips cells to ``running`` and often
+# keeps their value, so a running cell outside this still shows a result.
+CELL_WITHOUT_VALUE = Q(value__isnull=True) | Q(value="")
 
-def mark_eval_cells_stopped(user_eval_metric, *, reason: str) -> int:
+
+def mark_eval_cells_stopped(
+    user_eval_metric,
+    *,
+    reason: str,
+    column_ids: Collection[str] | None = None,
+    keep_values: bool = False,
+) -> int:
     """Flip RUNNING cells of an eval (and its paired EVALUATION_REASON cells)
     to ERROR with a human-readable `reason`.
+
+    ``column_ids`` narrows the flip to those of the eval's columns, and
+    ``keep_values`` to running cells without a value; stale-work recovery
+    passes the columns it proved abandoned and keeps a result a rerun left in
+    place.
 
     Covers:
     - Dataset evals: Column.source = EVALUATION, source_id = eval_id
@@ -66,15 +82,25 @@ def mark_eval_cells_stopped(user_eval_metric, *, reason: str) -> int:
             ).values_list("id", flat=True)
         )
 
-        column_ids = eval_column_ids + reason_column_ids
-        if not column_ids:
+        target_column_ids = eval_column_ids + reason_column_ids
+        if column_ids is not None:
+            allowed = {str(column_id) for column_id in column_ids}
+            target_column_ids = [
+                column_id
+                for column_id in target_column_ids
+                if str(column_id) in allowed
+            ]
+        if not target_column_ids:
             return 0
 
-        updated = Cell.objects.filter(
-            column_id__in=column_ids,
+        running = Cell.objects.filter(
+            column_id__in=target_column_ids,
             deleted=False,
             status=CellStatus.RUNNING.value,
-        ).update(
+        )
+        if keep_values:
+            running = running.filter(CELL_WITHOUT_VALUE)
+        updated = running.update(
             status=CellStatus.ERROR.value,
             value=display,
             value_infos=value_infos,

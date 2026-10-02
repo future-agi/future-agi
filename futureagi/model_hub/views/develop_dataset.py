@@ -12436,7 +12436,7 @@ def run_evaluation_task(evaluation_data):
             "template", "pinned_version"
         )
         metric_map = {str(metric.id): metric for metric in list(metrics)}
-        metrics.update(status=StatusType.RUNNING.value)
+        metrics.update(status=StatusType.RUNNING.value, updated_at=timezone.now())
 
         if (
             evaluation_data.get("column_source", "")

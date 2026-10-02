@@ -47,6 +47,7 @@ OPERATOR_STARTUP_MUTATION_COMMANDS = frozenset(
         "drop_legacy_observation_span",
         "migrate",
         "provision_grouping_features",
+        "recover_stale_work",
         "register_temporal_schedules",
         "seed_system_evals",
     }

@@ -505,6 +505,13 @@ class APICallLog(BaseModel):
                 fields=["organization", "source_id", "-created_at"],
                 name="idx_apicalllog_org_source",
             ),
+            # Stale-work recovery reads the few rows still in processing,
+            # oldest first (ee.usage.services.stale_usage).
+            models.Index(
+                fields=["created_at"],
+                name="idx_apicalllog_processing",
+                condition=models.Q(status="processing"),
+            ),
         ]
 
     def __str__(self):

@@ -5,7 +5,7 @@ Run with: pytest model_hub/tests/test_user_evaluation_tasks.py -v
 """
 
 import uuid
-from unittest.mock import MagicMock, PropertyMock, patch
+from unittest.mock import ANY, MagicMock, PropertyMock, patch
 
 import pytest
 
@@ -307,7 +307,7 @@ class TestExecuteEvaluation:
         execute_evaluation()
 
         mock_user_eval.objects.filter.return_value.update.assert_called_once_with(
-            status=StatusType.RUNNING.value
+            status=StatusType.RUNNING.value, updated_at=ANY
         )
         mock_process_task.apply_async.assert_called()
 
