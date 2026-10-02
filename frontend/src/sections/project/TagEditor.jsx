@@ -69,6 +69,7 @@ const TagEditor = ({ projectId, variant = "grid" }) => {
   const [anchorEl, setAnchorEl] = useState(null);
   const [search, setSearch] = useState("");
   const [newTagInput, setNewTagInput] = useState("");
+  const [mode, setMode] = useState("inspect"); // 'inspect' | 'edit'
   const queryClient = useQueryClient();
 
   // ── Fetch this project's tags ──
@@ -148,14 +149,35 @@ const TagEditor = ({ projectId, variant = "grid" }) => {
       .sort();
   }, [allKnownTags, tags, search]);
 
+  const openPopover = (e) => {
+    e.stopPropagation();
+    setAnchorEl(e.currentTarget);
+    setMode("inspect");
+    setSearch("");
+    setNewTagInput("");
+  };
+
+  const closePopover = () => {
+    setAnchorEl(null);
+    setSearch("");
+    setNewTagInput("");
+    setMode("inspect");
+  };
+
+  const switchToEdit = () => setMode("edit");
+  const switchToInspect = () => {
+    setMode("inspect");
+    setSearch("");
+    setNewTagInput("");
+  };
+
+  const isListVariant = variant === "grid"; // list-only new inspection flow
+
   return (
     <>
-      {/* ── Inline display — entire area is clickable ── */}
+      {/* ── Inline display — entire area is clickable, keyboard accessible ── */}
       <Box
-        onClick={(e) => {
-          e.stopPropagation();
-          setAnchorEl(e.currentTarget);
-        }}
+        onClick={openPopover}
         sx={{
           display: "flex",
           alignItems: "center",
@@ -168,29 +190,39 @@ const TagEditor = ({ projectId, variant = "grid" }) => {
           py: 0.25,
           "&:hover": { bgcolor: "action.hover" },
         }}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            openPopover(e);
+          }
+        }}
+        aria-label={`View tags for project, ${tags.length} tags`}
+        aria-expanded={Boolean(anchorEl)}
       >
         {tags.length > 0 ? (
           <>
-            {tags.slice(0, 2).map((tag) => (
-              <Chip
-                key={tag}
-                label={tag}
-                size="small"
-                sx={{
-                  height: 20,
-                  fontSize: 11,
-                  fontWeight: 500,
-                  color: getTagColor(tag),
-                  bgcolor: `${getTagColor(tag)}14`,
-                  border: `1px solid ${getTagColor(tag)}30`,
-                  "& .MuiChip-label": { px: 0.75 },
-                  pointerEvents: "none",
-                }}
-              />
-            ))}
-            {tags.length > 2 && (
-              <Typography sx={{ fontSize: 10, color: "text.disabled" }}>
-                +{tags.length - 2}
+            {/* Single bounded preview chip (D01) */}
+            <Chip
+              key={tags[0]}
+              label={tags[0]}
+              size="small"
+              sx={{
+                height: 20,
+                fontSize: 11,
+                fontWeight: 500,
+                color: getTagColor(tags[0]),
+                bgcolor: `${getTagColor(tags[0])}14`,
+                border: `1px solid ${getTagColor(tags[0])}30`,
+                "& .MuiChip-label": { px: 0.75, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+                pointerEvents: "none",
+                maxWidth: "calc(100% - 48px)",
+              }}
+            />
+            {tags.length > 1 && (
+              <Typography sx={{ fontSize: 10, color: "text.disabled", flexShrink: 0 }}>
+                +{tags.length - 1}
               </Typography>
             )}
             <Iconify
@@ -217,141 +249,146 @@ const TagEditor = ({ projectId, variant = "grid" }) => {
       <Popover
         open={Boolean(anchorEl)}
         anchorEl={anchorEl}
-        onClose={() => {
-          setAnchorEl(null);
-          setSearch("");
-          setNewTagInput("");
-        }}
+        onClose={closePopover}
         anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
         transformOrigin={{ vertical: "top", horizontal: "left" }}
         slotProps={{
           paper: {
-            sx: { width: 220, borderRadius: "10px", overflow: "hidden" },
+            sx: { width: 240, borderRadius: "10px", overflow: "hidden" },
             onClick: (e) => e.stopPropagation(),
           },
         }}
       >
         <Box sx={{ p: 1.5, pb: 1 }}>
-          <Typography sx={{ fontSize: 13, fontWeight: 600, mb: 1 }}>
-            Tags
-          </Typography>
-          <TextField
-            size="small"
-            fullWidth
-            placeholder="Search tags"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            autoFocus
-            InputProps={{
-              startAdornment: (
-                <Iconify
-                  icon="mdi:magnify"
-                  width={16}
-                  sx={{ color: "text.disabled", mr: 0.5 }}
-                />
-              ),
-              sx: { fontSize: 12, height: 32, borderRadius: "6px" },
-            }}
-          />
-        </Box>
+          <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", mb: 1 }}>
+            <Typography sx={{ fontSize: 13, fontWeight: 600 }}>
+              Tags {tags.length > 0 ? `(${tags.length})` : ""}
+            </Typography>
+            {mode === "inspect" && tags.length > 0 && (
+              <Button size="small" onClick={switchToEdit} sx={{ minWidth: 0, px: 1, fontSize: 11 }}>
+                Edit tags
+              </Button>
+            )}
+            {mode === "edit" && (
+              <Button size="small" onClick={switchToInspect} sx={{ minWidth: 0, px: 1, fontSize: 11 }}>
+                Back to tags
+              </Button>
+            )}
+          </Box>
 
-        <Box sx={{ maxHeight: 200, overflow: "auto", px: 0.5 }}>
-          {availableTags.map((tag) => {
-            const checked = tags.includes(tag);
-            const color = getTagColor(tag);
-            return (
-              <Box
-                key={tag}
-                onClick={() => toggleTag(tag)}
-                sx={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 0.5,
-                  px: 1,
-                  py: 0.25,
-                  cursor: "pointer",
-                  borderRadius: "4px",
-                  "&:hover": { bgcolor: "action.hover" },
-                }}
-              >
-                <Checkbox
-                  size="small"
-                  checked={checked}
-                  tabIndex={-1}
-                  sx={{ p: 0.25, "& .MuiSvgIcon-root": { fontSize: 16 } }}
-                />
-                <Typography sx={{ fontSize: 12, fontWeight: 500, color }}>
+          {mode === "inspect" && (
+            <Box sx={{ maxHeight: 220, overflow: "auto", px: 0.5 }}>
+              {tags.length === 0 && (
+                <Typography sx={{ px: 1, py: 1, fontSize: 11, color: "text.disabled", textAlign: "center" }}>
+                  No tags on this project
+                </Typography>
+              )}
+              {tags.map((tag) => (
+                <Typography
+                  key={tag}
+                  sx={{
+                    fontSize: 12,
+                    fontWeight: 500,
+                    color: getTagColor(tag),
+                    px: 1,
+                    py: 0.5,
+                    borderRadius: "4px",
+                    "&:hover": { bgcolor: "action.hover" },
+                    wordBreak: "break-word",
+                  }}
+                >
                   {tag}
                 </Typography>
-              </Box>
-            );
-          })}
-          {isKnownTagsError && (
-            <Box
-              role="alert"
-              sx={{
-                px: 1,
-                py: 0.75,
-                fontSize: 11,
-                color: "warning.main",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: 1,
-              }}
-            >
-              Tag suggestions unavailable.
-              <Button
-                size="small"
-                disabled={isKnownTagsFetching}
-                onClick={() => refetchKnownTags()}
-              >
-                Retry
-              </Button>
+              ))}
             </Box>
           )}
-          {availableTags.length === 0 && !isKnownTagsError && (
-            <Typography
-              sx={{
-                px: 1,
-                py: 1,
-                fontSize: 11,
-                color: "text.disabled",
-                textAlign: "center",
-              }}
-            >
-              No tags found
-            </Typography>
-          )}
-        </Box>
 
-        <Divider sx={{ mt: 0.5 }} />
-
-        <Box sx={{ p: 1 }}>
-          <TextField
-            size="small"
-            fullWidth
-            placeholder="Type new tag and press Enter"
-            value={newTagInput}
-            onChange={(e) => setNewTagInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                e.stopPropagation();
-                handleNewTag();
-              }
-            }}
-            InputProps={{
-              startAdornment: (
-                <Iconify
-                  icon="mdi:plus"
-                  width={14}
-                  sx={{ color: "primary.main", mr: 0.5 }}
+          {mode === "edit" && (
+            <>
+              <TextField
+                size="small"
+                fullWidth
+                placeholder="Search tags"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                autoFocus
+                InputProps={{
+                  startAdornment: (
+                    <Iconify icon="mdi:magnify" width={16} sx={{ color: "text.disabled", mr: 0.5 }} />
+                  ),
+                  sx: { fontSize: 12, height: 32, borderRadius: "6px" },
+                }}
+              />
+              <Box sx={{ maxHeight: 160, overflow: "auto", px: 0.5, mt: 1 }}>
+                {availableTags.map((tag) => {
+                  const checked = tags.includes(tag);
+                  const color = getTagColor(tag);
+                  return (
+                    <Box
+                      key={tag}
+                      onClick={() => toggleTag(tag)}
+                      sx={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 0.5,
+                        px: 1,
+                        py: 0.25,
+                        cursor: "pointer",
+                        borderRadius: "4px",
+                        "&:hover": { bgcolor: "action.hover" },
+                      }}
+                    >
+                      <Checkbox
+                        size="small"
+                        checked={checked}
+                        tabIndex={0}
+                        sx={{ p: 0.25, "& .MuiSvgIcon-root": { fontSize: 16 } }}
+                      />
+                      <Typography sx={{ fontSize: 12, fontWeight: 500, color }}>
+                        {tag}
+                      </Typography>
+                    </Box>
+                  );
+                })}
+                {isKnownTagsError && (
+                  <Box role="alert" sx={{ px: 1, py: 0.75, fontSize: 11, color: "warning.main", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 1 }}>
+                    Tag suggestions unavailable.
+                    <Button size="small" disabled={isKnownTagsFetching} onClick={() => refetchKnownTags()}>
+                      Retry
+                    </Button>
+                  </Box>
+                )}
+                {availableTags.length === 0 && !isKnownTagsError && (
+                  <Typography sx={{ px: 1, py: 1, fontSize: 11, color: "text.disabled", textAlign: "center" }}>
+                    No tags found
+                  </Typography>
+                )}
+              </Box>
+              <Divider sx={{ mt: 0.5 }} />
+              <Box sx={{ p: 1 }}>
+                <TextField
+                  size="small"
+                  fullWidth
+                  placeholder="Type new tag and press Enter"
+                  value={newTagInput}
+                  onChange={(e) => setNewTagInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      handleNewTag();
+                    }
+                  }}
+                  InputProps={{
+                    startAdornment: (
+                      <Iconify icon="mdi:plus" width={14} sx={{ color: "primary.main", mr: 0.5 }} />
+                    ),
+                    sx: { fontSize: 12, height: 32, borderRadius: "6px" },
+                  }}
                 />
-              ),
-              sx: { fontSize: 12, height: 32, borderRadius: "6px" },
-            }}
-          />
+              </Box>
+            </>
+          )}
         </Box>
       </Popover>
     </>
