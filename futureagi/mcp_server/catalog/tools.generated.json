@@ -2,7 +2,7 @@
   "schema_version": 1,
   "source_contract": "swagger.json",
   "source_contract_sha256": "83fe2c54b6fbda789c5a5040e90d216af3279ab24d431ffbcdf003356fd1f02b",
-  "tool_count": 101,
+  "tool_count": 105,
   "tools": [
     {
       "name": "whoami",
@@ -5020,7 +5020,9 @@
           },
           "limit": {
             "type": "integer",
-            "description": "Number of results to return per page."
+            "description": "Number of results to return per page.",
+            "minimum": 1,
+            "maximum": 100
           }
         },
         "additionalProperties": false
@@ -5223,7 +5225,9 @@
           },
           "limit": {
             "type": "integer",
-            "description": "Number of results to return per page."
+            "description": "Number of results to return per page.",
+            "minimum": 1,
+            "maximum": 100
           }
         },
         "additionalProperties": false
@@ -5251,6 +5255,51 @@
       },
       "source": {
         "operationId": "tracer_user-alert-logs_list_all"
+      }
+    },
+    {
+      "name": "list_alert_rules",
+      "description": "List the configured alert monitors - what each one watches, its threshold and its project. Pair with list_fired_alerts to explain why an alert fired, or to see that no monitor covers a condition the user expected to be caught.",
+      "group": "observability",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": "integer",
+            "description": "A page number within the paginated result set."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of results to return per page.",
+            "minimum": 1,
+            "maximum": 100
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/tracer/user-alerts/list_monitors/",
+        "parameters": {
+          "path": [],
+          "query": [
+            "page",
+            "limit"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "tracer_user-alerts_list_monitors"
       }
     },
     {
@@ -9016,6 +9065,138 @@
       },
       "source": {
         "operationId": "agentcc_request-logs_list"
+      }
+    },
+    {
+      "name": "list_guardrail_rules",
+      "description": "Per-rule guardrail trigger breakdown - which guardrail rules exist and how often each has fired. Request logs report guardrail_triggered but not which rule caused it; this is what turns \"the request was blocked\" into \"the PII rule blocked it\".",
+      "group": "gateway",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": "integer",
+            "description": "A page number within the paginated result set."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of results to return per page.",
+            "minimum": 1,
+            "maximum": 100
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/agentcc/analytics/guardrail-rules/",
+        "parameters": {
+          "path": [],
+          "query": [
+            "page",
+            "limit"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "agentcc_analytics_guardrail_rules"
+      }
+    },
+    {
+      "name": "list_gateway_sessions",
+      "description": "List AI gateway sessions with their stats. These are gateway sessions, distinct from the tracing sessions returned by list_sessions. Use this to obtain a session id for list_gateway_session_requests.",
+      "group": "gateway",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": "integer",
+            "description": "A page number within the paginated result set."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of results to return per page.",
+            "minimum": 1,
+            "maximum": 100
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/agentcc/sessions/",
+        "parameters": {
+          "path": [],
+          "query": [
+            "page",
+            "limit"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "agentcc_sessions_list"
+      }
+    },
+    {
+      "name": "list_gateway_session_requests",
+      "description": "List every request log belonging to one gateway session. Request logs carry no trace id, so grouping by session is the way to see what else happened around a failed request.",
+      "group": "gateway",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "A UUID string identifying this agentcc session."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/agentcc/sessions/{id}/requests/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "agentcc_sessions_requests"
       }
     },
     {

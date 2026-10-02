@@ -1,5 +1,5 @@
 version: 1
-expected_tool_count: 101
+expected_tool_count: 105
 
 # Pagination is an MCP-only page-size ceiling, so an oversized page is rejected
 # before the REST view queries and serializes it. The generator keeps a stricter
@@ -276,6 +276,8 @@ tools:
     description: List the custom evaluation configurations available for online evaluation tasks. The ids returned here are what create_eval_task takes in its `evals` argument - eval templates are a different object and their ids are not accepted there.
     operation: {method: GET, path: "/tracer/custom-eval-config/"}
     access: read
+    pagination:
+      limit: {maximum: 100}
   - name: create_eval_config
     group: observability
     description: Create a custom evaluation configuration from an eval template so it can be attached to an online evaluation task. Use when list_eval_configs has no entry for the template you want to run over spans.
@@ -291,6 +293,15 @@ tools:
     description: List alerts that have fired, newest first. Use this to find out what the platform has already flagged before digging into traces or error clusters.
     operation: {method: GET, path: "/tracer/user-alert-logs/all/"}
     access: read
+    pagination:
+      limit: {maximum: 100}
+  - name: list_alert_rules
+    group: observability
+    description: List the configured alert monitors - what each one watches, its threshold and its project. Pair with list_fired_alerts to explain why an alert fired, or to see that no monitor covers a condition the user expected to be caught.
+    operation: {method: GET, path: "/tracer/user-alerts/list_monitors/"}
+    access: read
+    pagination:
+      limit: {maximum: 100}
   - name: pause_eval_task
     group: observability
     description: Pause a running online evaluation task by eval_task_id. Already-launched evaluations may finish before the worker stops.
@@ -502,6 +513,25 @@ tools:
     access: read
     pagination:
       limit: {maximum: 100}
+  - name: list_guardrail_rules
+    group: gateway
+    description: Per-rule guardrail trigger breakdown - which guardrail rules exist and how often each has fired. Request logs report guardrail_triggered but not which rule caused it; this is what turns "the request was blocked" into "the PII rule blocked it".
+    operation: {method: GET, path: "/agentcc/analytics/guardrail-rules/"}
+    access: read
+    pagination:
+      limit: {maximum: 100}
+  - name: list_gateway_sessions
+    group: gateway
+    description: List AI gateway sessions with their stats. These are gateway sessions, distinct from the tracing sessions returned by list_sessions. Use this to obtain a session id for list_gateway_session_requests.
+    operation: {method: GET, path: "/agentcc/sessions/"}
+    access: read
+    pagination:
+      limit: {maximum: 100}
+  - name: list_gateway_session_requests
+    group: gateway
+    description: List every request log belonging to one gateway session. Request logs carry no trace id, so grouping by session is the way to see what else happened around a failed request.
+    operation: {method: GET, path: "/agentcc/sessions/{id}/requests/"}
+    access: read
   - name: get_gateway_analytics
     group: gateway
     description: Return overview usage, latency, error, and cost analytics for the AI gateway.
