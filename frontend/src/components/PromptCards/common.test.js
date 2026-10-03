@@ -134,7 +134,11 @@ describe("getBlocks", () => {
       {
         insert: {
           PdfBlot: {
-            pdfData: { url: "https://pdf.dev", pdf_name: "doc.pdf", pdf_size: 300 },
+            pdfData: {
+              url: "https://pdf.dev",
+              pdf_name: "doc.pdf",
+              pdf_size: 300,
+            },
           },
         },
       },

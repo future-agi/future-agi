@@ -4,6 +4,12 @@
 import { describe, it, expect, vi } from "vitest";
 import React from "react";
 import { getBlocks } from "./common";
+
+// The real audio player fetches the file (WaveSurfer); jsdom has no media
+// stack, so it is stubbed exactly as in EmbedComponents/__tests__/AudioEmbed.test.jsx.
+vi.mock("src/components/custom-audio/CustomAudioPlayer", () => ({
+  default: () => <div data-testid="custom-audio-player" />,
+}));
 import {
   mountEditor,
   clipboardStub,
@@ -21,10 +27,16 @@ import {
   PNG_1x1,
   WAV_1S,
   textBlock,
-  pdfBlock,
+  pdfBlockEmitted,
 } from "./test-fixtures/media";
 
 const everyClipboardValue = (cb) => Object.values(cb.data).join("\n");
+
+// Quill resolves `shortKey` at module load: metaKey when navigator.platform
+// matches /Mac/, otherwise ctrlKey. jsdom reports an empty platform, so the
+// Cmd variant is exercised in the real-browser protocol and Ctrl here.
+const SHORT = { ctrlKey: true };
+const selectAll = (quill) => keydown(quill.root, "a", SHORT);
 
 describe("TH-150 select-all scoped to the focused editor (REQ-1)", () => {
   it("AC-1.1 [RED@dev]: Cmd/Ctrl+A selects the whole focused message incl. the attachment, not sibling editors", () => {
@@ -32,21 +44,23 @@ describe("TH-150 select-all scoped to the focused editor (REQ-1)", () => {
     const b = mountEditor([textBlock("other")]);
     a.quill.root.focus();
     a.quill.setSelection(1, 0, "silent");
-    const ev = keydown(a.quill.root, "a", { metaKey: true });
+    const ev = selectAll(a.quill);
     expect(ev.defaultPrevented).toBe(true);
     expect(a.quill.getSelection()).toEqual({ index: 0, length: 12 }); // length 13 minus terminal \n
     expect(b.quill.getSelection()).toBeNull();
-    // Ctrl variant (non-macOS)
-    a.quill.setSelection(3, 0, "silent");
-    keydown(a.quill.root, "a", { ctrlKey: true });
-    expect(a.quill.getSelection()).toEqual({ index: 0, length: 12 });
+    // the attachment card carries the selected-state class, text does not
+    expect(embedNodes(a.quill)[0].classList.contains("is-selected")).toBe(true);
+    a.quill.setSelection(1, 0, "api");
+    expect(embedNodes(a.quill)[0].classList.contains("is-selected")).toBe(
+      false,
+    );
   });
 
   it("AC-1.2 [RED@dev]: attachment-only message selects exactly the embed block", () => {
     const { quill } = mountEditor(DOC_PDF_ONLY);
     expect(quill.getLength()).toBe(2);
     quill.setSelection(1, 0, "silent");
-    keydown(quill.root, "a", { metaKey: true });
+    selectAll(quill);
     expect(quill.getSelection()).toEqual({ index: 0, length: 1 });
   });
 
@@ -75,7 +89,7 @@ describe("TH-150 copy projection (REQ-2, REQ-3, REQ-10, REQ-15)", () => {
     // the source document is untouched by copy
     expect(getBlocks(quill)).toEqual([
       { type: "text", text: "hello\n" },
-      pdfBlock,
+      pdfBlockEmitted,
       { type: "text", text: "world\n" },
     ]);
   });
@@ -88,7 +102,9 @@ describe("TH-150 copy projection (REQ-2, REQ-3, REQ-10, REQ-15)", () => {
     quill.setSelection(0, quill.getLength() - 1, "silent");
     const cb = clipboardStub();
     fireClipboard(quill.root, "copy", cb);
-    expect(cb.data["text/plain"]).toBe("  lead  {{a}}\n{{b}} tail");
+    // a text block that precedes an attachment sits on its own line, so its
+    // structural line break is part of the logical text (same as "hello\nworld")
+    expect(cb.data["text/plain"]).toBe("  lead  {{a}}\n{{b}} tail\n");
     expect(everyClipboardValue(cb)).not.toContain(WAV_1S.name);
   });
 
@@ -118,18 +134,20 @@ describe("TH-150 deletion semantics (REQ-7, REQ-13)", () => {
   it("AC-7.1: select-all + Backspace removes text and attachment in one keypress; empty document is the pinned P1 shape", () => {
     const onPromptChange = vi.fn();
     const { quill } = mountEditor(DOC_TEXT_PDF_TEXT, { onPromptChange });
-    keydown(quill.root, "a", { metaKey: true });
+    selectAll(quill);
     keydown(quill.root, "Backspace");
     expect(quill.getContents().ops).toEqual([{ insert: "\n" }]);
     expect(embedNodes(quill)).toHaveLength(0);
     expect(quill.root.classList.contains("ql-blank")).toBe(true);
-    expect(onPromptChange).toHaveBeenLastCalledWith([{ type: "text", text: "\n" }]);
+    expect(onPromptChange).toHaveBeenLastCalledWith([
+      { type: "text", text: "\n" },
+    ]);
     expect(quill.getSelection()).toEqual({ index: 0, length: 0 });
   });
 
   it("AC-7.2: forward Delete over the full selection gives the same result", () => {
     const { quill } = mountEditor(DOC_TEXT_PDF_TEXT);
-    keydown(quill.root, "a", { metaKey: true });
+    selectAll(quill);
     keydown(quill.root, "Delete");
     expect(quill.getContents().ops).toEqual([{ insert: "\n" }]);
   });
@@ -172,10 +190,13 @@ describe("TH-150 deletion semantics (REQ-7, REQ-13)", () => {
   });
 
   it("AC-5.1 / AC-8.3 [RED@dev]: the card delete control removes only that reference, makes no network call, and undo restores a working card", async () => {
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(""));
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(""));
     const a = mountEditor(DOC_HELLO_IMG_WORLD);
     const b = mountEditor(DOC_HELLO_IMG_WORLD);
-    const deleteBtn = a.quill.root.querySelector('[data-image-data] img[alt="delete"]')
+    const deleteBtn = a.quill.root
+      .querySelector('[data-image-data] img[alt="delete"]')
       ?.closest("button");
     expect(deleteBtn).toBeTruthy();
     a.quill.history.cutoff();
@@ -188,7 +209,9 @@ describe("TH-150 deletion semantics (REQ-7, REQ-13)", () => {
     await flush();
     const [restored] = embedNodes(a.quill);
     expect(restored).toBeTruthy();
-    expect(JSON.parse(restored.getAttribute("data-image-data")).url).toBe(PNG_1x1.url);
+    expect(JSON.parse(restored.getAttribute("data-image-data")).url).toBe(
+      PNG_1x1.url,
+    );
     expect(getBlocks(a.quill)).toEqual([
       { type: "text", text: "hello\n" },
       DOC_HELLO_IMG_WORLD[1],
@@ -201,14 +224,14 @@ describe("TH-150 deletion semantics (REQ-7, REQ-13)", () => {
 describe("TH-150 undo/redo restores attachments (REQ-8)", () => {
   it("AC-8.1 [RED@dev]: undo after select-all + Backspace restores text, PDF metadata and a usable delete control", async () => {
     const { quill } = mountEditor(DOC_TEXT_PDF_TEXT);
-    keydown(quill.root, "a", { metaKey: true });
+    selectAll(quill);
     keydown(quill.root, "Backspace");
     expect(embedNodes(quill)).toHaveLength(0);
     quill.history.undo();
     await flush();
     expect(getBlocks(quill)).toEqual([
       { type: "text", text: "hello\n" },
-      pdfBlock,
+      pdfBlockEmitted,
       { type: "text", text: "world\n" },
     ]);
     const [node] = embedNodes(quill);
@@ -224,9 +247,14 @@ describe("TH-150 undo/redo restores attachments (REQ-8)", () => {
 describe("TH-150 read-only editors (REQ-11)", () => {
   it("AC-11.1 / AC-11.2 [RED@dev]: disabled editor allows select/copy but hides delete controls and ignores cut/paste/Backspace", async () => {
     const onPromptChange = vi.fn();
-    const { quill } = mountEditor(DOC_HELLO_IMG_WORLD, { disabled: true, onPromptChange });
+    const { quill } = mountEditor(DOC_HELLO_IMG_WORLD, {
+      disabled: true,
+      onPromptChange,
+    });
     expect(quill.isEnabled()).toBe(false);
-    keydown(quill.root, "a", { metaKey: true });
+    // A read-only root is not focusable, so Cmd/Ctrl+A is the browser's page
+    // select-all there; a mouse selection inside the editor (simulated) copies.
+    quill.setSelection(0, 12, "silent");
     expect(quill.getSelection()).toEqual({ index: 0, length: 12 });
     const cb = clipboardStub();
     fireClipboard(quill.root, "copy", cb);
@@ -237,7 +265,9 @@ describe("TH-150 read-only editors (REQ-11)", () => {
     await flush();
     keydown(quill.root, "Backspace");
     expect(quill.getContents().ops).toEqual(before);
-    expect(quill.root.querySelector('[data-image-data] img[alt="delete"]')).toBeNull();
+    expect(
+      quill.root.querySelector('[data-image-data] img[alt="delete"]'),
+    ).toBeNull();
     expect(onPromptChange).not.toHaveBeenCalled();
   });
 });
@@ -253,17 +283,27 @@ describe("TH-150 external paste never creates media (REQ-6, REQ-15)", () => {
     fireClipboard(quill.root, "paste", cb);
     await flush();
     expect(embedNodes(quill)).toHaveLength(0);
-    expect(quill.getContents().ops.every((o) => typeof o.insert === "string")).toBe(true);
+    expect(
+      quill.getContents().ops.every((o) => typeof o.insert === "string"),
+    ).toBe(true);
     expect(getBlocks(quill)[0].text).toContain("plain");
   });
 
   it("AC-6.1: external text with spaces and a variable pastes with spacing intact and variable styling", async () => {
     const { quill } = mountEditor([textBlock("")]);
     quill.setSelection(0, 0, "silent");
-    fireClipboard(quill.root, "paste", clipboardStub({ "text/plain": "x  y {{v}}" }));
+    fireClipboard(
+      quill.root,
+      "paste",
+      clipboardStub({ "text/plain": "x  y {{v}}" }),
+    );
     await flush();
     expect(getBlocks(quill)).toEqual([{ type: "text", text: "x  y {{v}}\n" }]);
-    expect(quill.getContents().ops.some((o) => o.attributes?.bold && o.insert === "{{v}")).toBe(true);
+    expect(
+      quill
+        .getContents()
+        .ops.some((o) => o.attributes?.bold && o.insert === "{{v}"),
+    ).toBe(true);
     expect(embedNodes(quill)).toHaveLength(0);
   });
 });

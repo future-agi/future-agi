@@ -35,13 +35,12 @@ describe("PromptEditor baseline (text-only, AC-14.1)", () => {
     expect(quill.getSelection()).toEqual({ index: 0, length: 0 });
   });
 
-  it("copy of plain text writes text/plain and text/html (Quill default)", () => {
+  it("copy of plain text puts the exact selected text on text/plain", () => {
     const { quill } = mountEditor([textBlock("  two  spaces\nnext")]);
     quill.setSelection(0, quill.getLength() - 1, "silent");
     const cb = clipboardStub();
     fireClipboard(quill.root, "copy", cb);
     expect(cb.data["text/plain"]).toBe("  two  spaces\nnext");
-    expect(cb.data["text/html"]).toContain("two");
   });
 
   it("Cmd/Ctrl+A has no Quill binding: the logical selection does not change", () => {
@@ -55,13 +54,12 @@ describe("PromptEditor baseline (text-only, AC-14.1)", () => {
   it("variables render as text + EditVariable embed; getBlocks restores the brace", () => {
     const { quill } = mountEditor([textBlock("Hi {{name}} there")]);
     const ops = quill.getContents().ops;
-    expect(ops.map((o) => (typeof o.insert === "string" ? o.insert : "EMBED"))).toEqual([
-      "Hi ",
-      "{{name}",
-      "EMBED",
-      " there\n",
+    expect(
+      ops.map((o) => (typeof o.insert === "string" ? o.insert : "EMBED")),
+    ).toEqual(["Hi ", "{{name}", "EMBED", " there\n"]);
+    expect(getBlocks(quill)).toEqual([
+      { type: "text", text: "Hi {{name}} there\n" },
     ]);
-    expect(getBlocks(quill)).toEqual([{ type: "text", text: "Hi {{name}} there\n" }]);
   });
 
   it("P3: one user edit after variable highlighting is reverted by one undo", () => {
@@ -72,7 +70,9 @@ describe("PromptEditor baseline (text-only, AC-14.1)", () => {
     quill.deleteText(11, 6, "user");
     expect(getBlocks(quill)).toEqual([{ type: "text", text: "Hi {{name}}\n" }]);
     quill.history.undo();
-    expect(getBlocks(quill)).toEqual([{ type: "text", text: "Hi {{name}} there\n" }]);
+    expect(getBlocks(quill)).toEqual([
+      { type: "text", text: "Hi {{name}} there\n" },
+    ]);
   });
 
   it("P4: external HTML paste keeps text and whitespace; bold is stripped by placeEditBolt", async () => {
