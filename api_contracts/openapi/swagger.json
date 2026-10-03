@@ -59747,6 +59747,39 @@
                 }
             ]
         },
+        "/tracer/dashboard/{id}/resolve-workspace/": {
+            "get": {
+                "operationId": "tracer_dashboard_resolve_workspace",
+                "summary": "Return the workspace that owns this dashboard, if the user has access.",
+                "description": "Used by the frontend when a dashboard 404s in the current workspace\nso it can auto-switch to the correct workspace instead of showing\n\"Dashboard not found\".",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/Dashboard"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ]
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/tracer/dataset/": {
             "get": {
                 "operationId": "tracer_dataset_list",

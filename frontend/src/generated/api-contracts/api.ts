@@ -69081,6 +69081,52 @@ export const tracerDashboardDelete = async (
   );
 };
 
+export type tracerDashboardResolveWorkspaceResponse200 = {
+  data: DashboardApi;
+  status: 200;
+};
+
+export type tracerDashboardResolveWorkspaceResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerDashboardResolveWorkspaceResponseSuccess =
+  tracerDashboardResolveWorkspaceResponse200 & {
+    headers: Headers;
+  };
+export type tracerDashboardResolveWorkspaceResponseError =
+  tracerDashboardResolveWorkspaceResponseDefault & {
+    headers: Headers;
+  };
+
+export type tracerDashboardResolveWorkspaceResponse =
+  | tracerDashboardResolveWorkspaceResponseSuccess
+  | tracerDashboardResolveWorkspaceResponseError;
+
+export const getTracerDashboardResolveWorkspaceUrl = (id: string) => {
+  return `/tracer/dashboard/${id}/resolve-workspace/`;
+};
+
+/**
+ * Used by the frontend when a dashboard 404s in the current workspace
+so it can auto-switch to the correct workspace instead of showing
+"Dashboard not found".
+ * @summary Return the workspace that owns this dashboard, if the user has access.
+ */
+export const tracerDashboardResolveWorkspace = async (
+  id: string,
+  options?: RequestInit,
+): Promise<tracerDashboardResolveWorkspaceResponse> => {
+  return apiMutator<tracerDashboardResolveWorkspaceResponse>(
+    getTracerDashboardResolveWorkspaceUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
 export type tracerDatasetListResponse200 = {
   data: TracerDatasetList200;
   status: 200;

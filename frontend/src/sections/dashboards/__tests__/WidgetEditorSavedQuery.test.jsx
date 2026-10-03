@@ -15,6 +15,12 @@ const h = vi.hoisted(() => ({
   },
   agents: { data: [] },
   inventory: { filteredAttributes: [], inventoryControlProps: {} },
+  resolveWorkspace: {
+    data: undefined,
+    isFetching: false,
+    error: null,
+    refetch: vi.fn(),
+  },
 }));
 
 vi.mock("src/hooks/useDashboards", () => ({
@@ -27,6 +33,7 @@ vi.mock("src/hooks/useDashboards", () => ({
   usePropertyCatalog: () => h.catalog,
   useLegacyDashboardMetricsPaginated: () => h.catalog,
   isPropertyCatalogNotReadyError: () => false,
+  useResolveDashboardWorkspace: () => h.resolveWorkspace,
 }));
 vi.mock("react-router-dom", async (original) => ({
   ...(await original()),

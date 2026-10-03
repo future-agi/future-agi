@@ -51038,6 +51038,218 @@ export const TracerDashboardDeleteParams = zod.object({
   id: zod.string(),
 });
 
+/**
+ * Used by the frontend when a dashboard 404s in the current workspace
+so it can auto-switch to the correct workspace instead of showing
+"Dashboard not found".
+ * @summary Return the workspace that owns this dashboard, if the user has access.
+ */
+export const TracerDashboardResolveWorkspaceParams = zod.object({
+  id: zod.string(),
+});
+
+export const tracerDashboardResolveWorkspaceResponseNameMax = 255;
+
+export const tracerDashboardResolveWorkspaceResponseCreatedByEmailMax = 254;
+
+export const tracerDashboardResolveWorkspaceResponseCreatedByNameMax = 255;
+
+export const tracerDashboardResolveWorkspaceResponseCreatedByOrganizationNameMax = 255;
+
+export const tracerDashboardResolveWorkspaceResponseCreatedByOrganizationDisplayNameMax = 255;
+
+export const tracerDashboardResolveWorkspaceResponseCreatedByOrganizationRegionMax = 16;
+
+export const tracerDashboardResolveWorkspaceResponseCreatedByOrganizationRequire2faGracePeriodDaysMin = 0;
+export const tracerDashboardResolveWorkspaceResponseCreatedByOrganizationRequire2faGracePeriodDaysMax = 32767;
+
+export const tracerDashboardResolveWorkspaceResponseCreatedByRoleMax = 255;
+
+export const tracerDashboardResolveWorkspaceResponseUpdatedByEmailMax = 254;
+
+export const tracerDashboardResolveWorkspaceResponseUpdatedByNameMax = 255;
+
+export const tracerDashboardResolveWorkspaceResponseUpdatedByOrganizationNameMax = 255;
+
+export const tracerDashboardResolveWorkspaceResponseUpdatedByOrganizationDisplayNameMax = 255;
+
+export const tracerDashboardResolveWorkspaceResponseUpdatedByOrganizationRegionMax = 16;
+
+export const tracerDashboardResolveWorkspaceResponseUpdatedByOrganizationRequire2faGracePeriodDaysMin = 0;
+export const tracerDashboardResolveWorkspaceResponseUpdatedByOrganizationRequire2faGracePeriodDaysMax = 32767;
+
+export const tracerDashboardResolveWorkspaceResponseUpdatedByRoleMax = 255;
+
+export const TracerDashboardResolveWorkspaceResponse = zod.object({
+  id: zod.string().uuid().optional(),
+  name: zod.string().min(1).max(tracerDashboardResolveWorkspaceResponseNameMax),
+  description: zod.string().optional(),
+  workspace: zod.string().uuid().optional(),
+  created_by: zod
+    .object({
+      id: zod.string().uuid().optional(),
+      email: zod
+        .string()
+        .email()
+        .min(1)
+        .max(tracerDashboardResolveWorkspaceResponseCreatedByEmailMax),
+      name: zod
+        .string()
+        .min(1)
+        .max(tracerDashboardResolveWorkspaceResponseCreatedByNameMax),
+      organization_role: zod
+        .enum([
+          "Owner",
+          "Admin",
+          "Member",
+          "Viewer",
+          "workspace_admin",
+          "workspace_member",
+          "workspace_viewer",
+        ])
+        .optional(),
+      organization: zod
+        .object({
+          id: zod.string().uuid().optional(),
+          created_at: zod.string().datetime({ offset: true }).optional(),
+          name: zod
+            .string()
+            .min(1)
+            .max(
+              tracerDashboardResolveWorkspaceResponseCreatedByOrganizationNameMax,
+            ),
+          display_name: zod
+            .string()
+            .max(
+              tracerDashboardResolveWorkspaceResponseCreatedByOrganizationDisplayNameMax,
+            )
+            .optional(),
+          is_new: zod.boolean().optional(),
+          ws_enabled: zod.boolean().optional(),
+          region: zod
+            .string()
+            .min(1)
+            .max(
+              tracerDashboardResolveWorkspaceResponseCreatedByOrganizationRegionMax,
+            )
+            .optional(),
+          require_2fa: zod.boolean().optional(),
+          require_2fa_grace_period_days: zod
+            .number()
+            .min(
+              tracerDashboardResolveWorkspaceResponseCreatedByOrganizationRequire2faGracePeriodDaysMin,
+            )
+            .max(
+              tracerDashboardResolveWorkspaceResponseCreatedByOrganizationRequire2faGracePeriodDaysMax,
+            )
+            .optional(),
+          require_2fa_enforced_at: zod
+            .string()
+            .datetime({ offset: true })
+            .optional(),
+        })
+        .optional(),
+      created_at: zod.string().datetime({ offset: true }).optional(),
+      status: zod.string().optional(),
+      role: zod
+        .string()
+        .max(tracerDashboardResolveWorkspaceResponseCreatedByRoleMax)
+        .optional()
+        .describe(
+          "User's job role (e.g., Data Scientist, ML Engineer, or custom role)",
+        ),
+      goals: zod
+        .object({})
+        .passthrough()
+        .optional()
+        .describe("List of user's goals for using the platform"),
+    })
+    .optional(),
+  updated_by: zod
+    .object({
+      id: zod.string().uuid().optional(),
+      email: zod
+        .string()
+        .email()
+        .min(1)
+        .max(tracerDashboardResolveWorkspaceResponseUpdatedByEmailMax),
+      name: zod
+        .string()
+        .min(1)
+        .max(tracerDashboardResolveWorkspaceResponseUpdatedByNameMax),
+      organization_role: zod
+        .enum([
+          "Owner",
+          "Admin",
+          "Member",
+          "Viewer",
+          "workspace_admin",
+          "workspace_member",
+          "workspace_viewer",
+        ])
+        .optional(),
+      organization: zod
+        .object({
+          id: zod.string().uuid().optional(),
+          created_at: zod.string().datetime({ offset: true }).optional(),
+          name: zod
+            .string()
+            .min(1)
+            .max(
+              tracerDashboardResolveWorkspaceResponseUpdatedByOrganizationNameMax,
+            ),
+          display_name: zod
+            .string()
+            .max(
+              tracerDashboardResolveWorkspaceResponseUpdatedByOrganizationDisplayNameMax,
+            )
+            .optional(),
+          is_new: zod.boolean().optional(),
+          ws_enabled: zod.boolean().optional(),
+          region: zod
+            .string()
+            .min(1)
+            .max(
+              tracerDashboardResolveWorkspaceResponseUpdatedByOrganizationRegionMax,
+            )
+            .optional(),
+          require_2fa: zod.boolean().optional(),
+          require_2fa_grace_period_days: zod
+            .number()
+            .min(
+              tracerDashboardResolveWorkspaceResponseUpdatedByOrganizationRequire2faGracePeriodDaysMin,
+            )
+            .max(
+              tracerDashboardResolveWorkspaceResponseUpdatedByOrganizationRequire2faGracePeriodDaysMax,
+            )
+            .optional(),
+          require_2fa_enforced_at: zod
+            .string()
+            .datetime({ offset: true })
+            .optional(),
+        })
+        .optional(),
+      created_at: zod.string().datetime({ offset: true }).optional(),
+      status: zod.string().optional(),
+      role: zod
+        .string()
+        .max(tracerDashboardResolveWorkspaceResponseUpdatedByRoleMax)
+        .optional()
+        .describe(
+          "User's job role (e.g., Data Scientist, ML Engineer, or custom role)",
+        ),
+      goals: zod
+        .object({})
+        .passthrough()
+        .optional()
+        .describe("List of user's goals for using the platform"),
+    })
+    .optional(),
+  created_at: zod.string().datetime({ offset: true }).optional(),
+  updated_at: zod.string().datetime({ offset: true }).optional(),
+  widget_count: zod.string().optional(),
+});
+
 export const TracerDatasetListQueryParams = zod.object({
   page: zod
     .number()
