@@ -25,7 +25,11 @@ from simulate.services.harness_evals import (
     resolve_eval_mapping,
     runnable_eval_config_ids,
 )
-from simulate.services.hosted_harness import create_hosted_job, register_attempt
+from simulate.services.hosted_harness import (
+    _record_target_agent_facts,
+    create_hosted_job,
+    register_attempt,
+)
 
 from .test_hosted_harness_channels import _headers, _payload
 
@@ -1312,6 +1316,55 @@ def test_provision_falls_back_to_the_authored_contract_excerpt(organization, wor
     # Base derives human-readable names, so the snake_case value arrives title-cased.
     assert agent.agent_name == "Cab Voice Agent"
     assert agent.inbound is True
+
+
+@pytest.mark.django_db
+def test_provision_prefers_the_full_phone_prompt_over_the_provisioned_excerpt(
+    organization, workspace
+):
+    full_prompt = "You are a refunds agent.\n" + "Follow every refund rule. " * 40
+    job, _ = create_hosted_job(
+        organization,
+        _payload(),
+        idempotency_key="phone-prompt-key",
+        workspace=workspace,
+    )
+    job.payload = {
+        **job.payload,
+        "agent": {
+            "connector": "phone",
+            "config": {"target_system_prompt": full_prompt},
+            "secret_refs": {},
+        },
+    }
+    job.save(update_fields=["payload"])
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    response = _provision(APIClient(), capability, agent_prompt="Refunds agent.")
+    assert response.status_code == 200, response.content
+
+    job.refresh_from_db()
+    agent = job.run_test.agent_definition
+    assert agent.description == full_prompt.strip()
+    assert agent.latest_version.configuration_snapshot["description"] == (
+        full_prompt.strip()
+    )
+
+
+@pytest.mark.django_db
+def test_a_changed_agent_prompt_reaches_a_new_version(organization, workspace):
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="reprompt-key", workspace=workspace
+    )
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    assert _provision(APIClient(), capability, agent_prompt="First.").status_code == 200
+    job.refresh_from_db()
+    agent = job.run_test.agent_definition
+
+    _record_target_agent_facts(job, agent, {"agent_prompt": "Second."})
+
+    agent.refresh_from_db()
+    assert agent.description == "Second."
+    assert agent.latest_version.configuration_snapshot["description"] == "Second."
 
 
 @pytest.mark.django_db

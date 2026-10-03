@@ -7,11 +7,11 @@ criteria: "You are evaluating whether the agent successfully completes the task 
   \ the primary objective or core request of the customer.\n2. Explicit confirmation or outcome delivery: The agent clearly\
   \ communicates the final result, confirmation, or status of the task so that the customer is aware it has been handled.\n\
   3. Handling blockers or policy boundaries: The agent correctly navigates system constraints, accurately applying company\
-  \ policies or executing valid workarounds to reach the closest possible resolution.\n\n## Anti-bias Rules\n- If the customer\
-  \ abruptly terminates the conversation or refuses to provide mandatory information (e.g., account verification), do not penalize\
+  \ policies or executing valid workarounds to reach the closest possible resolution. A blocker that leaves the primary objective unmet means the task is not completed, however clearly it is communicated.\n\n## Anti-bias Rules\n- If the customer\
+  \ abruptly terminates the conversation for reasons unrelated to the agent's handling, or refuses to provide mandatory information (e.g., account verification), do not penalize\
   \ the agent for non-completion.\n- An accurate, policy-compliant refusal (e.g., correctly denying a refund because it violates\
   \ terms of service) counts as a successful task completion, as the inquiry was definitively resolved according to business\
-  \ logic.\n- If the task requires back-end processing that takes hours or days to complete, the agent fulfills the criteria\
+  \ logic. A temporary system limit or error that blocks an otherwise valid request is not a policy refusal.\n- If the task requires back-end processing that takes hours or days to complete, the agent fulfills the criteria\
   \ by successfully initiating the workflow and setting clear timeline expectations.\n\n## Scoring\n- Return PASS if the agent\
   \ completely resolves the customer's request, delivers a clear and definitive outcome (including valid policy-based refusals),\
   \ and ensures all necessary execution steps within the scope of the chat are completed.\n- Return FAIL if the agent leaves\
@@ -66,11 +66,11 @@ config:
     \ the primary objective or core request of the customer.\n2. Explicit confirmation or outcome delivery: The agent clearly\
     \ communicates the final result, confirmation, or status of the task so that the customer is aware it has been handled.\n\
     3. Handling blockers or policy boundaries: The agent correctly navigates system constraints, accurately applying company\
-    \ policies or executing valid workarounds to reach the closest possible resolution.\n\n## Anti-bias Rules\n- If the customer\
-    \ abruptly terminates the conversation or refuses to provide mandatory information (e.g., account verification), do not\
+    \ policies or executing valid workarounds to reach the closest possible resolution. A blocker that leaves the primary objective unmet means the task is not completed, however clearly it is communicated.\n\n## Anti-bias Rules\n- If the customer\
+    \ abruptly terminates the conversation for reasons unrelated to the agent's handling, or refuses to provide mandatory information (e.g., account verification), do not\
     \ penalize the agent for non-completion.\n- An accurate, policy-compliant refusal (e.g., correctly denying a refund because\
     \ it violates terms of service) counts as a successful task completion, as the inquiry was definitively resolved according\
-    \ to business logic.\n- If the task requires back-end processing that takes hours or days to complete, the agent fulfills\
+    \ to business logic. A temporary system limit or error that blocks an otherwise valid request is not a policy refusal.\n- If the task requires back-end processing that takes hours or days to complete, the agent fulfills\
     \ the criteria by successfully initiating the workflow and setting clear timeline expectations.\n\n## Scoring\n- Return\
     \ PASS if the agent completely resolves the customer's request, delivers a clear and definitive outcome (including valid\
     \ policy-based refusals), and ensures all necessary execution steps within the scope of the chat are completed.\n- Return\

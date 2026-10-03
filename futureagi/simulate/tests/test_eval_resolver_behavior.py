@@ -1629,9 +1629,37 @@ class TestLegacyTranscriptRecordingResolution:
 
         assert transcript_data["voice_recording"] == call_execution.recording_url
         assert (
-            transcript_data["stereo_recording"]
-            == call_execution.stereo_recording_url
+            transcript_data["stereo_recording"] == call_execution.stereo_recording_url
         )
+
+    def test_eval_transcript_keeps_the_tested_agent_as_agent_without_direction(
+        self, call_execution
+    ):
+        from simulate.models.test_execution import CallTranscript
+
+        call_execution.provider_call_data = {}
+        call_execution.call_metadata = {"call_channel": "livekit"}
+        call_execution.save(update_fields=["provider_call_data", "call_metadata"])
+        CallTranscript.objects.create(
+            call_execution=call_execution,
+            speaker_role="assistant",
+            content="Hi, how can I help you?",
+            start_time_ms=0,
+            end_time_ms=1000,
+        )
+        CallTranscript.objects.create(
+            call_execution=call_execution,
+            speaker_role="user",
+            content="I need a ride.",
+            start_time_ms=1500,
+            end_time_ms=2500,
+        )
+        executor = TestExecutor(initialize_voice_service=False)
+
+        transcript_data = executor._get_call_transcript_data(call_execution)
+
+        assert "agent: Hi, how can I help you?" in transcript_data["transcript"]
+        assert "customer: I need a ride." in transcript_data["transcript"]
 
 
 # ---------------------------------------------------------------------------
