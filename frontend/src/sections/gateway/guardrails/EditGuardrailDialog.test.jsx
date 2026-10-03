@@ -69,7 +69,7 @@ describe("EditGuardrailDialog stage", () => {
     expect(savedConfig().stage).toBe("post");
   });
 
-  it("shows a post-only guardrail's fixed stage and saves it", () => {
+  it("shows a post-only guardrail's fixed stage and saves no stage", () => {
     renderDialog({ name: "hallucination-detection", stage: "pre" });
 
     const stageField = screen.getByLabelText("Stage");
@@ -79,16 +79,18 @@ describe("EditGuardrailDialog stage", () => {
     expect(screen.getAllByRole("combobox")).toHaveLength(1);
     save();
 
-    expect(savedConfig().stage).toBe("post");
+    // The gateway ignores a stage here, and saving must not push one the
+    // org never chose.
+    expect(savedConfig()).not.toHaveProperty("stage");
   });
 
-  it("does not save another stage for a built-in guardrail", () => {
+  it("drops a stale stage from a built-in guardrail", () => {
     renderDialog({ name: "pii-detector", stage: "both" });
 
     expect(screen.getByLabelText("Stage")).toHaveValue("Before LLM");
     save();
 
-    expect(savedConfig().stage).toBe("pre");
+    expect(savedConfig()).not.toHaveProperty("stage");
   });
 });
 

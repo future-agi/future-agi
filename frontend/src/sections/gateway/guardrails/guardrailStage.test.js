@@ -103,6 +103,22 @@ describe("getGuardrailStage", () => {
     ).toEqual({ configurable: false, stage: "pre" });
   });
 
+  it.each(["pii-detector", "injection-detector", "secrets-detector"])(
+    "maps the stored rule name %s to its built-in guardrail",
+    (name) => {
+      // The dashboard stores these names; the gateway knows them by their
+      // registry names, so a provider in the config must not make them
+      // configurable.
+      expect(
+        getGuardrailStage({
+          name,
+          stage: "post",
+          config: { provider: "lakera" },
+        }),
+      ).toEqual({ configurable: false, stage: "pre" });
+    },
+  );
+
   it("treats a missing guardrail as running before the LLM", () => {
     expect(getGuardrailStage(null)).toEqual({
       configurable: false,

@@ -118,7 +118,9 @@ func TestPlugin_StaticPostRuleNeedsOutput(t *testing.T) {
 		calls int
 	}{
 		{"no response", nil, 0},
-		{"usage-only response", &models.ChatCompletionResponse{ID: "resp", Usage: &models.Usage{TotalTokens: 3}}, 0},
+		// A usage-only response (pass-through handlers, an uncaptured stream)
+		// still reaches post rules: some read usage rather than output.
+		{"usage-only response", &models.ChatCompletionResponse{ID: "resp", Usage: &models.Usage{TotalTokens: 3}}, 1},
 		{"model output", stageTestResponse("hello"), 1},
 	}
 	for _, tt := range tests {

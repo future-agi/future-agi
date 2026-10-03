@@ -198,9 +198,8 @@ func TestOrgPostCheckNeedsOutput(t *testing.T) {
 		resp *models.ChatCompletionResponse
 	}{
 		{"no response", nil},
-		// Documents behaviour only: an external check finds no output text here
-		// and makes no call even without ProcessResponse's no-choices skip,
-		// which TestPlugin_StaticPostRuleNeedsOutput guards.
+		// The post pass runs here, but an external check finds no output
+		// text in a usage-only response and makes no call.
 		{"usage-only response", &models.ChatCompletionResponse{ID: "resp-usage", Usage: &models.Usage{TotalTokens: 15}}},
 	}
 	for _, tt := range tests {

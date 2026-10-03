@@ -282,6 +282,70 @@ func TestOutputRequestPromptIsLastUserMessage(t *testing.T) {
 	}
 }
 
+// With no user message to pair it with (no request, or only a system prompt),
+// the output is still sent, next to an empty user turn.
+func TestOutputRequestWithoutUserPrompt(t *testing.T) {
+	vendors := []struct {
+		name  string
+		cfg   map[string]interface{}
+		reply string
+	}{
+		{"aporia", map[string]interface{}{"provider": "aporia", "endpoint": "http://vendor.test", "project_id": "proj-1"}, `{"action":"passthrough"}`},
+		{"dynamoai", map[string]interface{}{"provider": "dynamoai", "endpoint": "http://vendor.test/moderation/analyze"}, `{"finalAction":"NONE"}`},
+		{"llama_guard", map[string]interface{}{"provider": "llama_guard", "endpoint": "http://vendor.test"}, `{"choices":[{"message":{"content":"safe"}}]}`},
+	}
+	requests := []struct {
+		name    string
+		request *models.ChatCompletionRequest
+	}{
+		{"no request", nil},
+		{"system prompt only", &models.ChatCompletionRequest{Model: "gpt-4o", Messages: []models.Message{directionMessage("system", "Be brief.")}}},
+	}
+	for _, v := range vendors {
+		for _, rq := range requests {
+			t.Run(v.name+"/"+rq.name, func(t *testing.T) {
+				tr := &captureTransport{reply: v.reply}
+				g := newCapturedGuardrail(t, v.cfg, tr)
+				input := directionInput(true)
+				input.Request = rq.request
+
+				if res := g.Check(context.Background(), input); !res.Pass {
+					t.Fatalf("check did not pass: %s", res.Message)
+				}
+				if len(tr.bodies) != 1 {
+					t.Fatalf("vendor calls = %d, want 1", len(tr.bodies))
+				}
+				var body interface{}
+				if err := json.Unmarshal(tr.bodies[0], &body); err != nil {
+					t.Fatalf("body is not JSON: %v", err)
+				}
+				if !bytes.Contains(tr.bodies[0], []byte(directionOutput)) {
+					t.Errorf("output request lacks the output: %s", tr.bodies[0])
+				}
+				if content, ok := firstUserContent(body); !ok || content != "" {
+					t.Errorf("user turn = %q (found %v), want an empty user turn: %s", content, ok, tr.bodies[0])
+				}
+				if bytes.Contains(tr.bodies[0], []byte("Be brief.")) {
+					t.Errorf("output request carries the system prompt: %s", tr.bodies[0])
+				}
+			})
+		}
+	}
+}
+
+// firstUserContent returns the content of the first user message in a body's
+// "messages" list.
+func firstUserContent(body interface{}) (string, bool) {
+	msgs, _ := jsonField(body, "messages").([]interface{})
+	for _, m := range msgs {
+		if mm, ok := m.(map[string]interface{}); ok && mm["role"] == "user" {
+			s, _ := mm["content"].(string)
+			return s, true
+		}
+	}
+	return "", false
+}
+
 // A retry must rebuild the output request: a sent request's body is spent.
 func TestOutputRequestRebuiltOnRetry(t *testing.T) {
 	tr := &captureTransport{statuses: []int{http.StatusServiceUnavailable}, reply: `{"action":"NONE"}`}

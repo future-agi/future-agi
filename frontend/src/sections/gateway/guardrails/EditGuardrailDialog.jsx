@@ -32,8 +32,7 @@ const EditGuardrailDialog = ({ open, onClose, guardrail, gatewayId }) => {
 
   const updateGuardrail = useUpdateGuardrail();
   const stageInfo = getGuardrailStage(guardrail);
-  // A fixed-stage guardrail is saved with the stage it always runs at.
-  const savedStage = stageInfo.configurable ? stage : stageInfo.stage;
+  const effectiveStage = stageInfo.configurable ? stage : stageInfo.stage;
 
   useEffect(() => {
     if (guardrail && open) {
@@ -47,9 +46,12 @@ const EditGuardrailDialog = ({ open, onClose, guardrail, gatewayId }) => {
     const config = {
       ...guardrail,
       action,
-      stage: savedStage,
       mode: resolveExecutionMode(guardrail),
     };
+    // A fixed-stage guardrail runs at its own stage whatever is stored, so its
+    // rule carries none: saving it never pushes a stage the org didn't choose.
+    if (stageInfo.configurable) config.stage = stage;
+    else delete config.stage;
     if (threshold !== "") config.threshold = Number(threshold);
 
     updateGuardrail.mutate(
@@ -111,7 +113,7 @@ const EditGuardrailDialog = ({ open, onClose, guardrail, gatewayId }) => {
           )}
           {/* The gateway records an org block after the LLM but returns the
               response until it acts on post-stage errors. */}
-          {action === "block" && savedStage !== "pre" && (
+          {action === "block" && effectiveStage !== "pre" && (
             <Alert severity="warning">
               Blocking after the LLM is not enforced yet: a flagged response is
               recorded and still returned.

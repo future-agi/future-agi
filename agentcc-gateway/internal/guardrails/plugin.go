@@ -86,10 +86,9 @@ func (p *GuardrailPlugin) ProcessRequest(ctx context.Context, rc *models.Request
 // ProcessResponse runs post-stage guardrails.
 func (p *GuardrailPlugin) ProcessResponse(ctx context.Context, rc *models.RequestContext) pipeline.PluginResult {
 	// The post pass also runs after a blocked request, a provider error or a
-	// timeout (no response), and for pass-through handlers whose response
-	// carries only usage. There is no output to check, and checks that fall
-	// back to the request would scan the prompt (and bill a vendor) again.
-	if rc.Response == nil || len(rc.Response.Choices) == 0 {
+	// timeout, with no response. There is no output to check, and checks that
+	// fall back to the request would scan the prompt (and bill a vendor) again.
+	if rc.Response == nil {
 		return pipeline.ResultContinue()
 	}
 
