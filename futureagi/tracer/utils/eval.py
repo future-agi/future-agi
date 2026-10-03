@@ -1062,6 +1062,7 @@ def _run_evaluation(
             "reference_id": observation_span.id,
             "is_futureagi_eval": futureagi_eval,
             "custom_eval_config_id": str(custom_eval_config.id),
+            "project_id": str(observation_span.project_id),
         }
         source_config.update(
             {
@@ -1801,6 +1802,7 @@ def _execute_evaluation(
         "reference_id": observation_span.id,
         "is_futureagi_eval": futureagi_eval,
         "custom_eval_config_id": str(custom_eval_config.id),
+        "project_id": str(observation_span.project_id),
         "mappings": run_params,
         "required_keys": list(run_params.keys()) if run_params else [],
         "span_id": str(observation_span.id),
@@ -3667,6 +3669,7 @@ def _execute_evaluation_for_trace(
         "reference_id": str(trace.id),
         "is_futureagi_eval": futureagi_eval,
         "custom_eval_config_id": str(custom_eval_config.id),
+        "project_id": str(trace.project_id),
         "mappings": run_params,
         "required_keys": list(run_params.keys()) if run_params else [],
         "trace_id": str(trace.id),
@@ -3919,6 +3922,7 @@ def _execute_evaluation_for_session(
         "reference_id": str(trace_session.id),
         "is_futureagi_eval": futureagi_eval,
         "custom_eval_config_id": str(custom_eval_config.id),
+        "project_id": str(trace_session.project_id),
         "mappings": run_params,
         "required_keys": list(run_params.keys()) if run_params else [],
         "session_id": str(trace_session.id),
