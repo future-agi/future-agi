@@ -68,3 +68,20 @@
   max-height: 900px;
   min-height: 300px;
 }
+
+/* TH-150: attachment cards are atomic Quill embeds. Their file name, size and
+   buttons are never selectable text (same rule as PR #2874). */
+.prompt-editor-card .ql-editor [data-image-data],
+.prompt-editor-card .ql-editor [data-audio-data],
+.prompt-editor-card .ql-editor [data-pdf-data],
+.prompt-editor-card .ql-editor > div[contenteditable="false"] {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Selected-state affordance for a card inside the current selection. */
+.prompt-editor-card .ql-editor .prompt-media-embed.is-selected {
+  outline: 2px solid var(--primary-main);
+  outline-offset: 2px;
+  border-radius: 8px;
+}

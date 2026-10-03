@@ -25,6 +25,24 @@ import "quill-mention/dist/quill.mention.css";
 import "quill-mention"; // Ensure it's available globally
 import "quill-mention/autoregister";
 import PdfBlot from "./Blots/PdfBlot";
+import { useSnackbar } from "src/components/snackbar";
+import { setEmbedCallbacks } from "./Blots/embedCallbacks";
+import { MEDIA_EMBED_CLASS } from "./Blots/MediaBlockEmbed";
+import { createPromptClipboardHandlers } from "./clipboard/promptClipboardHandlers";
+import { useClipboardProvenance } from "./clipboard/useClipboardProvenance";
+import {
+  EMBED_CONTROL_SELECTOR,
+  EMBED_NODE_SELECTOR,
+  embedIndexForNode,
+  embedIndicesInRange,
+  leafIsMediaEmbed,
+  selectAllRange,
+} from "./clipboard/selectionHelpers";
+import {
+  ALL_MEDIA_KINDS,
+  NO_MEDIA_KINDS,
+  OMISSION_MESSAGES,
+} from "./clipboard/constants";
 
 Quill.register("formats/EditVariable", EditVariableBolt);
 Quill.register("formats/ImageBlot", ImageBlot);
@@ -61,6 +79,10 @@ const PromptEditor = React.forwardRef(
       allVariablesValid = false,
       variableValidator,
       jinjaMode = false,
+      // Fail closed: a mount that never opts in cannot receive attachment
+      // references by paste (REQ-12). PromptCard/ExpandedPrompt pass the
+      // kinds their attach menu allows.
+      allowedMediaTypes = NO_MEDIA_KINDS,
     },
     quillRef,
   ) => {
@@ -68,9 +90,19 @@ const PromptEditor = React.forwardRef(
 
     const containerRef = useRef(null);
 
+    // TH-150: removing an attachment card edits only this editor's document
+    // (no storage request), is a single undoable user step, leaves the caret
+    // where the card was, and is refused in read-only editors.
+    const removeEmbedAt = useCallback((quill, index) => {
+      if (!quill || !quill.isEnabled()) return;
+      quill.deleteText(index, 1, "user");
+      quill.setSelection(index, 0, "silent");
+    }, []);
+
     const handleRemoveImage = useCallback(
       (imageId) => {
         const quill = quillRef.current;
+        if (!quill) return;
         const delta = quill.getContents();
         let index = 0;
         let found = false;
@@ -88,15 +120,16 @@ const PromptEditor = React.forwardRef(
         }
 
         if (found) {
-          quill.deleteText(index, 1, "api");
+          removeEmbedAt(quill, index);
         }
       },
-      [quillRef],
+      [quillRef, removeEmbedAt],
     );
 
     const handleRemoveAudio = useCallback(
       (audioId) => {
         const quill = quillRef.current;
+        if (!quill) return;
 
         const delta = quill.getContents();
         let index = 0;
@@ -115,15 +148,16 @@ const PromptEditor = React.forwardRef(
         }
 
         if (found) {
-          quill.deleteText(index, 1, "api");
+          removeEmbedAt(quill, index);
         }
       },
-      [quillRef],
+      [quillRef, removeEmbedAt],
     );
 
     const handleRemovePdf = useCallback(
       (pdfId) => {
         const quill = quillRef.current;
+        if (!quill) return;
 
         const delta = quill.getContents();
         let index = 0;
@@ -142,10 +176,10 @@ const PromptEditor = React.forwardRef(
         }
 
         if (found) {
-          quill.deleteText(index, 1, "api");
+          removeEmbedAt(quill, index);
         }
       },
-      [quillRef],
+      [quillRef, removeEmbedAt],
     );
 
     const defaultValue = useMemo(() => {
@@ -383,6 +417,47 @@ const PromptEditor = React.forwardRef(
       onTextChangeRef.current = onTextChange;
     });
 
+    // TH-150: clipboard provenance, omission notices and per-editor embed
+    // callbacks. The Quill handlers live outside React render, so they read
+    // the latest values through refs.
+    const getProvenance = useClipboardProvenance();
+    const { enqueueSnackbar } = useSnackbar();
+    const notifyRef = useRef(null);
+    notifyRef.current = (reason) => {
+      const message = OMISSION_MESSAGES[reason] || OMISSION_MESSAGES.invalid;
+      enqueueSnackbar?.(message, { variant: "warning" });
+    };
+    const allowedMediaTypesRef = useRef(allowedMediaTypes);
+    allowedMediaTypesRef.current = allowedMediaTypes;
+    const embedCallbacksRef = useRef({});
+    useLayoutEffect(() => {
+      embedCallbacksRef.current = {
+        handleRemoveImage,
+        handleRemoveAudio,
+        handleRemovePdf,
+        setSelectedImage,
+        openVariableEditor,
+        readOnly: Boolean(disabled),
+      };
+      if (quillRef.current) {
+        setEmbedCallbacks(quillRef.current, embedCallbacksRef.current);
+      }
+    });
+
+    // `readOnly` is only read by the Quill constructor; keep the instance in
+    // sync when the prop changes and re-render cards so mutating controls
+    // appear/disappear with it (REQ-11).
+    useEffect(() => {
+      const quill = quillRef.current;
+      if (!quill) return;
+      quill.enable(!disabled);
+      setEmbedCallbacks(quill, embedCallbacksRef.current);
+      quill.root.querySelectorAll(`.${MEDIA_EMBED_CLASS}`).forEach((node) => {
+        const blot = Quill.find(node, true);
+        if (blot && typeof blot.renderCard === "function") blot.renderCard();
+      });
+    }, [disabled, quillRef]);
+
     useEffect(() => {
       const formats = [
         "color",
@@ -407,6 +482,63 @@ const PromptEditor = React.forwardRef(
         readOnly: disabled,
         modules: {
           toolbar: false,
+          // TH-150: select-all scoped to this editor; one key removes exactly
+          // one adjacent attachment. Custom bindings run before Quill's
+          // defaults for the same key; returning true falls through to them.
+          keyboard: {
+            bindings: {
+              selectAll: {
+                key: "a",
+                shortKey: true,
+                handler() {
+                  const range = selectAllRange(this.quill);
+                  this.quill.setSelection(range.index, range.length, "user");
+                  return false;
+                },
+              },
+              deleteEmbedBackward: {
+                key: "Backspace",
+                collapsed: true,
+                handler(range) {
+                  if (!this.quill.isEnabled()) return false;
+                  if (range.index === 0) return true;
+                  if (!leafIsMediaEmbed(this.quill, range.index - 1))
+                    return true;
+                  this.quill.deleteText(range.index - 1, 1, "user");
+                  this.quill.setSelection(range.index - 1, 0, "silent");
+                  return false;
+                },
+              },
+              deleteEmbedForward: {
+                key: "Delete",
+                collapsed: true,
+                handler(range) {
+                  if (!this.quill.isEnabled()) return false;
+                  let target = -1;
+                  if (leafIsMediaEmbed(this.quill, range.index)) {
+                    target = range.index;
+                  } else {
+                    // Caret at the end of the text line just before a card:
+                    // the next character is that line's newline, so Quill's
+                    // own handler would try to merge the line into the card.
+                    // Remove the card instead, keep the line.
+                    const [line, offset] = this.quill.getLine(range.index);
+                    if (
+                      line &&
+                      offset === line.length() - 1 &&
+                      leafIsMediaEmbed(this.quill, range.index + 1)
+                    ) {
+                      target = range.index + 1;
+                    }
+                  }
+                  if (target < 0) return true;
+                  this.quill.deleteText(target, 1, "user");
+                  this.quill.setSelection(range.index, 0, "silent");
+                  return false;
+                },
+              },
+            },
+          },
           clipboard: {
             matchers: [
               [
@@ -529,6 +661,46 @@ const PromptEditor = React.forwardRef(
       quill.root.setAttribute("spellcheck", false);
 
       quillRef.current = quill;
+      setEmbedCallbacks(quill, embedCallbacksRef.current);
+
+      // TH-150: own copy/cut/paste on this editor (capture phase, see module).
+      const clipboardHandlers = createPromptClipboardHandlers({
+        quill,
+        getProvenance,
+        getAllowedMediaTypes: () => allowedMediaTypesRef.current,
+        notify: (reason) => notifyRef.current?.(reason),
+        makeId: getRandomId,
+      });
+      clipboardHandlers.attach();
+
+      // Clicking an attachment card (not its buttons) selects it as one block
+      // and keeps focus inside the editor, so a following Cmd/Ctrl+A,
+      // Backspace or Cmd/Ctrl+C acts on this editor rather than the page.
+      const onEmbedMouseDown = (event) => {
+        const target = event.target;
+        if (!target || typeof target.closest !== "function") return;
+        const embedNode = target.closest(EMBED_NODE_SELECTOR);
+        if (!embedNode || !quill.root.contains(embedNode)) return;
+        if (target.closest(EMBED_CONTROL_SELECTOR)) return;
+        const index = embedIndexForNode(quill, embedNode);
+        if (index < 0) return;
+        event.preventDefault();
+        quill.focus();
+        quill.setSelection(index, 1, "user");
+      };
+      quill.root.addEventListener("mousedown", onEmbedMouseDown);
+
+      // Visual selected state for atomic cards (their text is not selectable).
+      const syncSelectedEmbeds = (range) => {
+        quill.root
+          .querySelectorAll(`.${MEDIA_EMBED_CLASS}.is-selected`)
+          .forEach((node) => node.classList.remove("is-selected"));
+        if (!range || range.length === 0) return;
+        embedIndicesInRange(quill.getContents(), range).forEach(({ index }) => {
+          const [leaf] = quill.getLeaf(index);
+          leaf?.domNode?.classList?.add("is-selected");
+        });
+      };
 
       if (typeof inputRef === "function") {
         setTimeout(() => {
@@ -570,9 +742,12 @@ const PromptEditor = React.forwardRef(
 
       quill.on(Quill.events.TEXT_CHANGE, (...args) => {
         onTextChangeRef.current?.(...args);
+        // silent caret moves after delete/paste emit no selection-change
+        syncSelectedEmbeds(quill.getSelection());
       });
 
       quill.on(Quill.events.SELECTION_CHANGE, (...args) => {
+        syncSelectedEmbeds(args[0]);
         onSelectionChangeRef.current?.(...args);
       });
 
@@ -595,6 +770,15 @@ const PromptEditor = React.forwardRef(
         if (mentionModule) {
           mentionModule.hideMentionList();
         }
+
+        clipboardHandlers.detach();
+        quill.root.removeEventListener("mousedown", onEmbedMouseDown);
+
+        // Unmount the React roots of cards and variable chips still in the
+        // document; clearing innerHTML alone never detaches their blots.
+        quill.scroll
+          .descendants((blot) => typeof blot.unmountCard === "function")
+          .forEach((blot) => blot.unmountCard());
 
         quillRef.current = null;
         container.innerHTML = "";
@@ -690,6 +874,7 @@ PromptEditor.propTypes = {
   allVariablesValid: PropTypes.bool,
   variableValidator: PropTypes.func,
   jinjaMode: PropTypes.bool,
+  allowedMediaTypes: PropTypes.arrayOf(PropTypes.oneOf(ALL_MEDIA_KINDS)),
 };
 
 export default PromptEditor;

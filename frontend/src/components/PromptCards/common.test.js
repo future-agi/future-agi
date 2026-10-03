@@ -68,59 +68,85 @@ describe("getBlocks", () => {
     expect(getBlocks(quill)).toEqual([{ type: "text", text: "Hello world" }]);
   });
 
-  it("returns image block with snake_case inner keys", () => {
+  it("keeps the image blot's snake_case metadata on save", () => {
+    // ImageBlot.value() stores { url, img_name, img_size } in data-image-data,
+    // so imageData carries snake_case keys — there is no imgName/imgSize.
+    // (Reconciled with open PR #2707, which fixes the same overwrite.)
     const quill = mockQuill([
       {
         insert: {
           ImageBlot: {
-            imageData: { url: "https://img.com", imgName: "x", imgSize: 100 },
+            imageData: { url: "https://img.com", img_name: "x", img_size: 100 },
           },
         },
       },
     ]);
-    expect(getBlocks(quill)).toEqual([
-      {
-        type: "image_url",
-        image_url: {
-          url: "https://img.com",
-          imgName: "x",
-          imgSize: 100,
-          img_name: "x",
-          img_size: 100,
-        },
-      },
+    const [block] = getBlocks(quill);
+    expect(block).toEqual({
+      type: "image_url",
+      image_url: { url: "https://img.com", img_name: "x", img_size: 100 },
+    });
+    // After JSON serialization (what the save path sends) the block must still
+    // carry exactly the keys PromptEditor rebuilds the card from on reload.
+    expect(Object.keys(JSON.parse(JSON.stringify(block.image_url)))).toEqual([
+      "url",
+      "img_name",
+      "img_size",
     ]);
   });
 
-  it("returns audio block with snake_case inner keys", () => {
+  it("keeps the audio blot's snake_case metadata on save", () => {
+    // AudioBlot.value() stores snake_case keys in data-audio-data.
     const quill = mockQuill([
       {
         insert: {
           AudioBlot: {
             audioData: {
               url: "https://aud.io",
-              audioName: "a",
-              audioSize: 200,
-              audioType: "mp3",
+              audio_name: "a",
+              audio_size: 200,
+              audio_type: "mp3",
             },
           },
         },
       },
     ]);
-    expect(getBlocks(quill)).toEqual([
+    const [block] = getBlocks(quill);
+    expect(block).toEqual({
+      type: "audio_url",
+      audio_url: {
+        url: "https://aud.io",
+        audio_name: "a",
+        audio_size: 200,
+        audio_type: "mp3",
+      },
+    });
+    expect(Object.keys(JSON.parse(JSON.stringify(block.audio_url)))).toEqual([
+      "url",
+      "audio_name",
+      "audio_size",
+      "audio_type",
+    ]);
+  });
+
+  it("keeps the pdf blot's file_name and size on save (AC-9.1)", () => {
+    const quill = mockQuill([
       {
-        type: "audio_url",
-        audio_url: {
-          url: "https://aud.io",
-          audioName: "a",
-          audioSize: 200,
-          audioType: "mp3",
-          audio_name: "a",
-          audio_size: 200,
-          audio_type: "mp3",
+        insert: {
+          PdfBlot: {
+            pdfData: {
+              url: "https://pdf.dev",
+              pdf_name: "doc.pdf",
+              pdf_size: 300,
+            },
+          },
         },
       },
     ]);
+    const [block] = getBlocks(quill);
+    expect(block.pdf_url.file_name).toBe("doc.pdf");
+    expect(block.pdf_url.pdf_size).toBe(300);
+    expect(block.pdf_url.url).toBe("https://pdf.dev");
   });
 
   it("returns pdf block with snake_case key and renamed field", () => {
@@ -152,7 +178,7 @@ describe("getBlocks", () => {
       {
         insert: {
           ImageBlot: {
-            imageData: { url: "https://img.com", imgName: "x", imgSize: 100 },
+            imageData: { url: "https://img.com", img_name: "x", img_size: 100 },
           },
         },
       },
@@ -162,13 +188,7 @@ describe("getBlocks", () => {
       { type: "text", text: "before" },
       {
         type: "image_url",
-        image_url: {
-          url: "https://img.com",
-          imgName: "x",
-          imgSize: 100,
-          img_name: "x",
-          img_size: 100,
-        },
+        image_url: { url: "https://img.com", img_name: "x", img_size: 100 },
       },
       { type: "text", text: "after" },
     ]);
