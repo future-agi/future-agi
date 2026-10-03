@@ -2,15 +2,13 @@ import { Paper, Popper, ClickAwayListener, Stack } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useCallback, useMemo, useRef, useState } from "react";
 import { AGENT_NODE, NODE_TYPES } from "../utils/constants";
-import {
-  useGetNodeTemplates,
-  useGetReferenceableGraphs,
-} from "src/api/agent-playground/agent-playground";
-import { useAgentPlaygroundStoreShallow } from "../store";
+import { useGetNodeTemplates } from "src/api/agent-playground/agent-playground";
 import NodeCard from "./NodeCard";
 import PromptNodePopper from "./PromptNodePopper";
+import AgentNodeSetupDialog from "./AgentNodeSetupDialog";
 import { enqueueSnackbar } from "notistack";
 import useAddNodeOptimistic from "../AgentBuilder/hooks/useAddNodeOptimistic";
+import useAgentNodeInsertGuard from "../hooks/useAgentNodeInsertGuard";
 
 export default function NodeSelectionPopper({
   open,
@@ -22,14 +20,10 @@ export default function NodeSelectionPopper({
   const promptAnchorRef = useRef(null);
 
   const { addNode } = useAddNodeOptimistic();
+  const { guardNodeInsert, setupDialogProps } = useAgentNodeInsertGuard();
 
-  const { currentAgent } = useAgentPlaygroundStoreShallow((state) => ({
-    currentAgent: state.currentAgent,
-  }));
-  const { data: referenceableGraphs = [] } = useGetReferenceableGraphs(
-    currentAgent?.id,
-  );
-
+  // The Agent node is always listed (TH-4549). Whether it can be inserted
+  // right now is decided per click by useAgentNodeInsertGuard.
   const { data: templateNodes = [] } = useGetNodeTemplates();
   const nodesList = useMemo(
     () => [...templateNodes, AGENT_NODE],
@@ -50,11 +44,8 @@ export default function NodeSelectionPopper({
     onClose();
   }, [onClose]);
 
-  const handleNodeClick = useCallback(
+  const insertNode = useCallback(
     (nodeId, nodeTemplateId) => {
-      if (nodeId === NODE_TYPES.LLM_PROMPT) {
-        return;
-      }
       if (onNodeSelect) {
         onNodeSelect(nodeId, nodeTemplateId);
       } else {
@@ -64,9 +55,21 @@ export default function NodeSelectionPopper({
           node_template_id: nodeTemplateId,
         });
       }
+    },
+    [addNode, onNodeSelect],
+  );
+
+  const handleNodeClick = useCallback(
+    (nodeId, nodeTemplateId) => {
+      if (nodeId === NODE_TYPES.LLM_PROMPT) {
+        return;
+      }
+      // Eligible agents: inserts immediately, exactly as before. Otherwise the
+      // insert is deferred to the setup dialog, which outlives the closed menu.
+      guardNodeInsert(nodeId, () => insertNode(nodeId, nodeTemplateId));
       handleMainClose();
     },
-    [addNode, handleMainClose, onNodeSelect],
+    [guardNodeInsert, handleMainClose, insertNode],
   );
 
   return (
@@ -138,6 +141,8 @@ export default function NodeSelectionPopper({
               }
         }
       />
+
+      <AgentNodeSetupDialog {...setupDialogProps} />
     </>
   );
 }

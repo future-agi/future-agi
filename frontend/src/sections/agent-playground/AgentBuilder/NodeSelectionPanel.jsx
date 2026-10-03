@@ -2,14 +2,12 @@ import { Box, Skeleton, Stack } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useCallback, useMemo } from "react";
 import { useReactFlow } from "@xyflow/react";
-import { AGENT_NODE } from "../utils/constants";
-import {
-  useGetNodeTemplates,
-  useGetReferenceableGraphs,
-} from "src/api/agent-playground/agent-playground";
-import { useAgentPlaygroundStoreShallow } from "../store";
+import { AGENT_NODE, NODE_TYPES } from "../utils/constants";
+import { useGetNodeTemplates } from "src/api/agent-playground/agent-playground";
 import NodeCard from "../components/NodeCard";
+import AgentNodeSetupDialog from "../components/AgentNodeSetupDialog";
 import useAddNodeOptimistic from "./hooks/useAddNodeOptimistic";
+import useAgentNodeInsertGuard from "../hooks/useAgentNodeInsertGuard";
 
 const NodeCardSkeleton = () => (
   <Box sx={{ borderRadius: 1, padding: 0.5, width: "220px" }}>
@@ -31,23 +29,19 @@ const NodeCardSkeleton = () => (
 export default function NodeSelectionPanel({ width, disabled = false }) {
   const { addNode } = useAddNodeOptimistic();
   const { setCenter, getZoom } = useReactFlow();
+  const { guardNodeInsert, isAgentInsertReady, setupDialogProps } =
+    useAgentNodeInsertGuard();
 
-  const { currentAgent } = useAgentPlaygroundStoreShallow((state) => ({
-    currentAgent: state.currentAgent,
-  }));
-  const { data: referenceableGraphs = [] } = useGetReferenceableGraphs(
-    currentAgent?.id,
-  );
-
+  // The Agent node is always listed (TH-4549). Whether it can be inserted
+  // right now is decided per click by useAgentNodeInsertGuard.
   const { data: templateNodes = [], isLoading } = useGetNodeTemplates();
   const nodesList = useMemo(
     () => [...templateNodes, AGENT_NODE],
     [templateNodes],
   );
 
-  const handleNodeClick = useCallback(
+  const insertNode = useCallback(
     async (node) => {
-      if (disabled) return;
       const result = await addNode({
         type: node.id,
         position: undefined,
@@ -60,12 +54,28 @@ export default function NodeSelectionPanel({ width, disabled = false }) {
         });
       }
     },
-    [addNode, disabled, setCenter, getZoom],
+    [addNode, setCenter, getZoom],
+  );
+
+  const handleNodeClick = useCallback(
+    (node) => {
+      if (disabled) return;
+      guardNodeInsert(node.id, () => insertNode(node));
+    },
+    [disabled, guardNodeInsert, insertNode],
+  );
+
+  // Dragging onto the canvas bypasses the click guard, so the Agent card is
+  // only draggable while an eligible agent exists; otherwise clicking it
+  // opens the setup dialog instead of inserting an unusable node.
+  const isDraggable = useCallback(
+    (node) => !disabled && (node.id !== NODE_TYPES.AGENT || isAgentInsertReady),
+    [disabled, isAgentInsertReady],
   );
 
   const handleDragStart = useCallback(
     (event, node) => {
-      if (disabled) {
+      if (!isDraggable(node)) {
         event.preventDefault();
         return;
       }
@@ -78,7 +88,7 @@ export default function NodeSelectionPanel({ width, disabled = false }) {
       }
       event.dataTransfer.effectAllowed = "move";
     },
-    [disabled],
+    [isDraggable],
   );
 
   return (
@@ -112,9 +122,10 @@ export default function NodeSelectionPanel({ width, disabled = false }) {
           nodesList.map((node) => (
             <Box
               key={node.id}
+              data-testid={`sidebar-node-${node.id}`}
               onClick={() => handleNodeClick(node)}
               onDragStart={(e) => handleDragStart(e, node)}
-              draggable={!disabled}
+              draggable={isDraggable(node)}
               sx={{
                 borderRadius: 0.5,
                 overflow: "hidden",
@@ -129,6 +140,7 @@ export default function NodeSelectionPanel({ width, disabled = false }) {
           ))
         )}
       </Stack>
+      <AgentNodeSetupDialog {...setupDialogProps} />
     </Box>
   );
 }
