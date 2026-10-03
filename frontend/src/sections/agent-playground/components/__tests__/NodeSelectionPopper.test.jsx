@@ -426,8 +426,10 @@ describe("NodeSelectionPopper — Agent node without eligible agents (TH-4549)",
     expect(mockAddNode).not.toHaveBeenCalled();
   });
 
-  it("cancels the deferred Add when the originating node/edge anchor is gone", async () => {
-    const { enqueueSnackbar } = await import("notistack");
+  it("runs the deferred Add even after the hover-only '+' anchor unmounted (edge chrome is not the target)", async () => {
+    // AnimatedEdge renders its "+" only while hovered and closes hover when the
+    // popper closes, so by the time the user clicks Add the anchor element is
+    // detached. The source node still exists; the caller decides that.
     const detached = document.createElement("button"); // never appended: isConnected === false
     const onNodeSelect = vi.fn();
     const { rerender } = render(
@@ -449,8 +451,10 @@ describe("NodeSelectionPopper — Agent node without eligible agents (TH-4549)",
 
     fireEvent.click(screen.getByTestId("agent-node-setup-add"));
 
-    await waitFor(() => expect(enqueueSnackbar).toHaveBeenCalled());
-    expect(onNodeSelect).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(onNodeSelect).toHaveBeenCalledWith("agent", undefined),
+    );
+    expect(onNodeSelect).toHaveBeenCalledTimes(1);
     expect(mockAddNode).not.toHaveBeenCalled();
   });
 

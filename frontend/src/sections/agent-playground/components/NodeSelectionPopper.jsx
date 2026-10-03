@@ -60,27 +60,17 @@ export default function NodeSelectionPopper({
 
   // Always points at the newest insertNode so a *deferred* Agent insert (made
   // later from the setup dialog) runs the parent's current onNodeSelect — which
-  // re-checks running state and source position at that moment — instead of a
-  // closure frozen at click time (TH-4549, PRD R-13).
+  // re-reads running/read-only state and the source node at that moment —
+  // instead of a closure frozen at click time (TH-4549, PRD R-13). Whether the
+  // original target still exists is the caller's call (it owns the source node
+  // id); the "+" anchor is hover chrome on edges and says nothing about it.
   const latestInsertRef = useRef(insertNode);
   latestInsertRef.current = insertNode;
-  const anchorRef = useRef(anchorEl);
-  anchorRef.current = anchorEl;
 
-  const deferredInsert = useCallback((nodeId, nodeTemplateId) => {
-    // The "+" anchor lives inside the source node/edge. If it has been
-    // removed from the document, the retained target is gone: cancel rather
-    // than attaching the new node arbitrarily.
-    const anchor = anchorRef.current;
-    if (anchor && anchor.isConnected === false) {
-      enqueueSnackbar(
-        "The node this Agent node was going to attach to no longer exists. Choose a new target.",
-        { variant: "warning" },
-      );
-      return undefined;
-    }
-    return latestInsertRef.current(nodeId, nodeTemplateId);
-  }, []);
+  const deferredInsert = useCallback(
+    (nodeId, nodeTemplateId) => latestInsertRef.current(nodeId, nodeTemplateId),
+    [],
+  );
 
   const handleNodeClick = useCallback(
     (nodeId, nodeTemplateId) => {
