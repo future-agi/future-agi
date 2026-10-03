@@ -2,7 +2,8 @@
 // the same tab, signed-in user and organization. AC ids from PRD r1.2.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import React from "react";
-import { render, act } from "@testing-library/react";
+import { render } from "@testing-library/react";
+import PropTypes from "prop-types";
 import { AuthContext } from "src/auth/context/jwt/auth-context";
 import PromptEditor from "./PromptEditor";
 import { getBlocks } from "./common";
@@ -58,6 +59,13 @@ function Harness({ auth, prompts, refs, props = {} }) {
     </AuthContext.Provider>
   );
 }
+
+Harness.propTypes = {
+  auth: PropTypes.object.isRequired,
+  prompts: PropTypes.array.isRequired,
+  refs: PropTypes.array.isRequired,
+  props: PropTypes.object,
+};
 
 function mountPair(
   prompts,
