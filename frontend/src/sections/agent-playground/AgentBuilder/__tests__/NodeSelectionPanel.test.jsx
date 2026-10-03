@@ -31,6 +31,7 @@ const referenceableState = {
   isLoading: false,
   isFetching: false,
   isError: false,
+  error: null,
 };
 const mockRefetch = vi.fn();
 
@@ -56,6 +57,7 @@ const setReferenceable = (overrides) => {
     isLoading: false,
     isFetching: false,
     isError: false,
+    error: null,
     ...overrides,
   });
 };
@@ -93,7 +95,7 @@ describe("NodeSelectionPanel — Agent node discoverability (TH-4549)", () => {
     expect(mockAddNode).not.toHaveBeenCalled();
     expect(screen.getByTestId("agent-node-setup-dialog")).toBeInTheDocument();
     expect(
-      screen.getByText("No agents available to reference"),
+      screen.getByText("No eligible agents available here"),
     ).toBeInTheDocument();
   });
 
@@ -131,13 +133,22 @@ describe("NodeSelectionPanel — Agent node discoverability (TH-4549)", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("inserts the pending Agent node after a refresh finds eligible agents", async () => {
-    mockRefetch.mockResolvedValueOnce({ data: [{ id: "now-published" }] });
+  it("Refresh agents never inserts; explicit Add Agent node inserts the retained request", async () => {
+    mockRefetch.mockImplementationOnce(async () => {
+      setReferenceable({ data: [{ id: "now-published" }] });
+      return { data: [{ id: "now-published" }] };
+    });
     mockAddNode.mockResolvedValueOnce({ position: { x: 10, y: 20 } });
-    render(<NodeSelectionPanel width={240} />);
+    const { rerender } = render(<NodeSelectionPanel width={240} />);
     fireEvent.click(screen.getByTestId("sidebar-node-agent"));
 
     fireEvent.click(screen.getByTestId("agent-node-setup-refresh"));
+    await waitFor(() => expect(mockRefetch).toHaveBeenCalledTimes(1));
+    expect(mockAddNode).not.toHaveBeenCalled();
+
+    rerender(<NodeSelectionPanel width={240} />);
+    expect(screen.getByTestId("agent-node-setup-add")).toBeEnabled();
+    fireEvent.click(screen.getByTestId("agent-node-setup-add"));
 
     await waitFor(() =>
       expect(mockAddNode).toHaveBeenCalledWith({
@@ -151,6 +162,11 @@ describe("NodeSelectionPanel — Agent node discoverability (TH-4549)", () => {
         duration: 800,
         zoom: 1,
       }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId("agent-node-setup-dialog"),
+      ).not.toBeInTheDocument(),
     );
   });
 

@@ -47,17 +47,40 @@ export default function NodeSelectionPopper({
   const insertNode = useCallback(
     (nodeId, nodeTemplateId) => {
       if (onNodeSelect) {
-        onNodeSelect(nodeId, nodeTemplateId);
-      } else {
-        addNode({
-          type: nodeId,
-          position: undefined,
-          node_template_id: nodeTemplateId,
-        });
+        return onNodeSelect(nodeId, nodeTemplateId);
       }
+      return addNode({
+        type: nodeId,
+        position: undefined,
+        node_template_id: nodeTemplateId,
+      });
     },
     [addNode, onNodeSelect],
   );
+
+  // Always points at the newest insertNode so a *deferred* Agent insert (made
+  // later from the setup dialog) runs the parent's current onNodeSelect — which
+  // re-checks running state and source position at that moment — instead of a
+  // closure frozen at click time (TH-4549, PRD R-13).
+  const latestInsertRef = useRef(insertNode);
+  latestInsertRef.current = insertNode;
+  const anchorRef = useRef(anchorEl);
+  anchorRef.current = anchorEl;
+
+  const deferredInsert = useCallback((nodeId, nodeTemplateId) => {
+    // The "+" anchor lives inside the source node/edge. If it has been
+    // removed from the document, the retained target is gone: cancel rather
+    // than attaching the new node arbitrarily.
+    const anchor = anchorRef.current;
+    if (anchor && anchor.isConnected === false) {
+      enqueueSnackbar(
+        "The node this Agent node was going to attach to no longer exists. Choose a new target.",
+        { variant: "warning" },
+      );
+      return undefined;
+    }
+    return latestInsertRef.current(nodeId, nodeTemplateId);
+  }, []);
 
   const handleNodeClick = useCallback(
     (nodeId, nodeTemplateId) => {
@@ -65,11 +88,16 @@ export default function NodeSelectionPopper({
         return;
       }
       // Eligible agents: inserts immediately, exactly as before. Otherwise the
-      // insert is deferred to the setup dialog, which outlives the closed menu.
-      guardNodeInsert(nodeId, () => insertNode(nodeId, nodeTemplateId));
+      // insert is deferred to the setup dialog, which outlives the closed menu
+      // and re-validates the target when the user finally adds.
+      guardNodeInsert(
+        nodeId,
+        () => insertNode(nodeId, nodeTemplateId),
+        () => deferredInsert(nodeId, nodeTemplateId),
+      );
       handleMainClose();
     },
-    [guardNodeInsert, handleMainClose, insertNode],
+    [guardNodeInsert, handleMainClose, insertNode, deferredInsert],
   );
 
   return (
