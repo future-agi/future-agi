@@ -7,8 +7,10 @@ logic and are unit-tested directly; the wrappers add heartbeating and OTel
 context propagation, mirroring ``tfc/temporal/evaluations/activities.py``.
 """
 
+import structlog
 from django.db import close_old_connections
 from temporalio import activity
+from temporalio.exceptions import ApplicationError
 
 from tfc.telemetry import otel_sync_to_async
 from tfc.temporal.common.heartbeat import Heartbeater
@@ -33,6 +35,12 @@ from tfc.temporal.eval_tasks.types import (
     WorkflowLabelsOutput,
 )
 from tracer.services.eval_tasks.ch_guardrails import eval_ch_guardrails
+
+# One structured line per control step, so a task that stops draining is
+# visible on a dashboard instead of only in the entry table. Every field is a
+# count or task-level state: an eval entry's payload is customer data and never
+# goes in a log line.
+logger = structlog.get_logger(__name__)
 
 # =============================================================================
 # Synchronous helpers (the testable core)
@@ -91,7 +99,9 @@ def _run_entry_sync(entry_id: str) -> dict:
     Delegates to the ``run_entry`` service, which executes the eval, writes the
     result, and stamps the entry ``completed`` / ``errored`` / ``skipped`` plus
     its config hash. Returns ``"deleted"`` if the entry was soft-deleted mid-run
-    (a Delete & rerun landing while it ran), so the workflow just moves on.
+    (a Delete & rerun landing while it ran) or ``"reclaimed"`` if the row is no
+    longer under the claim the run took -- refused before the eval, or written
+    and fenced out after it -- so the workflow just moves on.
     """
     close_old_connections()
     try:
@@ -101,8 +111,14 @@ def _run_entry_sync(entry_id: str) -> dict:
         with eval_ch_guardrails():
             entry = EvalLogger.objects.filter(id=entry_id).first()
             if entry is None:
-                return {"entry_id": str(entry_id), "status": "deleted"}
-            return {"entry_id": str(entry_id), "status": str(run_entry(entry))}
+                return {"entry_id": str(entry_id), "task_id": "", "status": "deleted"}
+            return {
+                "entry_id": str(entry_id),
+                # Carried so the activity wrapper can log which task this run
+                # belonged to without ever naming the entry.
+                "task_id": str(entry.eval_task_id or ""),
+                "status": str(run_entry(entry)),
+            }
     finally:
         close_old_connections()
 
@@ -113,8 +129,20 @@ def _fail_entry_sync(entry_id: str) -> dict:
 
     ``run_entry`` self-converges for eval failures, so an activity reaching this
     path failed at the infra level, not the eval level. Only a still-running
-    entry is touched, so a late failure can't clobber a result that completed (or
-    a Delete & rerun that soft-deleted it) in the meantime.
+    entry is touched, and only under the claim this read saw, so a late failure
+    can't clobber a result that completed or a Delete & rerun that soft-deleted
+    the entry, and cannot race a claim taken between this read and its write.
+
+    The failed run's own claim is not available here -- the activity is handed
+    an entry id, the same reason ``run_entry``'s fence cannot see a claim
+    superseded before it began -- so this is a fence on the current claim, not
+    a check that the row is still the one that failed. What keeps those apart
+    from each other is upstream: the scheduled sweep asks Temporal before it
+    reaps, so no reaper retires the claim of a task whose workflow is still
+    progressing (``tracer.services.eval_tasks.recovery.recover_task``).
+
+    Returns ``"noop"`` when it wrote nothing, so the caller never records a
+    terminal outcome the entry table did not take.
     """
     close_old_connections()
     try:
@@ -129,37 +157,73 @@ def _fail_entry_sync(entry_id: str) -> dict:
         if entry is None:
             return {"entry_id": str(entry_id), "status": "noop"}
         config = CustomEvalConfig.objects.get(id=entry.custom_eval_config_id)
-        mark_terminal(
+        landed = mark_terminal(
             entry,
             EvalEntryStatus.ERRORED,
             config_hash=resolved_config_hash(config),
             error=True,
             error_message="run_entry activity failed after retries",
+            # This caller reads the row itself rather than running under a
+            # ``running_entry_epoch`` scope, so it fences on its own read.
+            epoch=entry.updated_at,
         )
+        if not landed:
+            return {"entry_id": str(entry_id), "status": "noop"}
         return {"entry_id": str(entry_id), "status": str(EvalEntryStatus.ERRORED)}
     finally:
         close_old_connections()
 
 
-def _reap_sync(task_id: str, older_than_seconds: int, max_attempts: int) -> dict:
+def _reap_sync(
+    task_id: str,
+    older_than_seconds: int,
+    max_attempts: int,
+    workflow_confirmed_stopped: bool = False,
+) -> dict:
     """Reclaim entries stuck running past ``older_than_seconds`` (e.g. a worker
     crashed mid-eval).
 
     Stale running entries go back to pending with ``attempts`` incremented;
     those already at ``max_attempts`` are marked errored so one poison row can't
-    loop forever. Returns ``{"requeued", "failed"}``. Called once at workflow
-    start to clear leftovers from a previous, crashed execution.
+    loop forever. Called at workflow start to clear leftovers from a
+    previous, crashed execution, and again while a drain waits for claims
+    too young to reclaim before it can finalize.
+
+    The requested threshold is raised to ``MIN_STALE_RUNNING_SECONDS`` unless
+    the starter's describe established that nothing was draining the task,
+    which ``workflow_confirmed_stopped`` carries. Blind, ``ReapInput``'s 600 s
+    default is inside the window an activity of a since-closed execution can
+    still be running in, and reaping there requeues a live run and pays for it
+    twice; with the describe behind it, 600 s is what Resume and Edit → Save
+    need in order to reclaim anything at all. The decision itself lives in
+    ``effective_stale_seconds``, and applying it here rather than in the
+    workflow keeps the threshold out of the replayed command stream.
+
+    Returns ``{"requeued", "failed", "older_than_seconds"}``, the last being the
+    threshold actually applied so the activity logs what it did, not what it
+    was asked for.
     """
     close_old_connections()
     try:
         from tracer.models.eval_task import EvalTask
-        from tracer.services.eval_tasks.reaper import reap_stale_running
+        from tracer.services.eval_tasks.reaper import (
+            effective_stale_seconds,
+            reap_stale_running,
+        )
 
+        stale_seconds = effective_stale_seconds(
+            older_than_seconds,
+            workflow_confirmed_stopped=workflow_confirmed_stopped,
+        )
         task = EvalTask.objects.get(id=task_id)
         requeued, failed = reap_stale_running(
-            task, older_than_seconds=older_than_seconds, max_attempts=max_attempts
+            task, older_than_seconds=stale_seconds, max_attempts=max_attempts
         )
-        return {"requeued": requeued, "failed": failed}
+        return {
+            "requeued": requeued,
+            "failed": failed,
+            "older_than_seconds": stale_seconds,
+        }
     finally:
         close_old_connections()
 
@@ -330,10 +394,41 @@ def _finalize_task_sync(task_id: str) -> dict:
 async def reconcile_eval_task_activity(
     input: ReconcileActivityInput,
 ) -> ReconcileActivityOutput:
-    async with Heartbeater():
-        result = await otel_sync_to_async(_reconcile_sync, thread_sensitive=False)(
-            input.task_id
-        )
+    from tracer.selectors.eval_tasks.row_resolver import (
+        EvalTaskReadBudgetExceeded,
+        EvalTaskSelectionRejected,
+    )
+
+    try:
+        async with Heartbeater():
+            result = await otel_sync_to_async(_reconcile_sync, thread_sensitive=False)(
+                input.task_id
+            )
+            logger.info(
+                "eval_task_reconciled",
+                task_id=result["task_id"],
+                created=result["created"],
+                requeued=result["requeued"],
+                dropped=result["dropped"],
+            )
+    except EvalTaskSelectionRejected as exc:
+        # Unsupported filters, row-count overflow, and ambiguous public span
+        # identities are deterministic task-contract failures. Retrying cannot
+        # change them, so preserve the historical fail-fast behavior.
+        raise ApplicationError(
+            str(exc),
+            type="EvalTaskSelectionRejected",
+            non_retryable=True,
+        ) from None
+    except EvalTaskReadBudgetExceeded as exc:
+        # Query timeout/resource pressure is transient. Let the activity's
+        # bounded Temporal policy retry it; continuous workflows then defer a
+        # still-exhausted reconcile without terminally failing the task.
+        raise ApplicationError(
+            str(exc),
+            type="EvalTaskReadBudgetExceeded",
+            non_retryable=False,
+        ) from None
     return ReconcileActivityOutput(
         task_id=result["task_id"],
         created=result["created"],
@@ -348,6 +443,12 @@ async def claim_eval_batch_activity(input: ClaimBatchInput) -> ClaimBatchOutput:
         result = await otel_sync_to_async(_claim_batch_sync, thread_sensitive=False)(
             input.task_id, input.n
         )
+    logger.info(
+        "eval_task_batch_claimed",
+        task_id=str(input.task_id),
+        claimed=len(result["entry_ids"]),
+        requested=input.n,
+    )
     return ClaimBatchOutput(entry_ids=result["entry_ids"])
 
 
@@ -357,6 +458,11 @@ async def run_eval_entry_activity(input: RunEntryInput) -> RunEntryOutput:
         result = await otel_sync_to_async(_run_entry_sync, thread_sensitive=False)(
             input.entry_id
         )
+    logger.info(
+        "eval_task_entry_run",
+        task_id=result["task_id"],
+        status=result["status"],
+    )
     return RunEntryOutput(entry_id=result["entry_id"], status=result["status"])
 
 
@@ -373,8 +479,18 @@ async def fail_eval_entry_activity(input: RunEntryInput) -> RunEntryOutput:
 async def reap_stale_running_activity(input: ReapInput) -> ReapOutput:
     async with Heartbeater():
         result = await otel_sync_to_async(_reap_sync, thread_sensitive=False)(
-            input.task_id, input.older_than_seconds, input.max_attempts
+            input.task_id,
+            input.older_than_seconds,
+            input.max_attempts,
+            input.workflow_confirmed_stopped,
         )
+    logger.info(
+        "eval_task_reaped",
+        task_id=str(input.task_id),
+        requeued=result["requeued"],
+        failed=result["failed"],
+        older_than_seconds=result["older_than_seconds"],
+    )
     return ReapOutput(requeued=result["requeued"], failed=result["failed"])
 
 
@@ -433,6 +549,14 @@ async def finalize_eval_task_activity(input: FinalizeInput) -> FinalizeOutput:
         result = await otel_sync_to_async(_finalize_task_sync, thread_sensitive=False)(
             input.task_id
         )
+    # Logged either way: a drain that ends without finalizing has entries
+    # stranded RUNNING, and that is the line an operator needs to see.
+    logger.info(
+        "eval_task_finalize_attempted",
+        task_id=result["task_id"],
+        finalized=result["finalized"],
+        status=result["status"],
+    )
     return FinalizeOutput(
         task_id=result["task_id"],
         finalized=result["finalized"],

@@ -32,18 +32,19 @@ read-only.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
-
-import clickhouse_connect
 
 from tracer.services.clickhouse.v2.id_remap_sql import (
     remap_left_join,
     resolved_id_expr,
 )
-from tracer.services.clickhouse.v2.query_settings import current_settings
+from tracer.services.clickhouse.v2.query_settings import (
+    application_read_settings,
+    current_settings,
+)
 
 
 # Field list that the eval runner actually reads off of an ObservationSpan.
@@ -223,6 +224,7 @@ _LEAN_SELECT_SQL = ", ".join(
 # ReplacingMergeTree(_version, is_deleted) engine already drops deleted rows under
 # FINAL, so the predicate is redundant and only arms the resurrection bug.
 _FINAL_SKIP_INDEX_SETTINGS = {"use_skip_indexes_if_final": 1}
+_FEED_TRACE_BATCH_SIZE = 1000
 
 # FINAL merges every part covering the queried key range, so its cost tracks the
 # project's span volume, not the number of ids asked for. On dev: a 500-id heavy
@@ -503,17 +505,41 @@ class CHSpanReader:
         username: str = "default",
         password: str = "",
         database: str = "default",
-        timeout_sec: int = 30,
+        timeout_sec: float = 9.5,
+        server_enforced_readonly: bool = False,
+        native_port: int | None = None,
     ):
-        self._client = clickhouse_connect.get_client(
-            host=host,
-            port=port,
-            username=username,
-            password=password,
-            database=database,
-            send_receive_timeout=timeout_sec,
-            settings=current_settings() or None,
-        )
+        if server_enforced_readonly:
+            if native_port is None:
+                raise ValueError(
+                    "native_port is required for a server-enforced read-only reader"
+                )
+            from tracer.services.clickhouse.server_readonly import (
+                ServerEnforcedReadOnlyNativeClient,
+            )
+
+            self._client = ServerEnforcedReadOnlyNativeClient(
+                host=host,
+                port=native_port,
+                username=username,
+                password=password,
+                database=database,
+                application_read=True,
+            )
+        else:
+            from tracer.services.clickhouse.application_read_transport import (
+                create_application_read_http_client,
+            )
+
+            self._client = create_application_read_http_client(
+                host=host,
+                port=port,
+                username=username,
+                password=password,
+                database=database,
+                send_receive_timeout=timeout_sec,  # Finite initialization only.
+                settings=current_settings() or None,
+            )
 
     def close(self) -> None:
         self._client.close()
@@ -574,11 +600,22 @@ class CHSpanReader:
         return join, predicate
 
     # ─── Single-row by id ────────────────────────────────────────────────────
-    def get(self, span_id: str, *, project_id: str | None = None) -> CHSpan | None:
+    def get(
+        self,
+        span_id: str,
+        *,
+        project_id: str | None = None,
+        project_ids: Iterable[str] | None = None,
+    ) -> CHSpan | None:
         """Equivalent to ObservationSpan.objects.get(id=span_id), returns None
         if absent (matches the pattern most callers wrap with try/except).
 
         ``project_id`` (optional) scopes to one tenant; omit for prior behavior.
+
+        ``project_ids`` (optional) restricts the read to a caller's projects.
+        A replay, re-import or shared provider account writes the same span id
+        into several projects; the most recently written live copy wins, the
+        rule the trace-detail read (``read_span_detail``) applies.
 
         ``id`` is below the primary-key prefix, so a bare ``id =`` read prunes
         only via the ``idx_id`` bloom — which CH 25.3 disables under FINAL by
@@ -589,18 +626,93 @@ class CHSpanReader:
         # No is_deleted predicate — see _FINAL_SKIP_INDEX_SETTINGS.
         where = ["id = %(span_id)s"]
         params: dict[str, Any] = {"span_id": span_id}
+        order_by = ""
         if project_id:
             where.append("project_id = %(pid)s")
             params["pid"] = str(project_id)
+        if project_ids is not None:
+            params["pids"] = tuple(dict.fromkeys(str(pid) for pid in project_ids))
+            if not params["pids"]:
+                return None
+            where.append("project_id IN %(pids)s")
+            order_by = (
+                " ORDER BY _version DESC, toString(project_id) DESC,"
+                " trace_id DESC, start_time DESC"
+            )
         rows = self._client.query(
             f"SELECT {_SELECT_SQL} FROM spans FINAL "
-            f"WHERE {' AND '.join(where)} LIMIT 1",
+            f"WHERE {' AND '.join(where)}{order_by} LIMIT 1",
             parameters=params,
             settings=_FINAL_SKIP_INDEX_SETTINGS,
         ).result_rows
         if not rows:
             return None
         return _row_to_chspan(rows[0])
+
+    def newest_trace_project(
+        self, trace_id: str, project_ids: Iterable[str]
+    ) -> str | None:
+        """The project holding the most recently written live copy of a trace.
+
+        The rule ``read_trace_detail`` applies when one trace id is written into
+        several of the caller's projects: newest live span version wins, ties
+        broken by project id. ``None`` when no project in ``project_ids`` holds
+        a live span of the trace.
+        """
+        return self.newest_trace_projects([trace_id], project_ids).get(str(trace_id))
+
+    def newest_trace_projects(
+        self, trace_ids: Iterable[str], project_ids: Iterable[str]
+    ) -> dict[str, str]:
+        """``{trace_id: project_id}``: :meth:`newest_trace_project` for many
+        traces in one read. A trace no project in ``project_ids`` holds live
+        is absent."""
+        tids = tuple(dict.fromkeys(str(tid) for tid in trace_ids))
+        pids = tuple(dict.fromkeys(str(pid) for pid in project_ids))
+        if not tids or not pids:
+            return {}
+        rows = self._client.query(
+            "SELECT toString(trace_id), toString(project_id) FROM ("
+            " SELECT project_id, trace_id,"
+            " argMax(is_deleted, _version) AS latest_is_deleted,"
+            " max(_version) AS latest_version"
+            " FROM spans"
+            " PREWHERE project_id IN %(pids)s AND trace_id IN %(tids)s"
+            " GROUP BY project_id, trace_id, id, start_time"
+            ") WHERE latest_is_deleted = 0"
+            " ORDER BY trace_id, latest_version DESC, toString(project_id) DESC"
+            " LIMIT 1 BY trace_id",
+            parameters={"pids": pids, "tids": tids},
+        ).result_rows
+        return {str(tid): str(pid) for tid, pid in rows}
+
+    def newest_span_projects(
+        self, span_ids: Iterable[str], project_ids: Iterable[str]
+    ) -> dict[str, str]:
+        """``{span_id: project_id}``: the project whose copy
+        ``get(span_id, project_ids=project_ids)`` returns, for many spans in one
+        read — the newest live version wins, ties broken as ``get`` breaks
+        them. Reads only the key columns, so a fat span cannot blow the memory
+        limit. A span no project in ``project_ids`` holds live is absent."""
+        ids = tuple(dict.fromkeys(str(sid) for sid in span_ids))
+        pids = tuple(dict.fromkeys(str(pid) for pid in project_ids))
+        if not ids or not pids:
+            return {}
+        rows = self._client.query(
+            "SELECT id, toString(project_id) FROM ("
+            " SELECT project_id, trace_id, id, start_time,"
+            " argMax(is_deleted, _version) AS latest_is_deleted,"
+            " max(_version) AS latest_version"
+            " FROM spans"
+            " PREWHERE project_id IN %(pids)s AND id IN %(ids)s"
+            " GROUP BY project_id, trace_id, id, start_time"
+            ") WHERE latest_is_deleted = 0"
+            " ORDER BY id, latest_version DESC, toString(project_id) DESC,"
+            " trace_id DESC, start_time DESC"
+            " LIMIT 1 BY id",
+            parameters={"pids": pids, "ids": ids},
+        ).result_rows
+        return {str(sid): str(pid) for sid, pid in rows}
 
     # ─── One trace's curated fields (the `traces` store the list endpoints read)
     def get_trace_row(
@@ -690,26 +802,42 @@ class CHSpanReader:
         ).result_rows
         return [_row_to_chspan(r) for r in rows]
 
-    def first_span_by_type(self, trace_id: str, observation_type: str) -> CHSpan | None:
+    def first_span_by_type(
+        self, trace_id: str, observation_type: str, *, project_id: str | None = None
+    ) -> CHSpan | None:
         """First span of a given type in a trace, ordered by start_time.
 
         Single-row CH read — replaces listing every span in a trace just to
         find the first LLM/TOOL/etc. span.
+
+        A trace id can be held by several projects (replays, re-imports).
+        Callers that know the trace's tenant must pass ``project_id``: it keeps
+        another project's copy out of the answer and prunes by the
+        primary-key prefix.
         """
         # No is_deleted predicate — see _FINAL_SKIP_INDEX_SETTINGS. Prunes via
         # the ``idx_trace_id`` bloom (off under FINAL without the setting).
+        where = ["trace_id = %(trace_id)s", "lower(observation_type) = %(otype)s"]
+        params: dict[str, Any] = {
+            "trace_id": trace_id,
+            "otype": observation_type.lower(),
+        }
+        if project_id:
+            where.append("project_id = %(pid)s")
+            params["pid"] = str(project_id)
         rows = self._client.query(
             f"SELECT {_LEAN_SELECT_SQL} FROM spans FINAL "
-            "WHERE trace_id = %(trace_id)s "
-            "AND lower(observation_type) = %(otype)s "
+            f"WHERE {' AND '.join(where)} "
             "ORDER BY start_time, id LIMIT 1",
-            parameters={"trace_id": trace_id, "otype": observation_type.lower()},
+            parameters=params,
             settings=_FINAL_SKIP_INDEX_SETTINGS,
         ).result_rows
         return _row_to_chspan(rows[0]) if rows else None
 
     # ─── All spans in a session ──────────────────────────────────────────────
-    def list_by_session(self, session_id: str) -> list[CHSpan]:
+    def list_by_session(
+        self, session_id: str, *, project_id: str | None = None
+    ) -> list[CHSpan]:
         """For session-level evals (`EvalLogger.target_type='session'`).
 
         P3b step1.5 (DESIGN §3 / id_remap_sql): ``session_id`` is the OLD curated
@@ -721,17 +849,26 @@ class CHSpanReader:
         stays the span's RAW id (these are real span rows). Pre-flip NO span
         matches a ``new_id``, so the resolved id == the span's own id and this is
         a byte-identical no-op (gate B).
+
+        ``project_id`` is optional for backward compatibility. Callers that know
+        the session's tenant must pass it so the primary-key prefix prunes the
+        read and duplicate ids cannot mix spans across projects.
         """
         remap_join = remap_left_join(
             "spans.trace_session_id", "trace_session_id_remap", "ts_remap"
         )
         resolved_ts = resolved_id_expr("spans.trace_session_id", "ts_remap")
+        where = [f"{resolved_ts} = %(session_id)s", "is_deleted = 0"]
+        params = {"session_id": session_id}
+        if project_id:
+            where.append("spans.project_id = %(project_id)s")
+            params["project_id"] = str(project_id)
         rows = self._client.query(
             f"SELECT {_SELECT_SQL} FROM spans FINAL "
             f"{remap_join} "
-            f"WHERE {resolved_ts} = %(session_id)s AND is_deleted = 0 "
+            f"WHERE {' AND '.join(where)} "
             "ORDER BY start_time, id",
-            parameters={"session_id": session_id},
+            parameters=params,
         ).result_rows
         return [_row_to_chspan(r) for r in rows]
 
@@ -1227,7 +1364,9 @@ class CHSpanReader:
         ).result_rows
         return [str(r[0]) for r in rows]
 
-    def scope_by_ids(self, span_ids: list[str]) -> dict[str, SpanScope]:
+    def scope_by_ids(
+        self, span_ids: list[str], *, project_ids: Iterable[str] | None = None
+    ) -> dict[str, SpanScope]:
         """Map ``span_id -> SpanScope(project_id, trace_id)``, reading ONLY those
         two columns instead of the full span row.
 
@@ -1240,14 +1379,25 @@ class CHSpanReader:
         panel-open must not OOM the shared cluster. ``FINAL`` is kept —
         project/trace are stable across versions and a two-column ``FINAL`` read
         stays well under the limit.
+
+        ``project_ids`` (optional) restricts the read to those projects. A span
+        id can exist in several projects, and unscoped the map keeps one
+        arbitrary copy per id.
         """
         if not span_ids:
             return {}
+        where = "id IN %(ids)s AND is_deleted = 0"
+        params: dict[str, Any] = {"ids": tuple(span_ids)}
+        if project_ids is not None:
+            params["pids"] = tuple(dict.fromkeys(str(pid) for pid in project_ids))
+            if not params["pids"]:
+                return {}
+            where += " AND project_id IN %(pids)s"
         rows = self._client.query(
             "SELECT id, toString(project_id) AS project_id, "
             "toString(trace_id) AS trace_id FROM spans FINAL "
-            "WHERE id IN %(ids)s AND is_deleted = 0",
-            parameters={"ids": tuple(span_ids)},
+            f"WHERE {where}",
+            parameters=params,
         ).result_rows
 
         def _norm(v: Any) -> str | None:
@@ -1322,18 +1472,10 @@ class CHSpanReader:
             "trace_id IN %(trace_ids)s",
             "(parent_span_id IS NULL OR parent_span_id = '')",
         ]
-        params: dict[str, Any] = {"trace_ids": tuple(trace_ids)}
+        params: dict[str, Any] = {}
         if project_ids:
             where.append("project_id IN %(project_ids)s")
             params["project_ids"] = tuple(project_ids)
-        rows = self._client.query(
-            f"SELECT toString(trace_id) AS trace_id, toString({resolved_ts}) AS tsid "
-            f"FROM spans FINAL {join} "
-            f"WHERE {' AND '.join(where)} "
-            "ORDER BY trace_id, start_time, id",
-            parameters=params,
-            settings=_FINAL_SKIP_INDEX_SETTINGS,
-        ).result_rows
 
         def _norm(v: Any) -> str | None:
             return (
@@ -1343,10 +1485,26 @@ class CHSpanReader:
             )
 
         result: dict[str, str | None] = {}
-        for tid, tsid in rows:
-            tid = str(tid)
-            if tid not in result:  # first root per trace wins
-                result[tid] = _norm(tsid)
+        # The driver expands trace_ids into SQL text. Keep each root lookup
+        # below ClickHouse's default max_query_size for large Feed clusters.
+        for start in range(0, len(trace_ids), _FEED_TRACE_BATCH_SIZE):
+            rows = self._client.query(
+                f"SELECT toString(trace_id) AS trace_id, toString({resolved_ts}) AS tsid "
+                f"FROM spans FINAL {join} "
+                f"WHERE {' AND '.join(where)} "
+                "ORDER BY trace_id, start_time, id",
+                parameters={
+                    **params,
+                    "trace_ids": tuple(
+                        trace_ids[start : start + _FEED_TRACE_BATCH_SIZE]
+                    ),
+                },
+                settings=_FINAL_SKIP_INDEX_SETTINGS,
+            ).result_rows
+            for tid, tsid in rows:
+                tid = str(tid)
+                if tid not in result:  # first root per trace wins
+                    result[tid] = _norm(tsid)
         return result
 
     # ─── Aggregations across many traces ──────────────────────────────────────
@@ -1665,26 +1823,33 @@ class CHSpanReader:
         resolved_eu = resolved_id_expr("rs.end_user_id")
         # No is_deleted predicate — see _FINAL_SKIP_INDEX_SETTINGS.
         inner_where = ["trace_id IN %(tids)s", "end_user_id IS NOT NULL"]
-        params: dict[str, Any] = {"tids": tuple(trace_ids)}
+        params: dict[str, Any] = {}
         if project_ids:
             inner_where.append("project_id IN %(pids)s")
             params["pids"] = tuple(project_ids)
-        rows = self._client.query(
-            "SELECT toString(trace_id) AS tid, "
-            f"toString({resolved_eu}) AS uid "
-            "FROM ("
-            "  SELECT trace_id, end_user_id FROM spans FINAL "
-            f"  WHERE {' AND '.join(inner_where)} "
-            ") AS rs "
-            f"{remap_join} "
-            f"GROUP BY toString(trace_id), toString({resolved_eu})",
-            parameters=params,
-            settings=_FINAL_SKIP_INDEX_SETTINGS,
-        ).result_rows
         out: dict[str, set[str]] = {tid: set() for tid in trace_ids}
-        for tid, uid in rows:
-            if uid and uid != "00000000-0000-0000-0000-000000000000":
-                out[tid].add(uid)
+        # clickhouse-connect renders tuple parameters into the SQL text. A
+        # large issue can have enough trace IDs to exceed CH's 256 KiB default
+        # max_query_size, even when the Feed page contains only one cluster.
+        for start in range(0, len(trace_ids), _FEED_TRACE_BATCH_SIZE):
+            rows = self._client.query(
+                "SELECT toString(trace_id) AS tid, "
+                f"toString({resolved_eu}) AS uid "
+                "FROM ("
+                "  SELECT trace_id, end_user_id FROM spans FINAL "
+                f"  WHERE {' AND '.join(inner_where)} "
+                ") AS rs "
+                f"{remap_join} "
+                f"GROUP BY toString(trace_id), toString({resolved_eu})",
+                parameters={
+                    **params,
+                    "tids": tuple(trace_ids[start : start + _FEED_TRACE_BATCH_SIZE]),
+                },
+                settings=_FINAL_SKIP_INDEX_SETTINGS,
+            ).result_rows
+            for tid, uid in rows:
+                if uid and uid != "00000000-0000-0000-0000-000000000000":
+                    out[tid].add(uid)
         return out
 
     # ─── End-user metrics (tasks/session.py user rollups) ─────────────────────
@@ -1866,6 +2031,9 @@ class CHSpanReader:
         session_id: str | list[str] | None = None,
         created_at_gte: datetime | None = None,
         created_at_range: tuple[datetime, datetime] | None = None,
+        created_at_half_open_range: tuple[datetime, datetime] | None = None,
+        start_time_gte: datetime | None = None,
+        start_time_range: tuple[datetime, datetime] | None = None,
         roots_only: bool = False,
     ) -> int:
         """Replaces ObservationSpan.objects.filter(<Q-object>).count() for
@@ -1878,6 +2046,12 @@ class CHSpanReader:
         ``roots_only`` counts one row per trace (root span = empty parent),
         turning this into a trace count — used where the PG path counted
         ``Trace`` rows in a window rather than spans.
+
+        ``start_time_*`` is the event-time contract for normal CH25 product
+        windows and enables partition/primary-key pruning. ``created_at_*`` is
+        retained only for callers that deliberately require ingestion-time
+        parity (legacy/arrival reconciliation); the two meanings are never
+        silently remapped.
 
         Codex wave-2 fixes (2026-05-26):
           • P1: created_at_* predicates target the CH `created_at` column
@@ -1937,6 +2111,21 @@ class CHSpanReader:
         if created_at_range:
             where.append("created_at BETWEEN %(cr_s)s AND %(cr_e)s")
             params["cr_s"], params["cr_e"] = created_at_range
+        if created_at_half_open_range:
+            where.append("created_at >= %(chr_s)s")
+            where.append("created_at < %(chr_e)s")
+            params["chr_s"], params["chr_e"] = created_at_half_open_range
+        # Normal CH25 product windows use event time: ``start_time`` is the
+        # partition/primary-key time column. Keep the created_at arguments
+        # above only for the retired/continuous arrival-parity callers that
+        # deliberately mean ingestion time.
+        if start_time_gte:
+            where.append("start_time >= %(stg)s")
+            params["stg"] = start_time_gte
+        if start_time_range:
+            where.append("start_time >= %(str_s)s")
+            where.append("start_time < %(str_e)s")
+            params["str_s"], params["str_e"] = start_time_range
         # roots_only counts distinct traces, not root rows — a trace with more
         # than one parentless span must count once (mirrors the GROUP BY tid /
         # first-root-per-trace dedupe elsewhere in this reader).
@@ -2210,13 +2399,19 @@ class CHSpanReader:
         params: dict[str, Any] | None = None,
         *,
         batch_size: int = 10_000,
+        settings: dict[str, Any] | None = None,
     ) -> Iterator[list[str]]:
         """Stream a query's first column as strings, re-chunked to ``batch_size``
         so neither the client nor the caller holds the full result in memory — a
         large historical scan can be consumed in waves."""
         batch: list[str] = []
+        query_settings = application_read_settings(
+            {**current_settings(), **(settings or {})}
+        )
         with self._client.query_row_block_stream(
-            sql, parameters=params or {}
+            sql,
+            parameters=params or {},
+            settings=query_settings,
         ) as stream:
             for block in stream:
                 for row in block:

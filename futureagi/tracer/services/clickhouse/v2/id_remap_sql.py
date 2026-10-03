@@ -64,6 +64,69 @@ def survivor_map_subquery(remap_table: str) -> str:
     )
 
 
+def bounded_survivor_map_subquery(
+    remap_table: str,
+    *,
+    candidate_param: str,
+) -> str:
+    """Return the exact survivor map only for groups touched by candidates.
+
+    Page-scoped reads already own a finite candidate id set.  Building the
+    global window-function map for every request can consume hundreds of MiB
+    before the actual page scan starts.  This equivalent shape first discovers
+    the finite set of touched ``new_id`` groups, then expands only those groups
+    to their old/new aliases.  ``candidate_param`` is a trusted builder-owned
+    parameter name, never request SQL.
+    """
+
+    if not candidate_param or not candidate_param.replace("_", "").isalnum():
+        raise ValueError("candidate remap parameter name is invalid")
+    placeholder = f"%({candidate_param})s"
+    return (
+        "SELECT any_id, "
+        "argMin(survivor_id, toString(survivor_id)) AS survivor_id FROM ("
+        "SELECT "
+        "arrayJoin(arrayDistinct(arrayConcat(groupArray(old_id), [new_id]))) "
+        "AS any_id, "
+        "argMin(old_id, toString(old_id)) AS survivor_id "
+        f"FROM {remap_table} FINAL "
+        "WHERE new_id IN ("
+        f"SELECT DISTINCT new_id FROM {remap_table} FINAL "
+        f"WHERE old_id IN {placeholder} OR new_id IN {placeholder}"
+        ") GROUP BY new_id"
+        ") GROUP BY any_id"
+    )
+
+
+def literal_survivor_map_subquery(
+    *,
+    any_ids_param: str,
+    survivor_ids_param: str,
+) -> str:
+    """Build a survivor map from caller-resolved finite parallel arrays.
+
+    Cursor selectors already classify their small dimension page against the
+    remap table before reading spans. Re-reading ``*_id_remap FINAL`` inside the
+    much larger span/enrichment statement raises peak memory even when the map's
+    *output* is tiny. This shape injects those exact ``any_id -> survivor_id``
+    pairs as query parameters, so the large statement never touches the remap
+    table. The caller must bind equal-length arrays; builders validate the pair
+    set before execution.
+    """
+
+    for param in (any_ids_param, survivor_ids_param):
+        if not param or not param.replace("_", "").isalnum():
+            raise ValueError("literal remap parameter name is invalid")
+    return (
+        "SELECT "
+        "toUUID(tupleElement(id_pair, 1)) AS any_id, "
+        "toUUID(tupleElement(id_pair, 2)) AS survivor_id "
+        "FROM (SELECT arrayJoin(arrayZip("
+        f"%({any_ids_param})s, %({survivor_ids_param})s"
+        ")) AS id_pair)"
+    )
+
+
 def resolved_id_expr(span_id_col: str, remap_alias: str = REMAP_ALIAS) -> str:
     """SQL for the resolved (survivor) id of ``span_id_col``: the joined map's
     ``survivor_id``, else the span's own id (zero-uuid/NULL guard — see module
@@ -88,6 +151,8 @@ def remap_left_join(
 
 __all__ = [
     "REMAP_ALIAS",
+    "bounded_survivor_map_subquery",
+    "literal_survivor_map_subquery",
     "resolved_id_expr",
     "remap_left_join",
     "survivor_map_subquery",

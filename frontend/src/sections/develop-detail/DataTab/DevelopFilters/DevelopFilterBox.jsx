@@ -13,6 +13,7 @@
 import {
   Autocomplete,
   Box,
+  Button,
   Checkbox,
   Chip,
   InputAdornment,
@@ -150,6 +151,11 @@ export const storeFilterToPanel = (storeFilter, columnLookup) => {
       : "dataset";
   return {
     field: storeFilter.columnId,
+    registryId:
+      storeFilter.registryId ||
+      storeFilter.propertyId ||
+      storeFilter.property_id ||
+      col?.registryId,
     fieldCategory: category,
     fieldType: panelType,
     operator: opStoreToPanel(storeFilter.filterConfig?.filterOp, panelType),
@@ -206,6 +212,7 @@ export const panelFilterToStore = (panelFilter) => {
   return {
     id: getRandomId(),
     columnId: panelFilter.field,
+    ...(panelFilter.registryId && { registryId: panelFilter.registryId }),
     filterConfig: {
       filterType: storeType,
       filterOp: opPanelToStore(panelFilter.operator, panelFilter.fieldType),
@@ -235,12 +242,30 @@ export const DatasetColumnValuePicker = ({
   freeSoloValues = false,
 }) => {
   const columnId = property?.id;
-  const { data: suggestions = [], isLoading } = useDatasetColumnValues({
+  const {
+    data: suggestions = [],
+    isLoading,
+    isError,
+    hasNextPage,
+    fetchNextPage,
+    isFetchingNextPage,
+  } = useDatasetColumnValues({
     datasetId: projectId,
     columnId,
     enabled: Boolean(projectId && columnId),
   });
   const [inputValue, setInputValue] = useState("");
+  const loadMoreControl = hasNextPage ? (
+    <Button
+      size="small"
+      variant="text"
+      disabled={isFetchingNextPage}
+      onClick={() => fetchNextPage()}
+      sx={{ alignSelf: "flex-start", minWidth: 0, px: 0.5, mt: 0.25 }}
+    >
+      {isFetchingNextPage ? "Loading more values…" : "Load more values"}
+    </Button>
+  ) : null;
 
   if (fieldType === "array" || freeSoloValues) {
     const arrVal = normalizePickerValues(value);
@@ -269,140 +294,164 @@ export const DatasetColumnValuePicker = ({
     };
 
     return (
-      <Autocomplete
-        multiple
-        freeSolo
-        size="small"
-        disableCloseOnSelect
-        options={optionsWithCustom}
-        value={arrVal}
-        inputValue={inputValue}
-        onInputChange={(_, newInputValue, reason) => {
-          if (reason === "reset") return;
-          if (newInputValue.includes(",")) {
-            commitInputValue(newInputValue);
-            return;
+      <Box sx={{ flex: 1, minWidth: 160, maxWidth: 320 }}>
+        <Autocomplete
+          multiple
+          freeSolo
+          size="small"
+          disableCloseOnSelect
+          options={optionsWithCustom}
+          value={arrVal}
+          inputValue={inputValue}
+          onInputChange={(_, newInputValue, reason) => {
+            if (reason === "reset") return;
+            if (newInputValue.includes(",")) {
+              commitInputValue(newInputValue);
+              return;
+            }
+            setInputValue(newInputValue);
+          }}
+          onChange={(_, newVal) => {
+            onChange(normalizePickerValues(newVal));
+          }}
+          loading={isLoading}
+          noOptionsText={
+            isError
+              ? "Suggestions unavailable. Enter an exact value."
+              : freeSoloValues
+                ? FREE_TEXT_NO_OPTIONS_TEXT
+                : undefined
           }
-          setInputValue(newInputValue);
-        }}
-        onChange={(_, newVal) => {
-          onChange(normalizePickerValues(newVal));
-        }}
-        loading={isLoading}
-        noOptionsText={freeSoloValues ? FREE_TEXT_NO_OPTIONS_TEXT : undefined}
-        getOptionLabel={(option) => String(option ?? "")}
-        isOptionEqualToValue={(option, selectedValue) =>
-          String(option ?? "") === String(selectedValue ?? "")
-        }
-        sx={{ flex: 1, minWidth: 160, maxWidth: 320 }}
-        renderOption={(props, option, { selected }) => {
-          const optionValue = String(option ?? "");
-          const isCustomOption =
-            showCustomOption &&
-            optionValue.toLowerCase() === customInputValue.toLowerCase();
-          return (
-            <Box
-              component="li"
-              {...props}
-              sx={{
-                display: "flex",
-                alignItems: "center",
-                gap: 1,
-                px: 1.5,
-                py: 0.75,
+          getOptionLabel={(option) => String(option ?? "")}
+          isOptionEqualToValue={(option, selectedValue) =>
+            String(option ?? "") === String(selectedValue ?? "")
+          }
+          sx={{ width: "100%" }}
+          renderOption={(props, option, { selected }) => {
+            const optionValue = String(option ?? "");
+            const isCustomOption =
+              showCustomOption &&
+              optionValue.toLowerCase() === customInputValue.toLowerCase();
+            return (
+              <Box
+                component="li"
+                {...props}
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 1,
+                  px: 1.5,
+                  py: 0.75,
+                }}
+              >
+                <Checkbox size="small" checked={selected} sx={{ p: 0 }} />
+                {isCustomOption ? (
+                  <Typography sx={{ fontSize: 12 }}>
+                    + Specify: <strong>{customInputValue}</strong>
+                  </Typography>
+                ) : (
+                  <Typography noWrap sx={{ fontSize: 12 }}>
+                    {optionValue}
+                  </Typography>
+                )}
+              </Box>
+            );
+          }}
+          renderTags={(tagValue, getTagProps) =>
+            tagValue.map((option, index) => (
+              <Chip
+                size="small"
+                label={option}
+                {...getTagProps({ index })}
+                key={option}
+                deleteIcon={<Iconify icon="mdi:close" width={10} />}
+                sx={{
+                  height: 20,
+                  fontSize: 10,
+                  maxWidth: 100,
+                  "& .MuiChip-label": { px: 0.5 },
+                }}
+              />
+            ))
+          }
+          renderInput={(params) => (
+            <TextField
+              {...params}
+              placeholder={arrVal.length ? "" : "Select values..."}
+              error={isError}
+              helperText={
+                isError
+                  ? "Suggestions unavailable; typed values still work."
+                  : freeSoloValues
+                    ? "Select one or more values (multi-select)"
+                    : ""
+              }
+              onKeyDown={(event) => {
+                if (
+                  (event.key === "Enter" || event.key === ",") &&
+                  inputValue.trim()
+                ) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  commitInputValue(inputValue);
+                }
               }}
-            >
-              <Checkbox size="small" checked={selected} sx={{ p: 0 }} />
-              {isCustomOption ? (
-                <Typography sx={{ fontSize: 12 }}>
-                  + Specify: <strong>{customInputValue}</strong>
-                </Typography>
-              ) : (
-                <Typography noWrap sx={{ fontSize: 12 }}>
-                  {optionValue}
-                </Typography>
-              )}
-            </Box>
-          );
-        }}
-        renderTags={(tagValue, getTagProps) =>
-          tagValue.map((option, index) => (
-            <Chip
-              size="small"
-              label={option}
-              {...getTagProps({ index })}
-              key={option}
-              deleteIcon={<Iconify icon="mdi:close" width={10} />}
-              sx={{
-                height: 20,
-                fontSize: 10,
-                maxWidth: 100,
-                "& .MuiChip-label": { px: 0.5 },
+              onBlur={() => commitInputValue(inputValue)}
+              InputProps={{
+                ...params.InputProps,
+                sx: { fontSize: 12, minHeight: 28, py: 0 },
               }}
             />
-          ))
-        }
-        renderInput={(params) => (
-          <TextField
-            {...params}
-            placeholder={arrVal.length ? "" : "Select values..."}
-            helperText={
-              freeSoloValues ? "Select one or more values (multi-select)" : ""
-            }
-            onKeyDown={(event) => {
-              if (
-                (event.key === "Enter" || event.key === ",") &&
-                inputValue.trim()
-              ) {
-                event.preventDefault();
-                event.stopPropagation();
-                commitInputValue(inputValue);
-              }
-            }}
-            onBlur={() => commitInputValue(inputValue)}
-            InputProps={{
-              ...params.InputProps,
-              sx: { fontSize: 12, minHeight: 28, py: 0 },
-            }}
-          />
-        )}
-      />
+          )}
+        />
+        {loadMoreControl}
+      </Box>
     );
   }
 
   // string / fallback — single text value with suggestion dropdown.
   const strVal = Array.isArray(value) ? value[0] || "" : value || "";
   return (
-    <Autocomplete
-      freeSolo
-      size="small"
-      options={suggestions}
-      value={strVal}
-      // onInputChange fires for both typing and option-pick so a user who
-      // types a novel substring still gets it flushed to the store.
-      onInputChange={(_, newVal) => onChange(newVal || "")}
-      loading={isLoading}
-      sx={{ flex: 1, minWidth: 140, maxWidth: 240 }}
-      renderInput={(params) => (
-        <TextField
-          {...params}
-          placeholder="Value"
-          InputProps={{
-            ...params.InputProps,
-            sx: { fontSize: 12, height: 28 },
-            startAdornment: (
-              <InputAdornment position="start" sx={{ mr: 0.5 }}>
-                <Iconify
-                  icon="mdi:pencil-outline"
-                  width={12}
-                  sx={{ color: "text.disabled" }}
-                />
-              </InputAdornment>
-            ),
-          }}
-        />
-      )}
-    />
+    <Box sx={{ flex: 1, minWidth: 140, maxWidth: 240 }}>
+      <Autocomplete
+        freeSolo
+        size="small"
+        options={suggestions}
+        value={strVal}
+        // onInputChange fires for both typing and option-pick so a user who
+        // types a novel substring still gets it flushed to the store.
+        onInputChange={(_, newVal) => onChange(newVal || "")}
+        loading={isLoading}
+        noOptionsText={
+          isError ? "Suggestions unavailable. Enter an exact value." : undefined
+        }
+        sx={{ width: "100%" }}
+        renderInput={(params) => (
+          <TextField
+            {...params}
+            placeholder="Value"
+            error={isError}
+            helperText={
+              isError ? "Suggestions unavailable; typed values still work." : ""
+            }
+            InputProps={{
+              ...params.InputProps,
+              sx: { fontSize: 12, height: 28 },
+              startAdornment: (
+                <InputAdornment position="start" sx={{ mr: 0.5 }}>
+                  <Iconify
+                    icon="mdi:pencil-outline"
+                    width={12}
+                    sx={{ color: "text.disabled" }}
+                  />
+                </InputAdornment>
+              ),
+            }}
+          />
+        )}
+      />
+      {loadMoreControl}
+    </Box>
   );
 };
 
@@ -417,8 +466,14 @@ export const buildProperties = (allColumns) => {
       const originType = colData?.origin_type;
       const isEval =
         originType === "evaluation" || originType === "evaluation_reason";
+      // Dataset-column registry identity is the immutable column UUID. AG Grid
+      // currently uses the same UUID as `field`, but prefer the catalog's
+      // canonical `col.id` so a display/accessor alias can never leak into
+      // property lookup, persisted filter state, or filter_values requests.
+      const columnId = colData?.id || column.field;
       return {
-        id: column.field || colData?.id,
+        id: columnId,
+        registryId: `dataset_column:${columnId}`,
         name: column.headerName || colData?.name || colData?.id,
         type: panelType,
         category: isEval ? "evaluation" : "dataset",
@@ -465,7 +520,7 @@ const DevelopFilterBox = () => {
     if (Array.isArray(allColumns)) {
       for (const column of allColumns) {
         const colData = column?.col;
-        const id = column.field || colData?.id;
+        const id = colData?.id || column.field;
         if (!id) continue;
         m[id] = column.headerName || colData?.name || colData?.id;
       }

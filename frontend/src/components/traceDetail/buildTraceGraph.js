@@ -5,8 +5,8 @@
  * 1. **Explicit**: If any span carries `graph.node.id` in its
  *    span_attributes, group by that ID and derive edges from
  *    `graph.node.parent_id`.
- * 2. **Inferred**: Group spans by `(observation_type, name)`,
- *    assign steps via timing overlap analysis, connect consecutive steps.
+ * 2. **Inferred nodes**: Group spans by `(observation_type, name)` and derive
+ *    edges only from the authoritative span-parent relation.
  *
  * Returns: { nodes: [...], edges: [...] } ready for AgentGraph/React Flow.
  */
@@ -66,6 +66,66 @@ function getGraphNodeName(span) {
   );
 }
 
+function numericSpanMetric(value) {
+  return Number.isFinite(value) && value >= 0 ? value : 0;
+}
+
+function createRecordedEdge(source, target) {
+  return {
+    source,
+    target,
+    transition_count: 0,
+    _total_latency_ms: 0,
+    total_tokens: 0,
+    total_cost: 0,
+    error_count: 0,
+    trace_count: 1,
+    is_self_loop: source === target,
+  };
+}
+
+function addTargetSpanMetrics(edge, span) {
+  edge.transition_count += 1;
+  edge._total_latency_ms += numericSpanMetric(span?.latency_ms);
+  edge.total_tokens += numericSpanMetric(span?.total_tokens);
+  edge.total_cost += numericSpanMetric(span?.cost);
+  if (span?.status === "ERROR") edge.error_count += 1;
+}
+
+function finalizeRecordedEdges(edges) {
+  return edges.map(({ _total_latency_ms: latencyTotal, ...edge }) => ({
+    ...edge,
+    avg_latency_ms:
+      edge.transition_count > 0
+        ? Math.round(latencyTotal / edge.transition_count)
+        : 0,
+  }));
+}
+
+/** Collapse the recorded span-parent relation into graph-node edges. */
+function buildRecordedHierarchyEdges(flatSpans, nodeIdForItem) {
+  const nodeIdBySpanId = new Map();
+  flatSpans.forEach((item) => {
+    const spanId = item.span?.id;
+    const nodeId = nodeIdForItem(item);
+    if (spanId && nodeId) nodeIdBySpanId.set(spanId, nodeId);
+  });
+
+  const edgeMap = new Map();
+  flatSpans.forEach((item) => {
+    const source = nodeIdBySpanId.get(item.parentSpanId);
+    const target = nodeIdForItem(item);
+    if (!source || !target) return;
+
+    const key = `${source}->${target}`;
+    const edge = edgeMap.get(key) || createRecordedEdge(source, target);
+    addTargetSpanMetrics(edge, item.span);
+    edgeMap.set(key, edge);
+  });
+
+  return finalizeRecordedEdges(Array.from(edgeMap.values()));
+}
+
 // ---------------------------------------------------------------------------
 // Strategy 1: Explicit graph attributes
 // ---------------------------------------------------------------------------
@@ -88,24 +148,25 @@ function buildExplicitGraph(flatSpans) {
         id: nodeId,
         name: displayName,
         type,
-        spanCount: 0,
-        totalLatency: 0,
-        totalTokens: 0,
-        totalCost: 0,
-        errorCount: 0,
+        span_count: 0,
+        _total_latency_ms: 0,
+        total_tokens: 0,
+        total_cost: 0,
+        error_count: 0,
+        trace_count: 1,
         evals: [],
         annotations: [],
       };
     }
 
     const node = nodeMap[nodeId];
-    node.spanCount += 1;
+    node.span_count += 1;
     if (!nodeToSpanIds[nodeId]) nodeToSpanIds[nodeId] = [];
     if (span.id) nodeToSpanIds[nodeId].push(span.id);
-    node.totalLatency += span.latency_ms || 0;
-    node.totalTokens += span.total_tokens || 0;
-    node.totalCost += span.cost || 0;
-    if (span.status === "ERROR") node.errorCount += 1;
+    node._total_latency_ms += span.latency_ms || 0;
+    node.total_tokens += span.total_tokens || 0;
+    node.total_cost += span.cost || 0;
+    if (span.status === "ERROR") node.error_count += 1;
     if (
       item.entry?._filterMatch === true ||
       item.entry?._filterMatch === undefined
@@ -123,44 +184,39 @@ function buildExplicitGraph(flatSpans) {
     if (parentNodeId && parentNodeId !== nodeId) {
       const edgeKey = `${parentNodeId}->${nodeId}`;
       if (!edgeMap[edgeKey]) {
-        edgeMap[edgeKey] = {
-          source: parentNodeId,
-          target: nodeId,
-          transitionCount: 0,
-        };
+        edgeMap[edgeKey] = createRecordedEdge(parentNodeId, nodeId);
       }
-      edgeMap[edgeKey].transitionCount += 1;
+      addTargetSpanMetrics(edgeMap[edgeKey], span);
     } else if (parentNodeId === nodeId) {
       // Self-loop
       const edgeKey = `${nodeId}->${nodeId}`;
       if (!edgeMap[edgeKey]) {
-        edgeMap[edgeKey] = {
-          source: nodeId,
-          target: nodeId,
-          transitionCount: 0,
-          isSelfLoop: true,
-        };
+        edgeMap[edgeKey] = createRecordedEdge(nodeId, nodeId);
       }
-      edgeMap[edgeKey].transitionCount += 1;
+      addTargetSpanMetrics(edgeMap[edgeKey], span);
     }
   }
 
   // Compute averages
-  const nodes = Object.values(nodeMap).map((n) => ({
-    ...n,
-    avgLatencyMs:
-      n.spanCount > 0 ? Math.round(n.totalLatency / n.spanCount) : 0,
-  }));
+  const nodes = Object.values(nodeMap).map(
+    ({ _total_latency_ms: latencyTotal, ...node }) => ({
+      ...node,
+      avg_latency_ms:
+        node.span_count > 0 ? Math.round(latencyTotal / node.span_count) : 0,
+    }),
+  );
 
   return {
     nodes,
-    edges: Object.values(edgeMap),
+    edges: finalizeRecordedEdges(Object.values(edgeMap)),
+    // graph.node.parent_id is topology, not chronological execution order.
+    path_edges: [],
     nodeToSpanIds,
   };
 }
 
 // ---------------------------------------------------------------------------
-// Strategy 2: Timing-based inference
+// Strategy 2: Inferred nodes with recorded span hierarchy
 // ---------------------------------------------------------------------------
 
 /** Group key for a span: "type:name" */
@@ -170,73 +226,12 @@ function spanGroupKey(span) {
   return `${type}:${name}`;
 }
 
-/**
- * Assign step numbers using timing overlap analysis.
- * Spans that overlap in time → same step (parallel).
- * Sequential spans → consecutive steps.
- */
-function assignSteps(flatSpans) {
-  if (flatSpans.length === 0) return [];
-
-  // Sort by start time
-  const sorted = [...flatSpans].sort((a, b) => {
-    const aTime = new Date(a.span.start_time || 0).getTime();
-    const bTime = new Date(b.span.start_time || 0).getTime();
-    return aTime - bTime;
-  });
-
-  const result = [];
-  let currentStep = 0;
-  let currentGroupEnd = 0;
-
-  for (const item of sorted) {
-    const startMs = new Date(item.span.start_time || 0).getTime();
-    const endMs = new Date(item.span.end_time || startMs).getTime();
-
-    if (startMs >= currentGroupEnd && result.length > 0) {
-      // New step — this span starts after the previous group ended
-      currentStep++;
-    }
-
-    result.push({ ...item, step: currentStep });
-    currentGroupEnd = Math.max(currentGroupEnd, endMs);
-  }
-
-  // Enforce parent-child constraints: child step must be > parent step
-  const spanSteps = {};
-  for (const item of result) {
-    spanSteps[item.span.id] = item.step;
-  }
-
-  let changed = true;
-  let iterations = 0;
-  while (changed && iterations < 500) {
-    changed = false;
-    iterations++;
-    for (const item of result) {
-      if (item.parentSpanId && spanSteps[item.parentSpanId] !== undefined) {
-        const parentStep = spanSteps[item.parentSpanId];
-        if (item.step <= parentStep) {
-          item.step = parentStep + 1;
-          spanSteps[item.span.id] = item.step;
-          changed = true;
-        }
-      }
-    }
-  }
-
-  return result;
-}
-
 function buildInferredGraph(flatSpans) {
-  const steppedSpans = assignSteps(flatSpans);
-
   // Group by spanGroupKey, aggregating metrics
   const nodeMap = {}; // groupKey -> node data
-  const nodeSteps = {}; // groupKey -> Set of steps this node appears at
   const nodeToSpanIds = {}; // groupKey -> [spanId1, spanId2, ...]
 
-  for (const item of steppedSpans) {
+  for (const item of flatSpans) {
     const key = spanGroupKey(item.span);
     const type = item.span.observation_type || "unknown";
     const name = item.span.name || "unnamed";
@@ -246,25 +241,25 @@ function buildInferredGraph(flatSpans) {
         id: key,
         name,
         type,
-        spanCount: 0,
-        totalLatency: 0,
-        totalTokens: 0,
-        totalCost: 0,
-        errorCount: 0,
+        span_count: 0,
+        _total_latency_ms: 0,
+        total_tokens: 0,
+        total_cost: 0,
+        error_count: 0,
+        trace_count: 1,
         evals: [],
         annotations: [],
       };
-      nodeSteps[key] = new Set();
     }
 
     const node = nodeMap[key];
-    node.spanCount += 1;
+    node.span_count += 1;
     if (!nodeToSpanIds[key]) nodeToSpanIds[key] = [];
     if (item.span.id) nodeToSpanIds[key].push(item.span.id);
-    node.totalLatency += item.span.latency_ms || 0;
-    node.totalTokens += item.span.total_tokens || 0;
-    node.totalCost += item.span.cost || 0;
-    if (item.span.status === "ERROR") node.errorCount += 1;
+    node._total_latency_ms += item.span.latency_ms || 0;
+    node.total_tokens += item.span.total_tokens || 0;
+    node.total_cost += item.span.cost || 0;
+    if (item.span.status === "ERROR") node.error_count += 1;
     // Track if any span in this node group matched the filter
     if (
       item.entry?._filterMatch === true ||
@@ -276,82 +271,25 @@ function buildInferredGraph(flatSpans) {
     const entryAnnotations = item.entry?.annotations || [];
     if (entryEvals.length) node.evals.push(...entryEvals);
     if (entryAnnotations.length) node.annotations.push(...entryAnnotations);
-    nodeSteps[key].add(item.step);
-  }
-
-  // Build edges from parent→child relationships (grouped)
-  const edgeMap = {};
-  for (const item of steppedSpans) {
-    if (!item.parentSpanId) continue;
-
-    const childKey = spanGroupKey(item.span);
-    // Find parent span to get its group key
-    const parentItem = steppedSpans.find(
-      (s) => s.span.id === item.parentSpanId,
-    );
-    if (!parentItem) continue;
-
-    const parentKey = spanGroupKey(parentItem.span);
-    if (parentKey === childKey) {
-      // Self-loop
-      const edgeKey = `${childKey}->${childKey}`;
-      if (!edgeMap[edgeKey]) {
-        edgeMap[edgeKey] = {
-          source: childKey,
-          target: childKey,
-          transitionCount: 0,
-          isSelfLoop: true,
-        };
-      }
-      edgeMap[edgeKey].transitionCount += 1;
-    } else {
-      const edgeKey = `${parentKey}->${childKey}`;
-      if (!edgeMap[edgeKey]) {
-        edgeMap[edgeKey] = {
-          source: parentKey,
-          target: childKey,
-          transitionCount: 0,
-        };
-      }
-      edgeMap[edgeKey].transitionCount += 1;
-    }
-  }
-
-  // Also add step-based sequential edges for nodes without parent-child edges
-  const stepToNodes = {};
-  for (const item of steppedSpans) {
-    const key = spanGroupKey(item.span);
-    if (!stepToNodes[item.step]) stepToNodes[item.step] = new Set();
-    stepToNodes[item.step].add(key);
-  }
-
-  const stepNumbers = Object.keys(stepToNodes)
-    .map(Number)
-    .sort((a, b) => a - b);
-  for (let i = 0; i < stepNumbers.length - 1; i++) {
-    const currentNodes = stepToNodes[stepNumbers[i]];
-    const nextNodes = stepToNodes[stepNumbers[i + 1]];
-    for (const src of currentNodes) {
-      for (const tgt of nextNodes) {
-        if (src === tgt) continue; // skip self-loops from step edges
-        const edgeKey = `${src}->${tgt}`;
-        if (!edgeMap[edgeKey]) {
-          edgeMap[edgeKey] = { source: src, target: tgt, transitionCount: 1 };
-        }
-      }
-    }
   }
 
   // Compute averages
-  const nodes = Object.values(nodeMap).map((n) => ({
-    ...n,
-    avgLatencyMs:
-      n.spanCount > 0 ? Math.round(n.totalLatency / n.spanCount) : 0,
-  }));
+  const nodes = Object.values(nodeMap).map(
+    ({ _total_latency_ms: latencyTotal, ...node }) => ({
+      ...node,
+      avg_latency_ms:
+        node.span_count > 0 ? Math.round(latencyTotal / node.span_count) : 0,
+    }),
+  );
 
   return {
     nodes,
-    edges: Object.values(edgeMap),
+    edges: buildRecordedHierarchyEdges(flatSpans, (item) =>
+      spanGroupKey(item.span),
+    ),
+    // Parent/child hierarchy plus timestamps is a partial order. It cannot
+    // prove one chronological path through concurrent or sibling spans.
+    path_edges: [],
     nodeToSpanIds,
   };
 }
@@ -377,22 +315,24 @@ function addSentinels(graph) {
     id: "__start__",
     name: "Start",
     type: "start",
-    spanCount: 0,
-    avgLatencyMs: 0,
-    totalTokens: 0,
-    totalCost: 0,
-    errorCount: 0,
+    span_count: 0,
+    avg_latency_ms: 0,
+    total_tokens: 0,
+    total_cost: 0,
+    error_count: 0,
+    trace_count: 1,
   };
 
   const endNode = {
     id: "__end__",
     name: "End",
     type: "end",
-    spanCount: 0,
-    avgLatencyMs: 0,
-    totalTokens: 0,
-    totalCost: 0,
-    errorCount: 0,
+    span_count: 0,
+    avg_latency_ms: 0,
+    total_tokens: 0,
+    total_cost: 0,
+    error_count: 0,
+    trace_count: 1,
   };
 
   // Find root nodes (never appear as edge target)
@@ -412,24 +352,42 @@ function addSentinels(graph) {
     ...rootIds.map((n) => ({
       source: "__start__",
       target: n.id,
-      transitionCount: 1,
+      transition_count: 1,
+      avg_latency_ms: 0,
+      total_tokens: 0,
+      total_cost: 0,
+      error_count: 0,
+      trace_count: 1,
+      is_self_loop: false,
     })),
     ...leafIds.map((n) => ({
       source: n.id,
       target: "__end__",
-      transitionCount: 1,
+      transition_count: 1,
+      avg_latency_ms: 0,
+      total_tokens: 0,
+      total_cost: 0,
+      error_count: 0,
+      trace_count: 1,
+      is_self_loop: false,
     })),
   ];
 
   return {
     nodes: [startNode, ...graph.nodes, endNode],
     edges: [...graph.edges, ...newEdges],
+    path_edges: graph.path_edges,
     nodeToSpanIds: graph.nodeToSpanIds || {},
   };
 }
 
 export function buildTraceGraph(spanTree) {
-  if (!spanTree?.length) return { nodes: [], edges: [] };
+  if (!Array.isArray(spanTree)) {
+    throw new Error("Trace graph requires a span-tree array");
+  }
+  if (spanTree.length === 0) {
+    return { nodes: [], edges: [], path_edges: [], nodeToSpanIds: {} };
+  }
 
   const flatSpans = flattenTree(spanTree);
 

@@ -198,8 +198,23 @@ def _scrub_deployment_telemetry_event(event: dict) -> dict:
     # though the inbound branch scrubbed the request body. Walk breadcrumbs
     # unconditionally and strip body fields whose ``url`` points at a telemetry
     # path before running the inbound scrub.
-    for breadcrumb in event.get("breadcrumbs", {}).get("values", []) or []:
+    breadcrumbs = event.get("breadcrumbs") or []
+    # Sentry SDK versions do not agree on the normalized breadcrumb shape:
+    # error events commonly expose {"values": [...]}, while transaction
+    # events can already expose the values list.  The scrubber runs inside
+    # ``before_send_transaction`` and must never turn a successful request
+    # into a 500 merely because the SDK chose the latter representation.
+    if isinstance(breadcrumbs, dict):
+        breadcrumbs = breadcrumbs.get("values") or []
+    if not isinstance(breadcrumbs, (list, tuple)):
+        breadcrumbs = []
+
+    for breadcrumb in breadcrumbs:
+        if not isinstance(breadcrumb, dict):
+            continue
         data = breadcrumb.get("data") or {}
+        if not isinstance(data, dict):
+            continue
         if _is_telemetry_url(data.get("url")):
             for key in ("body", "data", "http.request.body", "request_body"):
                 data.pop(key, None)

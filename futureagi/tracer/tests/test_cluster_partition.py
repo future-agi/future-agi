@@ -27,14 +27,10 @@ one-line change rather than a code change.
 """
 
 import re
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from tracer.queries import scan_clustering
 from tracer.queries.scan_clustering import find_nearest_centroid
-
-
-def _executed(mock_db):
-    return mock_db.return_value.client.execute.call_args_list[-1]
 
 
 def _norm(sql: str) -> str:
@@ -42,12 +38,13 @@ def _norm(sql: str) -> str:
 
 
 def _run(embedding=(0.1, 0.2), category="Context Handling Failures"):
+    db = MagicMock()
+    db.execute_read.return_value = []
     with patch(
-        "tracer.queries.scan_clustering.ClickHouseVectorDB"
-    ) as db, patch("tracer.queries.scan_clustering.ensure_centroid_table"):
-        db.return_value.client.execute.return_value = []
+        "tracer.queries.scan_clustering.ClickHouseVectorDB", return_value=db
+    ), patch("tracer.queries.scan_clustering.ensure_centroid_table"):
         find_nearest_centroid(list(embedding), "proj-1", category)
-    return _executed(db)
+    return db.execute_read.call_args_list[-1]
 
 
 class TestCategoryPartitionEnabled:

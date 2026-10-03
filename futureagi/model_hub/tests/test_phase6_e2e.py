@@ -402,6 +402,7 @@ class TestAnnotationLabelsForProject:
         Score.objects.create(
             source_type="observation_span",
             observation_span=observation_span,
+            tracer_project_id=observe_project.id,
             label=queue_no_project_label,
             value={"rating": 3},
             score_source="human",
@@ -423,6 +424,7 @@ class TestAnnotationLabelsForProject:
         Score.objects.create(
             source_type="trace",
             trace=trace,
+            tracer_project_id=observe_project.id,
             label=queue_no_project_label,
             value={"value": "up"},
             score_source="human",
@@ -470,6 +472,7 @@ class TestAnnotationLabelsForProject:
         Score.objects.create(
             source_type="observation_span",
             observation_span=observation_span,
+            tracer_project_id=observe_project.id,
             label=queue_no_project_label,
             value={"rating": 2},
             score_source="human",

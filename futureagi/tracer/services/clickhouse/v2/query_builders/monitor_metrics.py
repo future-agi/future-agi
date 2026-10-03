@@ -25,5 +25,7 @@ class MonitorMetricsQueryBuilderV2(V2RewriteMixin, MonitorMetricsQueryBuilder):
     the rewrite-safe ``deleted``-based form, so nothing needs excluding.
     """
 
+    _SPANS_TIME_COLUMN = "start_time"
+
 
 __all__ = ["MonitorMetricsQueryBuilderV2"]

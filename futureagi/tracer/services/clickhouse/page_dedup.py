@@ -28,12 +28,13 @@ page N transfers ``N*page_size + 2*page_size`` — a few MB even hundreds of
 pages deep, versus the whole window under the old ``LIMIT 1 BY``.
 """
 
+from collections.abc import Sequence
 from typing import Any
 
 
 def paginate_deduped(
     rows: list[dict],
-    key_field: str,
+    key_field: str | Sequence[str],
     page_number: int,
     page_size: int,
 ) -> tuple[list[dict[str, Any]], bool]:
@@ -41,7 +42,9 @@ def paginate_deduped(
 
     Args:
         rows: The sorted prefix ``[0, offset + 2*page_size)`` from Phase 1.
-        key_field: Row key to de-duplicate on (``"id"`` / ``"trace_id"``).
+        key_field: Row key to de-duplicate on (``"id"`` / ``"trace_id"``),
+            or a sequence of fields for a composite identity. Span IDs are
+            trace-scoped, so span callers use ``("trace_id", "id")``.
         page_number: Zero-based page index.
         page_size: Rows per page.
 
@@ -50,10 +53,14 @@ def paginate_deduped(
         at least one more de-duplicated row exists beyond it.
     """
     offset = page_number * page_size
-    seen: set[str] = set()
+    key_fields = (key_field,) if isinstance(key_field, str) else tuple(key_field)
+    if not key_fields:
+        raise ValueError("key_field must contain at least one field")
+
+    seen: set[tuple[str, ...]] = set()
     deduped: list[dict[str, Any]] = []
     for row in rows:
-        key = str(row.get(key_field, ""))
+        key = tuple(str(row.get(field, "")) for field in key_fields)
         if key in seen:
             continue
         seen.add(key)

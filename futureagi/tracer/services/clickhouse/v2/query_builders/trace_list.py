@@ -1,48 +1,2432 @@
 """
 v2 TraceList query builder — targets the CH 25.3 spans schema.
 
-Same pattern as v2/span_list.py: SUBCLASS the v1 builder, rewrite the
-compiled SQL output. The v1 TraceList builder reads from `spans` (legacy
-24.10 columns) plus joins to `tracer_eval_logger` and `model_hub_score`.
+The schema-aware core reuses the legacy filter planner. Physical replacement
+and page replay live in a separate mixin shared with voice calls, so callers
+can adopt the CH25 identity contract without changing acquisition policies.
+`V2RewriteMixin` translates SQL at the public builder boundary.
 
-`V2RewriteMixin` routes every inherited `build*` method's SQL through the v2
-rewriter at one boundary (no per-method overrides). The only locally-defined
-method is `build_count_query`, which carries a rollup fast-path; its SQL is
-rewritten by the mixin just like every other.
-
-`build_eval_query` / `build_annotation_query` are excluded from the rewrite:
-they read the legacy `tracer_eval_logger` / `model_hub_score` tables, which are
-NOT part of the CH 25.3 migration and still carry `_peerdb_is_deleted` (the
-spans-side `_peerdb_is_deleted` in those joins resolves via the schema-014
-ALIAS). Rewriting them would break those tables.
+`build_eval_query` / `build_annotation_query` are excluded from the span-column
+rewrite. The eval query follows the independently configured authoritative
+table on the CH25 connection; annotations retain their own source boundary.
 """
 
 from __future__ import annotations
 
+import re
+from collections.abc import Callable, Iterable, Iterator, Mapping
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from tracer.services.clickhouse.query_builders.trace_list import TraceListQueryBuilder
+from django.conf import settings
+
+from tracer.selectors.filter_seed_width import (
+    EmptyDensityEstimate,
+    FilterSeedWidthPolicy,
+    reduce_density_estimate,
+)
+from tracer.services.clickhouse.query_builders.filter_seed_witness import (
+    MAX_WITNESS_SLACK_HOURS,
+    ceil_hour,
+    floor_hour,
+    witness_envelope_sql,
+)
+from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
+    _TRACE_ANY_SPAN_COLUMNS,
+    _rendered_literal_bytes,
+)
+from tracer.services.clickhouse.query_builders.trace_list import (
+    _LONG_WINDOW_ORDERED_ROOT_INITIAL_SLICE,
+    _SELECTIVE_EXACT_TEXT_MIN_LENGTH,
+    LatestFilterPredicate,
+    TraceListQueryBuilder,
+    _unix_microseconds,
+)
+from tracer.services.clickhouse.read_budget import ReadDeadline, ReadDeadlineExceeded
 from tracer.services.clickhouse.v2.query_builders._rewrite import V2RewriteMixin
 from tracer.services.clickhouse.v2.query_builders.filters import (
     ClickHouseFilterBuilderV2,
 )
 
 
-class TraceListQueryBuilderV2(V2RewriteMixin, TraceListQueryBuilder):
-    """Drop-in v2 TraceList builder.
+@dataclass(frozen=True)
+class BoundedUserResolution:
+    """Final page-scoped user labels plus the number of physical CH reads."""
 
-    Callers swap one import line:
-        v1: from tracer.services.clickhouse.query_builders.trace_list import TraceListQueryBuilder
-        v2: from tracer.services.clickhouse.v2.query_builders.trace_list  import TraceListQueryBuilderV2
+    data: list[dict[str, str]]
+    query_count: int
 
-    Or route via the shadow harness in v2/shadow.py.
+
+MAX_USER_PHYSICAL_IDENTITIES_PER_PAGE = 4_096
+
+# The width the short exact-string seed opens at and refuses to narrow below
+# while its child witness stays time-unbounded. It is the fixed ceiling this
+# lane's row budget replaced, kept as the floor so the budget can only ever buy
+# MORE coverage per statement than the ceiling did - see
+# ``filter_seed_width_policy``. Provisional: with an unbounded witness the
+# dense per-statement cost does not shrink with the slice, so no measurement
+# locates an optimum below it.
+_SHORT_TEXT_SEED_PROVISIONAL_FLOOR = timedelta(hours=4)
+
+# How the short exact-string lane sizes its latest-state classifier chunk.
+#
+# Each candidate costs a fixed ~0.2M bloom false-positive rows in the unbounded
+# ``trace_id IN`` harvest, so the statement's cost is linear in how many
+# candidates it carries and a chunk sized to the page - rather than to the
+# 200-row seed limit - is the whole saving.
+#
+# The chunk is the selector's own ``prefix_needed`` plus a quarter, because a
+# chunk sized to the prefix EXACTLY has zero precision headroom: one candidate
+# the latest-state oracle rejects (a churned version, a tombstoned root) leaves
+# the prefix one row short and forces a second classifier statement that the
+# old flat 200 absorbed. A quarter buys back the slack the flat batch gave
+# without carrying its surplus - at a 50-row page the 51-row prefix asks for 64
+# and takes the floor, at 100 it asks for 127, at 150 for 189.
+#
+# The floor is that same quarter evaluated at the page size the grid actually
+# offers (ceil(51 * 1.25) == 64), kept as a constant so pages below it - the
+# grid's 10 and 25 - are not classified in chunks too small to prove a prefix
+# that a few stale roots can defeat. The ceiling is the 200 this lane's sibling
+# coordinate-replay shapes already issue, so no page can ever cost more
+# classifier statements than it did before this rule existed.
+_SHORT_TEXT_PREFIX_CLASSIFY_FLOOR = 64
+_SHORT_TEXT_PREFIX_CLASSIFY_CEILING = 200
+_SHORT_TEXT_PREFIX_CLASSIFY_HEADROOM_NUMERATOR = 5
+_SHORT_TEXT_PREFIX_CLASSIFY_HEADROOM_DENOMINATOR = 4
+
+# The same two widths once a slack setting bounds the witness. There the
+# statement's cost is linear in the envelope's hours, so a narrower slice
+# really is a cheaper statement and the row budget is a signal rather than a
+# constant; one hour is the measured schedule's opening width and the
+# granularity the ``toStartOfHour`` primary-key prefix prunes on. Every
+# bounded-witness lane opens and floors here: it is a property of the bounded
+# statement's cost shape, not of which predicate seeded it.
+_BOUNDED_WITNESS_SEED_FLOOR = timedelta(hours=1)
+
+# Every any-scope plan a ``_TRACE_ANY_SPAN_COLUMNS`` leaf compiles to: one
+# ``argMax`` over a bare span column, nullable columns wrapped in ``tuple``.
+# Recognising the emitted aggregate rather than the request leaf identifies
+# such a plan however it was routed - a bare native name and the SYSTEM_METRIC
+# alias of the same column compile to exactly this - and a compiler that
+# changes the spelling stops matching, which returns those shapes to the
+# ordered walk they run today rather than granting them anything.
+#
+# The set holds COLUMN names, not request keys, so the extra ``_SPAN_COLUMNS``
+# keys ``id`` and ``name`` - which map onto the same ``id`` / ``name`` columns -
+# collapse into it. Harmless either way: those keys resolve against
+# ``_TRACE_ROOT_COLUMNS`` first and compile to ``scope="root"``, which this
+# any-scope matcher never sees, and the prune carries no leaf regardless.
+_NATIVE_ANY_SPAN_COLUMNS = frozenset(
+    column for column, _, _ in _TRACE_ANY_SPAN_COLUMNS.values()
+)
+_NATIVE_ANY_SPAN_COLUMN_AGGREGATES = (
+    re.compile(r"argMax\((?P<column>\w+), _peerdb_version\) AS \w+"),
+    re.compile(r"argMax\(tuple\((?P<column>\w+)\), _peerdb_version\)\.1 AS \w+"),
+)
+
+#: The typed attribute Maps a coordinate-pruned replay exists to keep off
+#: whole partitions.
+_ATTRIBUTE_REPLAY_COLUMNS = (
+    "span_attr_str",
+    "span_attr_num",
+    "span_attr_bool",
+    "span_attributes_raw",
+)
+
+
+def _replays_typed_attributes(plan: LatestFilterPredicate) -> bool:
+    """True when this plan reads a typed attribute Map or the JSON overflow."""
+
+    return bool(plan.aggregates) and any(
+        column in " ".join(plan.aggregates) for column in _ATTRIBUTE_REPLAY_COLUMNS
+    )
+
+
+def _replays_native_any_span_column(plan: LatestFilterPredicate) -> bool:
+    """True when this plan replays one bare span column and nothing else."""
+
+    if len(plan.aggregates) != 1:
+        return False
+    for pattern in _NATIVE_ANY_SPAN_COLUMN_AGGREGATES:
+        match = pattern.fullmatch(plan.aggregates[0].strip())
+        if match is not None and match.group("column") in _NATIVE_ANY_SPAN_COLUMNS:
+            return True
+    return False
+
+
+def _short_text_prefix_classify_batch_size(prefix_needed: int) -> int:
+    """The short exact-string lane's classifier chunk for a requested prefix.
+
+    ``ceil(prefix_needed * 5 / 4)`` - the prefix plus a quarter of precision
+    headroom - clamped to ``[64, 200]``. Monotonic in ``prefix_needed`` and
+    never above the flat 200 this lane issued before, so no page's classifier
+    statement count can rise; and never below ``prefix_needed`` for any prefix
+    the ceiling admits, so no page loses a chunk it could prove in one.
     """
 
-    _v2_rewrite_exclude = frozenset({"build_eval_query", "build_annotation_query"})
+    with_headroom = -(
+        -prefix_needed
+        * _SHORT_TEXT_PREFIX_CLASSIFY_HEADROOM_NUMERATOR
+        // _SHORT_TEXT_PREFIX_CLASSIFY_HEADROOM_DENOMINATOR
+    )
+    return min(
+        _SHORT_TEXT_PREFIX_CLASSIFY_CEILING,
+        max(_SHORT_TEXT_PREFIX_CLASSIFY_FLOOR, with_headroom),
+    )
+
+
+# The anchor is as long as the value it describes, and the seed writes it into
+# two statements, so an unbounded anchor is what pushes a long value past the
+# parser limit. Keep only as much of it as the statement can afford. Every row
+# holding the whole value holds every substring of it, so a subset of the runs,
+# kept in order, is still a necessary condition: a shorter anchor can only
+# widen the granule set, never hide a matching row. The runs are ASCII by
+# construction above, so a character is a byte here.
+_MAX_NGRAM_ANCHOR_BYTES = 4 * 1024
+
+
+def _runs_within_anchor_budget(runs: list[str]) -> list[str]:
+    """The most selective runs that fit the anchor's byte budget, in order.
+
+    ``ngrambf_v1`` indexes four-grams, so a longer run carries more distinct
+    four-grams for the bytes it costs; prefer the longest. A single run past
+    the whole budget keeps a prefix, which is still a substring of the value.
+    """
+
+    if sum(len(run) + 1 for run in runs) <= _MAX_NGRAM_ANCHOR_BYTES:
+        return runs
+    kept: set[int] = set()
+    spent = 0
+    for index, run in sorted(
+        enumerate(runs), key=lambda pair: (-len(pair[1]), pair[0])
+    ):
+        if spent + len(run) + 1 > _MAX_NGRAM_ANCHOR_BYTES:
+            continue
+        kept.add(index)
+        spent += len(run) + 1
+    if not kept:
+        return [max(runs, key=len)[:_MAX_NGRAM_ANCHOR_BYTES]]
+    return [run for index, run in enumerate(runs) if index in kept]
+
+
+def _caseless_ascii_ngram_anchor(value: str) -> str | None:
+    """A necessary literal substring compatible with the existing ASCII index.
+
+    The index lowercases ASCII while exact matching uses lowerUTF8. Root-locale
+    Unicode lowercasing has two non-ASCII sources of ASCII letters: dotted I
+    (which may also add a combining dot) and Kelvin sign. Split at i/k and all
+    non-ASCII characters; the remaining ASCII letters, digits and punctuation
+    have the same lowercase representation under both functions. This allows
+    ordinary prose, not just digit/punctuation runs, to use the existing index.
+    Retain every usable run in order: a long common phrase must not discard a
+    shorter selective identifier elsewhere in the same exact literal. Unknown
+    casing segments become wildcards, not guessed Unicode transformations.
+    The hint remains a necessary condition only; exact Unicode comparison and
+    complete latest-state replay still decide membership. No usable four-gram
+    means the ordinary exact route, never an empty result.
+    """
+    runs = [
+        run for run in re.findall(r"[^IiKk\x80-\U0010ffff]+", value) if len(run) >= 4
+    ]
+    if not runs:
+        return None
+    return (
+        "%"
+        + "%".join(
+            run.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            for run in _runs_within_anchor_budget(runs)
+        )
+        + "%"
+    )
+
+
+# The candidate seed writes each value's exact witness and its index anchor
+# into the statement once apiece. Hold their sum inside a budget that leaves
+# the rest of the statement room under the parser ceiling
+# (``_CLICKHOUSE_MAX_QUERY_SIZE_BYTES``, in the shared predicate compiler with
+# the literal-size arithmetic every lane budgets by); a value past it keeps the
+# ordinary exact route, which carries the witness and no anchor.
+_LONG_TEXT_SEED_INLINE_BUDGET_BYTES = 232 * 1024
+
+
+class UserEnrichmentLimitExceeded(ReadDeadlineExceeded):
+    """A page's remap fan-in exceeded the optional enrichment read bound."""
+
+
+class _TraceRootReplayV2:
+    """CH25 physical replacement and hydration, independent of acquisition policy."""
+
+    @staticmethod
+    def filter_classifier_has_exact_start_time_identity() -> bool:
+        """CH25 replacement identity uses start hour, not exact producer time."""
+
+        return False
+
+    @staticmethod
+    def filter_classifier_physical_group_by(*, org_scope: bool) -> str:
+        """Collapse by the complete deployed CH25 ReplacingMergeTree key."""
+
+        project_prefix = "project_id, " if org_scope else ""
+        return (
+            f"{project_prefix}observation_type, service_name, "
+            "toStartOfHour(start_time), trace_id, id"
+        )
+
+    @staticmethod
+    def _filter_project_version_is_immutable() -> bool:
+        return False
+
+    @staticmethod
+    def _filter_classifier_root_order() -> str:
+        return (
+            "tuple(latest_start_time, grouped_id, grouped_root_observation_type, "
+            "grouped_root_service_name, grouped_root_start_hour)"
+        )
+
+    @staticmethod
+    def _filter_classifier_root_identity_fields() -> tuple[tuple[str, str], ...]:
+        return (
+            ("grouped_id", "root_span_id"),
+            ("latest_start_time", "start_time"),
+            ("grouped_root_observation_type", "_root_observation_type"),
+            ("grouped_root_service_name", "_root_service_name"),
+            ("grouped_root_start_hour", "_root_start_hour"),
+            ("latest_root_version", "_root_version"),
+        )
+
+    @staticmethod
+    def _filter_classifier_latest_select_sql(aggregate_sql: str) -> str:
+        """Pack the compiler's argMax expressions into ONE physical winner.
+
+        This consumes only the closed aggregate grammar emitted by the legacy
+        classifier/latest-predicate compiler, never user SQL. Fail closed if a
+        future compiler emits a different aggregate rather than mixing winners.
+        Tuple wrapping preserves NULLs, including tuple-valued plan arguments.
+        Equal-version conflicts have no unique storage winner; one tuple still
+        prevents constructing a row from fields of different tied versions.
+        """
+        pattern = re.compile(
+            r"\s*argMax\((.*?),\s*_peerdb_version\)(\.1)?\s+AS\s+(\w+)\s*(?:,|$)",
+            re.DOTALL,
+        )
+        values, aliases = [], []
+        position = 0
+        while aggregate_sql[position:].strip():
+            match = pattern.match(aggregate_sql, position)
+            if match is None:
+                raise ValueError("unsupported latest trace aggregate")
+            source, suffix, alias = match.groups()
+            values.append(source)
+            aliases.append(f"_physical_winner.{len(values)}{suffix or ''} AS {alias}")
+            position = match.end()
+        values.extend(("_peerdb_version", "project_version_id"))
+        aliases.extend(
+            (
+                f"_physical_winner.{len(values) - 1} AS latest_root_version",
+                f"_physical_winner.{len(values)} AS _latest_root_project_version",
+            )
+        )
+        return ",\n".join(
+            [
+                "observation_type AS grouped_root_observation_type",
+                "service_name AS grouped_root_service_name",
+                "toStartOfHour(start_time) AS grouped_root_start_hour",
+                f"argMax(tuple({', '.join(values)}), _peerdb_version) AS _physical_winner",
+                *aliases,
+            ]
+        )
+
+    def _validated_root_identity(self, row: dict[str, Any]) -> tuple:
+        """Full immutable storage key plus the observed time/version, or fail closed."""
+        project = str(row.get("project_id") or self.project_id or "")
+        allowed = (
+            set(self.project_ids or ())
+            if self.project_ids is not None
+            else {str(self.project_id)}
+        )
+        start, hour = row.get("start_time"), row.get("_root_start_hour")
+        kind, service = row.get("_root_observation_type"), row.get("_root_service_name")
+        version = row.get("_root_version")
+        if (
+            project not in allowed
+            or not row.get("trace_id")
+            or not row.get("root_span_id")
+            or not isinstance(start, datetime)
+            or not isinstance(hour, datetime)
+            or not isinstance(kind, str)
+            or not kind
+            or not isinstance(service, str)
+            or not isinstance(version, int)
+            or isinstance(version, bool)
+            or version < 0
+        ):
+            raise ValueError(
+                "v2 trace hydration requires a complete scoped root identity"
+            )
+        start_us, hour_us = _unix_microseconds(start), _unix_microseconds(hour)
+        if hour_us != start_us // 3_600_000_000 * 3_600_000_000:
+            raise ValueError(
+                "v2 trace hydration root hour does not contain latest time"
+            )
+        # Keep the legacy prefix for callers; physical scan coordinates below
+        # deliberately use the hour instead of the mutable exact timestamp.
+        return (
+            project,
+            str(row["trace_id"]),
+            str(row["root_span_id"]),
+            start_us,
+            kind,
+            service,
+            hour_us,
+            version,
+        )
+
+    def bounded_filter_page_hydration_identity(
+        self, row: dict[str, Any]
+    ) -> tuple | None:
+        # Missing/malformed replay metadata is drift, not an exception that
+        # bypasses the selector's existing unhydrated-checkpoint rollback.
+        try:
+            return self._validated_root_identity(row)
+        except ValueError:
+            return None
+
+    def content_root_identities_for_rows(
+        self, rows: list[dict[str, Any]]
+    ) -> list[tuple]:
+        return [self._validated_root_identity(row) for row in rows]
+
+    def content_root_rows_match(
+        self, expected: list[dict[str, Any]], actual: list[dict[str, Any]]
+    ) -> bool:
+        try:
+            expected_ids = self.content_root_identities_for_rows(expected)
+            actual_ids = self.content_root_identities_for_rows(actual)
+        except ValueError:
+            return False
+        return (
+            len(set(expected_ids)) == len(expected_ids)
+            and len(actual_ids) == len(expected_ids)
+            and set(actual_ids) == set(expected_ids)
+        )
+
+    def _root_replay_content_fields(self) -> list[tuple[str, str]]:
+        return [
+            ("input", "input"),
+            ("output", "output"),
+            ("attrs_string", "attrs_string"),
+            ("attrs_number", "attrs_number"),
+            ("attrs_bool", "attrs_bool"),
+            ("attributes_extra", "attributes_extra"),
+            ("metadata", "metadata"),
+        ]
+
+    def _root_replay_content_extra_select(self) -> list[str]:
+        return [self._trace_tags_select_sql()]
+
+    def _root_replay_content_join_sql(self) -> str:
+        return self._trace_tags_join_sql()
+
+    def _root_replay_query(
+        self, identities: list[tuple], *, content: bool
+    ) -> tuple[str, dict[str, Any]]:
+        """Replay the finite page by immutable coordinates, with no time/version prefilter."""
+        if not identities:
+            return "", {}
+        if len(identities) > 512 or len(
+            {identity[:2] for identity in identities}
+        ) != len(identities):
+            raise ValueError(
+                "trace replay requires one bounded root per trace identity"
+            )
+        prefix = "content" if content else "page_hydration"
+        params = {
+            **self.params,
+            f"{prefix}_trace_ids": tuple(
+                dict.fromkeys(identity[1] for identity in identities)
+            ),
+            f"{prefix}_root_identities": tuple(identities),
+            f"{prefix}_physical_keys": tuple(
+                (
+                    project,
+                    kind,
+                    service,
+                    datetime.fromtimestamp(hour // 1_000_000, UTC).replace(tzinfo=None),
+                    trace,
+                    span,
+                )
+                for project, trace, span, _, kind, service, hour, _ in identities
+            ),
+            # Expose native primary-index coordinates independently of the
+            # String-cast project identity and ORDER BY-only span suffix.
+            # This redundant superset improves sparse-index pruning without
+            # filtering mutable time/version/content before replacement.
+            f"{prefix}_primary_prefixes": tuple(
+                dict.fromkeys(
+                    (
+                        kind,
+                        service,
+                        datetime.fromtimestamp(hour // 1_000_000, UTC).replace(
+                            tzinfo=None
+                        ),
+                        trace,
+                    )
+                    for _, trace, _, _, kind, service, hour, _ in identities
+                )
+            ),
+        }
+        # Each source expression is inside the same tuple, so a newer NULL
+        # replaces an old value instead of argMax skipping it.
+        fields = [
+            ("start_time", "start_time"),
+            ("parent_span_id", "latest_parent_span_id"),
+            ("is_deleted", "latest_is_deleted"),
+            ("project_version_id", "latest_project_version_id"),
+            ("_version", "_root_version"),
+        ]
+        if content:
+            fields += self._root_replay_content_fields()
+        else:
+            fields += [
+                ("trace_name", "trace_name"),
+                ("name", "span_name"),
+                ("status", "status"),
+                ("end_time", "end_time"),
+                ("latency_ms", "latency_ms"),
+                ("cost", "cost"),
+                ("total_tokens", "total_tokens"),
+                ("prompt_tokens", "prompt_tokens"),
+                ("completion_tokens", "completion_tokens"),
+                ("model", "model"),
+                ("provider", "provider"),
+                ("trace_session_id", "trace_session_id"),
+            ]
+        projected = [
+            f"_root_snapshot.{index} AS {alias}"
+            for index, (_, alias) in enumerate(fields, start=1)
+        ]
+        selected = [
+            "toString(project_id) AS project_id",
+            "trace_id",
+            "root_span_id",
+            "start_time",
+            "_root_observation_type",
+            "_root_service_name",
+            "_root_start_hour",
+            "_root_version",
+        ]
+        selected += [
+            "toJSONString(metadata) AS metadata" if alias == "metadata" else alias
+            for _, alias in fields[5:]
+        ]
+        if content:
+            selected.extend(self._root_replay_content_extra_select())
+        else:
+            selected.append("_root_observation_type AS observation_type")
+        project_version = ""
+        if self.project_version_id:
+            params["project_version_id"] = self.project_version_id
+            project_version = "AND latest_project_version_id = %(project_version_id)s"
+        query = f"""
+        SELECT {", ".join(selected)}
+        FROM (
+            SELECT project_id, trace_id, root_span_id,
+                _root_observation_type, _root_service_name, _root_start_hour,
+                {", ".join(projected)}
+            FROM (
+                SELECT project_id, trace_id, id AS root_span_id,
+                    observation_type AS _root_observation_type,
+                    service_name AS _root_service_name,
+                    toStartOfHour(start_time) AS _root_start_hour,
+                    argMax(tuple({", ".join(source for source, _ in fields)}), _version) AS _root_snapshot
+                FROM {self.TABLE}
+                PREWHERE {self.project_filter_sql()}
+                  AND (observation_type, service_name,
+                       toStartOfHour(start_time), trace_id)
+                      IN %({prefix}_primary_prefixes)s
+                  AND (toString(project_id), observation_type, service_name,
+                       toStartOfHour(start_time), trace_id, id)
+                      IN %({prefix}_physical_keys)s
+                GROUP BY project_id, observation_type, service_name, toStartOfHour(start_time), trace_id, id
+            ) AS replayed_root_versions
+        ) AS latest_physical_roots
+        {self._root_replay_content_join_sql() if content else ""}
+        WHERE latest_is_deleted = 0
+          AND (latest_parent_span_id IS NULL OR latest_parent_span_id = '')
+          {project_version}
+        ORDER BY start_time DESC, trace_id DESC, project_id DESC
+        LIMIT {len(identities)}
+        """
+        return query, params
+
+    def build_filter_page_hydration_query(
+        self, candidate_rows: list[dict[str, Any]]
+    ) -> tuple[str, dict[str, Any]]:
+        return self._root_replay_query(
+            self.content_root_identities_for_rows(candidate_rows), content=False
+        )
+
+    def build_content_query(
+        self, trace_ids: list[str], *, root_identities: list[tuple] | None = None
+    ) -> tuple[str, dict[str, Any]]:
+        if not trace_ids:
+            return "", {}
+        if not root_identities or any(
+            len(identity) != 8 for identity in root_identities
+        ):
+            raise ValueError(
+                "v2 content replay requires complete root identities; no four-part fallback"
+            )
+        rows = []
+        for (
+            project,
+            trace,
+            span,
+            start,
+            kind,
+            service,
+            hour,
+            version,
+        ) in root_identities:
+            rows.append(
+                {
+                    "project_id": project,
+                    "trace_id": trace,
+                    "root_span_id": span,
+                    "start_time": datetime.fromtimestamp(
+                        start // 1_000_000, UTC
+                    ).replace(microsecond=start % 1_000_000),
+                    "_root_observation_type": kind,
+                    "_root_service_name": service,
+                    "_root_start_hour": datetime.fromtimestamp(hour // 1_000_000, UTC),
+                    "_root_version": version,
+                }
+            )
+        identities = self.content_root_identities_for_rows(rows)
+        if {identity[1] for identity in identities} != set(map(str, trace_ids)):
+            raise ValueError("v2 content replay identity escaped requested traces")
+        return self._root_replay_query(identities, content=True)
+
+
+class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
+    """Schema-aware planner shared before the public SQL rewrite boundary."""
+
+    _v2_rewrite_exclude = frozenset(
+        {
+            "build_eval_query",
+            "build_eval_replay_query",
+            "build_annotation_query",
+        }
+    )
 
     # Use the v2 filter compiler so filters read the v2 dimension tables
     # (end_users, etc.) instead of the dropped legacy CDC tables.
     _FILTER_BUILDER_CLS = ClickHouseFilterBuilderV2
+
+    def _attribute_coordinate_replay_regime(self) -> str:
+        """Which coordinate-replay regime this read is in, or ``""`` for none.
+
+        ``"typed"`` is the regime this builder has always had: EVERY any-scope
+        leaf replays a typed attribute Map or the JSON overflow. Every hook
+        that decides candidate acquisition reads exactly this, so its answer is
+        the base builder's answer on every shape.
+
+        ``"native"`` is the widened regime. At least one any-scope leaf still
+        replays a typed attribute Map - that replay is what the prefix harvest
+        exists to keep off whole partitions - and the remaining any-scope
+        leaves are native span columns (``model``, ``provider``, ``status``,
+        ``span_name``, ``service_name``, ``span_id``, ``span_kind``/
+        ``node_type``). The harvest selects every ``(observation_type,
+        service_name, hour, trace_id)`` coordinate of the candidate trace IDs,
+        carries no leaf predicate and applies no limit, so it cannot hide a
+        span whichever column the classifier later compares. Demoting such a
+        conjunction cost it the prune AND the batch - one ``model`` leaf beside
+        an attribute leaf classifies 200 seeded roots ten at a time.
+
+        A conjunction that carries a GLOBAL ANCHOR stays out of the widened
+        regime and keeps every base routing decision, because the widened
+        regime's hooks would take that anchor away:
+        ``allow_filter_anchor_probe_for_initial_continuation`` is False on this
+        regime, and the anchor probe is an indexed, deliberately sparse read
+        the base builder chose for exactly these shapes. The gate is the anchor
+        PLAN's existence, not ``_uses_global_error_status_anchor`` /
+        ``_uses_global_selective_exact_text_anchor``: those also read the
+        request window and the in-flight ``_bounded_anchor_probe``, so gating
+        on them would change the regime part-way through one request. Plan
+        existence is a pure function of the filters. Bringing anchored shapes
+        onto the widened regime needs a measurement this lane does not have.
+
+        A leaf the compiler routes to ``residual`` - ``has_eval``,
+        ``has_annotation``, ``annotator``, ``end_user_id``, native ``tags``,
+        annotation and eval-metric columns - still disables the prune: those
+        are not replayed from the spans table at these coordinates.
+        """
+
+        if (
+            self.project_id is None
+            or self.project_ids is not None
+            or self._bounded_identity_only
+            or self._bounded_internal_scan
+            or self._bounded_bulk_scan
+            or self._bounded_population_proof
+            or self._bounded_global_span_witnesses
+            or self._bounded_membership_filters is not None
+            or self._bounded_sampling_rate is not None
+            or self.search
+            or self.sort_params
+        ):
+            return ""
+        plans, residual = self._partition_trace_filter_plans(self._bounded_filters())
+        any_plans = [plan for plan in plans if plan.scope == "any"]
+        if residual or not any_plans:
+            return ""
+        if all(_replays_typed_attributes(plan) for plan in any_plans):
+            return "typed"
+        if not any(_replays_typed_attributes(plan) for plan in any_plans) or not all(
+            _replays_typed_attributes(plan) or _replays_native_any_span_column(plan)
+            for plan in any_plans
+        ):
+            return ""
+        if (
+            self._selective_error_status_anchor_plan() is not None
+            or self._selective_exact_text_anchor_plan() is not None
+        ):
+            return ""
+        return "native"
+
+    def _uses_attribute_coordinate_replay(self) -> bool:
+        """Prune public typed-attribute replay by complete immutable prefixes."""
+
+        return bool(self._attribute_coordinate_replay_regime())
+
+    def _replays_only_typed_attribute_coordinates(self) -> bool:
+        """The base gate: every any-scope leaf replays a typed attribute Map.
+
+        The hooks that choose HOW candidates are acquired read this rather than
+        the widened predicate, so the widening is a classifier-cost change and
+        cannot move an acquisition decision.
+
+        A narrowing of ``_uses_attribute_coordinate_replay``, and spelled as
+        one: the widened predicate stays the single place a subclass can turn
+        the whole coordinate lane off.
+        """
+
+        return (
+            self._uses_attribute_coordinate_replay()
+            and self._attribute_coordinate_replay_regime() == "typed"
+        )
+
+    def _uses_scalar_coordinate_replay(self) -> bool:
+        # Numeric raw-witness accelerators retain their scalar-only contract,
+        # and every seed lane below is gated on it: a native span column beside
+        # an attribute leaf keeps the coordinate prune but chooses no seed.
+        if not self._replays_only_typed_attribute_coordinates():
+            return False
+        plans, _ = self._partition_trace_filter_plans(self._bounded_filters())
+        return all(
+            "JSON" not in " ".join(plan.aggregates)
+            for plan in plans
+            if plan.scope == "any"
+        )
+
+    def _filter_classifier_coordinate_predicate(self) -> str:
+        if not self._uses_attribute_coordinate_replay():
+            return ""
+        # The deployed sparse primary key stops before trace_id. Harvest the
+        # complete indexed prefix from narrow columns first, then replay Map
+        # values only at those coordinates. All child timestamps, physical
+        # versions and tombstones participate; neither a raw value nor the
+        # selected seed root is allowed to choose the replay population.
+        # No inner LIMIT: an overflowing coordinate set must throw, not hide
+        # a span. The outer full replacement-key argMax remains authoritative.
+        return f"""
+                  AND (observation_type, service_name, toStartOfHour(start_time), trace_id) IN (
+                      SELECT DISTINCT observation_type, service_name,
+                          toStartOfHour(start_time), trace_id
+                      FROM {self.TABLE}
+                      PREWHERE {self.project_filter_sql()}
+                          AND trace_id IN %(candidate_trace_ids)s
+                  )
+        """
+
+    def recommended_filter_initial_classify_batch_size(self):
+        return 50 if self._public_boolean_candidate_seed_plan() is not None else None
+
+    def supports_filter_empty_seed_root_time_discovery(self) -> bool:
+        """Typed Boolean/short-string IN may skip only proven raw-root gaps."""
+        leaves = self._active_non_time_filters()
+        if (
+            self.project_version_id is not None
+            or not self.supports_filter_root_time_discovery()
+            or not self._uses_scalar_coordinate_replay()
+            or len(leaves) != 1
+        ):
+            return False
+        config = leaves[0].get("filter_config") or {}
+        values, types = config.get("filter_value"), config.get("attribute_value_types")
+        if not (
+            config.get("col_type") == "SPAN_ATTRIBUTE"
+            and config.get("filter_type") == "text"
+            and config.get("filter_op") == "in"
+            and isinstance(values, list)
+            and values
+            and isinstance(types, list)
+            and (
+                (
+                    all(type(value) is bool for value in values)
+                    and types == ["boolean"] * len(values)
+                )
+                or (
+                    all(
+                        type(value) is str
+                        and 0 < len(value.strip()) < _SELECTIVE_EXACT_TEXT_MIN_LENGTH
+                        for value in values
+                    )
+                    and types == ["string"] * len(values)
+                )
+            )
+        ):
+            return False
+        plans, residual = self._partition_trace_filter_plans(self._bounded_filters())
+        return bool(
+            not residual
+            and len(plans) == 1
+            and plans[0].scope == "any"
+            and not plans[0].exclude_group_matches
+        )
+
+    def filter_candidate_seed_requires_empty_prefix(self) -> bool:
+        return self._public_boolean_candidate_seed_plan() is not None
+
+    def recommended_filter_initial_slice_width(self):
+        # A row-budgeted lane opens at its policy's own initial width, clamped
+        # to the request: the shared candidate-witness contract declines any
+        # window of an hour or less, but a two-hour window still reaches this
+        # lane and is narrower than the floor the policy declares.
+        policy = self.filter_seed_width_policy()
+        if policy is not None:
+            start, end = self._bounded_request_window
+            return min(end - start, policy.initial_width)
+        if self.filter_candidate_seed_requires_empty_prefix():
+            start, end = self._bounded_request_window
+            return min(end - start, _LONG_WINDOW_ORDERED_ROOT_INITIAL_SLICE)
+        return super().recommended_filter_initial_slice_width()
+
+    def filter_seed_width_policy(self) -> FilterSeedWidthPolicy | None:
+        """Budget a candidate seed by rows read, not by hours.
+
+        A lane declares a policy exactly when its statement's cost tracks the
+        rows inside its slice. The short exact-string lane always does. The
+        numeric and long-text lanes open at the whole request window in one
+        statement and do so only while their witness is unbounded, so they
+        declare one only once
+        ``FILTER_SELECTOR_NUMERIC_LONG_TEXT_SEED_WITNESS_SLACK_HOURS`` puts
+        them on the bounded contract - off by default, and off means no
+        policy, no probe and no envelope, i.e. exactly today's statement. They
+        never take the unbounded schedule below: its four-hour floor would be a
+        NARROWING of today's full-width slice, which is a behaviour change no
+        setting asked for.
+
+        Declaring a policy also moves
+        ``recommended_filter_initial_slice_width``: above zero the wide lanes
+        open at ONE HOUR clamped to the request instead of the full request
+        window. That is a cost change beyond the seed statement, because the
+        slice width is the width of the ORDERED WALK as well - so on a shape
+        whose numeric seed is optional and may be abandoned
+        (``filter_candidate_seed_is_optional``, e.g. numeric beside ``model``,
+        or a version-pinned numeric), enabling the setting narrows the walk
+        that runs when the seed is skipped, trading bytes per statement for
+        statements per page. Exact either way - the cursor resumes the rest of
+        the window - but it belongs in the measurement, not only in the seed's
+        own budget.
+
+        The short lane has two width schedules because it has two cost shapes,
+        and ``FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS`` selects between
+        them:
+
+        * slack zero (the legacy any-span escape hatch; the default is 1 h):
+          the witness is time-unbounded, its flat term dominates, and the
+          floor and initial width are both the four hours of the fixed ceiling
+          this budget replaced - ``_SHORT_TEXT_SEED_PROVISIONAL_FLOOR``. Narrowing below
+          that would pay the same flat cost for a fraction of the coverage,
+          which is why the row budget can only widen this mode.
+        * slack above zero: the witness scan is confined to the roots'
+          own hours plus the slack, so the statement's cost is linear in the
+          envelope's hours (~0.46-0.49 GB per hour measured) and a narrower
+          slice really is a cheaper statement. Floor and initial width both
+          drop to ``_BOUNDED_WITNESS_SEED_FLOOR``, one hour, which is the
+          opening width of the measured 1 h -> 2 h -> 4 h schedule; the
+          row budget then does real work in both directions, halving a dense
+          slice back down toward that hour.
+
+        Both modes keep the same ``target_read_rows`` and the same four-hour
+        ``unsignalled_cap``: a transport that reports no progress justifies no
+        more than the ceiling this lane started from, whichever mode is on.
+        That number is also the UNPROBED cap - the widest slice either mode may
+        issue on the strength of the previous statement alone. Anything wider
+        must be costed first by ``build_filter_seed_density_probe_query``,
+        because the doubling rule is blind to the next slice's contents and a
+        sparse tail that ends in dense history is exactly where that blindness
+        is expensive.
+        The post-discovery reset follows the floor by construction - it is
+        ``max(1 h, policy.min_width)`` - so it is one hour in the bounded mode
+        and four in the unbounded one, with no second constant to keep in step.
+
+        Why the unbounded mode's floor is what it is. The long-text and
+        numeric lanes prune raw granules by value, so the base builder lets
+        them widen to the whole request window. A short exact literal only prunes by
+        key/value bloom, and with an unbounded witness this seed's cost has two
+        terms, neither of which a wall-clock ceiling tracks:
+
+        * A flat term, which dominates: the child witness in this CTE is
+          time-unbounded in that mode (any raw span of a candidate trace may
+          carry the value, whenever it started), so every statement scans the
+          trace-id bloom's false positives across retained history. A measured unbounded child
+          lookup over a fifteen-minute dense root window read 52.4M rows /
+          4.29 GB after the trace-id, key and value blooms had each roughly
+          halved the granule count (55,689 -> 27,219 -> 14,528 -> 9,069 ->
+          7,902). Modelling the bloom pass rate as ``1 - 0.999 ** roots`` over
+          a ~107M-row history fits that funnel, so read rows here chiefly
+          measure the *roots inside the slice*. Extrapolating that one point
+          (k = 676 roots in fifteen minutes of the densest tenant) the term
+          would pass 90% of its ceiling within about an hour of the same
+          traffic, after which it is paid per statement whatever the width.
+          That is an extrapolation from a single measurement, not a measured
+          saturation curve: nothing has been read at two widths of the same
+          data.
+        * A linear term: the ``attrs_string`` materialized for the traces whose
+          raw roots fall inside the slice, ~0.48 GB per slice-hour on a dense
+          project. It grows with the slice's *row* population, not its width,
+          and a project's density varies by two orders of magnitude across its
+          own retention: four hours of the same project's sparse history cost
+          110-220 ms server-side whatever the width.
+
+        What the budget can and cannot do therefore follows from the flat
+        term. Doubling fires only below a quarter of the target, which at the
+        default is roughly four or five roots in the slice, so the budget
+        *widens across near-empty history* - the regime a fixed four-hour
+        ceiling walked one slice at a time down a 166 h sparse tail. Anywhere
+        the user's own results live, every width is over budget instead, and
+        there the budget must not be allowed to buy less coverage than the
+        fixed ceiling it replaces. Hence the unbounded mode's floor, and its
+        initial width, are both the four hours that ceiling was: there this
+        lane only ever *widens* on sparse history and otherwise holds at four
+        hours, which is at least the previous behaviour in both regimes.
+        Halving therefore applies only to a width that first grew above four
+        hours and then ran into data.
+
+        The four-hour floor is provisional, and it is provisional precisely
+        because the flat term above is what a narrower slice cannot buy back.
+        It is not a measured optimum, and no measurement says where narrowing
+        an unbounded-witness statement stops paying. Bounding the witness is
+        the other half of that question, and it is what the slack switch
+        settles: the 3.66M rows / 4.47 GB / 3.8 s at ``max_threads`` 1 and
+        1.76 s at 2 measured for a dense four-hour slice is a measurement of
+        the *bounded* statement, confined to the window plus an hour of slack -
+        which this builder emits only when the switch is on, and never at the
+        default.
+
+        Slices at or above an hour are whole-hour multiples of the immutable
+        ``toStartOfHour`` primary-key prefix; their boundaries snap onto an hour
+        only after an empty-seed root-time discovery hit. This changes only
+        physical chunking; predicates, order, pagination and the exact
+        latest-state classifier are untouched, and the cursor resumes the
+        remaining window on the next request.
+        """
+        if self._uses_short_text_candidate_seed():
+            floor = (
+                _BOUNDED_WITNESS_SEED_FLOOR
+                if self._candidate_seed_witness_slack()
+                else _SHORT_TEXT_SEED_PROVISIONAL_FLOOR
+            )
+        elif self._uses_wide_candidate_seed() and self._candidate_seed_witness_slack():
+            floor = _BOUNDED_WITNESS_SEED_FLOOR
+        else:
+            return None
+        return FilterSeedWidthPolicy(
+            initial_width=floor,
+            min_width=floor,
+            target_read_rows=settings.FILTER_SELECTOR_TEXT_SEED_TARGET_READ_ROWS,
+        )
+
+    def pin_filter_seed_witness_slack_hours(self, hours: int | None) -> None:
+        """Finish a pagination with the witness slack it STARTED with.
+
+        The slack decides which traces are candidates at all, so changing it
+        between two hops of one cursor moves the boundary underneath a
+        half-published page: rows already returned can become non-candidates
+        (the user sees a duplicate when the next hop re-seeds) and rows already
+        skipped can become candidates (the user never sees them). An operator
+        turning the knob mid-request is a real event, not a hypothetical - the
+        setting is deliberately runtime-tunable.
+
+        So a continuation carries the slack it was minted with and pins it
+        here. ``None`` is a token that carries no slack FIELD, which each lane
+        resolves by what such a token can mean on it - see
+        ``_candidate_seed_witness_slack``. It is not "no pin": this method
+        records that a continuation applied one, because only a continuation
+        reaches it (the caller returns early without a cursor), so a fresh
+        page one keeps reading the live setting.
+        """
+
+        if hours is None:
+            self._pinned_witness_slack_hours = None
+            self._witness_slack_pin_applied = True
+            return
+        if isinstance(hours, bool) or not isinstance(hours, int):
+            raise ValueError("pinned witness slack must be whole hours")
+        if not 0 <= hours <= MAX_WITNESS_SLACK_HOURS:
+            raise ValueError("pinned witness slack is outside the supported range")
+        self._pinned_witness_slack_hours = hours
+        self._witness_slack_pin_applied = True
+
+    def filter_seed_witness_slack_hours(self) -> int | None:
+        """The slack this read will use, for the cursor to carry forward.
+
+        ``None`` means this request has no witness envelope to preserve - no
+        bounded-witness lane is active, or an active wide lane is running on
+        the unbounded default - and a cursor minted from it carries no slack,
+        so it stays byte-identical to one minted before the field existed. The
+        short exact-string lane keeps reporting its zero, which is the value
+        its own escape hatch has to pin.
+        """
+
+        hours = int(self._candidate_seed_witness_slack().total_seconds() // 3600)
+        if self._uses_short_text_candidate_seed():
+            return hours
+        # The wide lanes' envelope is off by default, and a request that emits
+        # none has nothing to preserve: returning zero there would put a field
+        # into every cursor those lanes mint for no behaviour at all.
+        return hours or None
+
+    def _candidate_seed_witness_slack(self) -> timedelta:
+        """Hours of lag the active lane's witness envelope allows; zero: none.
+
+        Each bounded-witness lane reads its own setting, because each is its
+        own contract about how long after its root a trace's spans may still
+        carry a match. The short exact-string lane reads the approved
+        ``FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS``; the numeric and
+        long-text lanes read
+        ``FILTER_SELECTOR_NUMERIC_LONG_TEXT_SEED_WITNESS_SLACK_HOURS``,
+        which is zero until an owner approves that contract on its own
+        evidence. Zero emits no envelope at all and leaves the witness CTE
+        time-unbounded, which is the legacy contract and the escape hatch.
+
+        The setting is read per statement rather than cached, so an operator
+        change takes effect on the next read - EXCEPT inside a running
+        pagination, where ``pin_filter_seed_witness_slack_hours`` holds the
+        value the cursor was minted with so a mid-flight change cannot skip or
+        duplicate rows. One pin serves whichever lane is active because the
+        filters that choose the lane are fixed for the life of a cursor.
+
+        The wide lanes emit no slack field at their default, so a continuation
+        of a chain minted there arrives with the pin APPLIED and EMPTY. That is
+        not an absence of information: the only way those lanes mint a token
+        without the field is by running unbounded, so an absent field on a wide
+        lane pins the legacy any-span witness - slack zero - for the rest of
+        the chain. A pagination started with the lane off therefore finishes
+        with it off even when an operator enables it mid-flight, which is the
+        safe direction and the one transition a value-only pin would miss. A
+        token minted before the field existed resolves the same way, because it
+        was minted by the same unbounded statement.
+
+        The short exact-string lane keeps its inherited behaviour, where an
+        absent field returns the builder to the setting: that lane always
+        writes its own slack, including zero, so it reaches this only for a
+        pre-field token, and that token's own read used the setting too.
+        """
+
+        if self._uses_short_text_candidate_seed():
+            setting = settings.FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS
+            absent_field_pin = None
+        elif self._uses_wide_candidate_seed():
+            setting = (
+                settings.FILTER_SELECTOR_NUMERIC_LONG_TEXT_SEED_WITNESS_SLACK_HOURS
+            )
+            absent_field_pin = 0
+        else:
+            return timedelta(0)
+        pinned = getattr(self, "_pinned_witness_slack_hours", None)
+        if pinned is None and getattr(self, "_witness_slack_pin_applied", False):
+            pinned = absent_field_pin
+        hours = pinned if pinned is not None else int(setting)
+        return timedelta(hours=min(max(hours, 0), MAX_WITNESS_SLACK_HOURS))
+
+    def _scalar_candidate_witness_envelope(
+        self, *, root_start: datetime, root_end: datetime
+    ) -> tuple[str, dict[str, Any]]:
+        """Bound the active seed lane's witness scan, when switched on.
+
+        Off - slack zero, which is the legacy escape hatch on the short
+        exact-string lane (default 1 h) and the DEFAULT on the numeric and
+        long-text lanes - the shared envelope emits nothing and the statement
+        is byte-identical to the unbounded contract. On, the witness must start
+        inside ``[hour_floor(root_start) - slack, hour_ceil(root_end) + slack)``
+        where ``[root_start, root_end]`` is the interval of roots the calling
+        statement can publish. Every root it publishes therefore keeps any
+        witness within ``slack`` of itself, and the hour alignment matches the
+        immutable ``toStartOfHour`` primary-key prefix the bound prunes on.
+
+        The fragment itself comes from ``witness_envelope_sql``, the module
+        the session list's seed gate compiles its envelope through too, so
+        both lanes are spelled exactly like the sibling root-population
+        subquery in the same CTE - epoch microseconds through
+        ``fromUnixTimestamp64Micro`` - rather than as a datetime literal, and
+        neither bound depends on how the driver or the server resolves a
+        timezone.
+
+        This narrows candidacy only. The exact latest-state classifier is a
+        separate statement and stays unbounded, so a published row is still an
+        exact any-span match; the envelope can only omit a trace whose sole
+        witness lies outside it. Physical versions and tombstones still
+        participate - the CTE deliberately carries no ``is_deleted`` filter -
+        so this bounds *when* a witness row starts, never which versions count.
+        """
+
+        return witness_envelope_sql(
+            root_start=root_start,
+            root_end=root_end,
+            slack=self._candidate_seed_witness_slack(),
+        )
+
+    def recommended_filter_classify_batch_size(self) -> int | None:
+        if self._uses_short_text_candidate_seed():
+            # Classify the ordered prefix this page can publish, plus a quarter.
+            #
+            # The seed keeps its 200-row limit: one seed statement pays the
+            # envelope's attribute materialization whatever its LIMIT, so
+            # re-seeding is the expensive mistake, not an extra classifier
+            # chunk. The classifier is the opposite shape - its unbounded
+            # ``trace_id IN`` harvest reads a fixed bloom false-positive cost
+            # per candidate across every partition of the project, so its rows
+            # scale with the number of candidates it carries and with nothing
+            # else. A seed that fills to 200 therefore made the classifier
+            # confirm 200 roots to publish a page of 50, and the surplus was
+            # discarded: the next page re-seeds from the published order key
+            # and never reuses them.
+            #
+            # ``read_bounded_filter_page`` already returns from the first chunk
+            # that proves the ordered prefix and checkpoints the continuation
+            # after every chunk, so a chunk sized to that prefix changes only
+            # how many candidates are classified before publication: same
+            # unbounded any-span oracle, same candidate order, same hydration,
+            # same cursor, and a classifier statement whose only textual
+            # difference is its own trailing ``LIMIT``, which tracks the
+            # candidate count and cannot truncate a match (the query groups by
+            # grouped trace id and emits at most one row per candidate).
+            #
+            # The chunk follows ``prefix_needed`` rather than ``page_size``
+            # alone because a numbered page must prove its whole requested
+            # prefix - ``(page_number + 1) * page_size + 1`` - in the chunks it
+            # is given; sizing to the page alone would make a deep numbered
+            # page issue a chunk per page of depth. The quarter above it is
+            # precision headroom: at exactly ``prefix_needed`` a single
+            # candidate the oracle rejects costs a second statement, which is
+            # how a smaller chunk could have been a net loss against the flat
+            # 200 it replaces.
+            return _short_text_prefix_classify_batch_size(
+                (self.page_number + 1) * self.page_size + 1
+            )
+        if self._uses_attribute_coordinate_replay():
+            return 200
+        return super().recommended_filter_classify_batch_size()
+
+    def recommended_filter_cursor_seed_batch_size(self) -> int | None:
+        if self._replays_only_typed_attribute_coordinates():
+            # Harvest one ordered root prefix before indexed exact replay.
+            # Twenty-six-root seeds repeatedly reread the same narrow primary
+            # index ranges for sparse/zero-default/negative scalar predicates.
+            # Batching changes only working-set size, never predicates, order,
+            # publication or the existing request/statement safety budgets.
+            #
+            # The base gate, not the widened one: cursor seed batching is an
+            # acquisition decision. A Boolean attribute beside ``model`` has no
+            # scalar candidate-witness predicate, so the base builder mints no
+            # cursor seed batch at all there, and the widening must not invent
+            # one for a working set nothing measured.
+            return 200
+        return super().recommended_filter_cursor_seed_batch_size()
+
+    def allow_filter_anchor_probe_for_initial_continuation(self) -> bool:
+        if self._uses_attribute_coordinate_replay():
+            # The all-history string sentinel can consume a full Map scan
+            # before the indexed page replay. Cursor acquisition can start
+            # directly with ordered roots and retain the same exact classifier.
+            # Numeric candidate-first seeds are separate and remain enabled.
+            return False
+        return super().allow_filter_anchor_probe_for_initial_continuation()
+
+    def _scalar_candidate_root_population_predicate(self) -> str:
+        if not self._uses_scalar_coordinate_replay():
+            return ""
+        # Any latest live matching root must also exist as a raw physical root
+        # in this exact interval. Old root versions only add false positives;
+        # the subsequent full-key latest-state classifier removes them.
+        # Restrict immutable trace IDs, NOT the child's start_time. Neither a
+        # population LIMIT nor the current page keyset may prune child history.
+        return f"""
+              AND trace_id IN (
+                  SELECT trace_id FROM {self.TABLE}
+                  PREWHERE {self.project_filter_sql()}
+                      AND start_time >= fromUnixTimestamp64Micro(%(filter_slice_start_us)s)
+                      AND start_time < fromUnixTimestamp64Micro(%(filter_slice_end_us)s)
+                  WHERE parent_span_id IS NULL OR parent_span_id = ''
+              )
+        """
+
+    def _scalar_candidate_conjunction_gate(
+        self,
+        anchor: LatestFilterPredicate,
+        *,
+        witness_envelope_fragment: str,
+        project_version_fragment: str,
+    ) -> tuple[str, dict[str, Any]]:
+        """Gate a conjunction's candidates on every other leaf's key, per trace.
+
+        THE SHAPE THIS EXISTS FOR. A conjunction of one short exact-string
+        leaf and several presence leaves seeds from the string leaf alone:
+        every trace carrying the value in the slice is a candidate, and the
+        exact classifier rejects the ones that miss a presence leaf. Where the
+        conjunction is sparser than its anchor that walk is unbounded by the
+        window: a ten-leaf filter measured on production seeded two hundred
+        candidates per statement, spent four classifier statements rejecting
+        each batch, and re-read the whole slice's witness for every keyset
+        continuation - the same statements over the first day and a half
+        whatever the window, and thirty-two statements before the harness
+        gave up. On the twelve-month window the anchor's own witness read 7.5
+        GB for 8.5k candidates of which the classifier accepted none.
+
+        THE GATE. Each other positive any-scope leaf compiles to a typed-Map
+        key witness - ``has(span_attr_str.keys, key)`` behind the deployed
+        ``mapKeys`` bloom - which is a NECESSARY condition of that leaf's
+        latest-state truth: a latest state that carries the key is a version
+        of some raw row that carries it. So the candidate CTE additionally
+        requires, per trace, one raw row per leaf inside the anchor's own
+        witness envelope:
+
+            trace_id IN (SELECT trace_id FROM spans PREWHERE <envelope>
+                         WHERE w_1 OR ... OR w_n
+                         GROUP BY trace_id
+                         HAVING countIf(w_1) > 0 AND ... AND countIf(w_n) > 0)
+
+        PER TRACE, NEVER PER SPAN. The leaves are independent existence
+        predicates over one trace's spans, so the conjunction holds at the
+        trace level; a trace whose witnesses sit on different rows (a root
+        and a tool child, say, in different key ranges) still matches. ANDing
+        the key witnesses inside one WHERE, or inside one ``indexHint``,
+        would drop exactly those traces. The union in the WHERE lets the
+        bloom skip granules carrying none of the keys; the HAVING is the
+        conjunction.
+
+        KEYS ONLY. The gate never compares a value, so it reads the keys
+        subcolumn and nothing else - measured at about forty bytes per row
+        against kilobytes for the anchor's value read. Value semantics stay
+        with the anchor witness and, as ever, the unchanged classifier.
+
+        WHAT IT COSTS AND BUYS, measured read-only on production over the
+        twelve-month window of the tenant that failed: the gate alone read
+        forty megabytes in under half a second and left 599 traces; the gated
+        anchor statement read 4.7 GB in 3.3 s against 7.5 GB in 6.3 s ungated,
+        and published no candidate, so no classifier statement and no keyset
+        re-read follow. The slices of one walk partition the window, so a
+        walk's seed cost sums to about that one statement.
+
+        THE CONTRACT IT EXTENDS. The gate is confined to the anchor's witness
+        envelope and is therefore emitted only when that envelope is - a
+        lane on the legacy unbounded contract emits no gate and its statement
+        stays byte-identical. Under the bounded contract a filtered list
+        already omits a trace whose only value witness starts more than the
+        slack after its root; with the gate the same holds for every other
+        positive leaf's key witness. That is the one observable change, and
+        it is the existing contract applied to the whole conjunction rather
+        than to one leaf of it.
+
+        A PURE FUNCTION OF THE FILTERS. Which leaves gate is decided by the
+        compiled plans alone - no probe, no estimate, no setting - so every
+        hop of one pagination emits the same gate and the boundary cannot
+        move under a half-published page. Leaves without a typed-Map key
+        witness (absence, JSON, root-scoped, grouped-absence) simply do not
+        take part; the gate is still exact with any subset of the leaves, and
+        with none there is no gate.
+        """
+
+        if not witness_envelope_fragment:
+            return "", {}
+        anchor_key_witness = str(anchor.raw_key_witness_predicate or "")
+        plans, residual = self._partition_trace_filter_plans(self._bounded_filters())
+        if residual:
+            return "", {}
+        witnesses: list[str] = []
+        params: dict[str, Any] = {}
+        for plan in plans:
+            key_witness = str(plan.raw_key_witness_predicate or "")
+            if (
+                plan.scope != "any"
+                or plan.exclude_group_matches
+                or not key_witness
+                or key_witness == anchor_key_witness
+                or "JSONExtract" in key_witness
+                or not re.search(
+                    r"\bhas\(span_attr_(?:str|num|bool)\.keys,", key_witness
+                )
+            ):
+                continue
+            witnesses.append(key_witness)
+            params.update(
+                {
+                    name: value
+                    for name, value in plan.params.items()
+                    if f"%({name})s" in key_witness
+                }
+            )
+        if not witnesses:
+            return "", {}
+        union = " OR ".join(witnesses)
+        conjunction = " AND ".join(f"countIf({witness}) > 0" for witness in witnesses)
+        fragment = f"""
+              AND trace_id IN (
+                  SELECT trace_id
+                  FROM {self.TABLE}
+                  PREWHERE {self.project_filter_sql()}
+                    {project_version_fragment}{witness_envelope_fragment}
+                  WHERE {union}
+                  GROUP BY trace_id
+                  HAVING {conjunction}
+              )"""
+        return fragment, params
+
+    def _positive_text_candidate_witnesses(
+        self,
+    ) -> Iterator[tuple[LatestFilterPredicate, str, list[str]]]:
+        """Yield compiler-proven positive string-only witnesses and their values.
+
+        Shared acquisition shape for both typed-string regimes below. It proves
+        only that a positive ``span_attr_str`` value witness exists and extracts
+        the bound literals it compares; no length, operation or index policy is
+        applied here. Numeric/Boolean branches, JSON, negation, missing-key
+        defaults and residual filters are rejected by the existing compiler and
+        ``_uses_scalar_coordinate_replay`` contract, not by this helper.
+        """
+        if not self._uses_scalar_coordinate_replay():
+            return
+        for plan in self._candidate_witness_plans():
+            witness = self._public_scalar_candidate_witness_predicate(plan)
+            if (
+                not witness
+                or "span_attr_str[" not in witness
+                or "span_attr_num" in witness
+                or "span_attr_bool" in witness
+            ):
+                continue
+            key_params = set(
+                re.findall(r"%\((\w+)\)s", plan.raw_key_witness_predicate or "")
+            )
+            value_params = set(re.findall(r"%\((\w+)\)s", witness)) - key_params
+            values: list[str] = []
+            for name in sorted(value_params):
+                value = plan.params.get(name)
+                values.extend(value if isinstance(value, (list, tuple)) else [value])
+            if values and all(isinstance(value, str) for value in values):
+                yield plan, witness, values
+
+    @property
+    def _long_text_candidate_seed_plan(self):
+        """Memoize the long-text plan against the inputs that decided it."""
+
+        return self._seed_plan_cached(
+            "long_text", self._compute_long_text_candidate_seed_plan
+        )
+
+    def _compute_long_text_candidate_seed_plan(self):
+        """Find a selective, compiler-proven necessary typed-string witness.
+
+        Long positive text filters otherwise classify hundreds of unrelated
+        roots per read. Length selects an execution plan only, never semantics.
+        Missing-key defaults, negation, JSON and mixed-type witnesses must still
+        satisfy the existing compiler's exhaustive raw-witness contract.
+        """
+        for plan, witness, values in self._positive_text_candidate_witnesses():
+            if not all(
+                len(value.strip()) >= _SELECTIVE_EXACT_TEXT_MIN_LENGTH
+                for value in values
+            ):
+                continue
+            anchors = [_caseless_ascii_ngram_anchor(value) for value in values]
+            if any(anchor is None for anchor in anchors):
+                continue
+            # A value too large to inline this many times keeps the
+            # ordinary exact route, which carries it once. Acquisition is
+            # the only thing that changes: the exact route is the same
+            # necessary-and-sufficient membership test the seed defers to.
+            inlined = sum(
+                _rendered_literal_bytes(literal)
+                for literal in [*anchors, *values]
+                if literal is not None
+            )
+            if inlined > _LONG_TEXT_SEED_INLINE_BUDGET_BYTES:
+                continue
+            params = dict(plan.params)
+            hints = []
+            for index, anchor in enumerate(anchors):
+                name = f"long_text_ngram_{index}"
+                params[name] = anchor
+                # Match schema 023's index expression exactly. indexHint
+                # only prunes impossible granules; it is never a value
+                # predicate or a substitute for latest-state replay.
+                hints.append(
+                    "arrayStringConcat(arrayMap(x -> lower(x), "
+                    f"mapValues(span_attr_str))) LIKE %({name})s"
+                )
+            return replace(
+                plan,
+                params=params,
+                raw_graph_value_witness_predicate=(
+                    "indexHint(" + " OR ".join(hints) + ") AND (" + witness + ")"
+                ),
+            )
+        return None
+
+    @property
+    def _short_text_candidate_seed_plan(self):
+        """Memoize the short-text plan against the inputs that decided it."""
+
+        return self._seed_plan_cached(
+            "short_text", self._compute_short_text_candidate_seed_plan
+        )
+
+    def _compute_short_text_candidate_seed_plan(self):
+        """Seed short exact strings from the compiler's own typed value bloom.
+
+        Selectivity policy for positive typed-string acquisition. A seed is
+        worth running only when one usable value index already exists, and
+        which index that is depends on value length and operation alone:
+
+        * long values (and only they) can anchor schema 023's concatenated
+          lowercase LIKE index, so substring operations stay on the long
+          regime above;
+        * a short literal has no usable LIKE anchor, but exact membership does
+          carry the compiler's value companion over ``mapValues(span_attr_str)``
+          (``has``/``hasAny`` plus its ASCII legacy variant), emitted for
+          ``equals``/``in`` only. That companion is a necessary condition, so
+          it may prune raw granules; exact Unicode comparison and the complete
+          six-key latest-state classifier still decide membership.
+
+        Everything else — mixed value lengths, substring/negative operations,
+        JSON, structured overflow, versioned requests, relational or end-user
+        seeds — keeps the existing acquisition path unchanged. This is the same
+        flat scalar typed-map AND envelope the numeric lane requires: at most
+        ten leaves, each its own typed Map plan, and no residual filter.
+
+        THE ONE EXEMPTION, and why it does not weaken the shape. A caller may
+        delegate to this builder with an internal root invariant of its own
+        — the voice list injects ``observation_type = 'conversation'`` carrying
+        the unforgeable ``_eval_task_trace_root`` marker, the same marker the
+        latest-state compiler already demands before it will read that column
+        as a root predicate at all. That leaf is structural, not a user filter:
+        it cannot arrive from a request (``col_type`` is an unconstrained
+        request string, but the filter serializer rejects the item key itself
+        as unknown and the latest-state compiler above requires that key to be
+        ``True``, so the column type alone reaches no plan), it is
+        re-applied by the seed's own root predicate, and it is applied a third
+        time by the unbounded latest-state classifier that decides membership.
+        So it is excluded from the counted shape here, exactly as
+        ``_positive_relational_seed_filter`` and the seed batch size already
+        exclude it, and the check it is excluded from stays as strict as it was
+        for every public leaf: every one of them must still be its own
+        any-scope typed Map plan, and every non-``any`` plan must be one of
+        these markers.
+        """
+        leaves = self._active_non_time_filters()
+        public_leaves = [
+            item for item in leaves if not item.get("_eval_task_trace_root")
+        ]
+        if (
+            self.project_version_id is not None
+            or not 1 <= len(public_leaves) <= 10
+            or not self._uses_scalar_coordinate_replay()
+            or self._positive_exact_end_user_seed_filter() is not None
+            or self._positive_relational_seed_filter() is not None
+        ):
+            return None
+        plans, residual = self._partition_trace_filter_plans(self._bounded_filters())
+        public_plans = [plan for plan in plans if plan.scope == "any"]
+        if (
+            residual
+            or len(plans) != len(leaves)
+            or len(public_plans) != len(public_leaves)
+            or not all(
+                plan.aggregates
+                and all(
+                    any(
+                        column in sql
+                        for column in (
+                            "span_attr_num",
+                            "span_attr_str",
+                            "span_attr_bool",
+                        )
+                    )
+                    for sql in plan.aggregates
+                )
+                for plan in public_plans
+            )
+        ):
+            return None
+        for plan, witness, values in self._positive_text_candidate_witnesses():
+            if (
+                all(
+                    0 < len(value.strip()) < _SELECTIVE_EXACT_TEXT_MIN_LENGTH
+                    for value in values
+                )
+                and "mapValues(span_attr_str)" in witness
+            ):
+                return plan
+        return None
+
+    def _public_long_text_candidate_seed_plan(self):
+        """Stable seam over the once-compiled long-text plan."""
+        return self._long_text_candidate_seed_plan
+
+    def _public_short_text_candidate_seed_plan(self):
+        """Stable seam over the once-compiled short-text plan."""
+        return self._short_text_candidate_seed_plan
+
+    def _public_text_candidate_seed_plan(self):
+        """Either typed-string regime, whichever value index is available."""
+        return (
+            self._public_long_text_candidate_seed_plan()
+            or self._public_short_text_candidate_seed_plan()
+        )
+
+    @property
+    def _short_text_candidate_seed_lane(self) -> bool:
+        """Compile the three seed plans once per input shape, not per hook call.
+
+        Deciding this recompiles ``_partition_trace_filter_plans`` several
+        times over, and the bounded-witness hooks
+        (``_scalar_candidate_witness_envelope`` ->
+        ``_candidate_seed_witness_slack`` -> here) ask for it on every
+        statement and twice inside ``filter_seed_width_policy``.
+
+        The cache is keyed on the inputs that decide the answer, NOT held for
+        the life of the builder. An earlier revision of this memo asserted that
+        ``filters`` is assigned in ``__init__`` and never rebound; that premise
+        is false. ``tracer/selectors/eval_tasks/row_resolver.py`` rebinds
+        ``builder.filters`` after construction on a production path, and at
+        least five test modules do the same. That rebind is harmless today only
+        because its builder carries ``bounded_identity_only=True``, which forces
+        every text seed plan below ``_uses_scalar_coordinate_replay`` to None
+        whatever the filters say - a coincidence of the current call sites, not
+        an invariant. A lane-changing rebind against a life-of-builder cache
+        would serve a stale plan, and a stale plan here means a seed statement
+        restricted by a predicate the caller has removed: an under-inclusive
+        page that silently drops rows.
+
+        So ``_seed_plan_cache_key`` freezes every input the three plans read -
+        the list is ``_SEED_PLAN_CACHE_INPUTS``, and a test walks the plans'
+        whole call graph and fails if it drifts - and any change to them
+        recomputes. Only the
+        plans are cached: the slack setting and the width policy are still read
+        per statement, so an operator change still takes effect on the next
+        read.
+        """
+        return self._seed_plan_cached("lane", self._compute_short_text_seed_lane)
+
+    def _compute_short_text_seed_lane(self) -> bool:
+        return (
+            super()._public_scalar_candidate_seed_plan() is None
+            and self._public_long_text_candidate_seed_plan() is None
+            and self._public_short_text_candidate_seed_plan() is not None
+        )
+
+    #: Every instance attribute the memoized seed plans read, directly or
+    #: through the base-class helpers they call (``_bounded_filters``,
+    #: ``_active_non_time_filters``, ``_uses_attribute_coordinate_replay`` and
+    #: ``_uses_scalar_coordinate_replay``, ``_candidate_witness_plans``,
+    #: ``_positive_exact_end_user_seed_filter``,
+    #: ``_positive_relational_seed_filter``). Nothing outside this tuple may be
+    #: able to change a plan; ``test_the_seed_plan_cache_key_covers_every_input
+    #: _the_plans_read`` walks that call graph and fails if the list drifts.
+    _SEED_PLAN_CACHE_INPUTS = (
+        "filters",
+        "search",
+        "sort_params",
+        "project_id",
+        "project_ids",
+        "project_version_id",
+        "eval_config_ids",
+        "annotation_label_ids",
+        "_eval_config_ids_known",
+        "_annotation_label_set_known",
+        "_bounded_identity_only",
+        "_bounded_internal_scan",
+        "_bounded_bulk_scan",
+        "_bounded_population_proof",
+        "_bounded_sampling_rate",
+        "_bounded_membership_filters",
+        "_bounded_global_span_witnesses",
+        "_bounded_include_filter_witnesses",
+        # Derived from filters at construction and NOT recomputed on a rebind,
+        # so it is a genuine independent input rather than a shadow of
+        # ``filters``: a builder whose filters were rebound still answers with
+        # the window it was constructed with.
+        "_bounded_request_window",
+    )
+
+    def _seed_plan_cache_key(self) -> tuple[str, ...]:
+        """Freeze every input the three text seed plans read.
+
+        ``repr`` rather than a hash: the filter leaves carry datetimes, UUIDs
+        and nested dicts, and an equal-valued rebind whose dicts were built in
+        a different insertion order only costs a recompute, never a wrong
+        answer. Anything that is not read here must not be able to change the
+        plans - which is a claim about a call graph, so a test walks it rather
+        than a comment asserting it.
+        """
+
+        return tuple(
+            repr(getattr(self, name, None)) for name in self._SEED_PLAN_CACHE_INPUTS
+        )
+
+    def _seed_plan_cached(self, name: str, compute: Callable[[], Any]) -> Any:
+        """Return ``compute()`` memoized for as long as the inputs hold still."""
+
+        key = self._seed_plan_cache_key()
+        cached = getattr(self, "_seed_plan_memo", None)
+        if cached is None or cached[0] != key:
+            cached = (key, {})
+            self._seed_plan_memo = cached
+        values = cached[1]
+        if name not in values:
+            values[name] = compute()
+        return values[name]
+
+    def _uses_short_text_candidate_seed(self) -> bool:
+        """True when the short exact-string lane is the active seed plan."""
+        return self._short_text_candidate_seed_lane
+
+    def _uses_wide_candidate_seed(self) -> bool:
+        """True when the numeric or long-text lane is the active seed plan.
+
+        The two lanes the base builder lets open at the whole request window
+        in a single statement, and the two this builder can move onto the
+        bounded-witness schedule. They share one hook because they share that
+        cost shape and one setting; which of them is chosen is decided in
+        ``_public_scalar_candidate_seed_plan``, numeric first.
+
+        False for a builder carrying the private ``_eval_task_trace_root``
+        marker. Such a builder is ANOTHER surface's delegate - voice calls
+        construct one for exactly this long-text plan - and those surfaces mint
+        their own cursors without pinning this slack, so a mid-flight setting
+        change there could move candidacy under a half-published page. Their
+        bounded-witness contracts are also their own owner decisions: a voice
+        ``call.*`` attribute written on the closing span is the concrete
+        failure. The widening stops at the surface it is proposed for.
+        """
+        return self._seed_plan_cached("wide_lane", self._compute_wide_seed_lane)
+
+    def _compute_wide_seed_lane(self) -> bool:
+        if any(
+            item.get("_eval_task_trace_root")
+            for item in self._active_non_time_filters()
+        ):
+            return False
+        return (
+            super()._public_scalar_candidate_seed_plan() is not None
+            or self._public_long_text_candidate_seed_plan() is not None
+        )
+
+    def _public_boolean_candidate_seed_plan(self):
+        leaves = self._active_non_time_filters()
+        if (
+            self.project_version_id is not None
+            or not self._uses_scalar_coordinate_replay()
+            or len(leaves) != 1
+        ):
+            return None
+        config = leaves[0].get("filter_config") or {}
+        if not (
+            config.get("col_type") == "SPAN_ATTRIBUTE"
+            and config.get("filter_type") == "boolean"
+            and config.get("filter_op") == "equals"
+            and type(config.get("filter_value")) is bool
+        ):
+            return None
+        plans, residual = self._partition_trace_filter_plans(self._bounded_filters())
+        if residual or len(plans) != 1:
+            return None
+        plan = plans[0]
+        # V2 classifies ONE physical tuple, so even false requires a raw row
+        # with this typed key and value. Keep the shared legacy/graph default
+        # guard unchanged; never prune versions from the exact classifier.
+        plan = replace(
+            plan, raw_graph_value_witness_predicate=plan.raw_witness_predicate
+        )
+        return plan if self._public_scalar_candidate_witness_predicate(plan) else None
+
+    def _public_scalar_candidate_seed_plan(self):
+        return (
+            super()._public_scalar_candidate_seed_plan()
+            or self._public_text_candidate_seed_plan()
+            or self._public_boolean_candidate_seed_plan()
+        )
+
+    def filter_candidate_seed_is_optional(self) -> bool:
+        if self._public_boolean_candidate_seed_plan() is not None:
+            return False
+        # Index-assisted long-text acquisition is an ordered, exhaustive
+        # necessary root population, followed by the unchanged latest-state
+        # classifier. Run it as the actual query plan, not an abortable probe:
+        # application reads deliberately do not honor speculative statement
+        # time/scan caps. Skipping it there would walk and hydrate unrelated
+        # roots until request continuation, without using the available index.
+        # Numeric speculative lanes and other seed types retain their own
+        # policy. Memory safety, exact ordering and pagination are unchanged.
+        if (
+            super()._public_scalar_candidate_seed_plan() is None
+            and self._public_text_candidate_seed_plan() is not None
+        ):
+            return False
+        # One compiler-proven positive numeric value witness can seed up to ten
+        # flat scalar typed-map AND leaves, including negative/absence siblings.
+        # This is the required acquisition plan under uncapped reads. It is
+        # still only a raw all-child-history superset: root-window ordering
+        # and the complete six-key latest-state classifier stay authoritative.
+        # Do not promote structured/residual, root/user/relation, versioned,
+        # sampled or internal requests to an unbounded speculative global Set.
+        active_filters = self._active_non_time_filters()
+        if (
+            self.project_version_id is None
+            and self._uses_scalar_coordinate_replay()
+            and 1 <= len(active_filters) <= 10
+            and super()._public_scalar_candidate_seed_plan() is not None
+            and self._positive_exact_end_user_seed_filter() is None
+            and self._positive_relational_seed_filter() is None
+        ):
+            plans, residual = self._partition_trace_filter_plans(
+                self._bounded_filters()
+            )
+            if (
+                not residual
+                and len(plans) == len(active_filters)
+                and all(
+                    plan.scope == "any"
+                    and plan.aggregates
+                    and all(
+                        any(
+                            column in sql
+                            for column in (
+                                "span_attr_num",
+                                "span_attr_str",
+                                "span_attr_bool",
+                            )
+                        )
+                        for sql in plan.aggregates
+                    )
+                    for plan in plans
+                )
+            ):
+                return False
+        return super().filter_candidate_seed_is_optional()
+
+    def build_filter_candidate_seed_page(self, **kwargs):
+        """Acquire one slice of candidate roots. THE CONTRACT this lane obeys.
+
+        Three sentences a reviewer should be able to hold at once, because
+        every knob below is a consequence of one of them.
+
+        1. ACQUISITION ONLY. This statement produces a candidate superset. The
+           exact latest-state classifier is a separate, unbounded statement and
+           it alone decides membership; a published row is always an exact
+           any-span match. Nothing here can make a non-match appear.
+        2. A SEED STATEMENT NEVER KNOWINGLY READS MORE THAN ~THE ROW BUDGET.
+           The width of the slice is chosen from the rows the previous
+           statement read (``filter_seed_width_policy``), and any width above
+           the unprobed cap must first be costed by a density probe
+           (``build_filter_seed_density_probe_query``), which answers from the
+           primary index and reads no column data at all. A sparse tail is
+           therefore crossed at index cost, not at slice cost.
+           Narrowing never skips: slices are contiguous and half-open, so a
+           shrunk slice defers its older part to the next adjacent one.
+        3. THE WITNESS ENVELOPE IS THE ONE PLACE CANDIDACY IS NARROWED, and it
+           is the one behaviour change a user could observe. With
+           ``FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS`` above zero (one
+           hour by default) a trace is a candidate only if a span carrying the
+           value STARTS within that slack of the roots this statement can
+           publish. A trace whose only matching span arrives more than the
+           slack after its root is omitted from a FILTERED list - it is still
+           in the unfiltered list, still fully readable, and still returned by
+           the same filter over a window that contains the span's own hour.
+           Setting the slack to zero restores the unbounded contract with no
+           deploy. A running pagination keeps the slack it started with, which
+           the signed cursor carries, so the boundary cannot move mid-page.
+        """
+
+        # A long-text witness starts with the requested root population, not
+        # every retained trace in the project. The child history is unbounded
+        # in time; the root interval only selects necessary immutable trace IDs.
+        # No inner LIMIT, raw is_deleted or current-root identity can prune the
+        # witness. Stale values remain candidates for exact latest-state replay.
+        if (
+            super()._public_scalar_candidate_seed_plan() is None
+            and self._public_text_candidate_seed_plan() is not None
+            and self._positive_exact_end_user_seed_filter() is None
+            and self._positive_relational_seed_filter() is None
+        ):
+            return TraceListQueryBuilder.build_filter_ordered_seed_page(
+                self,
+                **kwargs,
+                _positive_scalar_candidate_first=True,
+                _restrict_scalar_root_population=True,
+            )
+        return super().build_filter_candidate_seed_page(**kwargs)
+
+    def supports_filter_seed_density_probe(self) -> bool:
+        """A lane probes for density exactly when it declares a row budget.
+
+        The probe exists to cost a width the budget's doubling rule proposes
+        above its own unprobed cap, so it is the same question as whether
+        there is a budget at all; keeping a second lane list here is how the
+        two drift apart.
+        """
+
+        return self.filter_seed_width_policy() is not None
+
+    def build_filter_seed_density_probe_query(
+        self, *, slice_start: datetime, slice_end: datetime
+    ) -> tuple[str, dict[str, Any]]:
+        """Estimate, from the primary index alone, how dense a candidate is.
+
+        This is the density proof ``FilterSeedWidthPolicy`` requires before the
+        row budget may issue a slice wider than its unprobed cap. The reactive
+        doubling rule sizes the next slice from the PREVIOUS one's read rows,
+        so it crosses a sparse tail cheaply and then drops its accumulated
+        width onto whatever comes next; measured in production, eight doublings
+        over a 166 h sparse tail issued a 128 h slice that read over 12 GiB in
+        one statement. This probe is what makes that impossible: the widened
+        slice is costed before it is issued, and shrunk to fit the budget.
+
+        IT READS NO COLUMN DATA. ``EXPLAIN ESTIMATE`` answers from the primary
+        index: for every part the key condition selects it reports the parts,
+        granules (``marks``) and ``rows`` that a real statement WOULD read.
+        That is exactly the question the width policy asks, and it is a
+        different order of cost from asking it with ``count()``: the counting
+        form reads the smallest column of every row in the slice, which on the
+        measured 128 h proposal was 20.5M rows / 492 MB / 2.1 s at one worker.
+        The index form reads marks.
+
+        Deliberately the cheapest statement that answers the question:
+
+        * the key condition is ``project_id`` plus a half-open ``start_time``
+          range over ``[hour_floor(start), hour_ceil(end))`` clamped to the
+          request window. Both ends are whole hours, so the range is expressed
+          exactly by the ``toStartOfHour(start_time)`` primary-key component
+          the server prunes on - the same shape, and the same reasoning, as
+          this lane's own witness envelope. Rounding OUT rather than in keeps
+          the estimate an upper bound on the slice it is approving, so it can
+          only make the issued slice narrower, never wider;
+        * no attribute predicate, no typed-Map access, no child witness, no
+          ``FINAL``, no ordering, no per-trace sets, and in particular NO
+          ``IN`` subquery: ``EXPLAIN`` executes a scalar/``IN`` subquery to
+          plan around it, which would put a real read back inside a statement
+          whose whole purpose is not to have one;
+        * no ``is_deleted`` predicate either. It is not part of the primary
+          key, so it could not narrow an index estimate; leaving it out keeps
+          the statement honest about what it measures - every physical row in
+          the granules the slice touches, tombstones and stale versions
+          included, which is what the seed would have to walk past.
+
+        The estimate is an UPPER BOUND, twice over: whole granules, and every
+        physical version inside them. Both errors point the same way, at a
+        narrower issued slice.
+
+        DO NOT "IMPROVE" THE TIME PREDICATE INTO ``toStartOfHour(start_time)``.
+        It looks like the tighter spelling of the primary-key component, and
+        it would silently break this statement in the one direction that is
+        not safe. ``spans`` carries aggregate PROJECTIONs keyed on
+        ``(project_id, toStartOfHour(start_time) AS hour, ...)`` (schema 002
+        and 007). They do not store ``start_time``, so a predicate on the raw
+        column cannot be answered from them and the estimate describes the
+        base table - which is what the production measurement of the counting
+        form showed, at 492 MB of base-table reads. Spelled as ``hour``, the
+        optimizer could route the statement to a projection instead, and
+        ``rows`` would then be that projection's AGGREGATE rows: orders of
+        magnitude smaller than the slice, an estimate far below the budget,
+        and the widest possible slice APPROVED. Raw ``start_time`` bounds are
+        also what this lane's own seed and witness emit, and the hour-aligned
+        range prunes identically through the key expression's monotonicity -
+        plus the table's ``PARTITION BY toDate(start_time)``, which bounds the
+        parts the estimate can even consider.
+
+        One consequence of the ``EXPLAIN`` prefix worth stating: the v2
+        rewrite boundary appends its required ``SETTINGS`` only to statements
+        beginning ``SELECT``/``WITH``, so this one carries none. Both settings
+        it would add are inert here - there is no ``FINAL`` for
+        ``use_skip_indexes_if_final`` to protect, and ``optimize_use_projections``
+        already defaults to on while the paragraph above keeps projections out
+        of reach.
+
+        It answers a COST question only. It never decides membership, never
+        prunes candidates and never reaches the published page: shrinking a
+        slice defers its older part to the next contiguous slice, so the scan
+        stays exact whatever the probe says, and a probe that fails or returns
+        an unreadable shape simply pins the width at the unprobed cap.
+
+        ON THE CAPS THIS STATEMENT CARRIES. The selector clamps the probe to
+        one worker and one gibibyte of memory, and asks for a one-second
+        deadline and a one-gibibyte byte cap. Measured in production, only the
+        first two reach the server: ``application_read_settings`` zeroes the
+        byte caps and ``timeout_ms`` is not a statement deadline on the
+        application read path. That gap mattered while the probe was a count;
+        for an index estimate it is close to moot, because there is no data
+        read for a byte cap to bound.
+        """
+
+        request_start, request_end = self.parse_time_range(self.filters)
+        if not request_start <= slice_start < slice_end <= request_end:
+            raise ValueError("seed density probe must stay inside the request window")
+        if not self.supports_filter_seed_density_probe():
+            raise ValueError("seed density probe is unavailable")
+        probe_start = max(request_start, floor_hour(slice_start))
+        probe_end = min(request_end, ceil_hour(slice_end))
+        params = {
+            **self.params,
+            "seed_density_start_us": _unix_microseconds(probe_start),
+            "seed_density_end_us": _unix_microseconds(probe_end),
+        }
+        return (
+            f"""
+            EXPLAIN ESTIMATE
+            SELECT count()
+            FROM {self.TABLE}
+            WHERE {self.project_filter_sql()}
+              AND start_time >= fromUnixTimestamp64Micro(%(seed_density_start_us)s)
+              AND start_time < fromUnixTimestamp64Micro(%(seed_density_end_us)s)
+            """,
+            params,
+        )
+
+    def filter_seed_density_probe_estimate(
+        self,
+        rows: Iterable[Mapping[str, Any]],
+        columns: Iterable[str] | None = None,
+    ) -> int | EmptyDensityEstimate | None:
+        """Reduce one ``EXPLAIN ESTIMATE`` result to the policy's row bound.
+
+        The reading of that result - and in particular the refusal to read an
+        EMPTY estimate table as the integer zero - is shared with the span
+        lane's identical statement; see ``reduce_density_estimate``.
+        """
+
+        return reduce_density_estimate(rows, columns, table=self.TABLE)
+
+    def supports_filter_windowed_candidate_seed_page(self) -> bool:
+        return bool(
+            self._uses_scalar_coordinate_replay()
+            # Text already starts with this population. Do not repeat the same
+            # failed query before falling back to the exact ordered-root walk.
+            # The selector also offers this fallback only for an *optional*
+            # candidate seed, and both text regimes are required, so the gate
+            # is unreachable for them by construction. Application reads
+            # deliberately strip statement time/scan caps, so there is no
+            # in-statement recovery to fall back to either: the short lane's
+            # declared row budget is what bounds a text seed's working set.
+            and super()._public_scalar_candidate_seed_plan() is not None
+        )
+
+    def build_filter_windowed_candidate_seed_page(self, **kwargs):
+        """One alternative after a failed global seed, never an unconditional scan."""
+        if not self.supports_filter_windowed_candidate_seed_page():
+            raise ValueError("windowed scalar candidate seed is unavailable")
+        return TraceListQueryBuilder.build_filter_ordered_seed_page(
+            self,
+            **kwargs,
+            _positive_scalar_candidate_first=True,
+            _restrict_scalar_root_population=True,
+        )
+
+    def recommended_filter_candidate_witness_fallback_classify_batch_size(
+        self,
+    ) -> int | None:
+        if self._uses_attribute_coordinate_replay():
+            return 200
+        return (
+            super().recommended_filter_candidate_witness_fallback_classify_batch_size()
+        )
+
+    def prefer_filter_candidate_witness_probe_first(self) -> bool:
+        # The old finite Map probe can exceed its read cap before the exact
+        # indexed replay would finish. Avoid that extra scan on this lane.
+        return (
+            False
+            if self._uses_attribute_coordinate_replay()
+            else super().prefer_filter_candidate_witness_probe_first()
+        )
+
+    def build_span_attributes_query(
+        self,
+        trace_ids: list[str],
+        attribute_keys: Iterable[str] | None = None,
+        *,
+        trace_identities: Iterable[tuple[str, str]] | None = None,
+    ) -> tuple[str, dict[str, Any]]:
+        """Hydrate the latest live value of each requested key on a trace page.
+
+        A trace's physical span fanout is unbounded. Packing every span's full
+        maps into one ``groupArray`` merely hides that fanout from the result-row
+        limit while retaining unbounded ClickHouse/Python memory. This query
+        projects only requested keys and deterministically selects one value per
+        ``(project, trace, key)``: the value on the latest live physical span by
+        ``(latest_start_time, id, observation_type, service_name)``. Versions
+        collapse on the six-part storage key with one coherent tuple before
+        tombstones and key presence are evaluated. Therefore result cardinality
+        is bounded by ``page trace identities * requested keys`` regardless of
+        historical span/value fanout, without sampling or truncation.
+
+        It intentionally does not reuse the list's date window: child spans can
+        start more than a day after their root. Exact page-scoped project/trace
+        pairs are the membership boundary, including in organization mode where
+        trace ids are customer controlled and can collide across tenants.
+        Conflicting equal-version rows have no unique winner; this does not
+        promise equivalence to FINAL's unspecified tie selection.
+        """
+
+        normalized_trace_ids = tuple(
+            dict.fromkeys(str(trace_id) for trace_id in trace_ids if trace_id)
+        )
+        requested_keys = tuple(
+            dict.fromkeys(str(key) for key in (attribute_keys or ()) if key)
+        )
+        if not normalized_trace_ids or not requested_keys:
+            return "", {}
+
+        if trace_identities is None:
+            if self.project_ids is not None:
+                raise ValueError(
+                    "multi-project attribute hydration requires exact trace identities"
+                )
+            if not self.project_id:
+                raise ValueError("attribute hydration requires a project identity")
+            normalized_trace_identities = tuple(
+                (str(self.project_id), trace_id) for trace_id in normalized_trace_ids
+            )
+        else:
+            normalized_trace_identities = tuple(
+                dict.fromkeys(
+                    (str(candidate_project_id), str(candidate_trace_id))
+                    for candidate_project_id, candidate_trace_id in trace_identities
+                    if candidate_project_id and candidate_trace_id
+                )
+            )
+            requested_trace_id_set = set(normalized_trace_ids)
+            allowed_project_ids = (
+                set(self.project_ids or ())
+                if self.project_ids is not None
+                else {str(self.project_id)}
+            )
+            if not normalized_trace_identities or any(
+                candidate_project_id not in allowed_project_ids
+                or candidate_trace_id not in requested_trace_id_set
+                for candidate_project_id, candidate_trace_id in normalized_trace_identities
+            ):
+                raise ValueError("attribute hydration identities escaped request scope")
+
+        params: dict[str, Any] = {
+            **self.params,
+            "attr_trace_identities": normalized_trace_identities,
+            # clickhouse-driver renders a single-element tuple as a scalar
+            # String. ARRAY JOIN requires an Array even when only one key was
+            # requested, so bind the de-duplicated, insertion-ordered keys as
+            # a list rather than a tuple.
+            "requested_attribute_keys": list(requested_keys),
+        }
+        query = f"""
+        SELECT
+            toString(project_id) AS project_id,
+            trace_id,
+            attribute_key,
+            argMax(candidate_attribute_value_json,
+                tuple(latest_start_time, id, observation_type, service_name))
+                AS attribute_value_json
+        FROM (
+            SELECT
+                project_id,
+                trace_id,
+                id,
+                observation_type,
+                service_name,
+                latest_start_time,
+                attribute_key,
+                multiIf(
+                    notEmpty(JSONExtractRaw(latest_attributes_extra, attribute_key)),
+                        JSONExtractRaw(latest_attributes_extra, attribute_key),
+                    mapContains(latest_attrs_bool, attribute_key),
+                        if(latest_attrs_bool[attribute_key] != 0, 'true', 'false'),
+                    mapContains(latest_attrs_number, attribute_key),
+                        if(
+                            isFinite(latest_attrs_number[attribute_key]),
+                            toString(latest_attrs_number[attribute_key]),
+                            'null'
+                        ),
+                    mapContains(latest_attrs_string, attribute_key),
+                        toJSONString(latest_attrs_string[attribute_key]),
+                    ''
+                ) AS candidate_attribute_value_json
+            FROM (
+                SELECT
+                    project_id,
+                    trace_id,
+                    id,
+                    observation_type,
+                    service_name,
+                    argMax(tuple(start_time, attributes_extra, attrs_string,
+                        attrs_number, attrs_bool, is_deleted), _version) AS latest_span,
+                    latest_span.1 AS latest_start_time,
+                    latest_span.2 AS latest_attributes_extra,
+                    latest_span.3 AS latest_attrs_string,
+                    latest_span.4 AS latest_attrs_number,
+                    latest_span.5 AS latest_attrs_bool,
+                    latest_span.6 AS latest_is_deleted
+                FROM {self.TABLE}
+                PREWHERE (toString(project_id), trace_id)
+                    IN %(attr_trace_identities)s
+                  AND {self.project_filter_sql()}
+                GROUP BY project_id, observation_type, service_name,
+                    toStartOfHour(start_time), trace_id, id
+            ) AS latest_physical_spans
+            ARRAY JOIN %(requested_attribute_keys)s AS attribute_key
+            WHERE latest_is_deleted = 0
+        ) AS projected_attribute_values
+        WHERE notEmpty(candidate_attribute_value_json)
+        GROUP BY project_id, trace_id, attribute_key
+        """
+        return query, params
+
+    @staticmethod
+    def _trace_tags_select_sql() -> str:
+        """Project tags from the bounded latest trace row, without a dictionary."""
+
+        return "ifNull(nullIf(latest_trace_tags, ''), '[]') AS trace_tags"
+
+    def _trace_tags_join_sql(self) -> str:
+        """Resolve trace tags directly from the CH25 ``traces`` table.
+
+        The page identity already limits this read to at most the requested
+        trace IDs. Collapse those rows by the ReplacingMergeTree version,
+        discard a latest tombstone, and join on both tenant and trace identity.
+        This preserves the dictionary's missing-row ``[]`` contract while
+        avoiding a runtime ``dictGet`` privilege dependency.
+        """
+
+        return f"""
+        LEFT ANY JOIN (
+            SELECT
+                project_id AS trace_tags_project_id,
+                toString(id) AS trace_tags_trace_id,
+                argMax(tags, _version) AS latest_trace_tags,
+                argMax(is_deleted, _version) AS latest_trace_is_deleted
+            FROM traces
+            PREWHERE {self.project_filter_sql()}
+              AND id IN %(content_trace_ids)s
+            GROUP BY project_id, id
+            HAVING latest_trace_is_deleted = 0
+        ) AS latest_trace_tags_rows
+          ON latest_physical_roots.project_id = trace_tags_project_id
+         AND latest_physical_roots.trace_id = trace_tags_trace_id
+        """
+
+    def build_user_id_query(
+        self,
+        trace_ids: list[str],
+        *,
+        trace_identities: Iterable[tuple[str, str]] | None = None,
+    ) -> tuple[str, dict[str, Any]]:
+        """Build phase one of bounded, dictionary-free user enrichment.
+
+        Return at most one target row per supplied ``(project_id, trace_id)``.
+        The selected page users are frozen into one scalar array, then the remap
+        lookup discovers and expands only consolidation groups touched by those
+        IDs. The result freezes each trace's canonical id and the finite physical
+        ids phase two may inspect without a tenant-global remap aggregate.
+
+        ``trace_identities`` is authoritative when supplied.  It is mandatory
+        for an organization-scoped page because trace text is not globally
+        unique across projects.  The trace-only form remains for the single-
+        project builder contract and direct callers.
+        """
+
+        page_trace_ids = tuple(
+            dict.fromkeys(str(value) for value in trace_ids if value)
+        )
+        page_trace_identities = tuple(
+            dict.fromkeys(
+                (str(project_id), str(trace_id))
+                for project_id, trace_id in (trace_identities or ())
+                if project_id and trace_id
+            )
+        )
+        target_count = (
+            len(page_trace_identities) if page_trace_identities else len(page_trace_ids)
+        )
+        if target_count == 0:
+            return "", {}
+        if self.page_size <= 0 or target_count > self.page_size:
+            raise ValueError(
+                "user enrichment trace identities exceed the bounded page size"
+            )
+
+        params: dict[str, Any] = dict(self.params)
+        if page_trace_identities:
+            params["user_trace_identities"] = page_trace_identities
+            page_filter = "(sp.project_id, sp.trace_id) IN %(user_trace_identities)s"
+        else:
+            params["user_trace_ids"] = page_trace_ids
+            page_filter = (
+                f"{self.project_filter_sql('sp')} AND sp.trace_id IN %(user_trace_ids)s"
+            )
+        span_window = self._span_time_window(params, column="sp.start_time")
+
+        query = f"""
+        WITH
+        (
+            SELECT groupArray(tuple(project_id, trace_id, selected_end_user_id))
+            FROM (
+                SELECT
+                    project_id,
+                    trace_id,
+                    assumeNotNull(
+                        argMax(
+                            tuple(latest_end_user_id),
+                            tuple(start_time, id)
+                        ).1
+                    ) AS selected_end_user_id
+                FROM (
+                    SELECT
+                        sp.project_id,
+                        sp.trace_id,
+                        sp.id,
+                        sp.start_time,
+                        argMax(tuple(sp.end_user_id), sp._version).1
+                            AS latest_end_user_id,
+                        argMax(sp.is_deleted, sp._version) AS latest_is_deleted
+                    FROM spans AS sp
+                    PREWHERE {page_filter}
+                      {span_window}
+                    GROUP BY sp.project_id, sp.trace_id, sp.id, sp.start_time
+                ) AS latest_page_spans
+                WHERE latest_is_deleted = 0
+                  AND latest_end_user_id IS NOT NULL
+                  AND latest_end_user_id !=
+                      toUUID('00000000-0000-0000-0000-000000000000')
+                GROUP BY project_id, trace_id
+            ) AS selected_page_users
+        ) AS page_trace_user_rows,
+        latest_trace_users AS (
+            SELECT
+                tupleElement(page_user, 1) AS project_id,
+                tupleElement(page_user, 2) AS trace_id,
+                tupleElement(page_user, 3) AS selected_end_user_id
+            FROM (
+                SELECT arrayJoin(page_trace_user_rows) AS page_user
+            )
+        ),
+        page_end_user_group_ids AS (
+            SELECT DISTINCT remap_match.new_id
+            FROM end_user_id_remap AS remap_match FINAL
+            WHERE remap_match.old_id IN (
+                SELECT selected_end_user_id FROM latest_trace_users
+            )
+               OR remap_match.new_id IN (
+                SELECT selected_end_user_id FROM latest_trace_users
+            )
+        ),
+        remap_lookup AS (
+            SELECT
+                any_id,
+                argMin(
+                    group_survivor_end_user_id,
+                    tuple(toString(group_survivor_end_user_id), toString(new_id))
+                ) AS survivor_end_user_id,
+                argMin(
+                    all_physical_end_user_ids,
+                    tuple(toString(group_survivor_end_user_id), toString(new_id))
+                ) AS physical_end_user_ids
+            FROM (
+                SELECT
+                    new_id,
+                    argMin(old_id, toString(old_id)) AS group_survivor_end_user_id,
+                    arrayDistinct(
+                        arrayPushBack(
+                            groupUniqArray({MAX_USER_PHYSICAL_IDENTITIES_PER_PAGE + 1})(
+                                old_id
+                            ),
+                            new_id
+                        )
+                    ) AS all_physical_end_user_ids
+                FROM end_user_id_remap FINAL
+                WHERE new_id IN (SELECT new_id FROM page_end_user_group_ids)
+                GROUP BY new_id
+            )
+            ARRAY JOIN all_physical_end_user_ids AS any_id
+            GROUP BY any_id
+        ),
+        resolved_trace_users AS (
+            SELECT
+                trace_users.project_id,
+                trace_users.trace_id,
+                trace_users.selected_end_user_id,
+                if(
+                    remap.any_id =
+                        toUUID('00000000-0000-0000-0000-000000000000'),
+                    trace_users.selected_end_user_id,
+                    remap.survivor_end_user_id
+                ) AS resolved_end_user_id,
+                if(
+                    remap.any_id =
+                        toUUID('00000000-0000-0000-0000-000000000000'),
+                    [trace_users.selected_end_user_id],
+                    remap.physical_end_user_ids
+                ) AS physical_end_user_ids
+            FROM latest_trace_users AS trace_users
+            LEFT ANY JOIN remap_lookup AS remap
+              ON trace_users.selected_end_user_id = remap.any_id
+        )
+        SELECT
+            toString(project_id) AS project_id,
+            toString(trace_id) AS trace_id,
+            toString(resolved_end_user_id) AS resolved_end_user_id,
+            arrayMap(
+                value -> toString(value),
+                physical_end_user_ids
+            ) AS physical_end_user_ids
+        FROM resolved_trace_users
+        """
+        return query, params
+
+    def build_user_dimension_query(
+        self, target_rows: Iterable[Mapping[str, Any]]
+    ) -> tuple[str, dict[str, Any]]:
+        """Build phase two with an explicit finite composite identity predicate."""
+
+        identities = tuple(
+            sorted(
+                {
+                    (str(row.get("project_id", "")), str(physical_id))
+                    for row in target_rows
+                    for physical_id in (row.get("physical_end_user_ids") or ())
+                    if row.get("project_id") and physical_id
+                }
+            )
+        )
+        if not identities:
+            return "", {}
+        if len(identities) > MAX_USER_PHYSICAL_IDENTITIES_PER_PAGE:
+            raise UserEnrichmentLimitExceeded(
+                "user enrichment physical identity limit exceeded"
+            )
+
+        query = """
+        SELECT
+            toString(eu.project_id) AS project_id,
+            toString(eu.end_user_id) AS end_user_id,
+            eu.user_id AS user_id,
+            eu.version AS version
+        FROM end_users AS eu FINAL
+        PREWHERE (eu.project_id, eu.end_user_id)
+            IN %(user_physical_identities)s
+        WHERE eu.is_deleted = 0
+        """
+        return query, {
+            **self.params,
+            "user_physical_identities": identities,
+        }
+
+    def resolve_user_ids_for_trace_identities(
+        self,
+        trace_identities: Iterable[tuple[str, str]],
+        analytics,
+        *,
+        timeout_ms: int = 10_000,
+        settings: dict[str, Any] | None = None,
+        timeout_ms_provider: Callable[[], int] | None = None,
+    ) -> BoundedUserResolution:
+        """Execute the two page-bounded reads and merge by tenant + trace.
+
+        Phase one scans the selected spans once and the remap table once.  Its
+        finite result is frozen into the explicit composite identity predicate
+        used by phase two, allowing ClickHouse to prune ``end_users`` by its
+        physical primary key.  Keeping the project in the returned key prevents
+        same-text trace ids in two organization projects from overwriting or
+        leaking labels.
+        """
+
+        identities = tuple(dict.fromkeys(trace_identities))
+        if not identities:
+            return BoundedUserResolution(data=[], query_count=0)
+
+        local_deadline = ReadDeadline.start(timeout_ms)
+
+        def remaining_ms() -> int:
+            if timeout_ms_provider is not None:
+                return timeout_ms_provider()
+            return local_deadline.remaining_ms()
+
+        target_query, target_params = self.build_user_id_query(
+            [trace_id for _, trace_id in identities],
+            trace_identities=identities,
+        )
+        target_result = analytics.execute_ch_query(
+            target_query,
+            target_params,
+            timeout_ms=remaining_ms(),
+            settings=settings,
+        )
+        target_rows = target_result.data
+        dimension_query, dimension_params = self.build_user_dimension_query(target_rows)
+        if not dimension_query:
+            return BoundedUserResolution(data=[], query_count=1)
+
+        dimension_result = analytics.execute_ch_query(
+            dimension_query,
+            dimension_params,
+            timeout_ms=remaining_ms(),
+            settings=settings,
+        )
+        live_users = {
+            (str(row.get("project_id", "")), str(row.get("end_user_id", ""))): row
+            for row in dimension_result.data
+            if row.get("user_id")
+        }
+
+        resolved_rows: list[dict[str, str]] = []
+        for target in target_rows:
+            project_id = str(target.get("project_id", ""))
+            trace_id = str(target.get("trace_id", ""))
+            resolved_id = str(target.get("resolved_end_user_id", ""))
+            candidates = [
+                live_users[(project_id, str(physical_id))]
+                for physical_id in (target.get("physical_end_user_ids") or ())
+                if (project_id, str(physical_id)) in live_users
+            ]
+            if not candidates:
+                continue
+            selected = max(
+                candidates,
+                key=lambda row: (
+                    str(row.get("end_user_id", "")) == resolved_id,
+                    row.get("version"),
+                    str(row.get("end_user_id", "")),
+                ),
+            )
+            resolved_rows.append(
+                {
+                    "project_id": project_id,
+                    "trace_id": trace_id,
+                    "user_id": str(selected["user_id"]),
+                }
+            )
+
+        return BoundedUserResolution(data=resolved_rows, query_count=2)
 
     def build_count_query(self) -> tuple[str, dict[str, Any]]:
         """Pagination count.
@@ -98,4 +2482,15 @@ class TraceListQueryBuilderV2(V2RewriteMixin, TraceListQueryBuilder):
         return super().build_count_query()
 
 
-__all__ = ["TraceListQueryBuilderV2"]
+class TraceListQueryBuilderV2(V2RewriteMixin, _TraceListQueryBuilderV2Core):
+    """Public CH25 trace builder: rewrite the shared planner's output once."""
+
+    # The mixin precedes the core in the MRO and defines an empty default.
+    # Declare exclusions at the public boundary so eval/annotation SQL keeps
+    # its independent source contract, including nested eval replay queries.
+    _v2_rewrite_exclude = _TraceListQueryBuilderV2Core._v2_rewrite_exclude
+
+
+__all__ = [
+    "TraceListQueryBuilderV2",
+]

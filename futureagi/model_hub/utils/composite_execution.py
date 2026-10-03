@@ -340,7 +340,8 @@ def execute_composite_children_sync(
       `run_config.error_localizer_enabled` is captured on the link but not
       honoured — see `PER_CHILD_ERROR_LOCALIZER_ENABLED`.
     - Aggregate only when `parent.aggregation_enabled`; otherwise return
-      raw child results with a null aggregate.
+      raw child results with a null aggregate. The per-child summary is
+      built either way.
     - Defer pass/fail until a numeric aggregate is actually available.
 
     The caller is responsible for:
@@ -412,7 +413,10 @@ def execute_composite_children_sync(
             )
             aggregate_pass = determine_pass_fail(aggregate_score, parent_threshold)
 
-        summary = aggregate_summaries(child_results)
+    # Built in both modes: with aggregation off there is no aggregate, and
+    # every caller (tracer span/trace/session, dataset cell, external eval)
+    # stores this summary as the composite's result in its place.
+    summary = aggregate_summaries(child_results)
 
     # Error localizer dict is cheap to compute either way — it is consumed
     # regardless of aggregation mode so the UI can drill into failing

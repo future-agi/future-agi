@@ -3,11 +3,20 @@ from rest_framework import serializers
 
 from tracer.models.project import Project
 from tracer.models.trace_session import TraceSession
+from tracer.serializers.cursor_pagination import (
+    CURSOR_HELP_TEXT,
+    validate_cursor_exclusivity,
+)
 from tracer.serializers.filters import (
+    BOUNDED_PAGE_NUMBER_HELP_TEXT,
+    JsonObjectField,
     ObserveGraphDataRequestSerializer,
     SortParamListQueryParamField,
     StrictInputSerializer,
-    filter_list_query_param_field,
+    json_object_query_param_field,
+    session_bounded_filter_list_field,
+    session_bounded_filter_list_query_param_field,
+    session_filter_list_query_param_field,
 )
 
 
@@ -59,33 +68,84 @@ class TraceSessionFilterValuesQuerySerializer(serializers.Serializer):
     column = serializers.ChoiceField(
         choices=["session_id", "user_id", "first_message", "last_message"]
     )
-    search = serializers.CharField(required=False, allow_blank=True, default="")
+    search = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        default="",
+        max_length=512,
+    )
     page = serializers.IntegerField(required=False, default=0, min_value=0)
     page_size = serializers.IntegerField(
         required=False, default=50, min_value=1, max_value=500
     )
+
+    def validate_search(self, value):
+        from tracer.services.clickhouse.attribute_reads import (
+            InvalidAttributeSearch,
+            validate_attribute_search,
+        )
+
+        try:
+            return validate_attribute_search(value)
+        except InvalidAttributeSearch as exc:
+            raise serializers.ValidationError(str(exc)) from exc
 
 
 class TraceSessionListQuerySerializer(StrictInputSerializer):
     project_id = serializers.UUIDField(required=False)
     user_id = serializers.CharField(required=False, allow_blank=True)
     bookmarked = serializers.BooleanField(required=False, allow_null=True)
-    filters = filter_list_query_param_field(required=False, default=list)
+    filters = session_bounded_filter_list_query_param_field(
+        required=False, default=list
+    )
     sort_params = SortParamListQueryParamField(required=False, default=list)
-    page_number = serializers.IntegerField(required=False, default=0, min_value=0)
+    page_number = serializers.IntegerField(
+        required=False,
+        default=0,
+        min_value=0,
+        help_text=BOUNDED_PAGE_NUMBER_HELP_TEXT,
+    )
     page_size = serializers.IntegerField(
         required=False, default=30, min_value=1, max_value=500
     )
+    cursor = serializers.CharField(
+        required=False, allow_blank=False, max_length=4096, help_text=CURSOR_HELP_TEXT
+    )
+    cursor_mode = serializers.BooleanField(required=False, default=False)
     interval = serializers.CharField(required=False, allow_blank=True)
+    allow_sampled = serializers.BooleanField(
+        required=False,
+        help_text=(
+            "Omit for backward-compatible complete bounded pages, which may "
+            "label total_rows as a lower bound. Send false to require an exact "
+            "total, or true to opt in explicitly to lower-bound totals."
+        ),
+    )
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        return validate_cursor_exclusivity(self, attrs, page_field="page_number")
 
 
 class TraceSessionExportQuerySerializer(TraceSessionListQuerySerializer):
     project_id = serializers.UUIDField()
 
 
+class SessionNavigationContextSerializer(StrictInputSerializer):
+    page_request = json_object_query_param_field(required=False)
+    previous_page_request = json_object_query_param_field(required=False)
+    project_id = serializers.UUIDField(allow_null=True)
+    workspace_id = serializers.UUIDField()
+    user_id = serializers.CharField(required=False, allow_blank=False)
+    filters = session_bounded_filter_list_field()
+    sort_params = SortParamListQueryParamField()
+    cursor_mode = serializers.BooleanField(default=False)
+
+
 class TraceSessionRetrieveQuerySerializer(StrictInputSerializer):
+    navigation_context = json_object_query_param_field(required=False)
     user_id = serializers.CharField(required=False, allow_blank=True)
-    filters = filter_list_query_param_field(required=False, default=list)
+    filters = session_filter_list_query_param_field(required=False, default=list)
     sort_params = SortParamListQueryParamField(required=False, default=list)
     page_number = serializers.IntegerField(required=False, default=0, min_value=0)
     page_size = serializers.IntegerField(
@@ -93,5 +153,16 @@ class TraceSessionRetrieveQuerySerializer(StrictInputSerializer):
     )
 
 
+class TraceSessionDetailResultSerializer(serializers.Serializer):
+    session_metadata = JsonObjectField()
+    response = serializers.ListField(child=JsonObjectField())
+    next = serializers.BooleanField()
+
+
+class TraceSessionDetailResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = TraceSessionDetailResultSerializer()
+
+
 class TraceSessionGraphDataRequestSerializer(ObserveGraphDataRequestSerializer):
-    pass
+    filters = session_bounded_filter_list_field(required=False, default=list)

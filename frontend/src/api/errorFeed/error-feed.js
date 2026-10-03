@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
+import { fetchAllObserveProjects } from "src/api/project/observe-project-list";
 
 // Mirrors `DeepAnalysisResponse.status` on the backend
 // (futureagi/tracer/types/feed_types.py:DeepAnalysisResponse).
@@ -36,19 +37,11 @@ export const useObserveProjectList = (options = {}) => {
   return useQuery({
     ...options,
     queryKey: KEYS.projects,
-    queryFn: () =>
-      axios.get(endpoints.project.projectObserveList, {
-        params: {
-          project_type: "observe",
-          page_number: 0,
-          page_size: 200,
-        },
-      }),
-    select: (res) => {
-      const rows = res?.data?.result?.table ?? [];
-      return rows.map((p) => ({ value: p.id, label: p.name }));
-    },
+    queryFn: ({ signal }) => fetchAllObserveProjects({ signal }),
+    select: (rows) =>
+      rows.map((project) => ({ value: project.id, label: project.name })),
     staleTime: 5 * 60 * 1000,
+    retry: false,
   });
 };
 

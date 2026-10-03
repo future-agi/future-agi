@@ -442,6 +442,18 @@ def test_error_envelope_preserves_display_alias_and_extra_context():
     assert response["retry_after"] == 30
 
 
+def test_unprocessable_error_envelope_is_non_retryable_client_error():
+    response = build_error_envelope(
+        "The requested page is outside the bounded contract.",
+        status_code=422,
+        code="page_depth_exceeded",
+    )
+
+    assert response["status"] is False
+    assert response["type"] == "client_error"
+    assert response["code"] == "page_depth_exceeded"
+
+
 def test_error_envelope_preserves_details_attr_and_extra_metadata():
     response = build_error_envelope(
         {"field": ["Invalid value."]},

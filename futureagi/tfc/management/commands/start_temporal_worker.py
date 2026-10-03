@@ -9,12 +9,70 @@ import asyncio
 import os
 import signal
 import threading
-from typing import TYPE_CHECKING, List
 
 from django.core.management.base import BaseCommand
 
-if TYPE_CHECKING:
-    from temporalio.worker import Worker
+# Queues in this set have their own workload-level concurrency boundary. A
+# generic local ``--all-queues`` worker must not also poll them, otherwise its
+# much higher concurrency silently defeats that admission control.
+_DEDICATED_TASK_QUEUES = frozenset({"exact_aggregation"})
+
+
+def _generic_all_queues(registered_queues: list[str]) -> list[str]:
+    """Return queues safe for the generic all-queues worker to poll."""
+
+    return [queue for queue in registered_queues if queue not in _DEDICATED_TASK_QUEUES]
+
+
+def _workflow_cache_kwargs(queue_name: str) -> dict[str, int]:
+    """Return queue-specific Temporal workflow cache settings.
+
+    Exact aggregation uses a single workflow-task slot as part of its strict
+    admission boundary. Temporal requires at least two workflow-task slots
+    when sticky workflow caching is enabled. These workflows are one-shot
+    activity runners, so caching them has no reuse benefit; disabling the
+    cache also keeps new work on the normal queue instead of waiting behind
+    sticky long polls.
+    """
+
+    if queue_name == "exact_aggregation":
+        return {"max_cached_workflows": 0}
+    return {}
+
+
+def disable_litellm_logging_worker() -> None:
+    """Disable litellm's async logging worker to prevent event loop crashes.
+
+    The worker creates asyncio Queue/Task objects on temporary event loops
+    (from asyncio.run() in thread pool threads), which get destroyed when
+    those loops close — causing "Task was destroyed but it is pending".
+    Since we don't use litellm's callback system, disabling is safe.
+    Patch at BOTH class and instance level to cover all code paths.
+    """
+    try:
+        from litellm.litellm_core_utils.logging_worker import (
+            GLOBAL_LOGGING_WORKER,
+            LoggingWorker,
+        )
+    except ImportError:
+        return
+
+    def _noop(*_args, **_kwargs):
+        return None
+
+    async def _noop_worker_loop(self):
+        return
+
+    # Class-level
+    LoggingWorker.start = _noop
+    LoggingWorker.enqueue = _noop
+    LoggingWorker.ensure_initialized_and_enqueue = _noop
+    LoggingWorker._worker_loop = _noop_worker_loop
+
+    # Instance-level for the global singleton
+    GLOBAL_LOGGING_WORKER.start = _noop
+    GLOBAL_LOGGING_WORKER.enqueue = _noop
+    GLOBAL_LOGGING_WORKER.ensure_initialized_and_enqueue = _noop
 
 
 class Command(BaseCommand):
@@ -119,35 +177,7 @@ class Command(BaseCommand):
         # Configure structured logging for Temporal workers
         configure_temporal_logging()
 
-        # Disable litellm's async logging worker to prevent event loop crashes.
-        # The worker creates asyncio Queue/Task objects on temporary event loops
-        # (from asyncio.run() in thread pool threads), which get destroyed when
-        # those loops close — causing "Task was destroyed but it is pending".
-        # Since we don't use litellm's callback system, disabling is safe.
-        # Patch at BOTH class and instance level to cover all code paths.
-        try:
-            from litellm.litellm_core_utils.logging_worker import (
-                GLOBAL_LOGGING_WORKER,
-                LoggingWorker,
-            )
-
-            _noop = lambda *a, **kw: None
-
-            async def _noop_worker_loop(self):
-                return
-
-            # Class-level
-            LoggingWorker.start = _noop
-            LoggingWorker.enqueue = _noop
-            LoggingWorker.ensure_initialized_and_enqueue = _noop
-            LoggingWorker._worker_loop = _noop_worker_loop
-
-            # Instance-level for the global singleton
-            GLOBAL_LOGGING_WORKER.start = _noop
-            GLOBAL_LOGGING_WORKER.enqueue = _noop
-            GLOBAL_LOGGING_WORKER.ensure_initialized_and_enqueue = _noop
-        except ImportError:
-            pass
+        disable_litellm_logging_worker()
 
         task_queue = options["task_queue"]
         all_queues_mode = options["all_queues"]
@@ -173,7 +203,9 @@ class Command(BaseCommand):
                 if queue.strip()
             }
             queues_to_poll = [
-                queue for queue in get_all_queues() if queue not in excluded_queues
+                queue
+                for queue in _generic_all_queues(get_all_queues())
+                if queue not in excluded_queues
             ]
             # Get all unique workflows and activities across all queues
             workflows = get_all_workflows()
@@ -270,12 +302,13 @@ class Command(BaseCommand):
                         client.get_workflow_handle(PHONE_NUMBER_DISPATCHER_WORKFLOW_ID)
                     )
 
-                    call_dispatcher_result, phone_number_dispatcher_result = (
-                        await asyncio.gather(
-                            call_dispatcher_workflow_handle.signal("reload"),
-                            phone_number_dispatcher_workflow_handle.signal("reload"),
-                            return_exceptions=True,
-                        )
+                    (
+                        call_dispatcher_result,
+                        phone_number_dispatcher_result,
+                    ) = await asyncio.gather(
+                        call_dispatcher_workflow_handle.signal("reload"),
+                        phone_number_dispatcher_workflow_handle.signal("reload"),
+                        return_exceptions=True,
                     )
 
                     if isinstance(call_dispatcher_result, Exception):
@@ -310,6 +343,7 @@ class Command(BaseCommand):
                     "graceful_shutdown_timeout": timedelta(seconds=graceful_timeout),
                     "max_heartbeat_throttle_interval": timedelta(seconds=5),
                 }
+                kwargs.update(_workflow_cache_kwargs(queue_name))
 
                 # Resource-based tuning is disabled by default due to a known
                 # bug where workers stop polling queues.
@@ -334,7 +368,7 @@ class Command(BaseCommand):
                 return kwargs
 
             # Create workers for each queue
-            workers: List[Worker] = []
+            workers = []
             for queue_name in queues_to_poll:
                 worker_kwargs = create_worker_kwargs(queue_name)
                 workers.append(Worker(**worker_kwargs))
@@ -355,7 +389,7 @@ class Command(BaseCommand):
             # Start all workers concurrently
             worker_tasks = [
                 asyncio.create_task(run_single_worker(w, q))
-                for w, q in zip(workers, queues_to_poll)
+                for w, q in zip(workers, queues_to_poll, strict=True)
             ]
 
             # Wait for shutdown signal, then wait for all workers to finish

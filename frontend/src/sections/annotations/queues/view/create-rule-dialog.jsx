@@ -1,7 +1,7 @@
 /* eslint-disable react/prop-types */
 /* eslint-disable react-refresh/only-export-components */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import {
   Alert,
   Autocomplete,
@@ -20,6 +20,11 @@ import {
 } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import axios, { endpoints } from "src/utils/axios";
+import {
+  isPropertyCatalogNotReadyError,
+  PROPERTY_CATALOG_REQUEST_TIMEOUT_MS,
+  usePropertyCatalog,
+} from "src/hooks/useDashboards";
 import SvgColor from "src/components/svg-color";
 import {
   extractErrorMessage,
@@ -63,14 +68,21 @@ import {
   getDatasetOptionId,
   getQueueScopeId,
   getRuleSubmitDisabledTooltipTitle,
+  getTraceRulePanelMode,
   getSubmittableFilters,
   isDatasetFilterValid,
   isQueueScopeLocked,
   isScopeReady,
   makeDatasetDefaultFilter,
+  removeSubmittableFilterAtIndex,
   resolveRuleScopeId,
   transformDatasetFilter,
 } from "src/sections/annotations/queues/utils/automation-rule-utils";
+import {
+  PROPERTY_CATALOG_LEGACY_PAGE_SIZE,
+  PROPERTY_CATALOG_LEGACY_STALE_TIME_MS,
+  PROPERTY_CATALOG_SEARCH_PAGE_SIZE,
+} from "src/config/runtime_limits";
 
 const activeFilterButtonBg = (theme) => alpha(theme.palette.primary.main, 0.12);
 
@@ -482,9 +494,8 @@ function TraceRuleFilters({
     sourceType === "trace" && !!projectId,
   );
   const isVoiceProject = projectDetails?.source === PROJECT_SOURCE.SIMULATOR;
-  const panelSource = sourceType === "trace_session" ? "sessions" : "traces";
-  const isSpanSource = sourceType === "observation_span";
-  const filterFields =
+  const panelMode = getTraceRulePanelMode(sourceType, { isVoiceProject });
+  const sessionProperties =
     sourceType === "trace_session" ? SESSION_RULE_FILTER_FIELDS : undefined;
 
   const snakeFilters = useMemo(() => getSubmittableFilters(filters), [filters]);
@@ -553,12 +564,16 @@ function TraceRuleFilters({
         open={filterOpen}
         onClose={() => setFilterOpen(false)}
         projectId={projectId}
-        source={panelSource}
-        tab={isSpanSource ? "spans" : undefined}
-        isSpansView={isSpanSource}
-        filterFields={filterFields}
+        source={panelMode.source}
+        tab={panelMode.tab}
+        isSpansView={panelMode.isSpansView}
+        attributeSource={sourceType === "trace_session" ? "spans" : undefined}
+        // Session-specific system fields are additive. Passing them through
+        // `properties` would disable the shared dynamic catalog and hide Eval,
+        // Annotation, and Attribute properties from session rules.
+        filterFields={sessionProperties}
         isSimulator={isVoiceProject}
-        key={`${projectId}-${panelSource}-${isVoiceProject ? "voice" : "trace"}`}
+        key={`${projectId}-${panelMode.source}-${panelMode.tab || "none"}`}
         currentFilters={getSubmittableFilters(filters).map(apiFilterToPanel)}
         onApply={(newPanelFilters) => {
           onInteraction?.();
@@ -589,17 +604,7 @@ function TraceRuleFilters({
         onRemoveFilter={(index) => {
           onInteraction?.();
           setFilterAnchorEl(null);
-          const target = snakeFilters[index];
-          if (!target) return;
-          setFilters((prev) =>
-            prev.filter((filter) => {
-              const colMatches = filter.column_id === target.column_id;
-              const opMatches =
-                filter.filter_config?.filter_op ===
-                target.filter_config?.filter_op;
-              return !(colMatches && opMatches);
-            }),
-          );
+          setFilters((prev) => removeSubmittableFilterAtIndex(prev, index));
         }}
         onClearAll={() => {
           onInteraction?.();
@@ -635,20 +640,98 @@ function SimulationRuleFilters({
   );
 
   const snakeFilters = useMemo(() => getSubmittableFilters(filters), [filters]);
-  const { data: simulationEvalFields = [] } = useQuery({
-    queryKey: ["automation-rule-simulation-eval-fields", agentDefinitionId],
-    queryFn: () =>
-      axios.get(endpoints.dashboard.metrics, {
-        params: { agent_definition_id: agentDefinitionId },
-      }),
+  const propertyCatalog = usePropertyCatalog({
+    category: "eval_metric",
+    source: "simulation",
+    agentDefinitionId,
+    pageSize: PROPERTY_CATALOG_SEARCH_PAGE_SIZE,
     enabled: Boolean(agentDefinitionId),
-    select: (response) =>
-      buildTraceFilterProperties(response.data?.result?.metrics || [], {
+    allowLegacyNotReadyFallback: true,
+    fallbackScopeKey: `simulation-eval-property-catalog:${agentDefinitionId}`,
+  });
+  const {
+    data: simulationEvalCatalog,
+    fetchNextPage: fetchNextSimulationEvalPageLegacy,
+    hasNextPage: hasNextSimulationEvalPageLegacy,
+    isFetchingNextPage: isFetchingNextSimulationEvalPageLegacy,
+    isFetchNextPageError: isNextSimulationEvalPageErrorLegacy,
+  } = useInfiniteQuery({
+    queryKey: ["automation-rule-simulation-eval-fields", agentDefinitionId],
+    queryFn: ({ pageParam = 1, signal }) =>
+      axios.get(endpoints.dashboard.metrics, {
+        params: {
+          agent_definition_id: agentDefinitionId,
+          exclude_custom_attributes: true,
+          page: pageParam,
+          page_size: PROPERTY_CATALOG_LEGACY_PAGE_SIZE,
+        },
+        signal,
+        timeout: PROPERTY_CATALOG_REQUEST_TIMEOUT_MS,
+      }),
+    getNextPageParam: (lastPage, _pages, lastPageParam) => {
+      const result = lastPage.data?.result;
+      if (!result?.has_more) return undefined;
+      const currentPage = Number(result.page ?? lastPageParam);
+      return Number.isSafeInteger(currentPage) && currentPage >= 1
+        ? currentPage + 1
+        : undefined;
+    },
+    initialPageParam: 1,
+    enabled:
+      Boolean(agentDefinitionId) && propertyCatalog.legacyFallbackRequired,
+    staleTime: PROPERTY_CATALOG_LEGACY_STALE_TIME_MS,
+  });
+  const useLegacySimulationEvalCatalog = propertyCatalog.legacyFallbackRequired;
+  const catalogNotReady = isPropertyCatalogNotReadyError(propertyCatalog.error);
+  const simulationEvalMetrics = useMemo(
+    () =>
+      useLegacySimulationEvalCatalog
+        ? simulationEvalCatalog?.pages.flatMap(
+            (page) => page.data?.result?.metrics || [],
+          ) || []
+        : propertyCatalog.metrics,
+    [
+      propertyCatalog.metrics,
+      simulationEvalCatalog?.pages,
+      useLegacySimulationEvalCatalog,
+    ],
+  );
+  const fetchNextSimulationEvalPage = useLegacySimulationEvalCatalog
+    ? fetchNextSimulationEvalPageLegacy
+    : propertyCatalog.fetchNextPage;
+  const hasNextSimulationEvalPage = useLegacySimulationEvalCatalog
+    ? hasNextSimulationEvalPageLegacy
+    : Boolean(propertyCatalog.hasNextPage);
+  const isFetchingNextSimulationEvalPage = useLegacySimulationEvalCatalog
+    ? isFetchingNextSimulationEvalPageLegacy
+    : propertyCatalog.isFetchingNextPage;
+  const isNextSimulationEvalPageError = useLegacySimulationEvalCatalog
+    ? isNextSimulationEvalPageErrorLegacy
+    : Boolean(
+        (propertyCatalog.isError && !catalogNotReady) ||
+          propertyCatalog.isFetchNextPageError ||
+          propertyCatalog.cursorChainStopped,
+      );
+  const legacySimulationEvalContinuationKey = hasNextSimulationEvalPageLegacy
+    ? `legacy-page:${
+        Number(
+          simulationEvalCatalog?.pages.at(-1)?.data?.result?.page ||
+            simulationEvalCatalog?.pages.length ||
+            1,
+        ) + 1
+      }`
+    : null;
+  const simulationEvalContinuationKey = useLegacySimulationEvalCatalog
+    ? legacySimulationEvalContinuationKey
+    : propertyCatalog.continuationKey;
+  const simulationEvalFields = useMemo(
+    () =>
+      buildTraceFilterProperties(simulationEvalMetrics, {
         isSimulator: true,
         sourceScope: "simulation",
       }).filter((property) => property.category === "eval"),
-    staleTime: 5 * 60_000,
-  });
+    [simulationEvalMetrics],
+  );
   const properties = useMemo(() => {
     const fieldsById = new Map(
       SIMULATION_RULE_FILTER_FIELDS.map((field) => [field.id, field]),
@@ -711,6 +794,11 @@ function SimulationRuleFilters({
         showQueryTab={false}
         categories={SIMPLE_FILTER_CATEGORIES}
         panelWidth={560}
+        hasNextCatalogPage={hasNextSimulationEvalPage}
+        catalogContinuationKey={simulationEvalContinuationKey}
+        isFetchingNextCatalogPage={isFetchingNextSimulationEvalPage}
+        catalogNextPageError={isNextSimulationEvalPageError}
+        loadNextCatalogPage={fetchNextSimulationEvalPage}
       />
 
       <FilterChips
@@ -728,17 +816,7 @@ function SimulationRuleFilters({
         onRemoveFilter={(index) => {
           onInteraction?.();
           setFilterAnchorEl(null);
-          const target = snakeFilters[index];
-          if (!target) return;
-          setFilters((prev) =>
-            prev.filter((filter) => {
-              const colMatches = filter.column_id === target.column_id;
-              const opMatches =
-                filter.filter_config?.filter_op ===
-                target.filter_config?.filter_op;
-              return !(colMatches && opMatches);
-            }),
-          );
+          setFilters((prev) => removeSubmittableFilterAtIndex(prev, index));
         }}
         onClearAll={() => {
           onInteraction?.();

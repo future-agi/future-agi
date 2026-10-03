@@ -211,6 +211,7 @@ from ai_tools.tools.tracing import analyze_project_traces  # noqa: F401
 from ai_tools.tools.tracing import check_eval_config_exists  # noqa: F401
 from ai_tools.tools.tracing import create_alert_monitor  # noqa: F401
 from ai_tools.tools.tracing import create_custom_eval_config  # noqa: F401
+from ai_tools.tools.tracing import create_dashboard  # noqa: F401
 from ai_tools.tools.tracing import create_eval_task  # noqa: F401
 from ai_tools.tools.tracing import create_project  # noqa: F401
 from ai_tools.tools.tracing import create_score  # noqa: F401

@@ -139,11 +139,13 @@ if [ -n "$BACKEND_CONTAINER" ]; then
     docker exec "$BACKEND_CONTAINER" python manage.py shell -c "
 from tracer.services.clickhouse.schema import get_all_schema_ddl
 from tracer.services.clickhouse.client import get_clickhouse_client
+from tracer.services.clickhouse.v2.apply_schema_rewriter import with_dictionary_credentials
 ch = get_clickhouse_client()
 ok, err = 0, 0
 for name, ddl in get_all_schema_ddl():
     try:
-        ch.execute(ddl)
+        # Dictionaries read their source with the credentials this client uses.
+        ch.execute(with_dictionary_credentials(ddl, ch.user, ch.password))
         ok += 1
     except Exception as e:
         if 'already exists' not in str(e).lower():

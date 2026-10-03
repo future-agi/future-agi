@@ -27,9 +27,9 @@ const TOOL_GROUP_ICONS = {
   agents: "ph:robot-bold",
   simulation: "ph:waveform-bold",
   prompts: "ph:chat-text-bold",
-  users: "ph:users-bold",
   usage: "ph:chart-line-up-bold",
-  docs: "ph:book-open-bold",
+  gateway: "ph:plugs-bold",
+  dashboards: "ph:squares-four-bold",
 };
 
 const DEFAULT_TOOL_GROUPS = [
@@ -82,7 +82,7 @@ const DEFAULT_TOOL_GROUPS = [
     id: "agents",
     name: "Agents & Simulation",
     description:
-      "Manage agents, versions, scenarios, test executions, and call results",
+      "Browse agents, scenarios and test executions, and run saved simulation tests",
   },
   {
     id: "simulation",
@@ -97,21 +97,20 @@ const DEFAULT_TOOL_GROUPS = [
       "Manage prompt templates, versions, labels, folders, simulations, and evaluations",
   },
   {
-    id: "users",
-    name: "Users & Workspaces",
-    description:
-      "User management, workspace operations, organization settings, and API key management",
-  },
-  {
     id: "usage",
     name: "Usage & Costs",
     description: "Cost analytics and billing information",
   },
   {
-    id: "docs",
-    name: "Docs & Guides",
+    id: "gateway",
+    name: "AI Gateway",
+    description: "Gateway configuration, request logs, and analytics",
+  },
+  {
+    id: "dashboards",
+    name: "Dashboards",
     description:
-      "Search and query Future AGI documentation, setup guides, and API references",
+      "Dashboards, widgets, metric discovery, and chart data queries",
   },
 ];
 
@@ -141,7 +140,10 @@ export function normalizeMCPEnabledGroups(config, toolGroups) {
     config?.enabled_groups ||
     config?.enabled_tool_groups;
 
-  if (Array.isArray(explicit)) return explicit;
+  const availableIds = new Set(toolGroups.map((group) => group.id));
+  if (Array.isArray(explicit)) {
+    return explicit.filter((id) => availableIds.has(id));
+  }
 
   const availableGroups = Array.isArray(toolConfig.available_groups)
     ? toolConfig.available_groups
@@ -150,7 +152,7 @@ export function normalizeMCPEnabledGroups(config, toolGroups) {
     return availableGroups
       .filter((group) => group.enabled || group.checked)
       .map((group) => group.slug || group.id)
-      .filter(Boolean);
+      .filter((id) => availableIds.has(id));
   }
 
   return toolGroups.map((group) => group.id);

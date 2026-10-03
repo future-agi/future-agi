@@ -60,6 +60,19 @@ def _make_fake_convert(url_map):
     return _fake_convert
 
 
+def test_duration_falls_back_to_created_at_when_started_at_is_null():
+    result = normalize_vapi_data(
+        {
+            **VAPI_LOG,
+            "startedAt": None,
+            "createdAt": "2026-07-17T12:00:00Z",
+            "endedAt": "2026-07-17T12:01:35Z",
+        }
+    )
+
+    assert result["span_attributes"]["call.duration"] == 95
+
+
 class TestInlineRehostReplace:
     """Happy path: inline rehost replaces R2 URLs with S3 URLs."""
 

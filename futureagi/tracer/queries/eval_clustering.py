@@ -9,13 +9,15 @@ within the same eval, never across different evals.
 """
 
 import hashlib
+import json
+import math
 import re
 from datetime import timedelta
 from typing import List, Optional, Tuple
 
 import structlog
 from django.db import IntegrityError, transaction
-from django.db.models import Q
+from django.db.models import Exists, OuterRef, Q
 from django.utils import timezone
 
 from agentic_eval.core.database.ch_vector import ClickHouseVectorDB
@@ -52,12 +54,112 @@ _CLUSTER_WINDOW_DAYS = 60
 # no ``eval_task_id``; external evals never write EvalLogger at all.)
 _FAILING_EVAL_Q = (
     Q(custom_eval_config__isnull=False)
-    & (Q(output_bool=False) | Q(output_float__lt=1.0))
+    # ``output_str``/``output_str_list`` are included because choice-scored
+    # templates are stored there; the final score check is deliberately done
+    # in Python from the template config below.
+    & (
+        Q(output_bool=False)
+        | Q(output_float__lt=1.0)
+        | ~Q(output_str__isnull=True)
+        | ~Q(output_str_list=[])
+    )
     & ~Q(eval_explanation__isnull=True)
     & ~Q(eval_explanation="")
     & ~Q(eval_task_id__isnull=True)
     & ~Q(eval_task_id="")
 )
+
+
+def _numeric_score(value) -> float | None:
+    """Return a finite numeric score, or ``None`` for an unscorable value."""
+    if isinstance(value, bool):
+        return None
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        return None
+    return score if math.isfinite(score) else None
+
+
+def _mapped_choice_score(value, choice_scores: dict) -> float | None:
+    if not choice_scores:
+        return None
+    if isinstance(value, str):
+        for label, score in choice_scores.items():
+            if str(label).strip().lower() == value.strip().lower():
+                return _numeric_score(score)
+        return None
+    if isinstance(value, list):
+        scores = [_mapped_choice_score(item, choice_scores) for item in value]
+        scores = [score for score in scores if score is not None]
+        return sum(scores) / len(scores) if scores else None
+    return None
+
+
+def _eval_result_score(entry: EvalLogger) -> float | None:
+    """Resolve an eval's normalized score, including config-mapped choices."""
+    score = _numeric_score(entry.output_float)
+    if score is not None:
+        return score
+
+    template = getattr(getattr(entry, "custom_eval_config", None), "eval_template", None)
+    if template is None:
+        return None
+    choice_scores = getattr(template, "choice_scores", None) or {}
+
+    raw = entry.output_str
+    if raw:
+        # A scalar label is often serialized as plain text (including numeric
+        # labels such as ``"2"``). Resolve it before JSON/numeric coercion.
+        score = _mapped_choice_score(raw, choice_scores)
+        if score is not None:
+            return score
+        try:
+            raw = json.loads(raw)
+        except (TypeError, ValueError):
+            pass
+        if isinstance(raw, dict):
+            score = _numeric_score(raw.get("score"))
+            if score is not None:
+                return score
+            score = _mapped_choice_score(
+                raw.get("choice", raw.get("choices")), choice_scores
+            )
+            if score is not None:
+                return score
+            raw = raw.get("choice", raw.get("choices"))
+        # A numeric-looking choice label must be mapped before treating it as
+        # a literal score (e.g. choice "2" can intentionally map to 0.0).
+        score = _mapped_choice_score(raw, choice_scores)
+        if score is not None:
+            return score
+        score = _numeric_score(raw)
+        if score is not None:
+            return score
+
+    return _mapped_choice_score(entry.output_str_list, choice_scores)
+
+
+def _eval_score_threshold(entry: EvalLogger) -> float:
+    template = getattr(
+        getattr(entry, "custom_eval_config", None), "eval_template", None
+    )
+    threshold = getattr(template, "pass_threshold", None)
+    if isinstance(threshold, (int, float)) and not isinstance(threshold, bool):
+        return threshold
+    return 0.5
+
+
+def is_clusterable_eval_failure(entry: EvalLogger) -> bool:
+    """Whether a completed eval result is a failing, explainable result."""
+    if not entry.eval_explanation:
+        return False
+    if entry.output_bool is False:
+        return True
+    score = _eval_result_score(entry)
+    if score is None:
+        return False
+    return score < _eval_score_threshold(entry)
 
 
 # ---------------------------------------------------------------------------
@@ -72,7 +174,9 @@ def get_unclustered_eval_results(
     Fetch EvalLogger rows that failed, have an explanation, and haven't
     been assigned to a cluster yet.
 
-    "Failed" = output_bool is False OR output_float < 1.0.
+    "Failed" = output_bool is False OR a score resolved from the typed output,
+    JSON output, or the template's ``choice_scores`` mapping is below the
+    template's pass threshold.
     Skips rows with null eval_explanation (deterministic evals without reasoning).
     Only the last _CLUSTER_WINDOW_DAYS of results are considered.
 
@@ -80,14 +184,6 @@ def get_unclustered_eval_results(
     large backlog over successive bounded runs so a single clustering
     activity can never grow unbounded and time out.
     """
-    # Already-clustered eval_logger IDs
-    clustered_ids = set(
-        ErrorClusterTraces.objects.filter(
-            eval_logger__isnull=False,
-            cluster__project_id=project_id,
-        ).values_list("eval_logger_id", flat=True)
-    )
-
     since = timezone.now() - timedelta(days=_CLUSTER_WINDOW_DAYS)
 
     # Project scope is the eval's *config* project — never the trace/session's.
@@ -110,7 +206,33 @@ def get_unclustered_eval_results(
             custom_eval_config__project_id=project_id,
             created_at__gte=since,
         )
-        .select_related("custom_eval_config")
+        .select_related("custom_eval_config", "custom_eval_config__eval_template")
+        .filter(
+            ~Exists(
+                ErrorClusterTraces.objects.filter(
+                    eval_logger_id=OuterRef("pk"),
+                    cluster__project_id=project_id,
+                    deleted=False,
+                )
+            )
+        )
+        .only(
+            "id",
+            "created_at",
+            "eval_explanation",
+            "output_bool",
+            "output_float",
+            "output_str",
+            "output_str_list",
+            "target_type",
+            "trace_id",
+            "trace_session_id",
+            "custom_eval_config_id",
+            "custom_eval_config__name",
+            "custom_eval_config__eval_template_id",
+            "custom_eval_config__eval_template__choice_scores",
+            "custom_eval_config__eval_template__pass_threshold",
+        )
         .order_by("created_at")
     )
 
@@ -118,7 +240,7 @@ def get_unclustered_eval_results(
     # .iterator() so a huge backlog isn't all loaded into memory just to
     # stop early once `limit` unclustered rows have been collected.
     for ev in evals.iterator(chunk_size=2000):
-        if ev.id in clustered_ids:
+        if not is_clusterable_eval_failure(ev):
             continue
         results.append(
             ClusterableEvalResult(
@@ -132,7 +254,7 @@ def get_unclustered_eval_results(
                 session_id=(
                     str(ev.trace_session_id) if ev.trace_session_id else None
                 ),
-                score=ev.output_float,
+                score=_eval_result_score(ev),
             )
         )
         if limit is not None and len(results) >= limit:
@@ -236,7 +358,7 @@ def find_nearest_centroid(
         ensure_centroid_table(db)
         vector_str = "[" + ",".join(map(str, embedding)) + "]"
         family = _eval_family(eval_name, target_type)
-        rows = db.client.execute(
+        rows = db.execute_read(
             f"""
             SELECT
                 cluster_id,
@@ -248,6 +370,7 @@ def find_nearest_centroid(
             LIMIT 1
             """,
             {"project_id": project_id, "family": family},
+            max_result_rows=1,
         )
 
         if rows and rows[0][1] < COSINE_THRESHOLD:
@@ -553,7 +676,7 @@ def assign_to_cluster(
     family = _eval_family(result.eval_name, result.target_type)
     db = ClickHouseVectorDB()
     try:
-        rows = db.client.execute(
+        rows = db.execute_read(
             f"""
             SELECT centroid, member_count
             FROM {CENTROIDS_TABLE}
@@ -561,6 +684,7 @@ def assign_to_cluster(
             LIMIT 1
             """,
             {"cluster_id": cluster_id},
+            max_result_rows=1,
         )
 
         if rows:

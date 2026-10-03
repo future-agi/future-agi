@@ -27,6 +27,15 @@ class ScheduleConfig:
     deterministic state at fire time (e.g. a closing period derived from
     ``workflow.now()``) that the activity cannot reconstruct reliably
     from its own wall clock.
+
+    ``activity_args`` and ``activity_kwargs`` are serialized into the generic
+    task-runner input. They let one registered activity own many independently
+    scheduled scopes without performing an unbounded fan-out inside one run.
+
+    ``paused`` is the state a schedule is created in. Registration never pauses
+    or unpauses a schedule that already exists: from then on the paused state
+    belongs to operators (``register_temporal_schedules --pause/--unpause`` or
+    the Temporal UI/CLI) and survives every later deploy.
     """
 
     schedule_id: str
@@ -39,6 +48,9 @@ class ScheduleConfig:
     description: str | None = None
     overlap_policy: ScheduleOverlapPolicy = field(default=ScheduleOverlapPolicy.SKIP)
     workflow_class: Any | None = None
+    activity_args: tuple[Any, ...] = ()
+    activity_kwargs: dict[str, Any] = field(default_factory=dict)
+    paused: bool = False
 
     def __post_init__(self) -> None:
         if not self.cron_expression and self.interval_seconds <= 0:

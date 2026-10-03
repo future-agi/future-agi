@@ -19,19 +19,19 @@ which is a property of the statement.
 import re
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from tracer.models.trace_error_analysis import TraceErrorGroup
 from tracer.queries.scan_clustering import find_nearest_centroid
 from tracer.types.scan_types import ClusterableIssue
 
 
-def _executed_sql(mock_db):
-    return mock_db.return_value.client.execute.call_args_list[-1].args[0]
-
-
 def _norm(sql):
     return re.sub(r"\s+", " ", sql).strip()
+
+
+def _vector_db(rows):
+    db = MagicMock()
+    db.execute_read.return_value = rows
+    return db
 
 
 class TestFindNearestCentroidCollapsesVersions:
@@ -41,13 +41,13 @@ class TestFindNearestCentroidCollapsesVersions:
         Without the inner LIMIT 1 BY, every historical version of a centroid is
         a separate candidate row and the nearest *stale* version can win.
         """
+        db = _vector_db([])
         with patch(
-            "tracer.queries.scan_clustering.ClickHouseVectorDB"
-        ) as db, patch("tracer.queries.scan_clustering.ensure_centroid_table"):
-            db.return_value.client.execute.return_value = []
+            "tracer.queries.scan_clustering.ClickHouseVectorDB", return_value=db
+        ), patch("tracer.queries.scan_clustering.ensure_centroid_table"):
             find_nearest_centroid([0.1, 0.2], "proj-1", "Language-only")
 
-        sql = _norm(_executed_sql(db))
+        sql = _norm(db.execute_read.call_args.args[0])
         assert "LIMIT 1 BY cluster_id" in sql
         # The dedupe has to happen in a subquery, i.e. before the outer sort.
         inner = sql.split("LIMIT 1 BY cluster_id")[0]
@@ -62,24 +62,24 @@ class TestFindNearestCentroidCollapsesVersions:
         cluster in the same second are otherwise unordered, and member_count is
         strictly increasing per cluster.
         """
+        db = _vector_db([])
         with patch(
-            "tracer.queries.scan_clustering.ClickHouseVectorDB"
-        ) as db, patch("tracer.queries.scan_clustering.ensure_centroid_table"):
-            db.return_value.client.execute.return_value = []
+            "tracer.queries.scan_clustering.ClickHouseVectorDB", return_value=db
+        ), patch("tracer.queries.scan_clustering.ensure_centroid_table"):
             find_nearest_centroid([0.1, 0.2], "proj-1", "Language-only")
 
-        sql = _norm(_executed_sql(db))
+        sql = _norm(db.execute_read.call_args.args[0])
         assert "ORDER BY last_updated DESC, member_count DESC" in sql
 
     def test_still_applies_the_threshold(self):
         """Guard against the rewrite quietly dropping the distance cutoff."""
+        db = _vector_db([("S-AAA", 0.9)])
         with patch(
-            "tracer.queries.scan_clustering.ClickHouseVectorDB"
-        ) as db, patch("tracer.queries.scan_clustering.ensure_centroid_table"):
-            db.return_value.client.execute.return_value = [("S-AAA", 0.9)]
+            "tracer.queries.scan_clustering.ClickHouseVectorDB", return_value=db
+        ), patch("tracer.queries.scan_clustering.ensure_centroid_table"):
             assert find_nearest_centroid([0.1], "proj-1", "cat") is None
 
-            db.return_value.client.execute.return_value = [("S-AAA", 0.01)]
+            db.execute_read.return_value = [("S-AAA", 0.01)]
             assert find_nearest_centroid([0.1], "proj-1", "cat") == ("S-AAA", 0.01)
 
 

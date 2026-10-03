@@ -249,9 +249,21 @@ function schemaToZod(schema, options = {}) {
       compiled = options.coercePrimitives
         ? z.coerce.number().int()
         : z.number().int();
+      if (typeof schema.minimum === "number") {
+        compiled = compiled.min(schema.minimum);
+      }
+      if (typeof schema.maximum === "number") {
+        compiled = compiled.max(schema.maximum);
+      }
       break;
     case "number":
       compiled = options.coercePrimitives ? z.coerce.number() : z.number();
+      if (typeof schema.minimum === "number") {
+        compiled = compiled.min(schema.minimum);
+      }
+      if (typeof schema.maximum === "number") {
+        compiled = compiled.max(schema.maximum);
+      }
       break;
     case "boolean":
       compiled = options.coercePrimitives

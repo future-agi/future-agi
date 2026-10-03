@@ -9,30 +9,43 @@ export function summarizeAddResults(responses) {
   return responses.reduce(
     (acc, resp) => {
       const r = resp?.data?.result || resp?.data || {};
+      const pageErrors = Array.isArray(r.errors) ? r.errors : [];
       acc.added += r.added || 0;
       acc.duplicates += r.duplicates || 0;
-      if (Array.isArray(r.errors)) acc.errors.push(...r.errors);
+      acc.errorCount +=
+        Number.isSafeInteger(r.error_count) && r.error_count >= 0
+          ? r.error_count
+          : pageErrors.length;
+      acc.errors.push(...pageErrors);
       return acc;
     },
-    { added: 0, duplicates: 0, errors: [] },
+    { added: 0, duplicates: 0, errors: [], errorCount: 0 },
   );
 }
 
-export function addResultToast({ added, duplicates, errors }) {
+export function addResultToast({
+  added,
+  duplicates,
+  errors,
+  errorCount = errors.length,
+}) {
   const n = (c) => `${c} item${c !== 1 ? "s" : ""}`;
   if (added > 0) {
     const extra = [];
     if (duplicates) extra.push(`${duplicates} already in queue`);
-    if (errors.length) extra.push(`${n(errors.length)} skipped`);
+    if (errorCount) extra.push(`${n(errorCount)} skipped`);
     return {
       message: extra.length
         ? `${n(added)} added · ${extra.join(" · ")}`
         : `${n(added)} added to queue`,
-      variant: errors.length ? "warning" : "success",
+      variant: errorCount ? "warning" : "success",
     };
   }
-  if (errors.length) {
-    return { message: `Couldn't add ${n(errors.length)}: ${errors[0]}`, variant: "error" };
+  if (errorCount) {
+    return {
+      message: `Couldn't add ${n(errorCount)}: ${errors[0] || "Some items could not be added"}`,
+      variant: "error",
+    };
   }
   if (duplicates) {
     return {

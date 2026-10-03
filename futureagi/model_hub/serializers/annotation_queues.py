@@ -805,6 +805,15 @@ class SelectionSerializer(StrictInputSerializer):
     exclude_ids = serializers.ListField(
         child=serializers.CharField(), required=False, default=list
     )
+    cursor = serializers.CharField(
+        required=False,
+        allow_blank=False,
+        max_length=4096,
+        help_text=(
+            "Opaque continuation returned by a previous filter-mode add. Reuse "
+            "the same selection fields and queue when continuing."
+        ),
+    )
     # Voice/simulator projects only. Mirrors the grid toolbar's
     # ``remove_simulation_calls`` toggle so the backend resolver hides
     # VAPI simulator calls when the user has that toggle on. Ignored by
@@ -992,6 +1001,16 @@ class QueueForSourceQuerySerializer(StrictInputSerializer):
     )
     source_id = serializers.CharField(required=False, allow_blank=True)
     sources = QueueSourceListQueryParamField(required=False, allow_blank=True)
+    project_id = serializers.UUIDField(
+        required=False,
+        allow_null=True,
+        default=None,
+        help_text=(
+            "Tracer project the trace / span was opened from. The same id can "
+            "exist in several projects; when supplied, only that project's "
+            "queue items are listed."
+        ),
+    )
 
     def validate(self, attrs):
         sources = attrs.get("sources") or []
@@ -1374,6 +1393,12 @@ class QueueAddItemsResultSerializer(serializers.Serializer):
     errors = serializers.ListField(child=serializers.CharField())
     queue_status = serializers.CharField()
     total_matching = serializers.IntegerField(required=False)
+    total_matching_is_lower_bound = serializers.BooleanField(required=False)
+    has_more = serializers.BooleanField(required=False)
+    next_cursor = serializers.CharField(required=False, allow_null=True)
+    next_cursor_fingerprint = serializers.RegexField(
+        r"^[0-9a-f]{64}$", required=False, allow_null=True
+    )
 
 
 class QueueAddItemsResponseSerializer(serializers.Serializer):

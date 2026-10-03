@@ -1,0 +1,14 @@
+{{- if not .Values.agentccGateway.existingConfigMap }}
+{{- $ctx := dict "root" . "component" "agentcc-gateway" -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "futureagi.component" $ctx }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.componentLabels" $ctx | nindent 4 }}
+data:
+  # ${VAR} references expand from the gateway's environment (secrets.llm).
+  config.yaml: |
+    {{- toYaml .Values.agentccGateway.config | nindent 4 }}
+{{- end }}

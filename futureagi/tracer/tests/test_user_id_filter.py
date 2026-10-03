@@ -156,6 +156,23 @@ class UserIdFilterTests(unittest.TestCase):
             )
             self.assertIn("FROM tracer_enduser", sql)
 
+    def test_explicit_user_named_span_attributes_keep_raw_map_semantics(self):
+        for column_id in ("end_user_id", "user", "user_id", "user_id_type"):
+            with self.subTest(column_id=column_id):
+                b = self._build()
+                sql = b._build_condition(
+                    col_id=column_id,
+                    col_type=ClickHouseFilterBuilder.SPAN_ATTRIBUTE,
+                    filter_type="text",
+                    filter_op="equals",
+                    filter_value="raw-provider-value",
+                )
+
+                self.assertIsNotNone(sql)
+                self.assertIn("span_attr_str", sql)
+                self.assertNotIn("FROM tracer_enduser", sql)
+                self.assertNotIn("FROM end_users", sql)
+
     def test_user_filter_always_resolves_via_tracer_enduser(self):
         """``col_id == 'user'`` is treated as a string filter against
         ``tracer_enduser.user_id`` regardless of value shape — every value is
@@ -184,9 +201,7 @@ class UserIdFilterTests(unittest.TestCase):
         self.assertNotIn("FROM end_users", sql)
         self.assertIn("FROM tracer_enduser", sql)
         self.assertIn("user_id =", sql)
-        self.assertEqual(
-            b._params.get("col_1"), "08ad78f8-1974-45c1-b6bc-4f2b2ba0b243"
-        )
+        self.assertEqual(b._params.get("col_1"), "08ad78f8-1974-45c1-b6bc-4f2b2ba0b243")
 
     @pytest.mark.xfail(
         reason=(
@@ -236,8 +251,8 @@ class UserIdFilterTests(unittest.TestCase):
         self.assertIsNotNone(sql)
         self.assertIn("trace_id IN (", sql)
         self.assertIn("FROM tracer_enduser", sql)
-        self.assertIn("user_id LIKE", sql)
-        self.assertEqual(b._params.get("col_1"), "%admin%")
+        self.assertIn("positionUTF8(toString(user_id)", sql)
+        self.assertEqual(b._params.get("col_1"), "admin")
 
     def test_user_id_not_contains_flips_outer(self):
         b = self._build()
@@ -250,9 +265,11 @@ class UserIdFilterTests(unittest.TestCase):
         )
         self.assertIsNotNone(sql)
         self.assertIn("trace_id NOT IN (", sql)
-        self.assertIn("user_id LIKE", sql)
-        self.assertNotIn("user_id NOT LIKE", sql)
-        self.assertEqual(b._params.get("col_1"), "%admin%")
+        self.assertIn("positionUTF8(toString(user_id)", sql)
+        self.assertNotIn(
+            "positionUTF8(toString(user_id), toString(%(col_1)s)) = 0", sql
+        )
+        self.assertEqual(b._params.get("col_1"), "admin")
 
     def test_user_id_null_ops_do_not_query_end_users(self):
         # Null ops compare end_user_id against the zero-UUID directly — no

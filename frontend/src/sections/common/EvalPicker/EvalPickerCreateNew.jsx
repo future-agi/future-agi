@@ -57,6 +57,7 @@ import {
   extractCodeEvaluateParams,
 } from "./evalPickerConfigUtils";
 import { useParams } from "react-router";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 
 const TRACING_ROW_TYPE_TO_KEY = {
   Span: "spans",
@@ -124,6 +125,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     onFiltersChange,
     sourceTimeWindow,
     filterForm: localFilterForm,
+    requireInputs,
   } = useEvalPickerContext();
   const { enqueueSnackbar } = useSnackbar();
   // Fail closed while capabilities load (both flags true) so we never flash
@@ -376,7 +378,10 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
       sourceRef.current?.runTest?.(draftId);
       setTimeout(() => setIsTesting((v) => (v ? false : v)), 60000);
     } catch (error) {
-      handleTestResult(false, error?.message || "Failed to test");
+      handleTestResult(
+        false,
+        getSafeActionErrorMessage(error, "Failed to test evaluation"),
+      );
     }
   }, [
     draftId,
@@ -538,6 +543,16 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
       return;
     }
     if (!validate()) return;
+    if (requireInputs && Object.keys(sourceMapping || {}).length === 0) {
+      // Defensive: the mapping step normally guarantees at least one mapped
+      // input, but an eval stored with an empty mapping reads back as a
+      // result column and is never graded, so never save one here.
+      enqueueSnackbar(
+        "This evaluation has no inputs to map, so it can't run in an environment.",
+        { variant: "error" },
+      );
+      return;
+    }
     if (!draftId) {
       enqueueSnackbar("Draft not ready, please wait a moment", {
         variant: "warning",
@@ -575,12 +590,15 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
             : undefined,
       });
     } catch (error) {
-      enqueueSnackbar(error?.message || "Failed to save", { variant: "error" });
+      enqueueSnackbar(getSafeActionErrorMessage(error, "Failed to save"), {
+        variant: "error",
+      });
     } finally {
       setIsSaving(false);
     }
   }, [
     validate,
+    requireInputs,
     draftId,
     name,
     description,
@@ -653,9 +671,10 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
       setStep("config");
     } catch (error) {
       enqueueSnackbar(
-        error?.response?.data?.result ||
-          error?.message ||
+        getSafeActionErrorMessage(
+          error,
           "Failed to create composite evaluation",
+        ),
         { variant: "error" },
       );
     } finally {
@@ -1258,7 +1277,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                   />
                 </Box>
               )}
-              <Box sx={{ flex: 1, overflow: "auto" }}>
+              <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
                 {(source === "dataset" ||
                   source === "workbench" ||
                   source === "custom" ||
@@ -1294,6 +1313,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     isComposite={isComposite}
                     compositeAdhocConfig={compositeAdhocConfig}
                     localFilters={localApiFilters}
+                    allowCustomFieldPath
                   />
                 )}
                 {source === "tracing" && (

@@ -1,5 +1,6 @@
 import {
   Box,
+  Button,
   Checkbox,
   Chip,
   Divider,
@@ -14,6 +15,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Iconify from "src/components/iconify";
 import axios from "src/utils/axios";
 import { apiPath } from "src/api/contracts/api-surface";
+import { fetchAllObserveProjects } from "src/api/project/observe-project-list";
 import { enqueueSnackbar } from "notistack";
 
 // ── Tag colors ──
@@ -54,11 +56,8 @@ const updateProjectTags = async (projectId, tags) => {
   return data?.result?.tags || tags;
 };
 
-const fetchAllKnownTags = async () => {
-  const { data } = await axios.get(apiPath("/tracer/project/list_projects/"), {
-    params: { project_type: "observe", page_size: 100, page_number: 0 },
-  });
-  const projects = data?.result?.table || [];
+const fetchAllKnownTags = async ({ signal } = {}) => {
+  const projects = await fetchAllObserveProjects({ signal });
   const tagSet = new Set();
   projects.forEach((p) => (p.tags || []).forEach((t) => tagSet.add(t)));
   return Array.from(tagSet).sort();
@@ -81,11 +80,17 @@ const TagEditor = ({ projectId, variant = "grid" }) => {
   });
 
   // ── Fetch all known tags (for the dropdown list) — only when popover is open ──
-  const { data: allKnownTags = [] } = useQuery({
+  const {
+    data: allKnownTags = [],
+    isError: isKnownTagsError,
+    isFetching: isKnownTagsFetching,
+    refetch: refetchKnownTags,
+  } = useQuery({
     queryKey: ["all-known-tags"],
-    queryFn: fetchAllKnownTags,
+    queryFn: ({ signal }) => fetchAllKnownTags({ signal }),
     enabled: Boolean(anchorEl),
     staleTime: 60_000,
+    retry: false,
   });
 
   // ── Mutation ──
@@ -281,7 +286,31 @@ const TagEditor = ({ projectId, variant = "grid" }) => {
               </Box>
             );
           })}
-          {availableTags.length === 0 && (
+          {isKnownTagsError && (
+            <Box
+              role="alert"
+              sx={{
+                px: 1,
+                py: 0.75,
+                fontSize: 11,
+                color: "warning.main",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 1,
+              }}
+            >
+              Tag suggestions unavailable.
+              <Button
+                size="small"
+                disabled={isKnownTagsFetching}
+                onClick={() => refetchKnownTags()}
+              >
+                Retry
+              </Button>
+            </Box>
+          )}
+          {availableTags.length === 0 && !isKnownTagsError && (
             <Typography
               sx={{
                 px: 1,

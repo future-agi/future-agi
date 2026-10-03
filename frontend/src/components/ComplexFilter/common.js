@@ -6,15 +6,26 @@ import {
   LIST_FILTER_OPS,
   NO_VALUE_FILTER_OPS,
   RANGE_FILTER_OPS,
+  STRUCTURED_SPAN_ATTRIBUTE_ALLOWED_OPS,
 } from "src/api/contracts/filter-contract.generated";
 import { FilterTypeMapper } from "src/utils/constants";
 import { formatISOCustom } from "src/utils/utils";
 import { z } from "zod";
 
 const AllowedOperators = Array.from(
-  new Set(Object.values(FILTER_TYPE_ALLOWED_OPS).flat()),
+  new Set(
+    [
+      ...Object.values(FILTER_TYPE_ALLOWED_OPS),
+      ...Object.values(STRUCTURED_SPAN_ATTRIBUTE_ALLOWED_OPS),
+    ].flat(),
+  ),
 );
-const AllowedFilterTypes = Object.keys(FILTER_TYPE_ALLOWED_OPS);
+const AllowedFilterTypes = Array.from(
+  new Set([
+    ...Object.keys(FILTER_TYPE_ALLOWED_OPS),
+    ...Object.keys(STRUCTURED_SPAN_ATTRIBUTE_ALLOWED_OPS),
+  ]),
+);
 const AllowedColumnTypes = FILTER_COLUMN_TYPES;
 const ListOperators = new Set(LIST_FILTER_OPS);
 const NoValueOperators = new Set(NO_VALUE_FILTER_OPS);
@@ -24,10 +35,105 @@ export const stripUiFilterKeys = (filters = []) =>
   (Array.isArray(filters) ? filters : []).map((filter) => {
     if (!filter || typeof filter !== "object") return filter;
     const cleaned = { ...filter };
+    if (cleaned.registryId && !cleaned.property_id) {
+      cleaned.property_id = cleaned.registryId;
+    }
     delete cleaned._meta;
     delete cleaned.id;
+    delete cleaned.registryId;
     return cleaned;
   });
+
+export const getFilterDefinitionIdentity = (definition) => ({
+  column_id: definition?.propertyId,
+  ...(definition?.registryId || definition?.property_id
+    ? { registryId: definition.registryId || definition.property_id }
+    : {}),
+});
+
+const filterRegistryId = (value) =>
+  value?.registryId || value?.property_id || "";
+
+const filterNativePropertyId = (value) =>
+  value?.propertyId || value?.column_id || "";
+
+// Registry identity is authoritative whenever both sides have one. Falling
+// back to the native column is deliberate compatibility for filters saved
+// before property_id existed.
+export const filtersSharePropertyIdentity = (left, right) => {
+  const leftRegistryId = filterRegistryId(left);
+  const rightRegistryId = filterRegistryId(right);
+  if (leftRegistryId && rightRegistryId) {
+    return leftRegistryId === rightRegistryId;
+  }
+  const leftPropertyId = filterNativePropertyId(left);
+  return (
+    Boolean(leftPropertyId) && leftPropertyId === filterNativePropertyId(right)
+  );
+};
+
+export const getFilterDefinitionSelectionValue = (definition) => {
+  const registryId = filterRegistryId(definition);
+  const nativePropertyId = filterNativePropertyId(definition);
+  if (registryId) {
+    // The native suffix remains part of UI selection identity because several
+    // choices of one logical property can share a registry ID (annotation
+    // dependents use `<label-id>**<choice>`). Registry ID still separates a
+    // same-name system field from a custom attribute.
+    return `registry:${JSON.stringify([registryId, nativePropertyId])}`;
+  }
+  return nativePropertyId || definition?.propertyName || "";
+};
+
+export const filterDefinitionMatchesSelection = (definition, selection) => {
+  if (!selection) return false;
+  if (getFilterDefinitionSelectionValue(definition) === selection) return true;
+  // Explicit legacy fallback: old _meta paths stored propertyId/propertyName.
+  return (
+    filterRegistryId(definition) === selection ||
+    definition?.propertyId === selection ||
+    definition?.propertyName === selection
+  );
+};
+
+const registryUsageKey = (registryId) => `registry:${registryId}`;
+const legacyUsageKey = (columnId) => `legacy:${columnId}`;
+
+export const getFilterUsageCounts = (filters = []) =>
+  (filters || []).reduce((counts, filter) => {
+    const registryId = filterRegistryId(filter);
+    const columnId = filterNativePropertyId(filter);
+    const key = registryId
+      ? registryUsageKey(registryId)
+      : columnId
+        ? legacyUsageKey(columnId)
+        : "";
+    if (key) counts[key] = (counts[key] || 0) + 1;
+    return counts;
+  }, {});
+
+export const getFilterDefinitionUsage = (counts, definition) => {
+  const registryId = filterRegistryId(definition);
+  const columnId = filterNativePropertyId(definition);
+  const identifiedCount = registryId
+    ? counts?.[registryUsageKey(registryId)] || 0
+    : 0;
+  // A row without property_id is inherently ambiguous. Count it by its native
+  // column for compatibility, but never combine two identified definitions.
+  const legacyCount = columnId ? counts?.[legacyUsageKey(columnId)] || 0 : 0;
+  return identifiedCount + legacyCount;
+};
+
+export const isFilterDefinitionAtMaxUsage = (
+  definition,
+  counts,
+  currentFilter,
+) =>
+  Boolean(
+    definition?.maxUsage &&
+      getFilterDefinitionUsage(counts, definition) >= definition.maxUsage &&
+      !filtersSharePropertyIdentity(currentFilter, definition),
+  );
 
 export const NULL_OPERATORS = ["is_null", "is_not_null"];
 
@@ -43,6 +149,8 @@ export const getComplexFilterValidation = (
         .transform((val) => {
           return val;
         }),
+      registryId: z.string().optional(),
+      property_id: z.string().optional(),
       _meta: z
         .object({
           parentProperty: z.string().optional(),
@@ -66,6 +174,7 @@ export const getComplexFilterValidation = (
               z.array(z.string()),
               z.array(z.any()),
               z.boolean(),
+              z.record(z.union([z.string(), z.number().finite(), z.boolean()])),
             ])
             .optional(),
           col_type: z
@@ -74,9 +183,23 @@ export const getComplexFilterValidation = (
               AllowedColumnTypes,
             )
             .optional(),
+          attribute_value_types: z
+            .array(z.enum(["string", "number", "boolean"]).nullable())
+            .optional(),
         })
         .refine(
           (val) => {
+            if (val.attribute_value_types !== undefined) {
+              if (
+                val.col_type !== "SPAN_ATTRIBUTE" ||
+                !ListOperators.has(val.filter_op) ||
+                !Array.isArray(val.filter_value) ||
+                val.attribute_value_types.length !== val.filter_value.length
+              ) {
+                return false;
+              }
+            }
+
             // Skip validation for null operators as they don't require filter_value
             if (NoValueOperators.has(val.filter_op)) {
               return true;
@@ -165,6 +288,13 @@ export const getComplexFilterValidation = (
                   );
                 }
                 return val.filter_value !== "" && val.filter_value != null;
+              case "map":
+                return (
+                  val.filter_value !== null &&
+                  typeof val.filter_value === "object" &&
+                  !Array.isArray(val.filter_value) &&
+                  Object.keys(val.filter_value).length > 0
+                );
               default:
                 return true;
             }
@@ -231,6 +361,9 @@ export const getComplexFilterValidation = (
         };
       }
 
+      const registryId = val.property_id || val.registryId;
+      if (registryId) finalFilters.property_id = registryId;
+
       if (getCustomProperties) {
         const customProps = getCustomProperties(val);
         return {
@@ -280,7 +413,7 @@ export const avoidDuplicateFilterSet = (prev, filter) => {
     if (isEmptyFilter(f)) {
       return acc;
     }
-    if (f.column_id === filter.column_id) {
+    if (filtersSharePropertyIdentity(f, filter)) {
       // Rows can share a column_id, and replacing each one pushed `filter`
       // per match — duplicate chips, and removing one left the filter applied.
       if (filterAdded) {

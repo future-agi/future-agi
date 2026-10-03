@@ -2,7 +2,7 @@
 
 Covers:
   - Backward compat: the existing ``items`` payload still works.
-  - Filter-mode: happy path, exclude_ids, duplicates, truncation 400.
+  - Filter-mode: happy path, exclude_ids, duplicates, signed continuation.
   - Validation: both payload forms together, neither present,
     unsupported mode, unsupported source_type.
 """
@@ -10,18 +10,36 @@ Covers:
 from __future__ import annotations
 
 import json
-from datetime import timedelta
+import uuid
+from datetime import UTC, datetime, timedelta
+from threading import Barrier, BrokenBarrierError, Thread
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
+from django.conf import settings as django_settings
+from django.db import close_old_connections
+from django.test import TransactionTestCase
 from django.utils import timezone
 from structlog.testing import capture_logs
 
+from accounts.models import Organization, User
+from accounts.models.workspace import Workspace
 from model_hub.models.ai_model import AIModel
-from model_hub.models.annotation_queues import AnnotationQueue, QueueItem
+from model_hub.models.annotation_queues import (
+    FULL_ACCESS_QUEUE_ROLES,
+    AnnotationQueue,
+    AnnotationQueueAnnotator,
+    QueueItem,
+)
+from model_hub.models.choices import AnnotatorRole
+from tfc.middleware.workspace_context import (
+    clear_workspace_context,
+    set_workspace_context,
+)
 from tracer.models.observation_span import ObservationSpan
-from tracer.models.project import Project, ProjectSourceChoices
+from tracer.models.project import Project
 from tracer.models.trace import Trace
-from tracer.models.trace_session import TraceSession
 from tracer.tests._ch_seed import seed_ch_span
 
 # --------------------------------------------------------------------------
@@ -371,9 +389,7 @@ class TestAddItemsFilterMode:
     ):
         """Filter-mode add stamps project_id from the selection too, so every path
         that fills a queue leaves items scope-able by the render read."""
-        _seed_ch_trace_root(
-            Trace.objects.create(project=observe_project, name="t-fp")
-        )
+        _seed_ch_trace_root(Trace.objects.create(project=observe_project, name="t-fp"))
         resp = auth_client.post(
             _add_items_url(active_queue.id),
             {
@@ -481,7 +497,7 @@ class TestAddItemsFilterMode:
         assert result["duplicates"] == 1
         assert result["total_matching"] == 3
 
-    def test_filter_mode_truncation_returns_400_selection_too_large(
+    def test_filter_mode_continues_oversized_trace_selection_to_terminal_write(
         self, auth_client, active_queue, observe_project
     ):
         # Override the view-level cap for this test so we don't need to
@@ -491,17 +507,36 @@ class TestAddItemsFilterMode:
         original_cap = views_mod.MAX_SELECTION_CAP
         views_mod.MAX_SELECTION_CAP = 2
         try:
+            traces = []
             for i in range(3):
-                _seed_ch_trace_root(
-                    Trace.objects.create(project=observe_project, name=f"t-{i}")
-                )
-            resp = auth_client.post(
+                trace = Trace.objects.create(project=observe_project, name=f"t-{i}")
+                traces.append(trace)
+                _seed_ch_trace_root(trace)
+            selection = {
+                "mode": "filter",
+                "source_type": "trace",
+                "project_id": str(observe_project.id),
+            }
+            first = auth_client.post(
+                _add_items_url(active_queue.id),
+                {"selection": selection},
+                format="json",
+            )
+            assert first.status_code == 200, first.data
+            first_result = first.data["result"]
+            assert first_result["added"] == 2
+            assert first_result["total_matching"] == 3
+            assert first_result["total_matching_is_lower_bound"] is True
+            assert first_result["has_more"] is True
+            assert isinstance(first_result["next_cursor"], str)
+            assert first_result["next_cursor"]
+
+            terminal = auth_client.post(
                 _add_items_url(active_queue.id),
                 {
                     "selection": {
-                        "mode": "filter",
-                        "source_type": "trace",
-                        "project_id": str(observe_project.id),
+                        **selection,
+                        "cursor": first_result["next_cursor"],
                     }
                 },
                 format="json",
@@ -509,14 +544,23 @@ class TestAddItemsFilterMode:
         finally:
             views_mod.MAX_SELECTION_CAP = original_cap
 
-        assert resp.status_code == 400, resp.data
-        assert resp.data.get("type") == "selection_too_large"
-        assert resp.data.get("code") == "selection_too_large"
-        assert resp.data.get("detail")
-        err = resp.data.get("error") or {}
-        assert err.get("type") == "selection_too_large"
-        assert err.get("total_matching") == 3
-        assert err.get("cap") == 2
+        assert terminal.status_code == 200, terminal.data
+        terminal_result = terminal.data["result"]
+        assert terminal_result["added"] == 1
+        assert terminal_result["total_matching"] == 3
+        assert terminal_result["total_matching_is_lower_bound"] is False
+        assert terminal_result["has_more"] is False
+        assert terminal_result["next_cursor"] is None
+
+        queue_items = list(
+            QueueItem.objects.filter(queue=active_queue, deleted=False).order_by(
+                "order"
+            )
+        )
+        assert [item.order for item in queue_items] == [1, 2, 3]
+        assert {str(item.trace_id) for item in queue_items} == {
+            str(trace.id) for trace in traces
+        }
 
     def test_filter_mode_ch_failure_returns_503_not_500(
         self, auth_client, active_queue, observe_project, monkeypatch
@@ -543,6 +587,58 @@ class TestAddItemsFilterMode:
         )
         assert resp.status_code == 503, resp.data
         assert resp.data.get("code") == "source_resolve_unavailable"
+
+    def test_filter_mode_deadline_rolls_back_every_created_item(
+        self, auth_client, active_queue, observe_project, monkeypatch
+    ):
+        import model_hub.views.annotation_queues as views_mod
+        from model_hub.services.bulk_selection import ResolveResult
+        from tracer.services.clickhouse.read_budget import ReadDeadlineExceeded
+
+        trace = Trace.objects.create(project=observe_project, name="deadline-trace")
+        seen_deadlines = []
+
+        def resolve(**kwargs):
+            seen_deadlines.append(kwargs["deadline"])
+            return ResolveResult(
+                ids=[str(trace.id)],
+                total_matching=1,
+                truncated=False,
+            )
+
+        def create_then_expire(queue, items_to_create, *, deadline=None):
+            QueueItem.objects.bulk_create(items_to_create)
+            raise ReadDeadlineExceeded("expired after insert")
+
+        monkeypatch.setitem(views_mod.FILTER_MODE_RESOLVERS, "trace", resolve)
+        monkeypatch.setattr(
+            views_mod,
+            "filter_available_source_ids_for_annotation",
+            lambda *_args, **_kwargs: ([str(trace.id)], 0, None, {}),
+        )
+        monkeypatch.setattr(views_mod, "_finalize_bulk_add", create_then_expire)
+
+        resp = auth_client.post(
+            _add_items_url(active_queue.id),
+            {
+                "selection": {
+                    "mode": "filter",
+                    "source_type": "trace",
+                    "project_id": str(observe_project.id),
+                }
+            },
+            format="json",
+        )
+
+        assert resp.status_code == 503, resp.data
+        assert resp.data.get("code") == "add_items_deadline_exceeded"
+        assert "Nothing was added" in str(resp.data)
+        assert seen_deadlines[0].total_ms == views_mod.ADD_ITEMS_FILTER_MODE_WALL_MS
+        assert (
+            views_mod.ADD_ITEMS_FILTER_MODE_WALL_MS
+            == django_settings.INTERACTIVE_READ_DEFAULT_WALL_MS
+        )
+        assert not QueueItem.objects.filter(queue=active_queue, trace=trace).exists()
 
     def test_filter_mode_queue_item_count_matches_added(
         self, auth_client, active_queue, observe_project
@@ -572,6 +668,368 @@ class TestAddItemsFilterMode:
         )
         assert list_resp.status_code == 200, list_resp.data
         assert list_resp.data["count"] == 4
+
+
+class TestFilterModeQueueMutationSerialization(TransactionTestCase):
+    """Queue-level locking makes overlapping manager retries idempotent."""
+
+    reset_sequences = True
+
+    def setUp(self):
+        super().setUp()
+        self.organization = Organization.objects.create(name="Queue write lock org")
+        set_workspace_context(organization=self.organization)
+        self.managers = [
+            User.objects.create_user(
+                email=f"queue-lock-manager-{index}@example.com",
+                password="testpassword123",
+                name=f"Queue Lock Manager {index}",
+                organization=self.organization,
+            )
+            for index in range(2)
+        ]
+        self.workspace = Workspace.objects.create(
+            name="Queue write lock workspace",
+            organization=self.organization,
+            created_by=self.managers[0],
+        )
+        set_workspace_context(
+            workspace=self.workspace,
+            organization=self.organization,
+            user=self.managers[0],
+        )
+        self.queue = AnnotationQueue.objects.create(
+            name="Queue write lock",
+            organization=self.organization,
+            workspace=self.workspace,
+        )
+        for manager in self.managers:
+            AnnotationQueueAnnotator.objects.update_or_create(
+                queue=self.queue,
+                user=manager,
+                defaults={
+                    "role": AnnotatorRole.MANAGER.value,
+                    "roles": FULL_ACCESS_QUEUE_ROLES,
+                },
+            )
+
+    def tearDown(self):
+        clear_workspace_context()
+        super().tearDown()
+
+    def test_overlapping_manager_retries_keep_unique_ids_and_orders(self):
+        import model_hub.views.annotation_queues as views_mod
+        from model_hub.services.bulk_selection import ResolveResult
+        from tracer.services.clickhouse.read_budget import ReadDeadline
+
+        source_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
+        selection = {
+            "mode": "filter",
+            "source_type": "trace",
+            "project_id": str(uuid.uuid4()),
+        }
+        start_barrier = Barrier(2)
+        finalize_barrier = Barrier(2)
+        responses = []
+        errors = []
+        original_finalize = views_mod._finalize_bulk_add
+
+        def resolve(**_kwargs):
+            return ResolveResult(
+                ids=source_ids,
+                total_matching=len(source_ids),
+                truncated=False,
+            )
+
+        def available(_source_type, resolved_ids, **_kwargs):
+            return (
+                list(resolved_ids),
+                0,
+                None,
+                {
+                    source_id: {"name": f"source-{index}"}
+                    for index, source_id in enumerate(resolved_ids)
+                },
+            )
+
+        def synchronized_finalize(queue, items_to_create, *, deadline=None):
+            # Before the queue row lock, both requests build the same fresh
+            # item set and meet here; concurrent inserts then race the unique
+            # source constraint. With the lock, the first request times out of
+            # this test-only rendezvous and commits before the second performs
+            # duplicate detection, so the second has no rows to create.
+            if items_to_create:
+                try:
+                    finalize_barrier.wait(timeout=0.5)
+                except BrokenBarrierError:
+                    pass
+            return original_finalize(queue, items_to_create, deadline=deadline)
+
+        def add_as(manager):
+            close_old_connections()
+            set_workspace_context(
+                workspace=self.workspace,
+                organization=self.organization,
+                user=manager,
+            )
+            request = SimpleNamespace(
+                organization=self.organization,
+                workspace=self.workspace,
+                user=manager,
+                auth=None,
+            )
+            try:
+                start_barrier.wait(timeout=2)
+                response = views_mod.QueueItemViewSet()._add_items_filter_mode_request(
+                    request,
+                    self.queue.id,
+                    selection,
+                    deadline=ReadDeadline.start(10_000),
+                )
+                responses.append(response)
+            except Exception as exc:  # pragma: no cover - regression diagnostic
+                errors.append(exc)
+            finally:
+                clear_workspace_context()
+                close_old_connections()
+
+        with (
+            patch.dict(views_mod.FILTER_MODE_RESOLVERS, {"trace": resolve}),
+            patch.object(
+                views_mod,
+                "filter_available_source_ids_for_annotation",
+                side_effect=available,
+            ),
+            patch.object(
+                views_mod,
+                "_finalize_bulk_add",
+                side_effect=synchronized_finalize,
+            ),
+        ):
+            threads = [
+                Thread(target=add_as, args=(manager,)) for manager in self.managers
+            ]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=15)
+
+        assert all(not thread.is_alive() for thread in threads)
+        assert errors == []
+        assert sorted(response.status_code for response in responses) == [200, 200]
+        results = [response.data["result"] for response in responses]
+        assert sorted(result["added"] for result in results) == [0, 2]
+        assert sorted(result["duplicates"] for result in results) == [0, 2]
+
+        items = list(
+            QueueItem.objects.filter(queue=self.queue, deleted=False).order_by("order")
+        )
+        assert [item.order for item in items] == [1, 2]
+        assert [str(item.trace_id) for item in items] == source_ids
+        assert len({item.trace_id for item in items}) == len(source_ids)
+
+
+def test_bounded_bulk_selector_receives_only_the_request_remainder(monkeypatch):
+    import tracer.selectors.trace_filter_reads as trace_filter_reads
+    from model_hub.services import bulk_selection
+
+    calls = []
+
+    class Deadline:
+        def remaining_ms(self, *, floor_ms):
+            calls.append(("remaining", floor_ms))
+            return 4_321 if len(calls) == 1 else 4_000
+
+    class Builder:
+        @staticmethod
+        def bounded_filter_degraded_error_code():
+            return None
+
+        @staticmethod
+        def supports_bounded_filter_scan():
+            return True
+
+    def read_page(**kwargs):
+        calls.append(("selector", kwargs["deadline_ms"]))
+        return SimpleNamespace(complete=True, error_code=None, rows=[], has_more=False)
+
+    monkeypatch.setattr(trace_filter_reads, "read_bounded_filter_page", read_page)
+    page = bulk_selection._read_bounded_bulk_page(
+        builder=Builder(),
+        analytics=object(),
+        filters=[],
+        key_field="trace_id",
+        cap=1,
+        deadline=Deadline(),
+    )
+
+    assert page.complete is True
+    assert calls == [
+        ("remaining", 1),
+        ("selector", 4_321),
+        ("remaining", 1),
+    ]
+
+
+def test_filter_mode_pg_statements_receive_shrinking_timeouts(monkeypatch):
+    from contextlib import contextmanager
+
+    import model_hub.views.annotation_queues as views_mod
+
+    remaining = iter((8_000, 7_900, 5_000, 4_900, 4_800))
+
+    class Deadline:
+        @staticmethod
+        def remaining_ms(*, floor_ms):
+            assert floor_ms == 1
+            return next(remaining)
+
+    class RawCursor:
+        def __init__(self):
+            self.timeouts = []
+
+        def execute(self, sql, params):
+            assert sql == "SELECT set_config('statement_timeout', %s, true)"
+            self.timeouts.append(params[0])
+
+    class Connection:
+        vendor = "postgresql"
+        wrapper = None
+
+        @contextmanager
+        def execute_wrapper(self, wrapper):
+            self.wrapper = wrapper
+            yield
+
+    fake_connection = Connection()
+    raw_cursor = RawCursor()
+    executed = []
+
+    def execute(sql, params, many, context):
+        executed.append((sql, params, many, context))
+        return sql
+
+    monkeypatch.setattr(views_mod, "connection", fake_connection)
+    context = {"cursor": SimpleNamespace(cursor=raw_cursor)}
+    with views_mod._bounded_add_items_postgres(Deadline()):
+        assert fake_connection.wrapper(execute, "SELECT one", (), False, context) == (
+            "SELECT one"
+        )
+        assert fake_connection.wrapper(execute, "SELECT two", (), False, context) == (
+            "SELECT two"
+        )
+
+    assert raw_cursor.timeouts == ["8000", "5000"]
+    assert [row[0] for row in executed] == ["SELECT one", "SELECT two"]
+
+
+def test_filter_mode_assignment_materialization_observes_shared_deadline(monkeypatch):
+    import model_hub.models.annotation_queues as queue_models
+    from model_hub.utils.annotation_queue_helpers import (
+        assign_items_to_all_annotators,
+    )
+    from tracer.services.clickhouse.read_budget import ReadDeadlineExceeded
+
+    constructed = []
+    writes = []
+
+    class AssignmentManager:
+        @staticmethod
+        def bulk_create(assignments, **kwargs):
+            writes.append((list(assignments), kwargs))
+
+    class Assignment:
+        objects = AssignmentManager()
+
+        def __init__(self, **kwargs):
+            constructed.append(kwargs)
+
+    class Annotators:
+        def filter(self, *args, **kwargs):
+            return self
+
+        def values_list(self, *args, **kwargs):
+            return self
+
+        @staticmethod
+        def distinct():
+            return ["annotator-1"]
+
+    checks = 0
+
+    def expire_during_assignment_build():
+        nonlocal checks
+        checks += 1
+        # Three entry/query checkpoints run before materialization. The fourth
+        # is the 128th assignment checkpoint and must interrupt the build.
+        if checks == 4:
+            raise ReadDeadlineExceeded("shared request wall exhausted")
+
+    monkeypatch.setattr(queue_models, "QueueItemAssignment", Assignment)
+    monkeypatch.setattr(queue_models, "annotation_queue_role_q", lambda *_: object())
+
+    queue = SimpleNamespace(queue_annotators=Annotators())
+    with pytest.raises(ReadDeadlineExceeded, match="shared request wall"):
+        assign_items_to_all_annotators(
+            queue,
+            [object() for _ in range(200)],
+            deadline_check=expire_during_assignment_build,
+        )
+
+    assert len(constructed) == 127
+    assert writes == []
+
+
+def test_filter_deadline_wraps_validation_and_invalid_shape_never_reads_db(
+    monkeypatch,
+):
+    from rest_framework.parsers import JSONParser
+    from rest_framework.request import Request
+    from rest_framework.test import APIRequestFactory
+
+    import model_hub.views.annotation_queues as views_mod
+    import tfc.utils.api_contracts as api_contracts
+
+    events = []
+
+    class FakeReadDeadline:
+        @staticmethod
+        def start(total_ms):
+            events.append(("deadline", total_ms))
+            return SimpleNamespace(total_ms=total_ms)
+
+    original_validate = api_contracts._validate_serializer
+
+    def tracked_validate(*args, **kwargs):
+        events.append(("validate", args[0]))
+        return original_validate(*args, **kwargs)
+
+    def unexpected_db_read(*args, **kwargs):
+        raise AssertionError("invalid selection must return before queue DB access")
+
+    monkeypatch.setattr(views_mod, "ReadDeadline", FakeReadDeadline)
+    monkeypatch.setattr(api_contracts, "_validate_serializer", tracked_validate)
+    monkeypatch.setattr(views_mod.AnnotationQueue.objects, "get", unexpected_db_read)
+
+    raw_request = APIRequestFactory().post(
+        "/model-hub/annotation-queues/queue-1/items/add-items/",
+        {"selection": {"mode": "filter"}},
+        format="json",
+    )
+    request = Request(raw_request, parsers=[JSONParser()])
+    response = views_mod.QueueItemViewSet().add_items(request, queue_id="queue-1")
+
+    assert response.status_code == 400
+    assert events[0] == ("deadline", views_mod.ADD_ITEMS_FILTER_MODE_WALL_MS)
+    assert events[1][0] == "validate"
+
+    # The outer deadline wrapper must keep both routing and generated-contract
+    # metadata copied from @action / @validated_request.
+    add_items_action = views_mod.QueueItemViewSet.add_items
+    assert add_items_action.mapping["post"] == "add_items"
+    assert add_items_action.detail is False
+    assert add_items_action.url_path == "add-items"
+    assert getattr(add_items_action, "_swagger_auto_schema", None)
 
 
 # --------------------------------------------------------------------------
@@ -713,35 +1171,157 @@ class TestAddItemsFilterModeCallExecution:
         assert resp.status_code == 200, resp.data
         assert resp.data["result"]["added"] == 2
 
-    def test_filter_mode_ce_truncation_returns_400(
+    def test_filter_mode_ce_continues_oversized_selection_to_terminal_write(
         self, auth_client, active_queue, seeded_call_executions_for_dispatch
     ):
         import model_hub.views.annotation_queues as views_mod
 
-        agent_def, _ = seeded_call_executions_for_dispatch
+        agent_def, call_executions = seeded_call_executions_for_dispatch
         original_cap = views_mod.MAX_SELECTION_CAP
         views_mod.MAX_SELECTION_CAP = 2
         try:
-            resp = auth_client.post(
+            selection = {
+                "mode": "filter",
+                "source_type": "call_execution",
+                "project_id": str(agent_def.id),
+            }
+            first = auth_client.post(
+                _add_items_url(active_queue.id),
+                {"selection": selection},
+                format="json",
+            )
+            assert first.status_code == 200, first.data
+            first_result = first.data["result"]
+            assert first_result["added"] == 2
+            assert first_result["total_matching"] == 3
+            assert first_result["total_matching_is_lower_bound"] is True
+            assert first_result["has_more"] is True
+            assert isinstance(first_result["next_cursor"], str)
+            assert first_result["next_cursor"]
+
+            terminal = auth_client.post(
                 _add_items_url(active_queue.id),
                 {
                     "selection": {
-                        "mode": "filter",
-                        "source_type": "call_execution",
-                        "project_id": str(agent_def.id),
+                        **selection,
+                        "cursor": first_result["next_cursor"],
                     }
                 },
                 format="json",
             )
         finally:
             views_mod.MAX_SELECTION_CAP = original_cap
-        assert resp.status_code == 400, resp.data
-        assert resp.data.get("type") == "selection_too_large"
-        assert resp.data.get("code") == "selection_too_large"
-        err = resp.data.get("error") or {}
-        assert err.get("type") == "selection_too_large"
-        assert err.get("total_matching") == 3
-        assert err.get("cap") == 2
+
+        assert terminal.status_code == 200, terminal.data
+        terminal_result = terminal.data["result"]
+        assert terminal_result["added"] == 1
+        assert terminal_result["total_matching"] == 3
+        assert terminal_result["total_matching_is_lower_bound"] is False
+        assert terminal_result["has_more"] is False
+        assert terminal_result["next_cursor"] is None
+
+        queue_items = list(
+            QueueItem.objects.filter(queue=active_queue, deleted=False).order_by(
+                "order"
+            )
+        )
+        assert [item.order for item in queue_items] == [1, 2, 3]
+        assert {item.call_execution_id for item in queue_items} == {
+            call_execution.id for call_execution in call_executions
+        }
+
+    @pytest.mark.parametrize("filter_case", ["equals", "between"])
+    def test_filter_mode_ce_continuation_preserves_created_at_boundaries(
+        self,
+        filter_case,
+        auth_client,
+        active_queue,
+        seeded_call_executions_for_dispatch,
+    ):
+        import model_hub.views.annotation_queues as views_mod
+        from simulate.models.test_execution import CallExecution
+
+        agent_def, call_executions = seeded_call_executions_for_dispatch
+        base = datetime(2020, 1, 15, tzinfo=UTC)
+        if filter_case == "equals":
+            created_at_values = [
+                base + timedelta(hours=1),
+                base + timedelta(hours=12),
+                base + timedelta(hours=23),
+            ]
+            filter_value = (base + timedelta(hours=12)).isoformat()
+        else:
+            lower = base + timedelta(hours=1)
+            upper = base + timedelta(hours=3)
+            created_at_values = [lower, base + timedelta(hours=2), upper]
+            filter_value = [lower.isoformat(), upper.isoformat()]
+
+        for call_execution, created_at in zip(
+            call_executions,
+            created_at_values,
+            strict=True,
+        ):
+            CallExecution.objects.filter(pk=call_execution.pk).update(
+                created_at=created_at
+            )
+
+        selection = {
+            "mode": "filter",
+            "source_type": "call_execution",
+            "project_id": str(agent_def.id),
+            "filter": [
+                _api_filter(
+                    "created_at",
+                    "datetime",
+                    filter_case,
+                    filter_value,
+                )
+            ],
+        }
+        original_cap = views_mod.MAX_SELECTION_CAP
+        views_mod.MAX_SELECTION_CAP = 2
+        try:
+            first = auth_client.post(
+                _add_items_url(active_queue.id),
+                {"selection": selection},
+                format="json",
+            )
+            assert first.status_code == 200, first.data
+            first_result = first.data["result"]
+            assert first_result["added"] == 2
+            assert first_result["total_matching"] == 3
+            assert first_result["has_more"] is True
+            assert first_result["next_cursor"]
+
+            terminal = auth_client.post(
+                _add_items_url(active_queue.id),
+                {
+                    "selection": {
+                        **selection,
+                        "cursor": first_result["next_cursor"],
+                    }
+                },
+                format="json",
+            )
+        finally:
+            views_mod.MAX_SELECTION_CAP = original_cap
+
+        assert terminal.status_code == 200, terminal.data
+        terminal_result = terminal.data["result"]
+        assert terminal_result["added"] == 1
+        assert terminal_result["total_matching"] == 3
+        assert terminal_result["has_more"] is False
+        assert terminal_result["next_cursor"] is None
+
+        queue_items = list(
+            QueueItem.objects.filter(queue=active_queue, deleted=False).order_by(
+                "order"
+            )
+        )
+        assert [item.order for item in queue_items] == [1, 2, 3]
+        assert {item.call_execution_id for item in queue_items} == {
+            call_execution.id for call_execution in call_executions
+        }
 
 
 # --------------------------------------------------------------------------

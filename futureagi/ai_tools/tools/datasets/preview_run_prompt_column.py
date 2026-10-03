@@ -159,7 +159,7 @@ class PreviewRunPromptColumnTool(BaseTool):
                         id=tool_id, organization=context.organization
                     )
                     if tool_obj.config:
-                        tools_to_send.append(tool_obj.config)
+                        tools_to_send.append(tool_obj.as_openai_tool())
                 except ToolsModel.DoesNotExist:
                     return ToolResult.not_found("Tool", str(tool_id))
 

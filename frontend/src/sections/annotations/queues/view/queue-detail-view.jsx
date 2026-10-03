@@ -54,6 +54,7 @@ import ExportToDatasetDialog from "./export-to-dataset-dialog";
 import AutomationRulesTab from "./automation-rules-tab";
 import { paths } from "src/routes/paths";
 import { enqueueSnackbar } from "src/components/snackbar";
+import { SS_KEY_USER_ID } from "src/utils/sessionKeys";
 import { QUEUE_ROLES, hasQueueRole, isQueueAnnotatorRole } from "../constants";
 import {
   canOpenSubmissionWorkspace,
@@ -131,7 +132,7 @@ export default function QueueDetailView() {
   const currentUserId = String(
     user?.id ||
       (typeof window !== "undefined"
-        ? window.sessionStorage.getItem("currentUserId")
+        ? window.sessionStorage.getItem(SS_KEY_USER_ID)
         : "") ||
       "",
   );

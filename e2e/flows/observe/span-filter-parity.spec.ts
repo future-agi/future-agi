@@ -65,7 +65,12 @@ test('OBS-E2E-002: span table filter matches the API for the same query', {
   expect(projects).toHaveLength(1);
   const projectId = projects[0].id;
 
-  const spanNames = page.locator('.ag-row [col-id="span_name"]');
+  // Primary and compare grids remain mounted so view changes preserve their
+  // state. Scope assertions to the visible grid; the hidden disabled grid can
+  // legitimately contain AG Grid's failed-load placeholder row.
+  const spanNames = page.locator(
+    '.clean-data-table:visible .ag-row [col-id="span_name"]',
+  );
 
   await test.step('UI: open the project span table', async () => {
     // The URL the app navigates to itself when the table is grouped by span
@@ -77,7 +82,10 @@ test('OBS-E2E-002: span table filter matches the API for the same query', {
 
   await test.step('UI: filter the span table down to one span name', async () => {
     const filtered = page.waitForResponse(
-      (r) => r.url().includes(SPAN_LIST_PATH) && r.url().includes(alpha) && r.ok(),
+      (r) => r.url().includes(SPAN_LIST_PATH) && r.ok() &&
+        (r.request().method() === 'POST'
+          ? (r.request().postData() || '').includes(alpha)
+          : r.url().includes(alpha)),
       { timeout: UI_READY });
     await page.getByRole('button', { name: 'Filter' }).click();
     await page.getByRole('button', { name: 'Property' }).first().click();

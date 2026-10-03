@@ -9,98 +9,41 @@ rows (``observation_span_id IS NULL``) and picks the latest run when the
 same ``(span, eval_config)`` repeats.
 """
 
-import uuid
 from datetime import timedelta
 
-import pytest  # noqa: E402
+import pytest
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
 # Break the import cycle (see test_eval_logger_schema.py for the
 # canonical comment).
 import model_hub.tasks  # noqa: F401
-from model_hub.models.evals_metric import EvalTemplate  # noqa: E402
-from tracer.models.custom_eval_config import CustomEvalConfig  # noqa: E402
-from tracer.models.eval_task import (  # noqa: E402
-    EvalTask,
-    EvalTaskStatus,
-    RunType,
-)
-from tracer.models.observation_span import (  # noqa: E402
+from tracer.models.observation_span import (
     EvalLogger,
     EvalTargetType,
     ObservationSpan,
+)
+from tracer.tests.eval_task_factories import (
+    make_config as _config,
+)
+from tracer.tests.eval_task_factories import (
+    make_fresh_span as _fresh_span,
+)
+from tracer.tests.eval_task_factories import (
+    make_row as _row,
+)
+from tracer.tests.eval_task_factories import (
+    make_task as _task,
+)
+from tracer.tests.eval_task_factories import (
+    make_template as _template,
 )
 
 USAGE_URL = "/tracer/eval-task/get_usage/"
 
 
 # ── Test scaffolding ───────────────────────────────────────────────────
-
-
-def _template(*, organization, workspace, output_type_normalized, name=None):
-    return EvalTemplate.objects.create(
-        name=name or f"Template ({output_type_normalized})",
-        description="",
-        organization=organization,
-        workspace=workspace,
-        output_type_normalized=output_type_normalized,
-        config={
-            "output": {
-                "pass_fail": "Pass/Fail",
-                "percentage": "score",
-                "deterministic": "choices",
-            }[output_type_normalized]
-        },
-    )
-
-
-def _config(*, project, template, name):
-    return CustomEvalConfig.objects.create(
-        name=name,
-        project=project,
-        eval_template=template,
-        config={},
-        mapping={},
-        filters={},
-    )
-
-
-def _task(*, project, name="Agg task"):
-    return EvalTask.objects.create(
-        project=project,
-        name=name,
-        filters={},
-        sampling_rate=100,
-        run_type=RunType.CONTINUOUS,
-        status=EvalTaskStatus.PENDING,
-        spans_limit=100,
-    )
-
-
-def _row(*, span, cfg, task, **kwargs):
-    return EvalLogger.objects.create(
-        target_type=EvalTargetType.SPAN,
-        observation_span=span,
-        trace=span.trace,
-        custom_eval_config=cfg,
-        eval_task_id=str(task.id),
-        **kwargs,
-    )
-
-
-def _fresh_span(base):
-    """A new span sharing base's trace/project — one eval row per span, so
-    live rows don't collide on the eval_logger_live_span_uniq
-    (task, span, cfg) partial unique constraint."""
-    return ObservationSpan.objects.create(
-        id=f"span_{uuid.uuid4().hex[:16]}",
-        project=base.project,
-        trace=base.trace,
-        name="agg span",
-        observation_type="llm",
-        start_time=base.start_time,
-        end_time=base.end_time,
-    )
 
 
 # ── eval_aggregation ───────────────────────────────────────────────────
@@ -548,10 +491,11 @@ def _set_span_created_at(span, when):
 @pytest.mark.api
 @pytest.mark.django_db
 class TestAggregationDateRange:
-    """``start_date`` / ``end_date`` filter both aggregations by the span's
-    own ``created_at`` (not the EvalLogger's). When neither is given, every
-    span linked to the task is included; otherwise the range bounds the
-    set of qualifying spans inclusively."""
+    """Date bounds filter both aggregations by the span's ``created_at``.
+
+    A caller may supply either bound independently. Supplied bounds remain
+    inclusive for compatibility; without bounds all task spans are included.
+    """
 
     def _get(self, auth_client, task, **extra):
         return auth_client.get(
@@ -669,9 +613,9 @@ class TestAggregationDateRange:
         task, _ = self._setup_two_spans(
             project, organization, workspace, observation_span, child_span
         )
-        # 100 years ago → no span qualifies; rollup omits the config.
-        start = (timezone.now() - timedelta(days=36500)).isoformat()
-        end = (timezone.now() - timedelta(days=36000)).isoformat()
+        # A bounded historical window with no spans omits the config.
+        start = (timezone.now() - timedelta(days=300)).isoformat()
+        end = (timezone.now() - timedelta(days=299)).isoformat()
         agg = self._get(auth_client, task, start_date=start, end_date=end).json()[
             "result"
         ]["eval_aggregation"]
@@ -701,3 +645,210 @@ class TestAggregationDateRange:
         ).json()["result"]["span_aggregation"]
         # Only the recent (child) span survives the window.
         assert list(sa.keys()) == [str(child_span.id)]
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.django_db
+class TestUsageLogBoundedProjection:
+    def _get(self, auth_client, task, **extra):
+        return auth_client.get(
+            USAGE_URL,
+            {
+                "eval_task_id": str(task.id),
+                "period": "30d",
+                "page": 1,
+                "page_size": 100,
+                "include_summary": "false",
+                **extra,
+            },
+        )
+
+    def test_preserves_json_types_details_deleted_and_dangling_spans(
+        self,
+        auth_client,
+        project,
+        organization,
+        workspace,
+        observation_span,
+    ):
+        template = _template(
+            organization=organization,
+            workspace=workspace,
+            output_type_normalized="pass_fail",
+        )
+        config = _config(project=project, template=template, name="Projection")
+        config.mapping = {
+            "string_true": "payload.string_true",
+            "string_number": "payload.string_number",
+            "string_null": "payload.string_null",
+            "empty_string": "payload.empty_string",
+            "real_bool": "payload.real_bool",
+            "real_list": "payload.real_list",
+            "nested_list": "messages.0.content",
+            "double_underscore": "foo__bar",
+            "numeric_root": "0",
+        }
+        config.save(update_fields=["mapping"])
+        task = _task(project=project, name="Projection task")
+        ObservationSpan.objects.filter(id=observation_span.id).update(
+            span_attributes={
+                "input": False,
+                "input.value": "fallback input",
+                "payload": {
+                    "string_true": "true",
+                    "string_number": "123",
+                    "string_null": "null",
+                    "empty_string": "",
+                    "real_bool": True,
+                    "real_list": ["one", 2],
+                },
+                "messages": [{"content": "nested"}],
+                "foo__bar": "literal double underscore",
+                "0": "literal numeric root",
+            },
+            deleted=True,
+        )
+        live_log = _row(
+            span=observation_span,
+            cfg=config,
+            task=task,
+            output_bool=True,
+            eval_explanation="",
+            error_message="fallback reason",
+            output_metadata={
+                "warnings": [{"type": "partial_input", "message": "bounded"}]
+            },
+            results_explanation={"why": "preserved"},
+        )
+        dangling_log = EvalLogger.objects.create(
+            target_type=EvalTargetType.SPAN,
+            observation_span_id="missing-span",
+            trace=observation_span.trace,
+            custom_eval_config=config,
+            eval_task_id=str(task.id),
+            output_bool=True,
+        )
+
+        response = self._get(auth_client, task)
+
+        assert response.status_code == 200, response.json()
+        rows = {
+            item["id"]: item for item in response.json()["result"]["logs"]["results"]
+        }
+        live = rows[str(live_log.id)]
+        assert live["input"] == "fallback input"
+        assert live["reason"] == "fallback reason"
+        assert live["warnings"] == [{"type": "partial_input", "message": "bounded"}]
+        assert live["detail"]["results_explanation"] == {"why": "preserved"}
+        assert live["detail"]["input_variables"] == {
+            "string_true": "true",
+            "string_number": "123",
+            "string_null": "null",
+            "empty_string": "",
+            "real_bool": True,
+            "real_list": ["one", 2],
+            "nested_list": "nested",
+            "double_underscore": "literal double underscore",
+            "numeric_root": "literal numeric root",
+        }
+        assert live["detail"]["detail_complete"] is True
+        dangling = rows[str(dangling_log.id)]
+        assert dangling["detail"]["detail_complete"] is False
+        assert "span_context" in dangling["detail"]["omitted_fields"]
+
+    def test_page_of_100_uses_constant_bounded_projection_queries(
+        self,
+        auth_client,
+        project,
+        organization,
+        workspace,
+        observation_span,
+    ):
+        template = _template(
+            organization=organization,
+            workspace=workspace,
+            output_type_normalized="pass_fail",
+        )
+        config = _config(project=project, template=template, name="Scale")
+        config.mapping = {"prompt": "input"}
+        config.save(update_fields=["mapping"])
+        task = _task(project=project, name="Scale task")
+        spans = [
+            ObservationSpan(
+                id=f"usage_span_{ordinal:03d}",
+                project=observation_span.project,
+                trace=observation_span.trace,
+                name=f"usage span {ordinal}",
+                observation_type="llm",
+                start_time=observation_span.start_time,
+                end_time=observation_span.end_time,
+                span_attributes={"input": f"prompt {ordinal}"},
+            )
+            for ordinal in range(100)
+        ]
+        ObservationSpan.objects.bulk_create(spans)
+        EvalLogger.objects.bulk_create(
+            [
+                EvalLogger(
+                    target_type=EvalTargetType.SPAN,
+                    observation_span_id=span.id,
+                    trace_id=observation_span.trace_id,
+                    custom_eval_config_id=config.id,
+                    eval_task_id=str(task.id),
+                    output_bool=True,
+                )
+                for span in spans
+            ]
+        )
+
+        with CaptureQueriesContext(connection) as captured:
+            response = self._get(auth_client, task)
+
+        assert response.status_code == 200, response.json()
+        assert len(response.json()["result"]["logs"]["results"]) == 100
+        sql_statements = [query["sql"] for query in captured.captured_queries]
+        assert sum('FROM "tracer_eval_logger"' in sql for sql in sql_statements) == 1
+        assert (
+            sum('FROM "tracer_observation_span"' in sql for sql in sql_statements) == 1
+        )
+        assert (
+            sum('FROM "tracer_custom_eval_config"' in sql for sql in sql_statements)
+            == 1
+        )
+
+    def test_oversized_and_malformed_mapping_is_bounded_and_truthful(
+        self,
+        auth_client,
+        project,
+        organization,
+        workspace,
+        observation_span,
+    ):
+        template = _template(
+            organization=organization,
+            workspace=workspace,
+            output_type_normalized="pass_fail",
+        )
+        config = _config(project=project, template=template, name="Oversized")
+        config.mapping = {"huge": "x" * 9_000, "bad": ["not", "a", "path"]}
+        config.save(update_fields=["mapping"])
+        task = _task(project=project, name="Oversized mapping task")
+        log = _row(
+            span=observation_span,
+            cfg=config,
+            task=task,
+            output_bool=True,
+        )
+
+        response = self._get(auth_client, task)
+
+        assert response.status_code == 200, response.json()
+        row = next(
+            item
+            for item in response.json()["result"]["logs"]["results"]
+            if item["id"] == str(log.id)
+        )
+        assert row["detail"]["input_variables"] == {}
+        assert row["detail"]["detail_complete"] is False
+        assert "input_variables.mapping_oversized" in row["detail"]["omitted_fields"]

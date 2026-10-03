@@ -16,6 +16,10 @@ import Iconify from "src/components/iconify";
 import { useOrganization } from "src/contexts/OrganizationContext";
 import OrgTwoFactorPolicySection from "src/sections/settings/Security/OrgTwoFactorPolicySection";
 import logger from "src/utils/logger";
+import {
+  SS_KEY_ORG_DISPLAY_NAME,
+  SS_KEY_ORG_NAME,
+} from "src/utils/sessionKeys";
 
 const OrgSettings = () => {
   const theme = useTheme();
@@ -46,8 +50,8 @@ const OrgSettings = () => {
       });
       setIsEditing(false);
       // Update sessionStorage so the context picks up the new name
-      sessionStorage.setItem("organizationName", editName.trim());
-      sessionStorage.setItem("organizationDisplayName", editName.trim());
+      sessionStorage.setItem(SS_KEY_ORG_NAME, editName.trim());
+      sessionStorage.setItem(SS_KEY_ORG_DISPLAY_NAME, editName.trim());
       // Reload to refresh all contexts with the new org name
       window.location.reload();
     },

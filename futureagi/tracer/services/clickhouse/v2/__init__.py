@@ -44,13 +44,51 @@ def get_v2_config() -> dict[str, Any]:
     """
     legacy = getattr(settings, "CLICKHOUSE", {}) or {}
     cfg = getattr(settings, "CLICKHOUSE_V2", {}) or {}
+
+    def configured(
+        setting_key: str,
+        env_key: str,
+        fallback: Any,
+        *,
+        allow_empty: bool = False,
+    ) -> Any:
+        value = cfg.get(setting_key)
+        if value is not None and (allow_empty or value != ""):
+            return value
+        env_value = os.getenv(env_key)
+        if env_value is not None and (allow_empty or env_value != ""):
+            return env_value
+        return fallback
+
     return {
-        "host":      cfg.get("CH25_HOST")      or os.getenv("CH25_HOST")      or legacy.get("CH_HOST", "127.0.0.1"),
-        "http_port": int(cfg.get("CH25_HTTP_PORT") or os.getenv("CH25_HTTP_PORT") or 8123),
-        "tcp_port":  int(cfg.get("CH25_TCP_PORT")  or os.getenv("CH25_TCP_PORT")  or legacy.get("CH_PORT", 9000)),
-        "user":      cfg.get("CH25_USER")      or os.getenv("CH25_USER")      or legacy.get("CH_USERNAME", "default"),
-        "password":  cfg.get("CH25_PASSWORD")  or os.getenv("CH25_PASSWORD")  or legacy.get("CH_PASSWORD", ""),
-        "database":  cfg.get("CH25_DATABASE")  or os.getenv("CH25_DATABASE")  or legacy.get("CH_DATABASE", "futureagi"),
+        "host": configured(
+            "CH25_HOST", "CH25_HOST", legacy.get("CH_HOST", "127.0.0.1")
+        ),
+        "http_port": int(configured("CH25_HTTP_PORT", "CH25_HTTP_PORT", 8123)),
+        "tcp_port": int(
+            configured("CH25_TCP_PORT", "CH25_TCP_PORT", legacy.get("CH_PORT", 9000))
+        ),
+        "user": configured(
+            "CH25_USER", "CH25_USER", legacy.get("CH_USERNAME", "default")
+        ),
+        "password": configured(
+            "CH25_PASSWORD",
+            "CH25_PASSWORD",
+            legacy.get("CH_PASSWORD", ""),
+            allow_empty=True,
+        ),
+        "database": configured(
+            "CH25_DATABASE", "CH25_DATABASE", legacy.get("CH_DATABASE", "futureagi")
+        ),
+        "server_enforced_readonly": str(
+            configured(
+                "CH25_SERVER_ENFORCED_READONLY",
+                "CH25_SERVER_ENFORCED_READONLY",
+                legacy.get("CH_SERVER_ENFORCED_READONLY", False),
+                allow_empty=True,
+            )
+        ).lower()
+        in {"1", "true", "yes"},
     }
 
 
@@ -61,11 +99,16 @@ def get_reader():
     commands that need to inspect spans during validation.
     """
     from .span_reader import CHSpanReader
+
     cfg = get_v2_config()
     return CHSpanReader(
-        host=cfg["host"], port=cfg["http_port"],
-        username=cfg["user"], password=cfg["password"],
+        host=cfg["host"],
+        port=cfg["http_port"],
+        username=cfg["user"],
+        password=cfg["password"],
         database=cfg["database"],
+        server_enforced_readonly=cfg["server_enforced_readonly"],
+        native_port=cfg["tcp_port"],
     )
 
 

@@ -28,6 +28,7 @@ const FormSearchSelectFieldState = React.forwardRef(
       emptyMessage,
       onScrollEnd,
       isFetchingNextPage,
+      onSearchChange,
       selectAll,
       // Filter ``shrink`` out of ``rest`` — see rhf-text-field.jsx note.
       // eslint-disable-next-line no-unused-vars
@@ -63,6 +64,7 @@ const FormSearchSelectFieldState = React.forwardRef(
     const onClose = () => {
       setOpenDropdown(false);
       setSearchedValue("");
+      onSearchChange?.("");
     };
 
     const handleOpen = useCallback(() => {
@@ -96,15 +98,20 @@ const FormSearchSelectFieldState = React.forwardRef(
       (e) => {
         e.stopPropagation();
         setSearchedValue("");
+        onSearchChange?.("");
         handleOpen();
         inputRef.current?.focus();
       },
-      [handleOpen],
+      [handleOpen, onSearchChange],
     );
 
-    const handleOnChange = useCallback((e) => {
-      setSearchedValue(e.target.value);
-    }, []);
+    const handleOnChange = useCallback(
+      (e) => {
+        setSearchedValue(e.target.value);
+        onSearchChange?.(e.target.value);
+      },
+      [onSearchChange],
+    );
 
     const handleDropdownIconClick = useCallback(
       (e) => {
@@ -328,6 +335,7 @@ FormSearchSelectFieldState.propTypes = {
   emptyMessage: PropTypes.string,
   onScrollEnd: PropTypes.func,
   isFetchingNextPage: PropTypes.bool,
+  onSearchChange: PropTypes.func,
   selectAll: PropTypes.bool,
   shrink: PropTypes.bool,
 };

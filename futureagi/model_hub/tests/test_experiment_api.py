@@ -274,6 +274,41 @@ class TestExperimentsTableView:
         assert experiment.dataset_id == dataset.id
         assert experiment.column_id == output_column.id
 
+    @patch("tfc.temporal.experiments.start_experiment_workflow")
+    def test_update_experiment_rerun_stamps_previous_dataset_table(
+        self,
+        mock_start_workflow,
+        auth_client,
+        experiment,
+        experiment_dataset,
+        dataset,
+        output_column,
+    ):
+        experiment.experiments_datasets.add(experiment_dataset)
+        previous_updated_at = experiment_dataset.updated_at
+        payload = {
+            "experiment_id": str(experiment.id),
+            "name": experiment.name,
+            "dataset_id": str(dataset.id),
+            "column_id": str(output_column.id),
+            "prompt_config": {"model": "gpt-4"},
+            "re_run": True,
+        }
+
+        response = auth_client.put(
+            "/model-hub/experiments/",
+            payload,
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.data
+        mock_start_workflow.assert_called_once()
+        experiment_dataset.refresh_from_db()
+        assert experiment_dataset.deleted is True
+        assert experiment_dataset.deleted_at is not None
+        assert experiment_dataset.updated_at == experiment_dataset.deleted_at
+        assert experiment_dataset.updated_at > previous_updated_at
+
     def test_create_experiment_missing_name(self, auth_client, dataset, output_column):
         """Test that missing name returns error."""
         payload = {
@@ -442,6 +477,7 @@ class TestExperimentDeleteView:
         self, auth_client, experiment, experiment_dataset
     ):
         """Test successfully deleting an experiment."""
+        previous_updated_at = experiment.updated_at
         payload = {
             "experiment_ids": [str(experiment.id)],
         }
@@ -453,6 +489,11 @@ class TestExperimentDeleteView:
         )
 
         assert response.status_code == status.HTTP_200_OK
+        experiment.refresh_from_db()
+        assert experiment.deleted is True
+        assert experiment.deleted_at is not None
+        assert experiment.updated_at == experiment.deleted_at
+        assert experiment.updated_at > previous_updated_at
 
     def test_delete_experiment_multiple(self, auth_client, dataset, output_column):
         """Test deleting multiple experiments."""
@@ -483,6 +524,7 @@ class TestExperimentDeleteView:
         payload = {
             "experiment_ids": [str(exp1.id), str(exp2.id)],
         }
+        previous_updates = {exp1.id: exp1.updated_at, exp2.id: exp2.updated_at}
 
         response = auth_client.delete(
             "/model-hub/experiments/delete/",
@@ -491,6 +533,13 @@ class TestExperimentDeleteView:
         )
 
         assert response.status_code == status.HTTP_200_OK
+        for experiment in [exp1, exp2]:
+            experiment.refresh_from_db()
+            assert experiment.deleted is True
+            assert experiment.deleted_at is not None
+            assert experiment.updated_at == experiment.deleted_at
+            assert experiment.updated_at > previous_updates[experiment.id]
+        assert exp1.updated_at == exp2.updated_at
 
     def test_delete_experiment_missing_ids(self, auth_client):
         """Test that missing experiment_ids returns error."""
@@ -1590,6 +1639,67 @@ class TestExperimentInlineEvalMetrics:
             "output": "output_column",
             "expected": "expected_column",
         }
+
+    def test_diff_and_update_evals_stamps_removed_eval_columns(
+        self,
+        experiment,
+        dataset,
+        organization,
+        user,
+        workspace,
+        eval_template,
+    ):
+        from model_hub.views.experiments import _diff_and_update_evals
+
+        experiment.snapshot_dataset = dataset
+        experiment.save(update_fields=["snapshot_dataset"])
+        metric = UserEvalMetric.objects.create(
+            name="Removed Experiment Eval",
+            organization=organization,
+            workspace=workspace,
+            dataset=dataset,
+            template=eval_template,
+            config={},
+            status=StatusType.EXPERIMENT_EVALUATION.value,
+            source_id=str(experiment.id),
+            user=user,
+        )
+        experiment.user_eval_template_ids.add(metric)
+        eval_column = Column.objects.create(
+            name="Removed Eval",
+            dataset=dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.EVALUATION.value,
+            source_id=str(metric.id),
+        )
+        reason_column = Column.objects.create(
+            name="Removed Eval Reason",
+            dataset=dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.EVALUATION_REASON.value,
+            source_id=f"{eval_column.id}-sourceid-{metric.id}",
+        )
+        previous_updates = {
+            eval_column.id: eval_column.updated_at,
+            reason_column.id: reason_column.updated_at,
+        }
+
+        rerun_ids = _diff_and_update_evals(
+            experiment=experiment,
+            new_eval_entries=[],
+            organization=organization,
+            user=user,
+            workspace=workspace,
+        )
+
+        assert rerun_ids == []
+        for column in [eval_column, reason_column]:
+            column.refresh_from_db()
+            assert column.deleted is True
+            assert column.deleted_at is not None
+            assert column.updated_at == column.deleted_at
+            assert column.updated_at > previous_updates[column.id]
+        assert eval_column.updated_at == reason_column.updated_at
 
 
 @pytest.mark.django_db

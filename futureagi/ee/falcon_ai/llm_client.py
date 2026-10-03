@@ -71,7 +71,7 @@ class FalconLLMClient:
             "anthropic": "claude-sonnet-4-6",
             "bedrock": "us.anthropic.claude-sonnet-4-6",
             "openai": "gpt-4o-mini",
-            "vertex_ai": "vertex_ai/gemini-2.5-pro",
+            "vertex_ai": "vertex_ai/gemini-3.7-flash",
         }
         if self.use_managed_gateway:
             self.model = model or "falcon_ai"
@@ -112,7 +112,7 @@ class FalconLLMClient:
         elif self.provider == "vertex_ai" or self.provider.startswith("turing"):
             self.api_url = os.environ.get(
                 "AGENTCC_INTERNAL_URL",
-                os.environ.get("AGENTCC_GATEWAY_URL", "http://agentcc-gateway:8090"),
+                os.environ.get("AGENTCC_GATEWAY_URL", "http://agentcc-gateway:8080"),
             )
             self.api_key = os.environ.get("AGENTCC_INTERNAL_API_KEY", "")
         else:

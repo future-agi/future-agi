@@ -9,7 +9,6 @@ Pattern:
 - Helper functions: create, update, delete, pause, unpause, trigger, exists
 """
 
-
 from asgiref.sync import async_to_sync
 from temporalio.client import (
     Client,
@@ -89,14 +88,24 @@ async def a_update_schedule(
     schedule: Schedule,
     *,
     keep_tz: bool = True,
+    keep_state: bool = True,
 ) -> None:
-    """Update an existing schedule."""
+    """Update an existing schedule.
+
+    ``keep_state`` keeps the schedule's current state (paused, note, remaining
+    actions) instead of the one in ``schedule``, so re-registering a definition
+    updates what runs and when without undoing an operator's pause.
+    """
     handle = client.get_schedule_handle(schedule_id)
 
     async def updater(input: ScheduleUpdateInput) -> ScheduleUpdate:
         if keep_tz and input.description.schedule.spec:
             # Preserve existing timezone
-            schedule.spec.time_zone_name = input.description.schedule.spec.time_zone_name
+            schedule.spec.time_zone_name = (
+                input.description.schedule.spec.time_zone_name
+            )
+        if keep_state:
+            schedule.state = input.description.schedule.state
         return ScheduleUpdate(schedule=schedule)
 
     await handle.update(updater)
@@ -110,9 +119,12 @@ async def update_schedule(
     schedule: Schedule,
     *,
     keep_tz: bool = True,
+    keep_state: bool = True,
 ) -> None:
     """Sync wrapper for a_update_schedule."""
-    return await a_update_schedule(client, schedule_id, schedule, keep_tz=keep_tz)
+    return await a_update_schedule(
+        client, schedule_id, schedule, keep_tz=keep_tz, keep_state=keep_state
+    )
 
 
 async def a_delete_schedule(client: Client, schedule_id: str) -> bool:
@@ -259,8 +271,8 @@ def _build_schedule_for_config(config: ScheduleConfig) -> Schedule:
             TaskRunnerWorkflow.run,
             TaskRunnerInput(
                 activity_name=config.activity_name,
-                args=[],
-                kwargs={},
+                args=list(config.activity_args),
+                kwargs=dict(config.activity_kwargs),
                 queue=config.queue,
                 max_retries=activity_metadata.get("max_retries"),
                 retry_delay=activity_metadata.get("retry_delay"),
@@ -274,7 +286,8 @@ def _build_schedule_for_config(config: ScheduleConfig) -> Schedule:
         spec=spec,
         policy=SchedulePolicy(**policy_kwargs),
         state=ScheduleState(
-            note=config.description or f"Schedule for {config.activity_name}"
+            note=config.description or f"Schedule for {config.activity_name}",
+            paused=config.paused,
         ),
     )
 
@@ -336,15 +349,16 @@ async def cleanup_orphaned_schedules(
 async def a_register_schedules(
     client: Client,
     schedules: list[ScheduleConfig],
-    cleanup_orphans: bool = True,
+    cleanup_orphans: bool = False,
 ) -> None:
     """
-    Register multiple schedules with Temporal.
+    Register multiple schedules with Temporal, preserving unknown schedules by default.
 
     Args:
         client: Temporal client
         schedules: List of schedule configs to register
-        cleanup_orphans: If True, delete schedules not in the provided list (default: True)
+        cleanup_orphans: Explicitly delete schedules outside the provided full set
+            (default: False). Legacy/operator schedules otherwise remain untouched.
     """
     from tfc.temporal.common.registry import _import_temporal_activity_modules
 
@@ -409,9 +423,12 @@ async def a_register_schedules(
 async def register_schedules(
     client: Client,
     schedules: list[ScheduleConfig],
-    cleanup_orphans: bool = True,
+    cleanup_orphans: bool = False,
 ) -> None:
-    """Sync wrapper for a_register_schedules."""
+    """Sync registration; preserve unknown schedules unless cleanup is explicit.
+
+    cleanup_orphans defaults to False; True deletes schedules outside the full set.
+    """
     return await a_register_schedules(
         client, schedules, cleanup_orphans=cleanup_orphans
     )

@@ -29,10 +29,15 @@ from simulate.serializers.prompt_simulation import (
 from simulate.serializers.requests.run_test import (
     CreatePromptSimulationRequestSerializer,
     CreatePromptSimulationSerializer,
+    PromptSimulationListQuerySerializer,
 )
 from simulate.serializers.run_test import RunTestSerializer
 from simulate.services.test_executor import TestExecutor
 from simulate.utils.scenario_completeness import check_scenarios_incomplete
+from simulate.views.run_test import (
+    _bounded_run_test_list_read,
+    _run_test_read_queryset,
+)
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
 from tfc.utils.general_methods import GeneralMethods
@@ -54,11 +59,14 @@ class PromptSimulationListCreateView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
-    @swagger_auto_schema(
+    @_bounded_run_test_list_read
+    @validated_request(
+        query_serializer=PromptSimulationListQuerySerializer,
         responses={
             200: PromptSimulationListResponseSerializer,
             400: ApiTextErrorResponseSerializer,
             404: ApiTextErrorResponseSerializer,
+            503: ApiTextErrorResponseSerializer,
             500: ApiTextErrorResponseSerializer,
         },
     )
@@ -85,22 +93,21 @@ class PromptSimulationListCreateView(APIView):
                 deleted=False,
             )
 
-            # Get query parameters
-            version_id = request.query_params.get("version_id")
-            limit = int(request.query_params.get("limit", 10))
-            page = int(request.query_params.get("page", 1))
+            # Get validated query parameters
+            query_data = request.validated_query_data
+            version_id = query_data.get("version_id")
+            limit = query_data["limit"]
+            page = query_data["page"]
 
             # Filter run tests by prompt_template and source_type='prompt'
-            run_tests = (
+            run_tests = _run_test_read_queryset(
                 RunTest.objects.filter(
                     prompt_template=prompt_template,
                     source_type="prompt",
                     organization=user_organization,
                     deleted=False,
                 )
-                .prefetch_related("scenarios")
-                .order_by("-created_at")
-            )
+            ).order_by("-created_at")
 
             # Filter by version if specified
             if version_id:
@@ -300,9 +307,11 @@ class PromptSimulationDetailView(APIView):
         responses={
             200: PromptSimulationRunResponseSerializer,
             404: ApiTextErrorResponseSerializer,
+            503: ApiTextErrorResponseSerializer,
             500: ApiTextErrorResponseSerializer,
         },
     )
+    @_bounded_run_test_list_read
     def get(self, request, prompt_template_id, run_test_id, *args, **kwargs):
         """Retrieve a specific prompt simulation run."""
         try:
@@ -318,7 +327,7 @@ class PromptSimulationDetailView(APIView):
 
             # Get the run test
             run_test = get_object_or_404(
-                RunTest,
+                _run_test_read_queryset(RunTest.objects),
                 id=run_test_id,
                 prompt_template=prompt_template,
                 source_type="prompt",
