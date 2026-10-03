@@ -86,6 +86,9 @@ class EvalListRequestSerializer(serializers.Serializer):
         choices=["all", "user", "system"], default="all"
     )
     filters = EvalListFiltersSerializer(required=False, allow_null=True, default=None)
+    filter_combinator = serializers.ChoiceField(
+        choices=["and", "or"], required=False, default="and"
+    )
     sort_by = serializers.ChoiceField(
         choices=["name", "updated_at", "created_at"], default="updated_at"
     )

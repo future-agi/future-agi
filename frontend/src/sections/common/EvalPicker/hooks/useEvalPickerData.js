@@ -74,6 +74,7 @@ export function useEvalPickerData({
   const [pageSize, setPageSize] = useState(25);
   const [sorting, setSorting] = useState([{ id: "last_updated", desc: true }]);
   const [filters, setFilters] = useState(null);
+  const [filterCombinator, setFilterCombinator] = useState("and");
   const debouncedSearch = useDebounce(searchQuery.trim(), 500);
 
   const ownerFilter = filters?.owner || "all";
@@ -123,6 +124,7 @@ export function useEvalPickerData({
     search: debouncedSearch || null,
     ownerFilter,
     filters: apiFilters,
+    filterCombinator,
     sortBy,
     sortOrder,
     enabled: enabled && !sourceId,
@@ -224,5 +226,7 @@ export function useEvalPickerData({
     setSorting,
     filters,
     setFilters,
+    filterCombinator,
+    setFilterCombinator,
   };
 }

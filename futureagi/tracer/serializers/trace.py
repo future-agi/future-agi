@@ -19,6 +19,7 @@ from tracer.serializers.filters import (
     SortParamListQueryParamField,
     StrictInputSerializer,
     bounded_filter_list_query_param_field,
+    filter_combinator_field,
     filter_list_query_param_field,
 )
 from tracer.services.user_attribute_contract import unsupported_user_attribute_keys
@@ -188,6 +189,7 @@ class TraceListQuerySerializer(StrictInputSerializer):
     project_version_id = serializers.UUIDField(required=True)
     trace_ids = CommaSeparatedStringListField(required=False, default=list)
     filters = bounded_filter_list_query_param_field(required=False, default=list)
+    filter_combinator = filter_combinator_field()
     sort_params = SortParamListQueryParamField(required=False, default=list)
     page_number = serializers.IntegerField(
         required=False,
@@ -213,6 +215,7 @@ class TraceObserveListQuerySerializer(StrictInputSerializer):
     project_version_id = serializers.UUIDField(required=False)
     session_id = serializers.UUIDField(required=False)
     filters = bounded_filter_list_query_param_field(required=False, default=list)
+    filter_combinator = filter_combinator_field()
     page_number = serializers.IntegerField(
         required=False,
         default=0,

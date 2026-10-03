@@ -4402,6 +4402,13 @@ const TraceFilterPanel = ({
   ValuePickerOverride,
   showAi = true,
   showQueryTab = true,
+  // AND/OR separator in the Query tab. Opt-in: most surfaces embedding this
+  // panel keep AND-only data paths, so a visible control there would lie.
+  showCombinator = false,
+  // The combinator currently in effect downstream (LLMTracingView grid
+  // state), so a re-opened panel shows and re-applies the real operator
+  // instead of resetting to AND while the grid keeps filtering by OR.
+  currentCombinator = "and",
   categories: categoriesOverride,
   propertyFilter,
   operatorFilter,
@@ -4600,11 +4607,17 @@ const TraceFilterPanel = ({
       queryCatalogSearchSettled &&
       !queryPropertyCatalog.legacyFallbackRequired,
   );
+  // AND/OR between the Query tab's tokens. Basic/AI filters stay AND-only,
+  // so the combinator only changes from the Query tab and, on reopen,
+  // re-seeds from `currentCombinator` (what the grid is actually filtering
+  // by) instead of snapping to AND while downstream stays OR.
+  const [filterCombinator, setFilterCombinator] = useState(currentCombinator);
   // Serialized snapshot of the filter set last sent to onApply. Auto-apply
   // compares against this so we only hit the API when the applyable filter set
   // actually changes — picking a field/operator with no value, or re-opening
   // the popover, yields the same set and is skipped.
   const lastAppliedRef = useRef(undefined);
+  const lastCombinatorRef = useRef(currentCombinator);
 
   const queryAttributeLookupEnabled = Boolean(
     !unifiedPropertyCatalogActive &&
@@ -5027,6 +5040,12 @@ const TraceFilterPanel = ({
 
   useEffect(() => {
     if (open) {
+      // Re-seed from what the grid is actually filtering by. Without this a
+      // panel reopened after picking OR would show AND while the grid keeps
+      // returning OR rows until the next interaction (F4).
+      const effective = currentCombinator === "or" ? "or" : "and";
+      setFilterCombinator(effective);
+      lastCombinatorRef.current = effective;
       if (currentFilters?.length) {
         // Enrich rows with fieldCategory and fieldType from properties lookup
         const enriched = currentFilters.map((f) => {
@@ -5129,9 +5148,10 @@ const TraceFilterPanel = ({
   );
 
   const handleQueryTokensChange = useCallback(
-    (tokens) => {
+    (tokens, combinator) => {
       const converted = queryTokensToRows(tokens);
       setRows(converted.length ? converted : [{ ...effectiveDefaultRow }]);
+      setFilterCombinator(combinator === "or" ? "or" : "and");
     },
     [effectiveDefaultRow, queryTokensToRows],
   );
@@ -5167,10 +5187,12 @@ const TraceFilterPanel = ({
       return;
     const next = computeValidFilters(sourceRows);
     const serialized = serializeFilterSet(next);
-    if (serialized === lastAppliedRef.current) return;
+    const combinatorChanged = filterCombinator !== lastCombinatorRef.current;
+    if (serialized === lastAppliedRef.current && !combinatorChanged) return;
     lastAppliedRef.current = serialized;
-    onApplyRef.current(next);
-  }, []);
+    lastCombinatorRef.current = filterCombinator;
+    onApplyRef.current(next, filterCombinator);
+  }, [filterCombinator]);
 
   const handleChange = useCallback(
     (idx, updated, { commit = false } = {}) => {
@@ -5236,8 +5258,10 @@ const TraceFilterPanel = ({
 
   const handleClear = useCallback(() => {
     setRows([{ ...effectiveDefaultRow }]);
+    setFilterCombinator("and");
+    lastCombinatorRef.current = "and";
     lastAppliedRef.current = serializeFilterSet(null);
-    onApply(null);
+    onApply(null, "and");
     onClose();
   }, [onApply, onClose, effectiveDefaultRow]);
 
@@ -5284,7 +5308,11 @@ const TraceFilterPanel = ({
       const validFilters = computeValidFilters(merged);
       setRows(merged);
       lastAppliedRef.current = serializeFilterSet(validFilters);
-      onApply(validFilters);
+      // AI filter produces an AND-ed set; reset the combinator so the
+      // panel's internal state stays in sync with what we send downstream.
+      setFilterCombinator("and");
+      lastCombinatorRef.current = "and";
+      onApply(validFilters, "and");
       setAiQuery("");
       bypassNextCloseFlushRef.current = true;
       onClose();
@@ -5403,7 +5431,13 @@ const TraceFilterPanel = ({
         {showQueryTab && (
           <Tabs
             value={activeTab}
-            onChange={(_, v) => setActiveTab(v)}
+            onChange={(_, v) => {
+              setActiveTab(v);
+              if (v === "basic") {
+                setFilterCombinator("and");
+                lastCombinatorRef.current = "and";
+              }
+            }}
             sx={{
               minHeight: 24,
               borderBottom: "1px solid",
@@ -5563,6 +5597,8 @@ const TraceFilterPanel = ({
               fieldMap={queryFieldMap}
               getOperators={queryGetOperators}
               onApply={handleQueryTokensChange}
+              showCombinator={showCombinator}
+              initialCombinator={currentCombinator}
               initialTokens={rows
                 .filter((r) => {
                   if (!r.field) return false;
@@ -5704,6 +5740,8 @@ TraceFilterPanel.propTypes = {
   ValuePickerOverride: PropTypes.elementType,
   showAi: PropTypes.bool,
   showQueryTab: PropTypes.bool,
+  showCombinator: PropTypes.bool,
+  currentCombinator: PropTypes.oneOf(["and", "or"]),
   categories: PropTypes.array,
   propertyFilter: PropTypes.func,
   operatorFilter: PropTypes.func,

@@ -1161,17 +1161,20 @@ describe("TraceFilterPanel AI apply (#577)", () => {
     });
     // The AI path now applies computeValidFilters(converted) like every other
     // path, so the operator is normalized to the canonical string op ("in").
-    expect(onApply).toHaveBeenCalledWith([
-      {
-        field: "status",
-        fieldCategory: "system",
-        fieldType: "string",
-        apiColType: undefined,
-        registryId: "system_attribute:traces:status",
-        operator: "in",
-        value: ["ERROR"],
-      },
-    ]);
+    expect(onApply).toHaveBeenCalledWith(
+      [
+        {
+          field: "status",
+          fieldCategory: "system",
+          fieldType: "string",
+          apiColType: undefined,
+          registryId: "system_attribute:traces:status",
+          operator: "in",
+          value: ["ERROR"],
+        },
+      ],
+      "and",
+    );
     expect(onClose).toHaveBeenCalled();
 
     document.body.removeChild(anchorEl);
@@ -4400,14 +4403,17 @@ describe("voice-call property parity", () => {
     });
 
     await waitFor(() =>
-      expect(onApply).toHaveBeenLastCalledWith([
-        expect.objectContaining({
-          field: "cost_cents",
-          fieldCategory: "attribute",
-          apiColType: "SPAN_ATTRIBUTE",
-          value: "12.2",
-        }),
-      ]),
+      expect(onApply).toHaveBeenLastCalledWith(
+        [
+          expect.objectContaining({
+            field: "cost_cents",
+            fieldCategory: "attribute",
+            apiColType: "SPAN_ATTRIBUTE",
+            value: "12.2",
+          }),
+        ],
+        "and",
+      ),
     );
     document.body.removeChild(anchorEl);
   });
@@ -5549,6 +5555,7 @@ describe("filter-value picker bounded-read UX", () => {
               value: ["example-trace"],
             }),
           ]),
+          "and",
         ),
       );
       document.body.removeChild(anchorEl);
@@ -5648,6 +5655,7 @@ describe("filter-value picker bounded-read UX", () => {
               value: ["example-user"],
             }),
           ]),
+          "and",
         ),
       );
       document.body.removeChild(anchorEl);

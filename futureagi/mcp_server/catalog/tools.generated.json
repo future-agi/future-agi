@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "source_contract_sha256": "1261cd0b1a4b5ad9b39cc9d68c08615b0f95578c4c45f2c34aa950bd8a2fa3dc",
+  "source_contract_sha256": "9d879e312d9782e85c253b9957472ddc599039a450f4c7ffe15455a7ef31df89",
   "tool_count": 92,
   "tools": [
     {
@@ -2184,6 +2184,15 @@
           "filters": {
             "$ref": "#/definitions/EvalListFilters"
           },
+          "filter_combinator": {
+            "title": "Filter combinator",
+            "type": "string",
+            "enum": [
+              "and",
+              "or"
+            ],
+            "default": "and"
+          },
           "sort_by": {
             "title": "Sort by",
             "type": "string",
@@ -2344,6 +2353,7 @@
             "search",
             "owner_filter",
             "filters",
+            "filter_combinator",
             "sort_by",
             "sort_order"
           ]
@@ -3531,6 +3541,14 @@
             "default": "[]",
             "minLength": 1
           },
+          "filter_combinator": {
+            "type": "string",
+            "enum": [
+              "and",
+              "or"
+            ],
+            "default": "and"
+          },
           "page_number": {
             "type": "integer",
             "default": 0,
@@ -3583,6 +3601,7 @@
             "project_version_id",
             "session_id",
             "filters",
+            "filter_combinator",
             "page_number",
             "page_size",
             "cursor",
@@ -3674,6 +3693,14 @@
             "default": "[]",
             "minLength": 1
           },
+          "filter_combinator": {
+            "type": "string",
+            "enum": [
+              "and",
+              "or"
+            ],
+            "default": "and"
+          },
           "page_number": {
             "type": "integer",
             "default": 0,
@@ -3718,6 +3745,7 @@
             "project_id",
             "user_id",
             "filters",
+            "filter_combinator",
             "page_number",
             "page_size",
             "cursor",
