@@ -73,7 +73,56 @@ describe("useAgentNodeAvailability (TH-4549)", () => {
     expect(result.current.status).toBe(AGENT_NODE_AVAILABILITY.ERROR);
   });
 
-  it("classifies 403 as forbidden and 404 as not_found (AC-05), everything else as error", () => {
+  it("classifies the production axios-interceptor shape { statusCode } (AC-05): 403 → forbidden, 404 → not_found", () => {
+    // src/utils/axios rejects `{ ...body, statusCode, transportCode }` — there is
+    // no `response` on the error that reaches react-query consumers.
+    setQuery({
+      isError: true,
+      error: {
+        detail: "Forbidden",
+        statusCode: 403,
+        transportCode: "ERR_BAD_REQUEST",
+      },
+    });
+    expect(
+      renderHook(() => useAgentNodeAvailability()).result.current.status,
+    ).toBe(AGENT_NODE_AVAILABILITY.FORBIDDEN);
+    setQuery({
+      isError: true,
+      error: {
+        detail: "Not found",
+        statusCode: 404,
+        transportCode: "ERR_BAD_REQUEST",
+      },
+    });
+    expect(
+      renderHook(() => useAgentNodeAvailability()).result.current.status,
+    ).toBe(AGENT_NODE_AVAILABILITY.NOT_FOUND);
+    setQuery({
+      isError: true,
+      error: {
+        message: "Something went wrong",
+        statusCode: 500,
+        transportCode: "ERR_BAD_RESPONSE",
+      },
+    });
+    expect(
+      renderHook(() => useAgentNodeAvailability()).result.current.status,
+    ).toBe(AGENT_NODE_AVAILABILITY.ERROR);
+    setQuery({
+      isError: true,
+      error: {
+        message: "Network Error",
+        statusCode: undefined,
+        transportCode: "ERR_NETWORK",
+      },
+    });
+    expect(
+      renderHook(() => useAgentNodeAvailability()).result.current.status,
+    ).toBe(AGENT_NODE_AVAILABILITY.ERROR);
+  });
+
+  it("also accepts raw axios `response.status` and plain Error shapes", () => {
     setQuery({ isError: true, error: { response: { status: 403 } } });
     expect(
       renderHook(() => useAgentNodeAvailability()).result.current.status,
@@ -132,7 +181,13 @@ describe("useAgentNodeAvailability (TH-4549)", () => {
     });
     expect(next).toBe(AGENT_NODE_AVAILABILITY.EMPTY);
 
-    mockRefetch.mockResolvedValueOnce({ error: { response: { status: 403 } } });
+    mockRefetch.mockResolvedValueOnce({
+      error: {
+        detail: "Forbidden",
+        statusCode: 403,
+        transportCode: "ERR_BAD_REQUEST",
+      },
+    });
     await act(async () => {
       next = await result.current.refresh();
     });

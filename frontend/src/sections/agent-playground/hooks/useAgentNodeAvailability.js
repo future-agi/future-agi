@@ -33,7 +33,10 @@ export const AGENT_NODE_AVAILABILITY = {
 };
 
 export const classifyAvailabilityError = (error) => {
-  const status = error?.response?.status ?? error?.status;
+  // src/utils/axios rejects a flattened `{ ...body, statusCode, transportCode }`
+  // (no `response`), so `statusCode` is the production shape; the nested
+  // `response.status` / `status` forms cover raw axios and non-axios errors.
+  const status = error?.statusCode ?? error?.response?.status ?? error?.status;
   if (status === 403) return AGENT_NODE_AVAILABILITY.FORBIDDEN;
   if (status === 404) return AGENT_NODE_AVAILABILITY.NOT_FOUND;
   return AGENT_NODE_AVAILABILITY.ERROR;

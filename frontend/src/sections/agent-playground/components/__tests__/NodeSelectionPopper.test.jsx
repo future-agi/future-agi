@@ -485,7 +485,12 @@ describe("NodeSelectionPopper — Agent node without eligible agents (TH-4549)",
     setReferenceable({
       data: undefined,
       isError: true,
-      error: { response: { status: 500 } },
+      // production shape from src/utils/axios interceptor
+      error: {
+        message: "Something went wrong",
+        statusCode: 500,
+        transportCode: "ERR_BAD_RESPONSE",
+      },
     });
     render(<NodeSelectionPopper {...defaultProps} />);
 
@@ -508,7 +513,11 @@ describe("NodeSelectionPopper — Agent node without eligible agents (TH-4549)",
     setReferenceable({
       data: undefined,
       isError: true,
-      error: { response: { status: 403 } },
+      error: {
+        detail: "Forbidden",
+        statusCode: 403,
+        transportCode: "ERR_BAD_REQUEST",
+      },
     });
     render(<NodeSelectionPopper {...defaultProps} />);
 
@@ -529,7 +538,11 @@ describe("NodeSelectionPopper — Agent node without eligible agents (TH-4549)",
     setReferenceable({
       data: undefined,
       isError: true,
-      error: { response: { status: 404 } },
+      error: {
+        detail: "Not found",
+        statusCode: 404,
+        transportCode: "ERR_BAD_REQUEST",
+      },
     });
     render(<NodeSelectionPopper {...defaultProps} />);
 
