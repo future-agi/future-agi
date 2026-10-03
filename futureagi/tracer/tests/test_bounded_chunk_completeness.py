@@ -322,8 +322,9 @@ def _voice_simulator_row() -> dict[str, Any]:
     )
 
 
-def _read_voice_page(bounded: BoundedFilterPage) -> Any:
-    """Drive the voice list with every published row filtered out in Python."""
+def _read_voice_page(bounded: BoundedFilterPage, raw_log: Any = None) -> Any:
+    """Drive the voice list with the simulator filter on. Every row carries
+    *raw_log* — by default a simulator call's, so each is filtered out in Python."""
 
     from tracer.services.clickhouse.query_builders.voice_call_list import (
         VAPI_PHONE_NUMBERS,
@@ -331,12 +332,12 @@ def _read_voice_page(bounded: BoundedFilterPage) -> Any:
     from tracer.services.clickhouse.query_service import QueryResult
     from tracer.views.trace import TraceView
 
+    if raw_log is None:
+        raw_log = {"customer": {"number": VAPI_PHONE_NUMBERS[0]}}
     hydrated = [
         {
             **row,
-            "span_attributes": {
-                "raw_log": {"customer": {"number": VAPI_PHONE_NUMBERS[0]}}
-            },
+            "span_attributes": {"raw_log": raw_log},
             "attrs_string": {},
             "attrs_number": {},
             "attrs_bool": {},

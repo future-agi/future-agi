@@ -315,6 +315,10 @@ async function runGeneration(schemaPath) {
     return source.slice(0, start) + rewritten + source.slice(end);
   }
 
+  const interruptionNullableFields = {
+    RunCallApi: ["avg_stop_time_after_interruption", "ai_interruption_count"],
+    GroupAggregatesApi: ["avg_stop_time_after_interruption", "ai_interruptions"],
+  };
   const voiceCallDetailNullableFields = [
     "provider_call_id",
     "phone_number",
@@ -363,6 +367,18 @@ async function runGeneration(schemaPath) {
   const schemasOutputPath = path.join(outputDir, "api.schemas.ts");
   if (fs.existsSync(schemasOutputPath)) {
     let schemas = fs.readFileSync(schemasOutputPath, "utf8");
+
+    for (const [typeName, fields] of Object.entries(interruptionNullableFields)) {
+      for (const field of fields) {
+        schemas = assertReplaceInNamedBlock(
+          schemas,
+          `export interface ${typeName} {`,
+          `${field}: number;`,
+          `${field}: number | null;`,
+          `${typeName}.${field} nullable`,
+        );
+      }
+    }
 
     // x-string-or-array: type aliases preceded by "Plain text string or array
     // of content-part objects." are generated as { [key: string]: unknown } but
@@ -646,11 +662,30 @@ export type ${jsonAlias} = JsonValueApi;`,
       "TraceSessionTableRowApi dynamic JSON values",
     );
 
+    // A key that never expires syncs to the gateway with expires_at: null.
+    schemas = assertReplaceInNamedBlock(
+      schemas,
+      "export interface APIKeyBulkItemApi {",
+      "expires_at: string;",
+      "expires_at: string | null;",
+      "APIKeyBulkItemApi.expires_at nullable",
+    );
+
     fs.writeFileSync(schemasOutputPath, schemas);
   }
 
   if (fs.existsSync(zodOutputPath)) {
     let zod = fs.readFileSync(zodOutputPath, "utf8");
+
+    for (const field of new Set(Object.values(interruptionNullableFields).flat())) {
+      zod = assertReplaceInNamedBlock(
+        zod,
+        "export const SimulateV3TestExecutionCallsResponse =",
+        `"${field}": zod.number()`,
+        `"${field}": zod.number().nullable()`,
+        `SimulateV3TestExecutionCallsResponse.${field} nullable`,
+      );
+    }
 
     zod = assertReplace(
       zod,
@@ -1115,6 +1150,14 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
         `TracerTraceAgentGraphResponse.${fieldPrefix}.trace_count nullable`,
       );
     }
+
+    zod = assertReplaceInNamedBlock(
+      zod,
+      "export const AgentccApiKeysBulkListResponse = zod.object({",
+      '"expires_at": zod.string().datetime({"offset":true})',
+      '"expires_at": zod.string().datetime({"offset":true}).nullable()',
+      "AgentccApiKeysBulkListResponse.expires_at nullable",
+    );
 
     // x-string-or-array: orval generates zod.object({}).passthrough() for these
     // fields. Use the unique description emitted by StringOrArrayField as anchor.

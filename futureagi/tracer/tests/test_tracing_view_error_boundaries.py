@@ -630,7 +630,7 @@ def _trace_detail_call(monkeypatch, exc):
     request = SimpleNamespace()
     view = TraceView()
     view.request = request
-    return view.retrieve(request, pk="trace-1")
+    return unwrap(TraceView.retrieve)(view, request, pk="trace-1")
 
 
 def _span_detail_call(monkeypatch, exc):

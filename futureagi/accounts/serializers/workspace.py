@@ -49,13 +49,15 @@ class WorkspaceListSerializer(serializers.ModelSerializer):
             for membership in admin_memberships
         ]
 
+    # Full ISO 8601 instants: the list shows a local date and time, and a bare
+    # date parses as midnight UTC, which reads as the day before west of UTC.
     def get_start_data(self, obj):
-        """Get start date in required format"""
-        return obj.created_at.strftime("%Y-%m-%d") if obj.created_at else ""
+        """Get start date as an ISO 8601 timestamp with offset"""
+        return obj.created_at.isoformat() if obj.created_at else ""
 
     def get_last_update_date(self, obj):
-        """Get last update date in required format"""
-        return obj.updated_at.strftime("%Y-%m-%d") if obj.updated_at else ""
+        """Get last update date as an ISO 8601 timestamp with offset"""
+        return obj.updated_at.isoformat() if obj.updated_at else ""
 
     def get_invite_link(self, obj):
         """Get invite link (placeholder for v1)"""

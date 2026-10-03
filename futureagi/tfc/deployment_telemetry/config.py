@@ -134,13 +134,22 @@ def is_self_hosted_deployment() -> bool:
     return not is_cloud_deployment()
 
 
+# Values that name no release. The compose files pass
+# ``FUTURE_AGI_VERSION=${FUTURE_AGI_VERSION:-unknown}`` and the image tag
+# defaults to ``latest``, so either can shadow a real version baked into the
+# image as SERVICE_VERSION or GIT_SHA.
+_PLACEHOLDER_VERSIONS = frozenset({"", "unknown", "latest"})
+
+
 def get_version() -> str:
-    return (
-        os.getenv("FUTURE_AGI_VERSION")
-        or os.getenv("SERVICE_VERSION")
-        or os.getenv("GIT_SHA")
-        or "unknown"
-    )
+    candidates = [
+        (os.getenv(name) or "").strip()
+        for name in ("FUTURE_AGI_VERSION", "SERVICE_VERSION", "GIT_SHA")
+    ]
+    for value in candidates:
+        if value.lower() not in _PLACEHOLDER_VERSIONS:
+            return value
+    return next((value for value in candidates if value), "unknown")
 
 
 def detect_deployment_type() -> str:

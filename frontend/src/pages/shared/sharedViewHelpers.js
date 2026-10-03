@@ -34,3 +34,8 @@ export function isVoiceCall(resourceData) {
   if (!Array.isArray(spans)) return false;
   return !!findConversationSpan(spans);
 }
+
+/** "chat" for text simulations, "voice" otherwise. */
+export function simulationCallKind(call) {
+  return call?.simulation_call_type === "text" ? "chat" : "voice";
+}

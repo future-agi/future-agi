@@ -29,7 +29,7 @@ from tracer.services.clickhouse import oss_cdc_bootstrap as core
 from tracer.services.clickhouse import oss_cdc_install as install
 from tracer.services.clickhouse import oss_cdc_inventory as inventory
 from tracer.services.clickhouse import oss_native_bootstrap as native
-from tracer.services.clickhouse.oss_cdc_source import inspect_source
+from tracer.services.clickhouse.oss_cdc_source import SourceError, inspect_source
 
 Config = install.Config
 _NAME = re.compile(r"[a-z_][a-z_0-9]{0,62}\Z")
@@ -50,6 +50,59 @@ def _mirror_name(config, tables):
 
 class SetupError(ValueError):
     """Safe error without driver payloads, SQL, or credentials."""
+
+
+# What the standalone install's in-app change capture (oss_outbox_cdc: OUTBOX,
+# STATE and TRIGGERS) leaves in the application database. Spelled out so this
+# module keeps its import graph; a test pins them to oss_outbox_cdc.
+_OUTBOX_TABLES = ("public.fi_cdc_outbox", "public.fi_cdc_state")
+_OUTBOX_TRIGGERS = ("fi_cdc_ins", "fi_cdc_upd", "fi_cdc_del", "fi_cdc_trunc")
+OUTBOX_DATA_MESSAGE = (
+    "this database was set up by the standalone install (in-app change capture), "
+    "and the distributed stack cannot take over its data. Switching an existing "
+    "install between the default and the distributed stack is not supported: back up, "
+    "run ./bin/uninstall --wipe-data, then ./bin/install --distributed"
+)
+
+
+def _outbox_capture_present(pg_query) -> bool:
+    """Its landing tables have no mirror, so PeerDB would refuse them further
+    on with a less useful error, and its capture triggers would keep filling
+    an outbox that nothing in the distributed stack drains."""
+    rows = pg_query(
+        "SELECT to_regclass(%(outbox)s) IS NOT NULL "
+        "OR to_regclass(%(state)s) IS NOT NULL "
+        "OR EXISTS (SELECT 1 FROM pg_catalog.pg_trigger "
+        "WHERE NOT tgisinternal AND tgname = ANY(%(triggers)s))",
+        {
+            "outbox": _OUTBOX_TABLES[0],
+            "state": _OUTBOX_TABLES[1],
+            "triggers": list(_OUTBOX_TRIGGERS),
+        },
+    )
+    return bool(rows and rows[0][0])
+
+
+# These modules raise only fixed or identifier-only messages, never driver text.
+_SAFE_ERRORS = (
+    SourceError,
+    core.BootstrapError,
+    install.InstallError,
+    inventory.InventoryError,
+    native.NativeBootstrapError,
+)
+
+
+def _reason(error):
+    """Class name, plus the message only for errors built to be displayed.
+
+    Driver, transport and unexpected exceptions can carry DSNs, credentials,
+    SQL or row data, so only their class name is reported.
+    """
+    name = type(error).__name__
+    if isinstance(error, _SAFE_ERRORS) and str(error):
+        return f"{name}: {error}"
+    return name
 
 
 def _inspect_peers(request, config):
@@ -417,9 +470,10 @@ def run(
         )
     except SetupError:
         raise
-    except Exception:
+    except Exception as error:
         raise SetupError(
-            "PeerDB setup failed; partial state retained. Explicitly invoke again to inspect; no automatic retry or cleanup."
+            f"PeerDB setup failed ({_reason(error)}); partial state retained. "
+            "Explicitly invoke again to inspect; no automatic retry or cleanup."
         ) from None
 
 
@@ -475,6 +529,8 @@ def _run(config, *, apply, wait_for_mirrors, timeout, pg_connect, ch_connect, re
             deadline.remaining()
             return pg.execute(statement, parameters).fetchall()
 
+        if _outbox_capture_present(pg_query):
+            raise SetupError(OUTBOX_DATA_MESSAGE)
         landing = core.landing_tables(include_usage_schema=config.include_usage_schema)
         source = inspect_source(pg_query, source=config.source, tables=landing)
         definitions = core._source_definitions(
@@ -620,9 +676,10 @@ def main(argv=None):
         return 0 if result["ready"] or (args.apply and result["accepted"]) else 1
     except SetupError as error:
         print(str(error), file=sys.stderr)
-    except Exception:
+    except Exception as error:
         print(
-            "PeerDB setup failed; partial state retained. No automatic retry or cleanup.",
+            f"PeerDB setup failed ({_reason(error)}); partial state retained. "
+            "No automatic retry or cleanup.",
             file=sys.stderr,
         )
     return 1

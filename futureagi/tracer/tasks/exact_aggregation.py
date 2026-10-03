@@ -87,12 +87,23 @@ def _renew_exact_refresh_lease_until_stopped(
 
 @contextmanager
 def _exact_observe_analytics() -> Iterator[Any]:
-    """Own one CH25 client with the reviewed exact-graph timeout ceiling."""
+    """Own one CH25 client with the reviewed exact-graph timeout ceiling.
+
+    Every statement a refresh sends through it asks ClickHouse to stop at what
+    is left of ``GRAPH_BACKGROUND_WALL_MS`` (``WallCappedAnalytics``). Without
+    that, a read past the wall ran to the end on the worker's one slot and its
+    result was then discarded by the reader's own deadline fence; now the
+    server stops it at the wall and the refresh takes the failed path.
+    """
 
     from django.conf import settings
 
     from tracer.services.clickhouse.client import ClickHouseClient
     from tracer.services.clickhouse.query_service import AnalyticsQueryService
+    from tracer.services.clickhouse.read_budget import (
+        ReadDeadline,
+        WallCappedAnalytics,
+    )
     from tracer.services.clickhouse.v2 import get_v2_config
 
     config = get_v2_config()
@@ -107,9 +118,13 @@ def _exact_observe_analytics() -> Iterator[Any]:
         read_timeout_ceiling_ms=read_timeout_ceiling_ms,
     )
     try:
-        yield AnalyticsQueryService(
-            ch_client=client,
-            read_timeout_ceiling_ms=read_timeout_ceiling_ms,
+        yield WallCappedAnalytics(
+            AnalyticsQueryService(
+                ch_client=client,
+                read_timeout_ceiling_ms=read_timeout_ceiling_ms,
+            ),
+            ReadDeadline.start(read_timeout_ceiling_ms),
+            floor_ms=int(settings.EXACT_GRAPH_MIN_REMAINING_MS),
         )
     finally:
         client.close()
@@ -283,7 +298,19 @@ def _attribute_detail_payload(identity: dict[str, Any]) -> Any:
 
 def _load_exact_payload(namespace: str, identity: dict[str, Any]) -> Any:
     if namespace.startswith("observe-"):
-        return _observe_payload(namespace, identity)
+        from tracer.services.clickhouse.graph_metric_statistic import (
+            stamp_snapshot_statistic,
+        )
+
+        # The statistic travels in the cached payload. Readers serve a latency
+        # snapshot only when it says "mean", so one an older worker cached
+        # during a rolling deploy (unmarked) is a miss
+        # (graph_metric_statistic.snapshot_names_its_statistic).
+        return stamp_snapshot_statistic(
+            namespace,
+            identity.get("metric_id"),
+            _observe_payload(namespace, identity),
+        )
     if namespace == "dashboard-query":
         return _dashboard_payload(identity)
     if namespace == "eval-usage":

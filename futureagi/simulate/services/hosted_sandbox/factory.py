@@ -1,10 +1,22 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from django.conf import settings
 
 from .base import SandboxProviderConfigurationError, SandboxRuntimeProvider
 from .daytona import DaytonaSandboxRuntimeProvider
 from .e2b import E2BSandboxRuntimeProvider
+
+
+@dataclass(frozen=True)
+class SandboxRuntimePolicy:
+    name: str
+    digest: str
+    permits_unpinned_parallelism: bool = False
+    fixed_resources: tuple[int, int, int] | None = None
+    supports_runtime_selection: bool = False
+    max_ttl_seconds: int | None = None
 
 
 def sandbox_provider_name() -> str:
@@ -36,6 +48,26 @@ def sandbox_runtime_reference() -> tuple[str, str]:
         if dockerfile
         else str(getattr(settings, "ALK_DAYTONA_SNAPSHOT", "") or ""),
         str(getattr(settings, "ALK_DAYTONA_SNAPSHOT_DIGEST", "") or ""),
+    )
+
+
+def sandbox_runtime_policy() -> SandboxRuntimePolicy:
+    """Provider-specific runtime facts used by provider-neutral admission."""
+    name, digest = sandbox_runtime_reference()
+    if sandbox_provider_name() == "e2b":
+        return SandboxRuntimePolicy(
+            name,
+            digest,
+            fixed_resources=E2BSandboxRuntimeProvider.configured_resources(),
+            max_ttl_seconds=int(getattr(settings, "ALK_E2B_MAX_TTL_SECONDS", 0)),
+        )
+    return SandboxRuntimePolicy(
+        name,
+        digest,
+        permits_unpinned_parallelism=bool(
+            getattr(settings, "ALK_DAYTONA_DOCKERFILE", "")
+        ),
+        supports_runtime_selection=True,
     )
 
 

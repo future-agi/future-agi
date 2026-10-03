@@ -17,6 +17,7 @@ from slack_sdk.webhook import WebhookClient
 logger = structlog.get_logger(__name__)
 from tfc.temporal import temporal_activity
 from tfc.utils.email import email_helper
+from tfc.utils.error_codes import get_error_message
 from tracer.models.custom_eval_config import CustomEvalConfig, EvalOutputType
 from tracer.models.monitor import (
     AlertTypeChoices,
@@ -48,6 +49,13 @@ class MonitorConfigError(Exception):
 
 def build_monitor_ch_builder(monitor: UserAlertMonitor) -> "MonitorMetricsQueryBuilder":
     """Construct the routed MONITOR_METRICS builder from a monitor instance."""
+    # Monitors are project-scoped (the REST serializer and UI require one); a
+    # NULL project would otherwise bind as ``project_id = 'None'`` and fail in
+    # ClickHouse (Code 376) on every run. Checked first so a project-less eval
+    # monitor reports this cause, not a missing eval config.
+    if monitor.project_id is None:
+        raise MonitorConfigError(get_error_message("MONITOR_PROJECT_REQUIRED"))
+
     eval_config_id = None
     eval_output_type = None
     if (

@@ -73,6 +73,13 @@ func (s *ClickHouseSink) Insert(ctx context.Context, batch Batch) error {
 	return nil
 }
 
+// Publish makes the sink the spool's publisher in direct mode: replay keeps a
+// spool record until both index writes are confirmed, as the Kafka consumer
+// commits an offset only after them.
+func (s *ClickHouseSink) Publish(ctx context.Context, batch Batch) error {
+	return s.Insert(ctx, batch)
+}
+
 func (s *ClickHouseSink) insert(ctx context.Context, table string, rows any) error {
 	// Metadata and INSERT share the existing per-table deadline.
 	ctx, cancel := context.WithTimeout(ctx, s.cfg.Timeout)

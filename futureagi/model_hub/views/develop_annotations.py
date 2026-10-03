@@ -5,11 +5,16 @@ import uuid
 
 import numpy as np
 import pandas as pd
+import requests
 import structlog
 from accounts.models import User
 from accounts.utils import get_request_organization
 from agentic_eval.core.embeddings.embedding_manager import (
     EmbeddingManager,
+)
+from agentic_eval.core.embeddings.serving_client import (
+    SERVING_UNAVAILABLE_MESSAGE,
+    require_serving,
 )
 from django.core.exceptions import ValidationError
 from django.db import transaction
@@ -2001,12 +2006,28 @@ class AnnotationSummaryView(APIView):
             if len(texts) < 2:
                 continue  # need at least 2 texts for similarity
 
+            # Cached probe: fails fast instead of timing out per row.
+            require_serving()
+
             # ✅ Use SimilarityCalculator
             sim_result = self.calculate_similarity(texts, texts)
 
             row_sims.append(sim_result)
 
         return round(np.mean(row_sims), 2) if row_sims else None
+
+    def text_agreement(self, df):
+        """``(cosine_similarity, note)`` for a text label.
+
+        The similarity needs embeddings from model serving, which the default
+        install runs only with the ``ml`` profile. Without it the metric is
+        left out with a note, and the rest of the summary is still returned.
+        """
+        try:
+            return self.avg_semantic_similarity(df), None
+        except (ConnectionError, requests.exceptions.ConnectionError) as e:
+            logger.info("annotation_similarity_skipped", error=str(e))
+            return None, SERVING_UNAVAILABLE_MESSAGE
 
     def build_counts_matrix(self, df, categories):
         """
@@ -2245,12 +2266,16 @@ class AnnotationSummaryView(APIView):
                             max_len = corpus.get("max_len")
                             avg_len = corpus.get("avg_len")
 
-                        cosine_similarity = self.avg_semantic_similarity(text_metrics)
+                        cosine_similarity, similarity_note = self.text_agreement(
+                            text_metrics
+                        )
                         if cosine_similarity is not None and pd.notna(
                             cosine_similarity
                         ):
                             agreements.append(cosine_similarity)
                         r["cosine_similarity"] = cosine_similarity
+                        if similarity_note:
+                            r["cosine_similarity_note"] = similarity_note
                         r["len_range"] = f"{min_len}-{max_len}"
                         r["avg_len"] = avg_len
                         r["vocab_size"] = len(vocab)
