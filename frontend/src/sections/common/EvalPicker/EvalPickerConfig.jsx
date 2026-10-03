@@ -135,21 +135,22 @@ const EvalPickerConfig = ({ evalData, onBack, onSave, isSaving }) => {
 
   // Extract required variables from eval template.
   // Prefer live extraction from the instructions text (so newly added /
-  // removed `{{variable}}` placeholders show up immediately), falling
-  // back to the template's stored requiredKeys when there's no
-  // instructions text to parse. Mirrors the mustache-extraction branch
-  // in EvalPickerConfigFull.jsx.
+  // removed `{{variable}}` placeholders show up immediately). Fall back to
+  // the template's stored requiredKeys only when there are no instructions
+  // to parse (blank text, or a code eval whose logic lives in `config.code`).
+  // Once instructions exist, they are authoritative: removing the last
+  // placeholder must empty the list rather than resurrect stale requiredKeys.
   const variables = useMemo(() => {
     const requiredKeys = normalizedEvalData?.requiredKeys || [];
     const instructions = normalizedEvalData?.instructions || "";
 
-    const matches = instructions.match(/\{\{\s*([^{}]+?)\s*\}\}/g) || [];
-    const templateVars = matches.map((m) =>
-      m.replace(/\{\{|\}\}/g, "").trim(),
-    );
-    if (templateVars.length > 0) return [...new Set(templateVars)];
+    if (normalizedEvalData?.evalType === "code" || !instructions.trim()) {
+      return [...new Set(requiredKeys)];
+    }
 
-    return [...new Set(requiredKeys)];
+    const matches = instructions.match(/\{\{\s*([^{}]+?)\s*\}\}/g) || [];
+    const templateVars = matches.map((m) => m.replace(/\{\{|\}\}/g, "").trim());
+    return [...new Set(templateVars)];
   }, [normalizedEvalData]);
 
   // Column options for mapping dropdowns
@@ -182,24 +183,39 @@ const EvalPickerConfig = ({ evalData, onBack, onSave, isSaving }) => {
     autoMapVariables(variables, sourceColumns),
   );
 
-  // Re-run auto-mapping when source columns change
+  // Rebuild the mapping from the current variable set whenever the variables
+  // or source columns change. Previous (user-set) values are kept only for
+  // variables that still exist, so removed placeholders are pruned and an
+  // empty variable set clears the mapping. Unmapped variables are auto-filled.
   useEffect(() => {
-    if (sourceColumns?.length > 0 && variables.length > 0) {
-      setMapping((prev) => {
-        const auto = autoMapVariables(variables, sourceColumns);
-        // Preserve any user-set mappings, only fill in unmapped variables
-        const merged = { ...auto };
-        for (const [key, val] of Object.entries(prev)) {
-          if (val) merged[key] = val;
-        }
-        return merged;
-      });
-    }
+    setMapping((prev) => {
+      const auto = autoMapVariables(variables, sourceColumns);
+      const next = {};
+      for (const variable of variables) {
+        const value = prev[variable] || auto[variable];
+        if (value) next[variable] = value;
+      }
+      const prevKeys = Object.keys(prev);
+      const unchanged =
+        prevKeys.length === Object.keys(next).length &&
+        prevKeys.every((key) => prev[key] === next[key]);
+      return unchanged ? prev : next;
+    });
   }, [sourceColumns, variables]);
 
   const handleMappingChange = useCallback((variable, value) => {
     setMapping((prev) => ({ ...prev, [variable]: value }));
   }, []);
+
+  // Only ever expose mappings for variables that currently exist, so a save
+  // fired before the sync effect runs cannot leak a removed variable.
+  const activeMapping = useMemo(
+    () =>
+      Object.fromEntries(
+        variables.filter((v) => mapping[v]).map((v) => [v, mapping[v]]),
+      ),
+    [variables, mapping],
+  );
 
   const unmappedCount = variables.filter((v) => !mapping[v]).length;
 
@@ -211,7 +227,7 @@ const EvalPickerConfig = ({ evalData, onBack, onSave, isSaving }) => {
       evalTemplateId: templateId,
       name: evalName,
       model,
-      mapping,
+      mapping: activeMapping,
       evalTemplate: normalizedEvalData,
       evalType: normalizedEvalData?.evalType,
       templateType: normalizedEvalData?.templateType,
@@ -219,7 +235,7 @@ const EvalPickerConfig = ({ evalData, onBack, onSave, isSaving }) => {
       config: normalizedEvalData?.config,
     };
     onSave(evalConfig);
-  }, [evalData, normalizedEvalData, evalName, model, mapping, onSave]);
+  }, [evalData, normalizedEvalData, evalName, model, activeMapping, onSave]);
 
   return (
     <Box
