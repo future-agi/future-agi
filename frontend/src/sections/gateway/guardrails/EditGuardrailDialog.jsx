@@ -13,9 +13,13 @@ import {
 } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
 import { useUpdateGuardrail } from "../providers/hooks/useGatewayConfig";
+import {
+  GUARDRAIL_STAGES,
+  GUARDRAIL_STAGE_LABELS,
+  getGuardrailStage,
+} from "./guardrailStage";
 
 const ACTIONS = ["block", "warn", "log"];
-const STAGES = ["pre", "post", "both"];
 
 function resolveExecutionMode(guardrail) {
   return guardrail?.mode === "async" ? "async" : "sync";
@@ -27,11 +31,13 @@ const EditGuardrailDialog = ({ open, onClose, guardrail, gatewayId }) => {
   const [threshold, setThreshold] = useState("");
 
   const updateGuardrail = useUpdateGuardrail();
+  const stageInfo = getGuardrailStage(guardrail);
+  const effectiveStage = stageInfo.configurable ? stage : stageInfo.stage;
 
   useEffect(() => {
     if (guardrail && open) {
       setAction(guardrail.action || "block");
-      setStage(guardrail.stage || guardrail.phase || "pre");
+      setStage(getGuardrailStage(guardrail).stage);
       setThreshold(guardrail.threshold ?? "");
     }
   }, [guardrail, open]);
@@ -40,9 +46,12 @@ const EditGuardrailDialog = ({ open, onClose, guardrail, gatewayId }) => {
     const config = {
       ...guardrail,
       action,
-      stage,
       mode: resolveExecutionMode(guardrail),
     };
+    // A fixed-stage guardrail runs at its own stage whatever is stored, so its
+    // rule carries none: saving it never pushes a stage the org didn't choose.
+    if (stageInfo.configurable) config.stage = stage;
+    else delete config.stage;
     if (threshold !== "") config.threshold = Number(threshold);
 
     updateGuardrail.mutate(
@@ -79,19 +88,37 @@ const EditGuardrailDialog = ({ open, onClose, guardrail, gatewayId }) => {
               </MenuItem>
             ))}
           </TextField>
-          <TextField
-            label="Stage"
-            select
-            fullWidth
-            value={stage}
-            onChange={(e) => setStage(e.target.value)}
-          >
-            {STAGES.map((item) => (
-              <MenuItem key={item} value={item}>
-                {item}
-              </MenuItem>
-            ))}
-          </TextField>
+          {stageInfo.configurable ? (
+            <TextField
+              label="Stage"
+              select
+              fullWidth
+              value={stage}
+              onChange={(e) => setStage(e.target.value)}
+            >
+              {GUARDRAIL_STAGES.map((item) => (
+                <MenuItem key={item} value={item}>
+                  {GUARDRAIL_STAGE_LABELS[item]}
+                </MenuItem>
+              ))}
+            </TextField>
+          ) : (
+            <TextField
+              label="Stage"
+              fullWidth
+              disabled
+              value={GUARDRAIL_STAGE_LABELS[stageInfo.stage]}
+              helperText="This guardrail always runs at this stage"
+            />
+          )}
+          {/* The gateway records an org block after the LLM but returns the
+              response until it acts on post-stage errors. */}
+          {action === "block" && effectiveStage !== "pre" && (
+            <Alert severity="warning">
+              Blocking after the LLM is not enforced yet: a flagged response is
+              recorded and still returned.
+            </Alert>
+          )}
           <TextField
             label="Threshold"
             type="number"

@@ -1,6 +1,6 @@
 import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "src/utils/test-utils";
+import { render, screen, within } from "src/utils/test-utils";
 import GuardrailManagementSection from "./GuardrailManagementSection";
 
 let mockOrgConfigReturn = {
@@ -107,5 +107,36 @@ describe("GuardrailManagementSection", () => {
     expect(screen.getByText("Action")).toBeInTheDocument();
     expect(screen.getByText("block")).toBeInTheDocument();
     expect(screen.queryByText("sync")).not.toBeInTheDocument();
+  });
+
+  it("shows the stage each guardrail runs at", () => {
+    mockOrgConfigReturn = {
+      data: {
+        guardrails: {
+          rules: [
+            { name: "lakera-guard", stage: "both", enabled: true },
+            {
+              name: "futureagi-eval",
+              stage: "post",
+              phase: "pre",
+              enabled: true,
+            },
+            { name: "hallucination-detection", stage: "pre", enabled: true },
+            { name: "pii-detector", stage: "post", enabled: true },
+          ],
+        },
+      },
+      isLoading: false,
+    };
+
+    render(<GuardrailManagementSection />);
+
+    const stageOf = (name) =>
+      within(screen.getByText(name).closest("tr")).getByText(/LLM$/)
+        .textContent;
+    expect(stageOf("lakera-guard")).toBe("Before and after LLM");
+    expect(stageOf("futureagi-eval")).toBe("After LLM");
+    expect(stageOf("hallucination-detection")).toBe("After LLM");
+    expect(stageOf("pii-detector")).toBe("Before LLM");
   });
 });

@@ -915,7 +915,12 @@ func TestPlugin_PostBlock(t *testing.T) {
 	rc := models.AcquireRequestContext()
 	defer rc.Release()
 	rc.Request = &models.ChatCompletionRequest{Model: "gpt-4o"}
-	rc.Response = &models.ChatCompletionResponse{ID: "test"}
+	rc.Response = &models.ChatCompletionResponse{
+		ID: "test",
+		Choices: []models.Choice{
+			{Message: models.Message{Role: "assistant", Content: json.RawMessage(`"toxic content"`)}},
+		},
+	}
 	rc.Model = "gpt-4o"
 
 	result := plugin.ProcessResponse(context.Background(), rc)

@@ -33,7 +33,8 @@
         "enabled": { "type": "boolean" },
         "action": { "type": "string" },
         "confidence_threshold": { "type": "number" },
-        "config": { "type": "object", "additionalProperties": true }
+        "config": { "type": "object", "additionalProperties": true },
+        "stage": { "type": "string" }
       }
     },
     "GuardrailConfig": {

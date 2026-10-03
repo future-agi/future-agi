@@ -23,13 +23,15 @@ type crowdstrikeAdapter struct {
 	tokenExpiry time.Time
 }
 
+// event_type is a top-level field beside guard_input; AIDR picks the
+// collector's input (the default) or output policy by it.
 type crowdstrikeGuardRequest struct {
 	GuardInput crowdstrikeGuardInput `json:"guard_input"`
+	EventType  string                `json:"event_type"`
 }
 
 type crowdstrikeGuardInput struct {
-	Messages  []crowdstrikeMessage `json:"messages"`
-	EventType string               `json:"event_type"`
+	Messages []crowdstrikeMessage `json:"messages"`
 }
 
 type crowdstrikeMessage struct {
@@ -38,8 +40,8 @@ type crowdstrikeMessage struct {
 }
 
 type crowdstrikeResponse struct {
-	Status  string           `json:"status"`
-	Summary string           `json:"summary"`
+	Status  string            `json:"status"`
+	Summary string            `json:"summary"`
 	Result  crowdstrikeResult `json:"result"`
 }
 
@@ -102,6 +104,16 @@ func (a *crowdstrikeAdapter) getToken(ctx context.Context) (string, error) {
 }
 
 func (a *crowdstrikeAdapter) buildRequest(ctx context.Context, text string) (*http.Request, error) {
+	return a.guard(ctx, "input", crowdstrikeMessage{Role: "user", Content: text})
+}
+
+// buildOutputRequest sends model output as an assistant message with
+// event_type output, so the collector's output policy applies.
+func (a *crowdstrikeAdapter) buildOutputRequest(ctx context.Context, _, output string) (*http.Request, error) {
+	return a.guard(ctx, "output", crowdstrikeMessage{Role: "assistant", Content: output})
+}
+
+func (a *crowdstrikeAdapter) guard(ctx context.Context, eventType string, msg crowdstrikeMessage) (*http.Request, error) {
 	token, err := a.getToken(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("crowdstrike auth failed: %v", err)
@@ -110,11 +122,9 @@ func (a *crowdstrikeAdapter) buildRequest(ctx context.Context, text string) (*ht
 	url := strings.TrimRight(a.baseURL, "/") + "/aidr/aiguard/v1/guard_chat_completions"
 	payload := crowdstrikeGuardRequest{
 		GuardInput: crowdstrikeGuardInput{
-			Messages: []crowdstrikeMessage{
-				{Role: "user", Content: text},
-			},
-			EventType: "input",
+			Messages: []crowdstrikeMessage{msg},
 		},
+		EventType: eventType,
 	}
 	return makeJSONRequest(ctx, url, payload, map[string]string{
 		"Authorization": "Bearer " + token,

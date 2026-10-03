@@ -35,11 +35,11 @@ type grayswanMessage struct {
 }
 
 type grayswanResponse struct {
-	Violation                float64                    `json:"violation"`
-	ViolatedRules            []int                      `json:"violated_rules"`
-	Mutation                 bool                       `json:"mutation"`
-	IPI                      bool                       `json:"ipi"`
-	ViolatedRuleDescriptions []grayswanRuleDescription  `json:"violated_rule_descriptions"`
+	Violation                float64                   `json:"violation"`
+	ViolatedRules            []int                     `json:"violated_rules"`
+	Mutation                 bool                      `json:"mutation"`
+	IPI                      bool                      `json:"ipi"`
+	ViolatedRuleDescriptions []grayswanRuleDescription `json:"violated_rule_descriptions"`
 }
 
 type grayswanRuleDescription struct {
@@ -69,12 +69,20 @@ func newGrayswanAdapter(cfg map[string]interface{}) *grayswanAdapter {
 	}
 }
 
-// Cygnal monitor requires both Authorization Bearer AND grayswan-api-key headers.
 func (a *grayswanAdapter) buildRequest(ctx context.Context, text string) (*http.Request, error) {
+	return a.monitor(ctx, grayswanMessage{Role: "user", Content: text})
+}
+
+// buildOutputRequest monitors model output as an assistant message, the role
+// Cygnal's OpenAI-style messages give the model's reply.
+func (a *grayswanAdapter) buildOutputRequest(ctx context.Context, _, output string) (*http.Request, error) {
+	return a.monitor(ctx, grayswanMessage{Role: "assistant", Content: output})
+}
+
+// Cygnal monitor requires both Authorization Bearer AND grayswan-api-key headers.
+func (a *grayswanAdapter) monitor(ctx context.Context, msg grayswanMessage) (*http.Request, error) {
 	payload := grayswanRequest{
-		Messages: []grayswanMessage{
-			{Role: "user", Content: text},
-		},
+		Messages: []grayswanMessage{msg},
 	}
 	if len(a.rules) > 0 {
 		payload.Rules = a.rules

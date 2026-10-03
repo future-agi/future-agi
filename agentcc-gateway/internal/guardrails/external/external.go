@@ -21,6 +21,13 @@ type providerAdapter interface {
 	parseResponse(body []byte) *guardrails.CheckResult
 }
 
+// outputAwareAdapter is implemented by adapters whose API labels text as model
+// output rather than a prompt. Check uses it for responses; prompt is the last
+// user message, for APIs that judge a response in the context of its prompt.
+type outputAwareAdapter interface {
+	buildOutputRequest(ctx context.Context, prompt, output string) (*http.Request, error)
+}
+
 // ExternalGuardrail calls a third-party guardrail provider's API.
 type ExternalGuardrail struct {
 	name    string
@@ -92,8 +99,14 @@ func New(name string, cfg map[string]interface{}) *ExternalGuardrail {
 	return g
 }
 
-func (g *ExternalGuardrail) Name() string           { return g.name }
+func (g *ExternalGuardrail) Name() string            { return g.name }
 func (g *ExternalGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
+
+// SupportsStage reports that an external check can scan the prompt or the
+// model's response, so an org check may run it at either stage or both.
+func (g *ExternalGuardrail) SupportsStage(s guardrails.Stage) bool {
+	return s == guardrails.StagePre || s == guardrails.StagePost
+}
 
 // Check evaluates text against the external provider.
 func (g *ExternalGuardrail) Check(ctx context.Context, input *guardrails.CheckInput) *guardrails.CheckResult {
@@ -114,7 +127,17 @@ func (g *ExternalGuardrail) Check(ctx context.Context, input *guardrails.CheckIn
 		return &guardrails.CheckResult{Pass: true}
 	}
 
-	respBody, err := g.callProvider(ctx, text)
+	build := func(ctx context.Context) (*http.Request, error) {
+		return g.adapter.buildRequest(ctx, text)
+	}
+	if oa, ok := g.adapter.(outputAwareAdapter); ok && input.Response != nil {
+		prompt := lastUserText(input)
+		build = func(ctx context.Context) (*http.Request, error) {
+			return oa.buildOutputRequest(ctx, prompt, text)
+		}
+	}
+
+	respBody, err := g.callProvider(ctx, build)
 	if err != nil {
 		return &guardrails.CheckResult{
 			Pass:    false,
@@ -126,7 +149,9 @@ func (g *ExternalGuardrail) Check(ctx context.Context, input *guardrails.CheckIn
 	return g.adapter.parseResponse(respBody)
 }
 
-func (g *ExternalGuardrail) callProvider(ctx context.Context, text string) ([]byte, error) {
+// callProvider sends the request that build makes, retrying on failure. build
+// runs once per attempt because a sent request's body is consumed.
+func (g *ExternalGuardrail) callProvider(ctx context.Context, build func(context.Context) (*http.Request, error)) ([]byte, error) {
 	var lastErr error
 	attempts := 1 + g.retry
 	for i := 0; i < attempts; i++ {
@@ -136,7 +161,7 @@ func (g *ExternalGuardrail) callProvider(ctx context.Context, text string) ([]by
 		default:
 		}
 
-		body, err := g.doCall(ctx, text)
+		body, err := g.doCall(ctx, build)
 		if err != nil {
 			lastErr = err
 			continue
@@ -146,8 +171,8 @@ func (g *ExternalGuardrail) callProvider(ctx context.Context, text string) ([]by
 	return nil, fmt.Errorf("failed after %d attempts: %w", attempts, lastErr)
 }
 
-func (g *ExternalGuardrail) doCall(ctx context.Context, text string) ([]byte, error) {
-	req, err := g.adapter.buildRequest(ctx, text)
+func (g *ExternalGuardrail) doCall(ctx context.Context, build func(context.Context) (*http.Request, error)) ([]byte, error) {
+	req, err := build(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -181,6 +206,21 @@ func extractInputText(input *guardrails.CheckInput) string {
 		}
 	}
 	return strings.Join(parts, "\n")
+}
+
+// lastUserText returns the text of the request's last user message: the prompt
+// a response answers, without the system prompt or earlier turns.
+func lastUserText(input *guardrails.CheckInput) string {
+	if input.Request == nil {
+		return ""
+	}
+	msgs := input.Request.Messages
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == "user" {
+			return extractContentText(msgs[i].Content)
+		}
+	}
+	return ""
 }
 
 // extractOutputText concatenates all choice message contents from the response.
@@ -315,7 +355,8 @@ func makeJSONRequest(ctx context.Context, url string, payload interface{}, heade
 	return req, nil
 }
 
-// inputForPost creates a guardrails.CheckInput with a single user message for testing.
+// inputForPost creates a post-stage guardrails.CheckInput for tests: a response
+// whose single assistant choice holds content, and a request with no messages.
 func inputForPost(content string) *guardrails.CheckInput {
 	raw, _ := json.Marshal(content)
 	return &guardrails.CheckInput{
