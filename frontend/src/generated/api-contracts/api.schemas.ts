@@ -19917,6 +19917,17 @@ export const CallExecutionDetailApiStatus = {
 } as const;
 
 /**
+ * Set on the v3 call detail: a sub-goal check or an evaluation
+ */
+export type CallExecutionEvalMetricApiKind =
+  (typeof CallExecutionEvalMetricApiKind)[keyof typeof CallExecutionEvalMetricApiKind];
+
+export const CallExecutionEvalMetricApiKind = {
+  evaluation: "evaluation",
+  sub_goal: "sub_goal",
+} as const;
+
+/**
  * number | bool | string | list[string] | null
  */
 export type CallExecutionEvalMetricApiValue = { [key: string]: unknown };
@@ -19937,6 +19948,8 @@ export interface CallExecutionEvalMetricApi {
   reason?: string;
   type?: string;
   template_type?: string;
+  /** Set on the v3 call detail: a sub-goal check or an evaluation */
+  kind?: CallExecutionEvalMetricApiKind;
   visible?: boolean;
   error?: boolean;
   status?: string;
@@ -21030,6 +21043,7 @@ export interface RunTestExecutionsResponseApi {
   /** @minLength 1 */
   readonly previous?: string;
   readonly results?: readonly TestExecutionItemResponseApi[];
+  readonly covered_scenario_count?: number;
 }
 
 export interface SimulationPreviewItemApi {
@@ -22218,6 +22232,7 @@ export interface SimulateRunV3FunctionCallApi {
   result?: SimulateRunV3FunctionCallApiResult;
   output?: SimulateRunV3FunctionCallApiOutput;
   duration_ms?: number;
+  start_time_ms?: number;
 }
 
 export interface CallExecutionV3DetailResponseApi {
@@ -22436,6 +22451,7 @@ export interface RunDashboardSeriesApi {
   label: string;
   started_at: string;
   calls: number;
+  latency_ms: number;
   duration_ms: number;
   llm_cents: number;
   tts_cents: number;
@@ -22572,6 +22588,7 @@ export interface RunDashboardV3Api {
   series: RunDashboardSeriesApi[];
   series_limit: number;
   series_mode: RunDashboardV3ApiSeriesMode;
+  agent_latency_percentiles: RunDashboardPercentileApi[];
   latency_percentiles: RunDashboardPercentileApi[];
   distributions: RunDashboardDistributionApi[];
   csat: RunDashboardCsatApi;
@@ -22825,6 +22842,9 @@ export interface RunCallApi {
   completed_at: string;
   duration_seconds: number;
   latency_ms: number;
+  /** Average stop time after caller interruption in milliseconds. */
+  avg_stop_time_after_interruption: number | null;
+  ai_interruption_count: number | null;
   turn_count: number;
   tokens: number;
   cost_cents: number;
@@ -22843,6 +22863,10 @@ export interface GroupAggregatesApi {
   csat: number;
   turns: number;
   latency_ms: number;
+  /** Mean call stop latency in milliseconds, excluding unmeasured calls. */
+  avg_stop_time_after_interruption: number | null;
+  /** Mean AI interruption count per call, excluding unmeasured calls. */
+  ai_interruptions: number | null;
   tokens: number;
   evaluations: GroupAggregatesApiEvaluations;
 }
@@ -22876,11 +22900,20 @@ export interface RunFacetsApi {
   status: FacetValueApi[];
 }
 
+export type EvaluationColumnApiKind =
+  (typeof EvaluationColumnApiKind)[keyof typeof EvaluationColumnApiKind];
+
+export const EvaluationColumnApiKind = {
+  evaluation: "evaluation",
+  sub_goal: "sub_goal",
+} as const;
+
 export interface EvaluationColumnApi {
   /** @minLength 1 */
   id: string;
   /** @minLength 1 */
   name: string;
+  kind: EvaluationColumnApiKind;
 }
 
 export interface RunCallsV3ResponseApi {
@@ -23143,6 +23176,16 @@ export interface ApiErrorResponseApi {
   details?: ApiErrorResponseApiDetails;
 }
 
+export type FetchGraphResponseApiResultMetricStatistic =
+  (typeof FetchGraphResponseApiResultMetricStatistic)[keyof typeof FetchGraphResponseApiResultMetricStatistic];
+
+export const FetchGraphResponseApiResultMetricStatistic = {
+  count: "count",
+  sum: "sum",
+  mean: "mean",
+  percentage: "percentage",
+} as const;
+
 export type FetchGraphResponseApiResultDataItem = {
   timestamp: string;
   value: number;
@@ -23167,6 +23210,7 @@ export type FetchGraphResponseApiResult = {
   metric_name?: string;
   id?: string;
   name?: string;
+  metric_statistic?: FetchGraphResponseApiResultMetricStatistic;
   data: FetchGraphResponseApiResultDataItem[];
   query_complete: boolean;
   query_status: FetchGraphResponseApiResultQueryStatus;
@@ -26616,9 +26660,23 @@ export interface ObserveGraphDataRequestApi {
   filters?: ObserveGraphDataRequestApiFiltersItem[];
   filter_combinator?: ObserveGraphDataRequestApiFilterCombinator;
   interval?: ObserveGraphDataRequestApiInterval;
+  /** Accepted for older clients and ignored for SYSTEM_METRIC graphs: each system metric has one statistic, named by the response's metric_statistic. Latency is always the mean (avg) span latency. */
   property?: string;
   req_data_config: ObserveGraphDataRequestApiReqDataConfig;
 }
+
+/**
+ * Statistic of the published system-metric series per bucket. Latency is always the mean (avg) of span latency, filtered or not. Absent for eval and annotation series.
+ */
+export type ObserveGraphDataResultApiMetricStatistic =
+  (typeof ObserveGraphDataResultApiMetricStatistic)[keyof typeof ObserveGraphDataResultApiMetricStatistic];
+
+export const ObserveGraphDataResultApiMetricStatistic = {
+  count: "count",
+  sum: "sum",
+  mean: "mean",
+  percentage: "percentage",
+} as const;
 
 /**
  * Graph points. A sampled series is published only with complete declared stratum coverage; degraded reads never publish points.
@@ -26677,6 +26735,8 @@ export const ObserveGraphDataResultApiQuerySamplingStrategy = {
 export interface ObserveGraphDataResultApi {
   metric_name: string;
   name?: string;
+  /** Statistic of the published system-metric series per bucket. Latency is always the mean (avg) of span latency, filtered or not. Absent for eval and annotation series. */
+  metric_statistic?: ObserveGraphDataResultApiMetricStatistic;
   /** Graph points. A sampled series is published only with complete declared stratum coverage; degraded reads never publish points. */
   data: ObserveGraphDataPointApi[];
   query_complete?: boolean;
@@ -27128,6 +27188,13 @@ export interface ProjectApi {
 export type ProjectGraphDataResultApiSystemMetrics = { [key: string]: unknown };
 
 /**
+ * Statistic of each ``system_metrics`` series per bucket, e.g. {"latency": "mean", "tokens": "sum", "cost": "mean", "traffic": "count"}. Latency is always the mean (avg) span latency.
+ */
+export type ProjectGraphDataResultApiSystemMetricStatistics = {
+  [key: string]: "count" | "sum" | "mean" | "percentage";
+};
+
+/**
  * Any valid JSON value.
  */
 export type ProjectGraphDataResultApiEvaluations = { [key: string]: unknown };
@@ -27135,6 +27202,8 @@ export type ProjectGraphDataResultApiEvaluations = { [key: string]: unknown };
 export interface ProjectGraphDataResultApi {
   /** Any valid JSON value. */
   system_metrics: ProjectGraphDataResultApiSystemMetrics;
+  /** Statistic of each ``system_metrics`` series per bucket, e.g. {"latency": "mean", "tokens": "sum", "cost": "mean", "traffic": "count"}. Latency is always the mean (avg) span latency. */
+  system_metric_statistics?: ProjectGraphDataResultApiSystemMetricStatistics;
   /** Any valid JSON value. */
   evaluations: ProjectGraphDataResultApiEvaluations;
 }
@@ -28339,6 +28408,7 @@ export interface TraceSessionGraphDataRequestApi {
   filters?: TraceSessionGraphDataRequestApiFiltersItem[];
   filter_combinator?: TraceSessionGraphDataRequestApiFilterCombinator;
   interval?: TraceSessionGraphDataRequestApiInterval;
+  /** Accepted for older clients and ignored for SYSTEM_METRIC graphs: each system metric has one statistic, named by the response's metric_statistic. Latency is always the mean (avg) span latency. */
   property?: string;
   req_data_config: TraceSessionGraphDataRequestApiReqDataConfig;
 }
@@ -28365,6 +28435,19 @@ export const ObserveGraphDataErrorResponseApiType = {
 export type ObserveGraphDataErrorResponseApiDetails = {
   [key: string]: string[];
 };
+
+/**
+ * Statistic of the published system-metric series per bucket. Latency is always the mean (avg) of span latency, filtered or not. Absent for eval and annotation series.
+ */
+export type ObserveGraphDataErrorResultApiMetricStatistic =
+  (typeof ObserveGraphDataErrorResultApiMetricStatistic)[keyof typeof ObserveGraphDataErrorResultApiMetricStatistic];
+
+export const ObserveGraphDataErrorResultApiMetricStatistic = {
+  count: "count",
+  sum: "sum",
+  mean: "mean",
+  percentage: "percentage",
+} as const;
 
 export type ObserveGraphDataErrorResultApiQueryProvenance =
   (typeof ObserveGraphDataErrorResultApiQueryProvenance)[keyof typeof ObserveGraphDataErrorResultApiQueryProvenance];
@@ -28413,6 +28496,8 @@ export const ObserveGraphDataErrorResultApiQuerySamplingStrategy = {
 export interface ObserveGraphDataErrorResultApi {
   metric_name: string;
   name?: string;
+  /** Statistic of the published system-metric series per bucket. Latency is always the mean (avg) of span latency, filtered or not. Absent for eval and annotation series. */
+  metric_statistic?: ObserveGraphDataErrorResultApiMetricStatistic;
   /** Graph points. A sampled series is published only with complete declared stratum coverage; degraded reads never publish points. */
   data: ObserveGraphDataPointApi[];
   query_complete?: boolean;
@@ -28923,6 +29008,7 @@ export interface TraceGraphDataRequestApi {
   filters?: TraceGraphDataRequestApiFiltersItem[];
   filter_combinator?: TraceGraphDataRequestApiFilterCombinator;
   interval?: TraceGraphDataRequestApiInterval;
+  /** Accepted for older clients and ignored for SYSTEM_METRIC graphs: each system metric has one statistic, named by the response's metric_statistic. Latency is always the mean (avg) span latency. */
   property?: string;
   req_data_config: TraceGraphDataRequestApiReqDataConfig;
   /** Population the graph counts: every trace, or only voice calls (traces whose root span is a conversation), exactly as list_voice_calls selects them. */

@@ -82,6 +82,43 @@ def _json_value(field: str, *keys: str):
     return expression
 
 
+# The rows show the authored scenario's sub-goals when the call carries none of
+# its own (see ``build_call_rows``), so the filter and facets read the same way.
+_NO_RESULT_SUB_GOALS = (
+    Q(call_metadata__hosted_harness_receipt__sub_goals__isnull=True)
+    | Q(call_metadata__hosted_harness_receipt__sub_goals=[])
+) & (Q(call_metadata__sub_goals__isnull=True) | Q(call_metadata__sub_goals=[]))
+
+
+def _authored_sub_goal_q(value: Any) -> Q:
+    """Match a call whose linked scenario lists ``value`` as a sub-goal.
+
+    A trial's source scenario wins over a registration, as in the rows.
+    """
+    execution = "hosted_harness_execution__source_scenario__sub_goals"
+    registration = "hosted_registration__sub_goals"
+    return (
+        Q(**{f"{execution}__contains": [value]})
+        | Q(**{f"{execution}__contains": [{"name": value}]})
+        | (
+            Q(hosted_harness_execution__isnull=True)
+            & (
+                Q(**{f"{registration}__contains": [value]})
+                | Q(**{f"{registration}__contains": [{"name": value}]})
+            )
+        )
+    )
+
+
+def _authored_sub_goals_expression():
+    empty = Value([], output_field=JSONField())
+    return Coalesce(
+        NullIf(F("hosted_harness_execution__source_scenario__sub_goals"), empty),
+        NullIf(F("hosted_registration__sub_goals"), empty),
+        output_field=JSONField(),
+    )
+
+
 def _eval_verdict_q(eval_ids: set[str], values: list[Any]) -> Q:
     verdict = Q(pk__in=[])
     for eval_id in eval_ids:
@@ -101,6 +138,25 @@ def _eval_measured_q(eval_id: str) -> Q:
     return ~Q(In(Lower(Trim(status)), ["pending", "skipped", "error"]))
 
 
+def _object_score(eval_id: str):
+    """A choice-scored eval's numeric `score` key, or NULL when it isn't a JSON number."""
+    inner = _json_value("eval_outputs", eval_id, "output", "score")
+    is_number = Exact(
+        Func(inner, function="jsonb_typeof", output_field=TextField()),
+        Value("number"),
+    )
+    return Case(
+        When(
+            is_number,
+            then=Cast(
+                _json_text("eval_outputs", eval_id, "output", "score"), FloatField()
+            ),
+        ),
+        default=None,
+        output_field=FloatField(),
+    )
+
+
 def _eval_score(eval_id: str):
     numeric = _safe_json_float("eval_outputs", eval_id, "output")
     numeric_type = Exact(
@@ -111,6 +167,7 @@ def _eval_score(eval_id: str):
         ),
         Value("number"),
     )
+    object_score = _object_score(eval_id)
     return Case(
         When(~_eval_measured_q(eval_id), then=Value(None, output_field=FloatField())),
         When(
@@ -133,7 +190,13 @@ def _eval_score(eval_id: str):
                 output_field=FloatField(),
             ),
         ),
-        default=None,
+        default=Case(
+            When(
+                GreaterThan(object_score, Value(1.0)), then=object_score / Value(100.0)
+            ),
+            default=object_score,
+            output_field=FloatField(),
+        ),
         output_field=FloatField(),
     )
 
@@ -187,7 +250,7 @@ def run_calls_queryset(
         job__simulation_runs__test_execution_id=OuterRef("test_execution_id")
     )
     authored = (
-        HostedHarnessScenario.no_workspace_objects.filter(
+        HostedHarnessScenario.all_objects.filter(
             Q(call_execution_id=OuterRef("pk"))
             | Q(own_run | own_environment, scenario_key=OuterRef("result_scenario_key"))
         )
@@ -343,6 +406,7 @@ def apply_run_call_query(queryset: QuerySet, query: dict[str, Any]) -> QuerySet:
             )
             sub_goal_query |= Q(call_metadata__sub_goals__contains=[value])
             sub_goal_query |= Q(call_metadata__sub_goals__contains=[{"name": value}])
+            sub_goal_query |= _NO_RESULT_SUB_GOALS & _authored_sub_goal_q(value)
         queryset = queryset.filter(sub_goal_query)
 
     group_by = query.get("group_by")
@@ -461,8 +525,15 @@ def run_call_facets(
         queryset.order_by()
         .annotate(
             result_sub_goals=Coalesce(
-                _json_value("call_metadata", "hosted_harness_receipt", "sub_goals"),
-                _json_value("call_metadata", "sub_goals"),
+                NullIf(
+                    _json_value("call_metadata", "hosted_harness_receipt", "sub_goals"),
+                    Value([], output_field=JSONField()),
+                ),
+                NullIf(
+                    _json_value("call_metadata", "sub_goals"),
+                    Value([], output_field=JSONField()),
+                ),
+                _authored_sub_goals_expression(),
                 Value([], output_field=JSONField()),
                 output_field=JSONField(),
             )
@@ -498,6 +569,8 @@ def group_run_calls(
         return []
     field = GROUP_FIELDS[group_by]
     expressions = _aggregate_expressions(include_percentiles=False)
+    expressions["stop_latency_average"] = Avg("avg_stop_time_after_interruption_ms")
+    expressions["ai_interruptions_average"] = Avg("ai_interruption_count")
 
     for index, column in enumerate(columns):
         eval_id = str(column["id"])
@@ -560,6 +633,8 @@ def group_run_calls(
                     "csat": values.get("csat_average"),
                     "turns": values.get("turns_average"),
                     "latency_ms": summary["latency"]["average"],
+                    "avg_stop_time_after_interruption": values["stop_latency_average"],
+                    "ai_interruptions": values["ai_interruptions_average"],
                     "tokens": summary["tokens"]["total_value"],
                     "evaluations": evaluation_aggregates,
                 },
@@ -634,15 +709,20 @@ def build_run_analytics(execution: TestExecution) -> dict[str, Any]:
             "id", filter=Q(eval_outputs__has_key=eval_id)
         )
         output_type_key = f"eval_outputs__{eval_id}__output_type"
+        # Choice-scored evals keep their number at output.score, whatever output_type they carry.
         evaluation_expressions[f"score_{eval_id}"] = Avg(
-            Case(
-                When(
-                    **{
-                        output_type_key: "score",
-                        "then": _safe_json_float("eval_outputs", eval_id, "output"),
-                    }
+            Coalesce(
+                Case(
+                    When(
+                        **{
+                            output_type_key: "score",
+                            "then": _safe_json_float("eval_outputs", eval_id, "output"),
+                        }
+                    ),
+                    default=None,
+                    output_field=FloatField(),
                 ),
-                default=None,
+                _object_score(eval_id),
                 output_field=FloatField(),
             )
         )

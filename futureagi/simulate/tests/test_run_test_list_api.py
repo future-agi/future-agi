@@ -1294,6 +1294,75 @@ class TestRunTestExecutionsView:
             TestExecution.ExecutionStatus.COMPLETED.lower()
         )
 
+    def test_get_run_test_executions_counts_covered_scenarios_over_every_page(
+        self, auth_client, run_test_with_v10_scenario
+    ):
+        # 12 harness runs over 7 distinct scenario keys; the default page holds
+        # 10. Every harness run of an environment shares the one dataset row in
+        # scenario_ids, so the count has to come from the keys.
+        shared_row = str(uuid4())
+        key_sets = [
+            ["k1", "k2"],
+            ["k2", "k3"],
+            ["k3"],
+            ["k1"],
+            ["k4", "k5"],
+            ["k5"],
+            ["k1", "k2", "k3"],
+            ["k6"],
+            ["k2"],
+            ["k4"],
+            ["k7"],
+            ["k1", "k7"],
+        ]
+        for keys in key_sets:
+            TestExecution.objects.create(
+                run_test=run_test_with_v10_scenario,
+                status=TestExecution.ExecutionStatus.COMPLETED,
+                scenario_ids=[shared_row],
+                total_scenarios=len(keys),
+                execution_metadata={"selected_scenario_keys": keys},
+            )
+        TestExecution.objects.create(
+            run_test=run_test_with_v10_scenario,
+            status=TestExecution.ExecutionStatus.COMPLETED,
+            scenario_ids=[shared_row],
+            total_scenarios=1,
+            execution_metadata={"selected_scenario_keys": ["k99"]},
+            deleted=True,
+        )
+
+        response = auth_client.get(
+            f"/simulate/run-tests/{run_test_with_v10_scenario.id}/executions/"
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        body = response.json()
+        assert body["count"] == 12
+        assert len(body["results"]) == 10
+        assert body["covered_scenario_count"] == 7
+
+    def test_get_run_test_executions_counts_native_runs_by_scenario_ids(
+        self, auth_client, run_test_with_v10_scenario
+    ):
+        # A native run carries no scenario keys; each scenario_ids entry is a
+        # scenario of its own.
+        a, b, c = (str(uuid4()) for _ in range(3))
+        for scenario_ids in ([a, b], [b, c], [c]):
+            TestExecution.objects.create(
+                run_test=run_test_with_v10_scenario,
+                status=TestExecution.ExecutionStatus.COMPLETED,
+                scenario_ids=scenario_ids,
+                total_scenarios=len(scenario_ids),
+            )
+
+        response = auth_client.get(
+            f"/simulate/run-tests/{run_test_with_v10_scenario.id}/executions/"
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        assert response.json()["covered_scenario_count"] == 3
+
     def test_get_run_test_executions_unauthenticated_returns_401(
         self, api_client, run_test_with_v10_scenario
     ):

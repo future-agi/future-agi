@@ -113,6 +113,10 @@ export default function VoiceCallDrawer({
         scenarioId={data?.scenario_id}
         isLoading={isPending}
         hiddenActionIds={HIDDEN_VOICE_ACTIONS}
+        // Checklist and Graph have no data behind them on an environment run yet.
+        hidePathTabs
+        // Fix with Falcon isn't wired into the environment flow yet.
+        showFixWithFalcon={false}
         // The product header defaults both arrows to enabled, so always pass
         // real values.
         onPrev={onPrev}

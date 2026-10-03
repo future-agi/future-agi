@@ -995,14 +995,15 @@ def _apply_receipt_to_call(
         transcript = next(
             (item for item in artifacts if item.kind == "transcript"), None
         )
+        base_time = None
         if transcript is not None:
-            _ingest_hosted_transcript(call, transcript)
+            base_time = _ingest_hosted_transcript(call, transcript)
             call.transcript_available = True
             update_fields.append("transcript_available")
         if tool_trace is not None:
             provider_data = dict(call.provider_call_data or {})
             livekit_data = dict(provider_data.get("livekit") or {})
-            livekit_data["tool_calls"] = _read_hosted_tool_trace(tool_trace)
+            livekit_data["tool_calls"] = _read_hosted_tool_trace(tool_trace, base_time)
             provider_data["livekit"] = livekit_data
             call.provider_call_data = provider_data
             update_fields.append("provider_call_data")
@@ -1189,8 +1190,14 @@ def _receipt_evaluation_coverage(body: dict[str, Any]) -> dict[str, int | bool]:
     }
 
 
-def _read_hosted_tool_trace(artifact: HostedHarnessArtifact) -> list[dict[str, Any]]:
-    """Read the sealed JSONL tool trace into the authorized call detail payload."""
+def _read_hosted_tool_trace(
+    artifact: HostedHarnessArtifact, base_time: float | None
+) -> list[dict[str, Any]]:
+    """Read the sealed JSONL tool trace into the authorized call detail payload.
+
+    A call's epoch ``at`` is rebased onto the transcript's clock, so the call
+    sits at its turn in the transcript and playback reaches it.
+    """
     response = None
     try:
         response = get_storage_client().get_object(
@@ -1206,6 +1213,9 @@ def _read_hosted_tool_trace(artifact: HostedHarnessArtifact) -> list[dict[str, A
             except json.JSONDecodeError:
                 continue
             if isinstance(value, dict):
+                at = value.get("at")
+                if base_time is not None and isinstance(at, (int, float)) and at > 0:
+                    value["start_time_ms"] = int(round((at - base_time) * 1000))
                 calls.append(value)
         return calls
     finally:
@@ -1223,12 +1233,14 @@ def _epoch_seconds(value: Any) -> float | None:
 
 def _ingest_hosted_transcript(
     call: CallExecution, artifact: HostedHarnessArtifact
-) -> None:
+) -> float | None:
     """Materialize the sealed transcript artifact into the normal call transcript model.
 
     The v2 producer emits structured JSON.  Raw text remains supported for artifacts uploaded by
     older guests, so upgrading the platform does not invalidate already-running attempts.
+    Returns the epoch second the stored turn offsets are measured from, when the turns are timed.
     """
+    base_time = None
     response = None
     try:
         response = get_storage_client().get_object(
@@ -1288,7 +1300,7 @@ def _ingest_hosted_transcript(
             CallTranscript.objects.filter(call_execution=call).delete()
             if segments:
                 _store_alk_chat_messages(call, segments)
-            return
+            return None
         rows: list[CallTranscript] = []
         if isinstance(messages, list):
             # The v2 transcript carries absolute speech timing
@@ -1379,6 +1391,7 @@ def _ingest_hosted_transcript(
         CallTranscript.objects.filter(call_execution=call).delete()
         if rows:
             CallTranscript.objects.bulk_create(rows)
+        return base_time
     finally:
         if response is not None:
             response.close()

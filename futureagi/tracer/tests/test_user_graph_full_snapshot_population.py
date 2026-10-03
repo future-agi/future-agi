@@ -79,7 +79,8 @@ def test_equal_snapshot_bounds_remove_recursive_trace_population(membership):
     assert "GROUP BY end_user_id, trace_id" in sql
     assert "GROUP BY time_bucket, end_user_id" in sql
     assert "sum(rs.cost) AS span_total_cost" in sql
-    assert "avg(rs.latency_ms) AS span_avg_latency" in sql
+    assert "sum(rs.latency_ms) AS span_latency_sum" in sql
+    assert "count(rs.latency_ms) AS span_latency_count" in sql
     assert params["snapshot_start_date"] == START
     assert params["snapshot_end_date"] == END
     assert params["project_id"] == PROJECT

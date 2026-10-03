@@ -185,6 +185,11 @@ def create_hosted_job(
         if seed is None:
             seed = secrets.randbits(63)
         normalized = _json_value(payload)
+        # Deployment policy must not change the submitted request's idempotency digest.
+        artifacts = normalized["artifacts"]
+        artifacts["max_artifact_bytes"] = max(
+            artifacts.get("max_artifact_bytes", 0), settings.HARNESS_MAX_ARTIFACT_BYTES
+        )
         normalized.update(
             {
                 "schema_version": _JOB_SCHEMA_VERSION,
@@ -1024,23 +1029,49 @@ def provision_scenarios(
         locked.content_updated_at = timezone.now()
         locked.save(update_fields=["run_test", "content_updated_at", "updated_at"])
         if existing_registrations:
-            if set(existing_by_key) != set(requested_keys):
+            # Rows indexed for scenarios the final suite dropped are hidden, not fatal.
+            requested = set(requested_keys)
+            stale = [
+                registration
+                for key, registration in existing_by_key.items()
+                if key not in requested
+            ]
+            if any(row.scenario_id or row.call_execution_id for row in stale):
                 raise HostedHarnessError(
                     "scenario_registration_conflict",
                     "the indexed authored suite differs from the provision request",
                     status_code=409,
                 )
-            registrations = []
             bound_at = timezone.now()
+            for row in stale:
+                row.deleted, row.deleted_at, row.updated_at = True, bound_at, bound_at
+            HostedHarnessScenario.all_objects.bulk_update(
+                stale, ["deleted", "deleted_at", "updated_at"]
+            )
+            hidden = {
+                row.scenario_key: row
+                for row in HostedHarnessScenario.all_objects.filter(
+                    job=locked,
+                    deleted=True,
+                    scenario_key__in=requested - set(existing_by_key),
+                )
+            }
+            registrations = []
             for persona, row in zip(payload["personas"], dataset_rows, strict=True):
-                registration = existing_by_key[persona["scenario_key"]]
+                key = persona["scenario_key"]
+                registration = existing_by_key.get(key) or hidden.get(key)
+                if registration is None:
+                    registration = HostedHarnessScenario.no_workspace_objects.create(
+                        job=locked, scenario_key=key
+                    )
+                registration.deleted, registration.deleted_at = False, None
                 registration.scenario = scenarios[0]
                 registration.dataset_row = row
                 registration.updated_at = bound_at
                 registrations.append(registration)
-            HostedHarnessScenario.no_workspace_objects.bulk_update(
+            HostedHarnessScenario.all_objects.bulk_update(
                 registrations,
-                ["scenario", "dataset_row", "updated_at"],
+                ["deleted", "deleted_at", "scenario", "dataset_row", "updated_at"],
             )
         else:
             registrations = [

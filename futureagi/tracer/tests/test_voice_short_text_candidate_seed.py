@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 import pytest
 from clickhouse_driver.errors import Error as ClickHouseError
 from clickhouse_driver.errors import ErrorCodes
+from django.test import override_settings
 
 from tracer.selectors.filter_seed_width import FilterSeedWidthPolicy
 from tracer.selectors.trace_filter_reads import read_bounded_filter_page
@@ -476,6 +477,24 @@ def test_the_voice_seed_lane_keeps_the_whole_request_wall_per_statement():
     assert page.error_code is None
     assert [a.error_code for a in page.attempts] == [None] * len(page.attempts)
     assert sum(transport.slice_widths, timedelta()) == request_end - request_start
+
+
+def test_a_request_wall_above_the_statement_cap_is_capped_not_refused():
+    """Production raised the request wall to 60 s with the builder cap at 30 s.
+
+    The voice list recommended the whole wall, and the bounded selector
+    refuses a recommendation above ``FILTER_SELECTOR_MAX_BUILDER_QUERY_TIMEOUT_MS``
+    ("recommended query timeout exceeds the bounded read contract"), so every
+    voice filtered read answered 500. The recommendation is now capped, as the
+    span list's is.
+    """
+
+    with override_settings(INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS=60_000):
+        builder = voice_builder()
+        assert builder.recommended_filter_query_timeout_ms() == 30_000
+        transport, page = walk(builder, transport=EnforcingProgressTransport())
+    assert page.complete is True
+    assert page.error_code is None
 
 
 @pytest.mark.parametrize(

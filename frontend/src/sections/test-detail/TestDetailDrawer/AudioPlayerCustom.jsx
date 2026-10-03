@@ -99,7 +99,12 @@ export const StereoMultiTrackPlayer = ({
     customerUrl: stereoCustomer,
     loading: stereoLoading,
     error: stereoError,
-  } = useStereoChannels(recordings?.stereo || "", isInbound, provider);
+  } = useStereoChannels(
+    recordings?.stereo || "",
+    isInbound,
+    provider,
+    recordings?.stereoChannels,
+  );
 
   // Use stereo-split channels when available, fall back to separate mono files
   const useStereo =

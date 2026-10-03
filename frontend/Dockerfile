@@ -3,14 +3,16 @@
 
 # Base images, pinned by digest (multi-arch indexes) so a rebuild of the same
 # source gives the same layers. Bump both the tag and the digest together.
-#   node:22.18.0 -> build and dev stages only, never shipped
+#   frontend-base -> build and dev stages only, never shipped: node with
+#     `yarn install` already baked in (see Dockerfile.base). Republish it
+#     (base-image-publish.yml) when package.json/yarn.lock change.
 #   nginx:1.31.6-alpine-slim -> the served image: 5.8 MB gzip, vs 26.3 MB for
 #     nginx:alpine (amd64, Docker Hub, 2026-09-25). nginx.conf uses only core
 #     http directives (gzip, expires, add_header, try_files) and
 #     docker-entrypoint.sh below needs only busybox sh/printenv/sed, so none of
 #     the modules alpine-slim leaves out (njs, geoip, image-filter, xslt, acme)
 #     nor nginx:alpine's curl are used.
-ARG NODE_IMAGE=node:22.18.0@sha256:3266bc9e8bee1acc8a77386eefaf574987d2729b8c5ec35b0dbd6ddbc40b0ce2
+ARG NODE_IMAGE=futureagi/frontend-base:v1.0.0@sha256:09f8b135ddb30b5312ddca993c21e1678da0f9bbaa36d677697542ab8a2dfc43
 ARG NGINX_IMAGE=nginx:1.31.6-alpine-slim@sha256:f761b94f2cb9e8e05e2943d5f773609596113ef69b54e2433a996d109a8f78b7
 
 # Stage 1: Build the React app.
@@ -26,9 +28,6 @@ ENV VITE_HOST_API=${VITE_HOST_API} \
     VITE_ENVIRONMENT=${VITE_ENVIRONMENT}
 
 WORKDIR /app
-
-COPY package.json yarn.lock ./
-RUN yarn install --network-timeout 600000
 
 COPY . ./
 
@@ -64,8 +63,6 @@ RUN yarn build \
 # a host-side `yarn install`.
 FROM ${NODE_IMAGE} AS dev
 WORKDIR /app
-COPY package.json yarn.lock ./
-RUN yarn install
 EXPOSE 3000
 CMD ["yarn", "dev", "--host", "--port", "3000"]
 

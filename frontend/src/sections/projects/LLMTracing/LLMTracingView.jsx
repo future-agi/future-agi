@@ -131,8 +131,7 @@ const convertGraphSelectionsToFilters = (
 };
 import { ShowComponent } from "src/components/show";
 import { useQueryClient, useMutation } from "@tanstack/react-query";
-import { formatDate } from "src/utils/report-utils";
-import { startOfToday, startOfTomorrow, startOfYesterday, sub } from "date-fns";
+import { observePresetDateFilter } from "../timeWindowPresets";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { useUrlState } from "src/routes/hooks/use-url-state";
 import { Helmet } from "react-helmet-async";
@@ -406,7 +405,7 @@ const comparePillSx = {
 };
 
 // Header row for agent graph/path in compare mode: [A/B badge] [label] [date pill] [filter pill] + inline chips
-const CompareGraphHeader = ({
+export const CompareGraphHeader = ({
   compareType,
   dateFilter,
   setDateFilter,
@@ -428,47 +427,9 @@ const CompareGraphHeader = ({
       setCustomDateOpen(true);
       return;
     }
-    let filter = null;
-    switch (option) {
-      case "Today":
-        filter = [formatDate(startOfToday()), formatDate(startOfTomorrow())];
-        break;
-      case "Yesterday":
-        filter = [formatDate(startOfYesterday()), formatDate(startOfToday())];
-        break;
-      case "7D":
-        filter = [
-          formatDate(sub(new Date(), { days: 7 })),
-          formatDate(startOfTomorrow()),
-        ];
-        break;
-      case "30D":
-        filter = [
-          formatDate(sub(new Date(), { days: 30 })),
-          formatDate(startOfTomorrow()),
-        ];
-        break;
-      case "3M":
-        filter = [
-          formatDate(sub(new Date(), { months: 3 })),
-          formatDate(startOfTomorrow()),
-        ];
-        break;
-      case "6M":
-        filter = [
-          formatDate(sub(new Date(), { months: 6 })),
-          formatDate(startOfTomorrow()),
-        ];
-        break;
-      case "12M":
-        filter = [
-          formatDate(sub(new Date(), { months: 12 })),
-          formatDate(startOfTomorrow()),
-        ];
-        break;
-      default:
-        break;
-    }
+    // One shared window per preset: hour-floored start, next-midnight end,
+    // identical to the default load (see observePresetDateFilter).
+    const filter = observePresetDateFilter(option);
     if (filter)
       setDateFilter((prev) => ({
         ...prev,

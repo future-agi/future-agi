@@ -1,9 +1,9 @@
 {{- $b := .Values.backend -}}
 {{- $ctx := dict "root" . "component" "backend" -}}
-{{- $image := include "futureagi.image" (dict "root" . "image" $b.image) -}}
+{{- $image := include "futureagi.image" (dict "root" . "image" $b.image "digestKey" "backend") -}}
 {{- $pullPolicy := include "futureagi.imagePullPolicy" (dict "root" . "image" $b.image) -}}
 {{- $env := include "futureagi.env.python" (dict "root" . "component" (dict "SERVICE_TYPE" "backend") "overrides" $b.extraEnv) -}}
-{{- $containerSecurity := include "futureagi.containerSecurityContext" (dict "overrides" $b.containerSecurityContext) -}}
+{{- $containerSecurity := include "futureagi.containerSecurityContext" (dict "root" $ "overrides" $b.containerSecurityContext) -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -11,6 +11,7 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "futureagi.componentLabels" $ctx | nindent 4 }}
+  {{- include "futureagi.block" (dict "text" (include "futureagi.workloadAnnotations" $) "indent" 2) }}
 spec:
   {{- if not $b.autoscaling.enabled }}
   replicas: {{ $b.replicas }}
@@ -38,11 +39,13 @@ spec:
         {{- end }}
     spec:
       serviceAccountName: {{ include "futureagi.serviceAccountName" . }}
-      automountServiceAccountToken: false
+      automountServiceAccountToken: {{ include "futureagi.automountServiceAccountToken" . }}
       {{- include "futureagi.block" (dict "text" (include "futureagi.imagePullSecrets" .) "indent" 6) }}
+      # The preStop sleep, then in-flight requests.
+      terminationGracePeriodSeconds: {{ $b.terminationGracePeriodSeconds | default 30 }}
       securityContext:
-        {{- include "futureagi.podSecurityContext" (dict "uid" 1000 "overrides" $b.podSecurityContext) | nindent 8 }}
-      {{- include "futureagi.block" (dict "text" (include "futureagi.scheduling" (dict "root" . "values" $b "spread" true)) "indent" 6) }}
+        {{- include "futureagi.podSecurityContext" (dict "root" $ "uid" 1000 "overrides" $b.podSecurityContext) | nindent 8 }}
+      {{- include "futureagi.block" (dict "text" (include "futureagi.scheduling" (dict "root" . "values" $b "spread" true "component" "backend" "multi" (include "futureagi.multiReplica" $b))) "indent" 6) }}
       {{- if $b.collectStatic }}
       initContainers:
         # Static files of /admin and /docs (WhiteNoise serves them from STATIC_ROOT).
@@ -95,6 +98,7 @@ spec:
             - name: http
               containerPort: 8000
               protocol: TCP
+          {{- include "futureagi.block" (dict "text" (include "futureagi.preStop" (dict "root" . "seconds" $b.preStopSleepSeconds)) "indent" 10) }}
           env:
             {{- $env | trim | nindent 12 }}
           {{- with .Values.config.extraEnvFrom }}

@@ -216,7 +216,7 @@ def authored_scenarios(run_test_id, *, call_execution_id, scenario_key) -> Query
     run, or found by the call's scenario key on the run's own job or its parent
     environment. Arguments may be ``OuterRef``s for a per-call subquery."""
     run_jobs = HostedHarnessJob.no_workspace_objects.filter(run_test_id=run_test_id)
-    return HostedHarnessScenario.no_workspace_objects.filter(
+    return HostedHarnessScenario.all_objects.filter(
         Q(call_execution_id=call_execution_id)
         | Q(
             Q(job_id__in=run_jobs.values("id"))
@@ -230,7 +230,7 @@ def authored_scenarios_for_calls(run_test_id, calls) -> dict:
     """Each call's authored scenario, found with one query for the whole run."""
     run_jobs = HostedHarnessJob.no_workspace_objects.filter(run_test_id=run_test_id)
     call_ids = [call.id for call in calls]
-    rows = HostedHarnessScenario.no_workspace_objects.filter(
+    rows = HostedHarnessScenario.all_objects.filter(
         Q(call_execution_id__in=call_ids)
         | Q(job_id__in=run_jobs.values("id"))
         | Q(job_id__in=run_jobs.values("environment_id"))
@@ -340,14 +340,13 @@ def index_scenarios(
                 setattr(row, name, value)
             row.save(update_fields=[*fields, "updated_at"])
         written += 1
-    # Only an amend prunes: a short suite on a poll may still be mid-write. Called rows are kept,
-    # whether a direct run or a selected run's execution points at them.
+    # Only an amend prunes: a short suite on a poll may still be mid-write. The row is
+    # soft-deleted even when history points at it, so old Runs retain their foreign key
+    # while active-suite reads and new Run selection no longer expose it.
     if prune:
         HostedHarnessScenario.no_workspace_objects.filter(job=job).exclude(
             scenario_key__in=seen
-        ).filter(call_execution__isnull=True, executions__isnull=True).update(
-            deleted=True, deleted_at=timezone.now()
-        )
+        ).update(deleted=True, deleted_at=timezone.now())
     return written
 
 

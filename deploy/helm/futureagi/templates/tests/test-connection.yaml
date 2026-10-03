@@ -28,10 +28,12 @@ spec:
   automountServiceAccountToken: false
   {{- include "futureagi.block" (dict "text" (include "futureagi.imagePullSecrets" .) "indent" 2) }}
   securityContext:
-    {{- include "futureagi.podSecurityContext" (dict "uid" 1000) | nindent 4 }}
+    {{- include "futureagi.podSecurityContext" (dict "root" $ "uid" 1000) | nindent 4 }}
+  {{- /* Placed like the bootstrap job: the backend's settings, else the chart-wide ones. */}}
+  {{- include "futureagi.block" (dict "text" (include "futureagi.scheduling" (dict "root" . "values" $b)) "indent" 2) }}
   containers:
     - name: test
-      image: {{ include "futureagi.image" (dict "root" . "image" $b.image) }}
+      image: {{ include "futureagi.image" (dict "root" . "image" $b.image "digestKey" "backend") }}
       imagePullPolicy: {{ include "futureagi.imagePullPolicy" (dict "root" . "image" $b.image) }}
       command: ["python", "-c"]
       args:
@@ -53,4 +55,4 @@ spec:
         requests: {cpu: 10m, memory: 64Mi}
         limits: {cpu: 200m, memory: 256Mi}
       securityContext:
-        {{- include "futureagi.containerSecurityContext" (dict) | nindent 8 }}
+        {{- include "futureagi.containerSecurityContext" (dict "root" $) | nindent 8 }}

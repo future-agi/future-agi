@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+from django.test import override_settings
 from django.utils import timezone as django_timezone
 from rest_framework.test import APIClient
 
@@ -83,6 +84,112 @@ def test_provision_binds_rows_indexed_during_authoring(organization):
     assert {registration.id for registration in registrations} == indexed_ids
     assert all(registration.scenario_id for registration in registrations)
     assert all(registration.dataset_row_id for registration in registrations)
+
+
+@pytest.mark.django_db
+def test_provision_hides_rows_indexed_for_scenarios_the_suite_dropped(organization):
+    from simulate.models import HostedHarnessScenario
+
+    job, _ = create_hosted_job(
+        organization,
+        _payload(scenario_count=2),
+        idempotency_key="provision-drops-stale-index-rows",
+    )
+    kept = {
+        "scenario_key": "late-refund",
+        "name": "Sam",
+        "situation": "My refund is late",
+    }
+    added = {
+        "scenario_key": "duplicate-charge",
+        "name": "Avery",
+        "situation": "Charged twice",
+    }
+    dropped = {
+        "scenario_key": "wrong-address",
+        "name": "Lee",
+        "situation": "Wrong address",
+    }
+    index_scenarios(job, [kept, dropped])
+    kept_id = job.scenario_registrations.get(scenario_key="late-refund").id
+
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    response = APIClient().post(
+        f"{BASE}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "provision",
+            "name": "Billing support suite",
+            "modality": "text",
+            "personas": [kept, added],
+        },
+        format="json",
+        **_headers(capability),
+    )
+
+    assert response.status_code == 200, response.content
+    live = {row.scenario_key: row for row in job.scenario_registrations.all()}
+    assert set(live) == {"late-refund", "duplicate-charge"}
+    assert live["late-refund"].id == kept_id
+    assert all(row.scenario_id and row.dataset_row_id for row in live.values())
+    stale = HostedHarnessScenario.all_objects.get(job=job, scenario_key="wrong-address")
+    assert stale.deleted is True
+
+
+@pytest.mark.django_db
+def test_provision_still_refuses_to_drop_a_registered_scenario(organization):
+    job, _ = create_hosted_job(
+        organization,
+        _payload(scenario_count=2),
+        idempotency_key="provision-keeps-registered-rows",
+    )
+    kept = {
+        "scenario_key": "late-refund",
+        "name": "Sam",
+        "situation": "My refund is late",
+    }
+    registered = {
+        "scenario_key": "wrong-address",
+        "name": "Lee",
+        "situation": "Wrong address",
+    }
+    added = {
+        "scenario_key": "duplicate-charge",
+        "name": "Avery",
+        "situation": "Charged twice",
+    }
+    index_scenarios(job, [kept, registered])
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    client, headers = APIClient(), _headers(capability)
+    first = client.post(
+        f"{BASE}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "provision",
+            "name": "Suite",
+            "modality": "text",
+            "personas": [kept, registered],
+        },
+        format="json",
+        **headers,
+    )
+    assert first.status_code == 200, first.content
+    job.refresh_from_db()
+    job.run_test = None
+    job.save(update_fields=["run_test"])
+
+    second = client.post(
+        f"{BASE}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "provision",
+            "name": "Suite",
+            "modality": "text",
+            "personas": [kept, added],
+        },
+        format="json",
+        **headers,
+    )
+
+    assert second.status_code == 409, second.content
+    assert job.scenario_registrations.filter(scenario_key="wrong-address").exists()
 
 
 @pytest.mark.django_db
@@ -421,7 +528,7 @@ def test_read_hosted_tool_trace_ignores_blank_and_malformed_lines():
         "simulate.services.hosted_harness_ingestion.get_storage_client",
         return_value=storage,
     ):
-        calls = _read_hosted_tool_trace(artifact)
+        calls = _read_hosted_tool_trace(artifact, None)
 
     assert calls == [
         {"name": "lookup", "ok": True},
@@ -429,6 +536,29 @@ def test_read_hosted_tool_trace_ignores_blank_and_malformed_lines():
     ]
     response.close.assert_called_once_with()
     response.release_conn.assert_called_once_with()
+
+
+def test_read_hosted_tool_trace_places_timed_calls_on_the_transcript_clock():
+    response = MagicMock()
+    response.read.return_value = (
+        b'{"name":"lookup","at":1700000012.5}\n'
+        b'{"name":"untimed","at":0}\n'
+        b'{"name":"missing"}\n'
+    )
+    storage = MagicMock()
+    storage.get_object.return_value = response
+
+    with patch(
+        "simulate.services.hosted_harness_ingestion.get_storage_client",
+        return_value=storage,
+    ):
+        calls = _read_hosted_tool_trace(MagicMock(object_key="trace"), 1700000010.0)
+
+    assert calls == [
+        {"name": "lookup", "at": 1700000012.5, "start_time_ms": 2500},
+        {"name": "untimed", "at": 0},
+        {"name": "missing"},
+    ]
 
 
 def _payload(**overrides):
@@ -481,6 +611,39 @@ def _headers(capability):
         "HTTP_AUTHORIZATION": f"Bearer {capability.token}",
         "HTTP_X_HARNESS_FENCE": capability.fence,
     }
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "requested_budget,effective_budget",
+    [
+        (1_073_741_824, 10_737_418_240),
+        (21_474_836_480, 21_474_836_480),
+    ],
+)
+def test_hosted_job_budget_floor_preserves_request_identity(
+    organization, requested_budget, effective_budget
+):
+    payload = _payload()
+    payload["artifacts"]["max_artifact_bytes"] = requested_budget
+    request_digest = canonical_digest(payload)
+    with override_settings(HARNESS_MAX_ARTIFACT_BYTES=10_737_418_240):
+        job, created = create_hosted_job(
+            organization, payload, idempotency_key="configured-artifact-budget"
+        )
+    with override_settings(HARNESS_MAX_ARTIFACT_BYTES=32_212_254_720):
+        retried, retry_created = create_hosted_job(
+            organization, payload, idempotency_key="configured-artifact-budget"
+        )
+
+    job.refresh_from_db()
+    assert created is True
+    assert retry_created is False
+    assert retried.id == job.id
+    assert job.max_artifact_bytes == effective_budget
+    assert job.payload["artifacts"]["max_artifact_bytes"] == effective_budget
+    assert job.request_digest == request_digest
+    assert payload["artifacts"]["max_artifact_bytes"] == requested_budget
 
 
 @pytest.mark.django_db
@@ -647,7 +810,7 @@ def test_hosted_voice_transcript_offsets_follow_the_recording(
     rows = call.transcripts.order_by("start_time_ms", "created_at")
     assert [row.start_time_ms for row in rows] == expected_starts
     assert [row.end_time_ms for row in rows] == [
-        expected_starts[1],
+        expected_starts[0] + 3740,
         expected_starts[1],
         expected_starts[2] + 7180,
     ]
@@ -878,9 +1041,7 @@ def test_capability_budget_starts_after_sandbox_provisioning(organization, setti
     attempt.refresh_from_db()
     assert activated.token == capability.token
     assert activated.fence == capability.fence
-    expected_active_budget = (
-        3600 + job.payload["runtime"]["max_duration_seconds"]
-    )
+    expected_active_budget = 3600 + job.payload["runtime"]["max_duration_seconds"]
     assert job.deadline_at == activated_at + timedelta(seconds=expected_active_budget)
     assert attempt.expires_at == job.deadline_at + timedelta(seconds=420)
     assert activated.document["expires_at"] == attempt.expires_at.isoformat(
@@ -1491,7 +1652,8 @@ def test_artifact_upload_is_content_addressed_and_manifest_is_acked(organization
 
 
 @pytest.mark.django_db
-def test_artifact_budget_is_rechecked_after_concurrent_upload(organization):
+def test_artifact_budget_is_rechecked_after_concurrent_upload(organization, settings):
+    settings.HARNESS_MAX_ARTIFACT_BYTES = 10
     payload = _payload(
         artifacts={
             "level": "full",

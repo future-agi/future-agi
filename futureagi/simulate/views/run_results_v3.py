@@ -25,6 +25,7 @@ from simulate.services.run_results_v3 import (
     build_call_rows,
     build_evaluation_catalog,
     function_calls,
+    receipt_sub_goal_names,
 )
 from simulate.services.run_results_v3_queries import (
     GROUP_FIELDS,
@@ -235,6 +236,11 @@ class RunCallSerializer(serializers.Serializer):
     completed_at = serializers.DateTimeField(allow_null=True)
     duration_seconds = serializers.FloatField(allow_null=True)
     latency_ms = serializers.FloatField(allow_null=True)
+    avg_stop_time_after_interruption = serializers.IntegerField(
+        allow_null=True,
+        help_text="Average stop time after caller interruption in milliseconds.",
+    )
+    ai_interruption_count = serializers.IntegerField(allow_null=True)
     turn_count = serializers.IntegerField(allow_null=True)
     tokens = serializers.IntegerField(allow_null=True)
     cost_cents = serializers.FloatField(allow_null=True)
@@ -259,12 +265,21 @@ class RunFacetsSerializer(serializers.Serializer):
 class EvaluationColumnSerializer(serializers.Serializer):
     id = serializers.CharField()
     name = serializers.CharField()
+    kind = serializers.ChoiceField(choices=["evaluation", "sub_goal"])
 
 
 class GroupAggregatesSerializer(serializers.Serializer):
     csat = serializers.FloatField(allow_null=True)
     turns = serializers.FloatField(allow_null=True)
     latency_ms = serializers.FloatField(allow_null=True)
+    avg_stop_time_after_interruption = serializers.FloatField(
+        allow_null=True,
+        help_text="Mean call stop latency in milliseconds, excluding unmeasured calls.",
+    )
+    ai_interruptions = serializers.FloatField(
+        allow_null=True,
+        help_text="Mean AI interruption count per call, excluding unmeasured calls.",
+    )
     tokens = serializers.FloatField(allow_null=True)
     evaluations = serializers.JSONField()
 
@@ -381,6 +396,7 @@ class FunctionCallSerializer(serializers.Serializer):
     result = serializers.JSONField(required=False)
     output = serializers.JSONField(required=False)
     duration_ms = serializers.FloatField(required=False)
+    start_time_ms = serializers.IntegerField(required=False)
 
     class Meta:
         ref_name = "SimulateRunV3FunctionCall"
@@ -548,6 +564,14 @@ def build_call_execution_detail(
         ).data
     )
     normalized = row[0]
+    # A sub-goal check is a harness verdict too, but it belongs to the
+    # scenario, not the eval list. Tag each metric so the UI can tell.
+    sub_goal_names = receipt_sub_goal_names(call.call_metadata)
+    for metric in (data.get("eval_metrics") or {}).values():
+        if isinstance(metric, dict) and metric:
+            metric["kind"] = (
+                "sub_goal" if metric.get("name") in sub_goal_names else "evaluation"
+            )
     data.update(
         {
             "goal": normalized["goal"],

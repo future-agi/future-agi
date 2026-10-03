@@ -1,11 +1,13 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { Box, Stack, Typography, Button, Tab, TextField, Popover, MenuItem } from "@mui/material";
+import { Box, Stack, Typography, Button, Tab, TextField, Popover, MenuItem, IconButton, Tooltip } from "@mui/material";
 
 import Iconify from "src/components/iconify";
+import SvgColor from "src/components/svg-color/svg-color";
+import ColumnResizer from "src/components/ColumnResizer/ColumnResizer";
 import { SegmentedTabs } from "src/components/tabs/tabs";
 import { FilterPanel } from "src/components/filter-panel";
-import { SCENARIOS_COPY } from "./scenarios.constants";
+import { ROW_HEIGHTS, SCENARIOS_COPY } from "./scenarios.constants";
 
 // Per-axis icon, keyed by the server grouping `value`. Falls back to a neutral
 // icon for any axis the backend adds later.
@@ -31,8 +33,10 @@ export default function ScenarioToolbar({
   groupBy, onGroupByChange, groupings = [],
   filterFields, filters, onApplyFilters, filterCount,
   shownCount, totalCount, hiddenCount = 0, onClear,
+  rowHeight = "Short", onRowHeightChange,
 }) {
   const [filterAnchor, setFilterAnchor] = useState(null);
+  const [heightAnchor, setHeightAnchor] = useState(null);
   const [groupByAnchor, setGroupByAnchor] = useState(null);
   const anyFilter = query.length > 0 || filterCount > 0;
   // "Show all" reads truer than "Clear" when the only thing set is a hidden
@@ -55,7 +59,7 @@ export default function ScenarioToolbar({
           onChange={(e) => onQueryChange(e.target.value)}
           placeholder={SCENARIOS_COPY.searchPlaceholder}
           InputProps={{
-            sx: { typography: "s2" },
+            sx: { typography: "s2", height: 38 },
             startAdornment: (
               <Box sx={{ pr: 0.75, pl: 0.25, display: "flex", color: "text.subtitle" }}>
                 <Iconify icon="solar:magnifer-linear" width={14} />
@@ -65,7 +69,7 @@ export default function ScenarioToolbar({
           sx={{ maxWidth: 380, flex: 1 }}
         />
         <Button
-          size="small" variant="outlined"
+          size="medium" variant="outlined"
           onClick={(e) => setGroupByAnchor(e.currentTarget)}
           startIcon={<Iconify icon={groupingIcon(activeGrouping.value)} width={14} />}
           endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={12} />}
@@ -103,7 +107,7 @@ export default function ScenarioToolbar({
           })}
         </Popover>
         <Button
-          size="small" variant="outlined"
+          size="medium" variant="outlined"
           onClick={(e) => setFilterAnchor(e.currentTarget)}
           startIcon={<Iconify icon="mage:filter" width={14} />}
           endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={12} />}
@@ -130,11 +134,33 @@ export default function ScenarioToolbar({
           </>
         )}
         <Box sx={{ flex: 1 }} />
+        {view === "table" && onRowHeightChange && (
+          <Tooltip arrow title={SCENARIOS_COPY.rowHeight}>
+            <IconButton
+              size="medium"
+              aria-label={SCENARIOS_COPY.rowHeight}
+              onClick={(e) => setHeightAnchor(e.currentTarget)}
+            >
+              <SvgColor src="/assets/icons/action_buttons/ic_height.svg" sx={{ width: 16, height: 16, color: "text.primary" }} />
+            </IconButton>
+          </Tooltip>
+        )}
         <SegmentedTabs value={view} onChange={(_, v) => onViewChange(v)} sx={{ flexShrink: 0 }}>
           <Tab value="table" label="Table" />
           <Tab value="list" label="List" />
         </SegmentedTabs>
       </Stack>
+
+      {onRowHeightChange && (
+        <ColumnResizer
+          open={!!heightAnchor}
+          anchorEl={heightAnchor}
+          onClose={() => setHeightAnchor(null)}
+          sizeMapping={ROW_HEIGHTS}
+          defaultActive={rowHeight}
+          setCellHeight={onRowHeightChange}
+        />
+      )}
 
       <FilterPanel
         anchorEl={filterAnchor}
@@ -170,4 +196,6 @@ ScenarioToolbar.propTypes = {
   totalCount: PropTypes.number,
   hiddenCount: PropTypes.number,
   onClear: PropTypes.func,
+  rowHeight: PropTypes.string,
+  onRowHeightChange: PropTypes.func,
 };

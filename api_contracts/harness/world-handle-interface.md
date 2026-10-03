@@ -95,7 +95,7 @@ from the generation-time acceptance gates; read-only; 60s each).
 | `WorldUnavailable` where the capability was never provisioned for ANY world (empty `public` schema, `call` under `tool_trace`) | `capability_unavailable` — domain `environment`; deterministic bundle/scenario mismatch: do NOT retire the world and do NOT retry on another (every world is identical) (v3.5) |
 | `WorldStateTooLarge` raised (check should have used `query()`) | `state_too_large` |
 | the simulated-call machinery crashed (not the agent, not a check) | `call_failed` — domain `infrastructure`; retried once on another world (v3.3) |
-| the LiveKit dispatch was never acknowledged within the ack ladder's +60 s budget (`c3-call-affinity.md` v0.4 §4.5) | `voice_dispatch_unacknowledged` — domain `infrastructure`; retried once on another world (like `call_failed`) |
+| the LiveKit dispatch was never acknowledged within the ack ladder's +60 s budget | `voice_dispatch_unacknowledged` — domain `infrastructure`; retried once on another world (like `call_failed`) |
 | `ready`/`check` raised an exception | `ready_broken` / `check_broken` — the broken-value rows cover exceptions too, matching `run_check` (v3.4) |
 | the scheduler's own machinery failed while driving the scenario | `driver_crashed` — not retried (v3.4) |
 

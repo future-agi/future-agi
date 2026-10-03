@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import gzip
+import hashlib
 import io
 import json
+import os
 import tarfile
+import tempfile
+import tracemalloc
+import zlib
 from contextlib import nullcontext
 from datetime import timedelta
 from types import SimpleNamespace
@@ -35,11 +40,13 @@ from simulate.services.hosted_harness_gateway import (
     _connector_egress_domains,
     _execution_ttl_seconds,
     _known_simulator_egress_inputs,
+    _add_scoped_guest_pin_policy,
     _normalize_egress_domains,
     _platform_simulator_material,
     _provider_egress_domains,
     _provider_import_authoring_material,
     _resolved_egress_domains,
+    _scenarios_cli_command,
     _validate_resolved_egress_domains,
     _webrtc_egress_cidrs,
     attach_platform_simulator_secret_refs,
@@ -70,8 +77,53 @@ def _isolate_platform_simulator_environment(settings, monkeypatch):
         "ALK_HOSTED_AGENTCC_MODEL",
         "ALK_HARNESS",
         "ALK_HARNESS_MODEL",
+        "ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER",
+        "ALK_CAB_GUEST_POC_PIN",
     ):
         monkeypatch.delenv(name, raising=False)
+
+
+def test_private_pin_policy_is_phone_scoped_and_fails_closed(monkeypatch) -> None:
+    monkeypatch.setenv("ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER", "+15551234567")
+    monkeypatch.setenv("ALK_CAB_GUEST_POC_PIN", "7682")
+    job = SimpleNamespace(
+        organization_id="org-approved",
+        payload={
+            "agent": {
+                "connector": "phone",
+                "config": {"phone_number": "+15551234567"},
+            }
+        },
+    )
+    values = {}
+    assert _add_scoped_guest_pin_policy(values, job) is True
+    assert values == {
+        "ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER": "+15551234567",
+        "ALK_CAB_GUEST_POC_PIN": "7682",
+    }
+
+    values.clear()
+    job.organization_id = "org-other"
+    assert _add_scoped_guest_pin_policy(values, job) is True
+    assert values == {
+        "ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER": "+15551234567",
+        "ALK_CAB_GUEST_POC_PIN": "7682",
+    }
+
+    values.clear()
+    job.payload["agent"]["config"]["phone_number"] = "+15557654321"
+    assert _add_scoped_guest_pin_policy(values, job) is False
+    assert values == {}
+
+
+def test_add_scenarios_carries_job_only_for_target_scoped_policy() -> None:
+    scoped = _scenarios_cli_command(
+        name="guest", count=12, guidance=[], include_job=True
+    )
+    generic = _scenarios_cli_command(name="guest", count=12, guidance=[])
+
+    assert "--job /work/job.json" in scoped
+    assert "--job /work/job.json" not in generic
 
 
 def test_guest_failure_cause_preserves_legacy_runnable_entrypoint_blocker() -> None:
@@ -122,8 +174,8 @@ def test_platform_simulator_material_uses_deployment_credentials_only(
     assert values["LIVEKIT_API_SECRET"] == "platform-livekit-secret"
     assert values["SIP_OUTBOUND_TRUNK_ID"] == "ST_platform-outbound"
     assert values["SIP_OUTBOUND_FROM_NUMBER"] == "+14155550123"
-    assert values["ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER"] == "+15551234567"
-    assert values["ALK_CAB_GUEST_POC_PIN"] == "7682"
+    assert "ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER" not in values
+    assert "ALK_CAB_GUEST_POC_PIN" not in values
     assert values["ALK_HARNESS"] == "claude"
     assert values["ALK_HARNESS_MODEL"] == "vertex_ai/gemini-3.7-flash"
     assert values["ALK_CLAUDE_GATEWAY_URL"] == "https://gateway.futureagi.test"
@@ -218,6 +270,13 @@ def test_platform_ambience_clips_reach_the_harness_and_its_egress(monkeypatch):
         None,
     )
     assert {urlparse(clip["url"]).hostname for clip in clips} <= domains
+
+
+def test_caller_barge_in_rate_comes_from_platform_configuration(monkeypatch):
+    monkeypatch.setenv("ALK_HARNESS", "gemini")
+    monkeypatch.setenv("HARNESS_CALLER_BARGE_IN_RATE", "0.2")
+    values, _ = _platform_simulator_material()
+    assert values["HARNESS_CALLER_BARGE_IN_RATE"] == "0.2"
 
 
 def test_a_deployment_catalogue_overrides_the_platform_clips(monkeypatch, tmp_path):
@@ -1262,7 +1321,10 @@ def test_offline_delivery_replays_durable_guest_spool(monkeypatch):
             archive.addfile(member, io.BytesIO(body))
 
     sandbox = _Sandbox()
-    sandbox.fs.download_file = lambda path, timeout=None: archive_body.getvalue()
+    sandbox.fs.download_file_stream = lambda path, timeout=None: (
+        archive_body.getvalue()[offset : offset + 64]
+        for offset in range(0, len(archive_body.getvalue()), 64)
+    )
     gateway = object.__new__(HostedHarnessGateway)
     gateway.client = SimpleNamespace(get=lambda *args, **kwargs: sandbox)
     attempt = SimpleNamespace(
@@ -1273,13 +1335,16 @@ def test_offline_delivery_replays_durable_guest_spool(monkeypatch):
     replayed = []
     recovered_receipt_options = []
 
+    def artifact_ingest(*args, **kwargs):
+        replayed.append(("artifact", kwargs["stream"].read()))
+
     def receipt_ingest(*args, **kwargs):
         replayed.append(("receipt", args[1]))
         recovered_receipt_options.append(kwargs)
 
     monkeypatch.setattr(
         "simulate.services.hosted_harness_ingestion.ingest_artifact",
-        lambda *args, **kwargs: replayed.append(("artifact", kwargs)),
+        artifact_ingest,
     )
     monkeypatch.setattr(
         "simulate.services.hosted_harness_ingestion.ingest_event_batch",
@@ -1306,7 +1371,256 @@ def test_offline_delivery_replays_durable_guest_spool(monkeypatch):
         "receipt",
         "manifest",
     ]
-    assert replayed[0][1]["stream"].read() == artifact
+    assert replayed[0][1] == artifact
+
+
+@pytest.mark.parametrize("overflow", ["compressed", "expanded"])
+def test_offline_delivery_rejects_oversized_spool_before_replay(monkeypatch, overflow):
+    max_bytes = 16 * 1024 * 1024
+    closed = []
+
+    def chunks(path, timeout=None):
+        try:
+            if overflow == "compressed":
+                # A gzip header then empty stored blocks: it inflates to nothing, so only
+                # the download cap can stop it.
+                yield b"\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff"
+                chunk = b"\x00\x00\x00\xff\xff" * 13107
+                for _ in range(max_bytes // len(chunk) + 1):
+                    yield chunk
+            else:
+                body = io.BytesIO()
+                with tarfile.open(fileobj=body, mode="w:gz") as archive:
+                    member = tarfile.TarInfo("outbound-spool/artifacts/large.bin")
+                    member.size = max_bytes + 1
+                    archive.addfile(member, io.BytesIO(b"\0" * member.size))
+                yield body.getvalue()
+        finally:
+            closed.append(True)
+
+    sandbox = _Sandbox()
+    sandbox.fs.download_file_stream = chunks
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = SimpleNamespace(get=lambda *args, **kwargs: sandbox)
+    attempt = SimpleNamespace(
+        provider_ref="sandbox-1", job=SimpleNamespace(max_artifact_bytes=0)
+    )
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_ingestion.ingest_artifact",
+        lambda *args, **kwargs: pytest.fail("oversized spool must not be replayed"),
+    )
+
+    with pytest.raises(HostedHarnessError) as error:
+        gateway._recover_offline_delivery(attempt)
+    assert error.value.code == "offline_delivery_too_large"
+    assert closed == [True]
+
+
+class _CountingFile:
+    def __init__(self, file, read, written):
+        self._file, self._read, self._written = file, read, written
+
+    def read(self, *args):
+        data = self._file.read(*args)
+        self._read.append(len(data))
+        return data
+
+    def write(self, data):
+        self._written.append(len(data))
+        return self._file.write(data)
+
+    def __getattr__(self, name):
+        return getattr(self._file, name)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        self._file.close()
+
+
+def _offline_recovery(monkeypatch, archive, *, max_artifact_bytes):
+    """Gateway whose sandbox serves ``archive``, plus the bytes read from and written to its temp files."""
+    read, written = [], []
+    temporary_file = tempfile.TemporaryFile
+    monkeypatch.setattr(
+        tempfile,
+        "TemporaryFile",
+        lambda *args, **kwargs: _CountingFile(
+            temporary_file(*args, **kwargs), read, written
+        ),
+    )
+    sandbox = _Sandbox()
+    sandbox.fs.download_file_stream = lambda path, timeout=None: iter([archive])
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = SimpleNamespace(get=lambda *args, **kwargs: sandbox)
+    attempt = SimpleNamespace(
+        id="attempt-1",
+        provider_ref="sandbox-1",
+        job=SimpleNamespace(max_artifact_bytes=max_artifact_bytes),
+    )
+    return gateway, attempt, read, written
+
+
+def test_offline_delivery_reads_the_spool_once_in_any_archive_order(monkeypatch):
+    # `tar -czf` stores members in directory order, but replay reads them sorted by name.
+    # Store them in reverse so every replay step would seek backwards through a gzip stream.
+    bodies = {}
+    for _ in range(40):
+        body = os.urandom(32 * 1024)
+        bodies[hashlib.sha256(body).hexdigest()] = body
+    raw = io.BytesIO()
+    with tarfile.open(fileobj=raw, mode="w") as archive:
+        for digest in sorted(bodies, reverse=True):
+            metadata = json.dumps(
+                {
+                    "digest": digest,
+                    "kind": "recording",
+                    "size": len(bodies[digest]),
+                    "content_type": "audio/wav",
+                    "scenario_key": "one",
+                }
+            ).encode()
+            for name, data in (
+                (f"outbound-spool/artifacts/{digest}.json", metadata),
+                (f"outbound-spool/artifacts/{digest}.bin", bodies[digest]),
+            ):
+                member = tarfile.TarInfo(name)
+                member.size = len(data)
+                archive.addfile(member, io.BytesIO(data))
+        manifest = tarfile.TarInfo("outbound-spool/manifest.json")
+        manifest.size = 2
+        archive.addfile(manifest, io.BytesIO(b"{}"))
+    gateway, attempt, read, _ = _offline_recovery(
+        monkeypatch, gzip.compress(raw.getvalue()), max_artifact_bytes=16 * 1024 * 1024
+    )
+    replayed = {}
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_ingestion.ingest_artifact",
+        lambda *args, **kwargs: replayed.update(
+            {kwargs["digest"]: kwargs["stream"].read()}
+        ),
+    )
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_ingestion.ingest_manifest",
+        lambda *args, **kwargs: None,
+    )
+
+    assert gateway._recover_offline_delivery(attempt) is True
+    assert replayed == bodies
+    # Every artifact is read once from the inflated tar. Re-inflating the gzip stream on
+    # each backward seek reads the spool roughly once per artifact instead.
+    assert sum(len(body) for body in bodies.values()) <= sum(read)
+    assert sum(read) <= 2 * len(raw.getvalue())
+
+
+def test_offline_delivery_stops_inflating_a_spool_bomb_at_the_budget(monkeypatch):
+    class Zeros(io.RawIOBase):
+        def __init__(self, size):
+            self.left = size
+
+        def readinto(self, buffer):
+            size = min(len(buffer), self.left)
+            buffer[:size] = bytes(size)
+            self.left -= size
+            return size
+
+    bomb = io.BytesIO()
+    with tarfile.open(fileobj=bomb, mode="w:gz") as archive:
+        member = tarfile.TarInfo("outbound-spool/artifacts/bomb.bin")
+        # 16x the cap of a zero budget, about 256 KiB once gzipped.
+        member.size = 256 * 1024 * 1024
+        archive.addfile(member, Zeros(member.size))
+    gateway, attempt, _, written = _offline_recovery(
+        monkeypatch, bomb.getvalue(), max_artifact_bytes=0
+    )
+    max_bytes = 16 * 1024 * 1024
+
+    tracemalloc.start()
+    try:
+        with pytest.raises(HostedHarnessError) as error:
+            gateway._recover_offline_delivery(attempt)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert error.value.code == "offline_delivery_too_large"
+    assert sum(written) <= max_bytes + 1024 * 1024
+    assert peak < 8 * 1024 * 1024
+
+
+def test_offline_delivery_rejects_a_sparse_member_larger_than_the_budget(monkeypatch):
+    # A pax GNU-sparse header lets a 10 KiB tar claim a member larger than the budget, so
+    # only the header-size cap, not the inflation cap, stops replay from reading it.
+    raw = io.BytesIO()
+    with tarfile.open(fileobj=raw, mode="w", format=tarfile.PAX_FORMAT) as archive:
+        member = tarfile.TarInfo("outbound-spool/events.spool.jsonl")
+        member.pax_headers = {
+            "GNU.sparse.map": "0,0",
+            "GNU.sparse.numblocks": "1",
+            "GNU.sparse.realsize": str(16 * 1024 * 1024 + 1),
+        }
+        archive.addfile(member, io.BytesIO(b""))
+    gateway, attempt, _, _ = _offline_recovery(
+        monkeypatch, gzip.compress(raw.getvalue()), max_artifact_bytes=0
+    )
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_ingestion.ingest_event_batch",
+        lambda *args, **kwargs: pytest.fail("a sparse member must not be replayed"),
+    )
+
+    with pytest.raises(HostedHarnessError) as error:
+        gateway._recover_offline_delivery(attempt)
+    assert error.value.code == "offline_delivery_too_large"
+
+
+@pytest.mark.parametrize("damage", ["truncated", "trailing", "second_member"])
+def test_offline_delivery_rejects_a_damaged_gzip_stream_before_replay(
+    monkeypatch, damage
+):
+    metadata = {
+        "digest": "one",
+        "kind": "recording",
+        "size": 1,
+        "content_type": "audio/wav",
+        "scenario_key": "one",
+    }
+    raw = io.BytesIO()
+    with tarfile.open(fileobj=raw, mode="w") as archive:
+        for name, data in (
+            ("outbound-spool/artifacts/one.json", json.dumps(metadata).encode()),
+            ("outbound-spool/artifacts/one.bin", b"x"),
+            ("outbound-spool/manifest.json", b"{}"),
+        ):
+            member = tarfile.TarInfo(name)
+            member.size = len(data)
+            archive.addfile(member, io.BytesIO(data))
+    tar = raw.getvalue()
+    manifest_at = (
+        tarfile.open(fileobj=io.BytesIO(tar))
+        .getmember("outbound-spool/manifest.json")
+        .offset
+    )
+    # Every case below inflates its first part to a tar that parses cleanly and holds a
+    # replayable artifact, so only the stream check stands between it and a partial replay.
+    if damage == "truncated":
+        compressor = zlib.compressobj(wbits=zlib.MAX_WBITS | 16)
+        body = compressor.compress(tar[:manifest_at]) + compressor.flush(
+            zlib.Z_FULL_FLUSH
+        )
+        expected = EOFError
+    elif damage == "trailing":
+        body, expected = gzip.compress(tar) + b"\1", ValueError
+    else:
+        body = gzip.compress(tar[:manifest_at]) + gzip.compress(tar[manifest_at:])
+        expected = ValueError
+    gateway, attempt, _, _ = _offline_recovery(monkeypatch, body, max_artifact_bytes=0)
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_ingestion.ingest_artifact",
+        lambda *args, **kwargs: pytest.fail("a damaged spool must not be replayed"),
+    )
+
+    with pytest.raises(expected):
+        gateway._recover_offline_delivery(attempt)
 
 
 def test_offline_control_processes_scenario_registration(monkeypatch):

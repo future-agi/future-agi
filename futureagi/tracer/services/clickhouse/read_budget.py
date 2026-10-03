@@ -3,6 +3,7 @@
 import re
 import time
 from dataclasses import dataclass
+from typing import Any
 
 from clickhouse_connect.driver.exceptions import (
     DatabaseError as ClickHouseConnectDatabaseError,
@@ -125,6 +126,57 @@ class ReadDeadline:
         if cap_ms <= 0:
             raise ValueError("read timeout cap must be positive")
         return min(int(cap_ms), remaining)
+
+
+class WallCappedAnalytics:
+    """Ask ClickHouse to stop every statement at what is left of one wall.
+
+    Application reads carry no server deadline by default: ``timeout_ms`` is
+    admission arithmetic, and ``application_read_settings`` zeroes
+    ``max_execution_time``. A caller that owns a real wall (the exact-refresh
+    worker's ``GRAPH_BACKGROUND_WALL_MS``, an inline chart's interactive wall)
+    wraps its service in this: each statement is sent with
+    ``server_execution_cap_ms`` = the time left on that wall, so a read that
+    would outlast the wall is stopped by the server
+    (``ReadDeadlineExceeded``) instead of reading to the end and holding its
+    slot for a result nobody can use. ``timeout_ms`` and ``settings`` pass
+    through unchanged; a caller's own tighter cap is kept. Below
+    ``floor_ms`` left, the statement is not sent at all. The cap is sent
+    whatever the deadline's ``enforce_on_server`` says: wrapping is the
+    opt-in.
+
+    A server profile locked at ``readonly=1`` accepts no query setting, so on
+    that lane the cap cannot reach the server (the service drops every
+    per-query setting); only the profile's own limits apply there.
+    """
+
+    def __init__(self, delegate: Any, deadline: ReadDeadline, *, floor_ms: int) -> None:
+        self._delegate = delegate
+        self._deadline = deadline
+        self._floor_ms = int(floor_ms)
+
+    def execute_ch_query(
+        self,
+        query: str,
+        params: dict | None = None,
+        timeout_ms: int | None = None,
+        settings: dict | None = None,
+        *,
+        server_execution_cap_ms: int | None = None,
+    ) -> Any:
+        cap_ms = self._deadline.remaining_ms(
+            server_execution_cap_ms, floor_ms=self._floor_ms
+        )
+        return self._delegate.execute_ch_query(
+            query,
+            params or {},
+            timeout_ms=timeout_ms,
+            settings=settings,
+            server_execution_cap_ms=cap_ms,
+        )
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._delegate, name)
 
 
 def is_read_budget_error(exc: Exception) -> bool:

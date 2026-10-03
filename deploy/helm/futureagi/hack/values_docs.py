@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -59,6 +60,23 @@ RULES: list[tuple[str, dict]] = [
     ("*pullPolicy", {"enum": ["", "Always", "IfNotPresent", "Never"]}),
     ("*.tag", {"type": ["string", "number"]}),
     ("*.digest", {"pattern": "^(sha256:[a-f0-9]{64})?$"}),
+    (
+        "image.digests",
+        {
+            "additionalProperties": False,
+            "properties": {
+                k: {"type": "string", "pattern": "^(sha256:[a-f0-9]{64})?$"}
+                for k in (
+                    "backend",
+                    "frontend",
+                    "fiCollector",
+                    "agentccGateway",
+                    "serving",
+                    "codeExecutor",
+                )
+            },
+        },
+    ),
     ("*replicas", REPLICAS),
     ("*.minReplicas", {"type": "integer", "minimum": 1}),
     ("*.maxReplicas", {"type": "integer", "minimum": 1}),
@@ -78,6 +96,16 @@ RULES: list[tuple[str, dict]] = [
     ("*.nodeSelector", STRING_MAP),
     ("nodeSelector", STRING_MAP),
     ("worker.allQueues.excludedQueues", {"items": {"type": "string"}}),
+    (
+        "agentccGateway.redis.enabled",
+        {
+            "anyOf": [
+                {"type": "boolean"},
+                {"type": "string", "enum": ["auto", "true", "false"]},
+            ]
+        },
+    ),
+    ("agentccGateway.redis.db", {"type": "integer", "minimum": 0}),
     (
         "worker.queues",
         {
@@ -106,8 +134,93 @@ RULES: list[tuple[str, dict]] = [
                         },
                     },
                     "extraEnv": SCALAR_MAP,
+                    "autoscaling": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            "enabled": {"type": "boolean"},
+                            "minReplicas": {"type": "integer", "minimum": 1},
+                            "maxReplicas": {"type": "integer", "minimum": 1},
+                            "targetCPUUtilizationPercentage": PERCENT_OR_EMPTY,
+                            "targetMemoryUtilizationPercentage": PERCENT_OR_EMPTY,
+                            "behavior": {"type": "object"},
+                        },
+                    },
+                    "gracefulShutdownSeconds": {"type": "integer", "minimum": 1},
+                    "preStopSleepSeconds": {"type": "integer", "minimum": 0},
+                    "pdb": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            "enabled": {"type": "boolean"},
+                            "maxUnavailable": {"type": ["integer", "string"]},
+                        },
+                    },
+                    "nodeSelector": STRING_MAP,
+                    "tolerations": {"type": "array"},
+                    "affinity": {"type": "object"},
+                    "topologySpreadConstraints": {"type": "array"},
+                    "priorityClassName": {"type": "string"},
+                    "podAnnotations": STRING_MAP,
+                    "podLabels": STRING_MAP,
                 },
             }
+        },
+    ),
+    ("topologySpread.preset", {"enum": ["soft", "hard", "none"]}),
+    # Gateway API durations (HTTPRoute timeouts), or empty.
+    ("gatewayApi.timeouts.*", {"pattern": "^(([0-9]{1,5}(h|m|s|ms)){1,4})?$"}),
+    ("gatewayApi.llmGateway.timeout", {"pattern": "^(([0-9]{1,5}(h|m|s|ms)){1,4})?$"}),
+    ("gatewayApi.parentRefs", {"items": {"type": "object", "required": ["name"]}}),
+    ("*.preStopSleepSeconds", {"minimum": 0}),
+    # Enterprise and hardened operations; validate.yaml enforces the same.
+    ("edition", {"enum": ["oss", "ee"]}),
+    (
+        "global.compatibility.openshift.adaptSecurityContext",
+        {"enum": ["auto", "force", "disabled"]},
+    ),
+    (
+        "license.heartbeat",
+        {
+            "anyOf": [
+                {"type": "null"},
+                {"type": "boolean"},
+                {"type": "string", "enum": ["", "true", "false"]},
+            ]
+        },
+    ),
+    ("global.proxy.httpProxy", {"pattern": "^((http|https|socks5h?)://[^/]+/?)?$"}),
+    ("global.proxy.httpsProxy", {"pattern": "^((http|https|socks5h?)://[^/]+/?)?$"}),
+    (
+        "externalSecrets.secrets",
+        {
+            "propertyNames": {
+                "enum": [
+                    "app",
+                    "llm",
+                    "license",
+                    "email",
+                    "google",
+                    "github",
+                    "microsoft",
+                    "admin",
+                    "postgres",
+                    "clickhouse",
+                    "redis",
+                    "objectStorage",
+                ]
+            },
+            "additionalProperties": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "data": {"type": "object"},
+                    "dataFrom": {"type": "array"},
+                    "secretStoreRef": {"type": "object"},
+                    "refreshInterval": {"type": "string"},
+                    "target": {"type": "object"},
+                },
+            },
         },
     ),
     (
@@ -284,7 +397,7 @@ def main() -> int:
             stale.append("README.md values table")
         if stale:
             print(
-                f"stale: {', '.join(stale)}. Run: python3 {Path(__file__).relative_to(CHART.parent.parent.parent)}",
+                f"stale: {', '.join(stale)}. Run: python3 {os.path.relpath(Path(__file__).resolve())}",
                 file=sys.stderr,
             )
             return 1
