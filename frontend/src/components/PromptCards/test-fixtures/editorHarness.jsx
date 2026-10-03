@@ -39,6 +39,7 @@ export function mountEditor(prompt, extraProps = {}) {
       openVariableEditor={() => {}}
       setSelectedImage={() => {}}
       placeholder="Type here"
+      allowedMediaTypes={["image", "audio", "pdf"]}
       {...extraProps}
     />,
   );

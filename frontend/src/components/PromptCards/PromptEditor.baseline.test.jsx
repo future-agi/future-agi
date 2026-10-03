@@ -43,12 +43,27 @@ describe("PromptEditor baseline (text-only, AC-14.1)", () => {
     expect(cb.data["text/plain"]).toBe("  two  spaces\nnext");
   });
 
-  it("Cmd/Ctrl+A has no Quill binding: the logical selection does not change", () => {
+  it("jsdom reports a non-Mac platform, so metaKey+A is not Quill's shortKey and changes nothing", () => {
+    // Quill resolves shortKey at load from navigator.platform (/Mac/ → metaKey,
+    // else ctrlKey); jsdom's platform is "". The product property (Ctrl/Cmd+A
+    // selects the whole message) is asserted in PromptEditor.selection.test.jsx.
     const { quill } = mountEditor([textBlock("hello")]);
     quill.setSelection(2, 0, "silent");
     const ev = keydown(quill.root, "a", { metaKey: true });
     expect(ev.defaultPrevented).toBe(false);
     expect(quill.getSelection()).toEqual({ index: 2, length: 0 });
+  });
+
+  it("cut of plain text puts the exact selected text on text/plain, removes it, and one undo restores it", () => {
+    const { quill } = mountEditor([textBlock("hello world")]);
+    quill.history.cutoff();
+    quill.setSelection(6, 5, "silent");
+    const cb = clipboardStub();
+    fireClipboard(quill.root, "cut", cb);
+    expect(cb.data["text/plain"]).toBe("world");
+    expect(quill.getContents().ops).toEqual([{ insert: "hello \n" }]);
+    quill.history.undo();
+    expect(quill.getContents().ops).toEqual([{ insert: "hello world\n" }]);
   });
 
   it("variables render as text + EditVariable embed; getBlocks restores the brace", () => {

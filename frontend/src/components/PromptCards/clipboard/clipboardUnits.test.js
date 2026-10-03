@@ -173,6 +173,13 @@ describe("internalClipboardStore.validateRecord (AC-15.1, AC-15.2)", () => {
     });
   });
 
+  it("accepts CRLF clipboard text for a record written with LF (R1)", () => {
+    const rec = { ...good(), text: "line1\nline2" };
+    expect(
+      store.validateRecord(rec, { clipboardText: "line1\r\nline2", live }),
+    ).toEqual({ ok: true });
+  });
+
   it("rejects everything when the live user is signed out", () => {
     expect(
       store.validateRecord(good(), {

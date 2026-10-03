@@ -14,6 +14,8 @@ export const TAB_ID =
   `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 export const ALL_MEDIA_KINDS = ["image", "audio", "pdf"];
+// Default for PromptEditor: no attachment kind may be inserted by paste.
+export const NO_MEDIA_KINDS = Object.freeze([]);
 
 export const OMISSION_REASONS = {
   UNSUPPORTED: "unsupported", // clipboard unavailable / write failed

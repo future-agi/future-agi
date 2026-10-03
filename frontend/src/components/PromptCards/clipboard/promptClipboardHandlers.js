@@ -11,12 +11,7 @@ import {
   itemsContainMedia,
 } from "./textProjection";
 import * as store from "./internalClipboardStore";
-import {
-  ALL_MEDIA_KINDS,
-  INTERNAL_MIME,
-  OMISSION_REASONS,
-  RECORD_VERSION,
-} from "./constants";
+import { INTERNAL_MIME, OMISSION_REASONS, RECORD_VERSION } from "./constants";
 import { BLOT_BY_MEDIA_KIND } from "../Blots/mediaValue";
 
 const Delta = Quill.import("delta");
@@ -28,7 +23,8 @@ export function createPromptClipboardHandlers({
   notify,
   makeId,
 }) {
-  const allowed = () => getAllowedMediaTypes?.() || ALL_MEDIA_KINDS;
+  // Fail closed: without an explicit list nothing may be inserted by paste.
+  const allowed = () => getAllowedMediaTypes?.() || [];
   const report = (reason) => {
     try {
       notify?.(reason);
@@ -129,6 +125,10 @@ export function createPromptClipboardHandlers({
     const handle = readData(e, INTERNAL_MIME);
     const text = readData(e, "text/plain");
     const html = readData(e, "text/html");
+
+    // Nothing this editor can insert (e.g. files only): leave the document
+    // and the current selection exactly as they are.
+    if (!handle && !text && !html) return;
 
     if (!handle) {
       pasteExternal(range, text, html);

@@ -38,7 +38,11 @@ import {
   leafIsMediaEmbed,
   selectAllRange,
 } from "./clipboard/selectionHelpers";
-import { ALL_MEDIA_KINDS, OMISSION_MESSAGES } from "./clipboard/constants";
+import {
+  ALL_MEDIA_KINDS,
+  NO_MEDIA_KINDS,
+  OMISSION_MESSAGES,
+} from "./clipboard/constants";
 
 Quill.register("formats/EditVariable", EditVariableBolt);
 Quill.register("formats/ImageBlot", ImageBlot);
@@ -75,7 +79,10 @@ const PromptEditor = React.forwardRef(
       allVariablesValid = false,
       variableValidator,
       jinjaMode = false,
-      allowedMediaTypes = ALL_MEDIA_KINDS,
+      // Fail closed: a mount that never opts in cannot receive attachment
+      // references by paste (REQ-12). PromptCard/ExpandedPrompt pass the
+      // kinds their attach menu allows.
+      allowedMediaTypes = NO_MEDIA_KINDS,
     },
     quillRef,
   ) => {
@@ -507,8 +514,25 @@ const PromptEditor = React.forwardRef(
                 collapsed: true,
                 handler(range) {
                   if (!this.quill.isEnabled()) return false;
-                  if (!leafIsMediaEmbed(this.quill, range.index)) return true;
-                  this.quill.deleteText(range.index, 1, "user");
+                  let target = -1;
+                  if (leafIsMediaEmbed(this.quill, range.index)) {
+                    target = range.index;
+                  } else {
+                    // Caret at the end of the text line just before a card:
+                    // the next character is that line's newline, so Quill's
+                    // own handler would try to merge the line into the card.
+                    // Remove the card instead, keep the line.
+                    const [line, offset] = this.quill.getLine(range.index);
+                    if (
+                      line &&
+                      offset === line.length() - 1 &&
+                      leafIsMediaEmbed(this.quill, range.index + 1)
+                    ) {
+                      target = range.index + 1;
+                    }
+                  }
+                  if (target < 0) return true;
+                  this.quill.deleteText(target, 1, "user");
                   this.quill.setSelection(range.index, 0, "silent");
                   return false;
                 },
@@ -749,6 +773,12 @@ const PromptEditor = React.forwardRef(
 
         clipboardHandlers.detach();
         quill.root.removeEventListener("mousedown", onEmbedMouseDown);
+
+        // Unmount the React roots of cards and variable chips still in the
+        // document; clearing innerHTML alone never detaches their blots.
+        quill.scroll
+          .descendants((blot) => typeof blot.unmountCard === "function")
+          .forEach((blot) => blot.unmountCard());
 
         quillRef.current = null;
         container.innerHTML = "";

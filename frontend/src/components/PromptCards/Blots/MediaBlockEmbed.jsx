@@ -50,22 +50,30 @@ export default class MediaBlockEmbed extends BlockEmbed {
   }
 
   detach() {
+    this.unmountCard();
+    super.detach();
+  }
+
+  /** Unmounts the React card without touching the Quill document. */
+  unmountCard() {
     const root = this.reactRoot;
     this.reactRoot = null;
     if (root) {
       // React warns when unmount() runs synchronously inside another commit.
       queueMicrotask(() => root.unmount());
     }
-    super.detach();
   }
 
   /** Re-renders the card with the owning editor's current callbacks. */
   renderCard() {
     const normalized = this.domNode[VALUE_KEY];
     if (!normalized) return;
+    // The owning editor's registry wins: it carries the read-only flag and
+    // the user-sourced removal (undo-able, caret placed). Callbacks that were
+    // serialised into the value only fill keys the registry does not define.
     const callbacks = {
-      ...getEmbedCallbacks(this),
       ...normalized.callbacks,
+      ...getEmbedCallbacks(this),
     };
     if (!this.reactRoot) {
       this.reactRoot = createRoot(this.domNode);

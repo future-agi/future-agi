@@ -53,6 +53,7 @@ function Harness({ auth, prompts, refs, props = {} }) {
           openVariableEditor={() => {}}
           setSelectedImage={() => {}}
           placeholder="Type here"
+          allowedMediaTypes={["image", "audio", "pdf"]}
           {...(props[i] || {})}
         />
       ))}
@@ -329,6 +330,111 @@ describe("TH-150 provenance boundary (REQ-15, REQ-16)", () => {
     await pasteInto(b, cb);
     expect(getBlocks(b)).toEqual([{ type: "text", text: "just text\n" }]);
     expect(enqueueSnackbar).not.toHaveBeenCalled();
+  });
+
+  it("AC-12.1 / V2: a mount that does not opt in (no allowedMediaTypes, like PromptImageInput/PromptTTSInput) never receives an attachment by paste", async () => {
+    const {
+      quills: [a, b],
+    } = mountPair([DOC_TEXT_PDF_TEXT, [textBlock("")]], {
+      props: { 1: { allowedMediaTypes: undefined } },
+    });
+    await pasteInto(b, copyAll(a));
+    expect(embedNodes(b)).toHaveLength(0);
+    expect(getBlocks(b)).toEqual([{ type: "text", text: "hello\nworld\n" }]);
+    expect(enqueueSnackbar).toHaveBeenCalledTimes(1);
+    expect(enqueueSnackbar.mock.calls[0][0]).toMatch(/not pasted/);
+  });
+
+  it("AC-12.1: PromptCard wiring — allowAttachment=false maps to an empty allow-list", async () => {
+    const {
+      quills: [a, b],
+    } = mountPair([DOC_TEXT_PDF_TEXT, [textBlock("")]], {
+      props: { 1: { allowedMediaTypes: [] } },
+    });
+    await pasteInto(b, copyAll(a));
+    expect(embedNodes(b)).toHaveLength(0);
+  });
+
+  it("R7: a paste with nothing this editor can insert (files only) leaves the document and selection untouched", async () => {
+    const {
+      quills: [b],
+    } = mountPair([[textBlock("keep me")]]);
+    b.setSelection(0, 4, "silent");
+    const before = b.getContents().ops;
+    const filesOnly = {
+      getData: () => "",
+      setData: () => {},
+      files: [{ name: "shot.png" }],
+      types: ["Files"],
+    };
+    fireClipboard(b.root, "paste", filesOnly);
+    await flush();
+    expect(b.getContents().ops).toEqual(before);
+    expect(b.getSelection()).toEqual({ index: 0, length: 4 });
+  });
+
+  it("AC-16.1 (copy): a clipboard write that throws during copy reports the failure and changes nothing", () => {
+    const {
+      quills: [a],
+    } = mountPair([DOC_TEXT_PDF_TEXT]);
+    a.setSelection(0, a.getLength() - 1, "silent");
+    const before = a.getContents().ops;
+    const denied = {
+      setData: () => {
+        throw new Error("denied");
+      },
+      getData: () => "",
+    };
+    fireClipboard(a.root, "copy", denied);
+    expect(a.getContents().ops).toEqual(before);
+    expect(enqueueSnackbar).toHaveBeenCalledTimes(1);
+    // partial write: text/plain succeeds, the internal handle write throws
+    const partial = clipboardStub();
+    partial.setData = (type, value) => {
+      if (type === INTERNAL_MIME) throw new Error("denied");
+      partial.data[type] = value;
+    };
+    fireClipboard(a.root, "cut", partial);
+    expect(a.getContents().ops).toEqual(before); // cut did not delete
+    expect(enqueueSnackbar).toHaveBeenCalledTimes(2);
+  });
+
+  it("AC-10.1: variables on both sides of an attachment survive a cut/paste round trip", async () => {
+    const {
+      quills: [a, b],
+    } = mountPair([
+      [
+        textBlock("{{first}} x"),
+        {
+          type: "pdf_url",
+          pdf_url: {
+            url: PDF_1P.url,
+            file_name: PDF_1P.name,
+            pdf_size: PDF_1P.size,
+          },
+        },
+        textBlock("{{second}}"),
+      ],
+      [textBlock("")],
+    ]);
+    a.setSelection(0, a.getLength() - 1, "silent");
+    const cb = clipboardStub();
+    fireClipboard(a.root, "cut", cb);
+    expect(cb.data["text/plain"]).toBe("{{first}} x\n{{second}}");
+    expect(a.getContents().ops).toEqual([{ insert: "\n" }]);
+    await pasteInto(b, cb);
+    expect(getBlocks(b)).toEqual([
+      { type: "text", text: "{{first}} x\n" },
+      pdfBlockEmitted,
+      { type: "text", text: "{{second}}\n" },
+    ]);
+    // the pasted variables are highlighted again (EditVariable chips)
+    const chips = b
+      .getContents()
+      .ops.filter((op) => op.insert && op.insert.EditVariable);
+    expect(chips).toHaveLength(2);
+    // AC-13.1: the destination keeps focus
+    expect(b.hasFocus()).toBe(true);
   });
 
   it("AC-11.1 (paste): a read-only destination is never mutated by a rich paste", async () => {

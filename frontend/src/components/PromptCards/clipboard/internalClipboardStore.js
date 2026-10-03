@@ -77,6 +77,11 @@ function sameProvenance(recorded, live) {
  * `clipboardText` is the text/plain the OS clipboard currently holds; a
  * mismatch means the clipboard moved on since the record was written.
  */
+// A platform may hand back CRLF for text written as LF; the comparison is an
+// integrity cross-check, not a security boundary, so line endings are folded.
+const normalizeLineEndings = (s) =>
+  typeof s === "string" ? s.replace(/\r\n?/g, "\n") : s;
+
 export function validateRecord(record, { clipboardText, live }) {
   if (!record || typeof record !== "object") {
     return { ok: false, reason: OMISSION_REASONS.OTHER_CONTEXT };
@@ -84,7 +89,10 @@ export function validateRecord(record, { clipboardText, live }) {
   if (record.version !== RECORD_VERSION) {
     return { ok: false, reason: OMISSION_REASONS.INVALID };
   }
-  if (typeof record.text !== "string" || record.text !== clipboardText) {
+  if (
+    typeof record.text !== "string" ||
+    normalizeLineEndings(record.text) !== normalizeLineEndings(clipboardText)
+  ) {
     return { ok: false, reason: OMISSION_REASONS.OTHER_CONTEXT };
   }
   if (!sameProvenance(record.provenance, live)) {

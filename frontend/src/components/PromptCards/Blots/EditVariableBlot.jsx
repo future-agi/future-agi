@@ -39,12 +39,17 @@ class EditVariableBolt extends BlockEmbed {
   }
 
   detach() {
+    this.unmountCard();
+    super.detach();
+  }
+
+  /** Unmounts the React chip without touching the Quill document. */
+  unmountCard() {
     const root = this.reactRoot;
     this.reactRoot = null;
     if (root) {
       queueMicrotask(() => root.unmount());
     }
-    super.detach();
   }
 
   // Add value method to properly handle the blot's value
