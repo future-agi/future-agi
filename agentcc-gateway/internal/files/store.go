@@ -65,7 +65,10 @@ func (s *Store) Get(id, orgID string) *StoredFile {
 	if f == nil {
 		return nil
 	}
-	if f.OrgID != "" && orgID != "" && f.OrgID != orgID {
+	// Strict ownership: a caller sees a file only if it belongs to the same org.
+	// Both empty (single-tenant) matches; a mismatch — including an empty org
+	// reaching for a tenant's file — does not.
+	if f.OrgID != orgID {
 		return nil
 	}
 	return f
@@ -78,8 +81,8 @@ func (s *Store) List(orgID, purpose string) []models.FileObject {
 
 	var result []models.FileObject
 	for _, f := range s.files {
-		// Filter by org.
-		if f.OrgID != "" && orgID != "" && f.OrgID != orgID {
+		// Strict ownership — see Get. An empty org lists only org-less files.
+		if f.OrgID != orgID {
 			continue
 		}
 		// Filter by purpose if specified.
@@ -100,7 +103,8 @@ func (s *Store) Delete(id, orgID string) bool {
 	if f == nil {
 		return false
 	}
-	if f.OrgID != "" && orgID != "" && f.OrgID != orgID {
+	// Strict ownership — see Get.
+	if f.OrgID != orgID {
 		return false
 	}
 	delete(s.files, id)
