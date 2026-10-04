@@ -547,8 +547,24 @@ async def fetch_and_persist_call_result(
             heartbeater.details = (f"extracting recordings for {input.call_id}",)
 
             recording_urls = await voice_manager.extract_and_persist_recordings(
-                input.call_id
+                input.call_id,
+                recording_context={
+                    "system_engine": input.provider,
+                    "direction": "outbound" if is_outbound else "inbound",
+                    "is_web_bridge": is_web_bridge,
+                    "recording_owner_account": "client"
+                    if use_customer_account
+                    else "system",
+                    "tested_agent_platform": input.client_provider,
+                    "transport": "web_bridge" if is_web_bridge else "sip",
+                },
             )
+            from dataclasses import asdict
+
+            call.audio_provenance = (
+                asdict(recording_urls.provenance) if recording_urls.provenance else None
+            )
+            update_fields.append("audio_provenance")
 
             if recording_urls.recording_url:
                 call.recording_url = recording_urls.recording_url
