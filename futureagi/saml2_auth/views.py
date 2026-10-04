@@ -1,5 +1,4 @@
 import datetime
-import os.path
 import traceback
 
 import requests
@@ -19,9 +18,8 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.views import APIView
 
 from accounts.authentication import generate_encrypted_message
-from accounts.gcp_marketplace_utils import encode_oauth_state
+from accounts.gcp_marketplace_utils import encode_oauth_state, read_oauth_state
 from accounts.gcp_marketplace_utils import process_signup as marketplace_signup
-from accounts.gcp_marketplace_utils import read_oauth_state
 from accounts.models.auth_token import (
     AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES,
     AuthToken,
@@ -48,6 +46,7 @@ from saml2_auth.serializers import (
     SAMLStringResponseSerializer,
     SAMLUrlResponseSerializer,
 )
+from saml2_auth.services import build_sp_client
 from tfc.middleware.workspace_context import get_current_organization
 
 # from user.permissions_manager import PermissionManager
@@ -57,7 +56,7 @@ from tfc.settings.settings import (
     AUTH0_CLIENT_ID,
     AUTH0_CLIENT_SECRET,
     AUTH0_DOMAIN,
-    BASE_DIR,
+    BASE_DIR,  # noqa: F401 - retained as a non-I/O compatibility hook for integrations
     GITHUB_API_ENDPOINT,
     GITHUB_CALLBACK_URL,
     GITHUB_CLIENT_ID,
@@ -73,7 +72,6 @@ from tfc.settings.settings import (
     default_next_url,
     get_assertion_url,
     get_entity_id,
-    get_name_id_format,
     get_started_url,
 )
 from tfc.utils.api_contracts import validated_request
@@ -151,57 +149,6 @@ except Exception:
     import urllib.parse
 
 
-def _get_metadata(alias):
-    saml_metadata_model = SAMLMetadataModel.objects.filter(identity_type=alias).first()
-    meta_dir = os.path.join(
-        BASE_DIR,
-        "metadata",
-    )
-    if not os.path.exists(meta_dir):
-        os.makedirs(meta_dir)
-    meta_file_path = os.path.join(meta_dir, f"{saml_metadata_model.relay_state}.xml")
-    if not os.path.isfile(meta_file_path):
-        with open(meta_file_path, "w") as fh:
-            fh.write(saml_metadata_model.meta)
-
-    return {"local": [meta_file_path]}, saml_metadata_model.identity_type
-
-
-def _get_saml_client(alias, acs_url):
-    from saml2 import BINDING_HTTP_POST, BINDING_HTTP_REDIRECT  # lazy
-    from saml2.client import Saml2Client  # lazy
-    from saml2.config import Config as Saml2Config  # lazy
-
-    metadata, identity_type = _get_metadata(alias)
-    saml_settings = {
-        "metadata": metadata,
-        "service": {
-            "sp": {
-                "endpoints": {
-                    "assertion_consumer_service": [
-                        (acs_url, BINDING_HTTP_REDIRECT),
-                        (acs_url, BINDING_HTTP_POST),
-                    ],
-                },
-                "allow_unsolicited": True,
-                "authn_requests_signed": False,
-                "logout_requests_signed": True,
-                "want_assertions_signed": True,
-                "want_response_signed": False,
-            },
-        },
-        "entityid": get_entity_id,
-    }
-
-    saml_settings["service"]["sp"]["name_id_format"] = get_name_id_format
-
-    spConfig = Saml2Config()
-    spConfig.load(saml_settings)
-    spConfig.allow_unknown_attributes = True
-    saml_client = Saml2Client(config=spConfig)
-    return saml_client, identity_type
-
-
 def get_alias(request):
     return request.get_host().split(".")[0]
 
@@ -219,26 +166,6 @@ def _format_form_errors(errors):
 class ACSView(APIView):
     _gm = GeneralMethods()
     parser_classes = [FormParser, MultiPartParser]
-
-    def save_auth_response(self, authn_response, user_identity):
-        """Save SAML authentication response to a file"""
-        try:
-            log_dir = os.path.join(BASE_DIR, "saml_logs")
-            if not os.path.exists(log_dir):
-                os.makedirs(log_dir)
-
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = os.path.join(log_dir, f"saml_response_{timestamp}.txt")
-
-            with open(filename, "w") as f:
-                f.write("Authentication Response:\n")
-                f.write(str(authn_response) + "\n\n")
-                f.write("User Identity:\n")
-                f.write(str(user_identity))
-
-            logger.info(f"SAML response saved to {filename}")
-        except Exception as e:
-            logger.error(f"Failed to save SAML response: {str(e)}")
 
     @swagger_auto_schema(
         request_body=no_body,
@@ -258,9 +185,8 @@ class ACSView(APIView):
             if not saml_obj:
                 raise Exception("RelayState No Valid")
 
-            saml_client, identity_type = _get_saml_client(
-                saml_obj.identity_type, get_assertion_url
-            )
+            saml_client = build_sp_client(saml_obj, get_assertion_url)
+            identity_type = saml_obj.identity_type
 
             if not resp:
                 raise Exception("Unauthorised")
@@ -337,12 +263,6 @@ class ACSView(APIView):
             access_token_encrypted = generate_encrypted_message(
                 {"user_id": str(user_model.id), "id": str(access_token.id)}
             )
-            cache.set(
-                f"access_token_{str(access_token.id)}",
-                {"token": access_token_encrypted, "user": user_model},
-                timeout=AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES * 60,
-            )
-
             next_url = default_next_url
             next_url += f"?sso_token={str(access_token_encrypted)}"
             login_next_url = request.session.get("login_next_url", None)
@@ -356,9 +276,8 @@ class ACSView(APIView):
             track_mixpanel_event(MixpanelEvents.SSO_LOGIN.value, properties)
             return HttpResponseRedirect(next_url)
 
-        except Exception as e:
-            self._gm.error_log(api_view="ACSView.post", code="ACS001", message=str(e))
-            traceback.print_exc()
+        except Exception:
+            logger.warning("saml_acs_rejected", reason="response_invalid")
             encoded = urlsafe_base64_encode(
                 b"SAML is not enabled for your organization. Please contact your Administrator"
             )
@@ -407,7 +326,6 @@ class IDPLoginView(APIView):
                 logger.info("Saml Data does not Exist")
                 return self._gm.bad_request(msg)
 
-            alias = saml_data.identity_type
             next_url = request.GET.get("next", default_next_url)
 
             try:
@@ -419,7 +337,7 @@ class IDPLoginView(APIView):
                 next_url = request.GET.get("next", default_next_url)
             request.session["login_next_url"] = next_url
 
-            saml_client, identity_type = _get_saml_client(alias, get_assertion_url)
+            saml_client = build_sp_client(saml_data, get_assertion_url)
             _, info = saml_client.prepare_for_authenticate()
 
             redirect_url = None
@@ -434,9 +352,8 @@ class IDPLoginView(APIView):
                 return self._gm.bad_request(msg)
             return self._gm.success_response({"url": redirect_url})
 
-        except Exception as e:
-            traceback.print_exc()
-            logger.error(e)
+        except Exception:
+            logger.warning("saml_login_denied", reason="idp_unavailable")
             return self._gm.bad_request(msg)
 
 
