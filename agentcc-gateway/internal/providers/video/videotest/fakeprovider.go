@@ -139,7 +139,8 @@ func (a *fakeAdapter) call(ctx context.Context, path string, body any, token str
 	if resp.StatusCode >= 400 {
 		defer resp.Body.Close()
 		b, _ := io.ReadAll(resp.Body)
-		return nil, &video.UpstreamError{Status: resp.StatusCode, Retryable: resp.StatusCode == 429 || resp.StatusCode >= 500, Body: b}
+		seconds, _ := strconv.Atoi(resp.Header.Get("Retry-After"))
+		return nil, &video.UpstreamError{RetryAfter: time.Duration(seconds) * time.Second, Status: resp.StatusCode, Retryable: resp.StatusCode == 429 || resp.StatusCode >= 500, Body: b}
 	}
 	return resp, nil
 }

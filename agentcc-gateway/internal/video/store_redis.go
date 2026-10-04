@@ -33,7 +33,7 @@ func (s *RedisStore) idemKey(j *VideoJob) string {
 	return s.opts.Prefix + "idem:" + url.QueryEscape(j.OrgID) + ":" + url.QueryEscape(j.IdemOp) + ":" + j.IdemDigest
 }
 func (s *RedisStore) keys(j *VideoJob) []string {
-	return []string{s.jobKey(j.ID), s.leaseKey(j.ID), s.orgKey(j.OrgID), s.idemKey(j), s.opts.Prefix + "submit", s.opts.Prefix + "due", s.opts.Prefix + "reconcile", s.opts.Prefix + "expire"}
+	return []string{s.jobKey(j.ID), s.leaseKey(j.ID), s.orgKey(j.OrgID), s.idemKey(j), s.opts.Prefix + "submit", s.opts.Prefix + "due", s.opts.Prefix + "reconcile", s.opts.Prefix + "expire", s.opts.Prefix + "active:org:" + url.QueryEscape(j.OrgID), s.opts.Prefix + "active:account:" + url.QueryEscape(j.Service+":"+j.AccountRef+":"+j.ModelID), s.reservationGuard(j.ID)}
 }
 func (s *RedisStore) do(fn func(redis.UniversalClient) error) error {
 	if s.client == nil {
@@ -58,7 +58,7 @@ func (s *RedisStore) eval(ctx context.Context, script string, keys []string, arg
 // back earlier writes. Every multi-key mutation either bootstraps a fresh fence
 // for a new record or validates both the live lease and persisted fencing token.
 const redisWritePrelude = `
-local expected_types = {'hash','string','zset','string','zset','zset','zset','zset'}
+local expected_types = {'hash','string','zset','string','zset','zset','zset','zset','zset','zset','string'}
 for i,k in ipairs(KEYS) do
  local t = redis.call('TYPE',k).ok
  if t ~= 'none' and t ~= expected_types[i] then return redis.error_reply('video key type mismatch') end
@@ -76,6 +76,10 @@ local function indexes(d)
  local expiry = math.max(tonumber(d.expires_at or '0'),tonumber(d.idempotency_expires_at or '0'))
  if expiry > 0 then redis.call('ZADD',KEYS[8],expiry,id) else redis.call('ZREM',KEYS[8],id) end
  if d.org_id == '' then return end
+ local terminal = d.status == 'completed' or d.status == 'failed' or d.status == 'cancelled'
+ if not terminal or d.upstream_may_continue == 'true' then
+  redis.call('ZADD',KEYS[9],0,id); redis.call('ZADD',KEYS[10],0,id)
+ else redis.call('ZREM',KEYS[9],id); redis.call('ZREM',KEYS[10],id) end
  local deleted = d.deleted_at ~= nil and d.deleted_at ~= ''
  local active = not deleted or protected(d)
  local next_at = tonumber(d.next_poll_at or '0')
@@ -115,11 +119,16 @@ end
 const redisCreateScript = redisWritePrelude + `
 local d = cjson.decode(ARGV[1])
 local use_idem = ARGV[2] == '1'
+if ARGV[5] ~= '' and redis.call('GET',KEYS[11]) ~= ARGV[5] then return {-3,''} end
 if use_idem then
  local existing = redis.call('GET',KEYS[4])
  if existing then return {0,existing} end
 end
 if redis.call('EXISTS',KEYS[1]) == 1 then return {-2,''} end
+if use_idem then
+ if tonumber(d.org_max_active or '0') > 0 and redis.call('ZCARD',KEYS[9]) >= tonumber(d.org_max_active) then return {-6,''} end
+ if tonumber(d.account_max_active or '0') > 0 and redis.call('ZCARD',KEYS[10]) >= tonumber(d.account_max_active) then return {-6,''} end
+end
 if not redis.call('SET',KEYS[2],ARGV[3] .. ':1','NX','PX',5000) then return {-3,''} end
 -- The acceptor owns the initial fence; no worker can claim until this script ends.
 d.lease_fence = '1'
@@ -129,6 +138,7 @@ if redis.call('GET',KEYS[2]) ~= ARGV[3] .. ':1' then return {-1,''} end
 if use_idem then redis.call('SET',KEYS[4],ARGV[4],'NX') end
 write(d)
 redis.call('DEL',KEYS[2])
+redis.call('HSET',KEYS[1],'lease_released','true')
 return {1,d.id}
 `
 const redisSaveScript = redisWritePrelude + `
@@ -152,6 +162,7 @@ elseif old == 'submitting' and phase == 'calling' then allowed = status == 'queu
 elseif old == 'submission_unknown' then allowed = status == 'queued' or status == 'running' or status == 'completed' or status == 'failed' or status == 'cancelled'
 elseif old == 'queued' then allowed = status == 'running' or status == 'completed' or status == 'failed' or status == 'cancelled'
 elseif old == 'running' then allowed = status == 'completed' or status == 'failed' or status == 'cancelled' end
+if old == 'submission_unknown' and status == 'submitting' and d.phase == 'prepared' and d.resubmit_authorized == 'true' then allowed = true end
 if not allowed then return {-4} end
 local deleted = redis.call('HGET',KEYS[1],'deleted_at')
 if deleted and deleted ~= '' then d.deleted_at = deleted end
@@ -169,10 +180,12 @@ if ARGV[3] == '1' then
  if not score or tonumber(score) > tonumber(ARGV[5]) then return {0} end
 end
 if redis.call('EXISTS',KEYS[2]) == 1 then return {-2} end
+local takeover=0
+if redis.call('HGET',KEYS[1],'lease_released')=='false' then takeover=1 end
 local fence = redis.call('HINCRBY',KEYS[1],'lease_fence',1)
 if not redis.call('SET',KEYS[2],ARGV[1] .. ':' .. fence,'NX','PX',ARGV[2]) then return {-2} end
-redis.call('HSET',KEYS[1],'lease_owner',ARGV[1])
-return {1,fence}
+redis.call('HSET',KEYS[1],'lease_owner',ARGV[1],'lease_released','false')
+return {1,fence,takeover}
 `
 const redisRenewScript = `
 if redis.call('GET',KEYS[2]) ~= ARGV[1] .. ':' .. ARGV[2] or redis.call('HGET',KEYS[1],'lease_fence') ~= ARGV[2] or (redis.call('HGET',KEYS[1],'org_id') or '') == '' then return {-1} end
@@ -182,6 +195,7 @@ return {1}
 const redisReleaseScript = `
 if redis.call('GET',KEYS[2]) ~= ARGV[1] .. ':' .. ARGV[2] or redis.call('HGET',KEYS[1],'lease_fence') ~= ARGV[2] or (redis.call('HGET',KEYS[1],'org_id') or '') == '' then return {-1} end
 redis.call('DEL',KEYS[2])
+redis.call('HSET',KEYS[1],'lease_released','true')
 return {1}
 `
 const redisGCScript = redisWritePrelude + `
@@ -195,7 +209,7 @@ if expiry <= 0 or expiry > tonumber(ARGV[3]) then return {0} end
 local value=redis.call('GET',KEYS[4])
 local same_binding = false
 if value then local binding=cjson.decode(value);same_binding = binding.id == d.id end
-for _,i in ipairs({3,5,6,7,8}) do redis.call('ZREM',KEYS[i],d.id) end
+for _,i in ipairs({3,5,6,7,8,9,10}) do redis.call('ZREM',KEYS[i],d.id) end
 if same_binding then redis.call('DEL',KEYS[4]) end
 redis.call('DEL',KEYS[1],KEYS[2])
 return {1}
@@ -210,10 +224,10 @@ func (s *RedisStore) Create(j *VideoJob) error {
 	if err := validateJob(j); err != nil {
 		return err
 	}
-	_, err := s.create(context.Background(), j, false)
+	_, err := s.create(context.Background(), j, false, "")
 	return err
 }
-func (s *RedisStore) create(ctx context.Context, j *VideoJob, useIdem bool) (*idemBinding, error) {
+func (s *RedisStore) create(ctx context.Context, j *VideoJob, useIdem bool, reservationToken string) (*idemBinding, error) {
 	fields, err := encodeJob(j)
 	if err != nil {
 		return nil, err
@@ -227,7 +241,7 @@ func (s *RedisStore) create(ctx context.Context, j *VideoJob, useIdem bool) (*id
 	if useIdem {
 		flag = 1
 	}
-	result, err := s.eval(ctx, redisCreateScript, s.keys(j), string(data), flag, NewID(), string(binding))
+	result, err := s.eval(ctx, redisCreateScript, s.keys(j), string(data), flag, NewID(), string(binding), reservationToken)
 	if err != nil {
 		return nil, err
 	}
@@ -240,6 +254,8 @@ func (s *RedisStore) create(ctx context.Context, j *VideoJob, useIdem bool) (*id
 			return nil, fmt.Errorf("%w: invalid idempotency binding", ErrStoreUnavailable)
 		}
 		return &b, nil
+	case -6:
+		return nil, ErrActiveLimit
 	case -2:
 		return nil, ErrVideoJobExists
 	default:
@@ -272,11 +288,11 @@ func (s *RedisStore) Accept(ctx context.Context, req AcceptRequest) (AcceptResul
 		}
 		return s.replay(ctx, binding, j.Fingerprint)
 	}
-	compensate, err := reserve(s.opts, j)
+	compensate, finish, token, err := s.reserveAccept(ctx, j)
 	if err != nil {
 		return AcceptResult{}, err
 	}
-	binding, err := s.create(ctx, j, true)
+	binding, err := s.create(ctx, j, true, token)
 	if err != nil {
 		// A lost reply is not proof that the Lua transaction failed. Read back on
 		// an independent bounded context even if the request context was cancelled.
@@ -300,6 +316,7 @@ func (s *RedisStore) Accept(ctx context.Context, req AcceptRequest) (AcceptResul
 				return AcceptResult{}, errors.Join(err, ErrReservationUncertain)
 			}
 			if found.ID == j.ID && found.Fingerprint == j.Fingerprint {
+				_ = finish()
 				return s.replay(recovery, found, j.Fingerprint)
 			}
 			if e := compensate(); e != nil {
@@ -315,8 +332,12 @@ func (s *RedisStore) Accept(ctx context.Context, req AcceptRequest) (AcceptResul
 		}
 		return s.replay(ctx, *binding, j.Fingerprint)
 	}
+	_ = finish() // A lost cleanup reply is harmless; GC sees the committed job.
 	persisted, err := s.GetAccounting(ctx, j.ID)
-	return AcceptResult{Job: persisted}, err
+	if err != nil {
+		return AcceptResult{}, errors.Join(err, ErrReservationUncertain)
+	}
+	return AcceptResult{Job: persisted}, nil
 }
 func (s *RedisStore) replay(ctx context.Context, binding idemBinding, fp string) (AcceptResult, error) {
 	j, err := s.GetAccounting(ctx, binding.ID)
@@ -388,7 +409,7 @@ func (s *RedisStore) lease(ctx context.Context, id, owner string, ttl time.Durat
 	case -2:
 		return Lease{}, ErrLeaseHeld
 	}
-	return Lease{JobID: id, Owner: owner, Fence: result[1].(int64), ExpiresAt: s.opts.Now().Add(ttl)}, nil
+	return Lease{Takeover: result[2].(int64) == 1, JobID: id, Owner: owner, Fence: result[1].(int64), ExpiresAt: s.opts.Now().Add(ttl)}, nil
 }
 func (s *RedisStore) Renew(ctx context.Context, l Lease, ttl time.Duration) error {
 	if ttl < time.Millisecond {
@@ -428,7 +449,7 @@ func (s *RedisStore) Save(ctx context.Context, j *VideoJob, l Lease) error {
 	if err := validateImmutable(old, copy); err != nil {
 		return err
 	}
-	if err := ValidateTransition(old.Status, old.Phase, copy.Status, copy.Phase); err != nil {
+	if err := ValidateTransition(old.Status, old.Phase, copy.Status, copy.Phase); err != nil && !authorizedResubmit(old, copy) {
 		return err
 	}
 	if old.DeletedAt != nil {
@@ -631,6 +652,9 @@ func (s *RedisStore) ClaimReconcile(ctx context.Context, o string, ttl time.Dura
 }
 func (s *RedisStore) GarbageCollect() (int, error) {
 	ctx := context.Background()
+	if err := s.recoverReservations(ctx); err != nil {
+		return 0, err
+	}
 	var ids []string
 	err := s.do(func(rdb redis.UniversalClient) error {
 		var err error
@@ -670,3 +694,16 @@ func (s *RedisStore) GarbageCollect() (int, error) {
 
 var _ Store = (*RedisStore)(nil)
 var _ Store = (*MemoryStore)(nil)
+
+func (s *RedisStore) ListAccounting(ctx context.Context) ([]*VideoJob, error) {
+	var ids []string
+	err := s.do(func(c redis.UniversalClient) error {
+		var e error
+		ids, e = c.ZRange(ctx, s.opts.Prefix+"expire", 0, -1).Result()
+		return e
+	})
+	if err != nil {
+		return nil, err
+	}
+	return s.readJobs(ctx, ids)
+}

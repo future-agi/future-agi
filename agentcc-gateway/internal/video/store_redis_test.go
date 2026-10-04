@@ -263,7 +263,7 @@ func (h *lostAcceptReply) ProcessPipelineHook(next redis.ProcessPipelineHook) re
 func (h *lostAcceptReply) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
 	return func(ctx context.Context, cmd redis.Cmder) error {
 		err := next(ctx, cmd)
-		if err == nil && (cmd.Name() == "eval" || cmd.Name() == "evalsha") && len(cmd.Args()) == 15 && fmt.Sprint(cmd.Args()[12]) == "1" {
+		if err == nil && (cmd.Name() == "eval" || cmd.Name() == "evalsha") && len(cmd.Args()) == 19 && fmt.Sprint(cmd.Args()[2]) == "11" && fmt.Sprint(cmd.Args()[15]) == "1" {
 			h.once.Do(func() { h.fired = true; err = errors.New("test: Redis reply lost after execution") })
 		}
 		return err

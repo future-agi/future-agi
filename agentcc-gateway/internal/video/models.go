@@ -8,6 +8,26 @@ import (
 
 // VideoJob represents a video generation job.
 type VideoJob struct {
+	StateChangedAt     time.Time             `json:"-" store:"state_changed_at"`
+	OrgMaxActive       int                   `json:"-" store:"org_max_active"`
+	AccountMaxActive   int                   `json:"-" store:"account_max_active"`
+	KeyType            string                `json:"-" store:"key_type"`
+	CorrelationData    map[string]string     `json:"-" store:"correlation_data"`
+	Observation        *provider.Observation `json:"-" store:"observation"`
+	Ingress            []InputAsset          `json:"-" store:"ingress"`
+	RateUSDPerMillion  float64               `json:"-" store:"rate_usd_per_million"`
+	BillingKnown       bool                  `json:"-" store:"billing_known"`
+	BillingMicros      int64                 `json:"-" store:"billing_micros"`
+	PostPluginsDone    bool                  `json:"-" store:"post_plugins_done"`
+	CopyAttempts       int                   `json:"-" store:"copy_attempts"`
+	DownloadAttempts   int                   `json:"-" store:"download_attempts"`
+	CopyBy             time.Time             `json:"-" store:"copy_by"`
+	SchemaFailures     int                   `json:"-" store:"schema_failures"`
+	ResubmitAuthorized bool                  `json:"-" store:"resubmit_authorized"`
+	ProgressReported   bool                  `json:"-" store:"progress_reported"`
+	CancelScope        string                `json:"-" store:"cancel_scope"`
+	TraceParentID      string                `json:"-" store:"trace_parent_id"`
+
 	KeyID                string              `json:"-" store:"key_id"`
 	Creator              string              `json:"-" store:"creator"`
 	Phase                string              `json:"-" store:"phase"`
@@ -116,52 +136,52 @@ func (j *VideoJob) IsTerminal() bool {
 }
 
 // ToSubmitResponse returns the 202 receipt response.
-func (j *VideoJob) ToSubmitResponse() map[string]interface{} {
-	return map[string]interface{}{
-		"id":         j.ID,
-		"object":     "video",
-		"status":     j.Status,
-		"model":      j.Model,
-		"created_at": j.CreatedAt.Unix(),
-		"expires_at": j.ExpiresAt.Unix(),
-		"progress":   j.Progress,
-	}
-}
+func (j *VideoJob) ToSubmitResponse() map[string]interface{} { return j.ToStatusResponse() }
 
-// ToStatusResponse returns the full job status.
+// ToStatusResponse is an explicit public allowlist. It never serializes the
+// persisted request, credentials, provider URLs or blob keys.
 func (j *VideoJob) ToStatusResponse() map[string]interface{} {
+	var progress any
+	if j.ProgressReported {
+		progress = j.Progress
+	}
+	timestamp := func(t time.Time) any {
+		if t.IsZero() {
+			return nil
+		}
+		return t.Unix()
+	}
 	resp := map[string]interface{}{
-		"id":         j.ID,
-		"object":     "video",
-		"status":     j.Status,
-		"model":      j.Model,
-		"progress":   j.Progress,
-		"created_at": j.CreatedAt.Unix(),
-		"expires_at": j.ExpiresAt.Unix(),
+		"id": j.ID, "object": "video", "status": j.Status, "model": j.Model, "provider_state": j.ProviderState,
+		"created_at": j.CreatedAt.Unix(), "updated_at": j.UpdatedAt.Unix(), "expires_at": j.ExpiresAt.Unix(), "progress": progress, "error": j.Error,
+		"resolved":   map[string]any{"service": j.Service, "model_id": j.ModelID, "region": j.Region, "capability_revision": j.CapabilityRevision},
+		"deadlines":  map[string]any{"submit_by": timestamp(j.SubmitBy), "run_by": timestamp(j.RunBy)},
+		"retry_safe": j.RetrySafe, "upstream_may_continue": j.UpstreamMayContinue,
+		"cancellation": map[string]any{"state": j.CancelState}, "reconciliation": map[string]any{"state": j.ReconcileState},
+		"estimate": map[string]any{"unit": j.EstimateUnit, "quantity": j.EstimateQty, "usd": nil, "tariff_revision": j.TariffRevision, "basis": "upper_bound"},
+		"metadata": j.ClientMetadata,
 	}
-	if j.StartedAt != nil {
-		resp["started_at"] = j.StartedAt.Unix()
+	if j.CancelScope != "" {
+		resp["cancellation"].(map[string]any)["scope"] = j.CancelScope
 	}
-	if j.CompletedAt != nil {
-		resp["completed_at"] = j.CompletedAt.Unix()
+	if j.TariffRevision != "" {
+		resp["estimate"].(map[string]any)["usd"] = j.EstimateUSD
 	}
-	if len(j.Videos) > 0 {
-		resp["videos"] = j.Videos
+	for k, t := range map[string]*time.Time{"submitted_at": j.SubmittedAt, "completed_at": j.CompletedAt, "last_checked_at": j.LastCheckedAt, "late_success_at": j.LateSuccessAt} {
+		if t != nil {
+			resp[k] = t.Unix()
+		}
 	}
-	if j.Error != nil {
-		resp["error"] = j.Error
+	list := make([]map[string]any, 0, len(j.Artifacts))
+	for _, a := range j.Artifacts {
+		list = append(list, map[string]any{"index": a.Index, "content_type": a.ContentType, "bytes": a.Bytes, "width": a.Width, "height": a.Height, "duration_seconds": a.DurationSeconds, "state": a.State, "expires_at": a.ExpiresAt.Unix(), "error": a.Error})
 	}
+	resp["artifacts"] = list
 	if j.Usage != nil {
-		resp["usage"] = j.Usage
+		resp["usage"] = map[string]any{"lines": j.Usage.Lines}
 	}
-	if j.Cost > 0 {
-		resp["cost"] = j.Cost
-	}
-	if len(j.ClientMetadata) > 0 {
-		resp["metadata"] = j.ClientMetadata
-	}
-	if j.RemixSourceID != "" {
-		resp["remix_source"] = j.RemixSourceID
+	if j.SettlementState == SettlementSettled || j.SettlementState == SettlementReleased {
+		resp["cost"] = map[string]any{"usd": float64(j.SettledMicros) / 1e6, "source": "reconciled", "tariff_revision": j.TariffRevision, "currency": "USD"}
 	}
 	return resp
 }
@@ -178,4 +198,14 @@ type Artifact struct {
 	State           string      `json:"state"`
 	ExpiresAt       time.Time   `json:"expires_at"`
 	Error           *VideoError `json:"error,omitempty"`
+}
+
+// InputAsset refers to a verified ingress blob; client URLs and inline bodies
+// are removed from the persisted request before acceptance.
+type InputAsset struct {
+	Key             string
+	Digest          string
+	Bytes           int64
+	Width, Height   int
+	DurationSeconds float64
 }

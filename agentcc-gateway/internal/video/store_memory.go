@@ -110,6 +110,22 @@ func (s *MemoryStore) Accept(ctx context.Context, req AcceptRequest) (AcceptResu
 		s.mu.Unlock()
 		return AcceptResult{}, errors.Join(ErrVideoJobExists, compensate())
 	}
+	orgCount, accountCount := 0, 0
+	for _, other := range s.jobs {
+		if other.OrgID == "" || other.IsTerminal() && !other.UpstreamMayContinue {
+			continue
+		}
+		if other.OrgID == j.OrgID {
+			orgCount++
+		}
+		if other.Service == j.Service && other.AccountRef == j.AccountRef && other.ModelID == j.ModelID {
+			accountCount++
+		}
+	}
+	if req.OrgMaxActive > 0 && orgCount >= req.OrgMaxActive || req.AccountMaxActive > 0 && accountCount >= req.AccountMaxActive {
+		s.mu.Unlock()
+		return AcceptResult{}, errors.Join(ErrActiveLimit, compensate())
+	}
 	j.LeaseFence = 1
 	s.jobs[j.ID] = j
 	s.idem[idemScope(j)] = j.ID
@@ -139,7 +155,8 @@ func (s *MemoryStore) leaseLocked(id, owner string, ttl time.Duration) (Lease, e
 	}
 	j.LeaseFence++
 	j.LeaseOwner = owner
-	l := Lease{JobID: id, Owner: owner, Fence: j.LeaseFence, ExpiresAt: now.Add(ttl)}
+	_, takeover := s.leases[id]
+	l := Lease{Takeover: takeover, JobID: id, Owner: owner, Fence: j.LeaseFence, ExpiresAt: now.Add(ttl)}
 	s.leases[id] = l
 	return l, nil
 }
@@ -196,7 +213,7 @@ func (s *MemoryStore) Save(ctx context.Context, j *VideoJob, l Lease) error {
 	if err := validateImmutable(old, copy); err != nil {
 		return err
 	}
-	if err := ValidateTransition(old.Status, old.Phase, copy.Status, copy.Phase); err != nil {
+	if err := ValidateTransition(old.Status, old.Phase, copy.Status, copy.Phase); err != nil && !authorizedResubmit(old, copy) {
 		return err
 	}
 	if old.DeletedAt != nil {
@@ -370,4 +387,23 @@ func (s *MemoryStore) idempotentIDLocked(j *VideoJob) string {
 		return ""
 	}
 	return id
+}
+
+func (s *MemoryStore) ListAccounting(ctx context.Context) ([]*VideoJob, error) {
+	if e := ctx.Err(); e != nil {
+		return nil, e
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := []*VideoJob{}
+	for _, j := range s.jobs {
+		if j.OrgID != "" {
+			c, e := cloneJob(j)
+			if e != nil {
+				return nil, e
+			}
+			out = append(out, c)
+		}
+	}
+	return out, nil
 }

@@ -25,6 +25,7 @@ var (
 	ErrLeaseHeld           = errors.New("video lease held")
 	ErrLeaseLost           = errors.New("video lease lost")
 	ErrStoreUnavailable    = errors.New("video_store_unavailable")
+	ErrActiveLimit         = errors.New("video active job limit exceeded")
 	ErrBudgetExceeded      = errors.New("budget_exceeded")
 	ErrCompensationFailed  = errors.New("video reservation compensation failed")
 )
@@ -45,6 +46,7 @@ type Store interface {
 	GarbageCollect() (int, error)
 	Accept(context.Context, AcceptRequest) (AcceptResult, error)
 	GetAccounting(context.Context, string) (*VideoJob, error)
+	ListAccounting(context.Context) ([]*VideoJob, error)
 	Lease(context.Context, string, string, time.Duration) (Lease, error)
 	Renew(context.Context, Lease, time.Duration) error
 	Release(context.Context, Lease) error
@@ -66,15 +68,17 @@ type BudgetReservation struct {
 	Limit, ModelLimit  float64
 }
 type AcceptRequest struct {
-	Job                       *VideoJob
-	Operation, IdempotencyKey string
-	Reservations              []BudgetReservation
+	OrgMaxActive, AccountMaxActive int
+	Job                            *VideoJob
+	Operation, IdempotencyKey      string
+	Reservations                   []BudgetReservation
 }
 type AcceptResult struct {
 	Job    *VideoJob
 	Replay bool
 }
 type Lease struct {
+	Takeover     bool
 	JobID, Owner string
 	Fence        int64
 	ExpiresAt    time.Time
@@ -136,6 +140,8 @@ func prepareAccept(req AcceptRequest, opts StoreOptions) (*VideoJob, error) {
 	j.Phase = PhasePrepared
 	j.IdemDigest = digest(req.IdempotencyKey)
 	j.IdemOp = req.Operation
+	j.OrgMaxActive = req.OrgMaxActive
+	j.AccountMaxActive = req.AccountMaxActive
 	j.Reservations = append([]BudgetReservation(nil), req.Reservations...)
 	now := opts.Now().UTC()
 	if j.CreatedAt.IsZero() {
