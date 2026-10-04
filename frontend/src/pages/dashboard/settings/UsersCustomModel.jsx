@@ -11,7 +11,8 @@ import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
 import { preventHeaderSelection } from "src/utils/utils";
 import { useDebounce } from "src/hooks/use-debounce";
 import { AgGridReact } from "ag-grid-react";
-import { format } from "date-fns";
+import { fDateLocal } from "src/utils/format-time";
+import { LocalDateTime } from "src/components/date-time/LocalDateTime";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { LoadingButton } from "@mui/lab";
 import { enqueueSnackbar } from "notistack";
@@ -137,11 +138,8 @@ const UsersCustomModel = () => {
         headerName: "Date Added",
         field: "created_at",
         flex: 1,
-        valueFormatter: (p) => {
-          if (!p.value) return ""; // Ensures no errors
-          const date = new Date(p.value);
-          return isNaN(date.getTime()) ? "" : format(date, "dd-MM-yyyy");
-        },
+        valueFormatter: (params) => fDateLocal(params.value),
+        cellRenderer: (params) => <LocalDateTime value={params.value} />,
       },
     ],
     [],

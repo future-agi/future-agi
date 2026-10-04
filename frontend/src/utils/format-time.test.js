@@ -2,7 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   fDate,
+  fDateLocal,
   fDateTime,
+  fDateTimeLocal,
+  describeInstant,
   fTimestamp,
   fToNow,
   fToNowStrict,
@@ -42,6 +45,188 @@ describe("toValidDate", () => {
     const parsed = toValidDate(1773567000000);
     expect(parsed).toBeInstanceOf(Date);
     expect(parsed.getTime()).toBe(1773567000000);
+  });
+});
+
+const INSTANT = "2025-10-31T00:00:00Z";
+const NativeDateTimeFormat = Intl.DateTimeFormat;
+
+describe("local instant formatters", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it.each([
+    ["Asia/Kolkata", "31 Oct 2025", "5:30 AM", "UTC+05:30"],
+    ["America/Los_Angeles", "30 Oct 2025", "5:00 PM", "UTC-07:00"],
+    ["UTC", "31 Oct 2025", "12:00 AM", "UTC+00:00"],
+    ["Europe/Berlin", "31 Oct 2025", "1:00 AM", "UTC+01:00"],
+  ])("formats the same instant in %s", (timeZone, date, time, offset) => {
+    const options = { timeZone };
+    expect(fDateLocal(INSTANT, options)).toBe(date);
+    expect(fDateTimeLocal(INSTANT, options)).toBe(`${date}, ${time}`);
+    expect(describeInstant(INSTANT, options)).toEqual({
+      local: `${date}, ${time}`,
+      zone: timeZone,
+      offset,
+      utc: "2025-10-31T00:00:00.000Z",
+    });
+  });
+
+  it.each([
+    ["Asia/Kolkata", "1 Jan 2026", "5:00 AM"],
+    ["America/New_York", "31 Dec 2025", "6:30 PM"],
+  ])("handles the year boundary in %s", (timeZone, date, time) => {
+    const value = "2025-12-31T23:30:00Z";
+    expect(fDateLocal(value, { timeZone })).toBe(date);
+    expect(fDateTimeLocal(value, { timeZone })).toBe(`${date}, ${time}`);
+  });
+
+  it.each([
+    ["2025-03-09T09:30:00Z", "9 Mar 2025, 1:30 AM", "UTC-08:00"],
+    ["2025-03-09T10:30:00Z", "9 Mar 2025, 3:30 AM", "UTC-07:00"],
+    ["2025-11-02T08:30:00Z", "2 Nov 2025, 1:30 AM", "UTC-07:00"],
+    ["2025-11-02T09:30:00Z", "2 Nov 2025, 1:30 AM", "UTC-08:00"],
+  ])("preserves DST offset and UTC identity for %s", (value, local, offset) => {
+    const options = { timeZone: "America/Los_Angeles" };
+    expect(fDateTimeLocal(value, options)).toBe(local);
+    expect(describeInstant(value, options)).toEqual({
+      local,
+      zone: options.timeZone,
+      offset,
+      utc: new Date(value).toISOString(),
+    });
+  });
+
+  it.each([
+    "2025-10-31T05:30:00+05:30",
+    "2025-10-30T17:00:00-0700",
+    new Date(INSTANT),
+    Date.parse(INSTANT),
+  ])("accepts equivalent zoned strings, Dates and epoch-ms: %s", (value) => {
+    const options = { timeZone: "Asia/Kolkata" };
+    expect(fDateLocal(value, options)).toBe("31 Oct 2025");
+    expect(fDateTimeLocal(value, options)).toBe("31 Oct 2025, 5:30 AM");
+    expect(describeInstant(value, options)).toEqual(
+      describeInstant(INSTANT, options),
+    );
+  });
+
+  it("accepts epoch zero without treating it as missing", () => {
+    const options = { timeZone: "UTC" };
+    expect(fDateLocal(0, options)).toBe("1 Jan 1970");
+    expect(fDateTimeLocal(0, options)).toBe("1 Jan 1970, 12:00 AM");
+    expect(describeInstant(0, options).utc).toBe("1970-01-01T00:00:00.000Z");
+  });
+
+  it.each([
+    "2025-10-31T05:30:00",
+    "2025-10-31",
+    null,
+    undefined,
+    "",
+    "garbage",
+    {},
+    NaN,
+    Infinity,
+    new Date("x"),
+    "2025-13-31T00:00:00Z",
+    "2025-02-30T00:00:00Z",
+    "Fri, 31 Oct 2025 00:00:00 GMT",
+    true,
+    [],
+  ])("rejects missing, invalid or non-instant input: %s", (value) => {
+    const options = { timeZone: "UTC" };
+    expect(fDateLocal(value, options)).toBe("");
+    expect(fDateTimeLocal(value, options)).toBe("");
+    expect(describeInstant(value, options)).toBeNull();
+  });
+
+  it.each(["en-US", "en-GB", "en-IN"])(
+    "keeps English month names and the requested zone under host locale %s",
+    (hostLocale) => {
+      vi.spyOn(Intl, "DateTimeFormat").mockImplementation(
+        (locale, options) =>
+          new NativeDateTimeFormat(locale || hostLocale, options),
+      );
+      const options = { timeZone: "Asia/Kolkata" };
+      expect(fDateLocal(INSTANT, options)).toBe("31 Oct 2025");
+      expect(fDateTimeLocal(INSTANT, options)).toBe("31 Oct 2025, 5:30 AM");
+      expect(describeInstant(INSTANT, options).local).toBe(
+        "31 Oct 2025, 5:30 AM",
+      );
+    },
+  );
+
+  it("falls back to UTC for an invalid explicit display zone", () => {
+    const options = { timeZone: "Invalid/Zone" };
+    expect(fDateLocal(INSTANT, options)).toBe("31 Oct 2025");
+    expect(fDateTimeLocal(INSTANT, options)).toBe("31 Oct 2025, 12:00 AM");
+    expect(describeInstant(INSTANT, options).zone).toBe("UTC");
+  });
+});
+
+describe("getDisplayTimeZone", () => {
+  beforeEach(() => vi.resetModules());
+  afterEach(() => vi.restoreAllMocks());
+
+  function mockDetectedZone(resolvedOptions) {
+    return vi
+      .spyOn(Intl, "DateTimeFormat")
+      .mockImplementation((locale, options) =>
+        locale === undefined
+          ? { resolvedOptions }
+          : new NativeDateTimeFormat(locale, options),
+      );
+  }
+
+  it("detects one zone for all helpers and retains it until page reload", async () => {
+    const resolvedOptions = vi
+      .fn()
+      .mockReturnValue({ timeZone: "Asia/Kolkata" });
+    mockDetectedZone(resolvedOptions);
+    const helpers = await import("./format-time");
+    expect(helpers.getDisplayTimeZone()).toBe("Asia/Kolkata");
+    resolvedOptions.mockReturnValue({ timeZone: "America/Los_Angeles" });
+    expect(helpers.fDateLocal(INSTANT)).toBe("31 Oct 2025");
+    expect(helpers.fDateTimeLocal(INSTANT)).toBe("31 Oct 2025, 5:30 AM");
+    expect(helpers.describeInstant(INSTANT).zone).toBe("Asia/Kolkata");
+    expect(helpers.getDisplayTimeZone()).toBe("Asia/Kolkata");
+    expect(resolvedOptions).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([{}, { timeZone: "" }, { timeZone: "Invalid/Zone" }])(
+    "uses UTC when the detected zone is missing or invalid: %s",
+    async (options) => {
+      mockDetectedZone(() => options);
+      const helpers = await import("./format-time");
+      expect(helpers.getDisplayTimeZone()).toBe("UTC");
+      expect(helpers.fDateTimeLocal(INSTANT)).toBe("31 Oct 2025, 12:00 AM");
+    },
+  );
+
+  it("uses UTC when resolvedOptions throws", async () => {
+    mockDetectedZone(() => {
+      throw new Error("No timezone available");
+    });
+    const { getDisplayTimeZone } = await import("./format-time");
+    expect(getDisplayTimeZone()).toBe("UTC");
+  });
+
+  it("uses UTC when reading the timeZone property throws", async () => {
+    mockDetectedZone(() => ({
+      get timeZone() {
+        throw new Error("No timezone available");
+      },
+    }));
+    const { getDisplayTimeZone } = await import("./format-time");
+    expect(getDisplayTimeZone()).toBe("UTC");
+  });
+
+  it("uses UTC when constructing the detector throws", async () => {
+    vi.spyOn(Intl, "DateTimeFormat").mockImplementation(() => {
+      throw new Error("No timezone available");
+    });
+    const { getDisplayTimeZone } = await import("./format-time");
+    expect(getDisplayTimeZone()).toBe("UTC");
   });
 });
 
