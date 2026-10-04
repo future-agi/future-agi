@@ -2536,7 +2536,7 @@ class VapiService(VoiceServiceBlueprint):
                     artifact_type=VapiArtifactType.MONO,
                     project_id=project_id,
                     call_scoped=True,
-                    recording_generation=call.audio_analysis_generation,
+                    recording_generation=getattr(call, "audio_analysis_generation", 0),
                 )
                 result.recording_url = s3_url
                 emit_recording_storage_usage("recording", payload_bytes)
@@ -2561,7 +2561,7 @@ class VapiService(VoiceServiceBlueprint):
                     artifact_type=VapiArtifactType.STEREO,
                     project_id=project_id,
                     call_scoped=True,
-                    recording_generation=call.audio_analysis_generation,
+                    recording_generation=getattr(call, "audio_analysis_generation", 0),
                 )
                 result.stereo_recording_url = s3_url
                 emit_recording_storage_usage("stereo_recording", payload_bytes)
@@ -2586,7 +2586,7 @@ class VapiService(VoiceServiceBlueprint):
                     artifact_type=VapiArtifactType.ASSISTANT,
                     project_id=project_id,
                     call_scoped=True,
-                    recording_generation=call.audio_analysis_generation,
+                    recording_generation=getattr(call, "audio_analysis_generation", 0),
                 )
                 result.assistant_recording_url = s3_url
                 emit_recording_storage_usage("assistant_recording", payload_bytes)
@@ -2611,7 +2611,7 @@ class VapiService(VoiceServiceBlueprint):
                     artifact_type=VapiArtifactType.CUSTOMER,
                     project_id=project_id,
                     call_scoped=True,
-                    recording_generation=call.audio_analysis_generation,
+                    recording_generation=getattr(call, "audio_analysis_generation", 0),
                 )
                 result.customer_recording_url = s3_url
                 emit_recording_storage_usage("customer_recording", payload_bytes)

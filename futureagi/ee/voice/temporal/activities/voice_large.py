@@ -559,10 +559,11 @@ async def fetch_and_persist_call_result(
                     "transport": "web_bridge" if is_web_bridge else "sip",
                 },
             )
-            from dataclasses import asdict
+            from dataclasses import asdict, is_dataclass
 
+            provenance = getattr(recording_urls, "provenance", None)
             call.audio_provenance = (
-                asdict(recording_urls.provenance) if recording_urls.provenance else None
+                asdict(provenance) if is_dataclass(provenance) else None
             )
             update_fields.append("audio_provenance")
 
