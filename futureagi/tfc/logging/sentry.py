@@ -132,10 +132,17 @@ def _is_sensitive_key(key: Any) -> bool:
     return any(s in lowered for s in SENSITIVE_KEY_SUBSTRINGS)
 
 
+_SAML_VALUE_MARKERS = ("<saml:", "<samlp:", "SAMLResponse=", "fai_saml_b_")
+
+
 def _scrub(value: Any, depth: int = 0) -> Any:
     """Recursively redact values under sensitive keys (defensive, bounded)."""
     if depth > 6:
         return value
+    if isinstance(value, str) and any(
+        marker in value for marker in _SAML_VALUE_MARKERS
+    ):
+        return _REDACTED
     if isinstance(value, dict):
         return {
             k: (_REDACTED if _is_sensitive_key(k) else _scrub(v, depth + 1))
@@ -172,6 +179,22 @@ def _scrub_event(event: dict) -> None:
     contexts = event.get("contexts")
     if isinstance(contexts, dict):
         event["contexts"] = _scrub(contexts)
+
+    # Sentry captures local variables (include_local_variables=True). An
+    # uncaught error in the ACS candidate-store path leaves the raw assertion
+    # in the view's stack frame; redact those vars the same way as request data
+    # so the assertion body never leaves the process (review finding 1, B7).
+    exception = event.get("exception")
+    if isinstance(exception, dict):
+        for value in exception.get("values") or []:
+            if not isinstance(value, dict):
+                continue
+            stacktrace = value.get("stacktrace")
+            if not isinstance(stacktrace, dict):
+                continue
+            for frame in stacktrace.get("frames") or []:
+                if isinstance(frame, dict) and isinstance(frame.get("vars"), dict):
+                    frame["vars"] = _scrub(frame["vars"])
 
 
 def _event_message(event: dict) -> str:
