@@ -13,7 +13,7 @@ from rest_framework.response import Response
 
 from tfc.utils.api_serializers import ManagementAPIErrorResponseSerializer
 from tfc.utils.general_methods import GeneralMethods
-from tfc.utils.openapi_contract import plan_operation_id_renames
+from tfc.utils.openapi_contract import HTTP_METHODS, plan_operation_id_renames
 
 logger = structlog.get_logger(__name__)
 
@@ -114,9 +114,16 @@ class ManagementAPISchemaGenerator(OpenAPISchemaGenerator):
 
     def get_paths(self, endpoints, components, request, public):
         paths, prefix = super().get_paths(endpoints, components, request, public)
+        # Operation is a SwaggerDict (OrderedDict subclass). dict(operation) would
+        # treat each value as a (key, value) pair and crash; copy the mapping.
+        # Path items also carry a `parameters` list, which is not an operation.
         document = {
             "paths": {
-                route: {method: dict(operation) for method, operation in item.items()}
+                route: {
+                    method: dict(operation.items())
+                    for method, operation in item.items()
+                    if method in HTTP_METHODS
+                }
                 for route, item in paths.items()
             }
         }

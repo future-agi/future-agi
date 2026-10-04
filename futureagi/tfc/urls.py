@@ -27,6 +27,7 @@ from drf_yasg.views import get_schema_view
 
 from tfc.capabilities.views import CapabilitiesView
 from tfc.ee_loader import has_ee
+from tfc.utils.api_contracts import ManagementAPISchemaGenerator
 from tfc.views.deployment import DeploymentInfoView
 from tfc.views.health import (
     AuthenticatedHealthView,
@@ -54,8 +55,15 @@ info_api = openapi.Info(
         name="Apache 2.0", url="http://www.apache.org/licenses/LICENSE-2.0.html"
     ),
 )
-SWAGGER_URL = "http://localhost:8000"
-schema_view = get_schema_view(info_api, public=True, url=SWAGGER_URL)
+# No explicit url: drf-yasg then derives host and schemes from the request
+# (and from trusted proxy headers), so a public deployment advertises its own
+# origin instead of a hardcoded localhost:8000. Offline contract generation
+# passes --url explicitly and is unaffected.
+schema_view = get_schema_view(
+    info_api,
+    public=True,
+    generator_class=ManagementAPISchemaGenerator,
+)
 
 urlpatterns = [
     path("", RedirectView.as_view(url="/docs/", permanent=False), name="root"),

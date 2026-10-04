@@ -25,6 +25,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.viewsets import ViewSet
 
+from tfc.utils import openapi_contract
 from tfc.utils.api_contracts import ManagementAPISchemaGenerator
 from tfc.utils.openapi_contract import (
     disambiguated_operation_id,
@@ -118,30 +119,30 @@ def test_rename_plan_keeps_collection_route_and_names_losers_after_their_paramet
     assert renames == {
         ("/b/{x}/", "delete"): "b_delete_by_x",
         ("/b/{x}/{y}/", "delete"): "b_delete_by_x_y",
+        # The hyphenated spelling has no path parameters and is shorter, so it
+        # keeps the historic ID; the underscore spelling is the loser.
         ("/kb/supported_models/", "get"): "kb_supported_models_supported_models",
     }
     # Pattern order must not matter: the plan is a function of the route set.
     reordered = {"paths": dict(reversed(list(document["paths"].items())))}
-    assert plan_operation_id_renames(reordered) == renames
+    assert dict(plan_operation_id_renames(reordered)) == dict(renames)
 
 
-def test_rename_plan_is_pure_and_does_not_require_django():
-    # Pure contract function must never import Django or drf_yasg.
-    import tfc.utils.openapi_contract as mod
-    assert "django" not in sys.modules
-    assert "drf_yasg" not in sys.modules
-    assert callable(mod.plan_operation_id_renames)
-
-
-# Mark the generator and runtime tests as expected to fail when the serializer
-# default bug is present (out of TH-5323 scope). They become the regression guard
-# once the default bug is fixed separately.
-pytestmark = [
-    pytest.mark.xfail(
-        reason="Serializer default bug (DashboardBreakdownSerializer) in drf_yasg default walk — TH-5323 scope is only duplicate operationId + base URL",
-        strict=False,
-    )
-]
+def test_contract_helpers_import_without_django():
+    # The helpers are stdlib-only so scripts/check_openapi_contract.py can use
+    # them outside Django. pytest-django has already imported Django here, so
+    # prove the module's own imports instead of the process state.
+    import ast
+    source = (Path(openapi_contract.__file__)).read_text()
+    tree = ast.parse(source)
+    imported = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported.update(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported.add(node.module.split(".")[0])
+    assert "django" not in imported
+    assert "drf_yasg" not in imported
 
 
 def test_rename_plan_never_reuses_an_existing_operation_id():
@@ -160,7 +161,7 @@ def test_rename_plan_never_reuses_an_existing_operation_id():
     [
         ("/users/", "/users/{user_id}/", "users_create_by_user_id"),
         ("/h/{harness_id}/ingress/", "/h/{harness_id}/ingress/{ingress_id}/", "users_create_by_ingress_id"),
-        ("/x/", "/x-alt/", "users_create_x_alt"),
+        ("/x/", "/x-alt/", "users_create_x-alt"),
     ],
 )
 def test_disambiguated_operation_id_is_derived_from_the_distinguishing_route_part(

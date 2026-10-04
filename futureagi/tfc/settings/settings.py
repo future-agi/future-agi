@@ -324,6 +324,7 @@ MIDDLEWARE += [
 # To check all the APIs
 SWAGGER_SETTINGS = {
     "DEFAULT_INFO": "tfc.urls.info_api",
+    "DEFAULT_GENERATOR_CLASS": "tfc.utils.api_contracts.ManagementAPISchemaGenerator",
     "DEFAULT_AUTO_SCHEMA_CLASS": "tfc.utils.api_contracts.ManagementAPIAutoSchema",
     "SECURITY_DEFINITIONS": {
         "X-Api-Key": {"type": "apiKey", "in": "header", "name": "X-Api-Key"},
