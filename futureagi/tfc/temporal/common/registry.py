@@ -83,6 +83,8 @@ TEMPORAL_ACTIVITY_MODULES = [
     "tfc.temporal.schedules.deployment_telemetry",
     # Deployment telemetry receiver-side integrations (PostHog, HubSpot, Slack)
     "ee.cloud.telemetry.deployment_telemetry_integrations",
+    # Bounded SAML login-state retention.
+    "saml2_auth.tasks",
 ]
 
 

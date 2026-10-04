@@ -1272,6 +1272,60 @@ default_error_next_url = f"{APP_BASE_URL}/auth/jwt/login?denied=true"
 get_entity_id = f"{_ssl}{APP_URL}"
 
 get_name_id_format = "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress"
+
+
+def _saml_setting(name: str, default: int, *, maximum: int | None = None) -> int:
+    """Load a SAML boundary limit and fail closed on invalid configuration."""
+
+    from django.core.exceptions import ImproperlyConfigured
+
+    try:
+        value = int(os.getenv(name, str(default)))
+    except ValueError as exc:
+        raise ImproperlyConfigured(f"{name} must be an integer") from exc
+    if value < 1 or (maximum is not None and value > maximum):
+        detail = f"between 1 and {maximum}" if maximum else "positive"
+        raise ImproperlyConfigured(f"{name} must be {detail}")
+    return value
+
+
+SAML_LOGIN_ENABLED = os.getenv("SAML_LOGIN_ENABLED", "false").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+SAML_ATTEMPT_TTL_SECONDS = _saml_setting("SAML_ATTEMPT_TTL_SECONDS", 600, maximum=600)
+SAML_CANDIDATE_TTL_SECONDS = _saml_setting(
+    "SAML_CANDIDATE_TTL_SECONDS", 60, maximum=120
+)
+SAML_MAX_RESPONSE_BYTES = _saml_setting(
+    "SAML_MAX_RESPONSE_BYTES", 65536, maximum=262144
+)
+SAML_MAX_ACS_BODY_BYTES = _saml_setting(
+    "SAML_MAX_ACS_BODY_BYTES", 131072, maximum=524288
+)
+SAML_MAX_METADATA_BYTES = _saml_setting(
+    "SAML_MAX_METADATA_BYTES", 262144, maximum=1048576
+)
+SAML_MAX_CANDIDATES_PER_ATTEMPT = _saml_setting("SAML_MAX_CANDIDATES_PER_ATTEMPT", 3)
+SAML_MAX_CANDIDATES_PER_ATTEMPT_LIFETIME = _saml_setting(
+    "SAML_MAX_CANDIDATES_PER_ATTEMPT_LIFETIME", 6
+)
+SAML_MAX_ATTEMPTS_PER_USER_PER_TTL = _saml_setting(
+    "SAML_MAX_ATTEMPTS_PER_USER_PER_TTL", 10
+)
+SAML_MAX_PENDING_COOKIES_PER_BROWSER = _saml_setting(
+    "SAML_MAX_PENDING_COOKIES_PER_BROWSER", 8
+)
+SAML_MAX_ATTEMPT_ROWS = _saml_setting("SAML_MAX_ATTEMPT_ROWS", 100000)
+SAML_MAX_CANDIDATE_ROWS = _saml_setting("SAML_MAX_CANDIDATE_ROWS", 2000)
+SAML_MAX_CANDIDATE_BYTES = _saml_setting("SAML_MAX_CANDIDATE_BYTES", 134217728)
+SAML_INLINE_CLEANUP_ROWS = _saml_setting("SAML_INLINE_CLEANUP_ROWS", 100)
+SAML_ATTEMPT_RETENTION_SECONDS = _saml_setting("SAML_ATTEMPT_RETENTION_SECONDS", 3600)
+SAML_SOCKET_REVALIDATE_SECONDS = _saml_setting(
+    "SAML_SOCKET_REVALIDATE_SECONDS", 30, maximum=120
+)
 AUTH0_DOMAIN = "accounts.google.com/o/oauth2"
 AUTH0_ALGORITHM = "RS256"
 GITHUB_API_ENDPOINT = "https://api.github.com"
