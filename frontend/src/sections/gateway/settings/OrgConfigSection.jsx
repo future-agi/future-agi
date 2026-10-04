@@ -107,7 +107,11 @@ const OrgConfigSection = () => {
                   {activeConfig.created_at && (
                     <Typography variant="caption" color="text.secondary">
                       Last Updated:{" "}
-                      <LocalDateTime value={activeConfig.created_at} withTime />
+                      <LocalDateTime
+                        value={activeConfig.created_at}
+                        withTime
+                        emptyText="No update time recorded"
+                      />
                     </Typography>
                   )}
                   {activeConfig.change_description && (

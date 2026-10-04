@@ -139,7 +139,9 @@ const UsersCustomModel = () => {
         field: "created_at",
         flex: 1,
         valueFormatter: (params) => fDateLocal(params.value),
-        cellRenderer: (params) => <LocalDateTime value={params.value} />,
+        cellRenderer: (params) => (
+          <LocalDateTime value={params.value} emptyText="No date added recorded" />
+        ),
       },
     ],
     [],

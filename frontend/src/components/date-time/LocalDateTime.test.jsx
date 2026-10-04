@@ -53,12 +53,19 @@ describe("LocalDateTime", () => {
     },
   );
 
-  it("leaves invalid grid values empty by default", () => {
-    const { container } = render(
-      <LocalDateTime value="<script>garbage</script>" />,
-    );
-    expect(container.textContent).toBe("");
+  it("shows Unknown by default and no tooltip for an invalid value", () => {
+    const { container } = render(<LocalDateTime value="<script>garbage</script>" />);
+    expect(screen.getByText("Unknown")).toBeInTheDocument();
     expect(container.querySelector("[tabindex]")).toBeNull();
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+  });
+
+  it("opens the same instant details on touch as on focus", async () => {
+    render(<LocalDateTime value={INSTANT} />);
+    const date = screen.getByText("31 Oct 2025");
+    fireEvent.touchStart(date);
+    const tooltip = await screen.findByRole("tooltip");
+    expect(tooltip).toHaveTextContent("Zone: Asia/Kolkata (UTC+05:30)");
+    expect(tooltip).toHaveTextContent("UTC: 2025-10-31T00:00:00.000Z");
   });
 });

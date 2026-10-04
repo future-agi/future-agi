@@ -94,7 +94,9 @@ const columns = (
     flex: 1,
     sortable: false,
     valueFormatter: (params) => fDateLocal(params.value),
-    renderCell: (params) => <LocalDateTime value={params.value} />,
+    renderCell: (params) => (
+      <LocalDateTime value={params.value} emptyText="No invite date recorded" />
+    ),
   },
   {
     field: "action",

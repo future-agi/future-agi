@@ -1,3 +1,4 @@
+import { useState } from "react";
 import PropTypes from "prop-types";
 import Tooltip from "@mui/material/Tooltip";
 
@@ -7,8 +8,9 @@ import {
   fDateTimeLocal,
 } from "src/utils/format-time";
 
-export function LocalDateTime({ value, withTime = false, emptyText = "" }) {
+export function LocalDateTime({ value, withTime = false, emptyText = "Unknown" }) {
   const instant = describeInstant(value);
+  const [touchOpen, setTouchOpen] = useState(false);
   if (!instant) return <span>{emptyText}</span>;
 
   const title = `Local: ${instant.local}\nZone: ${instant.zone} (${instant.offset})\nUTC: ${instant.utc}`;
@@ -17,9 +19,15 @@ export function LocalDateTime({ value, withTime = false, emptyText = "" }) {
     <Tooltip
       title={title}
       describeChild
+      open={touchOpen || undefined}
+      onClose={() => setTouchOpen(false)}
       componentsProps={{ tooltip: { sx: { whiteSpace: "pre-line" } } }}
     >
-      <span tabIndex={0}>
+      <span
+        tabIndex={0}
+        onTouchStart={() => setTouchOpen(true)}
+        onClick={() => setTouchOpen((open) => !open)}
+      >
         {withTime ? fDateTimeLocal(value) : fDateLocal(value)}
       </span>
     </Tooltip>
