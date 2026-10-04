@@ -66,6 +66,18 @@ class AudioMetrics:
     estimated_snr_db: float | None
 
 
+# TH-2094 follow-up to the attributed #3079 helper: expose the existing frames
+# for product eligibility checks without changing either acoustic algorithm.
+@dataclass(frozen=True)
+class AudioFrames:
+    frame_power: np.ndarray
+    frame_seconds: float
+    hop_seconds: float
+    f0: np.ndarray | None
+    voiced_flag: np.ndarray | None
+    pitch_hop_seconds: float | None
+
+
 def analyze_audio(audio_bytes: bytes) -> AudioMetrics:
     """Measure average pitch and estimated SNR of an encoded audio track.
 
@@ -99,17 +111,38 @@ def analyze_audio(audio_bytes: bytes) -> AudioMetrics:
     except Exception as exc:  # decoder errors vary by backend
         raise ValueError(f"Could not decode audio bytes: {exc}") from exc
 
+    return analyze_waveform(y, sr)[0]
+
+
+def analyze_waveform(y: np.ndarray, sr: int) -> tuple[AudioMetrics, AudioFrames]:
+    """Measure an already selected mono track at its native sample rate."""
+    import librosa
+
     y = np.asarray(y, dtype=np.float64)
+    if y.ndim != 1 or not np.isfinite(y).all():
+        raise ValueError("Expected a finite mono waveform")
+    frames = AudioFrames(np.array([]), _FRAME_SECONDS, _HOP_SECONDS, None, None, None)
     if y.size == 0 or sr <= 0:
-        return AudioMetrics(average_pitch_hz=None, estimated_snr_db=None)
-
+        return AudioMetrics(None, None), frames
     frame_power = _frame_power(y, sr)
+    frames = AudioFrames(
+        frame_power,
+        max(1, round(_FRAME_SECONDS * sr)) / sr,
+        max(1, round(_HOP_SECONDS * sr)) / sr,
+        None,
+        None,
+        None,
+    )
     if frame_power.max() < _SILENCE_POWER:
-        return AudioMetrics(average_pitch_hz=None, estimated_snr_db=None)
-
-    return AudioMetrics(
-        average_pitch_hz=_average_pitch_hz(librosa, y, sr),
-        estimated_snr_db=_estimated_snr_db(frame_power),
+        return AudioMetrics(None, None), frames
+    pitch, f0, voiced_flag, pitch_hop = _pitch_detail(librosa, y, sr)
+    return AudioMetrics(pitch, _estimated_snr_db(frame_power)), AudioFrames(
+        frame_power,
+        frames.frame_seconds,
+        frames.hop_seconds,
+        f0,
+        voiced_flag,
+        pitch_hop,
     )
 
 
@@ -120,6 +153,7 @@ def _frame_power(y: np.ndarray, sr: int) -> np.ndarray:
     the noise floor down, so only full frames are used. Audio shorter than
     one frame is treated as a single frame.
     """
+    y = np.asarray(y, dtype=np.float64)
     frame_length = max(1, round(_FRAME_SECONDS * sr))
     hop_length = max(1, round(_HOP_SECONDS * sr))
     if y.size <= frame_length:
@@ -133,28 +167,46 @@ def _frame_power(y: np.ndarray, sr: int) -> np.ndarray:
 
 def _estimated_snr_db(frame_power: np.ndarray) -> float | None:
     """Energy-based SNR estimate in dB, or ``None`` if no noise floor exists."""
+    return _estimated_snr_db_detail(frame_power)[0]
+
+
+def _estimated_snr_db_detail(
+    frame_power: np.ndarray,
+) -> tuple[float | None, float, bool, bool]:
+    """The unchanged estimate plus the noise floor and saturation flags."""
     noise_floor = max(
         float(np.percentile(frame_power, _NOISE_FLOOR_PERCENTILE)), _POWER_EPSILON
     )
     threshold = noise_floor * 10.0 ** (_ACTIVITY_MARGIN_DB / 10.0)
     active = frame_power > threshold
     if not active.any():
-        return None
+        return None, noise_floor, noise_floor == _POWER_EPSILON, False
 
     noise_power = max(float(frame_power[~active].mean()), _POWER_EPSILON)
     speech_power = float(frame_power[active].mean()) - noise_power
     if speech_power <= 0.0:
-        return None
+        return None, noise_power, noise_power == _POWER_EPSILON, False
 
     snr_db = 10.0 * math.log10(speech_power / noise_power)
-    return float(min(max(snr_db, 0.0), _MAX_SNR_DB))
+    return (
+        float(min(max(snr_db, 0.0), _MAX_SNR_DB)),
+        noise_power,
+        noise_power == _POWER_EPSILON,
+        snr_db >= _MAX_SNR_DB,
+    )
 
 
 def _average_pitch_hz(librosa, y: np.ndarray, sr: int) -> float | None:
     """Mean of the voiced ``librosa.pyin`` F0 frames, or ``None`` if none."""
+    return _pitch_detail(librosa, y, sr)[0]
+
+
+def _pitch_detail(
+    librosa, y: np.ndarray, sr: int
+) -> tuple[float | None, np.ndarray | None, np.ndarray | None, float | None]:
     fmax = min(_PITCH_FMAX_HZ, 0.45 * sr)
     if fmax <= _PITCH_FMIN_HZ:
-        return None  # sample rate too low to resolve any pitch in range
+        return None, None, None, None  # sample rate too low
 
     # pyin needs a window covering at least two periods of the lowest pitch;
     # grow the default frame for high sample rates.
@@ -171,5 +223,5 @@ def _average_pitch_hz(librosa, y: np.ndarray, sr: int) -> float | None:
     )
     voiced = f0[voiced_flag & np.isfinite(f0)]
     if voiced.size == 0:
-        return None
-    return float(np.mean(voiced))
+        return None, f0, voiced_flag, frame_length // 4 / sr
+    return float(np.mean(voiced)), f0, voiced_flag, frame_length // 4 / sr
