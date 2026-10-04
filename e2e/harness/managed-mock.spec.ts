@@ -94,7 +94,6 @@ const backgroundEnvironment = {
   AGENTCC_ADMIN_TOKEN: 'local-dev-only-admin-token-replace-me',
   AGENTCC_INTERNAL_URL: 'http://agentcc-gateway:8080',
   AGENTCC_GATEWAY_INTERNAL_URL: 'http://agentcc-gateway:8080', MODEL_SERVING_URL: 'http://mock-llm:8080',
-  AGENTCC_GATEWAY_FI_BASE_URL: 'http://backend',
   ENV_TYPE: 'local', EE_LICENSE_KEY: '', NO_STARTUP_DB_MUTATIONS: 'true', OTEL_ENABLED: 'false',
   FUTURE_AGI_TELEMETRY_DISABLED: 'true', TEMPORAL_HOST: 'temporal:7233', TEMPORAL_NAMESPACE: 'default',
   DJANGO_SETTINGS_MODULE: 'tfc.settings.settings', MAILGUN_API_KEY: '',
@@ -201,6 +200,11 @@ test('managed mock background opt-in rejects old routes and missing required set
   }
   validateMockEnvironment('agentcc-gateway', backgroundEnvironment, true);
   expect(() => validateMockEnvironment('agentcc-gateway', {}, true)).toThrow('required agentcc-gateway');
+});
+
+test('managed mock accepts the backend pointing Future AGI Eval at its own API', () => {
+  // Optional, so it stays out of backgroundEnvironment, whose keys are all required.
+  validateMockEnvironment('backend', { ...backgroundEnvironment, AGENTCC_GATEWAY_FI_BASE_URL: 'http://backend' }, true);
 });
 
 for (const [name, value] of Object.entries({
