@@ -38362,7 +38362,7 @@
         },
         "/model-hub/kb/supported-embedding-models": {
             "get": {
-                "operationId": "model-hub_kb_supported_embedding_models",
+                "operationId": "model-hub_kb_supported_embedding_models_supported-embedding-models",
                 "summary": "Get supported embedding models.",
                 "description": "Get all supported embedding models.",
                 "parameters": [
@@ -38440,7 +38440,7 @@
         },
         "/model-hub/kb/supported_embedding_models/": {
             "get": {
-                "operationId": "model-hub_kb_supported_embedding_models_supported_embedding_models",
+                "operationId": "model-hub_kb_supported_embedding_models",
                 "summary": "Get supported embedding models.",
                 "description": "Get all supported embedding models.",
                 "parameters": [

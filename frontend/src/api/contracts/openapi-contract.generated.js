@@ -583,7 +583,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
       post: {
-        operationId: "accounts_appsmith_users_create",
+        operationId: "accounts_appsmith_users_create_by_user_id",
         runtimeRequestValidation: true,
         runtimeResponseValidation: true,
         requestBody: {
@@ -615,7 +615,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
       patch: {
-        operationId: "accounts_appsmith_users_partial_update",
+        operationId: "accounts_appsmith_users_partial_update_by_user_id",
         runtimeRequestValidation: true,
         runtimeResponseValidation: true,
         requestBody: {
@@ -2496,7 +2496,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
       post: {
-        operationId: "accounts_team_users_create",
+        operationId: "accounts_team_users_create_by_member_id",
         runtimeRequestValidation: true,
         runtimeResponseValidation: true,
         requestBody: {
@@ -2528,7 +2528,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
       delete: {
-        operationId: "accounts_team_users_delete",
+        operationId: "accounts_team_users_delete_by_member_id",
         runtimeRequestValidation: false,
         runtimeResponseValidation: true,
         requestBody: null,
@@ -3434,7 +3434,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
       post: {
-        operationId: "accounts_workspaces_create",
+        operationId: "accounts_workspaces_create_by_workspace_id",
         runtimeRequestValidation: true,
         runtimeResponseValidation: true,
         requestBody: {
@@ -3466,7 +3466,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
       put: {
-        operationId: "accounts_workspaces_update",
+        operationId: "accounts_workspaces_update_by_workspace_id",
         runtimeRequestValidation: true,
         runtimeResponseValidation: true,
         requestBody: {
@@ -3498,7 +3498,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
       delete: {
-        operationId: "accounts_workspaces_delete",
+        operationId: "accounts_workspaces_delete_by_workspace_id",
         runtimeRequestValidation: false,
         runtimeResponseValidation: true,
         requestBody: null,
@@ -3654,7 +3654,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
       post: {
-        operationId: "accounts_workspaces_members_create",
+        operationId: "accounts_workspaces_members_create_by_member_id",
         runtimeRequestValidation: true,
         runtimeResponseValidation: true,
         requestBody: {
@@ -3686,7 +3686,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
       delete: {
-        operationId: "accounts_workspaces_members_delete",
+        operationId: "accounts_workspaces_members_delete_by_member_id",
         runtimeRequestValidation: false,
         runtimeResponseValidation: true,
         requestBody: null,
@@ -4285,7 +4285,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
     },
     "/agent-playground/graphs/{id}/versions/{version_id}/": {
       get: {
-        operationId: "agent-playground_graphs_versions_read",
+        operationId: "agent-playground_graphs_versions_read_by_version_id",
         runtimeRequestValidation: false,
         runtimeResponseValidation: false,
         requestBody: null,
@@ -20054,7 +20054,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
     },
     "/model-hub/experiments/{experiment_id}/{row_id}/": {
       get: {
-        operationId: "model-hub_experiments_read",
+        operationId: "model-hub_experiments_read_by_row_id",
         runtimeRequestValidation: true,
         runtimeResponseValidation: true,
         requestBody: null,
@@ -21064,7 +21064,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
     },
     "/model-hub/kb/supported-embedding-models": {
       get: {
-        operationId: "model-hub_kb_supported_embedding_models",
+        operationId:
+          "model-hub_kb_supported_embedding_models_supported-embedding-models",
         runtimeRequestValidation: false,
         runtimeResponseValidation: false,
         requestBody: null,
@@ -22440,7 +22441,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
     },
     "/model-hub/optimize-dataset/{model_id}/{optimization_id}/": {
       get: {
-        operationId: "model-hub_optimize-dataset_read",
+        operationId: "model-hub_optimize-dataset_read_by_optimization_id",
         runtimeRequestValidation: false,
         runtimeResponseValidation: false,
         requestBody: null,
@@ -28920,7 +28921,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
     },
     "/simulate/api/harness/ingress/{token}/{target_path}": {
       get: {
-        operationId: "simulate_api_harness_ingress_read",
+        operationId: "simulate_api_harness_ingress_read_by_target_path",
         runtimeRequestValidation: false,
         runtimeResponseValidation: false,
         requestBody: null,
@@ -28932,7 +28933,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
       post: {
-        operationId: "simulate_api_harness_ingress_create",
+        operationId: "simulate_api_harness_ingress_create_by_target_path",
         runtimeRequestValidation: true,
         runtimeResponseValidation: true,
         requestBody: {
@@ -28954,7 +28955,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
       put: {
-        operationId: "simulate_api_harness_ingress_update",
+        operationId: "simulate_api_harness_ingress_update_by_target_path",
         runtimeRequestValidation: true,
         runtimeResponseValidation: true,
         requestBody: {
@@ -28976,7 +28977,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
       patch: {
-        operationId: "simulate_api_harness_ingress_partial_update",
+        operationId:
+          "simulate_api_harness_ingress_partial_update_by_target_path",
         runtimeRequestValidation: true,
         runtimeResponseValidation: true,
         requestBody: {
@@ -28998,7 +29000,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
       delete: {
-        operationId: "simulate_api_harness_ingress_delete",
+        operationId: "simulate_api_harness_ingress_delete_by_target_path",
         runtimeRequestValidation: false,
         runtimeResponseValidation: false,
         requestBody: null,
@@ -41671,7 +41673,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
       patch: {
-        operationId: "usage_organization-billing_partial_update",
+        operationId: "usage_organization-billing_partial_update_by_billing_id",
         runtimeRequestValidation: true,
         runtimeResponseValidation: true,
         requestBody: {
@@ -41914,7 +41916,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
       post: {
-        operationId: "usage_organization-subscription_create",
+        operationId:
+          "usage_organization-subscription_create_by_organization_subscription_id",
         runtimeRequestValidation: true,
         runtimeResponseValidation: true,
         requestBody: {
@@ -41949,7 +41952,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
       patch: {
-        operationId: "usage_organization-subscription_partial_update",
+        operationId:
+          "usage_organization-subscription_partial_update_by_organization_subscription_id",
         runtimeRequestValidation: true,
         runtimeResponseValidation: true,
         requestBody: {
@@ -41984,7 +41988,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
       delete: {
-        operationId: "usage_organization-subscription_delete",
+        operationId:
+          "usage_organization-subscription_delete_by_organization_subscription_id",
         runtimeRequestValidation: false,
         runtimeResponseValidation: false,
         requestBody: null,
@@ -42262,7 +42267,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
       post: {
-        operationId: "usage_pricing_create",
+        operationId: "usage_pricing_create_by_pricing_id",
         runtimeRequestValidation: true,
         runtimeResponseValidation: true,
         requestBody: {
@@ -42297,7 +42302,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
       patch: {
-        operationId: "usage_pricing_partial_update",
+        operationId: "usage_pricing_partial_update_by_pricing_id",
         runtimeRequestValidation: true,
         runtimeResponseValidation: true,
         requestBody: {
@@ -42332,7 +42337,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
       delete: {
-        operationId: "usage_pricing_delete",
+        operationId: "usage_pricing_delete_by_pricing_id",
         runtimeRequestValidation: false,
         runtimeResponseValidation: false,
         requestBody: null,
@@ -42538,7 +42543,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
       post: {
-        operationId: "usage_rate-limits_create",
+        operationId: "usage_rate-limits_create_by_rate_limit_id",
         runtimeRequestValidation: true,
         runtimeResponseValidation: true,
         requestBody: {
@@ -42573,7 +42578,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
       patch: {
-        operationId: "usage_rate-limits_partial_update",
+        operationId: "usage_rate-limits_partial_update_by_rate_limit_id",
         runtimeRequestValidation: true,
         runtimeResponseValidation: true,
         requestBody: {
@@ -42608,7 +42613,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
       delete: {
-        operationId: "usage_rate-limits_delete",
+        operationId: "usage_rate-limits_delete_by_rate_limit_id",
         runtimeRequestValidation: false,
         runtimeResponseValidation: false,
         requestBody: null,
@@ -42814,7 +42819,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
       post: {
-        operationId: "usage_resource-limits_create",
+        operationId: "usage_resource-limits_create_by_resource_limit_id",
         runtimeRequestValidation: true,
         runtimeResponseValidation: true,
         requestBody: {
@@ -42849,7 +42854,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
       patch: {
-        operationId: "usage_resource-limits_partial_update",
+        operationId:
+          "usage_resource-limits_partial_update_by_resource_limit_id",
         runtimeRequestValidation: true,
         runtimeResponseValidation: true,
         requestBody: {
@@ -42884,7 +42890,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
       delete: {
-        operationId: "usage_resource-limits_delete",
+        operationId: "usage_resource-limits_delete_by_resource_limit_id",
         runtimeRequestValidation: false,
         runtimeResponseValidation: false,
         requestBody: null,
@@ -43195,7 +43201,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
       post: {
-        operationId: "usage_subscription-tier_create",
+        operationId: "usage_subscription-tier_create_by_subscription_id",
         runtimeRequestValidation: true,
         runtimeResponseValidation: true,
         requestBody: {
@@ -43230,7 +43236,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
       patch: {
-        operationId: "usage_subscription-tier_partial_update",
+        operationId:
+          "usage_subscription-tier_partial_update_by_subscription_id",
         runtimeRequestValidation: true,
         runtimeResponseValidation: true,
         requestBody: {
@@ -43265,7 +43272,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
       delete: {
-        operationId: "usage_subscription-tier_delete",
+        operationId: "usage_subscription-tier_delete_by_subscription_id",
         runtimeRequestValidation: false,
         runtimeResponseValidation: false,
         requestBody: null,
@@ -44163,7 +44170,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
     },
     "/usage/v2/payment-methods/{pm_id}/": {
       post: {
-        operationId: "usage_v2_payment-methods_create",
+        operationId: "usage_v2_payment-methods_create_by_pm_id",
         runtimeRequestValidation: true,
         runtimeResponseValidation: true,
         requestBody: {

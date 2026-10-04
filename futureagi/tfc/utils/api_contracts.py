@@ -96,7 +96,7 @@ class ExplicitQueryAutoSchema(ManagementAPIAutoSchema):
 
 
 class ManagementAPISchemaGenerator(OpenAPISchemaGenerator):
-    """Schema generator that guarantees unique operationIds.
+    """Schema generator that guarantees unique operationIds and a safe base URL.
 
     drf-yasg derives an operationId from the URL path and HTTP method, so one view
     mounted on both a collection and a detail route (``users/`` and
@@ -105,11 +105,17 @@ class ManagementAPISchemaGenerator(OpenAPISchemaGenerator):
     generators silently drop or overwrite one of the operations.
 
     Only the losing member of each collision is renamed, so every ID that is
-    already unique keeps its exact value and existing generated SDK methods keep
-    their names. The route with the fewest path parameters (the collection route)
-    keeps the historic ID; each other member gets a suffix derived from what
-    distinguishes its route, e.g. ``accounts_appsmith_users_create_by_user_id``.
-    See :func:`tfc.utils.openapi_contract.plan_operation_id_renames` for the rule.
+    already unique keeps its exact value. The route with the fewest path
+    parameters keeps the historic ID; among equal-parameter routes, the spelling
+    whose segments the others contain (the one the router always mounts) keeps
+    it. Each other member gets a suffix derived from what distinguishes its
+    route, e.g. ``accounts_appsmith_users_create_by_user_id``.
+    See :func:`tfc.utils.openapi_contract.plan_operation_id_renames`.
+
+    A ``DEFAULT_API_URL`` that is not an absolute http(s) URL makes drf-yasg raise
+    ``SwaggerGenerationError`` while building the schema, which the schema view
+    turns into an HTTP 500 for every visitor of ``/docs/``. The setting is
+    normalized in ``tfc.settings`` so a bad value is never passed in.
     """
 
     def get_paths(self, endpoints, components, request, public):

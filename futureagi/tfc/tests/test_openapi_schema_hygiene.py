@@ -119,9 +119,11 @@ def test_rename_plan_keeps_collection_route_and_names_losers_after_their_paramet
     assert renames == {
         ("/b/{x}/", "delete"): "b_delete_by_x",
         ("/b/{x}/{y}/", "delete"): "b_delete_by_x_y",
-        # The hyphenated spelling has no path parameters and is shorter, so it
-        # keeps the historic ID; the underscore spelling is the loser.
-        ("/kb/supported_models/", "get"): "kb_supported_models_supported_models",
+        # The underscore spelling contains every named segment of the hyphenated
+        # alias, so it is the route the router always mounts and keeps the
+        # historic ID. The shorter hyphenated alias is the loser. (Review
+        # finding 2: shorter-path-wins renamed the router path instead.)
+        ("/kb/supported-models", "get"): "kb_supported_models_supported-models",
     }
     # Pattern order must not matter: the plan is a function of the route set.
     reordered = {"paths": dict(reversed(list(document["paths"].items())))}
@@ -205,8 +207,8 @@ def test_collision_aware_generator_renames_only_the_losing_member():
         ("post", "/things/"): "things_create",
         ("get", "/things/{thing_id}/"): "things_read",
         ("post", "/things/{thing_id}/"): "things_create_by_thing_id",
-        ("get", "/widgets/supported-models"): "widgets_supported_models",
-        ("get", "/widgets/supported_models/"): "widgets_supported_models_supported_models",
+        ("get", "/widgets/supported_models/"): "widgets_supported_models",
+        ("get", "/widgets/supported-models"): "widgets_supported_models_supported-models",
     }
 
 
@@ -305,6 +307,23 @@ def test_runtime_schema_view_prefers_the_configured_public_base_url(client, sett
         document = _fetch_schema(client, HTTP_HOST="internal-pod:8000")
     assert document["host"] == "ai.example.internal"
     assert document["schemes"] == ["https"]
+
+
+def test_settings_only_publish_a_normalized_public_base_url():
+    # drf-yasg raises SwaggerGenerationError (an HTTP 500 for every /docs/
+    # visitor) when DEFAULT_API_URL is set and not an absolute http(s) URL. It
+    # reads SWAGGER_SETTINGS live, including for the UI renderer's stock
+    # generator, so the guard has to live in the setting itself. Review finding 1.
+    source = (
+        REPO_ROOT / "futureagi" / "tfc" / "settings" / "settings.py"
+    ).read_text(encoding="utf-8")
+    assert 'normalize_public_base_url(os.getenv("DEFAULT_API_URL"))' in source
+    assert 'SWAGGER_SETTINGS["DEFAULT_API_URL"] = _public_base_url' in source
+    # The assignment is conditional on a normalized value, so a bad env value
+    # leaves the key unset and drf-yasg falls back to the request.
+    assignment = source.index('SWAGGER_SETTINGS["DEFAULT_API_URL"]')
+    guard = source.rindex("if _public_base_url:", 0, assignment)
+    assert assignment - guard < 80
 
 
 @pytest.mark.api

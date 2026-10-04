@@ -321,6 +321,8 @@ MIDDLEWARE += [
     "tfc.middleware.posthog_middleware.PostHogMiddleware",  # API analytics (after auth)
 ]
 
+from tfc.utils.openapi_contract import normalize_public_base_url
+
 # To check all the APIs
 SWAGGER_SETTINGS = {
     "DEFAULT_INFO": "tfc.urls.info_api",
@@ -336,6 +338,13 @@ SWAGGER_SETTINGS = {
     },
     "USE_SESSION_AUTH": False,
 }
+# drf-yasg raises SwaggerGenerationError (an HTTP 500 for every visitor of
+# /docs/) when DEFAULT_API_URL is set and is not an absolute http(s) URL. It
+# reads this dict live, including for the UI renderer's stock generator, so the
+# value has to be valid here rather than patched in one generator subclass.
+_public_base_url = normalize_public_base_url(os.getenv("DEFAULT_API_URL"))
+if _public_base_url:
+    SWAGGER_SETTINGS["DEFAULT_API_URL"] = _public_base_url
 
 ROOT_URLCONF = "tfc.urls"
 

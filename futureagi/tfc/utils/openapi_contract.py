@@ -73,11 +73,24 @@ def _slug(value: str) -> str:
     return _UNSAFE_ID_CHARS.sub("_", value).strip("_") or "alt"
 
 
-def collision_rank(path: str) -> tuple[int, int, str]:
+def collision_rank(path: str, siblings: Iterable[str] = ()) -> tuple[int, int, int, str]:
     """Sort key deciding which member of an operationId collision keeps the
-    historic ID: fewest path parameters first (the collection-style route),
-    then the shorter path, then lexicographic order for determinism."""
-    return (len(path_parameters(path)), len(path), path)
+    historic ID.
+
+    Fewest path parameters first, so the collection route wins over its detail
+    route. Among routes with the same parameters, a spelling that omits the
+    trailing slash loses: the router always mounts its route with one, and the
+    slash-less path is an extra alias (``supported-models`` beside
+    ``supported_models/``). Length, then lexicographic order, break whatever is
+    left, so the result never depends on urlpatterns order.
+    """
+    missing_trailing_slash = not path.endswith("/")
+    return (
+        len(path_parameters(path)),
+        1 if missing_trailing_slash else 0,
+        len(path),
+        path,
+    )
 
 
 def disambiguated_operation_id(operation_id: str, winner_path: str, path: str) -> str:
@@ -115,7 +128,8 @@ def plan_operation_id_renames(document: Mapping) -> OrderedDict[tuple[str, str],
     }
     renames: OrderedDict[tuple[str, str], str] = OrderedDict()
     for operation_id, group in find_duplicate_operation_ids(document).items():
-        ordered = sorted(group, key=lambda member: collision_rank(member["path"]))
+        siblings = [member["path"] for member in group]
+        ordered = sorted(group, key=lambda member: collision_rank(member["path"], siblings))
         winner = ordered[0]
         for loser in ordered[1:]:
             candidate = disambiguated_operation_id(
