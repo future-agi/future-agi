@@ -14,9 +14,8 @@ export const getOwnEvalScores = (entry) => {
       .filter((span) => String(span?.span_id) === String(spanId))
       .map((span) => ({
         ...span,
-        config_id: evalEntry.config_id,
-        eval_config_id: evalEntry.config_id,
-        eval_name: evalEntry.name,
+        eval_config_id: evalEntry.eval_config_id,
+        eval_name: evalEntry.eval_name,
       })),
   );
 };

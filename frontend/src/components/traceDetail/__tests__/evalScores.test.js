@@ -19,7 +19,8 @@ describe("getOwnEvalScores", () => {
       eval_rollup: {
         evals: [
           {
-            config_id: "eval-1",
+            eval_config_id: "eval-1",
+            eval_name: "Quality",
             spans: [
               { span_id: "span-1", value: 1 },
               { span_id: "child", value: 0 },
@@ -30,7 +31,8 @@ describe("getOwnEvalScores", () => {
     });
     expect(rollupScores).toHaveLength(1);
     expect(rollupScores[0]).toMatchObject({
-      config_id: "eval-1",
+      eval_config_id: "eval-1",
+      eval_name: "Quality",
       span_id: "span-1",
       value: 1,
     });
