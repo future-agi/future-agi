@@ -72,7 +72,10 @@ function gatewayValues({ gateway, controlPlane }: MockTopology) {
   // credential or network allowance: private provider URLs stay refused.
   const wiring: Record<string, string> = { AGENTCC_CONTROL_PLANE_URL: controlPlane,
     AGENTCC_CONTROL_PLANE_TOKEN: allowed.AGENTCC_ADMIN_TOKEN, AGENTCC_SYNC_ON_STARTUP: 'true',
-    AGENTCC_SYNC_INTERVAL: '60s', AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS: 'false' };
+    AGENTCC_SYNC_INTERVAL: '60s', AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS: 'false',
+    // The backend's own API, where it points Future AGI Eval guardrails pushed
+    // to the gateway; anything else (Cloud's URL) stays refused.
+    AGENTCC_GATEWAY_FI_BASE_URL: controlPlane };
   return { allowed, wiring };
 }
 
