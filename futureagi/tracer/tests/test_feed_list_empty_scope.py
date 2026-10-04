@@ -196,6 +196,21 @@ class TestFailuresStayVisible:
         assert response.status_code == 400
         assert response.data["result"] == "Failed to fetch feed issues"
 
+    def test_stats_service_failure_is_still_a_400_in_empty_scope(
+        self, auth_client, user, workspace, entitled
+    ):
+        """M1: the empty-scope admission change on FeedStatsView must not turn
+        a stats service failure into an empty 200. Same envelope as the list
+        failure above."""
+        _assert_no_projects(user, workspace)
+        with patch.object(
+            feed_queries, "get_stats", side_effect=RuntimeError("boom")
+        ):
+            response = auth_client.get(STATS_URL)
+
+        assert response.status_code == 400
+        assert response.data["result"] == "Failed to fetch feed stats"
+
 
 class TestPopulatedScopeUnchanged:
     """Uses the shared `observe_project` fixture from tracer/tests/conftest.py."""

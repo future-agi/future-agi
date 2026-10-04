@@ -2,6 +2,8 @@ import React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "src/utils/test-utils";
+import { enqueueSnackbar } from "notistack";
+import { focusManager } from "@tanstack/react-query";
 
 // TH-8209: Error Feed page state precedence with a real QueryClient and the
 // real hooks; only the transport (axios + the Observe catalog loader) is
@@ -24,6 +26,7 @@ vi.mock("src/utils/axios", () => ({
 vi.mock("src/api/project/observe-project-list", () => ({
   fetchAllObserveProjects,
 }));
+vi.mock("notistack", () => ({ enqueueSnackbar: vi.fn() }));
 
 import ErrorFeedView from "../ErrorFeedView";
 import { useErrorFeedStore } from "../store";
@@ -160,5 +163,63 @@ describe("ErrorFeedView empty and failure states", () => {
     expect(await screen.findByText(FEED_FAILED_TITLE)).toBeInTheDocument();
     expect(screen.queryByText(NO_PROJECTS_TITLE)).not.toBeInTheDocument();
     expect(screen.queryByText(NO_ERRORS_TITLE)).not.toBeInTheDocument();
+  });
+
+  it("keeps the no-projects state when a non-project filter is applied", async () => {
+    fetchAllObserveProjects.mockResolvedValue([]);
+    axiosGet.mockResolvedValue(emptyPage);
+
+    renderPage();
+    expect(await screen.findByText(NO_PROJECTS_TITLE)).toBeInTheDocument();
+
+    fireEvent.mouseDown(screen.getByText("All Statuses"));
+    fireEvent.click(await screen.findByRole("option", { name: "Escalating" }));
+
+    expect(await screen.findByText(NO_PROJECTS_TITLE)).toBeInTheDocument();
+    expect(screen.queryByText(NO_ERRORS_TITLE)).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(axiosGet).toHaveBeenCalledWith(
+        "/tracer/feed/issues/",
+        expect.objectContaining({
+          params: expect.objectContaining({ status: "escalating" }),
+        }),
+      ),
+    );
+  });
+
+  it("leaves the no-projects state without a reload once a project exists", async () => {
+    fetchAllObserveProjects.mockResolvedValue([]);
+    axiosGet.mockResolvedValue(emptyPage);
+
+    const { unmount } = renderPage();
+    expect(await screen.findByText(NO_PROJECTS_TITLE)).toBeInTheDocument();
+    unmount();
+
+    fetchAllObserveProjects.mockResolvedValue([
+      { id: "p-1", name: "Checkout bot" },
+    ]);
+    axiosGet.mockResolvedValue(rowPage);
+
+    renderPage();
+
+    expect(await screen.findByText("Tool call failed")).toBeInTheDocument();
+    expect(screen.queryByText(NO_PROJECTS_TITLE)).not.toBeInTheDocument();
+  });
+
+  it("refetches on focus without a toast when both reads still succeed", async () => {
+    fetchAllObserveProjects.mockResolvedValue([]);
+    axiosGet.mockResolvedValue(emptyPage);
+
+    renderPage();
+    expect(await screen.findByText(NO_PROJECTS_TITLE)).toBeInTheDocument();
+    const callsBeforeFocus = axiosGet.mock.calls.length;
+    focusManager.setFocused(false);
+    focusManager.setFocused(true);
+
+    await waitFor(() =>
+      expect(axiosGet.mock.calls.length).toBeGreaterThan(callsBeforeFocus),
+    );
+    expect(await screen.findByText(NO_PROJECTS_TITLE)).toBeInTheDocument();
+    expect(enqueueSnackbar).not.toHaveBeenCalled();
   });
 });
