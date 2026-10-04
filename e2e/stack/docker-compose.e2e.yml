@@ -16,6 +16,7 @@ services:
   backend:
     restart: "no"
     environment:
+      BASE_URL: http://localhost:8100
       MODEL_SERVING_URL: http://mock-llm:8080
       FUTURE_AGI_TELEMETRY_DISABLED: "true"
       # Request logs reach Django over this shared secret; without it the
