@@ -106,10 +106,11 @@ class ManagementAPISchemaGenerator(OpenAPISchemaGenerator):
 
     Only the losing member of each collision is renamed, so every ID that is
     already unique keeps its exact value. The route with the fewest path
-    parameters keeps the historic ID; among equal-parameter routes, the spelling
-    whose segments the others contain (the one the router always mounts) keeps
-    it. Each other member gets a suffix derived from what distinguishes its
-    route, e.g. ``accounts_appsmith_users_create_by_user_id``.
+    parameters keeps the historic ID; among equal-parameter routes, one that
+    omits the trailing slash loses, so the route the router mounts (which always
+    has one) keeps it and the slash-less alias is renamed. Each other member
+    gets a suffix derived from what distinguishes its route, e.g.
+    ``accounts_appsmith_users_create_by_user_id``.
     See :func:`tfc.utils.openapi_contract.plan_operation_id_renames`.
 
     A ``DEFAULT_API_URL`` that is not an absolute http(s) URL makes drf-yasg raise
