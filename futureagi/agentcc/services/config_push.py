@@ -9,6 +9,9 @@ import structlog
 from django.conf import settings as django_settings
 
 from agentcc.contracts.gateway_admin import (
+    GuardrailCheck as GatewayGuardrailCheck,
+)
+from agentcc.contracts.gateway_admin import (
     OrgConfig as GatewayOrgConfig,
 )
 from agentcc.contracts.gateway_admin import (
@@ -197,6 +200,33 @@ def _set_check_stage(check, stage):
         check.pop("stage", None)
 
 
+_GUARDRAIL_CHECK_INPUT_FIELDS = _contract_input_names(GatewayGuardrailCheck)
+
+
+def _build_guardrail_config(guardrails_data, checks):
+    """
+    Pair the gateway checks with the org's pipeline settings. Nothing else the
+    org config stores under guardrails (rules, enabled) is in the contract.
+    """
+
+    def first(*keys, default=None):
+        # Same precedence as the contract's AliasChoices.
+        for key in keys:
+            if key in guardrails_data:
+                return guardrails_data[key]
+        return default
+
+    result = {
+        "checks": checks,
+        "fail_open": first("fail_open", "failOpen", default=False),
+        "pipeline_mode": first("pipeline_mode", "pipelineMode", default="parallel"),
+    }
+    timeout_ms = first("timeout_ms", "timeoutMs")
+    if timeout_ms:
+        result["timeout_ms"] = timeout_ms
+    return result
+
+
 def _transform_guardrails(guardrails_data, org_id=None):
     """
     Transform Django org-config guardrails (rules array) into gateway tenant
@@ -239,16 +269,7 @@ def _transform_guardrails(guardrails_data, org_id=None):
             _set_check_stage(checks[registry_name], rule.get("stage"))
         if org_id:
             _inject_fi_credentials(checks, org_id)
-        result = {
-            "checks": checks,
-            "fail_open": guardrails_data.get(
-                "failOpen", guardrails_data.get("fail_open", False)
-            ),
-            "pipeline_mode": guardrails_data.get("pipeline_mode", "parallel"),
-        }
-        if guardrails_data.get("timeout_ms"):
-            result["timeout_ms"] = guardrails_data["timeout_ms"]
-        return result
+        return _build_guardrail_config(guardrails_data, checks)
 
     # Checks as dict (from frontend saves via OrgConfig)
     if isinstance(raw_checks, dict) and raw_checks:
@@ -258,12 +279,26 @@ def _transform_guardrails(guardrails_data, org_id=None):
         mapped = {}
         for name, cfg in raw_checks.items():
             registry_name = _RULE_TO_REGISTRY.get(name, name)
-            # Strip internal metadata keys before forwarding to gateway
-            clean_cfg = (
-                {k: v for k, v in cfg.items() if not k.startswith("_")}
-                if isinstance(cfg, dict)
-                else cfg
-            )
+            # Forward only the contract's fields. The settings editor also
+            # stores its own keys on a check (mode, _originalName), and puts a
+            # model check's provider beside config; the gateway reads it only
+            # from config.
+            clean_cfg = cfg
+            if isinstance(cfg, dict):
+                clean_cfg = {
+                    k: v for k, v in cfg.items() if k in _GUARDRAIL_CHECK_INPUT_FIELDS
+                }
+                if (
+                    "threshold" in cfg
+                    and "confidence_threshold" not in clean_cfg
+                    and "confidenceThreshold" not in clean_cfg
+                ):
+                    clean_cfg["confidence_threshold"] = cfg["threshold"]
+                if cfg.get("provider"):
+                    clean_cfg["config"] = {
+                        "provider": cfg["provider"],
+                        **(clean_cfg.get("config") or {}),
+                    }
             inner = clean_cfg.get("config") if isinstance(clean_cfg, dict) else None
             _normalize_eval_ids(inner)
             if isinstance(clean_cfg, dict):
@@ -271,11 +306,11 @@ def _transform_guardrails(guardrails_data, org_id=None):
             mapped[registry_name] = clean_cfg
         if org_id:
             _inject_fi_credentials(mapped, org_id)
-        return {**guardrails_data, "checks": mapped}
+        return _build_guardrail_config(guardrails_data, mapped)
 
     # Convert rules array → checks map
     if not isinstance(rules, list) or not rules:
-        return guardrails_data
+        return _build_guardrail_config(guardrails_data, {})
 
     # Inject decrypted guardrail credentials before transformation
     _inject_guardrail_credentials(rules)
@@ -300,16 +335,7 @@ def _transform_guardrails(guardrails_data, org_id=None):
     if org_id:
         _inject_fi_credentials(checks, org_id)
 
-    result = {
-        "checks": checks,
-        "fail_open": guardrails_data.get(
-            "failOpen", guardrails_data.get("fail_open", False)
-        ),
-        "pipeline_mode": guardrails_data.get("pipeline_mode", "parallel"),
-    }
-    if guardrails_data.get("timeout_ms"):
-        result["timeout_ms"] = guardrails_data["timeout_ms"]
-    return result
+    return _build_guardrail_config(guardrails_data, checks)
 
 
 def _normalize_url(url):
