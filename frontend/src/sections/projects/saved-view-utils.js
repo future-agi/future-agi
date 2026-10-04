@@ -45,11 +45,18 @@ export const dateBoundsEqual = (a, b) => {
 };
 
 // Date filter equality for saved-view dirty checks: option name first, then
-// the custom bounds when the option is "Custom".
+// the custom bounds when the option is "Custom". A stored Custom with no
+// bounds array is a legacy row (migration 0078 copied option-only date
+// filters), and the live default always carries bounds, so that shape is not
+// an edit.
 export const dateFilterEqual = (current, baseline) => {
   const currentOption = current?.dateOption ?? null;
   const baselineOption = baseline?.dateOption ?? null;
   if (currentOption !== baselineOption) return false;
   if (baselineOption !== "Custom") return true;
-  return dateBoundsEqual(current?.dateFilter, baseline?.dateFilter);
+  const baselineBounds = baseline?.dateFilter;
+  if (!Array.isArray(baselineBounds) || baselineBounds.length === 0) {
+    return true;
+  }
+  return dateBoundsEqual(current?.dateFilter, baselineBounds);
 };

@@ -121,5 +121,17 @@ describe("saved-view-utils", () => {
       expect(dateFilterEqual(undefined, undefined)).toBe(true);
       expect(dateFilterEqual(undefined, custom(range))).toBe(false);
     });
+
+    // Migration 0078 copied legacy filters.dateFilter objects that carried an
+    // option name and no bounds array. The live default always has bounds, so
+    // a stored Custom with no pair must not read as an edit on load.
+    it("treats a Custom baseline with no bounds as equal to any bounds", () => {
+      expect(dateFilterEqual(custom(range), { dateOption: "Custom" })).toBe(
+        true,
+      );
+      expect(dateFilterEqual(custom(range), custom(undefined))).toBe(true);
+      expect(dateFilterEqual(custom(range), custom(null))).toBe(true);
+      expect(dateFilterEqual(custom(range), custom([]))).toBe(true);
+    });
   });
 });
