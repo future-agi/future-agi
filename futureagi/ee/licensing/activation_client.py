@@ -184,7 +184,22 @@ def dispatch_managed_request(
             "GATEWAY_UNREACHABLE", "Cannot reach managed AI gateway"
         )
 
-    _raise_for_managed_status(response.status_code, on_unauthorized)
+    try:
+        _raise_for_managed_status(response.status_code, on_unauthorized)
+    except ManagedServiceError as exc:
+        # Keep the existing public error codes. Typed services also need the
+        # status and gateway code to distinguish transient from permanent 5xx.
+        exc.status_code = response.status_code
+        exc.gateway_code = None
+        exc.retry_after = response.headers.get("Retry-After")
+        try:
+            body = response.json()
+            error = body.get("error") if isinstance(body, dict) else None
+            if isinstance(error, dict) and isinstance(error.get("code"), str):
+                exc.gateway_code = error["code"]
+        except ValueError:
+            pass
+        raise
     return response.json()
 
 

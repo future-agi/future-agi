@@ -1224,7 +1224,12 @@ class EvaluationRunner:
                         response.get("reason"),
                         CellStatus.PASS.value,
                     )
-            value = self.format_output(response, row)
+            formatter = getattr(eval_instance, "format_result", None)
+            value = (
+                formatter(response, self.eval_template)
+                if callable(formatter)
+                else self.format_output(response, row)
+            )
 
             if api_call_log_row is not None:
                 config_dict = json.loads(api_call_log_row.config)
@@ -1341,26 +1346,44 @@ class EvaluationRunner:
                     and BillingEventType is not None
                 ):
 
-                    emit(
-                        UsageEvent(
-                            org_id=emit_org_id,
-                            event_type=eval_event_type,
-                            amount=credits,
-                            properties={
-                                "source": self.source,
-                                "source_id": str(
-                                    self.source_id
-                                    or (
-                                        str(self.user_eval_metric.template.id)
-                                        if self.user_eval_metric
-                                        else ""
-                                    )
-                                ),
-                                "raw_cost_usd": str(actual_cost),
-                                **token_usage_properties(_token_usage),
-                            },
+                    from ee.evals.llm.jev_evaluator.evaluator import JevEvaluator
+
+                    if isinstance(eval_instance, JevEvaluator):
+                        from ee.jev.metering import build_usage_events
+
+                        run_id = (
+                            str(api_call_log_row.log_id)
+                            if api_call_log_row is not None
+                            else f"{self.replace_column_id}:{row.id}"
                         )
-                    )
+                        for event in build_usage_events(
+                            eval_instance,
+                            org_id=emit_org_id,
+                            cell_or_run_id=run_id,
+                            amount=credits,
+                        ):
+                            emit(event)
+                    else:
+                        emit(
+                            UsageEvent(
+                                org_id=emit_org_id,
+                                event_type=eval_event_type,
+                                amount=credits,
+                                properties={
+                                    "source": self.source,
+                                    "source_id": str(
+                                        self.source_id
+                                        or (
+                                            str(self.user_eval_metric.template.id)
+                                            if self.user_eval_metric
+                                            else ""
+                                        )
+                                    ),
+                                    "raw_cost_usd": str(actual_cost),
+                                    **token_usage_properties(_token_usage),
+                                },
+                            )
+                        )
             except Exception:
                 pass
 
@@ -1415,7 +1438,7 @@ class EvaluationRunner:
             error_message = get_specific_error_message(e)
 
             response, status, value = self._handle_error(error_message)
-           
+
             usage_error_code = get_usage_error_code(e)
             if usage_error_code:
                 response["error_code"] = usage_error_code

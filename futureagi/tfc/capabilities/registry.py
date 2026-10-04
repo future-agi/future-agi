@@ -102,6 +102,18 @@ FEATURE_TURING_MODELS = FeatureDefinition(
     air_gap_behavior=AirGapBehavior.UNAVAILABLE,
 )
 
+FEATURE_JEV_MODELS = FeatureDefinition(
+    id="jev_models",
+    oss_locked=True,
+    display_name="Jev Models",
+    oss_baseline=False,
+    requires_license=True,
+    execution_location=ExecutionLocation.FUTUREAGI_SERVICE,
+    required_service="jev",
+    metering_dimension="managed_ai_credits_monthly",
+    air_gap_behavior=AirGapBehavior.UNAVAILABLE,
+)
+
 FEATURE_PROTECT = FeatureDefinition(
     id="protect",
     oss_locked=True,
@@ -281,6 +293,7 @@ _ALL_FEATURES: tuple[FeatureDefinition, ...] = (
     FEATURE_DEDICATED_SUPPORT,
     FEATURE_AGREEMENT_METRICS,
     FEATURE_REQUIRED_LABELS,
+    FEATURE_JEV_MODELS,
 )
 
 

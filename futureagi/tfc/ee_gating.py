@@ -60,6 +60,7 @@ class EEFeature(str, Enum):
     DEDICATED_SUPPORT = "dedicated_support"
     FALCON_AI = "falcon_ai"
     TURING_MODELS = "turing_models"
+    JEV_MODELS = "jev_models"
     PROTECT = "protect"
     SCENARIOS = "scenarios"
     ERROR_FEED = "error_feed"

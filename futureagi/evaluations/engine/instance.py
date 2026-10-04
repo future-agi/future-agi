@@ -12,6 +12,7 @@ import structlog
 from evaluations.constants import FUTUREAGI_EVAL_TYPES
 
 logger = structlog.get_logger(__name__)
+_DEFAULT_MODEL = object()
 
 
 # Per-evaluator allow-list for per-binding ``run_config`` overrides. Caps
@@ -25,6 +26,13 @@ logger = structlog.get_logger(__name__)
 # dataset runner), not on the evaluator instance — kept out of both
 # allow-lists.
 _RUNTIME_ALLOWED_KEYS = {
+    "JevEvaluator": {
+        "pass_threshold",
+        "reverse_output",
+        "choice_scores",
+        "output_type",
+        "choices",
+    },
     "AgentEvaluator": {
         "model",
         "agent_mode",
@@ -417,11 +425,62 @@ def prepare_eval_config(
     return config, criteria_override
 
 
+def prepare_jev_config(
+    eval_template, config, effective_model, resolved_version, runtime_config
+):
+    """Build an effective typed config without resolving chat credentials."""
+    from copy import deepcopy
+
+    from ee.jev.mapping import validate_jev_mapping
+
+    effective = deepcopy(eval_template.config or {})
+    if resolved_version:
+        effective.update(deepcopy(resolved_version.config_snapshot or {}))
+    effective.update(config)
+    effective, _ = apply_version_overrides(effective, resolved_version)
+    effective["model"] = effective_model
+    effective["api_key"] = None
+    effective["provider"] = "typesafe"
+    effective["output_type"] = effective.get(
+        "output_type", effective.get("output", "Pass/Fail")
+    )
+    effective["choice_scores"] = (
+        getattr(resolved_version, "choice_scores", None)
+        if resolved_version
+        else eval_template.choice_scores
+    )
+    effective["choices"] = (
+        effective.get("choices")
+        or list(effective["choice_scores"] or {})
+        or eval_template.choices
+    )
+    effective["multi_choice"] = bool(
+        effective.get("multi_choice") or getattr(eval_template, "multi_choice", False)
+    )
+    effective["pass_threshold"] = resolve_pass_threshold(
+        eval_template, runtime_config, resolved_version
+    )
+    for key, value in ((runtime_config or {}).get("run_config") or {}).items():
+        if key in _RUNTIME_ALLOWED_KEYS["JevEvaluator"] and value is not None:
+            effective[key] = value
+    mapping = validate_jev_mapping(
+        eval_template,
+        output=effective["output_type"],
+        choice_scores=effective["choice_scores"],
+        multi_choice=effective["multi_choice"],
+        config=effective,
+    )
+    effective["jev_mapping"] = mapping.to_dict()
+    for key in ("organization_id", "workspace_id", "user_id"):
+        effective.pop(key, None)
+    return effective
+
+
 def create_eval_instance(
     eval_class,
     eval_template,
     config=None,
-    model="turing_large",
+    model=_DEFAULT_MODEL,
     kb_id=None,
     runtime_config=None,
     organization_id=None,
@@ -462,6 +521,40 @@ def create_eval_instance(
 
     resolved_version = resolve_version(eval_template, version_number, org)
 
+    from tfc.ee_gates import is_jev_model
+
+    template_model = (eval_template.config or {}).get("model")
+    version_model = getattr(resolved_version, "model", None)
+    binding = runtime_config or {}
+    binding_model = (binding.get("run_config") or {}).get("model") or binding.get(
+        "model"
+    )
+    supplied_model = None if model is _DEFAULT_MODEL else model
+    effective_model = binding_model or supplied_model or version_model or template_model
+    if is_jev_model(effective_model):
+        from tfc.capabilities import service as capability_service
+
+        capability_service.check_or_raise(
+            "jev_models", org_id=str(org.id) if org is not None else organization_id
+        )
+        from ee.evals.llm.jev_evaluator.evaluator import JevEvaluator
+
+        if kb_id:
+            config = {**config, "knowledge_base_id": str(kb_id)}
+        jev_config = prepare_jev_config(
+            eval_template, config, effective_model, resolved_version, runtime_config
+        )
+        return JevEvaluator(**jev_config), None
+
+    jev_selection = any(
+        isinstance(value, str) and value.lower().startswith("jev-")
+        for value in (template_model, version_model, effective_model)
+    )
+    if jev_selection:
+        model = effective_model
+    elif model is _DEFAULT_MODEL:
+        model = "turing_large"
+
     # Prepare config based on eval type
     config, criteria = prepare_eval_config(
         eval_template=eval_template,
@@ -475,6 +568,8 @@ def create_eval_instance(
 
     # Apply version overrides
     config, criteria = apply_version_overrides(config, resolved_version, criteria)
+    if jev_selection:
+        config["model"] = effective_model
 
     from agentic_eval.core_evals.fi_evals.eval_type import is_function_eval
 
