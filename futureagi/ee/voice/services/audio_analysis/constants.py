@@ -49,10 +49,29 @@ SUPPORTED_SUBTYPES = {
 
 
 def audio_metrics_enabled_for_org(org_id) -> bool:
-    """Shared scheduler/read gate; empty allowlist enables all organizations."""
+    """Shared scheduler/read gate: flag, then plan entitlement, then allowlist.
+
+    Entitlement reuses the voice-simulation plan check (`has_voice_sim`), which
+    passes on self-hosted deployments and denies on cloud when the plan lacks
+    it. A missing entitlement service denies rather than failing open. An empty
+    allowlist then means every entitled organization.
+    """
     from django.conf import settings
 
     if not getattr(settings, "VOICE_AUDIO_METRICS_ENABLED", False):
         return False
+    if not _org_entitled_to_voice_sim(org_id):
+        return False
     allowlist = getattr(settings, "VOICE_AUDIO_METRICS_ORG_ALLOWLIST", [])
     return not allowlist or str(org_id) in allowlist
+
+
+def _org_entitled_to_voice_sim(org_id) -> bool:
+    try:
+        from ee.usage.services.entitlements import Entitlements
+    except ImportError:
+        return False
+    try:
+        return Entitlements.check_feature(str(org_id or ""), "has_voice_sim").allowed
+    except Exception:
+        return False

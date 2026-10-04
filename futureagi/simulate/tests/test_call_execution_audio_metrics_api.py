@@ -171,6 +171,37 @@ def test_allowlist_denial_not_enabled(audio_call, settings):
     ] == empty_envelope(0, "not_enabled")
 
 
+def test_unentitled_org_reads_not_enabled(audio_call, monkeypatch):
+    """A cloud plan without voice simulation never sees the metrics (R10)."""
+
+    class Denied:
+        allowed = False
+
+    monkeypatch.setattr(
+        "ee.usage.services.entitlements.Entitlements.check_feature",
+        lambda org_id, feature: Denied(),
+    )
+    assert build_call_execution_detail(audio_call, include_audio_metrics=True)[
+        "audio_metrics"
+    ] == empty_envelope(0, "not_enabled")
+
+
+def test_entitlement_service_missing_denies(audio_call, monkeypatch):
+    import builtins
+
+    real_import = builtins.__import__
+
+    def guarded(name, *args, **kwargs):
+        if name == "ee.usage.services.entitlements":
+            raise ImportError("ee unavailable")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded)
+    assert build_call_execution_detail(audio_call, include_audio_metrics=True)[
+        "audio_metrics"
+    ] == empty_envelope(0, "not_enabled")
+
+
 def test_unknown_schema_version_unsupported(audio_call):
     audio_call.audio_metrics = {"schema_version": 99, "private": "secret"}
     assert build_call_execution_detail(audio_call, include_audio_metrics=True)[
