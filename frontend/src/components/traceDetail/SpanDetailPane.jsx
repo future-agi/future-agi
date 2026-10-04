@@ -46,6 +46,7 @@ import { normalizeTags } from "./tagUtils";
 import TagChip from "./TagChip";
 import TagInput from "./TagInput";
 import EvalsTabView, { collectAllEvalsFromEntry } from "./EvalsTabView";
+import EvalRollupSection from "./EvalRollupSection";
 import { openFixWithFalcon } from "src/sections/falcon-ai/helpers/openFixWithFalcon";
 import ImageCard from "src/components/multimodal/ImageCard";
 import AudioCellRenderer from "src/sections/common/DevelopCellRenderer/CellRenderers/AudioCellRenderer";
@@ -1722,9 +1723,28 @@ const SpanDetailPane = ({
   onClose,
   onAction,
   onSelectSpan,
+  initialEvalFocus = false,
   drawerOpen = true,
 }) => {
   const [activeTab, setActiveTab] = useState("preview");
+  const evalFocusSeededRef = useRef(false);
+  const lastEntryIdRef = useRef(null);
+  useEffect(() => {
+    if (!drawerOpen) {
+      evalFocusSeededRef.current = false;
+      return;
+    }
+    if (initialEvalFocus && !evalFocusSeededRef.current) {
+      evalFocusSeededRef.current = true;
+      setActiveTab("evals");
+    }
+  }, [drawerOpen, initialEvalFocus]);
+  useEffect(() => {
+    const entryId = entry?.observation_span?.id || entry?.observationSpan?.id;
+    if (entryId === lastEntryIdRef.current) return;
+    lastEntryIdRef.current = entryId;
+    if (!initialEvalFocus) setActiveTab("preview");
+  }, [entry, initialEvalFocus]);
   const [searchQuery, setSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState("markdown"); // "markdown" | "json" | "chat"
 
@@ -2127,8 +2147,14 @@ const SpanDetailPane = ({
         {/* Evals Tab — this span + child span evals. Rendered via the
             shared EvalsTabView component so the trace drawer and the
             voice drawer use the same eval UI. */}
-        {activeTab === "evals" && (
-          <EvalsTabView
+        {activeTab === "evals" &&
+          (entry?.eval_rollup ? (
+            <EvalRollupSection
+              rollup={entry.eval_rollup}
+              onSelectSpan={onSelectSpan}
+            />
+          ) : (
+            <EvalsTabView
             evals={collectAllEvalsFromEntry(entry)}
             onSelectSpan={onSelectSpan}
             emptyMessage="No evaluations for this span or its children"
@@ -2173,8 +2199,8 @@ const SpanDetailPane = ({
                 },
               });
             }}
-          />
-        )}
+            />
+          ))}
 
         {/* Annotations Tab */}
         {activeTab === "annotations" && (
@@ -2748,6 +2774,7 @@ SpanDetailPane.propTypes = {
   onClose: PropTypes.func.isRequired,
   onAction: PropTypes.func,
   onSelectSpan: PropTypes.func,
+  initialEvalFocus: PropTypes.bool,
   drawerOpen: PropTypes.bool,
 };
 

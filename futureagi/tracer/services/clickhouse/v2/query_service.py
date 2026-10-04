@@ -97,12 +97,15 @@ class V2AnalyticsQueryService(AnalyticsQueryService):
         trace_ids: list[str],
         candidate_config_ids: list[str],
         timeout_ms: int = 3000,
-    ) -> list[str]:
+        *,
+        include_target_type: bool = False,
+    ) -> list[str] | list[dict[str, str | None]]:
         return super().get_eval_config_ids_for_traces_ch(
             trace_ids,
             candidate_config_ids,
             timeout_ms=timeout_ms,
             eval_logger_table=self._configured_eval_logger_table(),
+            include_target_type=include_target_type,
         )
 
     def get_eval_config_ids_for_candidates_ch(
@@ -110,12 +113,15 @@ class V2AnalyticsQueryService(AnalyticsQueryService):
         candidate_config_ids: list[str],
         timeout_ms: int = 5000,
         window_days: int | None = 30,
-    ) -> list[str]:
+        *,
+        include_target_type: bool = False,
+    ) -> list[str] | list[dict[str, str | None]]:
         return super().get_eval_config_ids_for_candidates_ch(
             candidate_config_ids,
             timeout_ms=timeout_ms,
             window_days=window_days,
             eval_logger_table=self._configured_eval_logger_table(),
+            include_target_type=include_target_type,
         )
 
     def get_children_eval_metrics_ch(

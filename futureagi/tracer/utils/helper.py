@@ -32,6 +32,10 @@ class FieldConfig:
     settings: dict | None = None
     choices_map: dict | None = None
     eval_template_id: str | None = None
+    # Eval rows can target a span or a trace.  The Observe count tile uses this
+    # as presentation metadata only; unknown/session targets intentionally
+    # remain null so the UI does not invent a glyph.
+    target_type: str | None = None
     annotators: dict | None = None
     # When set, this column renders a sub-field (e.g. "reason") of a parent
     # eval column identified by parent_eval_id. Lets the frontend pull the
@@ -334,6 +338,8 @@ def update_column_config_based_on_eval_config(
     skip_choices: bool | None = False,
     is_simulator: bool = False,
     property_source: str | None = None,
+    target_types: dict[str, str | None] | None = None,
+    observed_choice_labels: dict[str, list[str]] | None = None,
 ):
     if not column_config:
         column_config = []
@@ -341,12 +347,32 @@ def update_column_config_based_on_eval_config(
     resolved_property_source = property_source or (
         "simulation" if is_simulator else "traces"
     )
+    target_types = target_types or {}
+    observed_choice_labels = observed_choice_labels or {}
 
     for item in custom_eval_configs:
         eval_template_config = item.eval_template.config or {}
         output_type = eval_template_config.get("output", "score")
         choices = item.eval_template.choices if item.eval_template.choices else None
-        choices_map = item.eval_template.config.get("choices_map", {})
+        choices_map = dict(item.eval_template.config.get("choices_map", {}) or {})
+        config_id = str(item.id)
+        target_type = target_types.get(config_id)
+        if target_type not in {"span", "trace"}:
+            target_type = None
+        # Count-mode tiles have one column per config rather than one per
+        # choice. Preserve declared labels, and give observed undeclared labels
+        # a neutral tone so an old result never disappears or inherits a
+        # misleading semantic color.
+        if skip_choices:
+            for label in observed_choice_labels.get(config_id, []):
+                if label not in (None, ""):
+                    choices_map.setdefault(str(label), "neutral")
+            if choices and output_type == EvalOutputType.CHOICES.value:
+                choices = list(
+                    dict.fromkeys(
+                        [*choices, *observed_choice_labels.get(config_id, [])]
+                    )
+                )
 
         # For simulator projects, don't add "Avg." prefix
         name_prefix = "" if is_simulator else "Avg. "
@@ -366,6 +392,7 @@ def update_column_config_based_on_eval_config(
                     ),
                     choices_map=choices_map,
                     eval_template_id=eval_template_id,
+                    target_type=target_type,
                 )
                 present_config = asdict(present_config)
                 present_config.update(
@@ -390,6 +417,7 @@ def update_column_config_based_on_eval_config(
                 choices_map=choices_map,
                 choices=choices,
                 eval_template_id=eval_template_id,
+                target_type=target_type,
             )
             present_config = asdict(present_config)
             present_config.update(

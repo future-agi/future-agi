@@ -60,7 +60,7 @@ from tfc.utils.api_serializers import ApiErrorResponseSerializer
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
-from tracer.models.custom_eval_config import CustomEvalConfig
+from tracer.models.custom_eval_config import CustomEvalConfig, EvalOutputType
 from tracer.models.observation_span import EvalLogger, ObservationSpan
 from tracer.models.project import Project
 from tracer.models.project_version import ProjectVersion
@@ -184,6 +184,7 @@ from tracer.utils.eval import (
 )
 from tracer.utils.filters import FilterEngine
 from tracer.utils.helper import (
+    eval_output_type_for_config,
     get_annotation_labels_by_project,
     get_annotation_labels_for_project,
     get_default_span_config,
@@ -2113,6 +2114,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 deleted=False,
             ).select_related("eval_template")
             eval_config_ids = [str(c.id) for c in eval_configs]
+
         else:
             # Configuration metadata is already a finite project-scoped PG
             # read. A window-wide CH discovery query before the page selector
@@ -2126,6 +2128,18 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 ).select_related("eval_template")
             )
             eval_config_ids = [str(c.id) for c in eval_configs]
+
+        eval_output_types = {
+            str(config.id): eval_output_type_for_config(config)
+            for config in eval_configs
+        }
+        eval_declared_choices = {
+            str(config.id): list(config.eval_template.choices or [])
+            for config in eval_configs
+            if getattr(config, "eval_template", None) is not None
+        }
+        eval_target_types: dict[str, str | None] = {}
+        eval_observed_choice_labels: dict[str, list[str]] = {}
 
         # Labels can be project-local or org/shared labels referenced by span
         # scores. Completeness is project-local, so retain that mapping for the
@@ -2506,6 +2520,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 span_ids,
                 created_after=page_min_created_at,
                 span_entities=span_entities,
+                count_mode=True,
             )
             if not eval_query:
                 return _stats({}, [], False)
@@ -2516,8 +2531,28 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 settings=SPAN_LIST_SINGLE_WORKER_READ_SETTINGS,
             )
             external_map = SpanListQueryBuilder.pivot_eval_results(
-                eval_result.data, key_by_trace=True
+                eval_result.data,
+                key_by_trace=True,
+                count_mode=True,
+                output_types=eval_output_types,
+                declared_choices=eval_declared_choices,
             )
+            for eval_row in eval_result.data:
+                config_id = str(eval_row.get("eval_config_id") or "")
+                target_type = eval_row.get("target_type")
+                if config_id and target_type in {"span", "trace"}:
+                    eval_target_types[config_id] = target_type
+            for span_evals in external_map.values():
+                for config_id, cell in span_evals.items():
+                    if eval_output_types.get(config_id) != EvalOutputType.CHOICES.value:
+                        continue
+                    if isinstance(cell, dict) and not cell.get("error") and not cell.get("status"):
+                        labels = eval_observed_choice_labels.setdefault(
+                            config_id, []
+                        )
+                        for label in cell:
+                            if label not in labels:
+                                labels.append(label)
             # Every copy gets the pivot; the table below keeps only the
             # columns of configs owned by the row's project.
             value = {
@@ -2660,7 +2695,11 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         # Build column config (from PG config tables)
         column_config = get_default_span_config(include_user_fields=True)
         column_config = update_column_config_based_on_eval_config(
-            column_config, eval_configs
+            column_config,
+            eval_configs,
+            skip_choices=True,
+            target_types=eval_target_types,
+            observed_choice_labels=eval_observed_choice_labels,
         )
         column_config = update_span_column_config_based_on_annotations(
             column_config, annotation_labels
@@ -2731,28 +2770,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 config_id = str(config.id)
                 if config_id not in span_evals:
                     continue
-                val = span_evals[config_id]
-                # Lifecycle marker — ``{"status": ...}`` (pending/running/skipped)
-                # or ``{"error": True}`` (errored): pass the whole marker through
-                # on the ``config_id`` column so the cell renders the
-                # loading / pending / skipped / error state instead of a blank.
-                if isinstance(val, dict) and (
-                    isinstance(val.get("status"), str) or val.get("error")
-                ):
-                    entry[config_id] = val
-                # CHOICES eval: spread per-choice percentages into separate
-                # columns keyed ``{config_id}**{choice}`` to match the
-                # column config produced by
-                # ``update_column_config_based_on_eval_config``.
-                elif isinstance(val, dict) and not val.get("error") and val:
-                    for choice, pct in val.items():
-                        entry[f"{config_id}**{choice}"] = pct
-                else:
-                    entry[config_id] = val
-                    if isinstance(val, dict):
-                        entry[config_id] = val.get("score")
-                    else:
-                        entry[config_id] = val
+                entry[config_id] = span_evals[config_id]
 
             # Add annotations
             span_annotations = annotation_map.get(span_entity, {})

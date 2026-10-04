@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { Box, Button, Stack } from "@mui/material";
 import CompactTabs from "./CompactTabs";
@@ -16,6 +16,7 @@ import { isLiveKitProvider } from "src/sections/agents/constants";
 import ScoresListSection from "src/components/ScoresListSection/ScoresListSection";
 import { buildVoiceCallScoreSource } from "src/components/voiceAnnotationSources";
 import EvalsTabView from "src/components/traceDetail/EvalsTabView";
+import EvalRollupSection from "src/components/traceDetail/EvalRollupSection";
 import { openFixWithFalcon } from "src/sections/falcon-ai/helpers/openFixWithFalcon";
 import VoiceLogsView from "./VoiceLogsView";
 import LoadingStateComponent from "src/components/CallLogsDetailDrawer/LoadingStateComponent";
@@ -54,8 +55,20 @@ const VoiceRightPanel = ({
   hiddenActionIds = [],
   hideAnnotationTab,
   showFixWithFalcon = true,
+  initialEvalFocus = false,
 }) => {
   const [currentTab, setCurrentTab] = useState(TABS.ANALYTICS);
+  const evalFocusSeededRef = useRef(false);
+  useEffect(() => {
+    if (!initialEvalFocus) {
+      evalFocusSeededRef.current = false;
+      return;
+    }
+    if (!evalFocusSeededRef.current) {
+      evalFocusSeededRef.current = true;
+      setCurrentTab(TABS.EVALUATIONS);
+    }
+  }, [initialEvalFocus]);
   const isSimulate = data?.module === "simulate";
   // Prefer the conversation root span (where voice-call attributes/raw_log
   // live). `trace.observation_spans.all()` is returned without a guaranteed
@@ -71,6 +84,20 @@ const VoiceRightPanel = ({
       spans[0]
     );
   }, [data?.observation_span]);
+  // Voice detail can receive the trace-detail tree directly or its legacy
+  // flattened root span. Prefer the additive rollup whenever either shape
+  // supplies it; scalar eval outputs remain the compatibility fallback.
+  const evalRollup = useMemo(() => {
+    if (data?.eval_rollup) return data.eval_rollup;
+    const tree = data?.observation_spans || data?.observation_span;
+    if (!Array.isArray(tree)) return null;
+    const root = tree.find(
+      (entry) =>
+        entry?.eval_rollup &&
+        !entry?.observation_span?.parent_span_id,
+    );
+    return root?.eval_rollup || null;
+  }, [data?.eval_rollup, data?.observation_span, data?.observation_spans]);
   const canCompare = isSimulate && !!onCompareBaseline && !!data?.session_id;
 
   const { isCallInProgress, message: loadingMessage } =
@@ -425,7 +452,10 @@ const VoiceRightPanel = ({
           </ShowComponent>
 
           <ShowComponent condition={currentTab === TABS.EVALUATIONS}>
-            <EvalsTabView
+            {evalRollup ? (
+              <EvalRollupSection rollup={evalRollup} />
+            ) : (
+              <EvalsTabView
               evals={normalizedEvals}
               emptyMessage="No evaluations for this call"
               showSpanColumn={false}
@@ -472,7 +502,8 @@ const VoiceRightPanel = ({
                   },
                 });
               }}
-            />
+              />
+            )}
           </ShowComponent>
 
           <ShowComponent condition={currentTab === TABS.MESSAGES}>
@@ -544,6 +575,7 @@ VoiceRightPanel.propTypes = {
   hiddenActionIds: PropTypes.arrayOf(PropTypes.string),
   hideAnnotationTab: PropTypes.bool,
   showFixWithFalcon: PropTypes.bool,
+  initialEvalFocus: PropTypes.bool,
 };
 
 export default VoiceRightPanel;

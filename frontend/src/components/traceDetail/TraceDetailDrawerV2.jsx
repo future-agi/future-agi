@@ -134,6 +134,7 @@ const TraceDetailDrawerV2 = ({
   hasNext = true,
   initialFullscreen = false,
   initialSpanId = null,
+  initialEvalFocus = false,
   refreshParentGrid,
 }) => {
   const navigate = useNavigate();
@@ -643,6 +644,13 @@ const TraceDetailDrawerV2 = ({
 
   const handleSelectSpan = useCallback((spanId) => {
     setSelectedSpanId((prev) => (prev === spanId ? null : spanId));
+  }, []);
+
+  // Evaluation-rollup "View span" is navigation, not a tree toggle. In
+  // particular, viewing the already-selected root must keep the detail pane
+  // visible instead of clearing the selection.
+  const handleViewSpan = useCallback((spanId) => {
+    setSelectedSpanId(spanId);
   }, []);
 
   const handleAction = useCallback(
@@ -1215,7 +1223,8 @@ const TraceDetailDrawerV2 = ({
                   projectId={projectId}
                   onClose={() => setSelectedSpanId(null)}
                   onAction={handleAction}
-                  onSelectSpan={handleSelectSpan}
+                  onSelectSpan={handleViewSpan}
+                  initialEvalFocus={initialEvalFocus}
                   drawerOpen={open}
                 />
               </Box>
@@ -1298,7 +1307,8 @@ const TraceDetailDrawerV2 = ({
                   projectId={projectId}
                   onClose={() => setSelectedSpanId(null)}
                   onAction={handleAction}
-                  onSelectSpan={handleSelectSpan}
+                  onSelectSpan={handleViewSpan}
+                  initialEvalFocus={initialEvalFocus}
                   drawerOpen={open}
                 />
               ) : (
@@ -1554,6 +1564,7 @@ TraceDetailDrawerV2.propTypes = {
   hasNext: PropTypes.bool,
   initialFullscreen: PropTypes.bool,
   initialSpanId: PropTypes.string,
+  initialEvalFocus: PropTypes.bool,
   refreshParentGrid: PropTypes.func,
 };
 

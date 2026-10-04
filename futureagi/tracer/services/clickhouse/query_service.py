@@ -471,7 +471,8 @@ class AnalyticsQueryService:
         window_days: int | None = 30,
         *,
         eval_logger_table: str | None = None,
-    ) -> list[str]:
+        include_target_type: bool = False,
+    ) -> list[str] | list[dict[str, str | None]]:
         """Return candidate config ids that have direct eval rows.
 
         Candidate config ids are globally unique and already carry project
@@ -488,13 +489,55 @@ class AnalyticsQueryService:
         if window_days is not None:
             params["window_days"] = int(window_days)
             window_sql = "AND created_at >= now() - toIntervalDay(%(window_days)s)"
-        query = (
-            "SELECT DISTINCT toString(custom_eval_config_id) AS config_id "
-            f"FROM {eval_table} "
-            f"WHERE {eval_nd} {window_sql} "
-            "AND custom_eval_config_id IN %(config_ids)s"
-        )
+        if include_target_type:
+            version = eval_logger_version_column(eval_table)
+            live_columns = eval_logger_live_state_columns(eval_table)
+            live_projection = ", ".join(
+                f"{column} AS latest_state_{index}"
+                for index, column in enumerate(live_columns)
+            )
+            live_predicate = " AND ".join(
+                (
+                    f"latest_state_{index} = 0"
+                    if column != "deleted"
+                    else f"(latest_state_{index} = 0 OR latest_state_{index} IS NULL)"
+                )
+                for index, column in enumerate(live_columns)
+            )
+            # Tombstones are filtered only after collapsing each physical log
+            # version. Filtering in the inner scan would resurrect an older
+            # score when the newest version is deleted.
+            query = f"""
+                SELECT
+                    toString(custom_eval_config_id) AS config_id,
+                    argMax(target_type, tuple(created_at, toString(id))) AS target_type
+                FROM (
+                    SELECT id, custom_eval_config_id, target_type, created_at,
+                           {live_projection}
+                    FROM {eval_table}
+                    WHERE custom_eval_config_id IN %(config_ids)s {window_sql}
+                    ORDER BY {version} DESC
+                    LIMIT 1 BY id
+                ) AS latest_eval_configs
+                WHERE {live_predicate}
+                GROUP BY custom_eval_config_id
+            """
+        else:
+            query = (
+                "SELECT DISTINCT toString(custom_eval_config_id) AS config_id "
+                f"FROM {eval_table} "
+                f"WHERE {eval_nd} {window_sql} "
+                "AND custom_eval_config_id IN %(config_ids)s"
+            )
         result = self.execute_ch_query(query, params, timeout_ms=timeout_ms)
+        if include_target_type:
+            return [
+                {
+                    "config_id": str(row["config_id"]),
+                    "target_type": row.get("target_type"),
+                }
+                for row in result.data
+            ]
         return [row["config_id"] for row in result.data]
 
     def get_eval_config_ids_for_traces_ch(
@@ -504,7 +547,8 @@ class AnalyticsQueryService:
         timeout_ms: int = 3000,
         *,
         eval_logger_table: str | None = None,
-    ) -> list[str]:
+        include_target_type: bool = False,
+    ) -> list[str] | list[dict[str, str | None]]:
         """Project-owned eval configs recorded for an explicit trace set.
 
         ``tracer_eval_logger`` has no project column and trace IDs are supplied
@@ -515,11 +559,44 @@ class AnalyticsQueryService:
         """
         if not (trace_ids and candidate_config_ids):
             return []
-        query = self._eval_config_ids_query(
-            "trace_id IN %(trace_ids)s "
-            "AND custom_eval_config_id IN %(candidate_config_ids)s",
-            eval_logger_table=eval_logger_table,
-        )
+        if include_target_type:
+            eval_table, _ = eval_logger_source(table=eval_logger_table)
+            version = eval_logger_version_column(eval_table)
+            live_columns = eval_logger_live_state_columns(eval_table)
+            live_projection = ", ".join(
+                f"{column} AS latest_state_{index}"
+                for index, column in enumerate(live_columns)
+            )
+            live_predicate = " AND ".join(
+                (
+                    f"latest_state_{index} = 0"
+                    if column != "deleted"
+                    else f"(latest_state_{index} = 0 OR latest_state_{index} IS NULL)"
+                )
+                for index, column in enumerate(live_columns)
+            )
+            query = f"""
+                SELECT
+                    toString(custom_eval_config_id) AS config_id,
+                    argMax(target_type, tuple(created_at, toString(id))) AS target_type
+                FROM (
+                    SELECT id, custom_eval_config_id, target_type, created_at,
+                           {live_projection}
+                    FROM {eval_table}
+                    WHERE trace_id IN %(trace_ids)s
+                      AND custom_eval_config_id IN %(candidate_config_ids)s
+                    ORDER BY {version} DESC
+                    LIMIT 1 BY id
+                ) AS latest_trace_eval_configs
+                WHERE {live_predicate}
+                GROUP BY custom_eval_config_id
+            """
+        else:
+            query = self._eval_config_ids_query(
+                "trace_id IN %(trace_ids)s "
+                "AND custom_eval_config_id IN %(candidate_config_ids)s",
+                eval_logger_table=eval_logger_table,
+            )
         result = self.execute_ch_query(
             query,
             {
@@ -528,6 +605,14 @@ class AnalyticsQueryService:
             },
             timeout_ms=timeout_ms,
         )
+        if include_target_type:
+            return [
+                {
+                    "config_id": str(row["config_id"]),
+                    "target_type": row.get("target_type"),
+                }
+                for row in result.data
+            ]
         return [row["config_id"] for row in result.data]
 
     def get_span_trace_map(
