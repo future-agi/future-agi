@@ -881,6 +881,16 @@ the real key never has to live in the file, but treat it as a secret anyway.
 The gateway runs as uid 65532 in Distributed, so a mounted config must be
 readable by that user (mode `0644`).
 
+### Gateway video job state
+
+Video generation is off by default. Before enabling it, configure the gateway's
+Redis with AOF (`appendfsync everysec`) or RDB snapshots and
+`maxmemory-policy noeviction` so job state survives restarts and memory pressure
+does not evict it. The gateway logs a warning when it can read a policy other
+than `noeviction`; managed Redis may deny that check. The default Standalone
+in-memory Redis is insufficient for durable video state. See the
+[video configuration](agentcc-gateway/docs/video-generation/configuration.md).
+
 ### Vertex AI
 
 Vertex needs a Bearer token from a GCP service account, not an API key. The

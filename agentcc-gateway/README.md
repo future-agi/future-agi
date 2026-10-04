@@ -12,7 +12,7 @@
 ### The OpenAI-compatible gateway for production AI.
 
 **One gateway, every modality.**
-Text · chat · embeddings · images · audio (speech + TTS) · video · OCR · rerank · realtime WebSocket · Assistants + threads · vector stores · batch jobs — all with dedicated routes.
+Text · chat · embeddings · images · audio (speech + TTS) · [video (Seedance only in this release)](#-video-generation) · OCR · rerank · realtime WebSocket · Assistants + threads · vector stores · batch jobs — all with dedicated routes.
 Route · cache · govern · guard · observe. Single Go binary. Drop-in OpenAI API.
 
 <p>
@@ -43,7 +43,7 @@ Agent Command Center sits between your app and LLM providers. Every request flow
 - **Cost control** — exact + semantic caching, per-key budgets, quotas, virtual keys, rate limits, credits ledger.
 - **Safety** — 18 built-in guardrail scanners (PII, injection, jailbreak, secrets, hallucination, MCP security, content moderation, custom policy, validation, leakage, language, blocklist, …) + adapters for 15 third-party guardrail vendors.
 - **Observability** — Prometheus + OpenTelemetry, per-request metrics (cost, tokens, cache hit, provider).
-- **Modern protocols first-class** — MCP, A2A, Assistants + threads, vector stores, batch, files, realtime WebSocket, responses API, video — shipped, not roadmap.
+- **Modern protocols first-class** — MCP, A2A, Assistants + threads, vector stores, batch, files, realtime WebSocket, responses API — shipped, not roadmap.
 
 One binary. One config. No proprietary control plane.
 
@@ -244,7 +244,7 @@ Every row below uses the **same methodology** each vendor uses for their own cla
 
 - **Against Bifrost**, the fastest published Go gateway: Bifrost claims **5 000 req/s** at 11 µs overhead on t3.xlarge (4 vCPU). **On the same t3.xlarge profile** our gateway sustains **~28 900 req/s — roughly 5.7×** the RPS at P99 ≤ 21 ms with 100 % success. On the apples-to-apples microbench, our **weighted target selection runs at ~9.9 ns** (vs their ~10 ns key-pick — we're slightly faster) and our **HTTP router dispatches in 36 ns**. Full chat pipeline in-process measures ~5 µs for a read path and ~66 µs for a full proxy round-trip through the plugin pipeline.
 
-- **Against Portkey**, the Node.js gateway: Portkey ships a 122 KB binary and claims "< 1 ms latency" (unqualified). Our binary is ~140× bigger because it includes the full guardrail stack (18 built-in scanners), 6 exact + 4 semantic cache backends, MCP/A2A/batch/files/realtime/responses/video endpoints, multi-tenant RBAC, and clustering — all compiled in, no plugin marketplace required. The "< 1 ms" claim has no hardware or workload attached; any face-value comparison is apples-to-oranges.
+- **Against Portkey**, the Node.js gateway: Portkey ships a 122 KB binary and claims "< 1 ms latency" (unqualified). Our binary is ~140× bigger because it includes the full guardrail stack (18 built-in scanners), 6 exact + 4 semantic cache backends, MCP/A2A/batch/files/realtime/responses endpoints, multi-tenant RBAC, and clustering — all compiled in, no plugin marketplace required. The "< 1 ms" claim has no hardware or workload attached; any face-value comparison is apples-to-oranges.
 
 - **Against Helicone + Kong AI Gateway**: neither publishes performance numbers. Run our harness, then theirs, then tell us.
 
@@ -318,7 +318,7 @@ Nobody publishes a head-to-head gateway comparison. So we did.
 | **Files API** | ✅ | ❌ | ❌ | ✅ | ❌ | ❌ |
 | **Realtime / WebSocket** | ✅ | ❌ | ❌ | ⚠️ | ❌ | ❌ |
 | **Responses API** | ✅ | ❌ | ❌ | ✅ | ❌ | ❌ |
-| **Video API** | ✅ | ❌ | ❌ | ⚠️ | ❌ | ❌ |
+| **Video API** | ⚠️ ² | ❌ | ❌ | ⚠️ | ❌ | ❌ |
 | **Prometheus metrics** | ✅ native | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **OpenTelemetry spans** | ✅ native | ⚠️ | ⚠️ | ✅ | ✅ | ✅ |
 | **Multi-tenant RBAC** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -329,6 +329,8 @@ Nobody publishes a head-to-head gateway comparison. So we did.
 Legend: ✅ first-class · ⚠️ partial/paid · ❌ not in OSS.
 
 <sup>¹ 18 built-in scanners + adapters for: Lakera, Aporia, AWS Bedrock Guardrails, Azure AI Content Safety, Presidio, Llama Guard, Pangea, Enkrypt, Lasso, HiddenLayer, Gray Swan, DynamoAI, CrowdStrike, IBM watsonx, Zscaler — all chainable in the same pipeline.</sup>
+
+<sup>² BytePlus Seedance only; other providers designed, not implemented. See the <a href="#-video-generation">video support matrix</a>.</sup>
 
 Corrections welcome — open an issue or send a PR.
 
@@ -416,7 +418,7 @@ Corrections welcome — open an issue or send a PR.
 - Files API
 - Realtime (WebSocket)
 - OpenAI Responses API
-- Video models
+- [Video models (BytePlus Seedance)](#-video-generation)
 - Streaming SSE + chunk-level plugins
 - Webhooks
 - Scheduled jobs
@@ -452,13 +454,13 @@ Corrections welcome — open an issue or send a PR.
 
 ## 📋 Capabilities in detail
 
-**One gateway, every modality your providers expose.** Text · chat · vision · embeddings · reranking · speech-to-text · text-to-speech (+ streaming) · realtime WebSocket · image generation · video generation · OCR · grounded search · tool calling · structured output · Assistants + threads · vector stores · batch jobs — all have dedicated gateway routes. The specific model you reach is whatever the configured upstream provider serves at that endpoint; we pass the full provider-native payload through.
+**One gateway, every modality your providers expose.** Text · chat · vision · embeddings · reranking · speech-to-text · text-to-speech (+ streaming) · realtime WebSocket · image generation · [video generation (Seedance only in this release)](#-video-generation) · OCR · grounded search · tool calling · structured output · Assistants + threads · vector stores · batch jobs — all have dedicated gateway routes. The specific model you reach is whatever the configured upstream provider serves at that endpoint; we pass the full provider-native payload through, except video, which uses the validated contract and support matrix below.
 
 **Surface area at a glance:** 🔌 **109 routes** across 23 endpoint categories · 🛡️ **18 built-in guardrails + 15 external vendor adapters** · 🧠 **15 routing strategies** · 🔧 **16 pipeline plugins** · 🔄 **2 cross-provider translators** (OpenAI ↔ Anthropic · OpenAI ↔ Gemini) · 🌐 **7 native provider packages** · 🔒 **6 secret resolvers** (AWS SM · Azure KV · GCP SM · HashiCorp Vault · env · file) · 💾 **10 cache backends** (6 exact + 4 semantic) · 🧩 **39 internal subsystems**. Every count is grep-verifiable in the tree.
 
 ### 🌈 Modalities
 
-Every modality below has dedicated routes in the gateway. The **specific models** reachable depend on what your configured provider(s) support — we pass through whatever the provider exposes at the endpoint.
+Every modality below has dedicated routes in the gateway. The **specific models** reachable depend on what your configured provider(s) support — we pass through whatever the provider exposes at the endpoint, except video, which is limited to the support matrix below.
 
 | Modality | Gateway endpoints |
 |---|---|
@@ -468,7 +470,7 @@ Every modality below has dedicated routes in the gateway. The **specific models*
 | Speech-to-text | `/v1/audio/transcriptions` · `/v1/audio/translations` |
 | Text-to-speech (+ streaming) | `/v1/audio/speech` · `/v1/audio/speech/stream` |
 | Realtime voice + text (WebSocket) | `/v1/realtime` |
-| Video generation | `/v1/videos` · `/v1/videos/{id}` |
+| [Video generation](#-video-generation) | `/v1/videos` · `/v1/videos/{id}` · `/v1/videos/{id}/content` · `/v1/videos/{id}/cancel` |
 | Embeddings | `/v1/embeddings` |
 | Reranking | `/v1/rerank` |
 | OCR | `/v1/ocr` |
@@ -478,6 +480,82 @@ Every modality below has dedicated routes in the gateway. The **specific models*
 | Assistants + threads | `/v1/assistants` · `/v1/threads` · `/v1/threads/{id}/{messages,runs,runs/{id}/steps}` |
 | Vector stores (RAG) | `/v1/vector_stores` · `/v1/vector_stores/{id}/{files,file_batches,search}` |
 | Batch (async) | `/-/batches` |
+
+### 🎬 Video generation
+
+Video generation is a durable, Redis-backed job lifecycle behind `/v1/videos`.
+It is **off by default** (`video.enabled: false`). This release implements one
+provider family, BytePlus ModelArk Seedance. Every other family in the table
+below is designed (capability record, adapter contract, tests mapped) but
+**not implemented** until its cohort PR lands, and no row, including Seedance,
+is smoke-verified against a live provider account yet. The table is the
+support claim; nothing outside it is supported.
+
+State vocabulary: `documented` = upstream contract verified from primary
+docs and adapter designed, not implemented · `implemented` = adapter and
+lifecycle shipped behind config, LIVE smoke pending authorization ·
+`gated` = blocked by an explicit decision (output exposure, account,
+tariff) even once implemented · `unverified` = at least one contract field
+could not be established; fails closed · `deferred` = product-owner-approved
+deferral (none today) · `retired` = provider retired the API.
+
+| ID | Family | Exact model IDs | State | Text→video | Image→video | References | Audio out | Cancel | Evidence |
+|---|---|---|---|---|---|---|---|---|---|
+| P01 | BytePlus Seedance 2.5 | `dreamina-seedance-2-5-260628` | implemented | yes | first, first+last | image / video / audio (audio-only allowed) | optional, default on | queued only | adapter + contract suite; account activation and LIVE smoke pending |
+| P02 | BytePlus Seedance 2.0 | `dreamina-seedance-2-0-260128` | implemented | yes | first, first+last | image / video / audio (audio needs image or video) | optional | queued only | same as P01 |
+| P03 | BytePlus Seedance 2.0 Fast / Mini | `dreamina-seedance-2-0-fast-260128`, `dreamina-seedance-2-0-mini-260615` | implemented | yes | first, first+last | image / video / audio (audio needs image or video) | optional | queued only | same as P01; 480p/720p only |
+| P04 | BytePlus Seedance 1.x | `seedance-1-5-pro-251215`, `seedance-1-0-pro-250528`, `seedance-1-0-pro-fast-251015` | implemented | yes | first; first+last except 1.0 Pro Fast | none | 1.5 only | queued only | same as P01; legacy inventory kept under D03 |
+| P05 | Google Veo 3.1 (Gemini API) | `veo-3.1-generate-preview`, `veo-3.1-fast-generate-preview` | documented | yes | first, first+last | up to 3 images | always on | no (not documented) | cohort L06 |
+| P06 | Google Veo 3.1 Lite (Gemini API) | `veo-3.1-lite-generate-preview` | documented | yes | first, first+last | none (docs conflict; fails closed) | always on | no | cohort L06 |
+| P07 | Google Gemini Omni Flash | `gemini-omni-1.1-flash` | unverified | yes | yes | video ≤ 3 clips; no audio refs | yes | unverified | background mode, URI expiry, duration unverified |
+| P08 | Google Vertex Veo 3.1 | `veo-3.1-generate-001`, `veo-3.1-fast-generate-001`, `veo-3.1-lite-generate-001` | unverified | yes | yes | Standard/Fast only | yes | unverified | operation binding and tariff unverified; PAYG unsupported upstream |
+| P09 | Runway | `gen4.5` | documented | yes | first | none pinned | unverified | pending, throttled, running | cohort L07 |
+| P10 | Runway | `gen4_turbo` | documented | no | first | none pinned | unverified | pending, throttled, running | cohort L07 |
+| P11 | Luma Agents | `ray-3.2` | documented | yes | first, last, keyframes | none | unverified | no (not documented) | cohort L07; HDR+10s fails closed |
+| P12 | Kling 3.0 | `kling-3.0` | documented | yes | first (+last) | Elements | native / off | no (not documented) | cohort L08; price sheet not recovered |
+| P13 | Kling additional versions | `kling-3.0-turbo`, `kling-v3-omni`, `kling-video-o1`, `kling-v2-6`, `kling-v2-5-turbo` | unverified | — | — | — | — | — | per-variant schema unverified |
+| P14 | MiniMax H3 | `MiniMax-H3`, `MiniMax-H3-Max` | documented | yes | first, first+last | ≤ 9 images, ≤ 3 videos, ≤ 3 audio | yes | queued only | cohort L08 |
+| P15 | MiniMax Hailuo (legacy) | `MiniMax-Hailuo-2.3`, `MiniMax-Hailuo-2.3-Fast`, `MiniMax-Hailuo-02` | unverified | — | — | — | — | — | v1 contract unverified |
+| P16 | Alibaba Wan 3.0 | `wan3.0-video`, `wan3.0-video-prime` | unverified | yes | first, first+last | image / video / audio (file and web refs rejected) | yes | unverified | enums and status strings to pin; cohort L09 |
+| P17 | Alibaba Wan 2.7 | `wan2.7-t2v`, `wan2.7-i2v` | documented | yes | yes | per-version schema | yes | unverified | cohort L09 |
+| P18 | Alibaba HappyHorse 1.1 | `happyhorse-1.1-t2v`, `happyhorse-1.1-i2v`, `happyhorse-1.1-r2v` | unverified | yes | first | r2v model only | yes | unverified | per-operation schema to pin; cohort L09 |
+| P19 | xAI Grok Imagine Video | `grok-imagine-video-1.5` | documented | yes | yes | preset voices (separate page) | yes | no (not documented) | cohort L09; URL lifetime unverified |
+| P20 | Amazon Nova Reel 1.1 (Bedrock) | `amazon.nova-reel-v1:1` | gated | yes | first frame per shot | none | none verified | unverified | requires customer S3 bucket, IAM and tariff; account decision pending |
+| P21 | Pika 2.2 via fal | `fal-ai/pika/v2.2/text-to-video`, `fal-ai/pika/v2.2/image-to-video` | gated | yes | first | none | not documented | queued only | fal CDN output public by default; exposure authorization pending |
+| P22 | Pika 2.5 via fal | `fal-ai/pika/v2.5/image-to-video` | gated | unverified | first | none | unverified | queued only | same exposure gate as P21 |
+| P23 | Lightricks LTX 2.5 via fal | `lightricks/ltx-2.5/image-to-video/fast` | gated | unverified | first (+last) | none | toggle | queued only | same exposure gate; direct API unverified; tariff unverified |
+| P24 | PixVerse v6 | `v6` (native), `fal-ai/pixverse/v6/image-to-video` | gated | yes (native) | yes | none | switch (native T2V) | unverified | native status/upload/cancel unverified; fal route under the P21 exposure gate |
+| P25 | Replicate inventory | `tencent/hunyuan-video`, `prunaai/p-video`, `lightricks/ltx-video` | unverified | — | — | — | — | — | model versions and schemas unverified |
+| P26 | Runway third-party catalog | `seedance2_5`, `seedance2`, `seedance2_fast`, `seedance2_mini`, `hailuo3`, `h3_max`, `wan3`, `wan3_prime`, `grok_imagine_1_5`, `happyhorse_1_0`, `veo3.1`, `veo3.1_fast`, `gemini_omni_flash_1.1`, `gemini_omni_flash` | unverified | per model | per model | per model | per model | Runway task semantics | explicit opt-in route only, never a fallback; per-model schema unpinned |
+| P27 | OpenAI Sora | `sora-2`, `sora-2-pro`, `sora-2-2025-10-06`, `sora-2-2025-12-08`, `sora-2-pro-2025-10-06` | retired | — | — | — | — | — | API retired 2026-09-24; IDs answer 400 `unsupported_model` |
+
+"Cancel" is what the upstream API documents, not a gateway promise:
+`POST /v1/videos/{id}/cancel` returns `cancel_unsupported` or
+`cancel_not_available` whenever the provider cannot confirm it. Dedicated
+edit, extend, upscale and avatar operations are out of scope (D04). Prices
+are not listed here: see the tariff revision in each job's `estimate`.
+
+Quickstart (BytePlus Seedance, operator key, `video.enabled: true`):
+
+```bash
+# 1. Start from the full video block in config.example.yaml. Enable Redis and video,
+#    set VIDEO_CORRELATION_SECRET and ARK_API_KEY in the environment, enable byteplus,
+#    and explicitly set acknowledge_public_output: true after reviewing the output ACL.
+#    Keep its deadlines, limits, region, account_ref, tariff and model settings.
+# 2. Submit (Idempotency-Key is required; reuse it on retries, never on a new generation)
+curl -s http://localhost:8080/v1/videos -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" -H "Idempotency-Key: my-chatbot-0001" \
+  -d '{"model":"byteplus/dreamina-seedance-2-5-260628","prompt":"A fox in tall grass at dawn","duration_seconds":5,"resolution":"720p","aspect_ratio":"16:9"}'
+# 3. Poll the gateway id until status is completed | failed | cancelled (reads hit Redis, never the provider)
+curl -s http://localhost:8080/v1/videos/video_01J9... -H "Authorization: Bearer YOUR_API_KEY"
+# 4. Download the gateway copy (valid until artifacts[].expires_at, 24h by default)
+curl -s -o out.mp4 "http://localhost:8080/v1/videos/video_01J9.../content?artifact_index=0" -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+Full contract: [api-reference](docs/video-generation/api-reference.md), [configuration](docs/video-generation/configuration.md),
+[operator-runbook](docs/video-generation/operator-runbook.md).
+
+Migration and release commit footer: [migration notes](docs/video-generation/migration.md).
 
 ### 🔌 Endpoints — 109 routes across 23 categories
 
@@ -505,8 +583,8 @@ Every modality below has dedicated routes in the gateway. The **specific models*
 </tr>
 <tr>
 <td><b>Video</b></td>
-<td><code>POST /v1/videos</code><br><code>GET /v1/videos</code><br><code>GET /v1/videos/{id}</code><br><code>DELETE /v1/videos/{id}</code></td>
-<td>Async job model · Sora · Veo · Runway via provider</td>
+<td><code>POST /v1/videos</code><br><code>GET /v1/videos</code><br><code>GET /v1/videos/{id}</code><br><code>DELETE /v1/videos/{id}</code><br><code>GET /v1/videos/{id}/content</code><br><code>POST /v1/videos/{id}/cancel</code></td>
+<td>Durable async jobs · BytePlus Seedance (this release) · <a href="#-video-generation">see support matrix</a></td>
 </tr>
 <tr>
 <td><b>OCR &amp; Search</b></td>
@@ -769,7 +847,7 @@ Each subsystem is its own Go package — isolated, tested, independently replace
 </tr>
 <tr>
 <td><b>Modern protocols</b></td>
-<td><code>mcp</code> · <code>a2a</code> · <code>realtime</code> · <code>responses</code> · <code>files</code> · <code>video</code></td>
+<td><code>mcp</code> · <code>a2a</code> · <code>realtime</code> · <code>responses</code> · <code>files</code> · <a href="#-video-generation"><code>video</code> (BytePlus Seedance)</a></td>
 </tr>
 <tr>
 <td><b>Deployment</b></td>

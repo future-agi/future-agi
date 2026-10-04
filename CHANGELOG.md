@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+
+### ⚠ BREAKING CHANGES
+
+* **gateway:** `POST /v1/videos` requires an `Idempotency-Key` header (400 `missing_idempotency_key` without it).
+* **gateway:** `DELETE /v1/videos/{id}` is local-only and no longer reports status `cancelled`; it returns `{deleted:true, deletion_scope:"local_only", upstream_may_continue, accounting_retained}`. Use the new `POST /v1/videos/{id}/cancel` for best-effort upstream cancellation.
+* **gateway:** video status vocabulary is `submitting | submission_unknown | queued | running | completed | failed | cancelled`. The scaffold constant `in_progress` is removed; no code path ever emitted it.
+* **gateway:** `prompt` is no longer echoed in video status or list responses.
+* **gateway:** `n > 1` is rejected with 400 unless the selected model natively supports multiple outputs; the scaffold accepted `n` up to 4 without acting on it.
+* **gateway:** video request fields `duration` (float), `size` and `style` are replaced by `duration_seconds` (integer), `resolution` and schema-validated `provider_options`; unknown fields are rejected with 400 `unknown_field`.
+
+### Features
+
+* **gateway:** durable video generation lifecycle with BytePlus Seedance adapter; off by default, live-provider smoke pending.
+
 ## [1.44.0](https://github.com/future-agi/future-agi/compare/v1.43.3...v1.44.0) (2026-10-01)
 
 

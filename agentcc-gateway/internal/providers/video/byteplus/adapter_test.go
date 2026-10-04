@@ -382,9 +382,32 @@ func TestFetch_StreamCapDeadlineAndDownloadLimit(t *testing.T) {
 		}
 	})
 	t.Run("body deadline", func(t *testing.T) {
-		a := testAdapter(t, func(w http.ResponseWriter, r *http.Request) { w.(http.Flusher).Flush(); <-r.Context().Done() })
-		a.cfg.FetchTimeout = 25 * time.Millisecond
+		a := testAdapter(t, func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/warmup" {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			w.(http.Flusher).Flush()
+			<-r.Context().Done()
+		})
 		raw := strings.TrimSuffix(a.base.String(), "/api/v3")
+		// Establish TLS before testing the body deadline. Otherwise a busy race
+		// run can spend the entire 25 ms on the handshake and never read a body.
+		warmCtx, stopWarmup := context.WithTimeout(context.Background(), time.Second)
+		defer stopWarmup()
+		warmReq, err := http.NewRequestWithContext(warmCtx, http.MethodGet, raw+"/warmup", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		warm, err := a.download.Do(warmReq)
+		if err != nil {
+			t.Fatal(err)
+		}
+		warm.Body.Close()
+		if warm.StatusCode != http.StatusNoContent {
+			t.Fatal(warm.StatusCode)
+		}
+		a.cfg.FetchTimeout = 25 * time.Millisecond
 		r, _, err := a.Fetch(context.Background(), video.ProviderRef{ProviderJobID: "cgt-test", Outputs: []video.OutputRef{{URL: raw}}}, 0)
 		if err != nil {
 			t.Fatal(err)

@@ -144,23 +144,34 @@ func TestFetch_MIMEMismatch(t *testing.T) {
 func TestFetch_RedirectLimitAndDeadline(t *testing.T) {
 	for _, mode := range []string{"redirect", "slow"} {
 		t.Run(mode, func(t *testing.T) {
-			s := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if mode == "slow" {
-					<-r.Context().Done()
-					return
-				}
-				http.Redirect(w, r, "/again", 302)
-			}))
-			defer s.Close()
 			f := NewFetcher(nil)
-			f.client.Transport = s.Client().Transport
+			rawURL := "https://public.example/a"
+			redirects := 0
+			if mode == "redirect" {
+				// Exercise http.Client's real redirect handling without making
+				// the redirect-limit assertion race TLS setup against the deadline.
+				f.client.Transport = transportFunc(func(r *http.Request) (*http.Response, error) {
+					redirects++
+					return &http.Response{StatusCode: 302, Header: http.Header{"Location": []string{"/again"}}, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+				})
+			} else {
+				s := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					<-r.Context().Done()
+				}))
+				defer s.Close()
+				f.client.Transport = s.Client().Transport
+				rawURL = s.URL
+			}
 			l := limits()
 			l.Deadline = 30 * time.Millisecond
-			_, err := f.Fetch(context.Background(), s.URL, "image/png", "", l)
+			_, err := f.Fetch(context.Background(), rawURL, "image/png", "", l)
 			if mode == "slow" {
 				requireCode(t, err, 408, "media_fetch_timeout")
 			} else {
 				requireCode(t, err, 400, "media_url_refused")
+				if redirects != 4 {
+					t.Fatalf("requests = %d, want initial request plus three followed redirects", redirects)
+				}
 			}
 		})
 	}

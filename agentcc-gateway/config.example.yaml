@@ -784,7 +784,10 @@ logging:
 #           description: "Search the open web"
 
 # Durable video generation is opt-in. Redis requires AOF appendfsync everysec
-# or RDB snapshots, and maxmemory-policy noeviction. No memory fallback.
+# or RDB snapshots, and maxmemory-policy noeviction. No automatic memory fallback.
+# Explicit development-only memory storage requires allow_non_durable_store: true.
+# Credentials use ${ENV}, vault://, aws-sm://, gcp-sm:// or azure-kv://.
+# Credential rotation requires a restart; disabled routes return 501 not_configured.
 # Runtime kill switch: video:v1:killswitch (admin /-/admin/video/); config is startup-only.
 # Canonical requests are stored plain in Redis under the metadata retention.
 # video:
@@ -792,7 +795,7 @@ logging:
 #   kill_switch: false
 #   store: redis
 #   allow_non_durable_store: false
-#   correlation_secret: "${VIDEO_CORRELATION_SECRET}"
+#   correlation_secret: "${VIDEO_CORRELATION_SECRET}" # Required for org_key_hmac.
 #   submit:
 #     sync_wait: 5s
 #     deadline: 30s
@@ -818,13 +821,14 @@ logging:
 #     max_bytes: 2147483648
 #     disk: { root: /var/lib/agentcc/video }
 #     s3: { bucket: "", prefix: "video/", region: "", access_key: "${AWS_ACCESS_KEY_ID}", secret_key: "${AWS_SECRET_ACCESS_KEY}", sse: "AES256" }
-#     presign: { enabled: false, ttl: 15m }
+#     presign: { enabled: false, ttl: 15m } # Phase 1 content is streamed by the gateway.
 #   retention: { job_metadata: 720h, idempotency: 720h }
 #   limits: { org_max_active_jobs: 10, org_submit_rpm: 60 }
 #   providers:
 #     byteplus:
 #       enabled: false
 #       api_key: "${ARK_API_KEY}"  # Also vault://, aws-sm://, gcp-sm://, azure-kv://.
+#       # credential_ref: provider:byteplus  # Optional existing provider key; api_key takes precedence.
 #       base_url: https://ark.ap-southeast.bytepluses.com/api/v3
 #       region: ap-southeast-1
 #       account_ref: byteplus-main
