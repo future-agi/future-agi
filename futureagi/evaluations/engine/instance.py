@@ -531,6 +531,22 @@ def create_eval_instance(
     )
     supplied_model = None if model is _DEFAULT_MODEL else model
     effective_model = binding_model or supplied_model or version_model or template_model
+    # An unsupported jev-* ID fails closed before any chat, Turing or BYOK logic:
+    # the direct engine path (SDK and other callers) never reaches the view-level
+    # validate_jev_binding guard, so the rejection has to live here (R-06).
+    if (
+        isinstance(effective_model, str)
+        and effective_model.lower().startswith("jev-")
+        and not is_jev_model(effective_model)
+    ):
+        from ee.jev.mapping import JevMappingError
+
+        raise JevMappingError(
+            "JEV_MODEL_UNKNOWN",
+            "model",
+            "Model %r is not a supported Jev evaluator model. Supported: "
+            "jev-1.13.0, jev-latest." % effective_model,
+        )
     if is_jev_model(effective_model):
         from tfc.capabilities import service as capability_service
 

@@ -133,18 +133,42 @@ def test_r14_capability_denial_before_constructor_or_transport():
     client.assert_not_called()
 
 
-def test_r06_unknown_jev_fails_existing_key_lookup():
-    with (
-        patch("evaluations.engine.instance.resolve_version", return_value=None),
-        patch(
-            "evaluations.engine.instance._get_api_key",
-            side_effect=ValueError("No API key found"),
-        ),
-        patch("ee.jev.client.JevSystemOneClient.evaluate") as client,
-    ):
-        with pytest.raises(ValueError, match="No API key found"):
-            create_eval_instance(Mock(), template("jev-2.0.0"), model=None)
-    client.assert_not_called()
+def test_r06_unknown_jev_rejected_before_key_lookup():
+    """An unsupported jev-* ID fails closed on the direct engine path: typed
+    JEV_MODEL_UNKNOWN, and neither the BYOK key lookup nor the Jev client runs.
+    Covers template, version and run_config sources (review finding 1)."""
+    from ee.jev.mapping import JevMappingError
+
+    cases = [
+        {"template_model": "jev-2.0.0", "version_model": None, "model": None},
+        {"template_model": "turing_large", "version_model": "jev-preview", "model": None},
+        {
+            "template_model": "turing_large",
+            "version_model": None,
+            "model": None,
+            "runtime_config": {"run_config": {"model": "JEV-9"}},
+        },
+    ]
+    for case in cases:
+        with (
+            patch(
+                "evaluations.engine.instance.resolve_version",
+                return_value=version(case["version_model"])
+                if case["version_model"]
+                else None,
+            ),
+            patch("evaluations.engine.instance._get_api_key") as key_lookup,
+            patch("ee.jev.client.JevSystemOneClient.evaluate") as client,
+        ):
+            with pytest.raises(JevMappingError, match="JEV_MODEL_UNKNOWN"):
+                create_eval_instance(
+                    Mock(),
+                    template(case["template_model"]),
+                    model=case["model"],
+                    runtime_config=case.get("runtime_config"),
+                )
+        key_lookup.assert_not_called()
+        client.assert_not_called()
 
 
 def test_r18_c21_turing_binding_over_jev_version_uses_turing():
