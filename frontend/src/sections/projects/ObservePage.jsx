@@ -1,4 +1,4 @@
-import React, { useMemo, useCallback, useEffect, useRef } from "react";
+import React, { useMemo, useCallback, useEffect, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { LoadingScreen } from "src/components/loading-screen";
 import { Box, Paper, useTheme, Alert, Button } from "@mui/material";
@@ -16,10 +16,10 @@ import {
   ViewConfigModal,
   TabContextMenu,
 } from "src/components/observe-tabs";
-import { useTabStoreShallow } from "./LLMTracing/tabStore";
+import { useTabStore, useTabStoreShallow } from "./LLMTracing/tabStore";
 import { useGetProjectDetails } from "src/api/project/project-detail";
 import { useQueryClient } from "@tanstack/react-query";
-import { useGetSavedViews, SAVED_VIEWS_KEY } from "src/api/project/saved-views";
+import { useGetSavedViews, useGetSavedView, savedViewsKey, classifySavedViewError, removeSavedViewFromCache } from "src/api/project/saved-views";
 import ReplayDrawer from "./ReplayDrawer/ReplayDrawer";
 import {
   resetReplaySessionsStore,
@@ -126,6 +126,19 @@ const ObservePage = React.memo(() => {
 
   // Active tab for the new tab system
   const [activeTab, setActiveTab] = useUrlState("tab", "traces");
+  const linkedViewId = new URLSearchParams(location.search).get("tab")?.replace(/^view-/, "");
+  const isNamedLink = new URLSearchParams(location.search).get("tab")?.startsWith("view-");
+  const viewDetail = useGetSavedView(observeId, isNamedLink ? linkedViewId : null);
+  const [unavailableId, setUnavailableId] = useState(null);
+  const unavailable = isNamedLink && (unavailableId === linkedViewId || (viewDetail.isError && classifySavedViewError(viewDetail.error).kind === "unavailable_record"));
+  useEffect(() => {
+    if (unavailable && unavailableId !== linkedViewId) {
+      setUnavailableId(linkedViewId);
+      removeSavedViewFromCache(queryClient, linkedViewId);
+      setActiveViewConfig(null);
+      resetTabStore();
+    }
+  }, [unavailable, unavailableId, linkedViewId, queryClient, setActiveViewConfig]);
 
   const currentRouteSegment = useMemo(() => {
     const segments = location.pathname.split("/").filter(Boolean);
@@ -173,13 +186,19 @@ const ObservePage = React.memo(() => {
       return;
     }
     if (lastHydratedTabRef.current === tab) return;
-    const customViews = savedViewsData?.custom_views ?? [];
-    if (!customViews.length) return;
-    const view = customViews.find((v) => `view-${v.id}` === tab);
+    const view = viewDetail.data;
+    if (viewDetail.isPending || viewDetail.isError) return;
     if (!view?.config) return;
     lastHydratedTabRef.current = tab;
     setActiveViewConfig(view.config);
-  }, [location.search, savedViewsData, setActiveViewConfig]);
+    const route = view.tab_type === "users" || view.tab_type === "user_detail" ? "users" : view.tab_type === "sessions" ? "sessions" : "llm-tracing";
+    const selected = view.tab_type === "spans" ? "spans" : "trace";
+    if (currentRouteSegment !== route || (route === "llm-tracing" && params.get("selectedTab") !== selected)) {
+      const canonical = new URLSearchParams({ tab });
+      if (route === "llm-tracing") canonical.set("selectedTab", selected);
+      navigate(`/dashboard/observe/${observeId}/${route}?${canonical}`, { replace: true });
+    }
+  }, [location.search, viewDetail.data, viewDetail.isPending, viewDetail.isError, setActiveViewConfig, currentRouteSegment, navigate, observeId]);
 
   // Handle tab change from ObserveTabBar
   const handleTabChange = useCallback(
@@ -196,7 +215,7 @@ const ObservePage = React.memo(() => {
       let viewTabType = "traces";
       if (tabKey.startsWith("view-")) {
         const viewId = tabKey.replace("view-", "");
-        const cached = queryClient.getQueryData([SAVED_VIEWS_KEY, observeId]);
+        const cached = queryClient.getQueryData(savedViewsKey(observeId));
         const customViews = cached?.custom_views ?? [];
         const view = customViews.find((v) => v.id === viewId);
         activeConfig = view?.config || null;
@@ -388,6 +407,7 @@ const ObservePage = React.memo(() => {
           activeTab={activeTab}
           onTabChange={handleTabChange}
           projectSource={projectDetail?.source}
+          projectName={projectDetail?.name}
         />
       </Paper>
 
@@ -399,9 +419,18 @@ const ObservePage = React.memo(() => {
 
       {/* Content Section */}
       <Box sx={contentStyles}>
-        <TabErrorBoundary resetKey={currentRouteSegment}>
-          <Outlet />
-        </TabErrorBoundary>
+        {isNamedLink && (unavailable || viewDetail.isError) ? (
+          <Box role="alert" sx={{ p: 6, textAlign: "center" }}>
+            <Box sx={{ fontWeight: 600, mb: 1 }}>{unavailable ? "This view is unavailable" : "Could not load this view"}</Box>
+            <Box sx={{ color: "text.secondary", mb: 2 }}>{unavailable ? "It may have been deleted, made private, or belong to a different project." : "Please retry. Your connection may be unavailable."}</Box>
+            <Button onClick={() => { setUnavailableId(null); viewDetail.refetch(); }}>Retry</Button>
+            <Button variant="contained" onClick={() => handleTabChange("traces")}>Go to traces</Button>
+          </Box>
+        ) : isNamedLink && (!viewDetail.data || lastHydratedTabRef.current !== `view-${linkedViewId}`) ? <TabContentLoader /> : (
+          <TabErrorBoundary resetKey={currentRouteSegment}>
+            <Outlet />
+          </TabErrorBoundary>
+        )}
       </Box>
       <ReplayDrawer
         gridApi={headerConfig?.gridApi}
@@ -415,6 +444,7 @@ const ObservePage = React.memo(() => {
         onClose={closeCreateModal}
         mode={editModalView ? "edit" : "create"}
         initialValues={editModalView}
+        projectName={projectDetail?.name}
         projectId={observeId}
         onSuccess={(newView) => {
           if (newView?.id) {
@@ -433,6 +463,9 @@ const ObservePage = React.memo(() => {
             ) ?? null
           }
           projectId={observeId}
+          projectName={projectDetail?.name}
+          activeTab={activeTab}
+          isDirty={useTabStore.getState().isDirty}
           onClose={closeContextMenu}
           onRename={startRenaming}
           onTabChange={handleTabChange}

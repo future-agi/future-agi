@@ -584,8 +584,7 @@ class TestSavedViewRetrieve:
     def test_retrieve_nonexistent_returns_error(self, auth_client):
         fake_id = uuid.uuid4()
         response = auth_client.get(f"{BASE_URL}/{fake_id}/", format="json")
-        # DRF returns 400 via our exception handler (not 404)
-        assert response.status_code in (400, 404)
+        assert response.status_code == 404
 
 
 class TestSavedViewUpdate:
@@ -593,7 +592,7 @@ class TestSavedViewUpdate:
     def test_update_saved_view(self, auth_client, saved_view):
         response = auth_client.put(
             _view_url(saved_view),
-            {
+            {"expected_revision": 1, 
                 "name": "Critical Errors",
                 "config": {
                     "filters": [
@@ -618,7 +617,7 @@ class TestSavedViewUpdate:
     def test_partial_update_name_only(self, auth_client, saved_view):
         response = auth_client.patch(
             _view_url(saved_view),
-            {"name": "Renamed View"},
+            {"expected_revision": 1, "name": "Renamed View"},
             format="json",
         )
         assert response.status_code == 200
@@ -628,7 +627,7 @@ class TestSavedViewUpdate:
     def test_partial_update_visibility(self, auth_client, saved_view):
         response = auth_client.patch(
             _view_url(saved_view),
-            {"visibility": "project"},
+            {"expected_revision": 1, "visibility": "project"},
             format="json",
         )
         assert response.status_code == 200
@@ -638,7 +637,7 @@ class TestSavedViewUpdate:
     def test_update_rejects_create_only_fields(self, auth_client, saved_view):
         response = auth_client.put(
             _view_url(saved_view),
-            {
+            {"expected_revision": 1, 
                 "name": "Critical Errors",
                 "tab_type": "spans",
                 "project_id": str(saved_view.project_id),
@@ -665,7 +664,7 @@ class TestSavedViewUpdate:
         )
         response = auth_client.patch(
             _view_url(other),
-            {"name": saved_view.name},  # "Error Traces"
+            {"expected_revision": 1, "name": saved_view.name},  # "Error Traces"
             format="json",
         )
         assert response.status_code == 400
@@ -677,7 +676,7 @@ class TestSavedViewUpdate:
     def test_update_allows_rename_to_unique_name(self, auth_client, saved_view):
         response = auth_client.patch(
             _view_url(saved_view),
-            {"name": "Totally Unique Name"},
+            {"expected_revision": 1, "name": "Totally Unique Name"},
             format="json",
         )
         assert response.status_code == 200
@@ -689,7 +688,7 @@ class TestSavedViewUpdate:
         trip the duplicate guard against the view's own row."""
         response = auth_client.patch(
             _view_url(saved_view),
-            {"name": saved_view.name, "visibility": "project"},
+            {"expected_revision": 1, "name": saved_view.name, "visibility": "project"},
             format="json",
         )
         assert response.status_code == 200
@@ -720,7 +719,7 @@ class TestSavedViewUpdate:
         )
         response = auth_client.patch(
             _workspace_view_url(target),
-            {"name": "Power Users"},
+            {"expected_revision": 1, "name": "Power Users"},
             format="json",
         )
         assert response.status_code == 400
@@ -751,7 +750,7 @@ class TestSavedViewUpdate:
         )
         response = auth_client.patch(
             _workspace_view_url(target),
-            {"name": "Shared Name"},
+            {"expected_revision": 1, "name": "Shared Name"},
             format="json",
         )
         assert response.status_code == 200
@@ -761,7 +760,7 @@ class TestSavedViewUpdate:
 class TestSavedViewDelete:
     @pytest.mark.django_db
     def test_delete_saved_view(self, auth_client, project, saved_view):
-        response = auth_client.delete(_view_url(saved_view), format="json")
+        response = auth_client.delete(_view_url(saved_view) + "&expected_revision=1", format="json")
         assert response.status_code == 200
 
         # Verify it's gone from list
@@ -773,7 +772,7 @@ class TestSavedViewDelete:
 
     @pytest.mark.django_db
     def test_soft_delete_preserves_record(self, auth_client, saved_view):
-        auth_client.delete(_view_url(saved_view), format="json")
+        auth_client.delete(_view_url(saved_view) + "&expected_revision=1", format="json")
 
         # Record still exists in DB (soft deleted)
         view = SavedView.all_objects.get(id=saved_view.id)
@@ -904,7 +903,7 @@ class TestSavedViewReorder:
         # Reverse the order
         response = auth_client.post(
             f"{BASE_URL}/reorder/",
-            {
+            {"expected_revision": 0, 
                 "project_id": str(project.id),
                 "order": [
                     {"id": str(views[2].id), "position": 0},
@@ -916,19 +915,20 @@ class TestSavedViewReorder:
         )
         assert response.status_code == 200
 
-        # Verify positions updated
+        # Source positions never change; ordering is personal.
         views[0].refresh_from_db()
         views[1].refresh_from_db()
         views[2].refresh_from_db()
-        assert views[0].position == 2
+        assert views[0].position == 0
         assert views[1].position == 1
-        assert views[2].position == 0
+        assert views[2].position == 2
+        assert response.json()["result"]["tab_order"]["order"] == [str(v.id) for v in reversed(views)]
 
     @pytest.mark.django_db
     def test_reorder_with_invalid_ids_fails(self, auth_client, project):
         response = auth_client.post(
             f"{BASE_URL}/reorder/",
-            {
+            {"expected_revision": 0, 
                 "project_id": str(project.id),
                 "order": [
                     {"id": str(uuid.uuid4()), "position": 0},
@@ -996,7 +996,7 @@ class TestSavedViewWorkspaceScope:
         view_id = data["id"]
         patch_response = auth_client.patch(
             f"{BASE_URL}/{view_id}/",
-            {"name": "Workspace Sessions Updated", "visibility": "project"},
+            {"expected_revision": 1, "name": "Workspace Sessions Updated", "visibility": "project"},
             format="json",
         )
         assert patch_response.status_code == 200
@@ -1046,25 +1046,25 @@ class TestSavedViewWorkspaceScope:
         assert create_response.status_code == 404
 
         detail_response = auth_client.get(_view_url(hidden_view), format="json")
-        assert detail_response.status_code in (400, 404)
+        assert detail_response.status_code == 404
 
         patch_response = auth_client.patch(
             _view_url(hidden_view),
-            {"name": "Leaked Update"},
+            {"expected_revision": 1, "name": "Leaked Update"},
             format="json",
         )
-        assert patch_response.status_code in (400, 404)
+        assert patch_response.status_code == 404
 
         duplicate_response = auth_client.post(
             _view_url(hidden_view, "duplicate/"),
             {"name": "Leaked Duplicate"},
             format="json",
         )
-        assert duplicate_response.status_code in (400, 404)
+        assert duplicate_response.status_code == 404
 
         reorder_response = auth_client.post(
             f"{BASE_URL}/reorder/",
-            {
+            {"expected_revision": 0, 
                 "project_id": str(other_workspace_project.id),
                 "order": [{"id": str(hidden_view.id), "position": 9}],
             },
@@ -1072,8 +1072,8 @@ class TestSavedViewWorkspaceScope:
         )
         assert reorder_response.status_code == 400
 
-        delete_response = auth_client.delete(_view_url(hidden_view), format="json")
-        assert delete_response.status_code in (400, 404)
+        delete_response = auth_client.delete(_view_url(hidden_view) + "&expected_revision=1", format="json")
+        assert delete_response.status_code == 404
 
         hidden_view.refresh_from_db()
         assert hidden_view.name == "Hidden Other Workspace"
@@ -1165,7 +1165,7 @@ class TestSavedViewEdgeCases:
     @pytest.mark.django_db
     def test_deleted_views_excluded_from_list(self, auth_client, project, saved_view):
         # Delete the view
-        auth_client.delete(_view_url(saved_view), format="json")
+        auth_client.delete(_view_url(saved_view) + "&expected_revision=1", format="json")
 
         # List should be empty
         response = auth_client.get(

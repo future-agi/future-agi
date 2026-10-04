@@ -1,10 +1,11 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import PropTypes from "prop-types";
-import { Box, ButtonBase, Divider } from "@mui/material";
+import { Box, Button, ButtonBase, Divider, CircularProgress } from "@mui/material";
 import {
   DndContext,
   closestCenter,
   PointerSensor,
+  KeyboardSensor,
   useSensor,
   useSensors,
 } from "@dnd-kit/core";
@@ -12,6 +13,7 @@ import {
   SortableContext,
   horizontalListSortingStrategy,
   useSortable,
+  sortableKeyboardCoordinates,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import Iconify from "src/components/iconify";
@@ -19,13 +21,15 @@ import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import {
   useGetSavedViews,
   useUpdateSavedView,
-  useDeleteSavedView,
+  useRefreshSavedViews,
   useReorderSavedViews,
 } from "src/api/project/saved-views";
 import { useTabStoreShallow } from "src/sections/projects/LLMTracing/tabStore";
 import { useObserveHeader } from "src/sections/project/context/ObserveHeaderContext";
 
 import { useSearchParams } from "react-router-dom";
+import DeleteViewDialog from "./DeleteViewDialog";
+import ShareViewDialog from "./ShareViewDialog";
 import FixedTab from "./FixedTab";
 import CustomViewTab from "./CustomViewTab";
 import SaveViewPopover from "src/components/traceDetail/SaveViewDialog";
@@ -95,6 +99,7 @@ const ObserveTabBar = ({
   onTabChange,
   renderRight,
   projectSource,
+  projectName,
 }) => {
   // Hide Sessions/Users tabs for voice (simulator) projects
   const visibleFixedTabs = useMemo(() => {
@@ -103,7 +108,11 @@ const ObserveTabBar = ({
     }
     return FIXED_TABS;
   }, [projectSource]);
-  const { data: savedViewsData } = useGetSavedViews(projectId);
+  const { data: savedViewsData, isPending: isLoadingViews, isError } = useGetSavedViews(projectId);
+  const refreshViews = useRefreshSavedViews(projectId);
+  const createButtonRef = useRef(null);
+  const [deletingView, setDeletingView] = useState(null);
+  const [sharingNewView, setSharingNewView] = useState(null);
   const { user } = useAuthContext();
   // Only show trace-list views (traces/spans/voice) — exclude "imagine" tabs (those belong to trace detail)
   const customViews = (savedViewsData?.custom_views ?? []).filter(
@@ -114,12 +123,13 @@ const ObserveTabBar = ({
 
   // Mutations
   const { mutate: updateView } = useUpdateSavedView(projectId);
-  const { mutate: deleteView } = useDeleteSavedView(projectId);
   const { mutate: reorderViews } = useReorderSavedViews(projectId);
 
-  const { isDirty, editingTabId, openContextMenu, stopRenaming } =
+  const { isDirty, editingTabId, openContextMenu, stopRenaming, saveAsNewRequested, consumeSaveAsNew } =
     useTabStoreShallow((s) => ({
       isDirty: s.isDirty,
+      saveAsNewRequested: s.saveAsNewRequested,
+      consumeSaveAsNew: s.consumeSaveAsNew,
       editingTabId: s.editingTabId,
       openContextMenu: s.openContextMenu,
       stopRenaming: s.stopRenaming,
@@ -131,6 +141,13 @@ const ObserveTabBar = ({
   const { mutate: createSavedView } = useCreateSavedView(projectId);
   const { getViewConfig } = useObserveHeader();
   const [searchParams] = useSearchParams();
+
+  useEffect(() => {
+    if (saveAsNewRequested) {
+      setSaveViewAnchor(createButtonRef.current);
+      consumeSaveAsNew();
+    }
+  }, [saveAsNewRequested, consumeSaveAsNew]);
 
   // Derive tab_type for a new saved view. Priority:
   //  - on a saved view tab, inherit the view's tab_type.
@@ -154,14 +171,20 @@ const ObserveTabBar = ({
   }, [activeTab, customViews, searchParams]);
 
   const handleSaveViewConfirm = useCallback(
-    (name) => {
+    (name, visibility = "personal", confirmed = false) => {
+      if (isSavingView) return;
+      const snapshot = confirmed ? sharingNewView.config : getViewConfig?.() ?? null;
+      if (visibility === "project" && !confirmed) {
+        setSharingNewView({ name, config: snapshot, visibility: "personal" });
+        return;
+      }
       setIsSavingView(true);
-      const snapshot = getViewConfig?.() ?? null;
       const tabType = resolveTabType();
       createSavedView(
         {
           project_id: projectId,
           name,
+          visibility,
           tab_type: tabType,
           config: snapshot ?? {},
         },
@@ -171,6 +194,7 @@ const ObserveTabBar = ({
             const newId = res?.data?.result?.id;
             if (newId) onTabChange?.(`view-${newId}`);
             setSaveViewAnchor(null);
+            setSharingNewView(null);
             setIsSavingView(false);
           },
           onError: (err) => {
@@ -182,12 +206,13 @@ const ObserveTabBar = ({
         },
       );
     },
-    [projectId, createSavedView, onTabChange, getViewConfig, resolveTabType],
+    [projectId, createSavedView, onTabChange, getViewConfig, resolveTabType, isSavingView, sharingNewView],
   );
 
   // DnD sensors — require 5px of movement before starting drag
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
   // -----------------------------------------------------------------------
@@ -223,9 +248,11 @@ const ObserveTabBar = ({
       reordered.splice(newIndex, 0, moved);
 
       const order = reordered.map((v, i) => ({ id: v.id, position: i }));
-      reorderViews({ project_id: projectId, order });
+      reorderViews({ project_id: projectId, order, expected_revision: savedViewsData?.tab_order?.revision }, {
+        onError: (err) => enqueueSnackbar(getRequestErrorMessage(err, "Could not reorder views. Please retry."), { variant: "error" }),
+      });
     },
-    [customViews, projectId, reorderViews],
+    [customViews, projectId, reorderViews, savedViewsData?.tab_order?.revision],
   );
 
   // -----------------------------------------------------------------------
@@ -262,23 +289,17 @@ const ObserveTabBar = ({
     [openContextMenu],
   );
 
-  const handleClose = useCallback(
-    (viewId) => {
-      deleteView(viewId, {
-        onSuccess: () => {
-          if (activeTab === `view-${viewId}`) {
-            onTabChange("traces");
-          }
-        },
-      });
-    },
-    [deleteView, activeTab, onTabChange],
-  );
+  const handleClose = useCallback((viewId) => {
+    const view = customViews.find((v) => v.id === viewId);
+    if (view?.can_delete) setDeletingView(view);
+  }, [customViews]);
 
   const handleRenameSubmit = useCallback(
     (viewId, newName) => {
+      const view = customViews.find((v) => v.id === viewId);
+      if (!view?.can_edit) return;
       updateView(
-        { id: viewId, name: newName },
+        { id: viewId, name: newName, expected_revision: view.revision },
         {
           onError: (err) =>
             enqueueSnackbar(getRequestErrorMessage(err, "Failed to rename view"), {
@@ -289,7 +310,7 @@ const ObserveTabBar = ({
       // Always exit edit mode — a lingering rename state would re-submit on blur.
       stopRenaming();
     },
-    [updateView, stopRenaming],
+    [updateView, stopRenaming, customViews],
   );
 
   const handleRenameCancel = useCallback(() => {
@@ -308,6 +329,19 @@ const ObserveTabBar = ({
     >
       {/* ── Left: Tabs ── */}
       <Box
+        role="tablist"
+        aria-label="Observe views"
+        onKeyDown={(event) => {
+          if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key) || event.target.closest("input")) return;
+          // DnD handles arrows on its own drag handle.
+          if (event.target.getAttribute("role") !== "tab") return;
+          const tabs = [...event.currentTarget.querySelectorAll('[role="tab"]')];
+          const index = tabs.indexOf(event.target);
+          const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1
+            : (index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+          event.preventDefault();
+          tabs[next]?.focus();
+        }}
         sx={{
           display: "flex",
           alignItems: "center",
@@ -386,7 +420,8 @@ const ObserveTabBar = ({
                   idx={idx}
                   isActive={activeTab === tab.key}
                   isDirty={isDirty}
-                  isRenaming={editingTabId === tab.view.id}
+                  projectName={projectName}
+                  isRenaming={editingTabId === tab.view.id && tab.view.can_edit}
                   onClick={onTabChange}
                   onClose={handleClose}
                   onContextMenu={handleContextMenu}
@@ -398,6 +433,9 @@ const ObserveTabBar = ({
           </DndContext>
         </Box>
 
+        {isLoadingViews && <CircularProgress size={16} aria-label="Loading views" />}
+        {isError && <Button onClick={refreshViews} size="small">Retry views</Button>}
+
         {/* Create view button — pinned after scrollable area */}
         <CustomTooltip
           show
@@ -408,6 +446,8 @@ const ObserveTabBar = ({
           type="black"
         >
           <ButtonBase
+            ref={createButtonRef}
+            aria-label="Create new view"
             data-create-view-btn
             onClick={(e) => setSaveViewAnchor(e.currentTarget)}
             sx={{
@@ -445,6 +485,15 @@ const ObserveTabBar = ({
         {renderRight}
       </Box>
 
+      {deletingView && <DeleteViewDialog view={deletingView} projectId={projectId} projectName={projectName}
+        onClose={() => {
+          const id = deletingView.id;
+          setDeletingView(null);
+          requestAnimationFrame(() => document.querySelector(`[data-view-id="${id}"]`)?.focus());
+        }}
+        onDeleted={(id) => { if (activeTab === `view-${id}`) onTabChange("traces"); }} />}
+      {sharingNewView && <ShareViewDialog view={sharingNewView} projectName={projectName} pending={isSavingView}
+        onClose={() => setSharingNewView(null)} onConfirm={() => handleSaveViewConfirm(sharingNewView.name, "project", true)} />}
       {/* Save View Popover — inline, anchored to "+" button */}
       <SaveViewPopover
         anchorEl={saveViewAnchor}
@@ -453,6 +502,8 @@ const ObserveTabBar = ({
         onSave={handleSaveViewConfirm}
         isLoading={isSavingView}
         existingNames={ownViewNames}
+        projectName={projectName}
+        allowSharing={!activeTab?.startsWith("view-") || customViews.find((v) => `view-${v.id}` === activeTab)?.is_owner}
       />
     </Box>
   );
@@ -464,6 +515,7 @@ ObserveTabBar.propTypes = {
   onTabChange: PropTypes.func.isRequired,
   renderRight: PropTypes.node,
   projectSource: PropTypes.string,
+  projectName: PropTypes.string,
 };
 
 export default React.memo(ObserveTabBar);

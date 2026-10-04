@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import PropTypes from "prop-types";
 import {
   Box,
@@ -8,6 +8,7 @@ import {
   Popover,
   TextField,
   Typography,
+  RadioGroup, Radio, FormControlLabel, FormControl, FormLabel,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 
@@ -18,8 +19,12 @@ const SaveViewPopover = ({
   onSave,
   isLoading,
   existingNames = [],
+  projectName = "this project",
+  allowSharing = false,
 }) => {
   const [name, setName] = useState("");
+  const [visibility, setVisibility] = useState("personal");
+  useEffect(() => { if (!open) { setName(""); setVisibility("personal"); } }, [open]);
 
   // Exact match — mirrors the backend's case-sensitive uniqueness check.
   const trimmed = name.trim();
@@ -27,15 +32,16 @@ const SaveViewPopover = ({
     trimmed.length > 0 && existingNames.some((n) => n === trimmed);
 
   const handleSave = useCallback(() => {
-    if (!trimmed || isDuplicate) return;
-    onSave(trimmed);
-    setName("");
-  }, [trimmed, isDuplicate, onSave]);
+    if (!trimmed || isDuplicate || trimmed.length > 255 || isLoading) return;
+    if (allowSharing) onSave(trimmed, visibility);
+    else onSave(trimmed);
+  }, [trimmed, isDuplicate, onSave, isLoading, allowSharing, visibility]);
 
   const handleClose = useCallback(() => {
+    if (isLoading) return;
     setName("");
     onClose();
-  }, [onClose]);
+  }, [onClose, isLoading]);
 
   return (
     <Popover
@@ -78,7 +84,7 @@ const SaveViewPopover = ({
               lineHeight: "22px",
             }}
           >
-            Save view
+            Save a view
           </Typography>
           <Typography
             sx={{
@@ -91,7 +97,7 @@ const SaveViewPopover = ({
             Save your current trace view for quick access later.
           </Typography>
         </Box>
-        <IconButton size="small" onClick={handleClose} sx={{ p: 0.25 }}>
+        <IconButton aria-label="Close dialog" disabled={isLoading} size="small" onClick={handleClose} sx={{ p: 0.25 }}>
           <Iconify icon="mdi:close" width={16} />
         </IconButton>
       </Box>
@@ -102,6 +108,8 @@ const SaveViewPopover = ({
       <Box sx={{ px: 0.5, py: 0.25 }}>
         <TextField
           fullWidth
+          disabled={isLoading}
+          inputProps={{ maxLength: 255 }}
           size="small"
           label={
             <span>
@@ -138,6 +146,17 @@ const SaveViewPopover = ({
         />
       </Box>
 
+      <FormControl disabled={isLoading} sx={{ px: 0.5, pt: 1 }}>
+        <FormLabel sx={{ fontSize: 12 }}>Visibility</FormLabel>
+        <RadioGroup value={visibility} onChange={(e) => setVisibility(e.target.value)}>
+          <FormControlLabel value="personal" control={<Radio size="small" />} label="Personal" />
+          <Typography variant="caption" color="text.secondary" sx={{ pl: 4 }}>Only you can see this view. Saved across browsers.</Typography>
+          {allowSharing && <>
+            <FormControlLabel value="project" control={<Radio size="small" />} label="Shared with project" />
+            <Typography variant="caption" color="text.secondary" sx={{ pl: 4 }}>Members of {projectName} can see the saved filters and display. Sharing does not change data access.</Typography>
+          </>}
+        </RadioGroup>
+      </FormControl>
       <Divider sx={{ mt: 1.5, mb: 0.5 }} />
 
       {/* Actions */}
@@ -154,6 +173,7 @@ const SaveViewPopover = ({
           size="small"
           variant="outlined"
           onClick={handleClose}
+          disabled={isLoading}
           sx={{
             textTransform: "none",
             fontSize: 12,
@@ -187,7 +207,7 @@ const SaveViewPopover = ({
             },
           }}
         >
-          Save view
+          {isLoading ? "Saving…" : "Save view"}
         </Button>
       </Box>
     </Popover>
@@ -201,6 +221,8 @@ SaveViewPopover.propTypes = {
   onSave: PropTypes.func.isRequired,
   isLoading: PropTypes.bool,
   existingNames: PropTypes.arrayOf(PropTypes.string),
+  projectName: PropTypes.string,
+  allowSharing: PropTypes.bool,
 };
 
 export default React.memo(SaveViewPopover);

@@ -21,14 +21,14 @@ describe("FixedTab", () => {
   it("calls onClick with tabKey when clicked", async () => {
     const onClick = vi.fn();
     render(<FixedTab {...defaultProps} onClick={onClick} />);
-    const button = screen.getByRole("button");
+    const button = screen.getByRole("tab");
     button.click();
     expect(onClick).toHaveBeenCalledWith("traces");
   });
 
   it("renders with active styling when isActive is true", () => {
     render(<FixedTab {...defaultProps} isActive={true} />);
-    const button = screen.getByRole("button");
+    const button = screen.getByRole("tab");
     // Active tab should have a different visual state (tested via MUI sx)
     expect(button).toBeInTheDocument();
   });
@@ -40,13 +40,13 @@ describe("FixedTab", () => {
 
   it("shows the keyboard shortcut hint ('Press <n>') on hover, not an index like '(n)'", async () => {
     render(<FixedTab {...defaultProps} shortcut="3" />);
-    await userEvent.hover(screen.getByRole("button"));
+    await userEvent.hover(screen.getByRole("tab"));
     expect(await screen.findByText("Press 3")).toBeInTheDocument();
   });
 
   it("does not hint the shortcut on the active tab (pressing it is a no-op)", async () => {
     render(<FixedTab {...defaultProps} shortcut="3" isActive />);
-    await userEvent.hover(screen.getByRole("button"));
+    await userEvent.hover(screen.getByRole("tab"));
     expect(screen.queryByText("Press 3")).not.toBeInTheDocument();
   });
 });

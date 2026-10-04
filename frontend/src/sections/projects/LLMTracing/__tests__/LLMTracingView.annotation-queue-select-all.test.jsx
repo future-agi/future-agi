@@ -347,6 +347,8 @@ vi.mock("src/api/project/saved-views", () => ({
   useUpdateSavedView: () => ({ mutate: vi.fn() }),
   useUpdateWorkspaceSavedView: () => ({ mutate: vi.fn() }),
   useGetSavedViews: () => ({ data: { custom_views: [] } }),
+  useGetWorkspaceSavedViews: () => ({ data: undefined }),
+  useRefreshSavedViews: () => vi.fn(),
 }));
 
 vi.mock("src/utils/axios", () => ({

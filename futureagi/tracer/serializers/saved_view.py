@@ -1,5 +1,6 @@
 from rest_framework import serializers
 
+from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
 from tracer.models.saved_view import SavedView
 from tracer.serializers.filters import StrictInputSerializer, filter_list_field
 
@@ -14,57 +15,38 @@ class SavedViewCreatorSerializer(serializers.Serializer):
 
 class SavedViewListSerializer(serializers.ModelSerializer):
     created_by = SavedViewCreatorSerializer(read_only=True)
+    revision = serializers.IntegerField(read_only=True)
+    is_owner = serializers.SerializerMethodField()
+    can_edit = serializers.SerializerMethodField()
+    can_delete = serializers.SerializerMethodField()
+
+    def get_is_owner(self, instance):
+        return self.context["policy"](instance)["is_owner"]
+
+    def get_can_edit(self, instance):
+        return self.context["policy"](instance)["can_edit"]
+
+    def get_can_delete(self, instance):
+        return self.context["policy"](instance)["can_delete"]
 
     class Meta:
         model = SavedView
-        fields = [
-            "id",
-            "name",
-            "tab_type",
-            "visibility",
-            "position",
-            "icon",
-            "config",
-            "created_by",
-            "created_at",
-            "updated_at",
-        ]
-        read_only_fields = [
-            "id",
-            "created_by",
-            "created_at",
-            "updated_at",
-        ]
+        fields = ["id", "name", "tab_type", "visibility", "position", "icon", "config",
+                  "created_by", "created_at", "updated_at", "revision", "is_owner", "can_edit", "can_delete"]
+        read_only_fields = fields
 
 
-class SavedViewDetailSerializer(serializers.ModelSerializer):
-    created_by = SavedViewCreatorSerializer(read_only=True)
+class SavedViewDetailSerializer(SavedViewListSerializer):
     updated_by = SavedViewCreatorSerializer(read_only=True)
 
-    class Meta:
-        model = SavedView
-        fields = [
-            "id",
-            "name",
-            "tab_type",
-            "visibility",
-            "position",
-            "icon",
-            "config",
-            "project",
-            "created_by",
-            "updated_by",
-            "created_at",
-            "updated_at",
-        ]
-        read_only_fields = [
-            "id",
-            "project",
-            "created_by",
-            "updated_by",
-            "created_at",
-            "updated_at",
-        ]
+    class Meta(SavedViewListSerializer.Meta):
+        fields = SavedViewListSerializer.Meta.fields + ["project", "updated_by"]
+        read_only_fields = fields
+
+
+class SavedViewTabOrderSerializer(serializers.Serializer):
+    revision = serializers.IntegerField(min_value=0)
+    order = serializers.ListField(child=serializers.UUIDField())
 
 
 class SavedViewDefaultTabSerializer(serializers.Serializer):
@@ -76,6 +58,7 @@ class SavedViewDefaultTabSerializer(serializers.Serializer):
 class SavedViewListResultSerializer(serializers.Serializer):
     default_tabs = SavedViewDefaultTabSerializer(many=True)
     custom_views = SavedViewListSerializer(many=True)
+    tab_order = SavedViewTabOrderSerializer()
 
 
 class SavedViewListResponseSerializer(serializers.Serializer):
@@ -165,6 +148,7 @@ class SavedViewCreateSerializer(StrictInputSerializer):
 
 
 class SavedViewUpdateSerializer(StrictInputSerializer):
+    expected_revision = serializers.IntegerField(min_value=1, required=True)
     name = serializers.CharField(max_length=255, required=False)
     visibility = serializers.ChoiceField(
         choices=["personal", "project"], required=False
@@ -188,7 +172,8 @@ class ReorderItemSerializer(serializers.Serializer):
     position = serializers.IntegerField(min_value=0)
 
 
-class SavedViewReorderSerializer(serializers.Serializer):
+class SavedViewReorderSerializer(StrictInputSerializer):
+    expected_revision = serializers.IntegerField(min_value=0, required=True)
     project_id = serializers.UUIDField(required=False, allow_null=True)
     tab_type = serializers.ChoiceField(
         choices=[
@@ -203,3 +188,68 @@ class SavedViewReorderSerializer(serializers.Serializer):
         required=False,
     )
     order = ReorderItemSerializer(many=True)
+
+
+    def validate(self, attrs):
+        if attrs.get("project_id") and attrs.get("tab_type"):
+            raise serializers.ValidationError("Project orders cannot specify tab_type.")
+        if not attrs.get("project_id") and not attrs.get("tab_type"):
+            raise serializers.ValidationError("Workspace orders require tab_type.")
+        ids = [item["id"] for item in attrs["order"]]
+        if len(ids) != len(set(ids)):
+            raise serializers.ValidationError("Order cannot contain duplicate entries.")
+        return attrs
+
+
+class SavedViewDeleteQuerySerializer(StrictInputSerializer):
+    expected_revision = serializers.IntegerField(min_value=1, required=True)
+    project_id = serializers.UUIDField(required=False, allow_null=True)
+
+
+class SavedViewReorderResultSerializer(SavedViewMessageResultSerializer):
+    tab_order = SavedViewTabOrderSerializer()
+
+
+class SavedViewReorderResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = SavedViewReorderResultSerializer()
+
+
+class SavedViewConflictResultSerializer(serializers.Serializer):
+    message = serializers.CharField()
+    current = SavedViewDetailSerializer()
+
+
+class SavedViewConflictResponseSerializer(ApiTextErrorResponseSerializer):
+    result = SavedViewConflictResultSerializer()
+
+
+class SavedViewOrderConflictResultSerializer(serializers.Serializer):
+    message = serializers.CharField()
+    current = SavedViewTabOrderSerializer()
+
+
+class SavedViewOrderConflictResponseSerializer(ApiTextErrorResponseSerializer):
+    result = SavedViewOrderConflictResultSerializer()
+
+
+class SavedViewPreconditionResponseSerializer(ApiTextErrorResponseSerializer):
+    pass
+
+
+class SavedViewForbiddenResponseSerializer(ApiTextErrorResponseSerializer):
+    pass
+
+
+class SavedViewNotFoundResponseSerializer(ApiTextErrorResponseSerializer):
+    pass
+
+
+class SavedViewListQuerySerializer(serializers.Serializer):
+    project_id = serializers.UUIDField(required=False)
+    tab_type = serializers.ChoiceField(choices=SavedView.TAB_TYPE_CHOICES, required=False)
+    consistency = serializers.ChoiceField(choices=["primary"], required=False)
+
+
+class SavedViewDuplicateSerializer(StrictInputSerializer):
+    name = serializers.CharField(max_length=255, required=False, allow_blank=False)

@@ -10,6 +10,11 @@ const mockCreate = vi.fn();
 const mockUpdate = vi.fn();
 let savedViewsResult = { custom_views: [] };
 vi.mock("src/api/project/saved-views", () => ({
+  useGetWorkspaceSavedViews: () => ({ data: undefined }),
+  useRefreshSavedViews: () => vi.fn(),
+  classifySavedViewError: () => ({ kind: "unavailable_record" }),
+  resolveExpectedRevision: vi.fn(),
+
   useCreateSavedView: () => ({ mutate: mockCreate, isPending: false }),
   useUpdateSavedView: () => ({ mutate: mockUpdate, isPending: false }),
   useGetSavedViews: () => ({ data: savedViewsResult }),
@@ -72,7 +77,7 @@ describe("ViewConfigModal", () => {
   it("renders visibility radio buttons", () => {
     render(<ViewConfigModal {...defaultProps} />);
     expect(screen.getByLabelText("Personal")).toBeInTheDocument();
-    expect(screen.getByLabelText("Shared with team")).toBeInTheDocument();
+    expect(screen.getByLabelText("Shared with project")).toBeInTheDocument();
   });
 
   it("renders Cancel and Create buttons", () => {
@@ -148,7 +153,7 @@ describe("ViewConfigModal — config snapshot on save", () => {
     expect(mockCreate.mock.calls[0][0].config).toEqual({});
   });
 
-  it("edit mode re-captures live config on save", async () => {
+  it("edit mode never captures the active tab config on a metadata save", async () => {
     const fresh = { filters: [canonicalFilter("duration")] };
     const stale = { filters: [canonicalFilter("status")] };
     renderWithCtx(() => fresh, {
@@ -162,11 +167,11 @@ describe("ViewConfigModal — config snapshot on save", () => {
     });
     fireEvent.click(screen.getByText("Save"));
     await waitFor(() => expect(mockUpdate).toHaveBeenCalled());
-    expect(mockUpdate.mock.calls[0][0].config).toEqual(fresh);
+    expect(mockUpdate.mock.calls[0][0]).not.toHaveProperty("config");
     expect(mockUpdate.mock.calls[0][0]).not.toHaveProperty("tab_type");
   });
 
-  it("edit mode falls back to initialValues.config when getViewConfig returns null", async () => {
+  it("edit mode omits config when only metadata changes", async () => {
     const stale = { filters: [canonicalFilter("status")] };
     renderWithCtx(() => null, {
       mode: "edit",
@@ -179,7 +184,7 @@ describe("ViewConfigModal — config snapshot on save", () => {
     });
     fireEvent.click(screen.getByText("Save"));
     await waitFor(() => expect(mockUpdate).toHaveBeenCalled());
-    expect(mockUpdate.mock.calls[0][0].config).toEqual(stale);
+    expect(mockUpdate.mock.calls[0][0]).not.toHaveProperty("config");
     expect(mockUpdate.mock.calls[0][0]).not.toHaveProperty("tab_type");
   });
 });

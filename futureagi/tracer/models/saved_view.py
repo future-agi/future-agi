@@ -1,5 +1,6 @@
 import uuid
 
+from django.core.exceptions import ValidationError
 from django.db import models
 
 from accounts.models.user import User
@@ -57,6 +58,7 @@ class SavedView(BaseModel):
     visibility = models.CharField(
         max_length=20, choices=VISIBILITY_CHOICES, default="personal"
     )
+    revision = models.PositiveIntegerField(default=1)
     position = models.IntegerField(default=0)
     icon = models.CharField(max_length=50, blank=True, null=True)
     config = models.JSONField(default=dict, blank=True)
@@ -96,3 +98,38 @@ class SavedView(BaseModel):
         return qs.filter(
             project__isnull=True, workspace=workspace, tab_type=tab_type
         )
+
+
+class SavedViewTabOrder(BaseModel):
+    """A caller's order within a project or a workspace-only tab bucket."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="saved_view_tab_orders")
+    workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name="saved_view_tab_orders")
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, null=True, blank=True, related_name="saved_view_tab_orders")
+    tab_type = models.CharField(max_length=20, choices=SavedView.TAB_TYPE_CHOICES, null=True, blank=True)
+    order = models.JSONField(default=list, blank=True)
+    revision = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        db_table = "tracer_saved_view_tab_order"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "workspace", "project"],
+                condition=models.Q(deleted=False, project__isnull=False),
+                name="unique_saved_view_tab_order_per_user_project",
+            ),
+            models.UniqueConstraint(
+                fields=["user", "workspace", "tab_type"],
+                condition=models.Q(deleted=False, project__isnull=True),
+                name="unique_saved_view_tab_order_per_user_workspace_tab",
+            ),
+        ]
+        indexes = [models.Index(fields=["user", "workspace", "project"])]
+
+    def clean(self):
+        super().clean()
+        if self.project_id is not None and self.tab_type is not None:
+            raise ValidationError({"tab_type": "Project orders cannot specify tab_type."})
+        if self.project_id is None and not self.tab_type:
+            raise ValidationError({"tab_type": "Workspace orders require tab_type."})

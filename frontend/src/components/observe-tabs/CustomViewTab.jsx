@@ -6,13 +6,13 @@ import {
   IconButton,
   Typography,
   TextField,
-  useTheme,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 
 const CustomViewTab = ({
   view,
+  projectName = "this project",
   shortcut,
   isActive,
   isDirty,
@@ -23,7 +23,6 @@ const CustomViewTab = ({
   onRenameSubmit,
   onRenameCancel,
 }) => {
-  const theme = useTheme();
   const [renameValue, setRenameValue] = useState(view.name);
   const inputRef = useRef(null);
 
@@ -60,7 +59,9 @@ const CustomViewTab = ({
     <CustomTooltip
       show
       title={
-        !isActive && shortcut ? `${view.name} · Press ${shortcut}` : view.name
+        view.visibility === "project"
+          ? `Shared with ${projectName} · owned by ${view.is_owner ? "you" : "a teammate"}`
+          : `Personal · owned by you${!isActive && shortcut ? ` · Press ${shortcut}` : ""}`
       }
       placement="bottom"
       arrow
@@ -68,6 +69,19 @@ const CustomViewTab = ({
       type="black"
     >
       <ButtonBase
+        component="div"
+        role="tab"
+        aria-selected={isActive}
+        aria-label={`${view.name} · ${view.visibility === "project" ? "Shared" : "Personal"} · owned by ${view.is_owner ? "you" : "a teammate"}`}
+        data-view-id={view.id}
+        tabIndex={isActive ? 0 : -1}
+        onKeyDown={(e) => {
+          if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {
+            e.preventDefault();
+            const rect = e.currentTarget.getBoundingClientRect();
+            onContextMenu(rect.left, rect.bottom, view.id);
+          }
+        }}
         onClick={() => onClick(tabKey)}
         onContextMenu={(e) => {
           e.preventDefault();
@@ -88,15 +102,16 @@ const CustomViewTab = ({
           "&:hover": {
             bgcolor: isActive ? "action.selected" : "background.neutral",
           },
-          "&:hover .close-btn": { opacity: 1 },
+          "&:hover .close-btn, &:focus-within .close-btn": { opacity: 1 },
+          "&:focus-visible": { outline: "2px solid", outlineColor: "primary.main" },
         }}
       >
         <Iconify
-          icon="mdi:eye-outline"
+          icon={view.visibility === "project" ? "mdi:account-group-outline" : "mdi:eye-outline"}
           width={14}
           sx={{ color: "text.primary", flexShrink: 0 }}
         />
-        {isRenaming ? (
+        {isRenaming && view.can_edit ? (
           <TextField
             inputRef={inputRef}
             value={renameValue}
@@ -129,24 +144,16 @@ const CustomViewTab = ({
             {view.name}
           </Typography>
         )}
-        {!isRenaming && (
-          <Iconify
+        {isDirty && isActive && <Box component="span" aria-label="Unsaved changes" sx={{ width: 6, height: 6, borderRadius: "50%", bgcolor: "primary.main" }} />}
+        {!isRenaming && view.can_delete && (
+          <IconButton
             className="close-btn"
-            icon="mdi:close"
-            width={12}
-            onClick={(e) => {
-              e.stopPropagation();
-              onClose(view.id);
-            }}
-            sx={{
-              opacity: 0,
-              color: "text.disabled",
-              cursor: "pointer",
-              flexShrink: 0,
-              transition: "opacity 100ms",
-              "&:hover": { color: "text.primary" },
-            }}
-          />
+            aria-label={`Delete ${view.name}`}
+            size="small"
+            onKeyDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); onClose(view.id); }}
+            sx={{ opacity: 0, p: 0, color: "text.disabled", "&:focus-visible": { opacity: 1, outline: "2px solid", outlineColor: "primary.main" } }}
+          ><Iconify icon="mdi:close" width={12} /></IconButton>
         )}
       </ButtonBase>
     </CustomTooltip>
@@ -154,7 +161,12 @@ const CustomViewTab = ({
 };
 
 CustomViewTab.propTypes = {
+  projectName: PropTypes.string,
   view: PropTypes.shape({
+    visibility: PropTypes.string,
+    is_owner: PropTypes.bool,
+    can_edit: PropTypes.bool,
+    can_delete: PropTypes.bool,
     id: PropTypes.string.isRequired,
     name: PropTypes.string.isRequired,
   }).isRequired,

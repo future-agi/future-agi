@@ -7,6 +7,12 @@ import { ObserveHeaderContext } from "src/sections/project/context/ObserveHeader
 const mockCreateSavedView = vi.fn();
 let mockSavedViewsList = [];
 vi.mock("src/api/project/saved-views", () => ({
+  useGetWorkspaceSavedViews: () => ({ data: undefined }),
+  useRefreshSavedViews: () => vi.fn(),
+  classifySavedViewError: () => ({ kind: "unavailable_record" }),
+  resolveExpectedRevision: vi.fn(),
+
+  useRefreshSavedViews: () => vi.fn(),
   useGetSavedViews: () => ({ data: { custom_views: mockSavedViewsList } }),
   useCreateSavedView: () => ({ mutate: mockCreateSavedView }),
   useUpdateSavedView: () => ({ mutate: vi.fn() }),

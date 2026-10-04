@@ -1,5 +1,11 @@
 import structlog
-from django.db import IntegrityError, models
+from django.db import IntegrityError, models, transaction
+from django.http import Http404
+from django.shortcuts import get_object_or_404
+from drf_yasg import openapi
+from rest_framework import serializers
+from tfc.constants.roles import RolePermissions
+from tfc.utils.api_serializers import ManagementAPIErrorResponseSerializer
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
@@ -10,9 +16,18 @@ from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.general_methods import GeneralMethods
 from tracer.db_routing import DATABASE_FOR_SAVED_VIEW_LIST
 from tracer.models.project import Project
-from tracer.models.saved_view import SavedView
+from tracer.models.saved_view import SavedView, SavedViewTabOrder
 from tracer.serializers.saved_view import (
     SavedViewCreateSerializer,
+    SavedViewDeleteQuerySerializer,
+    SavedViewListQuerySerializer,
+    SavedViewDuplicateSerializer,
+    SavedViewConflictResponseSerializer,
+    SavedViewOrderConflictResponseSerializer,
+    SavedViewPreconditionResponseSerializer,
+    SavedViewForbiddenResponseSerializer,
+    SavedViewNotFoundResponseSerializer,
+    SavedViewReorderResponseSerializer,
     SavedViewDetailResponseSerializer,
     SavedViewDetailSerializer,
     SavedViewListResponseSerializer,
@@ -23,6 +38,11 @@ from tracer.serializers.saved_view import (
 )
 
 logger = structlog.get_logger(__name__)
+
+READ_ERRORS = {400: ManagementAPIErrorResponseSerializer, 404: SavedViewNotFoundResponseSerializer}
+WRITE_ERRORS = {**READ_ERRORS, 403: SavedViewForbiddenResponseSerializer,
+                409: SavedViewConflictResponseSerializer, 428: SavedViewPreconditionResponseSerializer}
+
 
 DEFAULT_TABS = [
     {"key": "traces", "label": "Traces", "tab_type": "traces"},
@@ -54,26 +74,65 @@ class SavedViewViewSet(BaseModelViewSetMixin, ModelViewSet):
             )
             if tab_type:
                 queryset = queryset.filter(tab_type=tab_type)
-            return queryset.select_related("created_by", "updated_by")
+            return queryset.select_related("created_by", "updated_by", "workspace__organization")
 
         # Show personal views for current user + all project-shared views
         queryset = queryset.filter(
             models.Q(created_by=self.request.user, visibility="personal")
             | models.Q(visibility="project")
         )
-        return queryset.select_related("created_by", "updated_by")
+        return queryset.select_related("created_by", "updated_by", "workspace__organization")
 
     def get_serializer_class(self):
         if self.action == "retrieve":
             return SavedViewDetailSerializer
         return SavedViewListSerializer
 
+    def _mutation_policy(self, instance):
+        # Default-workspace expansion can return records from several workspaces.
+        # Memoize role lookups per record workspace, never per serializer row.
+        if not hasattr(self, "_workspace_roles"):
+            self._workspace_roles = {}
+        if instance.workspace_id not in self._workspace_roles:
+            self._workspace_roles[instance.workspace_id] = self.request.user.get_workspace_role(instance.workspace)
+        owner = instance.created_by_id is not None and instance.created_by_id == self.request.user.id
+        return {
+            "is_owner": owner,
+            "can_edit": owner,
+            "can_delete": owner or (instance.visibility == "project" and
+                self._workspace_roles[instance.workspace_id] in RolePermissions.ADMIN_ROLES),
+        }
+
+    def get_serializer_context(self):
+        return {**super().get_serializer_context(), "policy": self._mutation_policy}
+
+    def _detail(self, instance):
+        return SavedViewDetailSerializer(instance, context=self.get_serializer_context()).data
+
+    def _revision_required(self):
+        return self._gm.custom_error_response(428,
+            "This view was loaded without a revision. Refresh the page and try again.",
+            code="revision_required")
+
+    def _conflict(self, current):
+        return self._gm.custom_error_response(409, {
+            "message": "This view changed since you loaded it.", "current": current,
+        }, code="revision_conflict")
+
+    def _order_bucket(self, project_id, tab_type):
+        return {"user": self.request.user, "workspace": self.request.workspace,
+                "project_id": project_id or None, "tab_type": None if project_id else tab_type}
+
+    @staticmethod
+    def _order_data(record):
+        return {"revision": record.revision if record else 0, "order": record.order if record else []}
+
     # ------------------------------------------------------------------
     # LIST — returns default tabs + custom views
     # ------------------------------------------------------------------
 
     @uses_db(DATABASE_FOR_SAVED_VIEW_LIST, feature_key="feature:saved_view_list")
-    @validated_request(responses={200: SavedViewListResponseSerializer})
+    @validated_request(query_serializer=SavedViewListQuerySerializer, responses={200: SavedViewListResponseSerializer, **READ_ERRORS})
     def list(self, request, *args, **kwargs):
         try:
             project_id = request.query_params.get("project_id")
@@ -90,21 +149,26 @@ class SavedViewViewSet(BaseModelViewSetMixin, ModelViewSet):
                 except Project.DoesNotExist:
                     return self._gm.not_found("Project not found.")
 
-            # Route the saved-view list read to the replica when the
-            # feature key is opted in. See tracer/db_routing.py.
-            # No-op (stays on "default") until READ_REPLICA_OPT_IN includes
-            # "feature:saved_view_list".
-            queryset = self.get_queryset().using(DATABASE_FOR_SAVED_VIEW_LIST)
+            bucket = self._order_bucket(project_id, request.query_params.get("tab_type"))
+            if request.query_params.get("consistency") == "primary":
+                queryset = self.get_queryset().using("default")
+                order = SavedViewTabOrder.objects.using("default").filter(**bucket).first()
+            else:
+                queryset = self.get_queryset().using(DATABASE_FOR_SAVED_VIEW_LIST)
+                order = SavedViewTabOrder.objects.using(DATABASE_FOR_SAVED_VIEW_LIST).filter(**bucket).first()
+            views = list(queryset.order_by("position", "created_at"))
+            by_id = {str(view.id): view for view in views}
+            stored = order.order if order else []
+            effective = list(dict.fromkeys(pk for pk in stored if pk in by_id))
+            seen = set(effective)
+            effective.extend(str(view.id) for view in views if str(view.id) not in seen)
             serializer = SavedViewListSerializer(
-                queryset, many=True, context={"request": request}
+                [by_id[pk] for pk in effective], many=True, context=self.get_serializer_context()
             )
-
-            return self._gm.success_response(
-                {
-                    "default_tabs": DEFAULT_TABS,
-                    "custom_views": serializer.data,
-                }
-            )
+            return self._gm.success_response({
+                "default_tabs": DEFAULT_TABS, "custom_views": serializer.data,
+                "tab_order": {"revision": order.revision if order else 0, "order": effective},
+            })
         except Exception as e:
             logger.error(f"Failed to list saved views: {e}", exc_info=True)
             return self._gm.bad_request("Failed to list saved views.")
@@ -113,15 +177,16 @@ class SavedViewViewSet(BaseModelViewSetMixin, ModelViewSet):
     # RETRIEVE
     # ------------------------------------------------------------------
 
-    @validated_request(responses={200: SavedViewDetailResponseSerializer})
+    @validated_request(query_serializer=SavedViewListQuerySerializer, responses={200: SavedViewDetailResponseSerializer, **READ_ERRORS})
     def retrieve(self, request, *args, **kwargs):
         try:
-            instance = self.get_object()
+            instance = (get_object_or_404(self.get_queryset().using("default"), pk=kwargs[self.lookup_field])
+                        if request.query_params.get("consistency") == "primary" else self.get_object())
             serializer = SavedViewDetailSerializer(
-                instance, context={"request": request}
+                instance, context=self.get_serializer_context()
             )
             return self._gm.success_response(serializer.data)
-        except SavedView.DoesNotExist:
+        except Http404:
             return self._gm.not_found("Saved view not found.")
         except Exception as e:
             logger.error(f"Failed to retrieve saved view: {e}", exc_info=True)
@@ -131,7 +196,7 @@ class SavedViewViewSet(BaseModelViewSetMixin, ModelViewSet):
     # CREATE
     # ------------------------------------------------------------------
 
-    @validated_request(responses={200: SavedViewDetailResponseSerializer})
+    @validated_request(SavedViewCreateSerializer, responses={200: SavedViewDetailResponseSerializer, **READ_ERRORS})
     def create(self, request, *args, **kwargs):
         try:
             serializer = SavedViewCreateSerializer(data=request.data)
@@ -185,7 +250,7 @@ class SavedViewViewSet(BaseModelViewSetMixin, ModelViewSet):
                 )
 
             response_serializer = SavedViewDetailSerializer(
-                saved_view, context={"request": request}
+                saved_view, context=self.get_serializer_context()
             )
             return self._gm.success_response(response_serializer.data)
         except Exception as e:
@@ -196,80 +261,91 @@ class SavedViewViewSet(BaseModelViewSetMixin, ModelViewSet):
     # UPDATE / PARTIAL UPDATE
     # ------------------------------------------------------------------
 
-    @validated_request(responses={200: SavedViewDetailResponseSerializer})
+    @validated_request(SavedViewUpdateSerializer, strict_request_validation=False,
+                       responses={200: SavedViewDetailResponseSerializer, **WRITE_ERRORS})
     def update(self, request, *args, **kwargs):
         try:
-            instance = self.get_object()
-            partial = kwargs.get("partial", False)
-            serializer = SavedViewUpdateSerializer(data=request.data, partial=partial)
-            if not serializer.is_valid():
-                return self._gm.bad_request(serializer.errors)
-
-            data = serializer.validated_data
-            if instance.project_id is None and data.get("visibility") == "project":
-                data["visibility"] = "personal"
-
-            # Reject renaming onto a name that already exists in the same scope.
-            new_name = data.get("name")
-            if new_name and new_name != instance.name:
-                duplicate_exists = (
-                    SavedView.scoped(
-                        instance.created_by,
-                        project=instance.project,
-                        workspace=instance.workspace,
-                        tab_type=instance.tab_type,
-                    )
-                    .filter(name=new_name)
-                    .exclude(id=instance.id)
-                    .exists()
-                )
-                if duplicate_exists:
-                    return self._gm.bad_request(
-                        f"A view named '{new_name}' already exists."
-                    )
-
-            for attr, value in data.items():
-                setattr(instance, attr, value)
-            instance.updated_by = request.user
-            try:
+            with transaction.atomic():
+                # Lock only the saved view: nullable creator joins cannot be locked.
+                instance = self.get_queryset().select_for_update(of=("self",)).get(pk=kwargs[self.lookup_field])
+                if not self._mutation_policy(instance)["can_edit"]:
+                    return self._gm.forbidden_response("Only the owner can change this view.")
+                if "expected_revision" not in request.data:
+                    return self._revision_required()
+                try:
+                    expected = SavedViewUpdateSerializer().fields["expected_revision"].run_validation(request.data["expected_revision"])
+                except serializers.ValidationError as exc:
+                    return self._gm.bad_request(exc.detail)
+                if instance.revision != expected:
+                    return self._conflict(self._detail(instance))
+                # Validate only after access, permission, and revision checks.
+                serializer = SavedViewUpdateSerializer(data=request.data)
+                if not serializer.is_valid():
+                    return self._gm.bad_request(serializer.errors)
+                data = dict(serializer.validated_data)
+                data.pop("expected_revision")
+                if instance.project_id is None and data.get("visibility") == "project":
+                    data["visibility"] = "personal"
+                new_name = data.get("name")
+                if new_name and new_name != instance.name and SavedView.scoped(
+                    instance.created_by, project=instance.project, workspace=instance.workspace,
+                    tab_type=instance.tab_type,
+                ).filter(name=new_name).exclude(id=instance.id).exists():
+                    return self._gm.bad_request(f"A view named '{new_name}' already exists.")
+                for attr, value in data.items():
+                    setattr(instance, attr, value)
+                instance.updated_by = request.user
+                instance.revision += 1
                 instance.save()
-            except IntegrityError:
-                return self._gm.bad_request(
-                    f"A view named '{instance.name}' already exists."
-                )
-
-            response_serializer = SavedViewDetailSerializer(
-                instance, context={"request": request}
-            )
-            return self._gm.success_response(response_serializer.data)
-        except Exception as e:
-            logger.error(f"Failed to update saved view: {e}", exc_info=True)
+                return self._gm.success_response(self._detail(instance))
+        except Http404:
+            return self._gm.not_found("Saved view not found.")
+        except SavedView.DoesNotExist:
+            return self._gm.not_found("Saved view not found.")
+        except IntegrityError:
+            return self._gm.bad_request("A view with this name already exists.")
+        except Exception:
+            logger.error("Failed to update saved view", exc_info=True)
             return self._gm.bad_request("Failed to update saved view.")
 
-    @validated_request(responses={200: SavedViewDetailResponseSerializer})
+    @validated_request(SavedViewUpdateSerializer, strict_request_validation=False,
+                       responses={200: SavedViewDetailResponseSerializer, **WRITE_ERRORS})
     def partial_update(self, request, *args, **kwargs):
-        kwargs["partial"] = True
         return self.update(request, *args, **kwargs)
 
-    # ------------------------------------------------------------------
-    # DESTROY (soft delete)
-    # ------------------------------------------------------------------
-
-    @validated_request(responses={200: SavedViewMessageResponseSerializer})
+    @validated_request(responses={200: SavedViewMessageResponseSerializer, **WRITE_ERRORS},
+        manual_parameters=[
+            openapi.Parameter("expected_revision", openapi.IN_QUERY, type=openapi.TYPE_INTEGER, required=True, minimum=1),
+            openapi.Parameter("project_id", openapi.IN_QUERY, type=openapi.TYPE_STRING, format="uuid"),
+        ])
     def destroy(self, request, *args, **kwargs):
         try:
-            instance = self.get_object()
-            instance.delete()  # BaseModel soft delete
-            return self._gm.success_response({"message": "View deleted."})
-        except Exception as e:
-            logger.error(f"Failed to delete saved view: {e}", exc_info=True)
+            with transaction.atomic():
+                instance = self.get_queryset().select_for_update(of=("self",)).get(pk=kwargs[self.lookup_field])
+                if not self._mutation_policy(instance)["can_delete"]:
+                    return self._gm.forbidden_response("Only the owner can change this view.")
+                if "expected_revision" not in request.query_params:
+                    return self._revision_required()
+                serializer = SavedViewDeleteQuerySerializer(data=request.query_params)
+                if not serializer.is_valid():
+                    return self._gm.bad_request(serializer.errors)
+                if instance.revision != serializer.validated_data["expected_revision"]:
+                    return self._conflict(self._detail(instance))
+                instance.delete()
+                return self._gm.success_response({"message": "View deleted."})
+        except Http404:
+            return self._gm.not_found("Saved view not found.")
+        except SavedView.DoesNotExist:
+            return self._gm.not_found("Saved view not found.")
+        except Exception:
+            logger.error("Failed to delete saved view", exc_info=True)
             return self._gm.bad_request("Failed to delete saved view.")
 
     # ------------------------------------------------------------------
     # DUPLICATE
     # ------------------------------------------------------------------
 
-    @validated_request(responses={200: SavedViewDetailResponseSerializer})
+    @validated_request(SavedViewDuplicateSerializer, strict_request_validation=False, query_serializer=SavedViewListQuerySerializer, responses={200: SavedViewDetailResponseSerializer, **READ_ERRORS})
     @action(detail=True, methods=["post"], url_path="duplicate")
     def duplicate(self, request, *args, **kwargs):
         try:
@@ -299,6 +375,8 @@ class SavedViewViewSet(BaseModelViewSetMixin, ModelViewSet):
             if isinstance(requested_name, str):
                 requested_name = requested_name.strip()
             if requested_name:
+                if len(requested_name) > max_len:
+                    return self._gm.bad_request("View name cannot exceed 255 characters.")
                 new_name = requested_name
                 if new_name in existing_names:
                     return self._gm.bad_request(
@@ -336,9 +414,11 @@ class SavedViewViewSet(BaseModelViewSetMixin, ModelViewSet):
                 )
 
             response_serializer = SavedViewDetailSerializer(
-                new_view, context={"request": request}
+                new_view, context=self.get_serializer_context()
             )
             return self._gm.success_response(response_serializer.data)
+        except Http404:
+            return self._gm.not_found("Saved view not found.")
         except Exception as e:
             logger.error(f"Failed to duplicate saved view: {e}", exc_info=True)
             return self._gm.bad_request("Failed to duplicate saved view.")
@@ -347,54 +427,53 @@ class SavedViewViewSet(BaseModelViewSetMixin, ModelViewSet):
     # REORDER
     # ------------------------------------------------------------------
 
-    @validated_request(responses={200: SavedViewMessageResponseSerializer})
+    @validated_request(SavedViewReorderSerializer, strict_request_validation=False,
+        responses={200: SavedViewReorderResponseSerializer, **WRITE_ERRORS, 409: SavedViewOrderConflictResponseSerializer})
     @action(detail=False, methods=["post"], url_path="reorder")
     def reorder(self, request, *args, **kwargs):
         try:
+            if "expected_revision" not in request.data:
+                return self._revision_required()
             serializer = SavedViewReorderSerializer(data=request.data)
             if not serializer.is_valid():
                 return self._gm.bad_request(serializer.errors)
-
             data = serializer.validated_data
             project_id = data.get("project_id")
             tab_type = data.get("tab_type")
-            order = data["order"]
-
-            # Verify all view IDs belong to views the user can edit
-            view_ids = [item["id"] for item in order]
-            accessible_views = SavedView.objects.filter(
-                id__in=view_ids,
-                deleted=False,
-            )
+            bucket = self._order_bucket(project_id, tab_type)
+            requested = [str(item["id"]) for item in sorted(data["order"], key=lambda item: item["position"])]
+            # Start with the same workspace conventions as list, but scope by the
+            # submitted bucket rather than the list query parameters.
+            accessible = super().get_queryset()
             if project_id:
-                accessible_views = accessible_views.filter(
-                    project_id=project_id,
-                ).filter(
-                    models.Q(created_by=request.user) | models.Q(visibility="project")
-                )
+                if not Project.objects.filter(pk=project_id).exists():
+                    return self._gm.custom_error_response(400, "The requested order is invalid.", code="invalid_order")
+                accessible = accessible.filter(project_id=project_id).filter(
+                    models.Q(created_by=request.user, visibility="personal") | models.Q(visibility="project"))
             else:
-                accessible_views = accessible_views.filter(
-                    project__isnull=True,
-                    workspace=request.workspace,
-                    created_by=request.user,
-                )
-                if tab_type:
-                    accessible_views = accessible_views.filter(tab_type=tab_type)
-
-            accessible_ids = {str(v.id) for v in accessible_views}
-            requested_ids = {str(vid) for vid in view_ids}
-            if not requested_ids.issubset(accessible_ids):
-                return self._gm.bad_request(
-                    "Some view IDs are not accessible or do not exist."
-                )
-
-            # Bulk update positions
-            for item in order:
-                SavedView.objects.filter(id=item["id"]).update(
-                    position=item["position"]
-                )
-
-            return self._gm.success_response({"message": "Views reordered."})
-        except Exception as e:
-            logger.error(f"Failed to reorder saved views: {e}", exc_info=True)
+                accessible = accessible.filter(project__isnull=True, workspace=request.workspace,
+                    tab_type=tab_type, created_by=request.user, visibility="personal")
+            accessible_ids = {str(pk) for pk in accessible.values_list("id", flat=True)}
+            if not set(requested).issubset(accessible_ids):
+                return self._gm.custom_error_response(400, "The requested order is invalid.", code="invalid_order")
+            with transaction.atomic():
+                record = SavedViewTabOrder.objects.select_for_update().filter(**bucket).first()
+                if (record.revision if record else 0) != data["expected_revision"]:
+                    return self._conflict(self._order_data(record))
+                if record:
+                    record.order = requested
+                    record.revision += 1
+                    record.save()
+                else:
+                    try:
+                        # Savepoint keeps the outer transaction usable after a
+                        # concurrent first write wins the unique constraint.
+                        with transaction.atomic():
+                            record = SavedViewTabOrder.objects.create(**bucket, order=requested)
+                    except IntegrityError:
+                        current = SavedViewTabOrder.objects.select_for_update().get(**bucket)
+                        return self._conflict(self._order_data(current))
+                return self._gm.success_response({"message": "Views reordered.", "tab_order": self._order_data(record)})
+        except Exception:
+            logger.error("Failed to reorder saved views", exc_info=True)
             return self._gm.bad_request("Failed to reorder saved views.")

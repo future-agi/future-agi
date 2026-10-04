@@ -46,9 +46,19 @@ vi.mock("src/api/project/project-detail", () => ({
   useGetProjectDetails: () => ({ data: undefined }),
 }));
 
+let mockViewDetail = {};
 vi.mock("src/api/project/saved-views", () => ({
+  useGetWorkspaceSavedViews: () => ({ data: undefined }),
+  useRefreshSavedViews: () => vi.fn(),
+  classifySavedViewError: () => ({ kind: "unavailable_record" }),
+  resolveExpectedRevision: vi.fn(),
+
   SAVED_VIEWS_KEY: "saved-views",
   useGetSavedViews: () => ({ data: undefined }),
+  useGetSavedView: () => mockViewDetail,
+  savedViewsKey: (projectId) => ["saved-views", projectId],
+  classifySavedViewError: () => ({ kind: "unavailable_record" }),
+  removeSavedViewFromCache: vi.fn(),
 }));
 
 vi.mock("../ReplayDrawer/ReplayDrawer", () => ({
@@ -104,7 +114,7 @@ const renderObservePage = () => {
   );
 };
 
-const renderObservePageWithTab = (TabComponent) => {
+const renderObservePageWithTab = (TabComponent, entry = "/dashboard/observe/proj-1/llm-tracing") => {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -112,7 +122,7 @@ const renderObservePageWithTab = (TabComponent) => {
     <QueryClientProvider client={queryClient}>
       <ErrorBoundary fallback={<div>whole app crashed</div>}>
         <MemoryRouter
-          initialEntries={["/dashboard/observe/proj-1/llm-tracing"]}
+          initialEntries={[entry]}
         >
           <Routes>
             <Route
@@ -171,4 +181,18 @@ describe("ObservePage tab containment", () => {
       screen.queryByText("Could not load this tab"),
     ).not.toBeInTheDocument();
   });
+});
+
+
+it("shows a generic unavailable state for a missing named link without mounting trace data", async () => {
+  const retry = vi.fn();
+  mockViewDetail = { isError: true, error: { statusCode: 404 }, refetch: retry };
+  renderObservePageWithTab(() => <div>secret trace data</div>, "/dashboard/observe/proj-1/llm-tracing?tab=view-hidden");
+  expect(await screen.findByText("This view is unavailable")).toBeInTheDocument();
+  expect(screen.queryByText("secret trace data")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  expect(retry).toHaveBeenCalledOnce();
+  fireEvent.click(screen.getByRole("button", { name: "Go to traces" }));
+  await waitFor(() => expect(screen.queryByText("This view is unavailable")).not.toBeInTheDocument());
+  mockViewDetail = {};
 });
