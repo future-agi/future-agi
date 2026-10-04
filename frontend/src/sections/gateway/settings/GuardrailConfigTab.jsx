@@ -37,7 +37,7 @@ const GUARDRAIL_CHECKS = [
         ],
         defaultValue: "block",
         helperText:
-          "Mask, Redact and Hash replace each match with ***, [REDACTED:type] or a short hash before the request reaches the provider. Use them with the Warn or Log action, since Block rejects the request.",
+          "Mask, Redact and Hash replace each match with ***, [REDACTED:type] or a short hash before the request reaches the provider. Use them with the Warn or Log action, since Block rejects the request. The hash is unkeyed and short, so short values such as SSNs can be recovered from it.",
       },
     ],
   },

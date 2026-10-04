@@ -2,7 +2,9 @@ package pii
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -223,6 +225,48 @@ func TestRemediation_Hash(t *testing.T) {
 	}
 }
 
+// remediations lists each mode with what it puts in place of value.
+func remediations(entityType, value string) []struct{ mode, token string } {
+	sum := sha256.Sum256([]byte(value))
+	return []struct{ mode, token string }{
+		{"mask", "***"},
+		{"redact", "[REDACTED:" + entityType + "]"},
+		{"hash", fmt.Sprintf("[SHA:%x]", sum[:4])},
+	}
+}
+
+// Detections overlap: URL credentials contain an email, an unseparated card
+// number or IBAN contains a phone number, and a phone number can run into a
+// card. A check with no entities list runs every detector, so each span must
+// leave as one token, labelled by its longest detection and hashed whole.
+func TestRemediation_OverlappingDetections(t *testing.T) {
+	tests := []struct {
+		name, before, pii, entityType, after string
+	}{
+		{"url credentials", "Connect to ", "https://admin:secret@db.example.com", "url_credentials", ""},
+		{"iban followed by text", "IBAN ", "DE89370400440532013000", "iban", " for the refund"},
+		{"unseparated card", "card ", "4532759312345678", "credit_card", ""},
+		{"phone overlapping the start of a card", "ext ", "212 4532759312345678", "credit_card", " thanks"},
+	}
+	for _, tc := range tests {
+		for _, rem := range remediations(tc.entityType, tc.pii) {
+			t.Run(tc.name+"/"+rem.mode, func(t *testing.T) {
+				g := New(map[string]interface{}{"remediation": rem.mode})
+				input := makeInput(tc.before + tc.pii + tc.after)
+				if r := g.Check(context.Background(), input); r.Pass {
+					t.Fatal("expected PII detection")
+				}
+
+				var content string
+				json.Unmarshal(input.Request.Messages[0].Content, &content)
+				if want := tc.before + rem.token + tc.after; content != want {
+					t.Errorf("got %q, want %q", content, want)
+				}
+			})
+		}
+	}
+}
+
 func TestRemediation_Block_NoMutation(t *testing.T) {
 	g := New(map[string]interface{}{
 		"remediation": "block",
@@ -364,31 +408,81 @@ func TestMultimodalContent_RemediationKeepsParts(t *testing.T) {
 	}
 }
 
-func TestMultimodalContent_RemediationFallsBackToWholeContent(t *testing.T) {
-	// Keys in another case still decode for detection, but the per-part
-	// rewrite can't read them: the content must still leave masked.
-	raw := json.RawMessage(`[{"Type":"text","Text":"My email is alice@example.com"}]`)
-	g := New(map[string]interface{}{
-		"remediation": "redact",
-		"entities":    []interface{}{"email"},
-	})
-	input := &guardrails.CheckInput{
-		Request: &models.ChatCompletionRequest{
-			Model:    "gpt-4o",
-			Messages: []models.Message{{Role: "user", Content: raw}},
-		},
-		Metadata: map[string]string{},
-	}
-	if r := g.Check(context.Background(), input); r.Pass {
-		t.Fatal("expected PII detection in array content")
-	}
+func TestMultimodalContent_RemediationOverlappingDetections(t *testing.T) {
+	const creds = "https://admin:secret@db.example.com"
+	for _, rem := range remediations("url_credentials", creds) {
+		t.Run(rem.mode, func(t *testing.T) {
+			parts := []map[string]interface{}{
+				{"type": "text", "text": "My db: " + creds},
+				{"type": "image_url", "image_url": map[string]string{"url": "https://img.example.com/pic.png"}},
+				{"type": "text", "text": "what tables exist in it?"},
+			}
+			raw, _ := json.Marshal(parts)
+			g := New(map[string]interface{}{"remediation": rem.mode})
+			input := &guardrails.CheckInput{
+				Request: &models.ChatCompletionRequest{
+					Model:    "gpt-4o",
+					Messages: []models.Message{{Role: "user", Content: raw}},
+				},
+				Metadata: map[string]string{},
+			}
+			if r := g.Check(context.Background(), input); r.Pass {
+				t.Fatal("expected PII detection in array content")
+			}
 
-	content := string(input.Request.Messages[0].Content)
-	if strings.Contains(content, "alice@example.com") {
-		t.Fatalf("PII reached the provider: %s", content)
+			var got []map[string]interface{}
+			content := input.Request.Messages[0].Content
+			if err := json.Unmarshal(content, &got); err != nil || len(got) != 3 {
+				t.Fatalf("expected the 3 content parts to be kept, got %s", content)
+			}
+			if want := "My db: " + rem.token; got[0]["text"] != want {
+				t.Errorf("first text part: got %q, want %q", got[0]["text"], want)
+			}
+			image, _ := got[1]["image_url"].(map[string]interface{})
+			if got[1]["type"] != "image_url" || image["url"] != "https://img.example.com/pic.png" {
+				t.Errorf("image part changed: %v", got[1])
+			}
+			if got[2]["text"] != "what tables exist in it?" {
+				t.Errorf("second text part: got %q", got[2]["text"])
+			}
+		})
 	}
-	if !strings.Contains(content, "[REDACTED:email]") {
-		t.Errorf("expected redacted content, got %s", content)
+}
+
+func TestMultimodalContent_RemediationFallsBackToWholeContent(t *testing.T) {
+	// The per-part rewrite reads only "type" and "text", while detection reads
+	// keys in any case and the later of two such keys wins. Neither can see a
+	// match that spans two parts. The content must still leave remediated, as
+	// plain text.
+	tests := []struct{ name, content, want string }{
+		{"keys in another case", `[{"Type":"text","Text":"My email is alice@example.com"}]`, "My email is [REDACTED:email]"},
+		{"text key twice", `[{"type":"text","text":"alice@example.com","Text":"bob@example.com"}]`, "[REDACTED:email]"},
+		{"type key in another case", `[{"type":"text","text":"mail carol@example.com"},{"type":"image_url","Type":"text","text":"dave@example.com"}]`, "mail [REDACTED:email] [REDACTED:email]"},
+		{"match across two parts", `[{"type":"text","text":"Call 555-123"},{"type":"text","text":"4567 now"}]`, "Call [REDACTED:phone] now"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			g := New(map[string]interface{}{
+				"remediation": "redact",
+				"entities":    []interface{}{"email", "phone"},
+			})
+			input := &guardrails.CheckInput{
+				Request: &models.ChatCompletionRequest{
+					Model:    "gpt-4o",
+					Messages: []models.Message{{Role: "user", Content: json.RawMessage(tc.content)}},
+				},
+				Metadata: map[string]string{},
+			}
+			if r := g.Check(context.Background(), input); r.Pass {
+				t.Fatal("expected PII detection in array content")
+			}
+
+			content := input.Request.Messages[0].Content
+			var got string
+			if err := json.Unmarshal(content, &got); err != nil || got != tc.want {
+				t.Errorf("got %s, want %q", content, tc.want)
+			}
+		})
 	}
 }
 
