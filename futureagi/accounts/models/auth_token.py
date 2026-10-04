@@ -10,6 +10,10 @@ class AuthTokenType(models.TextChoices):
     REFRESH = "refresh"
 
 
+class AuthTokenOrigin(models.TextChoices):
+    SAML = "saml"
+
+
 class AuthToken(BaseModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(
@@ -20,6 +24,24 @@ class AuthToken(BaseModel):
         max_length=255, blank=True, null=True, choices=AuthTokenType.choices
     )
     is_active = models.BooleanField(default=True)
+    auth_origin = models.CharField(
+        max_length=16, choices=AuthTokenOrigin.choices, null=True, blank=True
+    )
+    scoped_organization = models.ForeignKey(
+        "accounts.Organization",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="scoped_auth_tokens",
+    )
+    origin_idp = models.ForeignKey(
+        "saml2_auth.SAMLMetadataModel",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="saml_auth_tokens",
+    )
+    origin_idp_generation = models.IntegerField(null=True, blank=True)
 
     def __str__(self):
         return f"Auth Token {self.id}"

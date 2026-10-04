@@ -8,6 +8,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.models.webauthn_credential import WebAuthnCredential
+from accounts.permissions import RequiresIndependentAuth
 from accounts.serializers.contracts import (
     ACCOUNTS_ERROR_RESPONSES,
     AccountsEmptyRequestSerializer,
@@ -38,7 +39,7 @@ logger = structlog.get_logger(__name__)
 class PasskeyRegisterOptionsView(APIView):
     """POST /accounts/passkey/register/options/ - Get registration options."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, RequiresIndependentAuth]
     _gm = GeneralMethods()
 
     @validated_request(
@@ -52,15 +53,13 @@ class PasskeyRegisterOptionsView(APIView):
             return Response(options_json)
         except Exception as e:
             logger.exception("passkey_register_options_failed", error=str(e))
-            return self._gm.bad_request(
-                "Failed to generate registration options."
-            )
+            return self._gm.bad_request("Failed to generate registration options.")
 
 
 class PasskeyRegisterVerifyView(APIView):
     """POST /accounts/passkey/register/verify/ - Verify registration."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, RequiresIndependentAuth]
     _gm = GeneralMethods()
 
     @validated_request(
@@ -139,6 +138,12 @@ class PasskeyDetailView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    def get_permissions(self):
+        permission_classes = [IsAuthenticated]
+        if self.request.method == "DELETE":
+            permission_classes.append(RequiresIndependentAuth)
+        return [permission() for permission in permission_classes]
+
     @validated_request(
         request_serializer=PasskeyRenameSerializer,
         responses={200: PasskeyRenameResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
@@ -192,9 +197,7 @@ class PasskeyAuthenticateOptionsView(APIView):
             return Response(options_json)
         except Exception as e:
             logger.exception("passkey_auth_options_failed", error=str(e))
-            return self._gm.bad_request(
-                "Failed to generate authentication options."
-            )
+            return self._gm.bad_request("Failed to generate authentication options.")
 
 
 class PasskeyAuthenticateVerifyView(APIView):

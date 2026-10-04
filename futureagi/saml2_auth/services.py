@@ -16,7 +16,7 @@ from django.db import connection, models, transaction
 from django.utils import timezone
 
 from accounts.authentication import generate_encrypted_message
-from accounts.models.auth_token import AuthToken, AuthTokenType
+from accounts.models.auth_token import AuthToken, AuthTokenOrigin, AuthTokenType
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import User
 from tfc.settings.settings import get_assertion_url, get_entity_id, get_name_id_format
@@ -441,6 +441,10 @@ def issue_token(
             auth_type=AuthTokenType.ACCESS.value,
             last_used_at=now,
             is_active=True,
+            auth_origin=AuthTokenOrigin.SAML,
+            scoped_organization_id=attempt.organization_id,
+            origin_idp=idp,
+            origin_idp_generation=idp.security_generation,
         )
         SamlLoginAttempt.objects.filter(id=attempt.id).update(
             state=SamlLoginAttempt.State.CONSUMED,
