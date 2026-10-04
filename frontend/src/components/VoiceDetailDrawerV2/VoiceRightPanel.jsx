@@ -49,6 +49,7 @@ const hasAttributeContent = (value) => {
 
 const VoiceRightPanel = ({
   data,
+  isStale = false,
   onCompareBaseline,
   onAction,
   hiddenActionIds = [],
@@ -176,6 +177,7 @@ const VoiceRightPanel = ({
         costBreakdown: data?.customer_cost_breakdown,
         isLiveKit: isLiveKitProvider(data?.provider),
         apiMetrics,
+        audioMetrics: data?.audio_metrics,
       };
     }
     const rawLog = getSpanAttributes(observationSpan)?.rawLog;
@@ -196,6 +198,7 @@ const VoiceRightPanel = ({
         customerCost || extractCostBreakdown(rawLog?.costBreakdown),
       isLiveKit: isLiveKitProvider(data?.provider),
       apiMetrics,
+      audioMetrics: data?.audio_metrics,
     };
   }, [isSimulate, data, observationSpan]);
 
@@ -421,7 +424,7 @@ const VoiceRightPanel = ({
           }}
         >
           <ShowComponent condition={currentTab === TABS.ANALYTICS}>
-            <CallAnalyticsView {...analyticsProps} />
+            <CallAnalyticsView {...analyticsProps} isStale={isStale} />
           </ShowComponent>
 
           <ShowComponent condition={currentTab === TABS.EVALUATIONS}>
@@ -538,6 +541,7 @@ const VoiceRightPanel = ({
 };
 
 VoiceRightPanel.propTypes = {
+  isStale: PropTypes.bool,
   data: PropTypes.object.isRequired,
   onCompareBaseline: PropTypes.func,
   onAction: PropTypes.func,

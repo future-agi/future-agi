@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { extractKpis } from "src/sections/test-detail/common";
 import { normalizeEvalResult } from "src/sections/develop-detail/DataTab/common";
@@ -8,6 +8,11 @@ import {
   STOPPABLE_EXECUTION_STATUSES,
   runColor,
 } from "src/sections/simulate/environments/workspace/runs/runs.constants";
+import {
+  callDetailRefetchInterval,
+  callDetailRetry,
+  isCallDetailAccessError,
+} from "./callDetailPolling";
 
 /**
  * The run/execution DETAIL data source.
@@ -557,23 +562,25 @@ export function mapCallDetail(raw) {
  * @param {Object} [options]  Extra react-query options (e.g. `retry`, `meta`).
  */
 export function useCallExecutionV3Detail(callExecId, enabled = true, options) {
+  const queryClient = useQueryClient();
+  const queryKey = ["simulation-call-detail-v3", callExecId];
+  const retry =
+    options?.retry ??
+    queryClient.getQueryDefaults(queryKey).retry ??
+    queryClient.getDefaultOptions().queries?.retry;
   return useQuery({
     ...options,
-    queryKey: ["simulation-call-detail-v3", callExecId],
+    queryKey,
     queryFn: () =>
       axios
         .get(endpoints.runResultsV3.callDetail(callExecId))
         .then((response) => response.data),
-    enabled: enabled && !!callExecId,
+    enabled: (query) =>
+      enabled && !!callExecId && !isCallDetailAccessError(query.state.error),
     staleTime: 1000 * 60 * 5,
-    refetchInterval: (query) => {
-      const evalMetrics = query.state.data?.eval_metrics;
-      if (!evalMetrics || typeof evalMetrics !== "object") return false;
-      const isLocalizing = Object.values(evalMetrics).some((metric) =>
-        ["pending", "running"].includes(metric?.error_localizer_status),
-      );
-      return isLocalizing ? 3000 : false;
-    },
+    retry: callDetailRetry(retry),
+    refetchInterval: (query) =>
+      callDetailRefetchInterval(query.state.data, query.state.error),
   });
 }
 
