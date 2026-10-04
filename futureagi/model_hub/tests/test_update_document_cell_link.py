@@ -142,3 +142,61 @@ def test_working_document_url_is_stored(auth_client, document_cell):
     if isinstance(infos, str):
         infos = json.loads(infos)
     assert infos.get("document_url") == stored_url
+
+
+def test_signed_link_does_not_store_or_return_its_query(auth_client, document_cell):
+    dataset, row, column, cell = document_cell
+    signed_url = (
+        "https://cdn.example.com/download/report.pdf?"
+        "X-Amz-Signature=secret-signature&X-Amz-Credential=secret-credential"
+    )
+
+    with patch(
+        "model_hub.views.develop_dataset.upload_document_to_s3",
+        return_value="https://storage.example.com/fresh.pdf",
+    ):
+        response = _post_link(auth_client, dataset, row, column, signed_url)
+
+    assert response.status_code == status.HTTP_200_OK
+    cell.refresh_from_db()
+    infos = _value_infos(cell)
+    assert infos["document_name"] == "report.pdf"
+    assert "secret-signature" not in json.dumps(infos)
+    assert "secret-credential" not in json.dumps(response.data)
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected_message"),
+    [
+        (ValueError("URL body exceeds 104857600 byte limit."), DOCUMENT_ADDRESS_UNREACHABLE),
+        (ValueError("Unable to process link. Status Code: 403"), DOCUMENT_ADDRESS_UNREACHABLE),
+    ],
+)
+def test_failed_link_replacement_preserves_the_document_for_remaining_failures(
+    auth_client, document_cell, failure, expected_message
+):
+    dataset, row, column, cell = document_cell
+    signed_url = "https://cdn.example.com/download?X-Amz-Signature=secret"
+
+    with patch(
+        "model_hub.views.develop_dataset.upload_document_to_s3",
+        side_effect=failure,
+    ):
+        response = _post_link(auth_client, dataset, row, column, signed_url)
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert expected_message in (response.data.get("message") or "")
+    assert "secret" not in json.dumps(response.data)
+    _assert_cell_unchanged(cell)
+
+
+def test_explicit_document_deletion_still_clears_the_cell(auth_client, document_cell):
+    dataset, row, column, cell = document_cell
+
+    response = _post_link(auth_client, dataset, row, column, "")
+
+    assert response.status_code == status.HTTP_200_OK
+    cell.refresh_from_db()
+    assert cell.value is None
+    assert _value_infos(cell) == {}
+    assert cell.status == CellStatus.PASS.value
