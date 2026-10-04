@@ -11,12 +11,11 @@ References:
 import logging
 import os
 import threading
-from typing import Any, Dict, Optional
 
 from opentelemetry import trace
 
 # Cache service name to avoid repeated env lookups
-_cached_service_name: Optional[str] = None
+_cached_service_name: str | None = None
 
 
 def _get_service_name() -> str:
@@ -39,7 +38,111 @@ def add_pid_and_tid(logger, method_name: str, event_dict: dict) -> dict:
     return event_dict
 
 
-_cached_region: Optional[str] = None
+_cached_region: str | None = None
+
+SAML_SECURITY_ALLOWED_KEYS = frozenset(
+    {
+        "event",
+        "logger",
+        "level",
+        "timestamp",
+        "pid",
+        "tid",
+        "region",
+        "attempt_id",
+        "org_id",
+        "idp_id",
+        "user_id",
+        "token_id",
+        "reason",
+        "detail",
+        "exc_type",
+        "transport",
+        "consumer",
+        "stage",
+        "candidate_count",
+        "pending_cookies",
+        "bound_org_id",
+        "requested_org_id",
+        "requested_workspace_id",
+        "requested_resource",
+        "actor_id",
+        "row_id",
+        "target_id",
+        "method",
+        "changed_fields",
+        "generation",
+        "otel_trace_id",
+        "otel_span_id",
+    }
+)
+
+
+def _is_saml_dependency_logger(name: str) -> bool:
+    return (
+        name == "saml2"
+        or name.startswith("saml2.")
+        or name == "xmlschema"
+        or name.startswith("xmlschema.")
+    )
+
+
+def scrub_saml_event(logger, method_name: str, event_dict: dict) -> dict:
+    """Keep SAML diagnostics useful without allowing protocol data to escape."""
+
+    del logger, method_name
+    name = str(event_dict.get("logger", ""))
+    if name == "saml2_auth.security" or name.startswith("saml2_auth."):
+        scrubbed = {
+            key: str(value)[:128]
+            for key, value in event_dict.items()
+            if key in SAML_SECURITY_ALLOWED_KEYS
+        }
+        for meta_key in ("_record", "_from_structlog"):
+            if meta_key in event_dict:
+                scrubbed[meta_key] = event_dict[meta_key]
+        return scrubbed
+    if not _is_saml_dependency_logger(name):
+        return event_dict
+
+    event = str(event_dict.get("event", ""))
+    dep_message_class = "".join(
+        character for character in event if character.isalnum()
+    )[:24]
+    scrubbed = {
+        "event": "saml_dependency_event",
+        "logger": name,
+        "level": event_dict.get("level", ""),
+        "timestamp": event_dict.get("timestamp", ""),
+        "dep_message_class": dep_message_class,
+        "pid": event_dict.get("pid", ""),
+        "tid": event_dict.get("tid", ""),
+        "region": event_dict.get("region", ""),
+    }
+    for meta_key in ("_record", "_from_structlog"):
+        if meta_key in event_dict:
+            scrubbed[meta_key] = event_dict[meta_key]
+    return scrubbed
+
+
+class SamlDependencyRedactFilter(logging.Filter):
+    """Remove SAML dependency messages before a handler can render them."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        if record.exc_info and record.exc_info[0] is not None:
+            dep_class = record.exc_info[0].__name__
+        else:
+            dep_class = "".join(
+                character for character in message if character.isalnum()
+            )[:24]
+        record.msg = "saml dependency event"
+        record.args = ()
+        record.exc_info = None
+        record.exc_text = None
+        record.stack_info = None
+        record.saml_dep_class = dep_class
+        return True
 
 
 def add_region_context(logger, method_name: str, event_dict: dict) -> dict:
@@ -113,7 +216,7 @@ def add_otel_context_from_record(logger, method_name: str, event_dict: dict) -> 
     """
     try:
         # Get the LogRecord if available (from stdlib logging integration)
-        record: Optional[logging.LogRecord] = event_dict.get("_record")
+        record: logging.LogRecord | None = event_dict.get("_record")
 
         if record:
             # Read OTel-injected attributes from LogRecord

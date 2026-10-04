@@ -48,6 +48,8 @@ SENTRY_DSN = os.getenv("SENTRY_DSN")
 # check are the only reliable levers.
 NOISY_LOGGER_PREFIXES = (
     "opentelemetry",  # OTLP exporter/instrumentation export failures
+    "saml2",
+    "xmlschema",
 )
 
 # Exact logger names handed to sentry_sdk.integrations.logging.ignore_logger.
@@ -60,6 +62,10 @@ IGNORED_LOGGERS = (
     "opentelemetry.exporter.otlp.proto.http.metric_exporter",
     "opentelemetry.exporter.otlp.proto.http.trace_exporter",
     "opentelemetry.exporter.otlp.proto.http._log_exporter",
+    "saml2",
+    "saml2.*",
+    "xmlschema",
+    "xmlschema.*",
 )
 
 # Exception class names that are expected/handled and not actionable as issues.
@@ -99,6 +105,10 @@ SENSITIVE_KEY_SUBSTRINGS = (
     "access_key",
     "private_key",
     "csrf",
+    "samlresponse",
+    "relaystate",
+    "fai_saml_b",
+    "candidate",
 )
 _REDACTED = "[Filtered]"
 

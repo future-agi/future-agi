@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import logging
+import logging.config
 from collections.abc import Iterator
 from dataclasses import dataclass
 from unittest.mock import Mock, patch
@@ -39,21 +40,29 @@ def capture_security_logging() -> Iterator[SecurityLogCapture]:
 
     @contextmanager
     def _capture() -> Iterator[SecurityLogCapture]:
-        logging_config = settings.LOGGING.copy()
+        from tfc.logging.config import get_logging_config
+
+        logging_config = get_logging_config(str(settings.BASE_DIR))
+        logging.config.dictConfig(logging_config)
         configure_structlog()
-        formatters = settings.LOGGING.get("formatters", {})
-        formatter_config = formatters.get("structured", {})
-        formatter = logging.Formatter(formatter_config.get("format"))
         root_stream = io.StringIO()
         saml_stream = io.StringIO()
-        root_handler = logging.StreamHandler(root_stream)
-        saml_handler = logging.StreamHandler(saml_stream)
-        root_handler.setFormatter(formatter)
-        saml_handler.setFormatter(formatter)
         root_logger = logging.getLogger()
         saml_logger = logging.getLogger("saml2")
-        root_logger.addHandler(root_handler)
-        saml_logger.addHandler(saml_handler)
+        root_handler = next(
+            handler
+            for handler in root_logger.handlers
+            if isinstance(handler, logging.StreamHandler)
+        )
+        saml_handler = next(
+            handler
+            for handler in saml_logger.handlers
+            if isinstance(handler, logging.StreamHandler)
+        )
+        root_original_stream = root_handler.stream
+        saml_original_stream = saml_handler.stream
+        root_handler.setStream(root_stream)
+        saml_handler.setStream(saml_stream)
         transport = Mock(name="sentry_transport")
         breadcrumbs = Mock(name="sentry_breadcrumb")
         try:
@@ -69,7 +78,8 @@ def capture_security_logging() -> Iterator[SecurityLogCapture]:
                     breadcrumb_spy=breadcrumbs,
                 )
         finally:
-            root_logger.removeHandler(root_handler)
-            saml_logger.removeHandler(saml_handler)
+            root_handler.setStream(root_original_stream)
+            saml_handler.setStream(saml_original_stream)
+            logging.config.dictConfig(settings.LOGGING)
 
     return _capture()
