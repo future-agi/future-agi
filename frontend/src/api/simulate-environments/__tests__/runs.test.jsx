@@ -16,8 +16,13 @@ const axios = axiosMod.default;
 const { endpoints } = axiosMod;
 const { paths } = await import("src/routes/paths");
 const { MOCK_RUNS } = await import("../_fixtures/runs");
-const { useEnvironmentRuns, executionToRun, runSimulationTarget } =
-  await import("../runs");
+const {
+  useEnvironmentRuns,
+  executionToRun,
+  runSimulationTarget,
+  refreshAfterRunStart,
+} = await import("../runs");
+const { harnessEnvironmentKey } = await import("../environment");
 
 // Raw executions payload (the product's `results[]` shape) — capitalised
 // product statuses, `success_rate` on the 0–100 scale, in the server's own
@@ -374,6 +379,20 @@ describe("useEnvironmentRuns", () => {
 
     expect(axios.get).not.toHaveBeenCalled();
     expect(result.current.runs).toEqual(MOCK_RUNS);
+  });
+});
+
+describe("refreshAfterRunStart", () => {
+  it("refreshes the run's executions and the environment, whose run count just grew", () => {
+    const queryClient = new QueryClient();
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    refreshAfterRunStart(queryClient, "env-1", "rt-1");
+    expect(invalidate).toHaveBeenCalledWith({
+      queryKey: ["run-test-executions", "rt-1"],
+    });
+    expect(invalidate).toHaveBeenCalledWith({
+      queryKey: harnessEnvironmentKey("env-1"),
+    });
   });
 });
 

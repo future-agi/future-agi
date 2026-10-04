@@ -77,6 +77,40 @@ class HarnessCheckpointEvaluationSerializer(serializers.Serializer):
     grading_error = serializers.BooleanField(required=False)
 
 
+class HarnessTargetUsageSerializer(serializers.Serializer):
+    prompt_tokens = serializers.IntegerField(min_value=0, required=False)
+    completion_tokens = serializers.IntegerField(min_value=0, required=False)
+    total_tokens = serializers.IntegerField(min_value=0, required=False)
+
+
+class HarnessTargetLatencySerializer(serializers.Serializer):
+    turn = serializers.IntegerField(min_value=0, required=False)
+    model = serializers.IntegerField(min_value=0, required=False)
+    voice = serializers.IntegerField(min_value=0, required=False)
+    transcriber = serializers.IntegerField(min_value=0, required=False)
+    endpointing = serializers.IntegerField(min_value=0, required=False)
+    turns = serializers.ListField(
+        child=serializers.IntegerField(min_value=0),
+        max_length=1000,
+        required=False,
+    )
+
+
+class HarnessTargetMetricsSerializer(serializers.Serializer):
+    """The agent under test's own provider-reported figures, never the simulator's."""
+
+    provider = serializers.ChoiceField(choices=("vapi", "retell", "livekit"))
+    usage = HarnessTargetUsageSerializer(required=False)
+    cost_cents = serializers.IntegerField(min_value=0, required=False)
+    latency = HarnessTargetLatencySerializer(required=False)
+    provider_call_id = serializers.CharField(
+        max_length=255, required=False, allow_blank=False
+    )
+    provider_end_reason = serializers.CharField(
+        max_length=255, required=False, allow_blank=False
+    )
+
+
 class HarnessCallSerializer(serializers.Serializer):
     started_at = serializers.DateTimeField()
     ended_at = serializers.DateTimeField()
@@ -91,6 +125,8 @@ class HarnessCallSerializer(serializers.Serializer):
     stop_reason = serializers.CharField(
         required=False, allow_null=True, allow_blank=False, max_length=128
     )
+    script_completed = serializers.BooleanField(required=False)
+    target_metrics = HarnessTargetMetricsSerializer(required=False, allow_null=True)
 
 
 class HarnessFailureSerializer(serializers.Serializer):
