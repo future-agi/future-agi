@@ -69,3 +69,19 @@ def test_acs_store_failure_scrubs_assertion_from_sentry_locals(monkeypatch):
     rendered = json.dumps(event)
     assert "private-marker@example.test" not in rendered
     assert "<saml:Assertion>" not in rendered
+
+
+def test_acs_body_is_not_copied_onto_the_tracing_span():
+    """Verifier finding 1 (P1): the ACS form body must never reach a tracing span.
+
+    OTelContextMiddleware copies request.POST onto the current span unless the
+    path is in SENSITIVE_BODY_PATH_PREFIXES. The ACS endpoint receives the raw
+    SAMLResponse, so /saml2_auth/ must be treated as sensitive or the assertion
+    is exported on every request, success or failure.
+    """
+
+    from tfc.telemetry.middleware import SENSITIVE_BODY_PATH_PREFIXES
+
+    assert any(
+        "/saml2_auth/acs/".startswith(prefix) for prefix in SENSITIVE_BODY_PATH_PREFIXES
+    ), "ACS path is not excluded from request-body span capture"
