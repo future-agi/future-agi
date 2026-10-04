@@ -93,6 +93,11 @@ func (f *Fetcher) Fetch(ctx context.Context, raw, declared, key string, l Limits
 		}
 		return redirect(r, via)
 	}
+	// A missing cap must fail before the user URL is dialled. Verify also
+	// rejects it, but only after the connection is open.
+	if l.MaxBytes <= 0 {
+		return Result{}, failure(400, "media_limit_required")
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return Result{}, fetchError(err)

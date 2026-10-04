@@ -56,8 +56,8 @@ func BytePlus() video.Capabilities {
 				}
 			}
 			m.Inputs[video.ReferenceImage] = image
-			m.Inputs[video.ReferenceVideo] = video.InputSpec{MinCount: 1, MaxCount: 1, Formats: []string{"mp4", "quicktime"}}
-			m.Inputs[video.ReferenceAudio] = video.InputSpec{MinCount: 1, MaxCount: 1, Formats: []string{"mpeg", "mp3", "wav"}}
+			m.Inputs[video.ReferenceVideo] = video.InputSpec{MinCount: 1, MaxCount: 1, MaxBytes: 50 * 1024 * 1024, Formats: []string{"mp4", "quicktime"}}
+			m.Inputs[video.ReferenceAudio] = video.InputSpec{MinCount: 1, MaxCount: 1, MaxBytes: 15 * 1024 * 1024, Formats: []string{"mpeg", "mp3", "wav"}}
 			m.Audio.InputRefs = []video.Role{video.ReferenceAudio}
 			m.Operations[video.Reference] = video.OperationSpec{Roles: []video.Role{video.ReferenceImage, video.ReferenceVideo, video.ReferenceAudio}}
 		} else {

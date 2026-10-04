@@ -137,6 +137,25 @@ func TestFetch_Oversize413(t *testing.T) {
 	_, err := f.Verify(context.Background(), bytes.NewReader(videotest.PNG()), "image/png", "", l)
 	requireCode(t, err, 413, "media_too_large")
 }
+
+// A missing byte cap must be refused before the user URL is dialled. MaxBytes 0
+// used to skip the header check and only fail inside Verify, after the
+// connection was open (review finding 2, head f2c100bf5).
+func TestFetch_MissingCapRefusedBeforeDial(t *testing.T) {
+	f := NewFetcher(nil)
+	dialled := false
+	f.client.Transport = transportFunc(func(r *http.Request) (*http.Response, error) {
+		dialled = true
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+	})
+	l := limits()
+	l.MaxBytes = 0
+	_, err := f.Fetch(context.Background(), "https://public.example/clip.mp4", "video/mp4", "", l)
+	requireCode(t, err, 400, "media_limit_required")
+	if dialled {
+		t.Fatal("user URL was dialled without a byte cap")
+	}
+}
 func TestFetch_MIMEMismatch(t *testing.T) {
 	_, err := NewFetcher(nil).Verify(context.Background(), bytes.NewReader(videotest.PNG()), "video/mp4", "", limits())
 	requireCode(t, err, 400, "media_type_mismatch")

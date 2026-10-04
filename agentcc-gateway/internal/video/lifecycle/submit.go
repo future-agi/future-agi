@@ -119,25 +119,20 @@ func (s *Service) submitError(ctx context.Context, j *video.VideoJob, l video.Le
 		}
 		return s.fail(ctx, j, l, code, true)
 	}
-	// Only a definitive rejection or a failed dial proves that no body was sent.
+	// Only a failed dial proves that no body was sent. A 429, 5xx, timeout or EOF
+	// can only be observed after the provider read the request, and Seedance has
+	// no idempotency token, so those stay submission_unknown for reconciliation
+	// instead of authorizing a second paid submit.
 	var op *net.OpError
-	safe := errors.As(err, &up) && up.Status == 429 || errors.As(err, &op) && op.Op == "dial"
-	if e := s.unknown(ctx, j, l, "submit_outcome_unknown"); e != nil {
-		return e
-	}
-	if safe {
+	if errors.As(err, &op) && op.Op == "dial" {
 		j.Status = video.StatusSubmitting
 		j.Phase = video.PhasePrepared
 		j.ResubmitAuthorized = true
 		j.ReconcileState = video.ReconcileNone
 		j.UpstreamMayContinue = false
-		delay := time.Second
-		if up != nil && up.RetryAfter > delay {
-			delay = up.RetryAfter
-		}
-		return s.saveLater(ctx, j, l, delay)
+		return s.saveLater(ctx, j, l, time.Second)
 	}
-	return nil
+	return s.unknown(ctx, j, l, "submit_outcome_unknown")
 }
 func (s *Service) unknown(ctx context.Context, j *video.VideoJob, l video.Lease, reason string) error {
 	j.Status = video.StatusSubmissionUnknown

@@ -305,6 +305,24 @@ func TestSubmit_401IsProviderAccessDenied(t *testing.T) {
 		t.Fatalf("status=%s err=%v", j.Status, j.Error)
 	}
 }
+
+// A 429 only exists after the provider read the request body, and Seedance has
+// no idempotency token, so a rate-limited submit must stay submission_unknown
+// and must never be sent again (review finding 1, head f2c100bf5).
+func TestSubmit_429AfterSendNeverResubmits(t *testing.T) {
+	f := setup(t, videotest.Script{Submit: videotest.Reply{Status: 429, Header: map[string][]string{"Retry-After": {"5"}}}})
+	j := f.accept(t)
+	f.tick(t)
+	j = f.job(t, j.ID)
+	if j.Status != video.StatusSubmissionUnknown || j.RetrySafe || !j.UpstreamMayContinue || j.ReconcileState != video.ReconcilePending {
+		t.Fatalf("status=%s phase=%s retry_safe=%v upstream_may_continue=%v reconcile=%s", j.Status, j.Phase, j.RetrySafe, j.UpstreamMayContinue, j.ReconcileState)
+	}
+	f.clock.Advance(2 * time.Minute)
+	f.tick(t)
+	if n := f.fake.SubmitCount(j.ID); n != 1 {
+		t.Fatalf("upstream submits=%d, want 1", n)
+	}
+}
 func TestPoll_ErrorsBackoff(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
