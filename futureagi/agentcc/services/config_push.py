@@ -35,8 +35,9 @@ _RULE_TO_REGISTRY = {
     "data-leakage-prevention": "data-leakage-prevention",
 }
 
-# External guardrail rules that need a "provider" key in their config
-# for the gateway's dynamic factory to recognize them.
+# Provider-backed checks need config.provider for the gateway's dynamic
+# guardrail factory to build them. Must equal
+# api_contracts/gateway/guardrail-providers.json, which tests on both sides check.
 _RULE_PROVIDER_DEFAULTS = {
     "futureagi-eval": "futureagi",
     "llama-guard": "llama_guard",

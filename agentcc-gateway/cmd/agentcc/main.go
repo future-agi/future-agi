@@ -308,53 +308,6 @@ func main() {
 			}
 		}
 
-		// Dynamic factory creates guardrails from org config for managed mode.
-		dynamicFactory := func(name string, cfg map[string]interface{}) guardrails.Guardrail {
-			switch name {
-			case "pii-detection":
-				return pii.New(cfg)
-			case "content-moderation":
-				return contentmod.New(cfg)
-			case "keyword-blocklist":
-				return blocklist.New(cfg)
-			case "input-validation":
-				return validation.New(cfg)
-			case "prompt-injection":
-				return injection.New(cfg)
-			case "secret-detection":
-				return secrets.New(cfg)
-			case "topic-restriction":
-				return topic.New(cfg)
-			case "language-detection":
-				return language.New(cfg)
-			case "system-prompt-protection":
-				return sysprompt.New(cfg)
-			case "hallucination-detection":
-				return hallucination.New(cfg)
-			case "data-leakage-prevention":
-				return leakage.New(cfg)
-			}
-			if futureagi.IsFutureAGIConfig(cfg) {
-				return futureagi.New(name, cfg)
-			}
-			if webhook.IsWebhookConfig(cfg) {
-				return webhook.New(name, cfg)
-			}
-			if expression.IsExpressionConfig(cfg) {
-				return expression.New(name, cfg)
-			}
-			if toolperm.IsToolPermConfig(cfg) {
-				return toolperm.New(name, cfg)
-			}
-			if mcpsec.IsMCPSecConfig(cfg) {
-				return mcpsec.New(name, cfg)
-			}
-			if external.IsExternalProviderConfig(cfg) {
-				return external.New(name, cfg)
-			}
-			return nil
-		}
-
 		guardrailPlugin := guardrails.NewPlugin(grEngine, guardrailRegistry, dynamicFactory, policyStore, tenantStore)
 		plugins = append(plugins, guardrailPlugin)
 		onOrgConfigChange = func(orgID string) {
@@ -660,6 +613,55 @@ func main() {
 	// Start returns as soon as the shutdown begins. Wait for the rest of it
 	// (in-flight requests, the last request-log flush) before exiting.
 	<-shutdownDone
+}
+
+// dynamicFactory creates the guardrail an org config check names, for managed
+// mode. A provider-backed check is built from its config.provider, which the
+// backend fills in from api_contracts/gateway/guardrail-providers.json.
+func dynamicFactory(name string, cfg map[string]interface{}) guardrails.Guardrail {
+	switch name {
+	case "pii-detection":
+		return pii.New(cfg)
+	case "content-moderation":
+		return contentmod.New(cfg)
+	case "keyword-blocklist":
+		return blocklist.New(cfg)
+	case "input-validation":
+		return validation.New(cfg)
+	case "prompt-injection":
+		return injection.New(cfg)
+	case "secret-detection":
+		return secrets.New(cfg)
+	case "topic-restriction":
+		return topic.New(cfg)
+	case "language-detection":
+		return language.New(cfg)
+	case "system-prompt-protection":
+		return sysprompt.New(cfg)
+	case "hallucination-detection":
+		return hallucination.New(cfg)
+	case "data-leakage-prevention":
+		return leakage.New(cfg)
+	}
+	if futureagi.IsFutureAGIConfig(cfg) {
+		return futureagi.New(name, cfg)
+	}
+	if webhook.IsWebhookConfig(cfg) {
+		return webhook.New(name, cfg)
+	}
+	if expression.IsExpressionConfig(cfg) {
+		return expression.New(name, cfg)
+	}
+	if toolperm.IsToolPermConfig(cfg) {
+		return toolperm.New(name, cfg)
+	}
+	if mcpsec.IsMCPSecConfig(cfg) {
+		return mcpsec.New(name, cfg)
+	}
+	if external.IsExternalProviderConfig(cfg) {
+		return external.New(name, cfg)
+	}
+	return nil
 }
 
 // findRuleConfig extracts the Config map for a named guardrail rule.

@@ -26,8 +26,8 @@ from agentcc.views.gateway import _prepare_vertex_provider_config
 ORG_CONFIG_FIXTURE = (
     Path(__file__).resolve().parent / "fixtures/gateway_org_config.full.json"
 )
-# Shared with the gateway's test that each check's guardrail recognises the
-# provider pushed for it (TestGuardrailRecognisersAcceptEveryPushedProvider).
+# Shared with the gateway's test that dynamicFactory builds each check as its
+# own guardrail (TestDynamicFactoryBuildsEachPushedCheckAsItsOwnGuardrail).
 GUARDRAIL_PROVIDERS_FIXTURE = (
     Path(__file__).resolve().parents[3]
     / "api_contracts/gateway/guardrail-providers.json"
