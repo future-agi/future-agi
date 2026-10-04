@@ -7,6 +7,7 @@ import {
   TERMINAL_STATUSES,
 } from "src/sections/common/simulation/constants/statusStyles";
 import { MOCK_RUNS } from "./_fixtures/runs";
+import { harnessEnvironmentKey } from "./environment";
 
 // Grading finishes on its own, so an `Evaluating` run offers no Stop here.
 const STOPPABLE_RUN_STATUSES = STOPPABLE_STATUSES.filter(
@@ -120,6 +121,15 @@ export function mapExecutions(payload, offset = 0) {
     const ordinal = count - offset - index;
     return { ...executionToRun(raw), ordinal, label: `Run ${ordinal}` };
   });
+}
+
+// A new run changes both the run-test's executions and the environment's run
+// count, which the Runs tab shows until the runs list loads.
+export function refreshAfterRunStart(queryClient, envId, runTestId) {
+  queryClient.invalidateQueries({
+    queryKey: ["run-test-executions", runTestId],
+  });
+  queryClient.invalidateQueries({ queryKey: harnessEnvironmentKey(envId) });
 }
 
 export function useEnvironmentRuns(

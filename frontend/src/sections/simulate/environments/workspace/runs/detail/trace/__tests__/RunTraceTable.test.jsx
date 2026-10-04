@@ -350,6 +350,14 @@ describe("RunTraceTable", () => {
     expect(onQueryChange).toHaveBeenLastCalledWith(null);
   });
 
+  it("forwards chart goal-outcome filters to the server", () => {
+    renderTable({ initialFilters: { goal_outcome: ["escalated"] } });
+    expect(useRunCalls).toHaveBeenLastCalledWith(
+      "ex1",
+      expect.objectContaining({ filters: { goal_outcome: ["escalated"] } }),
+    );
+  });
+
   it("follows the drawer: switches page, expands the call's group, highlights its row", () => {
     const onQueryChange = vi.fn();
     const { rerender } = renderTable({ onQueryChange });
