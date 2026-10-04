@@ -28,3 +28,28 @@ export const filtersContentEqual = (a, b) => {
   }
   return true;
 };
+
+// A Custom date range keeps dateOption "Custom" while its [start, end]
+// bounds change, so comparing the option name alone misses edited dates.
+// Bounds are persisted as "yyyy-MM-dd HH:mm:ss" strings; compare them as
+// strings so a hydrated saved view equals its own stored pair. A missing
+// pair compares equal to an empty one for legacy views without bounds.
+export const dateBoundsEqual = (a, b) => {
+  const aArr = Array.isArray(a) ? a : [];
+  const bArr = Array.isArray(b) ? b : [];
+  if (aArr.length !== bArr.length) return false;
+  for (let i = 0; i < aArr.length; i += 1) {
+    if (String(aArr[i] ?? "") !== String(bArr[i] ?? "")) return false;
+  }
+  return true;
+};
+
+// Date filter equality for saved-view dirty checks: option name first, then
+// the custom bounds when the option is "Custom".
+export const dateFilterEqual = (current, baseline) => {
+  const currentOption = current?.dateOption ?? null;
+  const baselineOption = baseline?.dateOption ?? null;
+  if (currentOption !== baselineOption) return false;
+  if (baselineOption !== "Custom") return true;
+  return dateBoundsEqual(current?.dateFilter, baseline?.dateFilter);
+};
