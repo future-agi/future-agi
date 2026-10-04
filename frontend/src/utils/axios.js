@@ -167,10 +167,20 @@ axiosInstance.interceptors.response.use(
       setIsRefreshing(true);
 
       try {
+        const refreshGeneration = localStorage.getItem("fai_auth_generation");
         const res = await refreshTokenRequest();
         const newAccessToken = res.data?.access;
 
         if (!newAccessToken) throw new Error("No access token returned");
+
+        if (
+          refreshGeneration !== localStorage.getItem("fai_auth_generation")
+        ) {
+          const sessionReplaced = new Error("session replaced");
+          processQueue(sessionReplaced, null);
+          window.location.replace("/dashboard/develop");
+          throw sessionReplaced;
+        }
 
         // 🪪 Save new token in storage + axios headers
         // Workspace header is managed by WorkspaceProvider (reads from sessionStorage).
@@ -196,6 +206,9 @@ axiosInstance.interceptors.response.use(
         originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
         return axiosInstance(originalRequest);
       } catch (err) {
+        if (err?.message === "session replaced") {
+          return Promise.reject(err);
+        }
         processQueue(err, null); // ❌ Fail queued requests too
         setSession(null);
         resetUser();
