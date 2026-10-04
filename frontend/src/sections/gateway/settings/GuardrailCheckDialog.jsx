@@ -81,7 +81,7 @@ const GuardrailCheckDialog = ({
         const pf = {};
         const mc = {};
         const cfgObj = initialData.config || {};
-        providerMeta.fields.forEach(({ key, defaultValue, type }) => {
+        providerMeta.fields.forEach(({ key, defaultValue, type, aliases }) => {
           const val = initialData[key] ?? cfgObj[key];
           if (CREDENTIAL_KEYS.has(key) && val) {
             pf[key] = CREDENTIAL_MASK;
@@ -91,6 +91,13 @@ const GuardrailCheckDialog = ({
               ? val.join("\n")
               : defaultValue ?? "";
             pf[key] = listValue;
+          } else if (aliases && Array.isArray(val)) {
+            // Values saved under an alias load as their option, once each.
+            pf[key] = [
+              ...new Set(
+                val.map((v) => (Object.hasOwn(aliases, v) ? aliases[v] : v)),
+              ),
+            ];
           } else if (val !== undefined && val !== "") {
             pf[key] = val;
           } else {
@@ -367,7 +374,12 @@ const GuardrailCheckDialog = ({
               ))
             }
             renderInput={(params) => (
-              <TextField {...params} label={label} size="small" />
+              <TextField
+                {...params}
+                label={label}
+                size="small"
+                helperText={helperText}
+              />
             )}
           />
         );

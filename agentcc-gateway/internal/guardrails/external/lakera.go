@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/futureagi/agentcc-gateway/internal/guardrails"
@@ -67,7 +68,7 @@ func newLakeraAdapter(cfg map[string]interface{}) *lakeraAdapter {
 	return &lakeraAdapter{
 		apiKey:     getStringConfig(cfg, "api_key", ""),
 		endpoint:   getStringConfig(cfg, "endpoint", "https://api.lakera.ai/v2/guard"),
-		projectID:  getStringConfig(cfg, "project_id", ""),
+		projectID:  strings.TrimSpace(getStringConfig(cfg, "project_id", "")),
 		categories: categories,
 	}
 }
@@ -103,6 +104,13 @@ func (a *lakeraAdapter) parseResponse(body []byte) *guardrails.CheckResult {
 
 	if !*resp.Flagged {
 		return &guardrails.CheckResult{Pass: true, Score: 0.0, Message: "content is safe"}
+	}
+	// Categories narrow a flag by its breakdown, which Guard always returns when
+	// asked, with the detections behind the flag. A flag without a detection
+	// can't be narrowed, so fail closed as above.
+	detected := slices.ContainsFunc(resp.Breakdown, func(d lakeraDetector) bool { return d.Detected })
+	if len(a.categories) > 0 && !detected {
+		return &guardrails.CheckResult{Pass: false, Score: 1.0, Message: "lakera flagged without a detection"}
 	}
 
 	var triggered []string

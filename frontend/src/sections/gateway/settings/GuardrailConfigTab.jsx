@@ -300,6 +300,13 @@ const MODEL_GUARDRAIL_CHECKS = [
         type: "multiselect",
         options: ["prompt_attack", "moderated_content", "pii", "unknown_links"],
         defaultValue: ["prompt_attack", "moderated_content"],
+        // v1 names in checks saved before these options; the gateway maps them
+        // the same way (lakeraLegacyCategories).
+        aliases: {
+          prompt_injection: "prompt_attack",
+          jailbreak: "prompt_attack",
+          harmful_content: "moderated_content",
+        },
         helperText:
           "Only these Lakera detector groups can block. Clear all to enforce every detector in the project's policy.",
       },

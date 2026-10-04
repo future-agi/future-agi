@@ -118,6 +118,11 @@ describe("GuardrailConfigTab", () => {
     expect(
       await screen.findByText("Configure: Lakera Guard"),
     ).toBeInTheDocument();
+    expect(
+      screen.getByRole("combobox", { name: "Categories" }),
+    ).toHaveAccessibleDescription(
+      /^Only these Lakera detector groups can block/,
+    );
 
     fireEvent.change(screen.getByLabelText(/API Key/), {
       target: { value: "lk-test" },
@@ -146,5 +151,53 @@ describe("GuardrailConfigTab", () => {
         },
       },
     });
+  });
+
+  it("opens a Lakera check saved with v1 categories as their v2 groups", async () => {
+    const onChange = vi.fn();
+
+    render(
+      <GuardrailConfigTab
+        guardrails={{
+          checks: {
+            "lakera-guard": {
+              enabled: true,
+              action: "block",
+              confidence_threshold: 0.8,
+              provider: "lakera",
+              config: {
+                api_key: "lk-test",
+                endpoint: "https://api.lakera.ai/v2/guard",
+                // The defaults the dashboard saved before the v2 options.
+                categories: [
+                  "prompt_injection",
+                  "jailbreak",
+                  "harmful_content",
+                ],
+              },
+            },
+          },
+        }}
+        onChange={onChange}
+      />,
+    );
+
+    // A stored check also has a Reset button; edit is first.
+    const lakeraCard = screen
+      .getByText("Lakera Guard")
+      .closest(".MuiCard-root");
+    fireEvent.click(within(lakeraCard).getAllByRole("button")[0]);
+
+    const dialog = await screen.findByRole("dialog");
+    const chips = [...dialog.querySelectorAll(".MuiChip-label")].map(
+      (chip) => chip.textContent,
+    );
+    expect(chips).toEqual(["prompt_attack", "moderated_content"]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(
+      onChange.mock.calls.at(-1)[0].checks["lakera-guard"].config.categories,
+    ).toEqual(["prompt_attack", "moderated_content"]);
   });
 });
