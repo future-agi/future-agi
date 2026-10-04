@@ -395,6 +395,13 @@ class CustomAIModelDetailsView(APIView):
             if output_token_cost is not None:
                 ai_model.output_token_cost = output_token_cost
             if new_model_name:
+                if (
+                    str(ai_model.provider or "").strip().lower() == "bedrock"
+                    and invalid_bedrock_model_id(new_model_name)
+                ):
+                    return self._gm.bad_request(
+                        get_error_message("INVALID_BEDROCK_MODEL_ID")
+                    )
                 ai_model.user_model_id = new_model_name
             _restore_plain_key_config_for_save(ai_model)
             ai_model.save()
@@ -619,6 +626,13 @@ class EditCustomModel(APIView):
             model = _custom_ai_model_queryset(request).get(id=model_id)
             if not model_name:
                 model_name = model.user_model_id
+            if (
+                str(model.provider or "").strip().lower() == "bedrock"
+                and invalid_bedrock_model_id(model_name)
+            ):
+                return self._gm.bad_request(
+                    get_error_message("INVALID_BEDROCK_MODEL_ID")
+                )
             if (key or config_json) and _vertex_sdk_missing(model.provider, model_name):
                 return self._gm.bad_request(VERTEX_SDK_MISSING_MESSAGE)
             if key or config_json:

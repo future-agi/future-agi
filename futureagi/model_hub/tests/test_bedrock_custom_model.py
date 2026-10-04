@@ -18,6 +18,7 @@ from model_hub.views.custom_model import CustomAIModelCreateView
 
 
 CREATE_URL = "/model-hub/custom_models/create/"
+EDIT_URL = "/model-hub/custom_models/edit/"
 FOUNDATION_ID = "anthropic.claude-3-haiku-20240307-v1:0"
 
 
@@ -117,6 +118,50 @@ def test_foundation_id_is_forwarded_unchanged(client, organization, monkeypatch)
     )
     assert saved.provider == "bedrock"
     assert "aws_secret_access_key" in saved.actual_json
+
+
+@pytest.mark.django_db
+def test_edit_rejects_friendly_label_before_provider(client, organization, user, workspace, monkeypatch):
+    saved = CustomAIModel.objects.create(
+        user_model_id=FOUNDATION_ID,
+        provider="bedrock",
+        input_token_cost=0,
+        output_token_cost=0,
+        organization=organization,
+        workspace=workspace,
+        user=user,
+        key_config={
+            "aws_access_key_id": "AKIAEXAMPLE",
+            "aws_secret_access_key": "secret-example",
+            "aws_region_name": "us-east-1",
+        },
+    )
+
+    def fail_if_called(**kwargs):
+        raise AssertionError(f"provider was called with {kwargs.get('model_name')}")
+
+    monkeypatch.setattr(
+        "model_hub.views.custom_model.validate_model_working", fail_if_called
+    )
+
+    response = client.patch(
+        EDIT_URL,
+        {
+            "id": str(saved.id),
+            "model_name": "Claude",
+            "config_json": {
+                "aws_access_key_id": "AKIAEXAMPLE",
+                "aws_secret_access_key": "secret-example",
+                "aws_region_name": "us-east-1",
+            },
+        },
+        format="json",
+    )
+
+    assert response.status_code == 400
+    assert "Bedrock model ID" in str(response.data)
+    saved.refresh_from_db()
+    assert saved.user_model_id == FOUNDATION_ID
 
 
 def test_identifier_helper_rejects_family_label_only():
