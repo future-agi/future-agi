@@ -1,11 +1,12 @@
-import datetime
 import traceback
 
 import requests
 
 # from accounts.models.user_permissions import UserPermission
 import structlog
+from django.conf import settings
 from django.core.cache import cache
+from django.db import transaction
 from django.db.models import Q
 from django.http import HttpResponse, HttpResponseRedirect
 from django.utils import timezone
@@ -13,6 +14,7 @@ from django.utils.http import urlsafe_base64_encode
 from drf_yasg import openapi
 from drf_yasg.utils import no_body, swagger_auto_schema
 from rest_framework import viewsets
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.views import APIView
@@ -35,6 +37,7 @@ from analytics.utils import (
 )
 from saml2_auth.forms import IDPUploadForm
 from saml2_auth.models import SAMLMetadataModel
+from saml2_auth.permissions import SAMLConfigPermission
 from saml2_auth.serializers import (
     SAMLAuthLoginQuerySerializer,
     SAMLErrorResponseSerializer,
@@ -79,6 +82,7 @@ from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
+security_logger = structlog.get_logger("saml2_auth.security")
 
 SAML_REDIRECT_RESPONSES = {
     200: None,
@@ -390,13 +394,78 @@ class IDPUploadViews(viewsets.ModelViewSet):
     _gm = GeneralMethods()
     parser_classes = (FormParser, MultiPartParser)
     # authentication_classes = (ProgrammaticAuthentication,)
-    permission_classes = (IsAuthenticated,)
+    permission_classes = (IsAuthenticated, SAMLConfigPermission)
     # rbac = 'idp'
     queryset = SAMLMetadataModel.objects.filter(deleted=False)
     lookup_field = "id"
     lookup_url_kwarg = "id"
     http_method_names = ["get", "post", "head", "delete", "options", "put"]
     parser_classes = (FormParser, MultiPartParser)
+
+    def get_queryset(self):
+        organization = get_request_organization(self.request)
+        if organization is None:
+            return SAMLMetadataModel.objects.none()
+        return SAMLMetadataModel.objects.filter(
+            deleted=False, organization=organization
+        )
+
+    def check_permissions(self, request):
+        try:
+            return super().check_permissions(request)
+        except PermissionDenied:
+            self._log_config_denied(
+                request,
+                self.kwargs.get(self.lookup_url_kwarg),
+                "permission_denied",
+            )
+            raise
+
+    def _metadata_too_large(self, request):
+        content_length = request.META.get("CONTENT_LENGTH")
+        maximum = getattr(settings, "SAML_MAX_METADATA_BYTES", 262144)
+        try:
+            if content_length is not None and int(content_length) > maximum:
+                return True
+        except ValueError:
+            return True
+        return len(request.body) > maximum
+
+    def _request_data(self, request):
+        if self._metadata_too_large(request):
+            return None
+        form = IDPUploadForm(request.POST, request.FILES)
+        if not form.is_valid():
+            return None
+        data = form.cleaned_data.copy()
+        metadata_file = data.pop("file", None)
+        data.pop("organization", None)
+        data.pop("relay_state", None)
+        if metadata_file is not None:
+            try:
+                data["meta"] = metadata_file.read().decode()
+            except (UnicodeDecodeError, OSError):
+                return None
+        return data
+
+    @staticmethod
+    def _revoke_idp_tokens(idp):
+        """Revoke scoped SAML credentials once the additive token fields land."""
+
+        if "origin_idp" not in {field.name for field in AuthToken._meta.get_fields()}:
+            return
+        AuthToken.no_workspace_objects.filter(origin_idp=idp, is_active=True).update(
+            is_active=False
+        )
+
+    def _log_config_denied(self, request, target_id, reason):
+        security_logger.warning(
+            "saml_config_denied",
+            actor_id=str(request.user.id),
+            target_id=str(target_id) if target_id else None,
+            method=request.method,
+            reason=reason,
+        )
 
     def get_serializer_class(self):
         if self.request.method == "GET":
@@ -444,31 +513,19 @@ class IDPUploadViews(viewsets.ModelViewSet):
         }
     )
     def retrieve(self, request, *args, **kwargs):
-        try:
-            uuid = kwargs.get(self.lookup_url_kwarg)
-            data = {}
-            existing_saml_metadata_model = SAMLMetadataModel.objects.get(
-                id=uuid, deleted=False
-            )
-            if existing_saml_metadata_model:
-                data["is_enabled"] = existing_saml_metadata_model.is_enabled
-                data["identity_type"] = existing_saml_metadata_model.identity_type
-                name = existing_saml_metadata_model.name
-                if (
-                    not existing_saml_metadata_model.name
-                    or existing_saml_metadata_model.name == "null"
-                ):
-                    name = existing_saml_metadata_model.get_identity_type
-                data["name"] = name
-                data["acs_url"] = get_assertion_url
-                data["audience_url"] = get_entity_id
-            return self._gm.success_response(data)
-        except SAMLMetadataModel.DoesNotExist:
-            return self._gm.bad_request("Invalid saml group.")
-        except Exception as e:
-            logger.error(e)
-            traceback.print_exc()
-            return self._gm.internal_server_error_response(get_error_message("US25"))
+        existing_saml_metadata_model = self.get_object()
+        name = existing_saml_metadata_model.name
+        if not name or name == "null":
+            name = existing_saml_metadata_model.get_identity_type
+        return self._gm.success_response(
+            {
+                "is_enabled": existing_saml_metadata_model.is_enabled,
+                "identity_type": existing_saml_metadata_model.identity_type,
+                "name": name,
+                "acs_url": get_assertion_url,
+                "audience_url": get_entity_id,
+            }
+        )
 
     @swagger_auto_schema(
         request_body=no_body,
@@ -481,31 +538,18 @@ class IDPUploadViews(viewsets.ModelViewSet):
         },
     )
     def create(self, request, *args, **kwargs):
-        try:
-            form = IDPUploadForm(request.POST, request.FILES)
-            if not form.is_valid():
-                return self._gm.bad_request(_format_form_errors(form.errors))
-            data = form.cleaned_data
-            data["organization"] = get_request_organization(request)
-            if "file" in data:
-                try:
-                    meta = data.pop("file").read()
-                    data["meta"] = meta.decode()
-                except Exception as e:
-                    logger.error(str(e))
-                    return self._gm.bad_request("Please select a XML file.")
-            if SAMLMetadataModel.objects.filter(
-                deleted=False, organization=data["organization"]
-            ).exists():
-                return self._gm.bad_request(
-                    "Maximum supported identity providers reached. Please edit or delete an existing IdP."
-                )
-            SAMLMetadataModel.objects.create(**data)
-            return self._gm.success_response("Success")
-        except Exception as e:
-            logger.error(e)
-            traceback.print_exc()
-            return self._gm.internal_server_error_response(get_error_message("US25"))
+        data = self._request_data(request)
+        organization = get_request_organization(request)
+        if data is None or organization is None:
+            return self._gm.bad_request("Please select a XML file.")
+        if SAMLMetadataModel.objects.filter(
+            deleted=False, organization=organization
+        ).exists():
+            return self._gm.bad_request(
+                "Maximum supported identity providers reached. Please edit or delete an existing IdP."
+            )
+        SAMLMetadataModel.objects.create(organization=organization, **data)
+        return self._gm.success_response("Success")
 
     @swagger_auto_schema(
         responses={
@@ -515,18 +559,23 @@ class IDPUploadViews(viewsets.ModelViewSet):
         }
     )
     def destroy(self, request, *args, **kwargs):
-        try:
-            uuid = kwargs.get(self.lookup_url_kwarg)
-            obj = SAMLMetadataModel.objects.get(id=uuid)
+        obj = self.get_object()
+        with transaction.atomic():
+            obj = self.get_queryset().select_for_update().get(id=obj.id)
             obj.deleted = True
-            obj.deleted_at = datetime.datetime.now()
-            obj.save()
-            return self._gm.success_response("Success")
-        except SAMLMetadataModel.DoesNotExist:
-            return self._gm.bad_request("Invalid saml group.")
-        except Exception as e:
-            logger.error(e)
-            return self._gm.internal_server_error_response(get_error_message("US25"))
+            obj.deleted_at = timezone.now()
+            obj.security_generation += 1
+            obj.save(update_fields=["deleted", "deleted_at", "security_generation"])
+            self._revoke_idp_tokens(obj)
+        security_logger.info(
+            "saml_config_changed",
+            actor_id=str(request.user.id),
+            org_id=str(obj.organization_id),
+            row_id=str(obj.id),
+            changed_fields=["deleted"],
+            generation=obj.security_generation,
+        )
+        return self._gm.success_response("Success")
 
     @swagger_auto_schema(
         request_body=no_body,
@@ -539,32 +588,37 @@ class IDPUploadViews(viewsets.ModelViewSet):
         },
     )
     def update(self, request, *args, **kwargs):
-        try:
-            uuid = kwargs.get(self.lookup_url_kwarg)
-            form = IDPUploadForm(request.POST, request.FILES)
-            saml_model = SAMLMetadataModel.objects.filter(id=uuid, deleted=False).get()
-            if not form.is_valid():
-                return self._gm.bad_request(_format_form_errors(form.errors))
-            data = form.cleaned_data
-            data["organization"] = get_request_organization(request)
-            if int(saml_model.identity_type) != int(
-                data.get("identity_type")
-            ) and not data.get("file"):
-                return self._gm.bad_request("Please select a XML file.")
-            if "file" in data:
-                try:
-                    meta = data.pop("file").read()
-                    data["meta"] = meta.decode()
-                except Exception:
-                    logger.info("No file in update SSO.")
-            SAMLMetadataModel.objects.filter(id=uuid).update(**data)
-            return self._gm.success_response("Success")
-        except SAMLMetadataModel.DoesNotExist:
-            return self._gm.bad_request("Invalid saml group.")
-        except Exception as e:
-            traceback.print_exc()
-            logger.error(e)
-            return self._gm.internal_server_error_response(get_error_message("US25"))
+        original = self.get_object()
+        data = self._request_data(request)
+        if data is None:
+            return self._gm.bad_request("Please select a XML file.")
+        if (
+            data.get("identity_type")
+            and int(original.identity_type) != int(data["identity_type"])
+            and "meta" not in data
+        ):
+            return self._gm.bad_request("Please select a XML file.")
+        changed_fields = [
+            field for field, value in data.items() if getattr(original, field) != value
+        ]
+        with transaction.atomic():
+            row = self.get_queryset().select_for_update().get(id=original.id)
+            for field, value in data.items():
+                setattr(row, field, value)
+            if changed_fields:
+                row.security_generation += 1
+                row.save(update_fields=[*changed_fields, "security_generation"])
+                self._revoke_idp_tokens(row)
+        if changed_fields:
+            security_logger.info(
+                "saml_config_changed",
+                actor_id=str(request.user.id),
+                org_id=str(original.organization_id),
+                row_id=str(original.id),
+                changed_fields=changed_fields,
+                generation=row.security_generation,
+            )
+        return self._gm.success_response("Success")
 
 
 import urllib.parse  # noqa: E402

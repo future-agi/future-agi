@@ -37,6 +37,7 @@ class SAMLMetadataModel(BaseModel):
     identity_type = models.PositiveSmallIntegerField(choices=IDENTITY_CHOICES)
     relay_state = models.CharField(max_length=100, unique=True, null=False, blank=False)
     is_enabled = models.BooleanField(default=False)
+    security_generation = models.IntegerField(default=1)
     organization = models.OneToOneField(
         Organization, on_delete=models.CASCADE, unique=True
     )
