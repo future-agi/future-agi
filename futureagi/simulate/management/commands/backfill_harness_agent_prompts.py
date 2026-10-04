@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
+from contextlib import nullcontext
 from typing import Any
 
 from django.core.management.base import BaseCommand
@@ -92,7 +93,7 @@ class Command(BaseCommand):
                 excerpts[agent.id].add(_normalised(excerpt))
 
         totals = {"agents": 0, "versions": 0, "calls": 0, "skipped": 0}
-        with transaction.atomic():
+        with transaction.atomic() if dry_run else nullcontext():
             for agent_id, agent in agents.items():
                 if len(prompts[agent_id]) != 1:
                     totals["skipped"] += 1
@@ -136,18 +137,22 @@ class Command(BaseCommand):
                 version.save(update_fields=[*changed, "updated_at"])
                 totals["versions"] += 1
 
-        calls = CallExecution.no_workspace_objects.filter(
+        call_ids = CallExecution.no_workspace_objects.filter(
             test_execution__run_test__agent_definition=agent
-        )
-        for call in calls.iterator():
-            metadata = dict(call.call_metadata or {})
-            keys = [
-                key
-                for key in PROMPT_METADATA_KEYS
-                if _is_shortened(str(metadata.get(key) or ""), full, excerpts)
-            ]
-            if keys:
-                metadata.update({key: full for key in keys})
-                call.call_metadata = metadata
-                call.save(update_fields=["call_metadata", "updated_at"])
-                totals["calls"] += 1
+        ).values_list("id", flat=True)
+        for call_id in call_ids.iterator():
+            with transaction.atomic():
+                call = CallExecution.no_workspace_objects.select_for_update().get(
+                    id=call_id
+                )
+                metadata = dict(call.call_metadata or {})
+                keys = [
+                    key
+                    for key in PROMPT_METADATA_KEYS
+                    if _is_shortened(str(metadata.get(key) or ""), full, excerpts)
+                ]
+                if keys:
+                    metadata.update(dict.fromkeys(keys, full))
+                    call.call_metadata = metadata
+                    call.save(update_fields=["call_metadata", "updated_at"])
+                    totals["calls"] += 1
