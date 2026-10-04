@@ -544,7 +544,7 @@ class RunCallsV3View(APIView):
 
 
 def build_call_execution_detail(
-    call: CallExecution, request=None, workspace=None
+    call: CallExecution, request=None, workspace=None, include_audio_metrics=False
 ) -> dict[str, Any]:
     """Build the v3 call-detail payload; shared-link resolve reuses it.
 
@@ -560,6 +560,7 @@ def build_call_execution_detail(
                 "workspace": workspace,
                 "eval_configs": build_eval_configs_map(call),
                 "detail_mode": True,
+                "include_audio_metrics": include_audio_metrics,
             },
         ).data
     )
@@ -613,7 +614,11 @@ class CallExecutionV3DetailView(APIView):
             test_execution__run_test__organization=organization,
             test_execution__run_test__deleted=False,
         )
-        return Response(build_call_execution_detail(call, request=request))
+        return Response(
+            build_call_execution_detail(
+                call, request=request, include_audio_metrics=True
+            )
+        )
 
 
 class RunAnalyticsV3View(APIView):

@@ -3761,6 +3761,7 @@ class CallExecutionDetailView(APIView):
                     "cells_by_row": {},
                     "snapshots_by_call": {},
                     "detail_mode": True,
+                    "include_audio_metrics": True,
                 },
             )
 
@@ -6653,6 +6654,7 @@ def _clear_call_execution_data(call_execution):
 
     # Create snapshot of current state before clearing
     CallExecutionSnapshot.objects.create(
+        audio_metrics=call_execution.audio_metrics,
         call_execution=call_execution,
         rerun_type=CallExecutionSnapshot.RerunType.CALL_AND_EVAL,
         service_provider_call_id=call_execution.service_provider_call_id,
@@ -6747,6 +6749,11 @@ def _clear_call_execution_data(call_execution):
     call_execution.ai_interruption_rate = None
     call_execution.avg_stop_time_after_interruption_ms = None
     call_execution.conversation_metrics_data = None
+    call_execution.audio_metrics = None
+    call_execution.audio_provenance = None
+    call_execution.audio_analysis_generation = (
+        call_execution.audio_analysis_generation or 0
+    ) + 1
     # Keep the dataset row linkage: the results grid resolves each call's
     # Scenario Information cells via row_id. Everything else (the ALK
     # alk_batch_claimed claim, eval flags) is intentionally dropped so /batch
@@ -6763,6 +6770,7 @@ def _save_eval_snapshot(call_execution):
 
     # Create snapshot with only evaluation data
     CallExecutionSnapshot.objects.create(
+        audio_metrics=call_execution.audio_metrics,
         call_execution=call_execution,
         rerun_type=CallExecutionSnapshot.RerunType.EVAL_ONLY,
         eval_outputs=call_execution.eval_outputs,
@@ -7499,6 +7507,7 @@ class CallExecutionRerunView(APIView):
 
         # Create snapshot of current state before clearing
         CallExecutionSnapshot.objects.create(
+            audio_metrics=call_execution.audio_metrics,
             call_execution=call_execution,
             rerun_type=CallExecutionSnapshot.RerunType.CALL_AND_EVAL,
             service_provider_call_id=call_execution.service_provider_call_id,
@@ -7560,6 +7569,7 @@ class CallExecutionRerunView(APIView):
 
         # Create snapshot with only evaluation data
         CallExecutionSnapshot.objects.create(
+            audio_metrics=call_execution.audio_metrics,
             call_execution=call_execution,
             rerun_type=CallExecutionSnapshot.RerunType.EVAL_ONLY,
             eval_outputs=call_execution.eval_outputs,

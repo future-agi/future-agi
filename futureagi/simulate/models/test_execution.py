@@ -278,6 +278,11 @@ class CallExecution(BaseModel):
         help_text="Complete call data from the provider. Format: dict[provider_name, data] where provider_name must be from SupportedProviders",
     )
 
+    # Internal source manifest and versioned public analysis envelope.
+    audio_metrics = models.JSONField(null=True, blank=True)
+    audio_provenance = models.JSONField(null=True, blank=True)
+    audio_analysis_generation = models.PositiveIntegerField(default=0)
+
     monitor_call_data = models.JSONField(
         null=True, blank=True, help_text="Monitor call data from API"
     )
@@ -511,6 +516,9 @@ class CallExecution(BaseModel):
 
     # Fields that get reset by reset_to_default - used for bulk_update operations
     RESET_FIELDS = [
+        "audio_metrics",
+        "audio_provenance",
+        "audio_analysis_generation",
         "monitor_call_data",
         "provider_call_data",
         "service_provider_call_id",
@@ -603,6 +611,10 @@ class CallExecution(BaseModel):
         self.ai_interruption_rate = None
         self.avg_stop_time_after_interruption_ms = None
         self.conversation_metrics_data = None
+
+        self.audio_metrics = None
+        self.audio_provenance = None
+        self.audio_analysis_generation = (self.audio_analysis_generation or 0) + 1
 
         if not isinstance(self.call_metadata, dict):
             self.call_metadata = {}
@@ -731,6 +743,8 @@ class CallExecutionSnapshot(BaseModel):
     duration_seconds = models.IntegerField(null=True, blank=True)
     recording_url = models.URLField(max_length=500, null=True, blank=True)
     stereo_recording_url = models.URLField(max_length=500, null=True, blank=True)
+
+    audio_metrics = models.JSONField(null=True, blank=True)
 
     # Cost data
     cost_cents = models.IntegerField(null=True, blank=True)

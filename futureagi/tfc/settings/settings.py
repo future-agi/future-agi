@@ -13,6 +13,7 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 import ipaddress
 import json
 import os
+import tempfile
 from datetime import timedelta
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -836,6 +837,33 @@ HOSTED_RUNNER_ENABLED = os.getenv("HOSTED_RUNNER_ENABLED", "false").lower() in (
 HOSTED_RUNNER_VOICE_ENABLED = os.getenv(
     "HOSTED_RUNNER_VOICE_ENABLED", "false"
 ).lower() in ("true", "1", "yes")
+
+# Local acoustic metrics. Fairness is bounded by worker concurrency and the
+# organization allowlist; there is no per-tenant slot lock in TH-2094.
+VOICE_AUDIO_METRICS_ENABLED = os.getenv(
+    "VOICE_AUDIO_METRICS_ENABLED", "false"
+).lower() in ("true", "1", "yes")
+VOICE_AUDIO_METRICS_ORG_ALLOWLIST = [
+    value.strip()
+    for value in os.getenv("VOICE_AUDIO_METRICS_ORG_ALLOWLIST", "").split(",")
+    if value.strip()
+]
+VOICE_AUDIO_METRICS_DNSMOS_MODEL_PATH = (
+    os.getenv("VOICE_AUDIO_METRICS_DNSMOS_MODEL_PATH") or None
+)
+VOICE_AUDIO_METRICS_DNSMOS_MODEL_SHA256 = (
+    os.getenv("VOICE_AUDIO_METRICS_DNSMOS_MODEL_SHA256") or None
+)
+VOICE_AUDIO_METRICS_CALIBRATION_PATH = (
+    os.getenv("VOICE_AUDIO_METRICS_CALIBRATION_PATH") or None
+)
+VOICE_AUDIO_METRICS_CALIBRATION_SHA256 = (
+    os.getenv("VOICE_AUDIO_METRICS_CALIBRATION_SHA256") or None
+)
+VOICE_AUDIO_METRICS_WORKER_MAX_CONCURRENT_ACTIVITIES = _admission_env_int(
+    "VOICE_AUDIO_METRICS_WORKER_MAX_CONCURRENT_ACTIVITIES", 2
+)
+VOICE_AUDIO_TMP_DIR = os.getenv("VOICE_AUDIO_TMP_DIR", tempfile.gettempdir())
 
 # Sequential reuse of one leased simulator room across a multi-row phone run
 # (D10). Default OFF: only a runner whose simulator kit serves multiple
