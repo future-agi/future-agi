@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.46.0](https://github.com/future-agi/future-agi/compare/v1.45.0...v1.46.0) (2026-10-04)
+
+
+### Features
+
+* **simulate:** prioritize run analytics decisions ([7f3631d](https://github.com/future-agi/future-agi/commit/7f3631d4917fb86367c076eeab9a899ffcc2f07a))
+
+
+### Bug Fixes
+
+* **simulate:** badge the Runs tab from the environment's full run count ([ce6af27](https://github.com/future-agi/future-agi/commit/ce6af27fa72afa793e1e89cfd7a7fea0d753cca0))
+
+
+### Performance Improvements
+
+* **simulate:** aggregate the run summary over a nested subquery ([bde6a26](https://github.com/future-agi/future-agi/commit/bde6a26bb9342b993f7ec6e389dbe80b5bf5e918))
+* **simulate:** resolve run jobs once for the v3 calls scenario lookup ([b810cbb](https://github.com/future-agi/future-agi/commit/b810cbbfbfbe1bc80cc56caa4b814d46362c95c2))
+* **simulate:** resolve run jobs once for the v3 calls scenario lookup ([3a4aebd](https://github.com/future-agi/future-agi/commit/3a4aebdab1021374f2332cb28f7964b7e54edd24))
+
 ## [1.45.0](https://github.com/future-agi/future-agi/compare/v1.44.0...v1.45.0) (2026-10-01)
 
 
