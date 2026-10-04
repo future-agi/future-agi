@@ -4,7 +4,7 @@ import pytest
 from rest_framework.test import APIClient
 
 from accounts.models.auth_token import AuthToken
-from saml2_auth.tests.conftest import bound_attempt
+from saml2_auth.tests.conftest import bound_attempt, complete, post_acs
 
 pytestmark = [pytest.mark.django_db, pytest.mark.integration]
 
@@ -34,15 +34,14 @@ def test_mismatched_in_response_to_denied(
     """The response must correlate to the exact request, not just an IdP row."""
 
     attempt = bound_attempt(api_client, email=saml_tenants.a2.email)
-    response = api_client.post(
-        "/saml2_auth/acs/",
-        {
-            "RelayState": attempt.relay,
-            "SAMLResponse": signed_a_response(
-                request_id=f"wrong-{attempt.request_id}", email=saml_tenants.a2.email
-            ),
-        },
+    candidate_key = post_acs(
+        api_client,
+        attempt.relay,
+        signed_a_response(
+            request_id=f"wrong-{attempt.request_id}", email=saml_tenants.a2.email
+        ),
     )
+    response = complete(api_client, candidate_key)
 
     assert "sso_token" not in response["Location"]
     assert not AuthToken.no_workspace_objects.filter(user=saml_tenants.a2).exists()
@@ -60,12 +59,15 @@ def test_replay_of_consumed_attempt_denied(
     first = api_client.post(
         "/saml2_auth/acs/", {"RelayState": attempt.relay, "SAMLResponse": payload}
     )
+    candidate_key = first["Location"].split("c=", maxsplit=1)[1]
+    completion = complete(api_client, candidate_key)
     replay = api_client.post(
         "/saml2_auth/acs/", {"RelayState": attempt.relay, "SAMLResponse": payload}
     )
 
     assert first.status_code == 303
-    assert replay.status_code == 400
+    assert "sso_token" in completion["Location"]
+    assert replay.status_code == 302
     assert AuthToken.no_workspace_objects.filter(user=saml_tenants.a2).count() == 1
 
 
@@ -87,4 +89,9 @@ def test_initiating_jar_bound_two_jars(
 
     assert candidate_response.status_code == 303
     assert "sso_token" not in candidate_response["Location"]
-    assert not AuthToken.no_workspace_objects.filter(user=saml_tenants.a2).exists()
+    candidate_key = candidate_response["Location"].split("c=", maxsplit=1)[1]
+    attacker_completion = complete(attacker, candidate_key)
+    assert "sso_token" not in attacker_completion["Location"]
+    initiator_completion = complete(initiator, candidate_key)
+    assert "sso_token" in initiator_completion["Location"]
+    assert AuthToken.no_workspace_objects.filter(user=saml_tenants.a2).count() == 1

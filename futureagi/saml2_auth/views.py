@@ -1,13 +1,15 @@
+import base64
+import binascii
+import hashlib
+import secrets
 import traceback
+from urllib.parse import urlencode
 
 import requests
-
-# from accounts.models.user_permissions import UserPermission
 import structlog
 from django.conf import settings
 from django.core.cache import cache
 from django.db import transaction
-from django.db.models import Q
 from django.http import HttpResponse, HttpResponseRedirect
 from django.utils import timezone
 from django.utils.http import urlsafe_base64_encode
@@ -28,7 +30,7 @@ from accounts.models.auth_token import (
     AuthTokenType,
 )
 from accounts.models.user import User
-from accounts.utils import first_signup, get_request_organization, is_work_email
+from accounts.utils import first_signup, get_request_organization
 from analytics.utils import (
     MixpanelEvents,
     MixpanelModes,
@@ -36,7 +38,7 @@ from analytics.utils import (
     track_mixpanel_event,
 )
 from saml2_auth.forms import IDPUploadForm
-from saml2_auth.models import SAMLMetadataModel
+from saml2_auth.models import SamlLoginAttempt, SAMLMetadataModel, SamlResponseCandidate
 from saml2_auth.permissions import SAMLConfigPermission
 from saml2_auth.serializers import (
     SAMLAuthLoginQuerySerializer,
@@ -49,11 +51,22 @@ from saml2_auth.serializers import (
     SAMLStringResponseSerializer,
     SAMLUrlResponseSerializer,
 )
-from saml2_auth.services import build_sp_client
-from tfc.middleware.workspace_context import get_current_organization
-
-# from user.permissions_manager import PermissionManager
-# from authentications.programatic_authentication import IsAuthenticated
+from saml2_auth.services import (
+    SamlDenied,
+    admit_attempt,
+    build_sp_client,
+    claim_attempt,
+    issue_token,
+    record_failure,
+    require_active_membership,
+    resolve_assertion_user,
+    resolve_login_idp,
+    resolve_login_user,
+    store_candidate,
+    update_attempt_request_id,
+    validate_next_path,
+    verify_assertion_bindings,
+)
 from tfc.settings.settings import (
     AUTH0_CALLBACK_URL,
     AUTH0_CLIENT_ID,
@@ -108,6 +121,16 @@ SAML_ACS_FORM_PARAMETERS = [
     ),
 ]
 
+SAML_COMPLETE_QUERY_PARAMETERS = [
+    openapi.Parameter(
+        "c",
+        openapi.IN_QUERY,
+        type=openapi.TYPE_STRING,
+        required=True,
+        description="One-time SAML response candidate key.",
+    )
+]
+
 SAML_IDP_UPLOAD_FORM_PARAMETERS = [
     openapi.Parameter(
         "name",
@@ -139,19 +162,6 @@ SAML_IDP_UPLOAD_FORM_PARAMETERS = [
     ),
 ]
 
-try:
-    import urllib.parse as _urlparse
-    from urllib.parse import unquote
-except ImportError:
-    import urllib.parse as _urlparse
-    from urllib.parse import unquote
-
-try:
-    pass
-except Exception:
-    import urllib.error
-    import urllib.parse
-
 
 def get_alias(request):
     return request.get_host().split(".")[0]
@@ -167,126 +177,159 @@ def _format_form_errors(errors):
     return "Invalid request."
 
 
+def _saml_denial_redirect(reason):
+    security_logger.warning("saml_completion_denied", reason=reason)
+    encoded = urlsafe_base64_encode(
+        b"SAML is not enabled for your organization. Please contact your Administrator"
+    )
+    return HttpResponseRedirect(f"{default_error_next_url}&reason={encoded}")
+
+
+def record_failure_for_candidate(candidate_key, reason):
+    candidate = (
+        SamlResponseCandidate.objects.filter(candidate_key=candidate_key)
+        .only("attempt_id")
+        .first()
+    )
+    if candidate:
+        record_failure(candidate.attempt_id, reason)
+
+
 class ACSView(APIView):
     _gm = GeneralMethods()
     parser_classes = [FormParser, MultiPartParser]
+    permission_classes = (AllowAny,)
+    authentication_classes = []
 
     @swagger_auto_schema(
         request_body=no_body,
         manual_parameters=SAML_ACS_FORM_PARAMETERS,
         runtime_request_validation=True,
-        responses={
-            **SAML_REDIRECT_RESPONSES,
-        },
+        responses={**SAML_REDIRECT_RESPONSES},
     )
     def post(self, request, *args, **kwargs):
-        from saml2 import entity  # lazy
-
         try:
-            resp = request.POST.get("SAMLResponse", None)
-            relay_state = request.POST.get("RelayState", "None Provided")
-            saml_obj = SAMLMetadataModel.objects.get(relay_state=relay_state)
-            if not saml_obj:
-                raise Exception("RelayState No Valid")
-
-            saml_client = build_sp_client(saml_obj, get_assertion_url)
-            identity_type = saml_obj.identity_type
-
-            if not resp:
-                raise Exception("Unauthorised")
-
-            authn_response = saml_client.parse_authn_request_response(
-                resp, entity.BINDING_HTTP_POST
-            )
-            if authn_response is None:
-                raise Exception("Unauthorised")
-            user_identity = authn_response.get_identity()
-
+            if not settings.SAML_LOGIN_ENABLED:
+                raise SamlDenied("idp_unavailable")
+            content_length = request.META.get("CONTENT_LENGTH")
+            if (
+                content_length is None
+                or int(content_length) > settings.SAML_MAX_ACS_BODY_BYTES
+            ):
+                raise SamlDenied("acs_malformed")
+            if len(request.body) > settings.SAML_MAX_ACS_BODY_BYTES:
+                raise SamlDenied("acs_malformed")
+            relay_state = request.POST.get("RelayState")
+            saml_response = request.POST.get("SAMLResponse")
+            if not relay_state or not saml_response:
+                raise SamlDenied("acs_malformed")
             try:
-                name_id = authn_response.get_subject().text
-            except Exception:
-                pass
-
-            if user_identity is None:
-                raise Exception("Unauthorised")
-            attributes = SAMLMetadataModel.get_attributes(identity_type)
-            if not user_identity:
-                authn_response.parse_assertion(attributes)
-                user_identity = authn_response.ava
-
-            if user_identity:
-                user_email = user_identity.get(attributes[0])[0]
-            else:
-                user_email = name_id
-
-            name = None
-            """
-            For AWS.
-            """
-            if user_identity and "name" in user_identity:
-                name = user_identity["name"][0]
-
-            if not name:
-                """
-                For Google or OKTA.
-                """
-                names = []
-                if user_identity and attributes[1] in user_identity:
-                    first_name = user_identity[attributes[1]][0]
-                    names.append(first_name)
-
-                if user_identity and attributes[2] in user_identity:
-                    last_name = user_identity[attributes[2]][0]
-                    names.append(last_name)
-                name = " ".join(names)
-                if not name:
-                    # Create name from email by taking the part before @ and replacing dots/underscores with spaces
-                    name = (
-                        user_email.split("@")[0]
-                        .replace(".", " ")
-                        .replace("_", " ")
-                        .title()
-                    )
-
-            # user_name = authn_response.get_subject().text
-
-            user_model = User.objects.filter(email=user_email).get()
-
-            if not user_model.is_active:
-                raise Exception("User is no longer active.")
-
-            user_model.organization = saml_obj.organization
-            user_model.save()
-            access_token = AuthToken.objects.create(
-                user=user_model,
-                auth_type=AuthTokenType.ACCESS.value,
-                last_used_at=timezone.now(),
-                is_active=True,
+                payload = base64.b64decode(saml_response, validate=True)
+            except (ValueError, binascii.Error):
+                raise SamlDenied("acs_malformed") from None
+            if len(payload) > settings.SAML_MAX_RESPONSE_BYTES:
+                raise SamlDenied("acs_malformed")
+            attempt = SamlLoginAttempt.objects.filter(
+                relay_key=relay_state,
+                state=SamlLoginAttempt.State.PENDING,
+                expires_at__gt=timezone.now(),
+            ).first()
+            if attempt is None:
+                raise SamlDenied("attempt_unavailable")
+            candidate = store_candidate(attempt=attempt, payload=payload)
+            response = HttpResponseRedirect(
+                f"/saml2_auth/complete/?{urlencode({'c': candidate.candidate_key})}"
             )
+            response.status_code = 303
+            return response
+        except (SamlDenied, ValueError):
+            return _saml_denial_redirect("acs_malformed")
 
-            access_token_encrypted = generate_encrypted_message(
-                {"user_id": str(user_model.id), "id": str(access_token.id)}
-            )
-            next_url = default_next_url
-            next_url += f"?sso_token={str(access_token_encrypted)}"
-            login_next_url = request.session.get("login_next_url", None)
-            if login_next_url:
-                next_url += f"&next={login_next_url}"
-                del request.session["login_next_url"]
 
-            properties = get_mixpanel_properties(
-                user=user_model, mode=MixpanelModes.SAML.value
-            )
-            track_mixpanel_event(MixpanelEvents.SSO_LOGIN.value, properties)
-            return HttpResponseRedirect(next_url)
+class CompleteView(APIView):
+    permission_classes = (AllowAny,)
+    authentication_classes = []
 
-        except Exception:
-            logger.warning("saml_acs_rejected", reason="response_invalid")
-            encoded = urlsafe_base64_encode(
-                b"SAML is not enabled for your organization. Please contact your Administrator"
+    @swagger_auto_schema(
+        manual_parameters=SAML_COMPLETE_QUERY_PARAMETERS,
+        responses={**SAML_REDIRECT_RESPONSES},
+    )
+    def get(self, request, *args, **kwargs):
+        candidate_key = request.GET.get("c", "")
+        cookie_name = None
+        claimed_attempt_id = None
+        try:
+            candidate = SamlResponseCandidate.objects.only("attempt_id").get(
+                candidate_key=candidate_key
             )
-            redirect_url = f"{default_error_next_url}&reason={encoded}"
-            return HttpResponseRedirect(redirect_url)
+            attempt_ref = SamlLoginAttempt.objects.only("id").get(
+                id=candidate.attempt_id
+            )
+            cookie_name = f"fai_saml_b_{attempt_ref.id.hex[:16]}"
+            binder = request.COOKIES.get(cookie_name)
+            if not binder:
+                raise SamlDenied("browser_unbound")
+            attempt, payload = claim_attempt(candidate_key=candidate_key, binder=binder)
+            claimed_attempt_id = attempt.id
+            idp = SAMLMetadataModel.objects.get(
+                id=attempt.idp_id,
+                deleted=False,
+                is_enabled=True,
+                organization_id=attempt.organization_id,
+                security_generation=attempt.idp_generation,
+            )
+            if hashlib.sha256(idp.meta.encode()).hexdigest() != attempt.idp_meta_sha256:
+                raise SamlDenied("idp_changed")
+            from saml2 import BINDING_HTTP_POST
+
+            parsed = build_sp_client(idp).parse_authn_request_response(
+                base64.b64encode(payload).decode(),
+                BINDING_HTTP_POST,
+                outstanding={attempt.request_id: attempt.relay_key},
+            )
+            facts = verify_assertion_bindings(parsed, attempt, idp)
+            subject = parsed.get_subject()
+            user = resolve_assertion_user(
+                parsed.get_identity() or {}, getattr(subject, "text", None)
+            )
+            require_active_membership(user, idp.organization)
+            token = issue_token(
+                attempt_id=attempt.id,
+                user=user,
+                not_on_or_after=facts.not_on_or_after,
+            )
+            security_logger.info(
+                "saml_login_succeeded",
+                org_id=str(idp.organization_id),
+                user_id=str(user.id),
+            )
+            response = HttpResponseRedirect(
+                f"{default_next_url}?{urlencode({'sso_token': token, 'next': attempt.next_path, 'auth': 'saml'})}"
+            )
+        except SamlDenied as exc:
+            if claimed_attempt_id:
+                record_failure(claimed_attempt_id, exc.reason)
+            elif candidate_key:
+                record_failure_for_candidate(candidate_key, exc.reason)
+            response = _saml_denial_redirect(exc.reason)
+        except (SAMLMetadataModel.DoesNotExist, SamlResponseCandidate.DoesNotExist):
+            if claimed_attempt_id:
+                record_failure(claimed_attempt_id, "response_invalid")
+            elif candidate_key:
+                record_failure_for_candidate(candidate_key, "response_invalid")
+            response = _saml_denial_redirect("response_invalid")
+        except Exception as exc:
+            security_logger.warning(
+                "saml_completion_rejected", exc_type=type(exc).__name__
+            )
+            if claimed_attempt_id:
+                record_failure(claimed_attempt_id, "response_invalid")
+            elif candidate_key:
+                record_failure_for_candidate(candidate_key, "response_invalid")
+            response = _saml_denial_redirect("response_invalid")
+        if cookie_name:
+            response.delete_cookie(cookie_name, path="/saml2_auth/")
+        return response
 
 
 class IDPLoginView(APIView):
@@ -296,68 +339,60 @@ class IDPLoginView(APIView):
 
     @validated_request(
         query_serializer=SAMLIDPLoginQuerySerializer,
-        responses={
-            200: SAMLUrlResponseSerializer,
-            400: SAMLErrorResponseSerializer,
-        },
+        responses={200: SAMLUrlResponseSerializer, 400: SAMLErrorResponseSerializer},
         reject_unknown_fields=True,
     )
     def get(self, request, *args, **kwargs):
         msg = "SSO is not enabled for your organisation. Please contact to your administration."
         try:
-            # provider = request.GET.get('provider')
-            work_email = request.validated_query_data.get("email")
-            if not work_email:
-                return self._gm.bad_request("Email is required")
-
-            work_email = work_email.lower()
-
-            if not is_work_email(work_email):
-                return self._gm.bad_request("Only Work email is permitted")
-
-            try:
-                user = User.objects.get(email=work_email)
-            except User.DoesNotExist:
-                logger.info("User Not Found")
-                return self._gm.bad_request(msg)
-
-            org_name = (get_current_organization() or user.organization).name
-            saml_data = SAMLMetadataModel.objects.filter(
-                Q(relay_state__istartswith=f"{org_name}")
-            ).first()
-
-            if not saml_data:
-                logger.info("Saml Data does not Exist")
-                return self._gm.bad_request(msg)
-
-            next_url = request.GET.get("next", default_next_url)
-
-            try:
-                if "next=" in unquote(next_url):
-                    next_url = _urlparse.parse_qs(
-                        _urlparse.urlparse(unquote(next_url)).query
-                    )["next"][0]
-            except (KeyError, IndexError):
-                next_url = request.GET.get("next", default_next_url)
-            request.session["login_next_url"] = next_url
-
-            saml_client = build_sp_client(saml_data, get_assertion_url)
-            _, info = saml_client.prepare_for_authenticate()
-
-            redirect_url = None
-
-            for key, value in info["headers"]:
-                if key == "Location":
-                    redirect_url = value
-                    break
-
-            if not redirect_url:
-                logger.info("No redirect Url")
-                return self._gm.bad_request(msg)
-            return self._gm.success_response({"url": redirect_url})
-
-        except Exception:
-            logger.warning("saml_login_denied", reason="idp_unavailable")
+            if not settings.SAML_LOGIN_ENABLED:
+                raise SamlDenied("idp_unavailable")
+            work_email = request.validated_query_data.get("email", "")
+            user = resolve_login_user(work_email)
+            if user is None:
+                raise SamlDenied("identity_missing")
+            idp = resolve_login_idp(user)
+            if idp is None:
+                raise SamlDenied("idp_unavailable")
+            cookie_names = [
+                name for name in request.COOKIES if name.startswith("fai_saml_b_")
+            ]
+            if len(cookie_names) >= settings.SAML_MAX_PENDING_COOKIES_PER_BROWSER:
+                raise SamlDenied("browser_capacity")
+            binder = secrets.token_urlsafe(32)
+            attempt = admit_attempt(
+                user=user,
+                idp=idp,
+                binder=binder,
+                next_path=validate_next_path(request.validated_query_data.get("next")),
+            )
+            request_id, info = build_sp_client(idp).prepare_for_authenticate(
+                relay_state=attempt.relay_key
+            )
+            update_attempt_request_id(attempt, request_id)
+            redirect_url = next(
+                value for key, value in info["headers"] if key == "Location"
+            )
+            response = self._gm.success_response({"url": redirect_url})
+            response.set_cookie(
+                f"fai_saml_b_{attempt.id.hex[:16]}",
+                binder,
+                max_age=settings.SAML_ATTEMPT_TTL_SECONDS,
+                httponly=True,
+                samesite="Lax",
+                secure=settings.ENV_TYPE not in {"local", "test", "development"},
+                path="/saml2_auth/",
+            )
+            return response
+        except (SamlDenied, StopIteration):
+            security_logger.warning("saml_login_denied", reason="idp_unavailable")
+            return self._gm.bad_request(msg)
+        except Exception as exc:
+            security_logger.warning(
+                "saml_login_denied",
+                reason="idp_unavailable",
+                exc_type=type(exc).__name__,
+            )
             return self._gm.bad_request(msg)
 
 

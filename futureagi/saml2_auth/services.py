@@ -7,13 +7,16 @@ import hmac
 import os
 import secrets
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
+from xml.etree import ElementTree
 
 from django.conf import settings
 from django.db import connection, models, transaction
 from django.utils import timezone
 
+from accounts.authentication import generate_encrypted_message
+from accounts.models.auth_token import AuthToken, AuthTokenType
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import User
 from tfc.settings.settings import get_assertion_url, get_entity_id, get_name_id_format
@@ -197,19 +200,17 @@ def verify_assertion_bindings(
         for data in bearer_data
     ):
         raise SamlDenied("response_invalid")
-    return AssertionFacts(
-        not_on_or_after=getattr(authn_response, "not_on_or_after", None)
-    )
+    not_on_or_after = getattr(authn_response, "not_on_or_after", None)
+    if isinstance(not_on_or_after, (int, float)):
+        not_on_or_after = datetime.fromtimestamp(not_on_or_after, tz=UTC)
+    return AssertionFacts(not_on_or_after=not_on_or_after)
 
 
 def _metadata_entity_id(idp: SAMLMetadataModel) -> str | None:
     """Read only the IdP entity identifier from the row's inline metadata."""
 
     try:
-        from saml2.mdstore import MetaDataInline
-
-        metadata = MetaDataInline([idp.meta])
-        return next(iter(metadata.keys()))
+        return ElementTree.fromstring(idp.meta).attrib.get("entityID")
     except Exception:
         raise SamlDenied("idp_unavailable") from None
 
@@ -350,9 +351,10 @@ def claim_attempt(*, candidate_key: str, binder: str) -> tuple[Any, bytes]:
             raise SamlDenied("attempt_unavailable")
         binder_hash = hashlib.sha256(binder.encode()).hexdigest()
         if not hmac.compare_digest(binder_hash, attempt.binder_hash):
-            candidate.delete()
             raise SamlDenied("browser_mismatch")
         payload = bytes(candidate.payload)
+        metadata_sha256 = hashlib.sha256(attempt.idp.meta.encode()).hexdigest()
+        idp_generation = attempt.idp.security_generation
         updated = SamlLoginAttempt.objects.filter(
             id=attempt.id,
             state=SamlLoginAttempt.State.PENDING,
@@ -360,13 +362,15 @@ def claim_attempt(*, candidate_key: str, binder: str) -> tuple[Any, bytes]:
         ).update(
             state=SamlLoginAttempt.State.CLAIMED,
             claimed_at=now,
-            idp_meta_sha256=hashlib.sha256(attempt.idp.meta.encode()).hexdigest(),
-            idp_generation=attempt.idp.security_generation,
+            idp_meta_sha256=metadata_sha256,
+            idp_generation=idp_generation,
         )
         candidate.delete()
         if updated != 1:
             raise SamlDenied("attempt_unavailable")
         attempt.state = SamlLoginAttempt.State.CLAIMED
+        attempt.idp_meta_sha256 = metadata_sha256
+        attempt.idp_generation = idp_generation
         return attempt, payload
 
 
@@ -382,6 +386,67 @@ def record_failure(attempt_id: Any, reason: str) -> None:
         deny_reason=reason[:32],
         finished_at=timezone.now(),
     )
+
+
+def issue_token(
+    *, attempt_id: Any, user: User, not_on_or_after: datetime | None
+) -> str:
+    """TX-B: revalidate the login's live tenancy state and mint one credential."""
+
+    from saml2_auth.models import SamlLoginAttempt, SAMLMetadataModel
+
+    with transaction.atomic():
+        idp_id = SamlLoginAttempt.objects.only("idp_id").get(id=attempt_id).idp_id
+        idp = SAMLMetadataModel.objects.select_for_update().get(id=idp_id)
+        attempt = SamlLoginAttempt.objects.select_for_update().get(id=attempt_id)
+        now = timezone.now()
+        if (
+            attempt.state != SamlLoginAttempt.State.CLAIMED
+            or attempt.expires_at <= now
+            or (not_on_or_after is not None and not_on_or_after <= now)
+        ):
+            raise SamlDenied("attempt_unavailable")
+        if (
+            idp.deleted
+            or not idp.is_enabled
+            or idp.organization_id != attempt.organization_id
+            or hashlib.sha256(idp.meta.encode()).hexdigest() != attempt.idp_meta_sha256
+            or idp.security_generation != attempt.idp_generation
+        ):
+            raise SamlDenied("idp_changed")
+        _tx_b_barrier("after_idp")
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT id FROM accounts_user WHERE id = %s AND is_active FOR SHARE",
+                [str(user.id)],
+            )
+            if cursor.fetchone() is None:
+                raise SamlDenied("user_inactive")
+        _tx_b_barrier("after_user")
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id FROM accounts_organization_membership
+                WHERE user_id = %s AND organization_id = %s
+                  AND is_active AND deleted = false
+                FOR SHARE
+                """,
+                [str(user.id), str(attempt.organization_id)],
+            )
+            if cursor.fetchone() is None:
+                raise SamlDenied("no_membership")
+        _tx_b_barrier("after_member")
+        token = AuthToken.objects.create(
+            user=user,
+            auth_type=AuthTokenType.ACCESS.value,
+            last_used_at=now,
+            is_active=True,
+        )
+        SamlLoginAttempt.objects.filter(id=attempt.id).update(
+            state=SamlLoginAttempt.State.CONSUMED,
+            finished_at=now,
+        )
+    return generate_encrypted_message({"user_id": str(user.id), "id": str(token.id)})
 
 
 def _tx_b_barrier(stage: str) -> None:

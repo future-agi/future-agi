@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-import re
+import base64
 import uuid
+import zlib
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+from xml.etree import ElementTree
 
 import pytest
 from django.core.cache import cache
@@ -212,15 +214,20 @@ def bound_attempt(client: APIClient, *, email: str) -> BoundAttempt:
     response = client.get("/saml2_auth/idp-login/", {"email": email})
     assert response.status_code == 200, response.content
     url = response.json()["result"]["url"]
-    request_ids = re.findall(r"RequestID=([^&]+)", url)
-    request_id = request_ids[0] if request_ids else "request-id-not-exposed"
+    redirect_query = parse_qs(urlparse(url).query)
+    relay_values = redirect_query.get("RelayState", [])
+    request_values = redirect_query.get("SAMLRequest", [])
+    assert len(relay_values) == 1, "initiation must use the attempt relay state"
+    assert len(request_values) == 1, "initiation must emit one AuthnRequest"
+    request_xml = zlib.decompress(base64.b64decode(request_values[0]), -zlib.MAX_WBITS)
+    request_id = ElementTree.fromstring(request_xml).attrib["ID"]
     binder_names = [name for name in response.cookies if name.startswith("fai_saml_b_")]
     assert len(binder_names) == 1, (
         "new SAML initiation must set one browser binder cookie"
     )
     return BoundAttempt(
         response=response,
-        relay="relay-state-is-server-issued-after-the-fix",
+        relay=relay_values[0],
         request_id=request_id,
         binder_cookie=binder_names[0],
     )

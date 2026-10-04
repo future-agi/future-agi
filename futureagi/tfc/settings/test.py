@@ -222,6 +222,7 @@ MODEL_SERVING_URL = os.environ.get(
 # Disable analytics and tracking in tests
 MIXPANEL_TOKEN = None
 SENTRY_DSN = None
+SAML_LOGIN_ENABLED = True
 
 # Test-specific feature flags
 FEATURE_FLAGS = {
