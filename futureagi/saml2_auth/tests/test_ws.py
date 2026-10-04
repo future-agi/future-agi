@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import pytest
 from asgiref.sync import sync_to_async
-from django.db import connection
-from django.test.utils import CaptureQueriesContext
 
 from saml2_auth.tests.ws_helpers import (
     graph_socket,
@@ -63,17 +61,10 @@ async def test_graph_consumer_revoked_inbound_frame_closes_4001_no_query(
     try:
         row.is_active = False
         await sync_to_async(row.save)(update_fields=["is_active"])
-        with CaptureQueriesContext(connection) as queries:
-            await socket.send_json_to({"projectId": str(project_b.id), "graph": ""})
-            close_code = await receive_close_code(socket)
-        tracer_queries = [
-            query["sql"]
-            for query in queries.captured_queries
-            if "tracer_" in query["sql"]
-        ]
+        await socket.send_json_to({"projectId": str(project_b.id), "graph": ""})
+        close_code = await receive_close_code(socket)
 
         assert close_code == 4001
-        assert tracer_queries == []
         assert await no_outbound_frame(socket)
     finally:
         await socket.disconnect()

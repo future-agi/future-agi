@@ -4,6 +4,7 @@ import { createInterface } from 'node:readline';
 import type { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { existsSync } from 'node:fs';
 
 import { E2E } from './env';
 
@@ -25,7 +26,10 @@ export interface LocalSamlIdp {
 const E2E_DIR = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const REPO_ROOT = path.dirname(E2E_DIR);
 const SERVER = path.join(E2E_DIR, 'lib', 'saml_idp_server.py');
-const DEFAULT_PYTHON = path.join(REPO_ROOT, 'futureagi', '.venv', 'bin', 'python');
+const DEFAULT_PYTHON = process.env.E2E_SAML_PYTHON
+  ?? (existsSync(path.join(REPO_ROOT, 'futureagi', '.venv', 'bin', 'python'))
+    ? path.join(REPO_ROOT, 'futureagi', '.venv', 'bin', 'python')
+    : 'python3');
 type IdpProcess = ChildProcessByStdio<null, Readable, Readable>;
 
 function readReady(child: IdpProcess): Promise<ReadyMessage> {
