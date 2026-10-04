@@ -805,6 +805,61 @@ def existing_member_access_will_change(
     return False
 
 
+INVITE_SIGNUP_REPORTED_KEY = "invite_signup_reported"
+
+
+def schedule_invite_acceptance_reporting(user):
+    """Queue signup reporting for a newly accepted invitee.
+
+    Stable workflow id per user so a retry or a second accept collapses onto
+    the in-flight run instead of posting a second signup. Does not send the
+    owner welcome email or seed demo data.
+    """
+    import tfc.temporal.background_tasks.activities  # noqa: F401
+    from temporalio.common import WorkflowIDConflictPolicy
+    from tfc.temporal.drop_in import start_activity
+
+    start_activity(
+        "run_invite_acceptance_reporting_activity",
+        args=(str(user.id),),
+        queue="default",
+        task_id=f"invite-signup-report-{user.id}",
+        id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
+    )
+
+
+def report_invite_acceptance(user_id):
+    """Create/update HubSpot, Slack signup feed, and Mixpanel for one invitee.
+
+    Idempotent via ``user.config[invite_signup_reported]``. Never sends the
+    generated-password welcome mail or seeds an organization demo dataset.
+    """
+    from analytics.utils import (
+        MixpanelEvents,
+        get_mixpanel_properties,
+        track_mixpanel_event,
+    )
+
+    user = User.objects.select_related("organization").get(id=user_id)
+    config = user.config if isinstance(user.config, dict) else {}
+    if config.get(INVITE_SIGNUP_REPORTED_KEY):
+        logger.info("invite_signup_report_already_sent", user_id=str(user_id))
+        return
+
+    if os.getenv("ENV_TYPE") not in ["local"]:
+        updated, err = send_hubspot_notification(user)
+        send_slack_notification(user, updated=updated, err=err)
+
+    properties = get_mixpanel_properties(user=user, mode="invite")
+    properties["signup_origin"] = "invite_acceptance"
+    track_mixpanel_event(MixpanelEvents.SIGNUP.value, properties)
+
+    config = dict(config)
+    config[INVITE_SIGNUP_REPORTED_KEY] = True
+    user.config = config
+    user.save(update_fields=["config"])
+
+
 # TODO: use async views to replace this code. its wrong
 def process_post_registration(user_id, generated_password):
     """Process post-registration steps using Temporal"""
