@@ -592,7 +592,7 @@ class TestSavedViewUpdate:
     def test_update_saved_view(self, auth_client, saved_view):
         response = auth_client.put(
             _view_url(saved_view),
-            {"expected_revision": 1, 
+            {"expected_revision": 1,
                 "name": "Critical Errors",
                 "config": {
                     "filters": [
@@ -637,7 +637,7 @@ class TestSavedViewUpdate:
     def test_update_rejects_create_only_fields(self, auth_client, saved_view):
         response = auth_client.put(
             _view_url(saved_view),
-            {"expected_revision": 1, 
+            {"expected_revision": 1,
                 "name": "Critical Errors",
                 "tab_type": "spans",
                 "project_id": str(saved_view.project_id),
@@ -903,7 +903,7 @@ class TestSavedViewReorder:
         # Reverse the order
         response = auth_client.post(
             f"{BASE_URL}/reorder/",
-            {"expected_revision": 0, 
+            {"expected_revision": 0,
                 "project_id": str(project.id),
                 "order": [
                     {"id": str(views[2].id), "position": 0},
@@ -928,7 +928,7 @@ class TestSavedViewReorder:
     def test_reorder_with_invalid_ids_fails(self, auth_client, project):
         response = auth_client.post(
             f"{BASE_URL}/reorder/",
-            {"expected_revision": 0, 
+            {"expected_revision": 0,
                 "project_id": str(project.id),
                 "order": [
                     {"id": str(uuid.uuid4()), "position": 0},
@@ -1064,7 +1064,7 @@ class TestSavedViewWorkspaceScope:
 
         reorder_response = auth_client.post(
             f"{BASE_URL}/reorder/",
-            {"expected_revision": 0, 
+            {"expected_revision": 0,
                 "project_id": str(other_workspace_project.id),
                 "order": [{"id": str(hidden_view.id), "position": 9}],
             },

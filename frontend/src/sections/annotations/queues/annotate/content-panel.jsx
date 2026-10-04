@@ -469,7 +469,6 @@ function InlineTraceView({ traceId, spanId, projectId: pinnedProjectId }) {
         showAgentGraph={showAgentGraph}
         onToggleAgentGraph={() => setShowAgentGraph((prev) => !prev)}
         onResetView={handleResetView}
-        hideSetDefault
       />
 
       {/* Body: Imagine view OR trace tree / timeline + span detail */}
