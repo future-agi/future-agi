@@ -73,6 +73,7 @@ def _ole(stream_name):
         (_ooxml("pptx"), "application/vnd.openxmlformats-officedocument.presentationml.presentation", "application/vnd.openxmlformats-officedocument.presentationml.presentation"),
         (_ole("WordDocument"), "application/msword", "application/msword"),
         (_ole("Workbook"), "application/vnd.ms-excel", "application/vnd.ms-excel"),
+        (_ole("Book"), "application/vnd.ms-excel", "application/vnd.ms-excel"),
         (_ole("PowerPoint Document"), "application/vnd.ms-powerpoint", "application/vnd.ms-powerpoint"),
         (b"name,score\nAda,100\n", "text/csv", "text/csv"),
         (b"plain notes\n", "text/plain; charset=utf-8", "text/plain"),

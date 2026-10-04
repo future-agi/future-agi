@@ -64,6 +64,7 @@ _OOXML_TYPES = {
 _OLE_STREAM_TYPES = {
     "WordDocument": "application/msword",
     "Workbook": "application/vnd.ms-excel",
+    "Book": "application/vnd.ms-excel",
     "PowerPoint Document": "application/vnd.ms-powerpoint",
 }
 _RTF_CONTENT_TYPES = frozenset({"text/rtf", "application/rtf"})
