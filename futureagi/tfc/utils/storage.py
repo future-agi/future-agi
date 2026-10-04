@@ -24,6 +24,12 @@ from requests.exceptions import ChunkedEncodingError, ConnectionError, RequestEx
 
 logger = structlog.get_logger(__name__)
 from tfc.settings.settings import MINIO_URL, UPLOAD_BUCKET_NAME
+from tfc.utils.document_link import (
+    DocumentLinkFetchError,
+    DocumentLinkTooLargeError,
+    DocumentLinkValidationError,
+    inspect_document_link_bytes,
+)
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.ssrf_guard import SsrfBlocked, safe_fetch
 from tfc.utils.storage_client import (
@@ -39,6 +45,9 @@ MAX_VIDEO_FILE_SIZE = 200 * 1024 * 1024
 # pre-SSRF-refactor behavior without leaving payloads unbounded.
 MAX_IMAGE_FILE_SIZE = 50 * 1024 * 1024
 MAX_DOCUMENT_FILE_SIZE = 100 * 1024 * 1024
+DOCUMENT_LINK_FETCH_BUDGET_SECONDS = 30
+DOCUMENT_LINK_FETCH_ATTEMPTS = 2
+DOCUMENT_LINK_ATTEMPT_TIMEOUT_SECONDS = 15
 
 
 def is_own_storage_url(value, bucket_name):
@@ -96,7 +105,14 @@ def is_own_storage_url(value, bucket_name):
     return False
 
 
-def _ssrf_safe_get(url, *, headers=None, timeout=20, max_bytes=None):
+def _ssrf_safe_get(
+    url,
+    *,
+    headers=None,
+    timeout=20,
+    max_bytes=None,
+    strict_redirect_origins=False,
+):
     """SSRF-guarded GET.
 
     SsrfBlocked (permanent rejection: private IP, bad scheme, blocked redirect)
@@ -107,6 +123,8 @@ def _ssrf_safe_get(url, *, headers=None, timeout=20, max_bytes=None):
     kwargs = {"method": "GET", "timeout": timeout, "headers": headers}
     if max_bytes is not None:
         kwargs["max_bytes"] = max_bytes
+    if strict_redirect_origins:
+        kwargs["strict_redirect_origins"] = True
     try:
         return safe_fetch(url, **kwargs)
     except SsrfBlocked:
@@ -339,6 +357,7 @@ def download_document_from_url(doc_url, max_retries=5, timeout=20):
         "text/plain",  # .txt
         "application/rtf",  # .rtf
         "text/rtf",  # Alternative RTF MIME type
+        "text/csv",  # CSV is accepted by the document upload allowlist.
     }
 
     file_signatures = {
@@ -425,8 +444,75 @@ def download_document_from_url(doc_url, max_retries=5, timeout=20):
     raise ValueError("ERROR_DOWNLOADING_DOCUMENT: Max retries exceeded")
 
 
+def download_document_link_from_url(doc_url):
+    """Fetch and verify an interactive Dataset document Link.
+
+    This is intentionally separate from :func:`download_document_from_url`.
+    Existing imports retain their historical content rules, while the Edit
+    Document Link tab gets byte-verified types, one retry at most, a 30-second
+    aggregate network budget, and redirect-origin hardening.
+    """
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/91.0.4472.124 Safari/537.36"
+        )
+    }
+    deadline = time.monotonic() + DOCUMENT_LINK_FETCH_BUDGET_SECONDS
+    last_error = None
+
+    for attempt in range(DOCUMENT_LINK_FETCH_ATTEMPTS):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        timeout = min(DOCUMENT_LINK_ATTEMPT_TIMEOUT_SECONDS, remaining)
+        try:
+            response = _ssrf_safe_get(
+                doc_url,
+                headers=headers,
+                timeout=timeout,
+                max_bytes=MAX_DOCUMENT_FILE_SIZE,
+                strict_redirect_origins=True,
+            )
+            if response.status_code == 200:
+                try:
+                    content_type = inspect_document_link_bytes(
+                        response.content,
+                        response.headers.get("Content-Type", ""),
+                    )
+                except DocumentLinkValidationError:
+                    raise
+                return response.content, content_type
+            if 500 <= response.status_code < 600:
+                last_error = DocumentLinkFetchError(
+                    "The address cannot be reached."
+                )
+                continue
+            raise DocumentLinkFetchError("The address cannot be reached.")
+        except SsrfBlocked as exc:
+            # Do not spend the retry budget on a permanent SSRF rejection.
+            raise DocumentLinkFetchError("The address cannot be reached.") from exc
+        except DocumentLinkValidationError:
+            raise
+        except RequestException as exc:
+            if "exceeds" in str(exc).lower() and "byte limit" in str(exc).lower():
+                raise DocumentLinkTooLargeError(
+                    "The document is larger than 100 MiB."
+                ) from exc
+            last_error = exc
+            if attempt + 1 == DOCUMENT_LINK_FETCH_ATTEMPTS:
+                break
+
+    raise DocumentLinkFetchError("The address cannot be reached.") from last_error
+
+
 def upload_document_to_s3(
-    file_url, bucket_name=os.getenv("MINIO_BUCKET_NAME"), object_key=None, org_id=None
+    file_url,
+    bucket_name=os.getenv("MINIO_BUCKET_NAME"),
+    object_key=None,
+    org_id=None,
+    document_link=False,
 ):
     """
     Uploads a document to S3 bucket.
@@ -464,7 +550,10 @@ def upload_document_to_s3(
         if parsed_url.scheme in ("http", "https"):
             # Check if the provided URL is valid
             if is_valid_url(file_url):
-                doc_bytes, content_type = download_document_from_url(file_url)
+                if document_link:
+                    doc_bytes, content_type = download_document_link_from_url(file_url)
+                else:
+                    doc_bytes, content_type = download_document_from_url(file_url)
                 if content_type not in supported_document_types:
                     raise ValueError(get_storage_error_message("INVALID_FILE_TYPE"))
             else:
@@ -563,9 +652,16 @@ def upload_document_to_s3(
 
         return url
     except ValueError as e:
+        # Link errors are deliberately generic at the endpoint and must not
+        # write signed query strings into server logs via a traceback.
+        if document_link:
+            raise
         traceback.print_exc()
         raise e
     except Exception as e:
+        if document_link:
+            logger.error("Error uploading document Link candidate")
+            raise DocumentLinkFetchError("The address cannot be reached.") from e
         logger.error(f"Error uploading document to S3: {str(e)}")
         traceback.print_exc()
         raise ValueError(

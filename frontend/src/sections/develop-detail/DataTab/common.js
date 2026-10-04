@@ -597,7 +597,7 @@ export const onCellValueChangedWrapper = (queryClient, dataset) => (params) => {
       }
     } catch (e) {
       logger.error("Failed to update cell:", e);
-      onError?.();
+      onError?.(e);
       if (typeof params?.onError === "function") {
         params.onError(e);
       }
@@ -608,11 +608,16 @@ export const onCellValueChangedWrapper = (queryClient, dataset) => (params) => {
         (typeof e?.response?.data?.result === "string"
           ? e.response.data.result
           : null);
+      const documentOutcomeUnknown =
+        dataType === "document" &&
+        (!e?.response || e.response.status >= 500);
       enqueueSnackbar(
         dataType === "document" &&
           typeof apiMessage === "string" &&
           apiMessage.trim()
           ? apiMessage
+          : documentOutcomeUnknown
+            ? "Unable to confirm the document update. Refreshing its saved value."
           : "Failed to update cell value. Reverting to previous value.",
         {
           variant: "error",
@@ -674,7 +679,16 @@ export const onCellValueChangedWrapper = (queryClient, dataset) => (params) => {
           () => {
             gridApi?.refreshServerSide({});
           },
-          () => rowNode.setDataValue(columnId, oldValue),
+          (error) => {
+            // A transport failure can occur after the server has saved the
+            // candidate.  Do not claim the old value survived until the grid
+            // has performed an authoritative readback.
+            if (!error?.response || error.response.status >= 500) {
+              gridApi?.refreshServerSide({});
+              return;
+            }
+            rowNode.setDataValue(columnId, oldValue);
+          },
         );
       } else {
         const formattedValue =

@@ -357,12 +357,12 @@ def test_document_link_fetch_strips_sensitive_headers_on_scheme_change(monkeypat
         https_pool.return_value.request.side_effect = fake_request
         safe_fetch(
             "http://origin.example.com/x",
-            headers={"Authorization": "Bearer secret", "Cookie": "session=abc"},
+            headers={"AUTHORIZATION": "Bearer secret", "Cookie": "session=abc"},
             strict_redirect_origins=True,
         )
 
-    assert captured_headers[0].get("Authorization") == "Bearer secret"
-    assert "Authorization" not in captured_headers[1]
+    assert captured_headers[0].get("AUTHORIZATION") == "Bearer secret"
+    assert "AUTHORIZATION" not in captured_headers[1]
     assert "Cookie" not in captured_headers[1]
 
 

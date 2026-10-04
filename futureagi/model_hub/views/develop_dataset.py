@@ -307,6 +307,7 @@ from tfc.temporal import temporal_activity
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import DatasetLimitCheckFailedErrorSerializer
 from tfc.utils.document_link import (
+    document_link_display_name,
     document_link_failure_message,
     resolve_document_cell_input,
 )
@@ -6237,6 +6238,8 @@ class UpdateCellValueView(APIView):
                             payload,
                             bucket_name="fi-customer-data-dev",
                             object_key=doc_key,
+                            document_link=isinstance(payload, str)
+                            and payload.startswith(("http://", "https://")),
                         )
                         value_infos = (
                             json.loads(cell.value_infos) if cell.value_infos else {}
@@ -6244,7 +6247,12 @@ class UpdateCellValueView(APIView):
                         if not isinstance(value_infos, dict):
                             value_infos = {}
                         value_infos["document_url"] = doc_url
-                        name = original_value
+                        name = (
+                            document_link_display_name(payload)
+                            if isinstance(payload, str)
+                            and payload.startswith(("http://", "https://"))
+                            else original_value
+                        )
                         value_infos["document_name"] = (
                             str(name)[:400] if name else ""
                         )
@@ -6253,13 +6261,15 @@ class UpdateCellValueView(APIView):
                         cell.value = doc_url
 
                 except Exception as e:
-                    logger.error(f"ERROR: {e}")
                     is_link = isinstance(converted, str) and converted.startswith(
                         ("http://", "https://")
                     )
                     if is_link:
                         # A failed link must not wipe the document already in the cell.
+                        # Do not log signed query parameters from the candidate URL.
+                        logger.warning("Document Link candidate was rejected")
                         return self._gm.bad_request(document_link_failure_message(e))
+                    logger.error(f"ERROR: {e}")
                     cell.value = None
                     cell.status = CellStatus.ERROR.value
                     cell.value_infos = json.dumps({"reason": str(e)})

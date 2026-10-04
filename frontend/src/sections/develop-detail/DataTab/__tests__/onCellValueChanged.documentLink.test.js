@@ -88,6 +88,41 @@ describe("onCellValueChangedWrapper document link (#2433)", () => {
     );
   });
 
+  it("reads back the document instead of claiming it is unchanged after an unknown save outcome", async () => {
+    const { params, setDataValue, refreshServerSide, onSuccess, onError } =
+      makeParams({
+        newValue: "https://example.com/report.pdf",
+      });
+    axios.post.mockRejectedValue(new Error("connection reset"));
+
+    onCellValueChangedWrapper({ invalidateQueries: vi.fn() }, "ds-1")(params);
+    await vi.waitFor(() => expect(onError).toHaveBeenCalled());
+
+    expect(onSuccess).not.toHaveBeenCalled();
+    expect(setDataValue).not.toHaveBeenCalled();
+    expect(refreshServerSide).toHaveBeenCalledWith({});
+    expect(enqueueSnackbar).toHaveBeenCalledWith(
+      "Unable to confirm the document update. Refreshing its saved value.",
+      { variant: "error" },
+    );
+  });
+
+  it("reads back the document after a server error that cannot prove rollback", async () => {
+    const { params, setDataValue, refreshServerSide } = makeParams({
+      newValue: "https://example.com/report.pdf",
+    });
+    axios.post.mockRejectedValue({ response: { status: 503, data: {} } });
+
+    onCellValueChangedWrapper({ invalidateQueries: vi.fn() }, "ds-1")(params);
+    await vi.waitFor(() => expect(refreshServerSide).toHaveBeenCalledWith({}));
+
+    expect(setDataValue).not.toHaveBeenCalled();
+    expect(enqueueSnackbar).toHaveBeenCalledWith(
+      "Unable to confirm the document update. Refreshing its saved value.",
+      { variant: "error" },
+    );
+  });
+
   it("stores a working document address without an error message", async () => {
     const { params, refreshServerSide, onSuccess, onError } = makeParams({
       newValue: "https://example.com/report.pdf",
