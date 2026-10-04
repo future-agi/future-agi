@@ -266,3 +266,31 @@ func (s *BudgetStore) SeedSpend(org, level, key, period string, totalSpend float
 func (s *BudgetStore) Available() bool {
 	return s.client != nil && s.client.Available()
 }
+
+// CheckAndRecordSpend reserves spend atomically with the existing limit-checking
+// script. allowed=false, ok=true means a budget rejection; ok=false means Redis
+// could not confirm the operation. Callers must fail closed on the latter.
+func (s *BudgetStore) CheckAndRecordSpend(org, level, key, period, model string, cost, limit, modelLimit float64) (total float64, allowed, ok bool) {
+	if s.client == nil || !s.client.Available() || cost < 0 || limit < 0 || modelLimit < 0 || math.IsNaN(cost) || math.IsNaN(limit) || math.IsNaN(modelLimit) || math.IsInf(cost, 0) || math.IsInf(limit, 0) || math.IsInf(modelLimit, 0) || cost >= float64(math.MaxInt64)/microUnit || limit >= float64(math.MaxInt64)/microUnit || modelLimit >= float64(math.MaxInt64)/microUnit {
+		return -1, false, false
+	}
+	modelField := ""
+	if model != "" {
+		modelField = "model:" + model
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	var result int64
+	err := s.client.Do(func(rdb redis.UniversalClient) error {
+		var err error
+		result, err = checkAndRecordScript.Run(ctx, rdb, []string{s.budgetKey(org, level, key, period)}, usdToMicros(cost), usdToMicros(limit), modelField, usdToMicros(modelLimit), int64(budgetTTL(period).Seconds())).Int64()
+		return err
+	})
+	if err != nil {
+		return -1, false, false
+	}
+	if result < 0 {
+		return -1, false, true
+	}
+	return microsToUSD(result), true, true
+}
