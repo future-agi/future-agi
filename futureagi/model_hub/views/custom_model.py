@@ -50,6 +50,37 @@ from tfc.utils.pagination import ExtendedPageNumberPagination
 logger = structlog.get_logger(__name__)
 
 
+_BEDROCK_FAMILY_LABELS = {
+    "claude",
+    "my claude",
+    "gpt",
+    "llama",
+    "titan",
+    "nova",
+    "mistral",
+    "command",
+}
+
+
+def invalid_bedrock_model_id(model_name) -> bool:
+    """A Bedrock model_name is an invocation ID, not a display label.
+
+    Family names such as "Claude" reach LiteLLM Invoke with no vendor and
+    fail as Unknown provider=None. Reject those before any provider call.
+    Real IDs contain a vendor separator (dot, slash, or colon).
+    """
+    if not isinstance(model_name, str):
+        return True
+    stripped = model_name.strip()
+    if not stripped or stripped != model_name or len(stripped) > 255:
+        return True
+    if any(ord(char) < 32 for char in stripped):
+        return True
+    if stripped.lower() in _BEDROCK_FAMILY_LABELS:
+        return True
+    return not any(separator in stripped for separator in (".", "/", ":"))
+
+
 def _vertex_sdk_missing(provider, model_name) -> bool:
     """A Vertex AI model litellm can only call through the ``vertexai`` SDK,
     on an image built without it (the optional ``gcp`` extra)."""
@@ -194,6 +225,12 @@ class CustomAIModelCreateView(APIView):
                 str(model_provider).strip().lower() == "bedrock"
                 or str(model_provider).strip().lower() == "sagemaker"
             ):
+                if str(model_provider).strip().lower() == "bedrock" and (
+                    invalid_bedrock_model_id(model_name)
+                ):
+                    return self._gm.bad_request(
+                        get_error_message("INVALID_BEDROCK_MODEL_ID")
+                    )
                 if (
                     not all(
                         key in config_json
