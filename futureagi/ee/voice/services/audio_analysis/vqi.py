@@ -1,4 +1,7 @@
-"""Regular DNSMOS OVRL windows with pinned, calibrated, local inference."""
+"""DNSMOS polynomial coefficients reproduced from microsoft/DNS-Challenge DNSMOS/dnsmos_local.py, Copyright (c) Microsoft Corporation, MIT License.
+
+Regular DNSMOS OVRL windows with pinned, calibrated, local inference.
+"""
 
 import hashlib
 import logging
