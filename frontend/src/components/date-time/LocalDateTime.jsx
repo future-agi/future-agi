@@ -10,7 +10,10 @@ import {
 
 export function LocalDateTime({ value, withTime = false, emptyText = "Unknown" }) {
   const instant = describeInstant(value);
-  const [touchOpen, setTouchOpen] = useState(false);
+  // Controlled from the first render. `open={flag || undefined}` would lock MUI's
+  // tooltip uncontrolled, and MUI replaces the child's onTouchStart with its own
+  // 700ms long-press handler, so touch has to open the disclosure itself.
+  const [open, setOpen] = useState(false);
   if (!instant) return <span>{emptyText}</span>;
 
   const title = `Local: ${instant.local}\nZone: ${instant.zone} (${instant.offset})\nUTC: ${instant.utc}`;
@@ -19,14 +22,16 @@ export function LocalDateTime({ value, withTime = false, emptyText = "Unknown" }
     <Tooltip
       title={title}
       describeChild
-      open={touchOpen || undefined}
-      onClose={() => setTouchOpen(false)}
+      open={open}
+      onOpen={() => setOpen(true)}
+      onClose={() => setOpen(false)}
+      enterTouchDelay={0}
       componentsProps={{ tooltip: { sx: { whiteSpace: "pre-line" } } }}
     >
       <span
         tabIndex={0}
-        onTouchStart={() => setTouchOpen(true)}
-        onClick={() => setTouchOpen((open) => !open)}
+        onTouchStart={() => setOpen(true)}
+        onClick={() => setOpen((current) => !current)}
       >
         {withTime ? fDateTimeLocal(value) : fDateLocal(value)}
       </span>

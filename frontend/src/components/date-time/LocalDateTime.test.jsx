@@ -60,11 +60,11 @@ describe("LocalDateTime", () => {
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
   });
 
-  it("opens the same instant details on touch as on focus", async () => {
+  it("opens the disclosure on touch through its own handler, not MUI's long press", () => {
     render(<LocalDateTime value={INSTANT} />);
     const date = screen.getByText("31 Oct 2025");
     fireEvent.touchStart(date);
-    const tooltip = await screen.findByRole("tooltip");
+    const tooltip = screen.getByRole("tooltip");
     expect(tooltip).toHaveTextContent("Zone: Asia/Kolkata (UTC+05:30)");
     expect(tooltip).toHaveTextContent("UTC: 2025-10-31T00:00:00.000Z");
   });

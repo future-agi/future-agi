@@ -100,8 +100,7 @@ describe("local instant formatters", () => {
     "2025-10-31T05:30:00+05:30",
     "2025-10-30T17:00:00-0700",
     new Date(INSTANT),
-    Date.parse(INSTANT),
-  ])("accepts equivalent zoned strings, Dates and epoch-ms: %s", (value) => {
+  ])("accepts equivalent zoned strings and Dates: %s", (value) => {
     const options = { timeZone: "Asia/Kolkata" };
     expect(fDateLocal(value, options)).toBe("31 Oct 2025");
     expect(fDateTimeLocal(value, options)).toBe("31 Oct 2025, 5:30 AM");
@@ -110,11 +109,13 @@ describe("local instant formatters", () => {
     );
   });
 
-  it("accepts epoch zero without treating it as missing", () => {
+  it("rejects bare numbers instead of rendering them as epoch dates", () => {
     const options = { timeZone: "UTC" };
-    expect(fDateLocal(0, options)).toBe("1 Jan 1970");
-    expect(fDateTimeLocal(0, options)).toBe("1 Jan 1970, 12:00 AM");
-    expect(describeInstant(0, options).utc).toBe("1970-01-01T00:00:00.000Z");
+    for (const value of [0, 1, -1, Date.parse(INSTANT)]) {
+      expect(fDateLocal(value, options)).toBe("");
+      expect(fDateTimeLocal(value, options)).toBe("");
+      expect(describeInstant(value, options)).toBeNull();
+    }
   });
 
   it.each([

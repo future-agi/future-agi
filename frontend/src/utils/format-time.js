@@ -67,10 +67,9 @@ function toInstant(value) {
     if (month < 1 || month > 12 || day < 1 || day > daysInMonth[month - 1]) {
       return null;
     }
-  } else if (
-    !(value instanceof Date) &&
-    !(typeof value === "number" && Number.isFinite(value))
-  ) {
+  } else if (!(value instanceof Date)) {
+    // Bare numbers are not instants. new Date(0) is 1970 and new Date(1) is a
+    // fabricated date; the API sends ISO strings, never epoch milliseconds.
     return null;
   }
   const parsed = new Date(value);
