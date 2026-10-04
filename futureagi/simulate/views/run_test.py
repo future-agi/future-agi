@@ -178,6 +178,7 @@ from simulate.utils.test_execution_utils import (
 )
 from simulate.views.scoping import run_test_workspace_filter
 from tfc.ee_gates import strip_turing_from_config_options
+from tfc.temporal.common.client import terminate_workflow_sync
 from tfc.settings import settings as app_settings
 from tfc.settings.settings import VAPI_INDIAN_PHONE_NUMBER_ID
 from tfc.utils.api_contracts import validated_request
@@ -4473,7 +4474,22 @@ class CallExecutionDeleteView(APIView):
             # Soft delete the call execution
             call_execution.deleted = True
             call_execution.deleted_at = timezone.now()
-            call_execution.save()
+            call_execution.save(update_fields=["deleted", "deleted_at"])
+
+            envelope = call_execution.audio_metrics or {}
+            if envelope.get("state") == "pending" and envelope.get("analysis_id"):
+                try:
+                    terminate_workflow_sync(f"audio-analysis-{envelope['analysis_id']}")
+                except Exception as exc:
+                    # The tombstone above is the correctness boundary. Never
+                    # fail deletion because a child is absent or Temporal is down.
+                    import logging
+
+                    logging.getLogger(__name__).warning(
+                        "audio_metrics.delete_termination_failed: %s",
+                        type(exc).__name__,
+                        extra={"analysis_id": envelope["analysis_id"]},
+                    )
 
             response_serializer = CallExecutionDeleteResponseSerializer(
                 {"message": "Call execution deleted successfully"}
