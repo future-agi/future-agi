@@ -49,8 +49,41 @@ def test_document_link_fetch_reports_the_existing_100_mib_bound_without_url():
     with patch(
         "tfc.utils.storage._ssrf_safe_get",
         side_effect=RequestException("URL body exceeds 104857600 byte limit."),
-    ):
+    ) as fetch:
         with pytest.raises(DocumentLinkTooLargeError) as error:
             download_document_link_from_url(signed_url)
 
     assert "secret" not in str(error.value)
+    # A size rejection is permanent, so it must not be retried.
+    assert fetch.call_count == 1
+
+
+def test_document_link_fetch_classifies_the_wrapped_size_error_and_does_not_retry():
+    """safe_fetch wraps the body-limit ValueError as 'Cannot access URL: ...'.
+
+    The classifier must still report the size bound, and must not spend the
+    one allowed retry on a rejection that cannot succeed.
+    """
+    signed_url = "https://cdn.example.com/download?X-Amz-Signature=secret"
+    wrapped = RequestException(
+        "Cannot access URL: URL body exceeds 104857600 byte limit."
+    )
+    with patch(
+        "tfc.utils.storage._ssrf_safe_get", side_effect=wrapped
+    ) as fetch:
+        with pytest.raises(DocumentLinkTooLargeError):
+            download_document_link_from_url(signed_url)
+
+    assert fetch.call_count == 1
+
+
+def test_document_link_fetch_does_not_retry_a_permanent_client_error():
+    signed_url = "https://cdn.example.com/download?X-Amz-Signature=secret"
+    with patch(
+        "tfc.utils.storage._ssrf_safe_get", side_effect=[_response(403), _response(200)]
+    ) as fetch:
+        with pytest.raises(Exception):
+            download_document_link_from_url(signed_url)
+
+    # A 403 cannot succeed on retry, so the second response must never be fetched.
+    assert fetch.call_count == 1

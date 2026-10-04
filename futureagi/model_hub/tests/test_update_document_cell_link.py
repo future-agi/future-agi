@@ -14,8 +14,10 @@ from model_hub.models.choices import CellStatus, DataTypeChoices, SourceChoices
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from tfc.utils.document_link import (
     DOCUMENT_ADDRESS_NOT_A_DOCUMENT,
+    DOCUMENT_ADDRESS_TOO_LARGE,
     DOCUMENT_ADDRESS_UNREACHABLE,
     DOCUMENT_NOT_A_WEB_ADDRESS,
+    DocumentLinkTooLargeError,
 )
 
 
@@ -168,7 +170,10 @@ def test_signed_link_does_not_store_or_return_its_query(auth_client, document_ce
 @pytest.mark.parametrize(
     ("failure", "expected_message"),
     [
-        (ValueError("URL body exceeds 104857600 byte limit."), DOCUMENT_ADDRESS_UNREACHABLE),
+        (
+            DocumentLinkTooLargeError("The document is larger than 100 MiB."),
+            DOCUMENT_ADDRESS_TOO_LARGE,
+        ),
         (ValueError("Unable to process link. Status Code: 403"), DOCUMENT_ADDRESS_UNREACHABLE),
     ],
 )

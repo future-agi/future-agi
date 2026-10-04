@@ -461,6 +461,7 @@ def download_document_link_from_url(doc_url):
     }
     deadline = time.monotonic() + DOCUMENT_LINK_FETCH_BUDGET_SECONDS
     last_error = None
+    permanent_error = None
 
     for attempt in range(DOCUMENT_LINK_FETCH_ATTEMPTS):
         remaining = deadline - time.monotonic()
@@ -489,14 +490,23 @@ def download_document_link_from_url(doc_url):
                     "The address cannot be reached."
                 )
                 continue
-            raise DocumentLinkFetchError("The address cannot be reached.")
+            # A permanent 4xx is not transient. Raise it outside the retry
+            # loop so it is not fetched a second time (R07).
+            permanent_error = DocumentLinkFetchError(
+                "The address cannot be reached."
+            )
+            break
         except SsrfBlocked as exc:
             # Do not spend the retry budget on a permanent SSRF rejection.
             raise DocumentLinkFetchError("The address cannot be reached.") from exc
         except DocumentLinkValidationError:
             raise
         except RequestException as exc:
-            if "exceeds" in str(exc).lower() and "byte limit" in str(exc).lower():
+            # safe_fetch wraps the body-limit ValueError as
+            # "Cannot access URL: ...", so match the wrapped text too, and do
+            # not spend the retry on a size rejection.
+            message = str(exc).lower()
+            if "byte limit" in message or "exceeds" in message and "byte" in message:
                 raise DocumentLinkTooLargeError(
                     "The document is larger than 100 MiB."
                 ) from exc
@@ -504,6 +514,8 @@ def download_document_link_from_url(doc_url):
             if attempt + 1 == DOCUMENT_LINK_FETCH_ATTEMPTS:
                 break
 
+    if permanent_error is not None:
+        raise permanent_error
     raise DocumentLinkFetchError("The address cannot be reached.") from last_error
 
 
