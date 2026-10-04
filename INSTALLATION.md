@@ -1046,7 +1046,11 @@ Lakera Guard, a webhook) triggers on every request while that call fails,
 whatever the Fail Open switch says: set to block, it refuses them all. So
 turn such checks off before upgrading, and back on one at a time afterwards,
 checking that requests still go through. Future AGI Eval at its default Base
-URL (Future AGI Cloud's) calls this install's API, not Cloud.
+URL (Future AGI Cloud's) calls this install's API, not Cloud, with your
+organization's own API key, whatever keys the check was given. Distributed
+needs this release's `docker-compose.distributed.yml` for that, since it gives
+the backend `AGENTCC_GATEWAY_FI_BASE_URL`; with an older one, such a check
+keeps the keys typed into it.
 
 A gateway config of your own (`AGENTCC_CONFIG_PATH`) needs these lines, which
 copies of an older example lack:
@@ -1074,7 +1078,16 @@ docker compose up -d
 
 Downtime is about the time the app (or backend) takes to restart. To roll
 back, set the bumped variable(s) to the previous tag and re-run the same two
-commands. To pin an exact image digest, use a `docker-compose.override.yml`,
+commands. Rolling Standalone back to an image from before gateway guardrails
+ran also needs that release's checkout, or `guardrails.enabled: false` in a
+gateway config of your own (`AGENTCC_CONFIG_PATH`, see
+[Configuring LLM providers](#configuring-llm-providers)), not in the tracked
+`config.example.yaml`, whose edits make `git pull` refuse to update:
+Standalone takes the guardrails switch from the checkout but `FI_BASE_URL`
+from the image, so the older image, running the newer checkout's config, sends
+Future AGI Eval checks at the default Base URL, and the prompts they check, to
+Cloud.
+To pin an exact image digest, use a `docker-compose.override.yml`,
 never `FUTURE_AGI_VERSION`; see [Verifying an image](https://docs.futureagi.com/docs/self-hosting/images#verifying-an-image).
 
 ## Backups

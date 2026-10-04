@@ -832,6 +832,10 @@ check set to block refuses the requests it matches, and a check that calls a
 service (Future AGI Eval, a third-party provider, a webhook) triggers on
 every request while that call fails, whatever the Fail Open switch says.
 Turn such checks off before upgrading, and back on one at a time afterwards.
+Future AGI Eval at its default Base URL (Future AGI Cloud's) calls the
+backend, not Cloud, with your organization's own API key, whatever keys the
+check was given: the chart gives the backend `AGENTCC_GATEWAY_FI_BASE_URL`,
+the backend Service, and pushes such checks to the gateway with that URL.
 With `agentccGateway.existingConfigMap`, add `guardrails: {enabled: true}` to
 its `config.yaml`, then restart the gateway, which reads it only at start:
 `kubectl -n futureagi rollout restart deployment/futureagi-agentcc-gateway`.

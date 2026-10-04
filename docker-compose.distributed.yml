@@ -129,6 +129,10 @@ x-backend-env: &backend-env
   # provider URLs. Which backends and gateways read it:
   # https://docs.futureagi.com/docs/self-hosting/configuration/reference#application-behaviour
   AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS: ${AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS:-false}
+  # The backend as the gateway reaches it. A Future AGI Eval guardrail at
+  # Future AGI Cloud's URL (the dashboard's default) is pushed to the gateway
+  # with this URL and the organization's own API key.
+  AGENTCC_GATEWAY_FI_BASE_URL: http://backend
   # Platform-owned virtual key for hosted ALK authoring (not a customer secret).
   AGENTCC_HARNESS_API_KEY: ${AGENTCC_HARNESS_API_KEY:-}
   AGENTCC_BASE_URL: ${AGENTCC_BASE_URL:-}

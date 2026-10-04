@@ -1935,6 +1935,12 @@ nothing. Change what they are derived from instead, or use a
     setups = ["S", "D"]
     text = "A Future AGI Eval guardrail whose Base URL is Future AGI Cloud's (`https://api.futureagi.com`, the dashboard's default) calls the app instead of sending the prompts it checks to Cloud. Helm sets it to the backend Service too. SDKs outside the stack take the collector's URL under the same name: `FI_COLLECTOR_PUBLIC_URL`."
 
+    [[part.section.row]]
+    keys = ["AGENTCC_GATEWAY_FI_BASE_URL"]
+    default = "`http://127.0.0.1:8000` (S: from the image), `http://backend` (D)"
+    setups = ["S", "D"]
+    text = "The app as the gateway reaches it. A Future AGI Eval guardrail whose Base URL is Future AGI Cloud's (`https://api.futureagi.com`, the dashboard's default) goes to the gateway with this Base URL and the organization's own API key, whatever keys it was given. Unset, such a guardrail keeps its Base URL and the keys typed into it: the organization's key never goes to Cloud. Helm sets it to the backend Service too."
+
 [[part]]
 heading = "Legacy and retired keys"
 role = "legacy"
