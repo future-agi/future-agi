@@ -63,7 +63,13 @@ import EvalUsageTab from "./EvalUsageTab";
 import VersionBadge from "./VersionBadge";
 import BulkDeleteDialog from "./BulkDeleteDialog";
 import { EVAL_TAGS } from "../constant";
-import { FAGI_MODEL_VALUES } from "./ModelSelector";
+import JevOutputConfig from "./JevOutputConfig";
+import {
+  buildJevMapping,
+  getJevValidationErrors,
+  hasExtraJevMessages,
+} from "../utils/jevMapping";
+import { FAGI_MODEL_VALUES, JEV_MODEL_VALUES } from "./ModelSelector";
 import { buildDataInjection } from "src/sections/common/EvalPicker/evalPickerConfigUtils";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
@@ -138,6 +144,7 @@ const EvalDetailPage = () => {
     CAPABILITY.TURING_MODELS,
   );
   const { locked: agentEvalLocked } = useFeatureLocked(CAPABILITY.AGENTIC_EVAL);
+  const { locked: jevLocked } = useFeatureLocked(CAPABILITY.JEV_MODELS);
   const errorLocalizerAvailable = useErrorLocalizationAvailable();
   // Confirmed denial (loaded AND not allowed). Seed the default model raw and
   // only strip it on confirmed denial, so entitled users don't lose the
@@ -166,6 +173,7 @@ const EvalDetailPage = () => {
     if (fagiModelsDenied && FAGI_MODEL_VALUES.has(model)) setModel("");
   }, [fagiModelsDenied, model]);
   const [openModelMenuSignal, setOpenModelMenuSignal] = useState(0);
+  const [jevMapping, setJevMapping] = useState({});
   const [outputType, setOutputType] = useState("pass_fail");
   const [passThreshold, setPassThreshold] = useState(0.5);
   const [choiceScores, setChoiceScores] = useState({});
@@ -346,6 +354,7 @@ const EvalDetailPage = () => {
           }
           setCodeLanguage(config.language || "python");
           setModel(config.model || evalData.model || "turing_large");
+          setJevMapping(config.jev_mapping || {});
           setOutputType(
             evalData.output_type ||
               evalData.output_type_normalized ||
@@ -399,11 +408,9 @@ const EvalDetailPage = () => {
           } else if (evalData.eval_type === "llm" && promptText) {
             setMessages([{ role: "system", content: promptText }]);
           }
-          if (config.few_shot_examples || config.fewShotExamples) {
-            setFewShotExamples(
-              config.few_shot_examples || config.fewShotExamples || [],
-            );
-          }
+          setFewShotExamples(
+            config.few_shot_examples || config.fewShotExamples || [],
+          );
         }
         setIsDirty(false);
         setTimeout(() => {
@@ -476,6 +483,7 @@ const EvalDetailPage = () => {
       }
       setCodeLanguage(config.language || "python");
       setModel(config.model || versionToLoad.model || "turing_large");
+      setJevMapping(config.jev_mapping || {});
       {
         const outputMap = {
           "Pass/Fail": "pass_fail",
@@ -503,11 +511,9 @@ const EvalDetailPage = () => {
       } else if (evalData.eval_type === "llm" && promptText) {
         setMessages([{ role: "system", content: promptText }]);
       }
-      if (config.few_shot_examples || config.fewShotExamples) {
-        setFewShotExamples(
-          config.few_shot_examples || config.fewShotExamples || [],
-        );
-      }
+      setFewShotExamples(
+        config.few_shot_examples || config.fewShotExamples || [],
+      );
       setCheckInternet(config.check_internet ?? false);
       setAgentMode(config.agent_mode || "agent");
       setSummaryType(resolve_summary_type(config.summary));
@@ -603,6 +609,7 @@ const EvalDetailPage = () => {
             "python",
         );
         setModel(config.model || evalData.model || "turing_large");
+        setJevMapping(config.jev_mapping || {});
         setOutputType(
           evalData.output_type ||
             evalData.output_type_normalized ||
@@ -656,11 +663,9 @@ const EvalDetailPage = () => {
         } else if (evalData.eval_type === "llm" && promptText) {
           setMessages([{ role: "system", content: promptText }]);
         }
-        if (config.few_shot_examples || config.fewShotExamples) {
-          setFewShotExamples(
-            config.few_shot_examples || config.fewShotExamples || [],
-          );
-        }
+        setFewShotExamples(
+          config.few_shot_examples || config.fewShotExamples || [],
+        );
         setIsDirty(false);
         initialLoadDone.current = true;
         // Release the populating guard after React flushes this batch so
@@ -778,8 +783,54 @@ const EvalDetailPage = () => {
     return [...new Set([...requiredKeys, ...templateVars])];
   }, [instructions, evalData, evalType, isComposite, compositeDetail]);
 
+  const isJevModel = JEV_MODEL_VALUES.has(model);
+  const effectiveConfig = useMemo(
+    () =>
+      viewingVersion
+        ? viewingVersion.config_snapshot || viewingVersion.configSnapshot || {}
+        : evalData?.config || {},
+    [viewingVersion, evalData],
+  );
+  const jevPayload = useMemo(
+    () =>
+      isJevModel
+        ? { jev_mapping: buildJevMapping(outputType, choiceScores, jevMapping) }
+        : {},
+    [isJevModel, outputType, choiceScores, jevMapping],
+  );
+  const jevMessages =
+    evalType === "llm" ? messages : effectiveConfig.messages || [];
+  const jevErrors = isJevModel
+    ? getJevValidationErrors({
+        mapping: jevPayload.jev_mapping,
+        config: {
+          ...effectiveConfig,
+          check_internet: checkInternet,
+          few_shot_examples: fewShotExamples,
+          ...(evalType === "agent"
+            ? {
+                agent_mode: agentMode,
+                tools: build_tools_payload(connectorIds),
+                knowledge_bases: knowledgeBaseIds,
+                data_injection: buildDataInjection(contextOptions),
+              }
+            : {}),
+        },
+        multiChoice,
+        choiceScores,
+        inputDataTypes: evalData?.input_data_types,
+        messages: jevMessages,
+      })
+    : [];
+  const jevError = jevErrors[0];
+  const jevTestBlocked = Boolean(jevError || (isJevModel && jevLocked));
+
   // Save version
   const handleSaveVersion = useCallback(async () => {
+    if (jevError) {
+      enqueueSnackbar(jevError, { variant: "error" });
+      return;
+    }
     if (agentEvalLocked && evalType === "agent") {
       enqueueSnackbar(
         "Agent evaluations aren't enabled for this workspace. Use LLM-as-a-Judge or Code evaluations instead.",
@@ -809,6 +860,7 @@ const EvalDetailPage = () => {
       const tools = build_tools_payload(connectorIds);
       // Update the template first
       const payload = {
+        ...jevPayload,
         instructions:
           evalType === "code" ? undefined : instructions || undefined,
         code: evalType === "code" ? code : undefined,
@@ -838,7 +890,8 @@ const EvalDetailPage = () => {
 
       // Build a config snapshot for the version so it captures the full state
       const configSnapshot = {
-        ...(evalData?.config || {}),
+        ...(isJevModel ? effectiveConfig : evalData?.config || {}),
+        ...jevPayload,
         rule_prompt: evalType === "code" ? "" : instructions,
         code: evalType === "code" ? code : undefined,
         language: evalType === "code" ? codeLanguage : undefined,
@@ -896,6 +949,12 @@ const EvalDetailPage = () => {
       );
     }
   }, [
+    jevError,
+    jevPayload,
+    isJevModel,
+    effectiveConfig,
+    templateFormat,
+    isComposite,
     evalType,
     agentEvalLocked,
     fagiLocked,
@@ -973,6 +1032,12 @@ const EvalDetailPage = () => {
 
   // Test evaluation — auto-saves current config before running
   const handleTestEvaluation = useCallback(async () => {
+    if (jevTestBlocked) {
+      enqueueSnackbar(jevError || "Not included in your plan", {
+        variant: "error",
+      });
+      return;
+    }
     if (fagiLocked && evalType !== "code" && !model && !isComposite) {
       enqueueSnackbar("Please select a model.", { variant: "error" });
       setOpenModelMenuSignal((n) => n + 1);
@@ -992,6 +1057,7 @@ const EvalDetailPage = () => {
             : { type: summaryType };
         const tools = build_tools_payload(connectorIds);
         await updateEval.mutateAsync({
+          ...jevPayload,
           instructions:
             evalType === "code" ? undefined : instructions || undefined,
           code: evalType === "code" ? code : undefined,
@@ -1042,6 +1108,11 @@ const EvalDetailPage = () => {
       setIsTesting(false);
     }
   }, [
+    jevError,
+    jevTestBlocked,
+    jevPayload,
+    templateFormat,
+    enqueueSnackbar,
     evalId,
     evalType,
     fagiLocked,
@@ -1631,6 +1702,22 @@ const EvalDetailPage = () => {
                   />
                 )}
 
+                {isJevModel && !isComposite && evalType !== "code" && (
+                  <JevOutputConfig
+                    outputType={outputType}
+                    choiceScores={choiceScores}
+                    mapping={jevMapping}
+                    onChange={(next) => {
+                      setJevMapping(next);
+                      markDirty();
+                    }}
+                    errors={jevErrors}
+                    hasExtraMessages={hasExtraJevMessages(jevMessages)}
+                    disabled={isSystemEval}
+                    locked={jevLocked}
+                  />
+                )}
+
                 {/* Output Type — category locked for both system and user;
                   scoring settings (labels/scores/threshold) editable for both. */}
                 {!isComposite &&
@@ -1677,6 +1764,7 @@ const EvalDetailPage = () => {
                     </Box>
                   ) : (
                     <OutputTypeConfig
+                      isJevModel={isJevModel}
                       outputType={outputType}
                       onOutputTypeChange={(v) => {
                         setOutputType(v);
@@ -2023,6 +2111,7 @@ const EvalDetailPage = () => {
                         size="small"
                         onClick={handleTestEvaluation}
                         disabled={
+                          jevTestBlocked ||
                           isTesting ||
                           !isPlaygroundReady ||
                           needsTemplateVariable ||
@@ -2063,6 +2152,7 @@ const EvalDetailPage = () => {
                           size="small"
                           onClick={handleSaveVersion}
                           disabled={
+                            Boolean(jevError) ||
                             isSaving ||
                             !isDirty ||
                             needsTemplateVariable ||

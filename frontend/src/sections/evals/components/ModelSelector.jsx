@@ -160,8 +160,96 @@ const FAGI_MODELS = [
 
 export const FAGI_MODEL_VALUES = new Set(FAGI_MODELS.map((m) => m.value));
 
+export const JEV_MODELS = [
+  {
+    value: "jev-1.13.0",
+    label: "Jev 1.13 (pinned)",
+    description: "Pinned System One model (jev-1.13.0)",
+  },
+  {
+    value: "jev-latest",
+    label: "Jev latest",
+    description: "Tracks the current Jev release (jev-latest)",
+  },
+];
+export const JEV_MODEL_VALUES = new Set(JEV_MODELS.map((m) => m.value));
+
 const FAGI_MODEL_LOCKED_TOOLTIP =
   "Turing models aren't enabled for this workspace. Select your own model.";
+
+// Managed models share the same product row and selection affordances.
+const ManagedModelRow = ({
+  m,
+  selected,
+  locked,
+  lockedTooltip,
+  secondaryText,
+  onSelect,
+}) => (
+  <Tooltip title={locked ? lockedTooltip : ""} placement="right" arrow>
+    <span>
+      <MenuItem
+        selected={selected}
+        disabled={locked}
+        onClick={onSelect}
+        sx={{
+          mx: 0.5,
+          borderRadius: "6px",
+          py: 0.75,
+          gap: 1,
+          width: "auto",
+        }}
+      >
+        <Iconify
+          icon={m.icon || "mdi:star-circle"}
+          width={18}
+          sx={{
+            color: selected ? "primary.main" : "text.secondary",
+            flexShrink: 0,
+          }}
+        />
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Typography
+            variant="body2"
+            sx={{ fontSize: "13px", fontWeight: 500 }}
+          >
+            {m.label}
+          </Typography>
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{ fontSize: "11px" }}
+          >
+            {secondaryText}
+          </Typography>
+        </Box>
+        {locked ? (
+          <Iconify
+            icon="mdi:lock-outline"
+            width={16}
+            sx={{ color: "text.disabled", flexShrink: 0 }}
+          />
+        ) : (
+          selected && (
+            <Iconify
+              icon="mdi:check"
+              width={16}
+              sx={{ color: "primary.main", flexShrink: 0 }}
+            />
+          )
+        )}
+      </MenuItem>
+    </span>
+  </Tooltip>
+);
+ManagedModelRow.propTypes = {
+  m: PropTypes.object.isRequired,
+  selected: PropTypes.bool.isRequired,
+  locked: PropTypes.bool.isRequired,
+  lockedTooltip: PropTypes.string.isRequired,
+  secondaryText: PropTypes.string.isRequired,
+  onSelect: PropTypes.func.isRequired,
+};
 
 const CHIP_STYLES = {
   backgroundColor: (theme) =>
@@ -696,6 +784,7 @@ const ModelSelector = ({
   // must not wipe a legitimately-preselected Turing model mid-fetch.
   const { locked: fagiModelsLocked, isLoading: capabilitiesLoading } =
     useFeatureLocked(CAPABILITY.TURING_MODELS);
+  const { locked: jevModelsLocked } = useFeatureLocked(CAPABILITY.JEV_MODELS);
   const fagiModelsDenied = fagiModelsLocked && !capabilitiesLoading;
   const { allowed: falconAllowed } = useFeatureAllowed(CAPABILITY.FALCON_AI);
 
@@ -782,7 +871,11 @@ const ModelSelector = ({
       modelPages?.pages.reduce((acc, p) => [...acc, ...p.data.results], []) ||
       [];
     // Filter out FAGI models to avoid duplicates
-    return all.filter((m) => !FAGI_MODEL_VALUES.has(m.model_name));
+    return all.filter(
+      (m) =>
+        !FAGI_MODEL_VALUES.has(m.model_name) &&
+        !JEV_MODEL_VALUES.has(m.model_name),
+    );
   }, [modelPages]);
 
   // Determine display name for the current model. Match on the full
@@ -792,6 +885,8 @@ const ModelSelector = ({
   // — still resolves to its FAGI label instead of rendering as "small".
   const modelDisplayName = useMemo(() => {
     if (!model) return "Select model";
+    const jev = JEV_MODELS.find((m) => m.value === model);
+    if (jev) return jev.label;
     const exact = FAGI_MODELS.find((m) => m.value === model);
     if (exact) return exact.label;
     const suffix = FAGI_MODELS.find((m) => m.value.endsWith(`_${model}`));
@@ -816,6 +911,13 @@ const ModelSelector = ({
     if (!modelSearch) return FAGI_MODELS;
     return FAGI_MODELS.filter((m) =>
       m.label.toLowerCase().includes(modelSearch.toLowerCase()),
+    );
+  }, [modelSearch]);
+
+  const filteredJevModels = useMemo(() => {
+    const search = modelSearch.toLowerCase();
+    return JEV_MODELS.filter(
+      (m) => m.label.toLowerCase().includes(search) || m.value.includes(search),
     );
   }, [modelSearch]);
 
@@ -1194,81 +1296,64 @@ const ModelSelector = ({
                 FutureAGI Models
               </Typography>
               {filteredFagiModels.map((m) => (
-                <Tooltip
+                <ManagedModelRow
                   key={m.value}
-                  title={fagiModelsLocked ? FAGI_MODEL_LOCKED_TOOLTIP : ""}
-                  placement="right"
-                  arrow
-                >
-                  <span>
-                    <MenuItem
-                      selected={m.value === model}
-                      disabled={fagiModelsLocked}
-                      onClick={() => {
-                        onModelChange(m.value);
-                        setModelAnchor(null);
-                        setModelSearch("");
-                      }}
-                      sx={{
-                        mx: 0.5,
-                        borderRadius: "6px",
-                        py: 0.75,
-                        gap: 1,
-                        width: "auto",
-                      }}
-                    >
-                      <Iconify
-                        icon={m.icon}
-                        width={18}
-                        sx={{
-                          color:
-                            m.value === model
-                              ? "primary.main"
-                              : "text.secondary",
-                          flexShrink: 0,
-                        }}
-                      />
-                      <Box sx={{ flex: 1, minWidth: 0 }}>
-                        <Typography
-                          variant="body2"
-                          sx={{ fontSize: "13px", fontWeight: 500 }}
-                        >
-                          {m.label}
-                        </Typography>
-                        <Typography
-                          variant="caption"
-                          color="text.secondary"
-                          sx={{ fontSize: "11px" }}
-                        >
-                          {fagiModelsLocked ? "Not enabled" : m.description}
-                        </Typography>
-                      </Box>
-                      {fagiModelsLocked ? (
-                        <Iconify
-                          icon="mdi:lock-outline"
-                          width={16}
-                          sx={{ color: "text.disabled", flexShrink: 0 }}
-                        />
-                      ) : (
-                        m.value === model && (
-                          <Iconify
-                            icon="mdi:check"
-                            width={16}
-                            sx={{ color: "primary.main", flexShrink: 0 }}
-                          />
-                        )
-                      )}
-                    </MenuItem>
-                  </span>
-                </Tooltip>
+                  m={m}
+                  selected={m.value === model}
+                  locked={fagiModelsLocked}
+                  lockedTooltip={FAGI_MODEL_LOCKED_TOOLTIP}
+                  secondaryText={
+                    fagiModelsLocked ? "Not enabled" : m.description
+                  }
+                  onSelect={() => {
+                    onModelChange(m.value);
+                    setModelAnchor(null);
+                    setModelSearch("");
+                  }}
+                />
+              ))}
+            </>
+          )}
+
+          {filteredJevModels.length > 0 && (
+            <>
+              <Typography
+                variant="caption"
+                sx={{
+                  px: 1.5,
+                  pt: 1.5,
+                  pb: 0.5,
+                  display: "block",
+                  fontSize: "10px",
+                  fontWeight: 700,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.5px",
+                  color: "primary.main",
+                }}
+              >
+                Jev models
+              </Typography>
+              {filteredJevModels.map((m) => (
+                <ManagedModelRow
+                  key={m.value}
+                  m={m}
+                  selected={m.value === model}
+                  locked={jevModelsLocked}
+                  lockedTooltip="Not included in your plan"
+                  secondaryText={m.value}
+                  onSelect={() => {
+                    onModelChange(m.value);
+                    setModelAnchor(null);
+                    setModelSearch("");
+                  }}
+                />
               ))}
             </>
           )}
 
           {/* Divider between sections */}
-          {filteredFagiModels.length > 0 && apiModels.length > 0 && (
-            <Divider sx={{ my: 0.5 }} />
-          )}
+          {(filteredFagiModels.length > 0 || filteredJevModels.length > 0) &&
+            apiModels.length > 0 && <Divider sx={{ my: 0.5 }} />}
 
           {/* Section 2: Your LLM Models (BYOK) */}
           {(apiModels.length > 0 || modelsLoading) && (
@@ -1393,6 +1478,7 @@ const ModelSelector = ({
           {/* Empty state */}
           {!modelsLoading &&
             filteredFagiModels.length === 0 &&
+            filteredJevModels.length === 0 &&
             apiModels.length === 0 && (
               <Typography
                 variant="body2"

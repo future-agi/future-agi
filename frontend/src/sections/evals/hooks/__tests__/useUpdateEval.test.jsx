@@ -55,6 +55,26 @@ describe("useUpdateEval model handling", () => {
     mocks.put.mockResolvedValue({ data: { result: {} } });
   });
 
+  it("preserves the Jev mapping through the contracted template update", async () => {
+    const jevMapping = {
+      revision: "jev-map-v1",
+      question_type: "noul",
+      pass: { criteria_true: "Accurate", criteria_false: "Invented" },
+      choice: null,
+      score: null,
+      include_messages: false,
+    };
+    const { url, body } = await sendUpdate({
+      model: "jev-latest",
+      output_type: "pass_fail",
+      jev_mapping: jevMapping,
+    });
+    expect(body.jev_mapping).toEqual(jevMapping);
+    expect(
+      validateContractedRequestConfig({ url, method: "put", data: body }),
+    ).toMatchObject({ ok: true });
+  });
+
   it("omits a blank model (no default model on self-hosted) so autosave does not 400", async () => {
     const { url, body } = await sendUpdate({
       eval_type: "llm",

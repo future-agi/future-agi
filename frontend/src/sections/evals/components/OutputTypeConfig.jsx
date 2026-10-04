@@ -34,6 +34,7 @@ const OutputTypeConfig = ({
   // scores, pass threshold) remains editable. Used to prevent users from
   // switching the fundamental output shape while still letting them tune it.
   categoryLocked = false,
+  isJevModel = false,
 }) => {
   // Category radio is locked if either the whole component is disabled OR
   // categoryLocked is explicitly set.
@@ -176,103 +177,110 @@ const OutputTypeConfig = ({
       {outputType === "percentage" && (
         <>
           {/* Score mapping */}
-          <Box>
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              sx={{ mb: 1, display: "block" }}
-            >
-              Create a list of predefined categories. Each choice maps to a
-              score between 0 and 1.
-            </Typography>
+          {(!isJevModel || Object.keys(choiceScores || {}).length > 0) && (
+            <Box>
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{ mb: 1, display: "block" }}
+              >
+                Create a list of predefined categories. Each choice maps to a
+                score between 0 and 1.
+              </Typography>
 
-            {Object.entries(choiceScores || {}).map(([label, score]) => (
-              <Box
-                key={label}
+              {Object.entries(choiceScores || {}).map(([label, score]) => (
+                <Box
+                  key={label}
+                  sx={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 1.5,
+                    py: 0.75,
+                    borderBottom: "1px solid",
+                    borderColor: "divider",
+                  }}
+                >
+                  <TextField
+                    size="small"
+                    defaultValue={label}
+                    onBlur={(e) => handleRenameChoice(label, e.target.value)}
+                    disabled={disabled}
+                    placeholder="Choice name"
+                    sx={{
+                      flex: 1,
+                      "& .MuiInputBase-root": { fontSize: "13px", height: 30 },
+                    }}
+                  />
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ whiteSpace: "nowrap" }}
+                  >
+                    Will be shown as
+                  </Typography>
+                  <Slider
+                    size="small"
+                    value={score}
+                    onChange={(_, val) => handleScoreChange(label, val)}
+                    min={0}
+                    max={1}
+                    step={0.1}
+                    disabled={disabled}
+                    valueLabelDisplay="auto"
+                    valueLabelFormat={(v) => v.toFixed(1)}
+                    sx={{ width: 80 }}
+                  />
+                  <Chip
+                    label={score.toFixed(1)}
+                    size="small"
+                    color={
+                      score >= 0.7
+                        ? "success"
+                        : score >= 0.3
+                          ? "warning"
+                          : "error"
+                    }
+                    sx={{
+                      minWidth: 40,
+                      fontSize: "12px",
+                      fontWeight: 600,
+                      height: 24,
+                    }}
+                  />
+                  <IconButton
+                    size="small"
+                    onClick={() => handleRemoveChoice(label)}
+                    disabled={disabled}
+                  >
+                    <Iconify icon="solar:trash-bin-trash-bold" width={16} />
+                  </IconButton>
+                </Box>
+              ))}
+
+              {/* Add Choice button */}
+              <Button
+                size="small"
+                color="primary"
+                startIcon={<Iconify icon="mingcute:add-line" width={14} />}
+                onClick={() => handleAddEmptyRow(0.5)}
+                disabled={disabled}
                 sx={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 1.5,
-                  py: 0.75,
-                  borderBottom: "1px solid",
-                  borderColor: "divider",
+                  textTransform: "none",
+                  fontSize: "12px",
+                  mt: 1,
+                  alignSelf: "flex-start",
                 }}
               >
-                <TextField
-                  size="small"
-                  defaultValue={label}
-                  onBlur={(e) => handleRenameChoice(label, e.target.value)}
-                  disabled={disabled}
-                  placeholder="Choice name"
-                  sx={{
-                    flex: 1,
-                    "& .MuiInputBase-root": { fontSize: "13px", height: 30 },
-                  }}
-                />
-                <Typography
-                  variant="caption"
-                  color="text.secondary"
-                  sx={{ whiteSpace: "nowrap" }}
-                >
-                  Will be shown as
-                </Typography>
-                <Slider
-                  size="small"
-                  value={score}
-                  onChange={(_, val) => handleScoreChange(label, val)}
-                  min={0}
-                  max={1}
-                  step={0.1}
-                  disabled={disabled}
-                  valueLabelDisplay="auto"
-                  valueLabelFormat={(v) => v.toFixed(1)}
-                  sx={{ width: 80 }}
-                />
-                <Chip
-                  label={score.toFixed(1)}
-                  size="small"
-                  color={
-                    score >= 0.7
-                      ? "success"
-                      : score >= 0.3
-                        ? "warning"
-                        : "error"
-                  }
-                  sx={{
-                    minWidth: 40,
-                    fontSize: "12px",
-                    fontWeight: 600,
-                    height: 24,
-                  }}
-                />
-                <IconButton
-                  size="small"
-                  onClick={() => handleRemoveChoice(label)}
-                  disabled={disabled}
-                >
-                  <Iconify icon="solar:trash-bin-trash-bold" width={16} />
-                </IconButton>
-              </Box>
-            ))}
+                Add Choice
+              </Button>
+            </Box>
+          )}
+        </>
+      )}
 
-            {/* Add Choice button */}
-            <Button
-              size="small"
-              color="primary"
-              startIcon={<Iconify icon="mingcute:add-line" width={14} />}
-              onClick={() => handleAddEmptyRow(0.5)}
-              disabled={disabled}
-              sx={{
-                textTransform: "none",
-                fontSize: "12px",
-                mt: 1,
-                alignSelf: "flex-start",
-              }}
-            >
-              Add Choice
-            </Button>
-          </Box>
-
+      {(outputType === "percentage" ||
+        (isJevModel && outputType === "pass_fail")) && (
+        <>
           {/* Pass Threshold */}
           <Box>
             <Typography variant="body2" fontWeight={600} sx={{ mb: 0.5 }}>
@@ -289,6 +297,8 @@ const OutputTypeConfig = ({
             <Box sx={{ display: "flex", alignItems: "center", gap: 2, px: 1 }}>
               <Typography variant="caption">0</Typography>
               <Slider
+                aria-label="Pass threshold"
+                disabled={isJevModel && disabled}
                 value={Math.round(passThreshold * 100)}
                 onChange={(_, val) => onPassThresholdChange(val / 100)}
                 min={0}
@@ -492,6 +502,7 @@ OutputTypeConfig.propTypes = {
   onMultiChoiceChange: PropTypes.func,
   disabled: PropTypes.bool,
   categoryLocked: PropTypes.bool,
+  isJevModel: PropTypes.bool,
 };
 
 export default OutputTypeConfig;
