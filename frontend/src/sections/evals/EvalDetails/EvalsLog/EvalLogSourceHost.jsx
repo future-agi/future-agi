@@ -334,7 +334,12 @@ function ScopedSourceHost({ logId, onLogUnavailable }) {
     };
   }, []);
   useEffect(() => {
-    if (query.isError && [401, 403, 404].includes(errorStatus(query.error)))
+    // 401 is the session-expiry path. A 403/404 on the enrichment request is a
+    // source outcome, not proof the evaluation log is gone: the view never
+    // returns those codes for a source failure, and a source failure must not
+    // discard an evaluation the base query already loaded (PRD preserve-the-
+    // evaluation rule). The row renders the source-unavailable state itself.
+    if (query.isError && errorStatus(query.error) === 401)
       onLogUnavailable?.();
   }, [query.isError, query.error, onLogUnavailable]);
   useEffect(() => {

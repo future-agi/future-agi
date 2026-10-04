@@ -577,15 +577,16 @@ describe("eval-owned source host", () => {
     },
   );
 
-  it("S09 removes stale evaluation content if the enrichment denies access to the log", async () => {
+  it("S09 keeps the evaluation when only the enrichment request is denied", async () => {
     axios.get.mockImplementation(async (_url, config) => {
       if (config?.params?.include_source_navigation) throw { statusCode: 403 };
       return envelope(baseLog);
     });
     mount(true);
-    await screen.findByText("Evaluation log is unavailable.");
-    expect(screen.queryByTestId("eval-output")).not.toBeInTheDocument();
-    expect(screen.queryByText("Stored input")).not.toBeInTheDocument();
+    await screen.findByText(unavailable);
+    expect(screen.getByTestId("eval-output")).toBeInTheDocument();
+    expect(screen.getByText("Stored input")).toBeInTheDocument();
+    expect(screen.queryByText("Evaluation log is unavailable.")).not.toBeInTheDocument();
     expect(destinationCalls()).toHaveLength(0);
   });
 
