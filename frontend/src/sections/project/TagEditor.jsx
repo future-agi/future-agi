@@ -10,7 +10,14 @@ import {
   Typography,
 } from "@mui/material";
 import PropTypes from "prop-types";
-import React, { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Iconify from "src/components/iconify";
 import axios from "src/utils/axios";
@@ -92,11 +99,15 @@ const TagEditor = ({ projectId, projectName, variant = "grid" }) => {
   const [mode, setMode] = useState(isHeader ? "edit" : "inspect");
   const [narrow, setNarrow] = useState(false);
   const triggerRef = useRef(null);
+  const editButtonRef = useRef(null);
+  const closeButtonRef = useRef(null);
+  const focusEditOnReturn = useRef(false);
+  const titleId = useId();
   const queryClient = useQueryClient();
 
   // ── Fetch this project's tags ──
   const {
-    data: tags = [],
+    data: tagData,
     isLoading: isTagsLoading,
     isError: isTagsError,
     refetch: refetchTags,
@@ -106,6 +117,14 @@ const TagEditor = ({ projectId, projectName, variant = "grid" }) => {
     enabled: !!projectId,
     staleTime: 30_000,
   });
+  const tags = useMemo(() => tagData ?? [], [tagData]);
+  // React Query keeps the last successful `data` when a refetch fails, so a
+  // refresh failure is distinct from a first-read failure (AC08): keep the
+  // last-known tags readable and pause editing until a refresh succeeds.
+  const hasTagData = tagData !== undefined;
+  const isTagsUnavailable = isTagsError && !hasTagData;
+  const isTagsStale = isTagsError && hasTagData;
+  const canMutate = !isTagsLoading && !isTagsError;
 
   // ── Fetch all known tags (for the dropdown list) — only while editing ──
   const {
@@ -148,27 +167,32 @@ const TagEditor = ({ projectId, projectName, variant = "grid" }) => {
     },
   });
   const isSaving = mutation.isPending;
+  // Writes are blocked while a save is pending or the project's tags are not
+  // authoritative (loading/stale). Controls stay focusable and advertise the
+  // state with aria-disabled instead of `disabled`, so a keyboard user does
+  // not lose focus after every save.
+  const writesBlocked = isSaving || !canMutate;
 
   const toggleTag = useCallback(
     (tag) => {
-      if (isSaving) return;
+      if (writesBlocked) return;
       const updated = tags.includes(tag)
         ? tags.filter((t) => t !== tag)
         : [...tags, tag];
       mutation.mutate(updated);
     },
-    [tags, mutation, isSaving],
+    [tags, mutation, writesBlocked],
   );
 
   const handleNewTag = useCallback(() => {
-    if (isSaving) return;
+    if (writesBlocked) return;
     const tag = newTagInput.trim();
     if (!tag) return;
     if (!tags.includes(tag)) {
       mutation.mutate([...tags, tag]);
     }
     setNewTagInput("");
-  }, [newTagInput, tags, mutation, isSaving]);
+  }, [newTagInput, tags, mutation, writesBlocked]);
 
   // Combine known tags + current tags for the dropdown
   const availableTags = useMemo(() => {
@@ -194,6 +218,14 @@ const TagEditor = ({ projectId, projectName, variant = "grid" }) => {
     return () => observer.disconnect();
   }, [isHeader]);
 
+  useEffect(() => {
+    if (mode !== "inspect" || !focusEditOnReturn.current) return;
+    focusEditOnReturn.current = false;
+    const edit = editButtonRef.current;
+    const target = edit && !edit.disabled ? edit : closeButtonRef.current;
+    target?.focus();
+  }, [mode]);
+
   const resetTransient = () => {
     setSearch("");
     setNewTagInput("");
@@ -215,9 +247,13 @@ const TagEditor = ({ projectId, projectName, variant = "grid" }) => {
   const tagCount = tags.length;
   const countLabel = `${tagCount} ${tagCount === 1 ? "tag" : "tags"}`;
   const subject = projectName ? `project ${projectName}` : "project";
-  let triggerLabel = `View tags for ${subject}, ${countLabel}`;
+  let triggerLabel = isHeader
+    ? `Edit tags, ${countLabel}`
+    : `View tags for ${subject}, ${countLabel}`;
   if (isTagsLoading) triggerLabel = `Tags for ${subject} are loading`;
-  else if (isTagsError) triggerLabel = `Tags for ${subject} are unavailable`;
+  else if (isTagsUnavailable)
+    triggerLabel = `Tags for ${subject} are unavailable`;
+  else if (isTagsStale) triggerLabel += " (couldn't refresh)";
 
   const renderSummary = () => {
     if (isTagsLoading) {
@@ -227,7 +263,7 @@ const TagEditor = ({ projectId, projectName, variant = "grid" }) => {
         </Typography>
       );
     }
-    if (isTagsError) {
+    if (isTagsUnavailable) {
       return (
         <Typography sx={{ fontSize: 10, color: "warning.main" }} noWrap>
           Tags unavailable
@@ -235,17 +271,25 @@ const TagEditor = ({ projectId, projectName, variant = "grid" }) => {
       );
     }
     if (tagCount === 0) {
+      if (isHeader) {
+        // Existing header presentation, unchanged.
+        return (
+          <Box
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              gap: 0.5,
+              color: "text.disabled",
+            }}
+          >
+            <Iconify icon="mdi:tag-plus-outline" width={18} />
+          </Box>
+        );
+      }
       return (
-        <Box
-          sx={{
-            display: "flex",
-            alignItems: "center",
-            gap: 0.5,
-            color: "text.disabled",
-          }}
-        >
-          <Iconify icon="mdi:tag-plus-outline" width={18} />
-        </Box>
+        <Typography sx={{ fontSize: 10, color: "text.disabled" }} noWrap>
+          No tags
+        </Typography>
       );
     }
     if (isHeader) {
@@ -299,6 +343,11 @@ const TagEditor = ({ projectId, projectName, variant = "grid" }) => {
   };
 
   const showBackToTags = mode === "edit" && !isHeader;
+  let editStatusText = "Changes save automatically";
+  if (isSaving) editStatusText = "Saving…";
+  else if (isTagsLoading) editStatusText = "Loading tags… editing paused";
+  else if (isTagsError)
+    editStatusText = "Couldn't refresh tags. Editing paused.";
 
   return (
     <>
@@ -337,10 +386,22 @@ const TagEditor = ({ projectId, projectName, variant = "grid" }) => {
         }}
       >
         {renderSummary()}
+        {isTagsStale && (
+          <Iconify
+            icon="mdi:alert-circle-outline"
+            width={12}
+            title="Couldn't refresh tags"
+            sx={{ color: "warning.main", ml: "auto", flexShrink: 0 }}
+          />
+        )}
         <Iconify
           icon="mdi:chevron-down"
           width={14}
-          sx={{ color: "text.disabled", ml: "auto", flexShrink: 0 }}
+          sx={{
+            color: "text.disabled",
+            ml: isTagsStale ? 0 : "auto",
+            flexShrink: 0,
+          }}
         />
       </Box>
 
@@ -353,6 +414,8 @@ const TagEditor = ({ projectId, projectName, variant = "grid" }) => {
         transformOrigin={{ vertical: "top", horizontal: "left" }}
         slotProps={{
           paper: {
+            role: "dialog",
+            "aria-labelledby": titleId,
             sx: { width: 240, borderRadius: "10px", overflow: "hidden" },
             onClick: (e) => e.stopPropagation(),
           },
@@ -369,13 +432,19 @@ const TagEditor = ({ projectId, projectName, variant = "grid" }) => {
             pb: 0.5,
           }}
         >
-          <Typography sx={{ fontSize: 13, fontWeight: 600 }} noWrap>
-            Tags{!isTagsLoading && !isTagsError ? ` (${tagCount})` : ""}
+          <Typography
+            id={titleId}
+            sx={{ fontSize: 13, fontWeight: 600 }}
+            noWrap
+          >
+            Tags{hasTagData && !isTagsLoading ? ` (${tagCount})` : ""}
           </Typography>
           <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-            {mode === "inspect" && !isTagsLoading && !isTagsError && (
+            {mode === "inspect" && hasTagData && !isTagsLoading && (
               <Button
+                ref={editButtonRef}
                 size="small"
+                disabled={!canMutate}
                 onClick={() => setMode("edit")}
                 sx={{ minWidth: 0, px: 1, fontSize: 11 }}
               >
@@ -386,6 +455,7 @@ const TagEditor = ({ projectId, projectName, variant = "grid" }) => {
               <Button
                 size="small"
                 onClick={() => {
+                  focusEditOnReturn.current = true;
                   setMode("inspect");
                   resetTransient();
                 }}
@@ -395,6 +465,7 @@ const TagEditor = ({ projectId, projectName, variant = "grid" }) => {
               </Button>
             )}
             <IconButton
+              ref={closeButtonRef}
               size="small"
               aria-label="Close"
               onClick={closePopover}
@@ -431,7 +502,9 @@ const TagEditor = ({ projectId, projectName, variant = "grid" }) => {
                   gap: 1,
                 }}
               >
-                Tags unavailable.
+                {isTagsStale
+                  ? "Couldn't refresh tags. Showing the last known tags."
+                  : "Tags unavailable."}
                 <Button size="small" onClick={() => refetchTags()}>
                   Retry
                 </Button>
@@ -451,7 +524,7 @@ const TagEditor = ({ projectId, projectName, variant = "grid" }) => {
               </Typography>
             )}
             {!isTagsLoading &&
-              !isTagsError &&
+              hasTagData &&
               tags.map((tag) => (
                 <Typography
                   key={tag}
@@ -510,7 +583,7 @@ const TagEditor = ({ projectId, projectName, variant = "grid" }) => {
                       gap: 0.5,
                       px: 1,
                       py: 0.25,
-                      cursor: isSaving ? "default" : "pointer",
+                      cursor: writesBlocked ? "default" : "pointer",
                       borderRadius: "4px",
                       "&:hover": { bgcolor: "action.hover" },
                     }}
@@ -518,8 +591,10 @@ const TagEditor = ({ projectId, projectName, variant = "grid" }) => {
                     <Checkbox
                       size="small"
                       checked={checked}
-                      disabled={isSaving}
-                      inputProps={{ "aria-label": tag }}
+                      inputProps={{
+                        "aria-label": tag,
+                        "aria-disabled": writesBlocked,
+                      }}
                       sx={{ p: 0.25, "& .MuiSvgIcon-root": { fontSize: 16 } }}
                     />
                     <Typography sx={{ fontSize: 12, fontWeight: 500, color }}>
@@ -575,7 +650,6 @@ const TagEditor = ({ projectId, projectName, variant = "grid" }) => {
                 fullWidth
                 placeholder="Type new tag and press Enter"
                 value={newTagInput}
-                disabled={isSaving}
                 onChange={(e) => setNewTagInput(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
@@ -583,6 +657,10 @@ const TagEditor = ({ projectId, projectName, variant = "grid" }) => {
                     e.stopPropagation();
                     handleNewTag();
                   }
+                }}
+                inputProps={{
+                  "aria-disabled": writesBlocked,
+                  readOnly: writesBlocked,
                 }}
                 InputProps={{
                   startAdornment: (
@@ -595,11 +673,30 @@ const TagEditor = ({ projectId, projectName, variant = "grid" }) => {
                   sx: { fontSize: 12, height: 32, borderRadius: "6px" },
                 }}
               />
-              <Typography
-                sx={{ mt: 0.5, px: 0.5, fontSize: 10, color: "text.disabled" }}
+              <Box
+                sx={{
+                  mt: 0.5,
+                  px: 0.5,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 1,
+                }}
               >
-                {isSaving ? "Saving…" : "Changes save automatically"}
-              </Typography>
+                <Typography
+                  sx={{
+                    fontSize: 10,
+                    color: canMutate ? "text.disabled" : "warning.main",
+                  }}
+                >
+                  {editStatusText}
+                </Typography>
+                {isTagsError && (
+                  <Button size="small" onClick={() => refetchTags()}>
+                    Retry
+                  </Button>
+                )}
+              </Box>
             </Box>
           </>
         )}
