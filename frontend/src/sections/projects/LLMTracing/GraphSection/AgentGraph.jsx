@@ -565,6 +565,15 @@ const nodeTypes = { agentNode: AgentNode };
 // ---------------------------------------------------------------------------
 // Dagre layout — direction-aware (LR for trace list, TB for trace detail)
 // ---------------------------------------------------------------------------
+
+// Edges into the Stop sentinel only close the drawing; they record no
+// relation between spans. With dagre's default weight of 1, a leaf's distance
+// to its parent and to Stop cost the same, so dagre is free to sink every leaf
+// onto the row above Stop. Parallel siblings then land on different levels
+// and read as a sequence (TH-4321). Weight 0 keeps Stop below the deepest node
+// while each node's level follows its recorded parent alone.
+const STOP_EDGE_LAYOUT = { weight: 0 };
+
 const layoutGraph = (nodes, edges, direction = "LR") => {
   const g = new Dagre.graphlib.Graph().setDefaultEdgeLabel(() => ({}));
   g.setGraph({
@@ -573,15 +582,21 @@ const layoutGraph = (nodes, edges, direction = "LR") => {
     nodesep: 25,
   });
 
+  const stopIds = new Set();
   nodes.forEach((node) => {
     const isSentinel = node.data?.type === "start" || node.data?.type === "end";
+    if (node.data?.type === "end") stopIds.add(node.id);
     g.setNode(node.id, {
       width: isSentinel ? 50 : 140,
       height: isSentinel ? 32 : 44,
     });
   });
   edges.forEach((edge) => {
-    g.setEdge(edge.source, edge.target);
+    if (stopIds.has(edge.target)) {
+      g.setEdge(edge.source, edge.target, { ...STOP_EDGE_LAYOUT });
+    } else {
+      g.setEdge(edge.source, edge.target);
+    }
   });
 
   Dagre.layout(g);
