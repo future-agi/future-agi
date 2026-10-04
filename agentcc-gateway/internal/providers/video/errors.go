@@ -3,6 +3,7 @@ package video
 import (
 	"errors"
 	"fmt"
+	"time"
 )
 
 var (
@@ -21,7 +22,9 @@ type UpstreamError struct {
 	Status          int
 	Code, RequestID string
 	Retryable       bool
-	Body            []byte
+	// RetryAfter preserves provider backoff on non-2xx responses. Zero is absent.
+	RetryAfter time.Duration
+	Body       []byte
 }
 
 func (e *UpstreamError) Error() string { return fmt.Sprintf("video upstream HTTP %d", e.Status) }
