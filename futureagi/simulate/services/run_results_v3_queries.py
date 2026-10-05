@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from collections import Counter, defaultdict
 from typing import Any
 
@@ -51,7 +52,7 @@ from django.db.models.lookups import (
 
 from model_hub.models.develop_dataset import Cell
 from simulate.models import CallExecution, SimulateEvalConfig, TestExecution
-from simulate.models.hosted_harness import HostedHarnessScenario
+from simulate.models.hosted_harness import HostedHarnessJob, HostedHarnessScenario
 from simulate.semantics import SupportedProviders
 from simulate.services.harness_scenarios import GROUP_BY as SCENARIO_GROUP_BY
 from simulate.services.harness_scenarios import level_label
@@ -63,11 +64,15 @@ from simulate.services.run_results_v3_expressions import (
     PercentileCont,
     _json_text,
     _safe_json_float,
+    project_annotation,
 )
 from simulate.services.run_results_v3_scoring import (
     EvalScoringSpec,
     resolve_eval_scoring_spec,
+    warn_invalid_eval_threshold,
 )
+
+ALL_ROWS = sys.maxsize
 
 OUTCOMES = tuple(OUTCOME_LABELS)
 # Outcomes that judge the agent. Errored and inconclusive calls never ran to a verdict,
@@ -112,6 +117,43 @@ def _json_value(field: str | Expression, *keys: str):
     for key in keys:
         expression = KeyTransform(key, expression)
     return expression
+
+
+# The rows show the authored scenario's sub-goals when the call carries none of
+# its own (see ``build_call_rows``), so the filter and facets read the same way.
+_NO_RESULT_SUB_GOALS = (
+    Q(call_metadata__hosted_harness_receipt__sub_goals__isnull=True)
+    | Q(call_metadata__hosted_harness_receipt__sub_goals=[])
+) & (Q(call_metadata__sub_goals__isnull=True) | Q(call_metadata__sub_goals=[]))
+
+
+def _authored_sub_goal_q(value: Any) -> Q:
+    """Match a call whose linked scenario lists ``value`` as a sub-goal.
+
+    A trial's source scenario wins over a registration, as in the rows.
+    """
+    execution = "hosted_harness_execution__source_scenario__sub_goals"
+    registration = "hosted_registration__sub_goals"
+    return (
+        Q(**{f"{execution}__contains": [value]})
+        | Q(**{f"{execution}__contains": [{"name": value}]})
+        | (
+            Q(hosted_harness_execution__isnull=True)
+            & (
+                Q(**{f"{registration}__contains": [value]})
+                | Q(**{f"{registration}__contains": [{"name": value}]})
+            )
+        )
+    )
+
+
+def _authored_sub_goals_expression():
+    empty = Value([], output_field=JSONField())
+    return Coalesce(
+        NullIf(F("hosted_harness_execution__source_scenario__sub_goals"), empty),
+        NullIf(F("hosted_registration__sub_goals"), empty),
+        output_field=JSONField(),
+    )
 
 
 def _eval_verdict_q(eval_ids: set[str], values: list[Any]) -> Q:
@@ -282,6 +324,32 @@ def _expanded_eval_score(
         ),
         output_field=FloatField(),
     )
+    if spec is None:
+        object_score = _json_value(field, eval_id, "output", "score")
+        selected_score = Case(
+            When(
+                Exact(
+                    Func(output, function="jsonb_typeof", output_field=TextField()),
+                    Value("object"),
+                ),
+                then=Case(
+                    When(
+                        Exact(
+                            Func(
+                                object_score,
+                                function="jsonb_typeof",
+                                output_field=TextField(),
+                            ),
+                            Value("number"),
+                        ),
+                        then=numeric_score,
+                    ),
+                    output_field=FloatField(),
+                ),
+            ),
+            default=selected_score,
+            output_field=FloatField(),
+        )
     return Case(
         When(
             ~_eval_measured_q(eval_id, field),
@@ -348,29 +416,16 @@ def _eval_score(eval_id: str, spec: EvalScoringSpec | None = None):
     )
 
 
-def _configured_eval_verdict(eval_id: str, config: SimulateEvalConfig):
-    spec = resolve_eval_scoring_spec(config)
-    raw_score = _eval_score(eval_id, spec)
-    if spec.output_type != "pass_fail":
-        score = Value(1.0) - raw_score if spec.reverse_output else raw_score
-        # Raw scores already exclude missing and unmeasured evaluations.
-        passed = Q(
-            Case(
-                When(
-                    GreaterThanOrEqual(score, Value(spec.threshold)), then=Value(True)
-                ),
-                default=Value(False),
-                output_field=BooleanField(),
-            )
-        )
-        failed = Q(
-            Case(
-                When(LessThan(score, Value(spec.threshold)), then=Value(True)),
-                default=Value(False),
-                output_field=BooleanField(),
-            )
-        )
-        return score, passed, failed
+def _configured_eval_verdict(
+    eval_id: str, config: SimulateEvalConfig, spec: EvalScoringSpec | None = None
+):
+    if spec is None:
+        spec = resolve_eval_scoring_spec(config)
+    raw_score = (
+        _eval_score(eval_id, spec)
+        if spec.threshold is not None
+        else Value(None, output_field=FloatField())
+    )
     final_pass = Q(
         Exact(
             Lower(Trim(_json_text("eval_outputs", eval_id, "output"))),
@@ -393,6 +448,15 @@ def _configured_eval_verdict(eval_id: str, config: SimulateEvalConfig):
             Value(True, output_field=JSONField()),
         )
     )
+    if spec.output_type != "pass_fail":
+        stored_verdict = Q(
+            In(
+                Lower(Trim(_json_text("eval_outputs", eval_id, "output_type"))),
+                ["pass/fail", "pass_fail"],
+            )
+        )
+        final_pass &= stored_verdict
+        final_fail &= stored_verdict
     measured = _eval_measured_q(eval_id)
     score = Case(
         When(~measured, then=Value(None, output_field=FloatField())),
@@ -401,11 +465,23 @@ def _configured_eval_verdict(eval_id: str, config: SimulateEvalConfig):
         default=Value(1.0) - raw_score if spec.reverse_output else raw_score,
         output_field=FloatField(),
     )
+    if spec.threshold is None:
+        return score, measured & final_pass, measured & final_fail
+    raw_pass = (
+        GreaterThan(raw_score, Value(0.0))
+        if spec.output_type == "pass_fail"
+        else GreaterThanOrEqual(raw_score, Value(spec.threshold))
+    )
+    raw_fail = (
+        LessThanOrEqual(raw_score, Value(0.0))
+        if spec.output_type == "pass_fail"
+        else LessThan(raw_score, Value(spec.threshold))
+    )
     passed = measured & Q(
         Case(
             When(final_pass, then=Value(True)),
             When(final_fail, then=Value(False)),
-            default=GreaterThanOrEqual(score, Value(spec.threshold)),
+            default=raw_fail if spec.reverse_output else raw_pass,
             output_field=BooleanField(),
         )
     )
@@ -413,11 +489,52 @@ def _configured_eval_verdict(eval_id: str, config: SimulateEvalConfig):
         Case(
             When(final_fail, then=Value(True)),
             When(final_pass, then=Value(False)),
-            default=LessThan(score, Value(spec.threshold)),
+            default=raw_pass if spec.reverse_output else raw_fail,
             output_field=BooleanField(),
         )
     )
     return score, passed, failed
+
+
+class _NativeHarnessVerdict(Func):
+    """Judge template-less harness checks using the call-row verdict rules."""
+
+    output_field = BooleanField()
+
+    def __init__(self, configured_ids: list[str], verdict: str):
+        super().__init__(
+            F("eval_outputs"), Value(configured_ids, output_field=JSONField())
+        )
+        self.verdict = verdict
+
+    def as_sql(self, compiler, connection, **extra_context):
+        source_sql, source_params = compiler.compile(self.source_expressions[0])
+        ids_sql, ids_params = compiler.compile(self.source_expressions[1])
+        status_sql = "lower(btrim(COALESCE(check_result.value->>'status', '')))"
+        if self.verdict == "error":
+            condition = f"{status_sql} IN ('error', 'failed')"
+            verdict_params = []
+        else:
+            tokens = (
+                ["pass", "passed", "true", "success", "successful"]
+                if self.verdict == "passed"
+                else ["fail", "failed", "false", "failure", "unsuccessful"]
+            )
+            condition = (
+                f"{status_sql} NOT IN ('pending', 'skipped', 'error', 'failed') "
+                "AND jsonb_typeof(check_result.value->'output') IN ('string', 'boolean') "
+                "AND lower(btrim(check_result.value->>'output')) = ANY(%s)"
+            )
+            verdict_params = [tokens]
+        sql = (
+            "EXISTS (SELECT 1 FROM jsonb_each("
+            f"CASE WHEN jsonb_typeof({source_sql}) = 'object' "
+            f"THEN {source_sql} ELSE '{{}}'::jsonb END) AS check_result(key, value) "
+            "WHERE jsonb_typeof(check_result.value) = 'object' "
+            "AND check_result.value->>'source' = 'harness' "
+            f"AND NOT ({ids_sql} ? check_result.key) AND {condition})"
+        )
+        return sql, [*source_params, *source_params, *ids_params, *verdict_params]
 
 
 def run_calls_queryset(
@@ -433,10 +550,17 @@ def run_calls_queryset(
     errored_eval = Q(pk__in=[])
     for config in live_configs:
         eval_id = str(config.id)
-        _, passed_q, failed_q = _configured_eval_verdict(eval_id, config)
+        spec = resolve_eval_scoring_spec(config)
+        warn_invalid_eval_threshold(config, spec)
+        _, passed_q, failed_q = _configured_eval_verdict(eval_id, config, spec)
         failed_eval |= failed_q
         passed_eval |= passed_q
         errored_eval |= _eval_errored_q(eval_id)
+
+    configured_ids = [str(config.id) for config in live_configs]
+    failed_eval |= Q(_NativeHarnessVerdict(configured_ids, "failed"))
+    passed_eval |= Q(_NativeHarnessVerdict(configured_ids, "passed"))
+    errored_eval |= Q(_NativeHarnessVerdict(configured_ids, "error"))
 
     # The common hosted-harness fields live in JSONB today. These annotations
     # keep filtering, grouping, ordering and aggregation inside PostgreSQL while
@@ -463,12 +587,24 @@ def run_calls_queryset(
     # A hosted call's use case, sub-goals, persona and coverage live on its
     # authored scenario: linked to the call on a direct run, or found by the
     # call's scenario key on the run's own job or its parent environment.
-    own_run = Q(job__test_execution_id=OuterRef("test_execution_id"))
-    own_environment = Q(
-        job__simulation_runs__test_execution_id=OuterRef("test_execution_id")
-    )
+    # The jobs are resolved here, once, so each per-call lookup is a
+    # (job, scenario_key) index hit. Keys repeat on every run of an
+    # environment, so matching the key first and joining back to the run
+    # scanned the job table for every call.
+    own_run = Q(pk__in=[])
+    own_environment = Q(pk__in=[])
+    run_jobs = HostedHarnessJob.all_objects.filter(
+        test_execution_id__in=(
+            execution_ids if execution_ids is not None else [execution.id]
+        )
+    ).values_list("test_execution_id", "id", "environment_id")
+    for run_id, job_id, environment_id in run_jobs:
+        this_run = Exact(OuterRef("test_execution_id"), Value(run_id))
+        own_run |= Q(this_run, job_id=job_id)
+        if environment_id:
+            own_environment |= Q(this_run, job_id=environment_id)
     authored = (
-        HostedHarnessScenario.no_workspace_objects.filter(
+        HostedHarnessScenario.all_objects.filter(
             Q(call_execution_id=OuterRef("pk"))
             | Q(own_run | own_environment, scenario_key=OuterRef("result_scenario_key"))
         )
@@ -611,42 +747,37 @@ def run_calls_queryset(
             Cast("row_id", TextField()),
             output_field=CharField(),
         ),
-        # One CSAT per call on the 0-10 scale. The scorer's own value comes first.
-        # overall_score is accepted only above 1: the voice CSAT step falls back to the
-        # provider's 0/1 success flag in that field, and 1.0 cannot be told apart.
-        result_csat=Coalesce(
-            Case(
-                When(
-                    Q(
-                        GreaterThanOrEqual(
-                            _safe_json_float("conversation_metrics_data", "csat_score"),
-                            Value(0.0),
-                        )
+        result_csat=Case(
+            When(
+                Q(
+                    GreaterThanOrEqual(
+                        _safe_json_float("conversation_metrics_data", "csat_score"),
+                        Value(0.0),
                     )
-                    & Q(
-                        LessThanOrEqual(
-                            _safe_json_float("conversation_metrics_data", "csat_score"),
-                            Value(10.0),
-                        )
-                    ),
-                    then=_safe_json_float("conversation_metrics_data", "csat_score"),
+                )
+                & Q(
+                    LessThanOrEqual(
+                        _safe_json_float("conversation_metrics_data", "csat_score"),
+                        Value(10.0),
+                    )
                 ),
-                default=None,
-                output_field=FloatField(),
+                then=_safe_json_float("conversation_metrics_data", "csat_score"),
             ),
-            Case(
-                When(
-                    overall_score__gt=1,
-                    overall_score__lte=10,
-                    then=F("overall_score"),
-                ),
-                default=None,
-                output_field=FloatField(),
-            ),
+            default=None,
             output_field=FloatField(),
         ),
     )
-    return queryset.select_related("scenario", "test_execution__agent_definition")
+    return project_annotation(queryset, "result_outcome").select_related(
+        "scenario", "test_execution__agent_definition"
+    )
+
+
+def run_call_rows_queryset(queryset: QuerySet) -> QuerySet:
+    """Keep SQL verdicts for filtering; call-row serialization judges each row."""
+    return queryset.alias(
+        result_outcome=F("result_outcome"),
+        result_eval_outcome=F("result_eval_outcome"),
+    )
 
 
 def apply_run_call_query(queryset: QuerySet, query: dict[str, Any]) -> QuerySet:
@@ -682,6 +813,7 @@ def apply_run_call_query(queryset: QuerySet, query: dict[str, Any]) -> QuerySet:
             )
             sub_goal_query |= Q(call_metadata__sub_goals__contains=[value])
             sub_goal_query |= Q(call_metadata__sub_goals__contains=[{"name": value}])
+            sub_goal_query |= _NO_RESULT_SUB_GOALS & _authored_sub_goal_q(value)
         queryset = queryset.filter(sub_goal_query)
 
     group_by = query.get("group_by")
@@ -774,8 +906,9 @@ def _summary_from_values(values: dict[str, Any]) -> dict[str, Any]:
 def summarize_run_calls(
     queryset: QuerySet, include_percentiles: bool = True
 ) -> dict[str, Any]:
+    rows = queryset.order_by()[:ALL_ROWS]
     return _summary_from_values(
-        queryset.aggregate(**_aggregate_expressions(include_percentiles))
+        rows.aggregate(**_aggregate_expressions(include_percentiles))
     )
 
 
@@ -798,8 +931,15 @@ def run_call_facets(
         queryset.order_by()
         .annotate(
             result_sub_goals=Coalesce(
-                _json_value("call_metadata", "hosted_harness_receipt", "sub_goals"),
-                _json_value("call_metadata", "sub_goals"),
+                NullIf(
+                    _json_value("call_metadata", "hosted_harness_receipt", "sub_goals"),
+                    Value([], output_field=JSONField()),
+                ),
+                NullIf(
+                    _json_value("call_metadata", "sub_goals"),
+                    Value([], output_field=JSONField()),
+                ),
+                _authored_sub_goals_expression(),
                 Value([], output_field=JSONField()),
                 output_field=JSONField(),
             )
@@ -830,15 +970,34 @@ def group_run_calls(
     group_by: str | None,
     page_rows: list[dict[str, Any]],
     columns: list[dict[str, str]],
+    *,
+    execution: TestExecution,
 ) -> list[dict[str, Any]]:
     if group_by not in GROUP_FIELDS or not page_rows:
         return []
     field = GROUP_FIELDS[group_by]
     expressions = _aggregate_expressions(include_percentiles=False)
+    expressions["stop_latency_average"] = Avg("avg_stop_time_after_interruption_ms")
+    expressions["ai_interruptions_average"] = Avg("ai_interruption_count")
+    scoring_configs = (
+        {
+            str(config.id): config
+            for config in SimulateEvalConfig.objects.filter(
+                run_test=execution.run_test, deleted=False
+            ).select_related("eval_template")
+        }
+        if columns
+        else {}
+    )
 
     for index, column in enumerate(columns):
         eval_id = str(column["id"])
-        score = _eval_score(eval_id)
+        config = scoring_configs.get(eval_id)
+        score = (
+            _configured_eval_verdict(eval_id, config)[0]
+            if config is not None
+            else _eval_score(eval_id)
+        )
         expressions[f"eval_{index}_average"] = Avg(score)
         expressions[f"eval_{index}_scored"] = Count(score)
     page_ids = [str(row["id"]) for row in page_rows]
@@ -899,6 +1058,8 @@ def group_run_calls(
                     "csat": values.get("csat_average"),
                     "turns": values.get("turns_average"),
                     "latency_ms": summary["latency"]["average"],
+                    "avg_stop_time_after_interruption": values.get("stop_latency_average"),
+                    "ai_interruptions": values.get("ai_interruptions_average"),
                     "tokens": summary["tokens"]["total_value"],
                     "evaluations": evaluation_aggregates,
                 },
@@ -961,9 +1122,7 @@ def build_run_comparison(
         labels: dict[str, str] = {}
         for scenario_key, scenario_label, outcome in (
             calls.order_by()
-            .values_list(
-                "result_scenario_key", "result_scenario", "result_outcome"
-            )
+            .values_list("result_scenario_key", "result_scenario", "result_outcome")
             .iterator(chunk_size=2000)
         ):
             key = str(scenario_key)

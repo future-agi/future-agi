@@ -14,6 +14,7 @@ import tarfile
 import tempfile
 import time
 import uuid
+import zlib
 from collections.abc import Callable, Iterable, Mapping
 from contextlib import contextmanager, nullcontext
 from datetime import timedelta
@@ -345,13 +346,9 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
         # whatever the scenario asked for, because the simulator reads them from its environment.
         "ALK_BACKGROUND_NOISE",
         "HARNESS_BACKGROUND_NOISE_VOLUME",
+        "HARNESS_CALLER_BARGE_IN_RATE",
         # Off has to travel: decided here, enforced inside the sandbox.
         "ALK_VOICEMAIL_SCENARIOS",
-        # Temporary Cab Guest Booking POC authoring policy. These values are read only from
-        # deployment configuration and travel on the platform simulator-secret channel; they
-        # never come from the customer's RL-environment values.
-        "ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER",
-        "ALK_CAB_GUEST_POC_PIN",
         "ALK_HARNESS_WORKERS_AT_ONCE",
         "ALK_VALIDATION_INSTANCES",
     ):
@@ -374,6 +371,25 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
     if credential_bytes is not None:
         values["GOOGLE_APPLICATION_CREDENTIALS"] = _SIMULATOR_VERTEX_CREDENTIALS_PATH
     return values, credential_bytes
+
+
+def _add_scoped_guest_pin_policy(values: dict[str, str], job: HostedHarnessJob) -> bool:
+    """Release the private POC policy only for its exact phone target."""
+    target = str(os.environ.get("ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER") or "").strip()
+    pin = str(os.environ.get("ALK_CAB_GUEST_POC_PIN") or "").strip()
+    agent = (job.payload or {}).get("agent") or {}
+    config = agent.get("config") or {}
+    submitted_target = str(config.get("phone_number") or "").strip()
+    if (
+        str(agent.get("connector") or "").strip().lower() != "phone"
+        or submitted_target != target
+        or not target
+        or not pin
+    ):
+        return False
+    values["ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER"] = target
+    values["ALK_CAB_GUEST_POC_PIN"] = pin
+    return True
 
 
 def _scenario_delta(instruction: str) -> int | None:
@@ -423,7 +439,9 @@ def _adjustment_stage(instruction: str, current_stage: str) -> str:
     }.get(current_stage, "scenarios")
 
 
-def _scenarios_cli_command(*, name: str, count: int, guidance: list[str]) -> str:
+def _scenarios_cli_command(
+    *, name: str, count: int, guidance: list[str], include_job: bool = False
+) -> str:
     """A non-interactive invocation of the harness's own scenario CLI against the reused
     ``/work/authoring``: reach exactly ``count`` scenarios, preserving existing ones, steered
     by ``guidance``. Uses the harness's public CLI contract (``alk-harness scenarios``) rather
@@ -436,6 +454,8 @@ def _scenarios_cli_command(*, name: str, count: int, guidance: list[str]) -> str
         f"--count {int(count)}",
         "--once",
     ]
+    if include_job:
+        parts.insert(-1, "--job /work/job.json")
     for item in guidance:
         text = str(item).strip()
         if text:
@@ -443,7 +463,9 @@ def _scenarios_cli_command(*, name: str, count: int, guidance: list[str]) -> str
     return " ".join(parts)
 
 
-def _hosted_scenario_repair_command(*, name: str, expected: int, actual: int) -> str:
+def _hosted_scenario_repair_command(
+    *, name: str, expected: int, actual: int, include_job: bool = False
+) -> str:
     """Non-interactive scenario-only repair: reach the exact ``expected`` count, preserving
     existing coverage, so Bundle V2's exact-cardinality gate is satisfied without a privileged
     in-sandbox updater."""
@@ -458,14 +480,19 @@ def _hosted_scenario_repair_command(*, name: str, expected: int, actual: int) ->
             f"Exactly {expected} scenarios are required, but {actual} are saved. "
             f"Remove exactly {-delta} excess scenario(s), preserving the strongest coverage."
         )
-    return _scenarios_cli_command(name=name, count=expected, guidance=[instruction])
+    return _scenarios_cli_command(
+        name=name,
+        count=expected,
+        guidance=[instruction],
+        include_job=include_job,
+    )
 
 
 _SCENARIO_EXTEND_REPAIR_PASSES = 2
 
 
 def _hosted_scenario_extend_command(
-    *, name: str, target_count: int, guidance: list[str]
+    *, name: str, target_count: int, guidance: list[str], include_job: bool = False
 ) -> str:
     """Chat-driven 'add N scenarios': re-run scenario generation against the reused world to
     reach ``target_count`` total, preserving existing scenarios, steered by the caller's
@@ -479,7 +506,9 @@ def _hosted_scenario_extend_command(
     archive) could never do.
     """
     target = int(target_count)
-    extend = _scenarios_cli_command(name=name, count=target, guidance=guidance)
+    extend = _scenarios_cli_command(
+        name=name, count=target, guidance=guidance, include_job=include_job
+    )
     repair = _scenarios_cli_command(
         name=name,
         count=target,
@@ -488,6 +517,7 @@ def _hosted_scenario_extend_command(
             f"scenario exactly and add only new distinct validated scenarios until exactly "
             f"{target} are saved."
         ],
+        include_job=include_job,
     )
     passes = " ".join(str(i) for i in range(1, _SCENARIO_EXTEND_REPAIR_PASSES + 1))
     return (
@@ -497,10 +527,13 @@ def _hosted_scenario_extend_command(
     )
 
 
-def _extend_command_for(job: HostedHarnessJob, payload: dict) -> str | None:
+def _extend_command_for(
+    job: HostedHarnessJob, payload: dict, *, include_job: bool = False
+) -> str | None:
     """Return the reused-authoring scenario-extension CLI command when the job carries a
     pending chat-driven 'add scenarios' request (a target count), else None for a normal run.
-    Guidance is optional — the count alone drives the add; guidance only steers the new ones."""
+    Guidance is optional — the count alone drives the add; guidance only steers the new ones.
+    """
     extend = (payload.get("metadata") or {}).get("scenario_extend")
     if not extend:
         return None
@@ -516,7 +549,10 @@ def _extend_command_for(job: HostedHarnessJob, payload: dict) -> str | None:
         or "agent"
     )
     return _hosted_scenario_extend_command(
-        name=name, target_count=int(target_count), guidance=guidance
+        name=name,
+        target_count=int(target_count),
+        guidance=guidance,
+        include_job=include_job,
     )
 
 
@@ -1603,6 +1639,7 @@ class HostedHarnessGateway:
         # Authoring reaches only the model provider and the source host - never the target
         # (LiveKit/Deepgram) media secrets, which belong to the execution sandbox alone.
         simulator_env, simulator_vertex_credentials = _platform_simulator_material()
+        guest_pin_policy_released = _add_scoped_guest_pin_policy(simulator_env, job)
         project_id = str(simulator_env.get("GOOGLE_CLOUD_PROJECT") or "")
 
         # Authoring reaches the source host, the authoring model provider (Vertex/Claude), and
@@ -1791,6 +1828,7 @@ class HostedHarnessGateway:
                             ),
                             expected=job.scenario_count,
                             actual=produced,
+                            include_job=guest_pin_policy_released,
                         )
                         repair = sandbox.process.exec(
                             repair_command,
@@ -1863,12 +1901,16 @@ class HostedHarnessGateway:
             # Resolve cached authoring created before connector resolution shipped as well as
             # newly-authored jobs. This must happen before network policy and job.json are built.
             payload = resolve_authored_connector(payload, authoring_archive)
+        simulator_env, simulator_vertex_credentials = _platform_simulator_material()
+        guest_pin_policy_released = _add_scoped_guest_pin_policy(simulator_env, job)
         # A chat-driven "add N scenarios" request replays the frozen world but re-runs
         # scenario-gen (extend) against it. The marker persists across infra retries and is
         # cleared only once the extended authoring is stored (store_authoring_archive), so a
         # mid-flight retry re-extends to the same total instead of replaying the old set.
         extend_command = (
-            _extend_command_for(job, payload) if authoring_archive is not None else None
+            _extend_command_for(job, payload, include_job=guest_pin_policy_released)
+            if authoring_archive is not None
+            else None
         )
         source = dict(payload["source"])
         if source["kind"] == "github":
@@ -1880,7 +1922,6 @@ class HostedHarnessGateway:
         # Bundle authoring is performed inside the sandbox. The platform sends source plus any
         # frozen authoring inputs; it does not select or execute a host-side bundle.
         secrets_map = PlatformSecretResolver().resolve(job)
-        simulator_env, simulator_vertex_credentials = _platform_simulator_material()
         authoring_target_secrets, _authoring_connector = (
             _provider_import_authoring_material(job, payload)
             if authoring_archive is None
@@ -2113,6 +2154,8 @@ class HostedHarnessGateway:
                     "ALK_CLAUDE_GATEWAY_API_KEY",
                     "ALK_VERTEX_LOCATION",
                     "ALK_VOICEMAIL_SCENARIOS",
+                    "ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER",
+                    "ALK_CAB_GUEST_POC_PIN",
                     "GOOGLE_APPLICATION_CREDENTIALS",
                     "GOOGLE_CLOUD_LOCATION",
                     "GOOGLE_CLOUD_PROJECT",
@@ -2261,6 +2304,7 @@ class HostedHarnessGateway:
     ) -> HostedHarnessConversationLease:
         """Start the conversation process beside the job's existing harness process."""
         simulator_env, simulator_vertex_credentials = _platform_simulator_material()
+        _add_scoped_guest_pin_policy(simulator_env, job)
         capability = issue_conversation_capability(
             conversation,
             endpoint_base_url=endpoint_base_url,
@@ -2284,6 +2328,22 @@ class HostedHarnessGateway:
             sandbox.fs.upload_file(
                 simulator_vertex_credentials,
                 _SIMULATOR_VERTEX_CREDENTIALS_PATH,
+            )
+        environment = job.environment or job
+        basis = str(
+            ((environment.payload or {}).get("metadata") or {}).get(
+                "authoring_revision"
+            )
+            or ""
+        )
+        if basis:
+            sandbox.fs.upload_file(
+                json.dumps(
+                    {"authoring_revision": basis},
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8"),
+                f"/work/authoring/{AUTHORING_BASIS_FILE}",
             )
         prepared = sandbox.process.exec(
             "mkdir -p /work/authoring && "
@@ -2310,6 +2370,8 @@ class HostedHarnessGateway:
                 "ALK_CLAUDE_GATEWAY_URL",
                 "ALK_CLAUDE_GATEWAY_API_KEY",
                 "CLAUDE_CODE_USE_VERTEX",
+                "ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER",
+                "ALK_CAB_GUEST_POC_PIN",
                 "CLOUD_ML_REGION",
                 "GOOGLE_APPLICATION_CREDENTIALS",
                 "GOOGLE_CLOUD_LOCATION",
@@ -2531,11 +2593,22 @@ class HostedHarnessGateway:
         workspace_archive = load_workspace_archive(conversation)
         if workspace_archive is None:
             workspace_archive = _authoring_archive_for(job)
+            if workspace_archive is not None:
+                environment = job.environment or job
+                basis = str(
+                    ((environment.payload or {}).get("metadata") or {}).get(
+                        "authoring_revision"
+                    )
+                    or ""
+                )
+                if basis:
+                    workspace_archive = with_authoring_basis(workspace_archive, basis)
         control_only = workspace_archive is None
         if workspace_archive is None:
             workspace_archive = _empty_workspace_archive()
         source_archive, _commit_sha = HostedSourceAcquirer().acquire(job)
         simulator_env, simulator_vertex_credentials = _platform_simulator_material()
+        _add_scoped_guest_pin_policy(simulator_env, job)
         platform_host = _hostname_from_url(endpoint_base_url)
         allowed_domains = _resolved_egress_domains(
             job.payload,
@@ -2625,6 +2698,8 @@ class HostedHarnessGateway:
                     "ALK_CLAUDE_GATEWAY_URL",
                     "ALK_CLAUDE_GATEWAY_API_KEY",
                     "CLAUDE_CODE_USE_VERTEX",
+                    "ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER",
+                    "ALK_CAB_GUEST_POC_PIN",
                     "CLOUD_ML_REGION",
                     "GOOGLE_APPLICATION_CREDENTIALS",
                     "GOOGLE_CLOUD_LOCATION",
@@ -3225,13 +3300,6 @@ class HostedHarnessGateway:
         into ``evidence_undeliverable``.
         """
 
-        from simulate.services.hosted_harness_ingestion import (
-            ingest_artifact,
-            ingest_event_batch,
-            ingest_manifest,
-            ingest_result_receipt,
-        )
-
         sandbox = self.client.get(
             str(attempt.provider_ref), request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS
         )
@@ -3242,55 +3310,104 @@ class HostedHarnessGateway:
         )
         if packed.exit_code:
             return False
-        body = sandbox.fs.download_file("/tmp/offline-outbound.tar.gz", 180)
         max_bytes = int(attempt.job.max_artifact_bytes * 1.1) + 16 * 1024 * 1024
-        if len(body) > max_bytes:
-            raise HostedHarnessError(
-                "offline_delivery_too_large",
-                "offline outbound archive exceeds the job artifact budget",
-                status_code=413,
-                retryable=False,
+        # Recordings can make the spool many GiB: keep it on disk, never in worker memory.
+        # Inflate while downloading so replay can read members in any order; every backward
+        # seek in a gzip stream would re-inflate it from the first byte.
+        with tempfile.TemporaryFile() as tar:
+            chunks = sandbox.fs.download_file_stream(
+                "/tmp/offline-outbound.tar.gz", 180
             )
+            inflater = zlib.decompressobj(wbits=zlib.MAX_WBITS | 16)
+            received = 0
+            inflated = 0
+            try:
+                for chunk in chunks:
+                    received += len(chunk)
+                    if received > max_bytes:
+                        raise HostedHarnessError(
+                            "offline_delivery_too_large",
+                            "offline outbound archive exceeds the job artifact budget",
+                            status_code=413,
+                            retryable=False,
+                        )
+                    while chunk:
+                        block = inflater.decompress(chunk, 1024 * 1024)
+                        chunk = inflater.unconsumed_tail
+                        if inflater.unused_data:
+                            # `tar -czf` writes one gzip member; anything after it would
+                            # be dropped from replay and pile up in memory.
+                            raise ValueError(
+                                "offline outbound archive has data after its gzip stream"
+                            )
+                        inflated += len(block)
+                        if inflated > max_bytes:
+                            raise HostedHarnessError(
+                                "offline_delivery_too_large",
+                                "inflated offline outbound archive exceeds the job artifact budget",
+                                status_code=413,
+                                retryable=False,
+                            )
+                        tar.write(block)
+            finally:
+                close = getattr(chunks, "close", None)
+                if close is not None:
+                    close()
+            if not inflater.eof:
+                raise EOFError("offline outbound archive is truncated")
+            tar.seek(0)
+            with tarfile.open(fileobj=tar, mode="r:") as archive:
+                return self._replay_offline_spool(attempt, archive, max_bytes)
 
-        files: dict[str, bytes] = {}
+    def _replay_offline_spool(
+        self, attempt: HostedHarnessAttempt, archive: tarfile.TarFile, max_bytes: int
+    ) -> bool:
+        from simulate.services.hosted_harness_ingestion import (
+            ingest_artifact,
+            ingest_event_batch,
+            ingest_manifest,
+            ingest_result_receipt,
+        )
+
+        members: dict[str, tarfile.TarInfo] = {}
         expanded = 0
-        with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as archive:
-            for member in archive.getmembers():
-                path = Path(member.name)
-                if (
-                    not member.isfile()
-                    or path.is_absolute()
-                    or ".." in path.parts
-                    or not path.parts
-                    or path.parts[0] != "outbound-spool"
-                ):
-                    continue
-                expanded += member.size
-                if expanded > max_bytes:
-                    raise HostedHarnessError(
-                        "offline_delivery_too_large",
-                        "expanded offline outbound archive exceeds the job artifact budget",
-                        status_code=413,
-                        retryable=False,
-                    )
-                stream = archive.extractfile(member)
-                if stream is not None:
-                    files[path.as_posix()] = stream.read()
+        for member in archive.getmembers():
+            path = Path(member.name)
+            if (
+                not member.isfile()
+                or path.is_absolute()
+                or ".." in path.parts
+                or not path.parts
+                or path.parts[0] != "outbound-spool"
+            ):
+                continue
+            expanded += member.size
+            if expanded > max_bytes:
+                raise HostedHarnessError(
+                    "offline_delivery_too_large",
+                    "expanded offline outbound archive exceeds the job artifact budget",
+                    status_code=413,
+                    retryable=False,
+                )
+            members[path.as_posix()] = member
+
+        def read(name: str) -> bytes:
+            stream = archive.extractfile(members[name])
+            return stream.read() if stream is not None else b""
 
         def json_file(name: str) -> dict[str, Any]:
-            value = json.loads(files[name].decode("utf-8"))
+            value = json.loads(read(name).decode("utf-8"))
             if not isinstance(value, dict):
                 raise ValueError(f"{name} must contain an object")
             return value
 
         artifact_prefix = "outbound-spool/artifacts/"
         recovered_by_scenario: dict[str, list[str]] = {}
-        for name in sorted(files):
+        for name in sorted(members):
             if not name.startswith(artifact_prefix) or not name.endswith(".json"):
                 continue
             metadata = json_file(name)
             digest = str(metadata["digest"])
-            artifact_body = files[f"{artifact_prefix}{digest}.bin"]
             ingest_artifact(
                 attempt,
                 digest=digest,
@@ -3298,13 +3415,14 @@ class HostedHarnessGateway:
                 size=int(metadata["size"]),
                 content_type=str(metadata["content_type"]),
                 scenario_key=metadata.get("scenario_key"),
-                stream=io.BytesIO(artifact_body),
+                stream=archive.extractfile(members[f"{artifact_prefix}{digest}.bin"]),
             )
             recovered_by_scenario.setdefault(metadata.get("scenario_key"), []).append(
                 digest
             )
 
-        events_body = files.get("outbound-spool/events.spool.jsonl", b"")
+        events_name = "outbound-spool/events.spool.jsonl"
+        events_body = read(events_name) if events_name in members else b""
         events = [
             json.loads(line)
             for line in events_body.decode("utf-8").splitlines()
@@ -3314,20 +3432,24 @@ class HostedHarnessGateway:
             ingest_event_batch(attempt, events[offset : offset + 100])
 
         receipt_prefix = "outbound-spool/receipts/"
-        for name in sorted(files):
-            if name.startswith(receipt_prefix) and name.endswith(".json"):
-                receipt = json_file(name)
-                ingest_result_receipt(
-                    attempt,
-                    receipt,
-                    digest_body=receipt,
-                    recovered_artifact_ids=recovered_by_scenario.get(
-                        receipt.get("scenario_key"), []
-                    ),
-                )
+        receipts = [
+            name
+            for name in sorted(members)
+            if name.startswith(receipt_prefix) and name.endswith(".json")
+        ]
+        for name in receipts:
+            receipt = json_file(name)
+            ingest_result_receipt(
+                attempt,
+                receipt,
+                digest_body=receipt,
+                recovered_artifact_ids=recovered_by_scenario.get(
+                    receipt.get("scenario_key"), []
+                ),
+            )
 
         manifest_name = "outbound-spool/manifest.json"
-        if manifest_name not in files:
+        if manifest_name not in members:
             return False
         manifest = json_file(manifest_name)
         ingest_manifest(attempt, manifest, digest_body=manifest)
@@ -3335,13 +3457,10 @@ class HostedHarnessGateway:
             "recovered offline hosted delivery attempt=%s events=%s receipts=%s artifacts=%s",
             attempt.id,
             len(events),
-            sum(
-                name.startswith(receipt_prefix) and name.endswith(".json")
-                for name in files
-            ),
+            len(receipts),
             sum(
                 name.startswith(artifact_prefix) and name.endswith(".json")
-                for name in files
+                for name in members
             ),
         )
         return True
@@ -4620,6 +4739,76 @@ def authoring_stage_outputs_from_archive(
     )
 
 
+def authoring_content_digest(body: bytes) -> str:
+    """Stable revision of files a Run can consume, ignoring chat-only state."""
+    entries: list[tuple[str, bytes]] = []
+    with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as archive:
+        for member in archive.getmembers():
+            parts = _archive_parts(member.name)
+            if (
+                not member.isfile()
+                or not parts
+                or parts[0].startswith(".")
+                or parts == ("cost.json",)
+                or "__pycache__" in parts
+            ):
+                continue
+            source = archive.extractfile(member)
+            if source is not None:
+                entries.append(("/".join(parts), source.read()))
+    digest = hashlib.sha256()
+    for path, data in sorted(entries):
+        encoded = path.encode("utf-8")
+        digest.update(len(encoded).to_bytes(4, "big"))
+        digest.update(encoded)
+        digest.update(len(data).to_bytes(8, "big"))
+        digest.update(data)
+    return f"sha256:{digest.hexdigest()}"
+
+
+AUTHORING_BASIS_FILE = ".futureagi-authoring-basis.json"
+
+
+def with_authoring_basis(body: bytes, revision: str) -> bytes:
+    """Stamp the environment revision a chat workspace was built from."""
+    data = json.dumps(
+        {"authoring_revision": revision}, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    out = io.BytesIO()
+    with (
+        tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as source,
+        tarfile.open(fileobj=out, mode="w:gz") as target,
+    ):
+        for member in source.getmembers():
+            if _archive_parts(member.name) == (AUTHORING_BASIS_FILE,):
+                continue
+            target.addfile(
+                member, source.extractfile(member) if member.isfile() else None
+            )
+        info = tarfile.TarInfo(AUTHORING_BASIS_FILE)
+        info.size = len(data)
+        info.mode = 0o600
+        target.addfile(info, io.BytesIO(data))
+    return out.getvalue()
+
+
+def authoring_basis(body: bytes) -> str:
+    """The environment revision a chat workspace declares it was built from."""
+    with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as archive:
+        for member in archive.getmembers():
+            if _archive_parts(member.name) != (AUTHORING_BASIS_FILE,):
+                continue
+            source = archive.extractfile(member) if member.isfile() else None
+            if source is None:
+                return ""
+            try:
+                value = json.loads(source.read().decode("utf-8"))
+            except (UnicodeDecodeError, ValueError):
+                return ""
+            return str((value or {}).get("authoring_revision") or "")
+    return ""
+
+
 # A run replays these byte for byte against their sealed manifests, so an edit never touches them.
 _SEALED_ARCHIVE_ROOTS = frozenset({"environment-bundle", "generic-harness"})
 
@@ -4668,73 +4857,98 @@ def _edit_for(folder: str, document: object, suite: list[dict]) -> dict | None:
 
 
 def push_scenarios_into_live_sandbox(job: HostedHarnessJob, suite: list[dict]) -> bool:
-    """Land an edited suite on the running guest, which would otherwise re-pack its own copy."""
+    """Land an edited suite in every live authoring or chat workspace."""
+    environment = job.environment or job
+    job_ids = [
+        environment.id,
+        *environment.simulation_runs.values_list("id", flat=True),
+    ]
+    refs = set(
+        HostedHarnessConversationLease.no_workspace_objects.filter(
+            conversation__job_id__in=job_ids,
+            state__in=(
+                HostedHarnessConversationLease.State.STARTING,
+                HostedHarnessConversationLease.State.ACTIVE,
+            ),
+        ).values_list("provider_ref", flat=True)
+    )
     attempt = (
         HostedHarnessAttempt.no_workspace_objects.filter(
             job=job, attempt_number=job.current_attempt_number
         )
         .exclude(provider_ref__isnull=True)
+        .exclude(
+            state__in=(
+                HostedHarnessAttempt.State.FAILED,
+                HostedHarnessAttempt.State.SUPERSEDED,
+                HostedHarnessAttempt.State.CLEANING_UP,
+            )
+        )
         .first()
     )
-    if attempt is None or not attempt.provider_ref:
+    if attempt is not None and attempt.provider_ref:
+        refs.add(attempt.provider_ref)
+    if not refs:
         return False
-    if attempt.state in {
-        HostedHarnessAttempt.State.FAILED,
-        HostedHarnessAttempt.State.SUPERSEDED,
-        HostedHarnessAttempt.State.CLEANING_UP,
-    }:
-        return False
-    try:
-        sandbox = HostedHarnessGateway().client.get(
-            str(attempt.provider_ref), request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS
-        )
-    except Exception:  # noqa: BLE001 - no live guest is the ordinary case, not a failure
-        return False
+
+    client = HostedHarnessGateway().client
+    delivered = False
+    for ref in refs:
+        try:
+            sandbox = client.get(
+                str(ref), request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS
+            )
+            _push_scenarios_to_sandbox(sandbox, suite)
+            delivered = True
+        except Exception:  # noqa: BLE001 - a stopped guest is the ordinary case
+            logger.warning(
+                "could not deliver edited suite to live workspace job=%s provider_ref=%s",
+                job.id,
+                ref,
+                exc_info=True,
+            )
+    return delivered
+
+
+def _push_scenarios_to_sandbox(sandbox: Any, suite: list[dict]) -> None:
     tokens = _suite_tokens(suite)
-    try:
-        listed = sandbox.process.exec(
-            "ls -1 /work/authoring/scenarios 2>/dev/null", timeout=60
+    listed = sandbox.process.exec(
+        "ls -1 /work/authoring/scenarios 2>/dev/null", timeout=60
+    )
+    present = sorted(name for name in (listed.result or "").split() if name)
+    for folder in present:
+        read = sandbox.process.exec(
+            f"cat /work/authoring/scenarios/{shlex.quote(folder)}/scenario.json",
+            timeout=60,
         )
-        present = sorted(name for name in (listed.result or "").split() if name)
-        for folder in present:
-            read = sandbox.process.exec(
-                f"cat /work/authoring/scenarios/{shlex.quote(folder)}/scenario.json",
+        try:
+            document = json.loads(read.result or "") if not read.exit_code else None
+        except ValueError:
+            document = None
+        if not _scenario_folder_kept(folder, document, tokens):
+            sandbox.process.exec(
+                f"rm -rf /work/authoring/scenarios/{shlex.quote(folder)}",
                 timeout=60,
             )
-            try:
-                document = json.loads(read.result or "") if not read.exit_code else None
-            except ValueError:
-                document = None
-            if not _scenario_folder_kept(folder, document, tokens):
-                sandbox.process.exec(
-                    f"rm -rf /work/authoring/scenarios/{shlex.quote(folder)}",
-                    timeout=60,
-                )
-                continue
-            edit = _edit_for(folder, document, suite)
-            if edit is None or not isinstance(document, dict):
-                continue
-            document.update(
-                {
-                    key: value
-                    for key, value in edit.items()
-                    if key not in {"scenario_key", "scenario_id"}
-                }
-            )
-            sandbox.fs.upload_file(
-                json.dumps(document, indent=2).encode("utf-8"),
-                f"/work/authoring/scenarios/{folder}/scenario.json",
-            )
+            continue
+        edit = _edit_for(folder, document, suite)
+        if edit is None or not isinstance(document, dict):
+            continue
+        document.update(
+            {
+                key: value
+                for key, value in edit.items()
+                if key not in {"scenario_key", "scenario_id"}
+            }
+        )
         sandbox.fs.upload_file(
-            json.dumps(suite, indent=2).encode("utf-8"),
-            "/work/authoring/scenarios.json",
+            json.dumps(document, indent=2).encode("utf-8"),
+            f"/work/authoring/scenarios/{folder}/scenario.json",
         )
-    except Exception:  # noqa: BLE001 - the archive is still the durable record
-        logger.exception(
-            "could not deliver edited suite to the live guest job=%s", job.id
-        )
-        return False
-    return True
+    sandbox.fs.upload_file(
+        json.dumps(suite, indent=2).encode("utf-8"),
+        "/work/authoring/scenarios.json",
+    )
 
 
 class AuthoringArchiveKept(Exception):
@@ -4774,7 +4988,102 @@ def rewrite_authoring_scenarios(job: HostedHarnessJob, suite: list[dict]) -> str
         length=len(rewritten),
         content_type="application/gzip",
     )
+    payload = dict(job.payload or {})
+    metadata = dict(payload.get("metadata") or {})
+    metadata["authoring_revision"] = authoring_content_digest(rewritten)
+    payload["metadata"] = metadata
+    job.payload = payload
+    job.content_updated_at = timezone.now()
+    job.save(update_fields=["payload", "content_updated_at", "updated_at"])
     return object_key
+
+
+def rewrite_conversation_scenarios(job: HostedHarnessJob, suite: list[dict]) -> int:
+    """Bring saved chat workspaces forward with a UI scenario amendment."""
+    environment = job.environment or job
+    revision = str(
+        ((environment.payload or {}).get("metadata") or {}).get("authoring_revision")
+        or ""
+    )
+    conversations = list(
+        HostedHarnessConversation.no_workspace_objects.filter(
+            job_id__in=[
+                environment.id,
+                *environment.simulation_runs.values_list("id", flat=True),
+            ],
+            latest_workspace_object_key__isnull=False,
+        )
+    )
+    client = get_storage_client()
+    rewritten_count = 0
+    for conversation in conversations:
+        response = None
+        try:
+            response = client.get_object(
+                UPLOAD_BUCKET_NAME, conversation.latest_workspace_object_key
+            )
+            body = response.read()
+            rewritten = _rewritten_authoring_archive(body, suite)
+            if rewritten is None:
+                logger.warning(
+                    "could not reconcile conversation workspace job=%s conversation=%s",
+                    job.id,
+                    conversation.id,
+                )
+                continue
+            if revision:
+                rewritten = with_authoring_basis(rewritten, revision)
+            rewritten_count += replace_conversation_workspace(
+                conversation,
+                rewritten,
+                expected_key=conversation.latest_workspace_object_key,
+                scenario_count=len(suite),
+            )
+        except Exception:  # noqa: BLE001 - the revision fence still prevents rollback
+            logger.warning(
+                "could not refresh conversation workspace job=%s conversation=%s",
+                job.id,
+                conversation.id,
+                exc_info=True,
+            )
+        finally:
+            if response is not None:
+                response.close()
+                response.release_conn()
+    return rewritten_count
+
+
+def replace_conversation_workspace(
+    conversation: HostedHarnessConversation,
+    body: bytes,
+    *,
+    expected_key: str | None,
+    scenario_count: int,
+) -> int:
+    """Store a platform-rebased chat workspace if no newer checkpoint replaced it."""
+    digest = hashlib.sha256(body).hexdigest()
+    key = (
+        f"harness-conversations/{conversation.organization_id}/"
+        f"{conversation.id}/{digest}.tar.gz"
+    )
+    client = get_storage_client()
+    ensure_bucket(client, UPLOAD_BUCKET_NAME)
+    client.put_object(
+        bucket_name=UPLOAD_BUCKET_NAME,
+        object_name=key,
+        data=io.BytesIO(body),
+        length=len(body),
+        content_type="application/gzip",
+    )
+    return HostedHarnessConversation.no_workspace_objects.filter(
+        id=conversation.id,
+        latest_workspace_object_key=expected_key,
+    ).update(
+        latest_workspace_digest=f"sha256:{digest}",
+        latest_workspace_object_key=key,
+        latest_scenario_count=scenario_count,
+        updated_at=timezone.now(),
+    )
 
 
 def _archive_parts(name: str) -> tuple[str, ...]:
@@ -4883,6 +5192,7 @@ def store_authoring_archive(
     payload = resolve_authored_connector(dict(job.payload or {}), body)
     metadata = dict(payload.get("metadata") or {})
     metadata["authoring_object_key"] = object_key
+    metadata["authoring_revision"] = authoring_content_digest(body)
     metadata["authoring_mode"] = "fresh"
     # A chat "add scenarios" run consumes its one-shot extend marker here, once the extended
     # authoring is durably stored, so a later plain rerun replays this set without re-extending.

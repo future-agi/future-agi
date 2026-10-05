@@ -40795,6 +40795,12 @@ export const SimulateCallExecutionsReadResponse = zod.object({
         reason: zod.string().optional(),
         type: zod.string().optional(),
         template_type: zod.string().optional(),
+        kind: zod
+          .enum(["evaluation", "sub_goal"])
+          .optional()
+          .describe(
+            "Set on the v3 call detail: a sub-goal check or an evaluation",
+          ),
         visible: zod.boolean().optional(),
         error: zod.boolean().optional(),
         status: zod.string().optional(),
@@ -44476,6 +44482,7 @@ export const SimulateRunTestsExecutionsListResponse = zod.object({
       }),
     )
     .optional(),
+  covered_scenario_count: zod.number().optional(),
 });
 
 export const SimulateRunTestsPreviewExecutionsListParams = zod.object({
@@ -46613,6 +46620,12 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
         reason: zod.string().optional(),
         type: zod.string().optional(),
         template_type: zod.string().optional(),
+        kind: zod
+          .enum(["evaluation", "sub_goal"])
+          .optional()
+          .describe(
+            "Set on the v3 call detail: a sub-goal check or an evaluation",
+          ),
         visible: zod.boolean().optional(),
         error: zod.boolean().optional(),
         status: zod.string().optional(),
@@ -46800,6 +46813,7 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
       result: zod.object({}).passthrough().optional(),
       output: zod.object({}).passthrough().optional(),
       duration_ms: zod.number().optional(),
+      start_time_ms: zod.number().optional(),
     }),
   ),
 });
@@ -46871,6 +46885,7 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
         label: zod.string().min(1),
         started_at: zod.string().datetime({ offset: true }),
         calls: zod.number(),
+        latency_ms: zod.number(),
         duration_ms: zod.number(),
         llm_cents: zod.number(),
         tts_cents: zod.number(),
@@ -46880,6 +46895,12 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
     ),
     series_limit: zod.number(),
     series_mode: zod.enum(["calls", "time_buckets"]),
+    agent_latency_percentiles: zod.array(
+      zod.object({
+        percentile: zod.number(),
+        value: zod.number(),
+      }),
+    ),
     latency_percentiles: zod.array(
       zod.object({
         percentile: zod.number(),
@@ -47697,6 +47718,13 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
       completed_at: zod.string().datetime({ offset: true }),
       duration_seconds: zod.number(),
       latency_ms: zod.number(),
+      avg_stop_time_after_interruption: zod
+        .number()
+        .nullable()
+        .describe(
+          "Average stop time after caller interruption in milliseconds.",
+        ),
+      ai_interruption_count: zod.number().nullable(),
       turn_count: zod.number(),
       tokens: zod.number(),
       cost_cents: zod.number(),
@@ -47786,6 +47814,18 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
         csat: zod.number(),
         turns: zod.number(),
         latency_ms: zod.number(),
+        avg_stop_time_after_interruption: zod
+          .number()
+          .nullable()
+          .describe(
+            "Mean call stop latency in milliseconds, excluding unmeasured calls.",
+          ),
+        ai_interruptions: zod
+          .number()
+          .nullable()
+          .describe(
+            "Mean AI interruption count per call, excluding unmeasured calls.",
+          ),
         tokens: zod.number(),
         evaluations: zod.object({}).passthrough(),
       }),
@@ -47815,6 +47855,7 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
     zod.object({
       id: zod.string().min(1),
       name: zod.string().min(1),
+      kind: zod.enum(["evaluation", "sub_goal"]),
     }),
   ),
 });
@@ -48112,6 +48153,9 @@ export const TracerChartsFetchGraphResponse = zod.object({
       metric_name: zod.string().optional(),
       id: zod.string().optional(),
       name: zod.string().optional(),
+      metric_statistic: zod
+        .enum(["count", "sum", "mean", "percentage"])
+        .optional(),
       data: zod.array(
         zod.object({
           timestamp: zod.string(),
@@ -57675,7 +57719,10 @@ export const TracerObservationSpanGetGraphMethodsBody = zod.object({
     .default(tracerObservationSpanGetGraphMethodsBodyIntervalDefault),
   property: zod
     .string()
-    .default(tracerObservationSpanGetGraphMethodsBodyPropertyDefault),
+    .default(tracerObservationSpanGetGraphMethodsBodyPropertyDefault)
+    .describe(
+      "Accepted for older clients and ignored for SYSTEM_METRIC graphs: each system metric has one statistic, named by the response's metric_statistic. Latency is always the mean (avg) span latency.",
+    ),
   req_data_config: zod.object({
     id: zod.string(),
     type: zod.enum(["SYSTEM_METRIC", "EVAL", "ANNOTATION"]),
@@ -57722,6 +57769,12 @@ export const TracerObservationSpanGetGraphMethodsResponse = zod.object({
   result: zod.object({
     metric_name: zod.string(),
     name: zod.string().optional(),
+    metric_statistic: zod
+      .enum(["count", "sum", "mean", "percentage"])
+      .optional()
+      .describe(
+        "Statistic of the published system-metric series per bucket. Latency is always the mean (avg) of span latency, filtered or not. Absent for eval and annotation series.",
+      ),
     data: zod
       .array(
         zod
@@ -60301,6 +60354,12 @@ export const TracerProjectGetGraphDataResponse = zod.object({
       .object({})
       .passthrough()
       .describe("Any valid JSON value."),
+    system_metric_statistics: zod
+      .record(zod.string(), zod.enum(["count", "sum", "mean", "percentage"]))
+      .optional()
+      .describe(
+        'Statistic of each ``system_metrics`` series per bucket, e.g. {"latency": "mean", "tokens": "sum", "cost": "mean", "traffic": "count"}. Latency is always the mean (avg) span latency.',
+      ),
     evaluations: zod.object({}).passthrough().describe("Any valid JSON value."),
   }),
 });
@@ -60642,6 +60701,12 @@ export const TracerProjectGetUsersAggregateGraphDataResponse = zod.object({
   result: zod.object({
     metric_name: zod.string(),
     name: zod.string().optional(),
+    metric_statistic: zod
+      .enum(["count", "sum", "mean", "percentage"])
+      .optional()
+      .describe(
+        "Statistic of the published system-metric series per bucket. Latency is always the mean (avg) of span latency, filtered or not. Absent for eval and annotation series.",
+      ),
     data: zod
       .array(
         zod
@@ -62864,7 +62929,10 @@ export const TracerTraceSessionGetSessionGraphDataBody = zod.object({
     .default(tracerTraceSessionGetSessionGraphDataBodyIntervalDefault),
   property: zod
     .string()
-    .default(tracerTraceSessionGetSessionGraphDataBodyPropertyDefault),
+    .default(tracerTraceSessionGetSessionGraphDataBodyPropertyDefault)
+    .describe(
+      "Accepted for older clients and ignored for SYSTEM_METRIC graphs: each system metric has one statistic, named by the response's metric_statistic. Latency is always the mean (avg) span latency.",
+    ),
   req_data_config: zod.object({
     id: zod.string(),
     type: zod.enum(["SYSTEM_METRIC", "EVAL", "ANNOTATION"]),
@@ -62911,6 +62979,12 @@ export const TracerTraceSessionGetSessionGraphDataResponse = zod.object({
   result: zod.object({
     metric_name: zod.string(),
     name: zod.string().optional(),
+    metric_statistic: zod
+      .enum(["count", "sum", "mean", "percentage"])
+      .optional()
+      .describe(
+        "Statistic of the published system-metric series per bucket. Latency is always the mean (avg) of span latency, filtered or not. Absent for eval and annotation series.",
+      ),
     data: zod
       .array(
         zod
@@ -64051,7 +64125,12 @@ export const TracerTraceGetGraphMethodsBody = zod.object({
   interval: zod
     .enum(["hour", "day", "week", "month"])
     .default(tracerTraceGetGraphMethodsBodyIntervalDefault),
-  property: zod.string().default(tracerTraceGetGraphMethodsBodyPropertyDefault),
+  property: zod
+    .string()
+    .default(tracerTraceGetGraphMethodsBodyPropertyDefault)
+    .describe(
+      "Accepted for older clients and ignored for SYSTEM_METRIC graphs: each system metric has one statistic, named by the response's metric_statistic. Latency is always the mean (avg) span latency.",
+    ),
   req_data_config: zod.object({
     id: zod.string(),
     type: zod.enum(["SYSTEM_METRIC", "EVAL", "ANNOTATION"]),
@@ -64110,6 +64189,12 @@ export const TracerTraceGetGraphMethodsResponse = zod.object({
   result: zod.object({
     metric_name: zod.string(),
     name: zod.string().optional(),
+    metric_statistic: zod
+      .enum(["count", "sum", "mean", "percentage"])
+      .optional()
+      .describe(
+        "Statistic of the published system-metric series per bucket. Latency is always the mean (avg) of span latency, filtered or not. Absent for eval and annotation series.",
+      ),
     data: zod
       .array(
         zod

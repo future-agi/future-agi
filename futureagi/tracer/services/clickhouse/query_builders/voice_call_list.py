@@ -481,7 +481,13 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         """
 
         if not self._bounded_internal_scan and not self._bounded_identity_only:
-            return settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
+            # Capped as the span list's is: the bounded selector refuses a
+            # recommendation above the builder cap, so a request wall raised
+            # past it (production: 60 s wall, 30 s cap) must not fail the page.
+            return min(
+                settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS,
+                settings.FILTER_SELECTOR_MAX_BUILDER_QUERY_TIMEOUT_MS,
+            )
         return None
 
     def recommended_filter_classify_batch_size(self) -> int | None:

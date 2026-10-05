@@ -76,7 +76,7 @@ const WIDGETS = [
     section: "CSAT and provider scores",
     wide: true,
   },
-  { id: "task_latency", title: "Call duration", section: "Latency" },
+  { id: "task_latency", title: "Agent latency", section: "Latency" },
   {
     id: "percentiles",
     title: "Agent response time percentiles",
@@ -144,7 +144,6 @@ const OUTCOMES = [
   { key: "inconclusive", label: "Inconclusive", color: COLORS[5] },
 ];
 const DISTRIBUTIONS = {
-  end_to_end_ms: ["Call duration", "ms"],
   latency_ms: ["Agent response time", "ms"],
   duration_seconds: ["Call duration", "seconds"],
   tokens: ["Tokens per call", "number"],
@@ -205,6 +204,17 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
       />
     );
   const dashboard = data.dashboard;
+  const latencyLabel =
+    dashboard.metrics.find((metric) => metric.key === "agent_latency")?.label ||
+    "Agent latency";
+  // Call length kept in the payload for earlier builds of this page.
+  const distributionRows = dashboard.distributions.filter(
+    (row) => row.key !== "end_to_end_ms",
+  );
+  const latencyAt = (percentile) =>
+    dashboard.agent_latency_percentiles?.find(
+      (row) => row.percentile === percentile,
+    )?.value;
   const open = onOpenCall
     ? (task) =>
         onOpenCall({
@@ -216,9 +226,6 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
     : undefined;
   const { summary, reliability } = data;
   const interval = reliability?.pass_rate_interval;
-  const response = dashboard.distributions.find(
-    (row) => row.key === "latency_ms",
-  );
   const evalSummary = dashboard.evaluation_summary;
   const subtitles = {
     goal_outcome: `${summary.measured} evaluated of ${summary.total} · errored and not-evaluated calls never count against the agent`,
@@ -240,9 +247,9 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
         : "Recorded LLM / TTS / STT / Storage cost per call",
     task_latency:
       dashboard.series_mode === "time_buckets"
-        ? "End-to-end wall clock · average per time bucket"
-        : "End-to-end wall clock per call",
-    percentiles: `p50 ${format(response?.p50, "ms")} · p90 ${format(response?.p90, "ms")} · p99 ${format(response?.p99, "ms")} of per-call averages`,
+        ? `${latencyLabel} · average per time bucket`
+        : `${latencyLabel} per call`,
+    percentiles: `p50 ${format(latencyAt(50), "ms")} · p90 ${format(latencyAt(90), "ms")} · p99 ${format(latencyAt(99), "ms")} of per-call averages`,
     distribution: "p50 · p90 · p99 · max for every measured metric",
     risk: `Weakest ${dashboard.use_case_risk.length} of ${dashboard.goal_count} scenarios · fewer than 3 evaluated calls ranked last`,
     tools_volume: `${dashboard.tools.total_invocations} recorded invocations · ${dashboard.tools.total_tools} tools · top 20`,
@@ -514,16 +521,18 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
         <TrendLine
           rows={dashboard.series}
           xKey="label"
-          valueKey="duration_ms"
+          valueKey="latency_ms"
+          valueLabel={latencyLabel}
           bucketed={dashboard.series_mode === "time_buckets"}
         />
       );
     if (id === "percentiles")
       return (
         <TrendLine
-          rows={dashboard.latency_percentiles}
+          rows={dashboard.agent_latency_percentiles}
           xKey="percentile"
           valueKey="value"
+          valueLabel={latencyLabel}
           percentile
         />
       );
@@ -538,8 +547,12 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
             pb: 2,
           }}
         >
-          {dashboard.distributions.map((row) => {
-            const [label, unit] = DISTRIBUTIONS[row.key] || [row.key, "number"];
+          {distributionRows.map((row) => {
+            const [mapped, unit] = DISTRIBUTIONS[row.key] || [
+              row.key,
+              "number",
+            ];
+            const label = row.key === "latency_ms" ? latencyLabel : mapped;
             return (
               <Box key={row.key}>
                 <Typography

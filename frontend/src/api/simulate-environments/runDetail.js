@@ -267,6 +267,8 @@ export function useRunDetail(runTestId, executionId, { envName } = {}) {
  *                                 (`overall_score`); null when absent.
  * @property {?number} turns       Turn count.
  * @property {?number} latencyMs   Mean latency, ms.
+ * @property {?number} stopLatencyMs Mean stop time after interruption, ms.
+ * @property {?number} aiInterruptions AI interruption count.
  * @property {?number} tokens      Token total.
  * @property {?number} durationMs  Call duration, ms.
  * @property {?string} simulationCallType  "voice" | "text" — routes the call
@@ -517,7 +519,9 @@ export function mapCallDetail(raw) {
     raw.eval_metrics && typeof raw.eval_metrics === "object"
       ? raw.eval_metrics
       : {};
+  // A sub-goal check is the scenario's, not an eval: the evals tab skips it.
   const evalResults = Object.entries(evalMetrics)
+    .filter(([, data]) => data?.kind !== "sub_goal")
     .map(([id, data]) => callEvalResult(id, data))
     .filter(Boolean);
 

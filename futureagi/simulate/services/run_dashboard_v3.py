@@ -46,13 +46,6 @@ GOAL_OUTCOMES = (
     "escalated",
     "inconclusive",
 )
-CALLER_END_REASONS = (
-    "customer_end_call",
-    "customer-ended-call",
-    "caller-ended-call",
-    "human-ended",
-    "hangup-by-user",
-)
 # Provider-agnostic end reasons (metric list v1 §5.1), first match wins. The hosted ALK
 # reasons are listed explicitly: none of them appear in any provider's vocabulary.
 END_REASONS = [
@@ -76,13 +69,16 @@ END_REASONS = [
     ("Agent ended", r"^(?:target|assistant)[-_]end(?:ed)?[-_]call$"),
     ("Agent disconnected", r"^target[-_]disconnected$"),
     ("Session closed", r"^(?:session[-_]closed|close[-_]on[-_]disconnect)$"),
-    ("Disconnected", r"^participant[-_]disconnected$"),
+    ("Disconnected", r"^(?:participant|room|provider)[-_]disconnected$"),
     (
         "Caller hung up",
         r"customer|user|caller|persona|client|human-ended|hangup-by-user",
     ),
     ("Agent ended", r"assistant|agent|end-call"),
-    ("Completed", r"complete|done|script-completed|outcome_satisfied"),
+    (
+        "Completed",
+        r"complete|done|script-completed|outcome_satisfied|^closing[-_]loop$",
+    ),
 ]
 
 
@@ -298,6 +294,10 @@ def _series(queryset: QuerySet, total: int) -> list[dict]:
         rows = (
             queryset.order_by(F("started_at").asc(nulls_last=True), "id")
             .annotate(
+                latency_ms=Case(
+                    When(result_latency_ms__gte=0, then=F("result_latency_ms")),
+                    output_field=FloatField(),
+                ),
                 duration_ms=F("duration_seconds") * 1000.0,
                 llm_cents=F("llm_cost_cents"),
                 tts_cents=F("tts_cost_cents"),
@@ -306,6 +306,7 @@ def _series(queryset: QuerySet, total: int) -> list[dict]:
             )
             .values(
                 "started_at",
+                "latency_ms",
                 "duration_ms",
                 "llm_cents",
                 "tts_cents",
@@ -338,6 +339,7 @@ def _series(queryset: QuerySet, total: int) -> list[dict]:
         .annotate(
             started_at=Min("started_at"),
             calls=Count("id"),
+            latency_ms=Avg("result_latency_ms", filter=Q(result_latency_ms__gte=0)),
             duration_ms=Avg(F("duration_seconds") * 1000.0),
             llm_cents=Sum("llm_cost_cents"),
             tts_cents=Sum("tts_cost_cents"),
@@ -446,9 +448,7 @@ def build_run_dashboard(
             "id",
             filter=Q(
                 call_metadata__hosted_harness_receipt__call__script_completed=False,
-                call_metadata__hosted_harness_receipt__call__stop_reason__in=(
-                    CALLER_END_REASONS
-                ),
+                dashboard_disconnection__in=["Caller hung up", "Simulator ended"],
                 result_outcome="failed",
             ),
         ),
@@ -638,10 +638,15 @@ def build_run_dashboard(
         }
     )
     slo_stats = _stats(voice, {key: f"slo_{key}" for key in slos})
-    latency_stats = _stats(queryset, {"latency_ms": "result_latency_ms"})
-    # Per-call averages: a single long pause inside an otherwise quick call is hidden.
-    curve = queryset.aggregate(
-        **{f"p{p}": PercentileCont("result_latency_ms", p / 100) for p in range(101)}
+    latency = queryset.filter(result_latency_ms__gte=0).aggregate(
+        measured=Count("id"),
+        average=Avg("result_latency_ms"),
+        max=Max("result_latency_ms"),
+        **{f"p{p}": PercentileCont("result_latency_ms", p / 100) for p in range(101)},
+    )
+    # Call length under the earlier keys, for frontend builds that still read them.
+    duration_curve = queryset.aggregate(
+        **{f"p{p}": PercentileCont("duration_seconds", p / 100) for p in range(101)}
     )
     costs = queryset.aggregate(
         **{
@@ -773,10 +778,29 @@ def build_run_dashboard(
         "series": _series(queryset, total),
         "series_mode": "calls" if total <= CHART_BUCKETS else "time_buckets",
         "series_limit": CHART_BUCKETS,
+        "agent_latency_percentiles": [
+            {"percentile": p, "value": latency[f"p{p}"]} for p in range(101)
+        ],
         "latency_percentiles": [
-            {"percentile": p, "value": curve[f"p{p}"]} for p in range(101)
+            {
+                "percentile": p,
+                "value": (
+                    duration_curve[f"p{p}"] * 1000
+                    if duration_curve[f"p{p}"] is not None
+                    else None
+                ),
+            }
+            for p in range(101)
         ],
         "distributions": [
+            {
+                "key": "latency_ms",
+                **{
+                    key: latency[key]
+                    for key in ("measured", "average", "max", "p50", "p90", "p99")
+                },
+            },
+            *[{"key": key, **stats} for key, stats in duration_stats.items()],
             {
                 "key": "end_to_end_ms",
                 **{
@@ -784,8 +808,6 @@ def build_run_dashboard(
                     for key, value in duration_stats["duration_seconds"].items()
                 },
             },
-            {"key": "latency_ms", **latency_stats["latency_ms"]},
-            *[{"key": key, **stats} for key, stats in duration_stats.items()],
         ],
         "tools": _tool_stats(queryset),
         "slowest_tasks": _tails(queryset, "duration_seconds"),

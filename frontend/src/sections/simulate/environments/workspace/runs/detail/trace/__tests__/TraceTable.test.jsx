@@ -32,6 +32,62 @@ const table = (props) => (
 );
 const activeRow = () => document.querySelector('tr[aria-selected="true"]');
 
+describe("TraceTable interruption metrics", () => {
+  const columns = new Set(["callDetails", "stopLatency", "aiInterruptions"]);
+
+  it.each([
+    [1281, 2, "1,281ms", "2"],
+    [0, 0, "0ms", "0"],
+    [null, null, "-", "-"],
+  ])(
+    "renders call metrics %s and %s",
+    (stopLatencyMs, aiInterruptions, latencyText, countText) => {
+      render(
+        table({
+          rows: [{ ...row("metrics"), stopLatencyMs, aiInterruptions }],
+          columns,
+        }),
+      );
+
+      expect(
+        within(document.querySelector("thead tr:last-of-type"))
+          .getAllByRole("columnheader")
+          .map((cell) => cell.textContent),
+      ).toEqual(["Run details", "Stop latency", "AI interruptions"]);
+      const cells = within(screen.getAllByRole("row")[2]).getAllByRole("cell");
+      expect(cells[1]).toHaveTextContent(latencyText);
+      expect(cells[2]).toHaveTextContent(countText);
+    },
+  );
+
+  it.each([
+    [640.5, 1.5, "640.5msAvg", "1.5Avg"],
+    [0, 0, "0msAvg", "0Avg"],
+    [null, null, "-", "-"],
+  ])(
+    "renders server group averages %s and %s across unloaded pages",
+    (stopLatency, aiInterruptions, latencyText, countText) => {
+      render(
+        table({
+          groups: [
+            {
+              ...group("Metrics", ["metrics"]),
+              count: 100,
+              agg: { stopLatency, aiInterruptions },
+            },
+          ],
+          columns,
+        }),
+      );
+      const cells = within(
+        screen.getByText("Metrics").closest("tr"),
+      ).getAllByRole("cell");
+      expect(cells[1]).toHaveTextContent(latencyText);
+      expect(cells[2]).toHaveTextContent(countText);
+    },
+  );
+});
+
 // The open call's row must end up on screen — groups start collapsed, and the
 // row only mounts once its group expands, so the scroll has to wait for it.
 describe("TraceTable — the open call's row scrolls into view", () => {
@@ -109,7 +165,7 @@ describe("TraceTable — sticky header and group rows", () => {
     ["A", "B"].forEach((label) => {
       const td = screen.getByText(label).closest("td");
       expect(position(td)).toBe("sticky");
-      expect(window.getComputedStyle(td).top).toBe("44px");
+      expect(window.getComputedStyle(td).top).toBe("72px");
     });
   });
 
@@ -125,9 +181,9 @@ describe("TraceTable — sticky header and group rows", () => {
 describe("TraceTable — outcome labels", () => {
   it("shows the outcome under Run details without a lifecycle status column", () => {
     render(table({ activeCallId: "a1" }));
-    const heads = [...document.querySelectorAll("thead th")].map((th) =>
-      th.textContent.trim(),
-    );
+    const heads = [
+      ...document.querySelectorAll("thead tr:last-of-type th"),
+    ].map((th) => th.textContent.trim());
     expect(heads.slice(0, 2)).toEqual(["Run details", "Persona"]);
     expect(heads).not.toContain("Status");
     expect(within(activeRow()).getByText("Passed")).toBeInTheDocument();
@@ -135,6 +191,33 @@ describe("TraceTable — outcome labels", () => {
 });
 
 describe("TraceTable — sub-goal verdicts", () => {
+  it("lists the call's sub-goal names in the Sub-goals column", () => {
+    render(
+      table({
+        columns: new Set(["callDetails", "subGoals"]),
+        groups: [
+          {
+            ...group("A", ["a1"]),
+            rows: [
+              {
+                ...row("a1"),
+                subGoalResults: [
+                  { name: "pin_verified", passed: true },
+                  { name: "exact_greeting", passed: false },
+                ],
+              },
+            ],
+          },
+        ],
+        activeCallId: "a1",
+      }),
+    );
+    const cells = activeRow().querySelectorAll("td");
+    expect(cells[cells.length - 1]).toHaveTextContent(
+      /pin_verified.*exact_greeting/,
+    );
+  });
+
   it("keeps duplicate names and their verdicts distinct across refreshes", () => {
     const consoleError = vi
       .spyOn(console, "error")
@@ -213,7 +296,9 @@ describe("TraceTable — sub-goal verdicts", () => {
         activeCallId: "a1",
       }),
     );
-    const details = within(activeRow()).getByText("Scenario a1").closest("td");
+    const details = within(activeRow())
+      .getAllByText("Scenario a1")[0]
+      .closest("td");
     for (const [name, verdict] of [
       ["Verify identity", "Passed"],
       ["Create refund", "Failed"],
@@ -232,6 +317,26 @@ describe("TraceTable — sub-goal verdicts", () => {
   });
 });
 
+describe("TraceTable — column group band", () => {
+  it("heads sub-goal checks with Sub-goal Results, ahead of the evaluations", () => {
+    render(
+      table({
+        columns: new Set(["callDetails", "subGoalEvals", "evals"]),
+        subGoalEvals: [{ id: "sg-1", name: "pin_verified" }],
+        evals: [{ id: "e1", name: "Tone" }],
+      }),
+    );
+    const band = [
+      ...document.querySelectorAll("thead tr:first-of-type th"),
+    ].map((th) => th.textContent.trim());
+    expect(band).toEqual(["Run details", "Sub-goal Results", "Evaluations"]);
+    const heads = [
+      ...document.querySelectorAll("thead tr:last-of-type th"),
+    ].map((th) => th.textContent.trim());
+    expect(heads.slice(-2)).toEqual(["pin_verified", "Tone"]);
+  });
+});
+
 describe("TraceTable — group row grid", () => {
   it("keeps the column dividers on the group row", () => {
     render(table());
@@ -240,6 +345,123 @@ describe("TraceTable — group row grid", () => {
     [...cells].slice(1).forEach((td) => {
       expect(window.getComputedStyle(td).borderLeftStyle).toBe("solid");
     });
+  });
+});
+
+describe("TraceTable — group row while its calls run", () => {
+  const blank = {
+    csat: null,
+    turns: null,
+    latencyMs: null,
+    tokens: null,
+    evalResults: [],
+  };
+  const call = (id, executionStatus) => ({
+    ...row(id),
+    ...blank,
+    executionStatus,
+  });
+  const renderGroup = (groupProps, tableProps = {}) =>
+    render(
+      <TraceTable
+        groups={[{ label: "G", count: 2, agg: {}, ...groupProps }]}
+        evals={[{ id: "e1", name: "Tone" }]}
+        onOpen={vi.fn()}
+        {...tableProps}
+      />,
+    );
+  // The group row's cell under a column header, so the checks hold whatever
+  // other columns the table has.
+  const cellUnder = (heading) => {
+    const heads = [
+      ...document.querySelectorAll("thead tr:last-of-type th"),
+    ].map((th) => th.textContent.trim());
+    return screen.getByText("G").closest("tr").children[heads.indexOf(heading)];
+  };
+  const COLUMNS = ["CSAT", "Turns", "Latency", "Tokens", "Tone"];
+  const loads = (heading) =>
+    cellUnder(heading).querySelector(".MuiSkeleton-root") !== null;
+  // The sub-goal count comes from the rows on this page, so it only shows
+  // once the whole group is here.
+  const subGoalColumns = new Set(["callDetails", "subGoals"]);
+  const subGoalCalls = [
+    {
+      ...call("g1", "completed"),
+      subGoalResults: [
+        { name: "pin_verified", passed: true },
+        { name: "exact_greeting", passed: null },
+      ],
+    },
+  ];
+
+  it("hides the sub-goal count while some of the group's calls are on another page", () => {
+    renderGroup({ rows: subGoalCalls, count: 2 }, { columns: subGoalColumns });
+    expect(cellUnder("Sub-goals")).toHaveTextContent("-");
+  });
+
+  it("counts the group's distinct sub-goals once every call is on the page", () => {
+    renderGroup({ rows: subGoalCalls, count: 1 }, { columns: subGoalColumns });
+    expect(cellUnder("Sub-goals")).toHaveTextContent("2 sub-goals");
+  });
+
+  it("shows a skeleton in each empty metric and eval cell while a call is running", () => {
+    renderGroup({ rows: [call("g1", "ongoing"), call("g2", "completed")] });
+    COLUMNS.forEach((heading) => expect(loads(heading)).toBe(true));
+  });
+
+  it("treats a queued call as still coming too", () => {
+    renderGroup({ rows: [call("g1", "pending"), call("g2", "completed")] });
+    COLUMNS.forEach((heading) => expect(loads(heading)).toBe(true));
+  });
+
+  it("keeps an aggregate it already has instead of a skeleton", () => {
+    renderGroup({
+      rows: [call("g1", "ongoing"), call("g2", "completed")],
+      agg: { turns: 4 },
+    });
+    expect(loads("Turns")).toBe(false);
+    expect(cellUnder("Turns")).toHaveTextContent("4");
+    expect(loads("CSAT")).toBe(true);
+  });
+
+  it("shows a dash once every call in the group has finished", () => {
+    renderGroup({ rows: [call("g1", "completed"), call("g2", "failed")] });
+    COLUMNS.forEach((heading) => {
+      expect(loads(heading)).toBe(false);
+      expect(cellUnder(heading)).toHaveTextContent("-");
+    });
+  });
+
+  it("loads only the eval cell while a finished call's eval is still grading", () => {
+    renderGroup({
+      rows: [
+        {
+          ...call("g1", "completed"),
+          evalResults: [{ id: "e1", status: "pending", score: null }],
+        },
+        call("g2", "completed"),
+      ],
+    });
+    expect(loads("Tone")).toBe(true);
+    ["CSAT", "Turns", "Latency", "Tokens"].forEach((heading) =>
+      expect(loads(heading)).toBe(false),
+    );
+  });
+
+  it("loads while the run is going and some of the group's calls are on another page", () => {
+    renderGroup(
+      { rows: [call("g1", "completed")], count: 3 },
+      { runActive: true },
+    );
+    COLUMNS.forEach((heading) => expect(loads(heading)).toBe(true));
+  });
+
+  it("doesn't load a group split across pages once the run has finished", () => {
+    renderGroup(
+      { rows: [call("g1", "completed")], count: 3 },
+      { runActive: false },
+    );
+    COLUMNS.forEach((heading) => expect(loads(heading)).toBe(false));
   });
 });
 
@@ -266,7 +488,9 @@ describe("TraceTable — eval cells without a score", () => {
     document.querySelector('tr[aria-selected="true"]').lastElementChild;
   // The eval cell is the call row's last cell; other cells can show "-" too.
   const hoverText = async (text) => {
-    const cell = document.querySelector('tr[aria-selected="true"]').lastElementChild;
+    const cell = document.querySelector(
+      'tr[aria-selected="true"]',
+    ).lastElementChild;
     fireEvent.mouseOver(within(cell).getByText(text));
     return screen.findByRole("tooltip");
   };
@@ -282,7 +506,9 @@ describe("TraceTable — eval cells without a score", () => {
     "shows a loading skeleton while the call is %s and has no result",
     (executionStatus) => {
       renderCell({ evalResults: [], executionStatus });
-      const cell = document.querySelector('tr[aria-selected="true"]').lastElementChild;
+      const cell = document.querySelector(
+        'tr[aria-selected="true"]',
+      ).lastElementChild;
       expect(cell.querySelector(".MuiSkeleton-root")).not.toBeNull();
       expect(within(cell).queryByText("N/A")).toBeNull();
       expect(within(cell).queryByText("-")).toBeNull();
@@ -292,23 +518,35 @@ describe("TraceTable — eval cells without a score", () => {
   it.each([
     ["cancelled", "Not evaluated: the call was cancelled"],
     ["failed", "Not evaluated: the call failed"],
-  ])("says a %s call was never evaluated, instead of N/A", async (executionStatus, tip) => {
-    renderCell({ evalResults: [], executionStatus });
-    expect(within(evalCell()).queryByText("N/A")).toBeNull();
-    expect(await hoverText("-")).toHaveTextContent(tip);
-  });
+  ])(
+    "says a %s call was never evaluated, instead of N/A",
+    async (executionStatus, tip) => {
+      renderCell({ evalResults: [], executionStatus });
+      expect(within(evalCell()).queryByText("N/A")).toBeNull();
+      expect(await hoverText("-")).toHaveTextContent(tip);
+    },
+  );
 
   it("explains a failed eval with its reason", async () => {
     renderCell({
-      evalResults: [{ id: "e1", score: null, status: "failed", reason: "Timed out" }],
+      evalResults: [
+        { id: "e1", score: null, status: "failed", reason: "Timed out" },
+      ],
     });
-    expect(await hoverText("-")).toHaveTextContent("Evaluation failed: Timed out");
+    expect(await hoverText("-")).toHaveTextContent(
+      "Evaluation failed: Timed out",
+    );
   });
 
   it("explains a skipped eval with its reason", async () => {
     renderCell({
       evalResults: [
-        { id: "e1", score: null, status: "skipped", reason: "No transcript data available" },
+        {
+          id: "e1",
+          score: null,
+          status: "skipped",
+          reason: "No transcript data available",
+        },
       ],
     });
     expect(await hoverText("-")).toHaveTextContent(
@@ -330,7 +568,9 @@ describe("TraceTable — eval cells without a score", () => {
 
   it("shows N/A for a completed result with neither a score nor a label", () => {
     renderCell({
-      evalResults: [{ id: "e1", score: null, label: null, status: "completed" }],
+      evalResults: [
+        { id: "e1", score: null, label: null, status: "completed" },
+      ],
     });
     expect(within(evalCell()).getByText("N/A")).toBeInTheDocument();
   });
@@ -385,5 +625,37 @@ describe("TraceTable — metric cells while the call runs", () => {
       expect(cell.querySelector(".MuiSkeleton-root")).toBeNull();
       expect(cell).toHaveTextContent("-");
     });
+  });
+});
+
+describe("TraceTable — persona cell", () => {
+  it("shows a persona that has no name but has other fields", () => {
+    render(
+      <TraceTable
+        groups={[
+          {
+            label: "A",
+            count: 1,
+            rows: [
+              {
+                ...row("x1"),
+                personaDetails: {
+                  name: null,
+                  voice: "Indian male",
+                  age: "50-60",
+                  traits: ["Anxious"],
+                },
+              },
+            ],
+            agg: {},
+          },
+        ]}
+        evals={[]}
+        onOpen={vi.fn()}
+        activeCallId="x1"
+      />,
+    );
+    expect(screen.getByText("Indian male")).toBeInTheDocument();
+    expect(screen.getByText("Anxious")).toBeInTheDocument();
   });
 });

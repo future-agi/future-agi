@@ -36,8 +36,16 @@ networkPolicy:
     - namespaceSelector:
         matchLabels:
           kubernetes.io/metadata.name: ingress-nginx
-# A CA bundle for postgres.external.sslMode=verify-full.
+# Browser downloads from the bundled MinIO on another port (MINIO_URL follows).
+objectStorage:
+  bundled:
+    service:
+      type: LoadBalancer
+      downloadPort: 9100
+# A CA bundle for postgres.external.sslMode=verify-full, and a job deleted as
+# soon as it finishes.
 bootstrap:
+  ttlSecondsAfterFinished: 0
   extraVolumes:
     - name: pg-ca
       secret:

@@ -86,4 +86,38 @@ spec:
                 port:
                   name: s3
     {{- end }}
+{{- if $i.websocket.enabled }}
+---
+# The API's WebSockets, with their own (long) timeouts.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "futureagi.component" (dict "root" . "component" "websocket") }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.componentLabels" $ctx | nindent 4 }}
+  {{- with merge (dict) ($i.websocket.annotations | default dict) ($i.annotations | default dict) }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with $i.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- with $i.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    - host: {{ $i.api.host | quote }}
+      http:
+        paths:
+          - path: /ws/
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "futureagi.component" (dict "root" . "component" "backend") }}
+                port:
+                  name: http
+{{- end }}
 {{- end }}

@@ -6,8 +6,9 @@ const captured = { trackUrls: null, singleUrl: null };
 
 // Mutable so a case can hand back real split channels; hoisted because the
 // vi.mock factory below is lifted above this file's other statements.
-const { stereo } = vi.hoisted(() => ({
+const { stereo, stereoArgs } = vi.hoisted(() => ({
   stereo: { assistantUrl: "", customerUrl: "", loading: false, error: null },
+  stereoArgs: { current: null },
 }));
 
 vi.mock("src/components/iconify", () => ({
@@ -17,7 +18,10 @@ vi.mock("src/components/iconify", () => ({
 }));
 
 vi.mock("src/hooks/use-stereo-channels", () => ({
-  default: () => stereo,
+  default: (...args) => {
+    stereoArgs.current = args;
+    return stereo;
+  },
 }));
 
 vi.mock("src/components/multi-track-audio-player/MultiTrackAudioPlayer", () => ({
@@ -105,6 +109,33 @@ describe("StereoMultiTrackPlayer track selection", () => {
     expect(captured.trackUrls.map((t) => t.name)).toEqual([
       "Customer Audio",
       "Assistant Audio",
+    ]);
+  });
+
+  it("hands the stereo split the backend's channel layout", () => {
+    const layout = { left: "customer", right: "assistant" };
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <AudioPlayerCustom
+          data={{
+            id: "call-3",
+            status: "completed",
+            provider: "phone",
+            call_type: "Inbound",
+            recordings: {
+              stereo: "https://example.test/stereo.wav",
+              stereo_channels: layout,
+            },
+          }}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(stereoArgs.current).toEqual([
+      "https://example.test/stereo.wav",
+      true,
+      "phone",
+      layout,
     ]);
   });
 

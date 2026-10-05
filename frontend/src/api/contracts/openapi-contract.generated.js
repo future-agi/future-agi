@@ -60544,6 +60544,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
             name: {
               type: "string",
             },
+            metric_statistic: {
+              type: "string",
+              enum: ["count", "sum", "mean", "percentage"],
+            },
             data: {
               type: "array",
               items: {
@@ -60612,6 +60616,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 },
                 name: {
                   type: "string",
+                },
+                metric_statistic: {
+                  type: "string",
+                  enum: ["count", "sum", "mean", "percentage"],
                 },
                 data: {
                   type: "array",
@@ -60750,6 +60758,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
                     additionalProperties: true,
                   },
                 },
+                system_metric_statistics: {
+                  type: "object",
+                  additionalProperties: {
+                    type: "string",
+                    enum: ["count", "sum", "mean", "percentage"],
+                  },
+                },
                 query_complete: {
                   type: "boolean",
                 },
@@ -60800,6 +60815,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   },
                   name: {
                     type: "string",
+                  },
+                  metric_statistic: {
+                    type: "string",
+                    enum: ["count", "sum", "mean", "percentage"],
                   },
                   data: {
                     type: "array",
@@ -67282,6 +67301,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         property: {
           title: "Property",
+          description:
+            "Accepted for older clients and ignored for SYSTEM_METRIC graphs: each system metric has one statistic, named by the response's metric_statistic. Latency is always the mean (avg) span latency.",
           type: "string",
           default: "average",
         },
@@ -72992,6 +73013,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           readOnly: true,
         },
+        covered_scenario_count: {
+          title: "Covered scenario count",
+          type: "integer",
+          readOnly: true,
+        },
       },
     },
     RunTestKPIsResponse: {
@@ -77994,6 +78020,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         property: {
           title: "Property",
+          description:
+            "Accepted for older clients and ignored for SYSTEM_METRIC graphs: each system metric has one statistic, named by the response's metric_statistic. Latency is always the mean (avg) span latency.",
           type: "string",
           default: "average",
         },
@@ -78452,6 +78480,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         property: {
           title: "Property",
+          description:
+            "Accepted for older clients and ignored for SYSTEM_METRIC graphs: each system metric has one statistic, named by the response's metric_statistic. Latency is always the mean (avg) span latency.",
           type: "string",
           default: "average",
         },
@@ -84726,6 +84756,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           "x-nullable": true,
         },
+        kind: {
+          title: "Kind",
+          description:
+            "Set on the v3 call detail: a sub-goal check or an evaluation",
+          type: "string",
+          enum: ["evaluation", "sub_goal"],
+        },
         visible: {
           title: "Visible",
           type: "boolean",
@@ -85104,6 +85141,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         duration_ms: {
           title: "Duration ms",
           type: "number",
+        },
+        start_time_ms: {
+          title: "Start time ms",
+          type: "integer",
         },
       },
     },
@@ -94729,6 +94770,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Name",
           type: "string",
         },
+        metric_statistic: {
+          title: "Metric statistic",
+          description:
+            "Statistic of the published system-metric series per bucket. Latency is always the mean (avg) of span latency, filtered or not. Absent for eval and annotation series.",
+          type: "string",
+          enum: ["count", "sum", "mean", "percentage"],
+        },
         data: {
           description:
             "Graph points. A sampled series is published only with complete declared stratum coverage; degraded reads never publish points.",
@@ -94879,6 +94927,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
         name: {
           title: "Name",
           type: "string",
+        },
+        metric_statistic: {
+          title: "Metric statistic",
+          description:
+            "Statistic of the published system-metric series per bucket. Latency is always the mean (avg) of span latency, filtered or not. Absent for eval and annotation series.",
+          type: "string",
+          enum: ["count", "sum", "mean", "percentage"],
         },
         data: {
           description:
@@ -96308,6 +96363,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           "x-json-value": true,
           description: "Any valid JSON value.",
+        },
+        system_metric_statistics: {
+          title: "System metric statistics",
+          description:
+            'Statistic of each ``system_metrics`` series per bucket, e.g. {"latency": "mean", "tokens": "sum", "cost": "mean", "traffic": "count"}. Latency is always the mean (avg) span latency.',
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            enum: ["count", "sum", "mean", "percentage"],
+          },
         },
         evaluations: {
           title: "Evaluations",
@@ -98264,6 +98329,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "series",
         "series_limit",
         "series_mode",
+        "agent_latency_percentiles",
         "latency_percentiles",
         "distributions",
         "csat",
@@ -98316,6 +98382,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Series mode",
           type: "string",
           enum: ["calls", "time_buckets"],
+        },
+        agent_latency_percentiles: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/RunDashboardPercentile",
+          },
         },
         latency_percentiles: {
           type: "array",
@@ -98482,7 +98554,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     EvaluationColumn: {
-      required: ["id", "name"],
+      required: ["id", "name", "kind"],
       type: "object",
       properties: {
         id: {
@@ -98494,6 +98566,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Name",
           type: "string",
           minLength: 1,
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["evaluation", "sub_goal"],
         },
       },
     },
@@ -98519,6 +98596,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "completed_at",
         "duration_seconds",
         "latency_ms",
+        "avg_stop_time_after_interruption",
+        "ai_interruption_count",
         "turn_count",
         "tokens",
         "cost_cents",
@@ -98643,6 +98722,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
         latency_ms: {
           title: "Latency ms",
           type: "number",
+          "x-nullable": true,
+        },
+        avg_stop_time_after_interruption: {
+          title: "Avg stop time after interruption",
+          description:
+            "Average stop time after caller interruption in milliseconds.",
+          type: "integer",
+          "x-nullable": true,
+        },
+        ai_interruption_count: {
+          title: "Ai interruption count",
+          type: "integer",
           "x-nullable": true,
         },
         turn_count: {
@@ -112221,6 +112312,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "label",
         "started_at",
         "calls",
+        "latency_ms",
         "duration_ms",
         "llm_cents",
         "tts_cents",
@@ -112243,6 +112335,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         calls: {
           title: "Calls",
           type: "integer",
+        },
+        latency_ms: {
+          title: "Latency ms",
+          type: "number",
+          "x-nullable": true,
         },
         duration_ms: {
           title: "Duration ms",
@@ -112432,7 +112529,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     GroupAggregates: {
-      required: ["csat", "turns", "latency_ms", "tokens", "evaluations"],
+      required: [
+        "csat",
+        "turns",
+        "latency_ms",
+        "avg_stop_time_after_interruption",
+        "ai_interruptions",
+        "tokens",
+        "evaluations",
+      ],
       type: "object",
       properties: {
         csat: {
@@ -112447,6 +112552,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         latency_ms: {
           title: "Latency ms",
+          type: "number",
+          "x-nullable": true,
+        },
+        avg_stop_time_after_interruption: {
+          title: "Avg stop time after interruption",
+          description:
+            "Mean call stop latency in milliseconds, excluding unmeasured calls.",
+          type: "number",
+          "x-nullable": true,
+        },
+        ai_interruptions: {
+          title: "Ai interruptions",
+          description:
+            "Mean AI interruption count per call, excluding unmeasured calls.",
           type: "number",
           "x-nullable": true,
         },

@@ -69,7 +69,7 @@ PROPERTY_CATALOG_RUNTIME_SETTING_SPECS = {
         (
             ("MAX_PAGE_SIZE", 50, 1, 200),
             ("MAX_SEARCH_BYTES", 512, 1, 4096),
-            ("QUERY_WALL_MS", 10_000, 100, 30_000),
+            ("QUERY_WALL_MS", 10_000, 100, 60_000),
             ("READ_POOL_SIZE", 4, 1, 32),
             ("READ_MAX_THREADS", 2, 1, 16),
             ("READ_MAX_CONCURRENT_QUERIES_PER_USER", 4, 1, 16),
@@ -96,7 +96,7 @@ PROPERTY_CATALOG_RUNTIME_SETTING_SPECS = {
         prefix="PROPERTY_CATALOG_",
     ),
     **_specs(
-        (("READ_TRANSPORT_TIMEOUT_SECONDS", 10.0, 0.1, 30.0),),
+        (("READ_TRANSPORT_TIMEOUT_SECONDS", 10.0, 0.1, 60.0),),
         value_type=float,
         prefix="PROPERTY_CATALOG_",
     ),
@@ -269,6 +269,7 @@ INTERACTIVE_READ_SETTING_SPECS = {
                 4 * 1024**3,
             ),
             ("EXACT_GRAPH_TRACE_CLASSIFIER_MAX_THREADS", 8, 1, 32),
+            ("EXACT_GRAPH_SESSION_READ_MAX_THREADS", 4, 1, 32),
             (
                 "INTERACTIVE_READ_DEFAULT_MAX_RESPONSE_UNITS",
                 2 * 1024**2,
@@ -351,6 +352,20 @@ INTERACTIVE_READ_SETTING_SPECS = {
             ("MONITOR_GRAPH_CH_TIMEOUT_CAP_MS", 6_000, 100, 60_000),
             ("MONITOR_GRAPH_METADATA_PG_TIMEOUT_CAP_MS", 1_000, 100, 10_000),
             ("GRAPH_BACKGROUND_WALL_MS", 180_000, 1_000, 180_000),
+            # Age after which a revisited Observe chart whose exact snapshot
+            # ran while its window was open refreshes that snapshot in the
+            # background (0 = off; values 1-59 are raised to 60 in code). The
+            # default's load bound is documented at
+            # _DEFAULT_REVALIDATE_AFTER_SECONDS in
+            # tracer/services/exact_aggregation_cache.py.
+            ("EXACT_AGGREGATION_REVALIDATE_AFTER_SECONDS", 300, 0, 86_400),
+            # A Sessions latency chart whose lean root read the index estimates
+            # at or below this many rows is computed inline on the interactive
+            # wall (one thread) instead of queueing on the exact worker; 0 turns
+            # inline off. Production root-row estimates: ~27k (small tenant,
+            # 7D), 1.2M (small tenant, 12M), 3.5M (largest tenant, 7D), 77M
+            # (largest tenant, 30D). See session_graph._inline_session_latency_graph.
+            ("SESSION_GRAPH_INLINE_MAX_ESTIMATED_ROWS", 2_000_000, 0, 50_000_000),
             ("GRAPH_EVENT_LIMIT", 2_000, 1, 100_000),
             ("GRAPH_TRACE_DECORATION_CANDIDATE_LIMIT", 40, 1, 4_096),
             ("GRAPH_SPAN_METRIC_BATCH_SIZE", 1_024, 1, 4_096),
@@ -938,6 +953,11 @@ def validate_interactive_read_settings(values: Mapping[str, Numeric]) -> None:
         values["EXACT_GRAPH_TRACE_CLASSIFIER_MAX_THREADS"],
         values["CLICKHOUSE_APPLICATION_READ_MAX_THREADS"],
         "exact-graph classifier threads cannot exceed the application maximum",
+    )
+    _require_at_most(
+        values["EXACT_GRAPH_SESSION_READ_MAX_THREADS"],
+        values["CLICKHOUSE_APPLICATION_READ_MAX_THREADS"],
+        "exact-graph session threads cannot exceed the application maximum",
     )
     _require_at_most(
         values["ANALYTICS_DEFAULT_LOOKBACK_DAYS"],

@@ -18,7 +18,7 @@ export const CHART_GUIDE = {
   pipeline_cost:
     "Per-call spend, split by voice-pipeline stage. If LLM towers over everything, you're overspending on model tokens (shorter prompt, cheaper model, cache). If TTS or STT dominate, look at voice provider tier. Transport bloat usually means calls staying open too long.",
   task_latency:
-    "Each call's end-to-end duration in the order it ran. Random spikes point at flaky infrastructure; a steady climb means the agent is doing more of something over time (retries, context growth); a step change usually means a new tool or model kicked in mid-run.",
+    "Each call's average agent response time in the order it ran. Random spikes point at flaky infrastructure; a steady climb means the agent is doing more of something over time (retries, context growth); a step change usually means a new tool or model kicked in mid-run.",
   percentiles:
     "Every call's average agent response time, sorted: read across to a percentile, up to the wait. p50 is typical, p90 is the slower 10% of calls. These are per-call averages, so a single long pause inside an otherwise quick call does not show here.",
   response_time:

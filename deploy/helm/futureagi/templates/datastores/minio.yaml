@@ -14,7 +14,7 @@ metadata:
   annotations:
     {{- include "futureagi.datastoreSyncWave" . | nindent 4 }}
 spec:
-  type: ClusterIP
+  type: {{ dig "service" "type" "ClusterIP" $bundled }}
   selector:
     {{- include "futureagi.selectorLabels" $ctx | nindent 4 }}
   ports:
@@ -22,6 +22,13 @@ spec:
       port: 9000
       targetPort: s3
       protocol: TCP
+    {{- if ne (dig "service" "type" "ClusterIP" $bundled) "ClusterIP" }}
+    # Where browsers download files (MINIO_URL, http://localhost:9005 by default).
+    - name: downloads
+      port: {{ dig "service" "downloadPort" 9005 $bundled }}
+      targetPort: s3
+      protocol: TCP
+    {{- end }}
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -50,7 +57,7 @@ spec:
       enableServiceLinks: false
       {{- include "futureagi.block" (dict "text" (include "futureagi.imagePullSecrets" .) "indent" 6) }}
       securityContext:
-        {{- include "futureagi.podSecurityContext" (dict "uid" 1000) | nindent 8 }}
+        {{- include "futureagi.podSecurityContext" (dict "root" $ "uid" 1000 "overrides" $.Values.objectStorage.bundled.podSecurityContext) | nindent 8 }}
       {{- include "futureagi.block" (dict "text" (include "futureagi.scheduling" (dict "root" . "values" $bundled)) "indent" 6) }}
       containers:
         - name: minio
@@ -91,7 +98,7 @@ spec:
           resources:
             {{- toYaml $bundled.resources | nindent 12 }}
           securityContext:
-            {{- include "futureagi.containerSecurityContext" (dict) | nindent 12 }}
+            {{- include "futureagi.containerSecurityContext" (dict "root" $ "overrides" $.Values.objectStorage.bundled.containerSecurityContext) | nindent 12 }}
           volumeMounts:
             - name: data
               mountPath: /data

@@ -51,7 +51,7 @@ spec:
       {{- include "futureagi.block" (dict "text" (include "futureagi.imagePullSecrets" .) "indent" 6) }}
       # The image's postgres user.
       securityContext:
-        {{- include "futureagi.podSecurityContext" (dict "uid" 999) | nindent 8 }}
+        {{- include "futureagi.podSecurityContext" (dict "root" $ "uid" 999 "overrides" $.Values.postgres.bundled.podSecurityContext) | nindent 8 }}
       {{- include "futureagi.block" (dict "text" (include "futureagi.scheduling" (dict "root" . "values" $bundled)) "indent" 6) }}
       terminationGracePeriodSeconds: 60
       containers:
@@ -96,7 +96,7 @@ spec:
           resources:
             {{- toYaml $bundled.resources | nindent 12 }}
           securityContext:
-            {{- include "futureagi.containerSecurityContext" (dict "readOnly" false) | nindent 12 }}
+            {{- include "futureagi.containerSecurityContext" (dict "root" $ "readOnly" false "overrides" $.Values.postgres.bundled.containerSecurityContext) | nindent 12 }}
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql/data

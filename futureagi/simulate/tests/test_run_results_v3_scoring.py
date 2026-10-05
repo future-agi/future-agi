@@ -9,7 +9,7 @@ import pytest
 from django.db import connection
 
 from simulate.models import CallExecution
-from simulate.services.run_results_v3 import _eval_outcome, call_outcome
+from simulate.services.run_results_v3 import _eval_outcome, call_outcome, eval_rows
 from simulate.services.run_results_v3_queries import (
     _configured_eval_verdict,
     run_calls_queryset,
@@ -180,10 +180,16 @@ def test_configured_verdict_query_compiles_without_database():
     config = _config("deterministic")
     config.id = "eval-1"
     config.eval_template.choice_scores = {"good": 1.0, "bad": 0.0}
-    with patch(
-        "simulate.services.run_results_v3_queries.SimulateEvalConfig.objects.filter"
-    ) as filtered:
+    with (
+        patch(
+            "simulate.services.run_results_v3_queries.SimulateEvalConfig.objects.filter"
+        ) as filtered,
+        patch(
+            "simulate.services.run_results_v3_queries.HostedHarnessJob.all_objects.filter"
+        ) as jobs,
+    ):
         filtered.return_value.select_related.return_value = [config]
+        jobs.return_value.values_list.return_value = []
         queryset = run_calls_queryset(SimpleNamespace(run_test=None), [uuid.uuid4()])
 
     sql = str(queryset.query)
@@ -212,7 +218,34 @@ def test_formatted_choice_uses_attachment_score_override(output):
     assert judgement.score == 0.0
 
 
+@pytest.mark.parametrize(
+    "output,status,expected",
+    [
+        ({"score": 1.0, "choice": "always"}, "completed", 1.0),
+        ({"score": 80, "choice": "mostly"}, "completed", 0.8),
+        ({"score": 0, "choice": "never"}, "completed", 0.0),
+        ({"score": 0.5, "choices": ["a", "b"]}, "completed", 0.5),
+        ({"score": "0.8"}, "completed", None),
+        ({"score": True}, "completed", None),
+        ({"score": None}, "completed", None),
+        ({"score": {"value": 1}}, "completed", None),
+        ({"choice": "always"}, "completed", None),
+        ({"score": 1.0}, "error", None),
+    ],
+)
+def test_native_choice_score_rows(output, status, expected):
+    call = SimpleNamespace(
+        eval_outputs={
+            "native": {"source": "harness", "output": output, "status": status}
+        }
+    )
+    assert eval_rows(call, {})[0]["score"] == expected
+
+
 SCORING_PARITY_CASES = [
+    ("percentage", {"score": 0.4, "choice": "sometimes"}, 0.5, {}),
+    ("percentage", {"score": 80, "choice": "mostly"}, 0.5, {}),
+    ("percentage", {"score": 0.5, "choices": ["a", "b"]}, 0.5, {}),
     ("pass_fail", "Failed", 0, {}),
     ("pass_fail", {"failure": True}, 0, {}),
     ("pass_fail", "Passed", 1, {}),

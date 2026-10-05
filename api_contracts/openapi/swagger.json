@@ -128494,6 +128494,15 @@
                     "type": "string",
                     "x-nullable": true
                 },
+                "kind": {
+                    "title": "Kind",
+                    "description": "Set on the v3 call detail: a sub-goal check or an evaluation",
+                    "type": "string",
+                    "enum": [
+                        "evaluation",
+                        "sub_goal"
+                    ]
+                },
                 "visible": {
                     "title": "Visible",
                     "type": "boolean"
@@ -131391,6 +131400,11 @@
                     "items": {
                         "$ref": "#/definitions/TestExecutionItemResponse"
                     },
+                    "readOnly": true
+                },
+                "covered_scenario_count": {
+                    "title": "Covered scenario count",
+                    "type": "integer",
                     "readOnly": true
                 }
             }
@@ -134369,6 +134383,10 @@
                 "duration_ms": {
                     "title": "Duration ms",
                     "type": "number"
+                },
+                "start_time_ms": {
+                    "title": "Start time ms",
+                    "type": "integer"
                 }
             }
         },
@@ -135052,6 +135070,7 @@
                 "label",
                 "started_at",
                 "calls",
+                "latency_ms",
                 "duration_ms",
                 "llm_cents",
                 "tts_cents",
@@ -135074,6 +135093,11 @@
                 "calls": {
                     "title": "Calls",
                     "type": "integer"
+                },
+                "latency_ms": {
+                    "title": "Latency ms",
+                    "type": "number",
+                    "x-nullable": true
                 },
                 "duration_ms": {
                     "title": "Duration ms",
@@ -135652,6 +135676,7 @@
                 "series",
                 "series_limit",
                 "series_mode",
+                "agent_latency_percentiles",
                 "latency_percentiles",
                 "distributions",
                 "csat",
@@ -135707,6 +135732,12 @@
                         "calls",
                         "time_buckets"
                     ]
+                },
+                "agent_latency_percentiles": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/RunDashboardPercentile"
+                    }
                 },
                 "latency_percentiles": {
                     "type": "array",
@@ -136797,6 +136828,8 @@
                 "completed_at",
                 "duration_seconds",
                 "latency_ms",
+                "avg_stop_time_after_interruption",
+                "ai_interruption_count",
                 "turn_count",
                 "tokens",
                 "cost_cents",
@@ -136923,6 +136956,17 @@
                     "type": "number",
                     "x-nullable": true
                 },
+                "avg_stop_time_after_interruption": {
+                    "title": "Avg stop time after interruption",
+                    "description": "Average stop time after caller interruption in milliseconds.",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "ai_interruption_count": {
+                    "title": "Ai interruption count",
+                    "type": "integer",
+                    "x-nullable": true
+                },
                 "turn_count": {
                     "title": "Turn count",
                     "type": "integer",
@@ -136971,6 +137015,8 @@
                 "csat",
                 "turns",
                 "latency_ms",
+                "avg_stop_time_after_interruption",
+                "ai_interruptions",
                 "tokens",
                 "evaluations"
             ],
@@ -136988,6 +137034,18 @@
                 },
                 "latency_ms": {
                     "title": "Latency ms",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "avg_stop_time_after_interruption": {
+                    "title": "Avg stop time after interruption",
+                    "description": "Mean call stop latency in milliseconds, excluding unmeasured calls.",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "ai_interruptions": {
+                    "title": "Ai interruptions",
+                    "description": "Mean AI interruption count per call, excluding unmeasured calls.",
                     "type": "number",
                     "x-nullable": true
                 },
@@ -137118,7 +137176,8 @@
         "EvaluationColumn": {
             "required": [
                 "id",
-                "name"
+                "name",
+                "kind"
             ],
             "type": "object",
             "properties": {
@@ -137131,6 +137190,14 @@
                     "title": "Name",
                     "type": "string",
                     "minLength": 1
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "enum": [
+                        "evaluation",
+                        "sub_goal"
+                    ]
                 }
             }
         },
@@ -137743,6 +137810,15 @@
                         "name": {
                             "type": "string"
                         },
+                        "metric_statistic": {
+                            "type": "string",
+                            "enum": [
+                                "count",
+                                "sum",
+                                "mean",
+                                "percentage"
+                            ]
+                        },
                         "data": {
                             "type": "array",
                             "items": {
@@ -137818,6 +137894,15 @@
                                 },
                                 "name": {
                                     "type": "string"
+                                },
+                                "metric_statistic": {
+                                    "type": "string",
+                                    "enum": [
+                                        "count",
+                                        "sum",
+                                        "mean",
+                                        "percentage"
+                                    ]
                                 },
                                 "data": {
                                     "type": "array",
@@ -137976,6 +138061,18 @@
                                         "additionalProperties": true
                                     }
                                 },
+                                "system_metric_statistics": {
+                                    "type": "object",
+                                    "additionalProperties": {
+                                        "type": "string",
+                                        "enum": [
+                                            "count",
+                                            "sum",
+                                            "mean",
+                                            "percentage"
+                                        ]
+                                    }
+                                },
                                 "query_complete": {
                                     "type": "boolean"
                                 },
@@ -138031,6 +138128,15 @@
                                     },
                                     "name": {
                                         "type": "string"
+                                    },
+                                    "metric_statistic": {
+                                        "type": "string",
+                                        "enum": [
+                                            "count",
+                                            "sum",
+                                            "mean",
+                                            "percentage"
+                                        ]
                                     },
                                     "data": {
                                         "type": "array",
@@ -145534,6 +145640,7 @@
                 },
                 "property": {
                     "title": "Property",
+                    "description": "Accepted for older clients and ignored for SYSTEM_METRIC graphs: each system metric has one statistic, named by the response's metric_statistic. Latency is always the mean (avg) span latency.",
                     "type": "string",
                     "default": "average"
                 },
@@ -145628,6 +145735,17 @@
                 "name": {
                     "title": "Name",
                     "type": "string"
+                },
+                "metric_statistic": {
+                    "title": "Metric statistic",
+                    "description": "Statistic of the published system-metric series per bucket. Latency is always the mean (avg) of span latency, filtered or not. Absent for eval and annotation series.",
+                    "type": "string",
+                    "enum": [
+                        "count",
+                        "sum",
+                        "mean",
+                        "percentage"
+                    ]
                 },
                 "data": {
                     "description": "Graph points. A sampled series is published only with complete declared stratum coverage; degraded reads never publish points.",
@@ -146657,6 +146775,20 @@
                     "type": "object",
                     "x-json-value": true,
                     "description": "Any valid JSON value."
+                },
+                "system_metric_statistics": {
+                    "title": "System metric statistics",
+                    "description": "Statistic of each ``system_metrics`` series per bucket, e.g. {\"latency\": \"mean\", \"tokens\": \"sum\", \"cost\": \"mean\", \"traffic\": \"count\"}. Latency is always the mean (avg) span latency.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "enum": [
+                            "count",
+                            "sum",
+                            "mean",
+                            "percentage"
+                        ]
+                    }
                 },
                 "evaluations": {
                     "title": "Evaluations",
@@ -149178,6 +149310,7 @@
                 },
                 "property": {
                     "title": "Property",
+                    "description": "Accepted for older clients and ignored for SYSTEM_METRIC graphs: each system metric has one statistic, named by the response's metric_statistic. Latency is always the mean (avg) span latency.",
                     "type": "string",
                     "default": "average"
                 },
@@ -149248,6 +149381,17 @@
                 "name": {
                     "title": "Name",
                     "type": "string"
+                },
+                "metric_statistic": {
+                    "title": "Metric statistic",
+                    "description": "Statistic of the published system-metric series per bucket. Latency is always the mean (avg) of span latency, filtered or not. Absent for eval and annotation series.",
+                    "type": "string",
+                    "enum": [
+                        "count",
+                        "sum",
+                        "mean",
+                        "percentage"
+                    ]
                 },
                 "data": {
                     "description": "Graph points. A sampled series is published only with complete declared stratum coverage; degraded reads never publish points.",
@@ -150445,6 +150589,7 @@
                 },
                 "property": {
                     "title": "Property",
+                    "description": "Accepted for older clients and ignored for SYSTEM_METRIC graphs: each system metric has one statistic, named by the response's metric_statistic. Latency is always the mean (avg) span latency.",
                     "type": "string",
                     "default": "average"
                 },

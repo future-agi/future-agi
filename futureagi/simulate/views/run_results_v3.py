@@ -27,6 +27,7 @@ from simulate.services.run_results_v3 import (
     build_call_rows,
     build_evaluation_catalog,
     function_calls,
+    receipt_sub_goal_names,
 )
 from simulate.services.run_results_v3_queries import (
     GROUP_FIELDS,
@@ -34,6 +35,7 @@ from simulate.services.run_results_v3_queries import (
     build_run_analytics,
     group_run_calls,
     run_call_facets,
+    run_call_rows_queryset,
     run_calls_queryset,
     summarize_run_calls,
 )
@@ -243,6 +245,11 @@ class RunCallSerializer(serializers.Serializer):
     completed_at = serializers.DateTimeField(allow_null=True)
     duration_seconds = serializers.FloatField(allow_null=True)
     latency_ms = serializers.FloatField(allow_null=True)
+    avg_stop_time_after_interruption = serializers.IntegerField(
+        allow_null=True,
+        help_text="Average stop time after caller interruption in milliseconds.",
+    )
+    ai_interruption_count = serializers.IntegerField(allow_null=True)
     turn_count = serializers.IntegerField(allow_null=True)
     tokens = serializers.IntegerField(allow_null=True)
     cost_cents = serializers.FloatField(allow_null=True)
@@ -267,12 +274,21 @@ class RunFacetsSerializer(serializers.Serializer):
 class EvaluationColumnSerializer(serializers.Serializer):
     id = serializers.CharField()
     name = serializers.CharField()
+    kind = serializers.ChoiceField(choices=["evaluation", "sub_goal"])
 
 
 class GroupAggregatesSerializer(serializers.Serializer):
     csat = serializers.FloatField(allow_null=True)
     turns = serializers.FloatField(allow_null=True)
     latency_ms = serializers.FloatField(allow_null=True)
+    avg_stop_time_after_interruption = serializers.FloatField(
+        allow_null=True,
+        help_text="Mean call stop latency in milliseconds, excluding unmeasured calls.",
+    )
+    ai_interruptions = serializers.FloatField(
+        allow_null=True,
+        help_text="Mean AI interruption count per call, excluding unmeasured calls.",
+    )
     tokens = serializers.FloatField(allow_null=True)
     evaluations = serializers.JSONField()
 
@@ -423,6 +439,7 @@ class FunctionCallSerializer(serializers.Serializer):
     result = serializers.JSONField(required=False)
     output = serializers.JSONField(required=False)
     duration_ms = serializers.FloatField(required=False)
+    start_time_ms = serializers.IntegerField(required=False)
 
     class Meta:
         ref_name = "SimulateRunV3FunctionCall"
@@ -523,7 +540,9 @@ class RunCallsV3View(APIView):
         )
         count = filtered_summary["total"]
         columns, live_eval_ids = build_evaluation_catalog(execution)
-        page_calls = list(filtered_queryset[start : start + page_size])
+        page_calls = list(
+            run_call_rows_queryset(filtered_queryset)[start : start + page_size]
+        )
         page_rows, columns = build_call_rows(
             execution, page_calls, columns, live_eval_ids
         )
@@ -559,7 +578,11 @@ class RunCallsV3View(APIView):
             "total_pages": max(1, (count + page_size - 1) // page_size),
             "results": page_rows,
             "groups": group_run_calls(
-                filtered_queryset, query.get("group_by"), page_rows, columns
+                filtered_queryset,
+                query.get("group_by"),
+                page_rows,
+                columns,
+                execution=execution,
             ),
             "facets": run_call_facets(facet_queryset, facets_cache_key),
             "evaluation_columns": columns,
@@ -588,6 +611,14 @@ def build_call_execution_detail(
         ).data
     )
     normalized = row[0]
+    # A sub-goal check is a harness verdict too, but it belongs to the
+    # scenario, not the eval list. Tag each metric so the UI can tell.
+    sub_goal_names = receipt_sub_goal_names(call.call_metadata)
+    for metric in (data.get("eval_metrics") or {}).values():
+        if isinstance(metric, dict) and metric:
+            metric["kind"] = (
+                "sub_goal" if metric.get("name") in sub_goal_names else "evaluation"
+            )
     data.update(
         {
             "goal": normalized["goal"],
@@ -598,6 +629,8 @@ def build_call_execution_detail(
             "persona_details": normalized["persona_details"],
             "sub_goal_results": normalized["sub_goal_results"],
             "outcome": normalized["outcome"],
+            "overall_score": normalized["csat"],
+            "csat_score": normalized["csat"],
             "cost_breakdown_cents": normalized["cost_breakdown_cents"],
             "evaluations": normalized["evaluations"],
             "function_calls": function_calls(call),
@@ -729,7 +762,7 @@ def _csv_rows(
 def _csv_rows_from_queryset(execution: TestExecution, queryset) -> Iterator[str]:
     columns, live_eval_ids = build_evaluation_catalog(execution)
     yield from _csv_rows([], columns)
-    iterator = queryset.iterator(chunk_size=500)
+    iterator = run_call_rows_queryset(queryset).iterator(chunk_size=500)
     while chunk := list(islice(iterator, 500)):
         rows, _ = build_call_rows(execution, chunk, columns, live_eval_ids)
         chunk_rows = _csv_rows(rows, columns)

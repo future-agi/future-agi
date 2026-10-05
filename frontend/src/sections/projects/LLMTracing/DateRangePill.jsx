@@ -1,10 +1,9 @@
 import React, { useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { Button, MenuItem, Popover } from "@mui/material";
-import { startOfToday, startOfTomorrow, startOfYesterday, sub } from "date-fns";
 import Iconify from "src/components/iconify";
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
-import { formatDate } from "src/utils/report-utils";
+import { observePresetDateFilter } from "../timeWindowPresets";
 
 export const DATE_OPTIONS = [
   { key: "Today", label: "Today" },
@@ -32,40 +31,10 @@ const DEFAULT_PILL_SX = {
   "&:hover": { borderColor: "text.secondary" },
 };
 
+// Delegates to the shared Observe preset window (hour-floored start,
+// next-midnight end) so every picker and the default load agree.
 export function dateFilterForOption(option) {
-  switch (option) {
-    case "Today":
-      return [formatDate(startOfToday()), formatDate(startOfTomorrow())];
-    case "Yesterday":
-      return [formatDate(startOfYesterday()), formatDate(startOfToday())];
-    case "7D":
-      return [
-        formatDate(sub(new Date(), { days: 7 })),
-        formatDate(startOfTomorrow()),
-      ];
-    case "30D":
-      return [
-        formatDate(sub(new Date(), { days: 30 })),
-        formatDate(startOfTomorrow()),
-      ];
-    case "3M":
-      return [
-        formatDate(sub(new Date(), { months: 3 })),
-        formatDate(startOfTomorrow()),
-      ];
-    case "6M":
-      return [
-        formatDate(sub(new Date(), { months: 6 })),
-        formatDate(startOfTomorrow()),
-      ];
-    case "12M":
-      return [
-        formatDate(sub(new Date(), { months: 12 })),
-        formatDate(startOfTomorrow()),
-      ];
-    default:
-      return null;
-  }
+  return observePresetDateFilter(option);
 }
 
 const DateRangePill = ({ dateFilter, setDateFilter, label, sx }) => {

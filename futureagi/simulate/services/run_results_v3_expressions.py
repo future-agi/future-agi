@@ -7,16 +7,54 @@ from django.db.models import (
     F,
     FloatField,
     Func,
+    QuerySet,
     TextField,
     Value,
     When,
 )
 from django.db.models.aggregates import Aggregate
+from django.db.models.expressions import Col
 from django.db.models.fields.json import KeyTextTransform
 from django.db.models.functions import Cast, Greatest, Least, NullIf
 from django.db.models.lookups import GreaterThan, Regex
+from django.db.models.sql.datastructures import BaseTable
 
 NUMERIC_JSON_PATTERN = r"^-?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$"
+
+
+class _LateralProjection(BaseTable):
+    """Keep one scalar annotation from being expanded at every ORM reference."""
+
+    def __init__(self, alias: str | None, parent_alias: str, expression: Expression):
+        super().__init__("simulation_call_verdict", alias)
+        self.parent_alias = parent_alias
+        self.expression = expression
+
+    def as_sql(self, compiler, connection):
+        sql, params = compiler.compile(self.expression)
+        alias = connection.ops.quote_name(self.table_alias)
+        # OFFSET 0 prevents PostgreSQL from inlining the expensive expression.
+        return f"CROSS JOIN LATERAL (SELECT {sql} AS value OFFSET 0) {alias}", params
+
+    def relabeled_clone(self, change_map):
+        return self.__class__(
+            change_map.get(self.table_alias, self.table_alias),
+            change_map.get(self.parent_alias, self.parent_alias),
+            self.expression.relabeled_clone(change_map),
+        )
+
+
+def project_annotation(queryset: QuerySet, name: str) -> QuerySet:
+    """Project an existing annotation once per call, retaining an ORM queryset."""
+    queryset = queryset.all()
+    query = queryset.query
+    expression = query.annotations[name]
+    alias = query.join(_LateralProjection(None, query.get_initial_alias(), expression))
+    field = expression.output_field.clone()
+    field.set_attributes_from_name("value")
+    field.model = None
+    query.annotations[name] = Col(alias, field)
+    return queryset
 
 
 class NormalizedEvalNumber(Func):
