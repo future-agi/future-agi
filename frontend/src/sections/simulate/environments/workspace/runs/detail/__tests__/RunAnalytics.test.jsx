@@ -307,6 +307,76 @@ describe("RunAnalytics", () => {
     expect(useRunAnalytics).toHaveBeenCalledWith("execution-1");
   });
 
+  const callMetric = (key, value, unit = "number", note = "") => ({
+    key,
+    label: key,
+    value,
+    unit,
+    measured: 4,
+    total: 4,
+    note,
+  });
+  const callMetrics = [
+    callMetric("total", 4),
+    callMetric("connected_rate", 75, "percent"),
+    callMetric("agent_latency", 462, "ms"),
+    callMetric("duration", 11.9, "seconds"),
+    callMetric("turns", 9.1),
+  ];
+  const voiceMetrics = [
+    callMetric("wpm", 167),
+    callMetric("stop", 289, "ms"),
+    callMetric("talk", 48, "percent"),
+  ];
+  const renderWithMetrics = (metrics) => {
+    const data = structuredClone(analytics);
+    data.dashboard.metrics.push(...metrics);
+    data.dashboard.run_health = {
+      ...data.dashboard.run_health,
+      attempted: 4,
+      connected: 3,
+    };
+    useRunAnalytics.mockReturnValue({ data, isPending: false, isError: false });
+    render(<RunAnalytics executionId="execution-1" />);
+  };
+  const tile = (label) => screen.getByText(label).parentElement;
+
+  it("shows call and voice metric tiles", () => {
+    renderWithMetrics([...callMetrics, ...voiceMetrics]);
+
+    expect(within(tile("Total Calls")).getByText("4")).toBeInTheDocument();
+    expect(within(tile("Connected")).getByText("3")).toBeInTheDocument();
+    expect(within(tile("Connected")).getByText("of 4")).toBeInTheDocument();
+    expect(
+      within(tile("Calls Connected (%)")).getByText("75%"),
+    ).toBeInTheDocument();
+    expect(
+      within(tile("Agent Latency")).getByText("462ms"),
+    ).toBeInTheDocument();
+    expect(within(tile("Agent WPM")).getByText("167")).toBeInTheDocument();
+    expect(
+      within(tile("Agent Stop Latency")).getByText("289ms"),
+    ).toBeInTheDocument();
+    expect(within(tile("Talk Ratio")).getByText("48/52")).toBeInTheDocument();
+    expect(within(tile("Avg duration")).getByText("11.9s")).toBeInTheDocument();
+    expect(within(tile("Avg turns")).getByText("9.1")).toBeInTheDocument();
+  });
+
+  it("hides voice-only tiles and marks unreported call metrics", () => {
+    renderWithMetrics([
+      ...callMetrics.filter((metric) => metric.key !== "agent_latency"),
+      callMetric("agent_latency", null, "ms"),
+    ]);
+
+    for (const label of ["Agent WPM", "Agent Stop Latency", "Talk Ratio"]) {
+      expect(screen.queryByText(label)).not.toBeInTheDocument();
+    }
+    expect(within(tile("Agent Latency")).getByText("-")).toBeInTheDocument();
+    expect(
+      within(tile("Agent Latency")).getByText("Not reported"),
+    ).toBeInTheDocument();
+  });
+
   it("shows drop-off coverage when completion evidence is unavailable", () => {
     const data = structuredClone(analytics);
     const dropOff = data.dashboard.metrics.find(
@@ -463,6 +533,31 @@ describe("RunAnalytics", () => {
       screen.getByRole("button", { name: "Show Escalated calls" }),
     );
     expect(open).toHaveBeenLastCalledWith({ goal_outcome: ["escalated"] });
+  });
+
+  it.each([
+    ["queued", "Queued"],
+    ["in_progress", "In progress"],
+  ])("opens %s calls from the goal-outcome chart", (outcome, label) => {
+    const data = structuredClone(analytics);
+    const chart = data.dashboard.breakdowns.find(
+      (item) => item.key === "goal_outcome",
+    );
+    chart.total = 4;
+    chart.headline = { label: "passed", count: 0, share: 0 };
+    chart.segments = [
+      { label: outcome, count: 4, share: 100, statuses: [outcome] },
+    ];
+    useRunAnalytics.mockReturnValue({ data, isPending: false, isError: false });
+    const open = vi.fn();
+    render(<RunAnalytics executionId="execution-1" onOpenCalls={open} />);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Show detailed analytics" }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: `Show ${label} calls` }),
+    );
+    expect(open).toHaveBeenCalledWith({ goal_outcome: [outcome] });
   });
 
   it("opens the actual call from a performance-tail widget", () => {

@@ -14,7 +14,6 @@ import { CellSkeleton } from "./traceCells";
 
 const DESC_KEYS = [
   "callDetails",
-  "status",
   "persona",
   "scenario",
   "situation",
@@ -72,15 +71,6 @@ export default function TraceGroupHeaderRow({
   const personaCount = uniqueBy((t) => t.persona);
 
   const descSummary = (key) => {
-    if (key === "status") {
-      // The group's calls load a page at a time, so only count once all of
-      // them are here — a partial count would read as the whole group.
-      if (group.rows.length < group.count) return "-";
-      const done = group.rows.filter(
-        (t) => t.executionStatus === "completed",
-      ).length;
-      return `${done}/${group.count} completed`;
-    }
     if (key === "persona")
       return personaCount
         ? `${personaCount} persona${personaCount === 1 ? "" : "s"}`
@@ -94,8 +84,11 @@ export default function TraceGroupHeaderRow({
       // Counted from the rows here, so only once every call in the group is
       // on this page: a page's share would read as the whole group's.
       if (group.rows.length < group.count) return "-";
-      const subGoalCount = new Set(group.rows.flatMap((t) => t.subGoals || []))
-        .size;
+      const subGoalCount = new Set(
+        group.rows.flatMap((t) =>
+          (t.subGoalResults || []).map((goal) => goal.name),
+        ),
+      ).size;
       return subGoalCount
         ? `${subGoalCount} sub-goal${subGoalCount === 1 ? "" : "s"}`
         : "-";

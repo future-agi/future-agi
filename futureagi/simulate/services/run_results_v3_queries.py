@@ -57,7 +57,7 @@ from simulate.semantics import SupportedProviders
 from simulate.services.harness_scenarios import GROUP_BY as SCENARIO_GROUP_BY
 from simulate.services.harness_scenarios import level_label
 from simulate.services.run_reliability_v3 import build_reliability
-from simulate.services.run_results_v3 import build_evaluation_catalog
+from simulate.services.run_results_v3 import OUTCOME_LABELS, build_evaluation_catalog
 from simulate.services.run_results_v3_expressions import (
     MatchingListGroups,
     NormalizedEvalNumber,
@@ -74,7 +74,7 @@ from simulate.services.run_results_v3_scoring import (
 
 ALL_ROWS = sys.maxsize
 
-OUTCOMES = ("passed", "failed", "error", "inconclusive")
+OUTCOMES = tuple(OUTCOME_LABELS)
 # Outcomes that judge the agent. Errored and inconclusive calls never ran to a verdict,
 # so they are reported as run health rather than counted against the agent.
 EVALUATED_OUTCOMES = ("passed", "failed")
@@ -671,6 +671,8 @@ def run_calls_queryset(
             output_field=CharField(),
         ),
         result_outcome=Case(
+            When(status__in=["pending", "queued"], then=Value("queued")),
+            When(status__in=["ongoing", "analyzing"], then=Value("in_progress")),
             When(
                 call_metadata__harness_outcome_status__in=[
                     "error",
@@ -1026,12 +1028,7 @@ def group_run_calls(
         summaries = (
             queryset.filter(visible).order_by().values(field).annotate(**expressions)
         )
-    labels = {
-        "passed": "Passed",
-        "failed": "Failed",
-        "error": "Errored",
-        "inconclusive": "Not measured",
-    }
+    labels = OUTCOME_LABELS
     # Levels read as the Scenarios tab names them ("none" is "No attack").
     labelled_axis = group_by in {"sub_goal", "attack", "task"}
     groups = []
