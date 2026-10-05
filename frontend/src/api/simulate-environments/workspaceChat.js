@@ -270,7 +270,9 @@ export function useWorkspaceChat(env, { source } = {}) {
     frozen,
     frozenReason,
     inFlight: conversationInFlight(conversation),
-    // A question or confirmation is open for the user to answer.
-    waiting: conversationWaiting(conversation),
+    // A question or confirmation is open and the user can still answer it. A
+    // frozen chat (job ended without a saved workspace, conversation retired)
+    // can keep an open question on the backend, but there is nothing to do.
+    waiting: !frozen && conversationWaiting(conversation),
   };
 }
