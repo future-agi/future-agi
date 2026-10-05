@@ -1,18 +1,34 @@
 eval_id: 114
 name: customer_agent_query_handling
-description: Checks if the bot correctly interprets user queries and gives relevant answers.
-criteria: "You are evaluating whether the agent correctly interprets and responds to customer queries.\n\n## Criteria\n\n\
-  1. Query comprehension: The agent should understand what the customer is asking, even if informally phrased.\n   - Always:\
-  \ Correctly interprets every query regardless of phrasing.\n   - Never: Consistently misunderstands what the customer is\
-  \ asking.\n\n2. Response relevance: Answers should directly address the customer's question.\n   - Always: Every response\
-  \ is targeted and relevant.\n   - Never: Responses are generic, off-topic, or scripted regardless of the question.\n   - A reply in a language other than the one the customer is using, an answer about a different product or service than the one asked for, or a customer question left unanswered or met with the same non-answer each time does not address the query.\n\n3.\
-  \ Unexpected query handling: Out-of-scope questions should be handled gracefully.\n   - Always: Politely redirects or provides\
-  \ the best available help.\n   - Never: Ignores or crashes on unexpected questions.\n\n## Anti-bias Rules\n\n- Asking for\
-  \ clarification when a query is genuinely ambiguous counts as GOOD handling.\n- Redirecting out-of-scope queries politely\
-  \ is appropriate, not a failure.\n- A short relevant answer scores higher than a long irrelevant one.\n\n## Scoring\n\n\
-  Select 'never' if consistently misinterprets queries. Select 'occasionally' if handles some well but misinterprets others, or if any of the customer's main requests is misunderstood or left unanswered.\
-  \ Select 'frequently' if correctly handles most queries. Select 'always' if accurately interprets and helpfully responds\
-  \ to every query.\n\n## Inputs\n\n<conversation>{{conversation}}</conversation>"
+description: "Checks whether every substantive part of user questions and requests is understood and appropriately addressed."
+criteria: |-
+  Evaluate whether the agent understands and addresses each substantive question and request in the conversation.
+
+  ## Criteria
+  1. Separate multipart queries into distinct issues, including secondary questions, corrections, and follow-ups.
+  2. Match each issue to a direct answer, necessary clarification, or relevant limitation; answering one part does not satisfy the others.
+  3. Track deferred and repeated questions until addressed; a completed task or repeated acknowledgment does not erase unanswered issues.
+  4. Judge importance and scope from the interaction, not assumed domain rules or the agent's unsupported claim that a question is unrelated.
+  5. Address the requested subject and expressed language needs; unrelated or unintelligible replies do not resolve the query.
+
+  ## Anti-bias Rules
+  - Allow genuine clarification and relevant admissions of uncertainty; do not require invented answers or unavailable capabilities.
+  - One concise response may address several issues; exclude greetings, filler, and statements needing no response.
+  - Exclude unclear or missing content from omission judgments rather than assuming an answer was given or withheld.
+  - Judge observable responses, not unseen execution; politeness does not compensate for material nonanswers.
+
+  ## Scoring
+  - Select 'never' when no substantive issue is meaningfully handled or misunderstanding and nonanswers dominate.
+  - Select 'occasionally' for material gaps, persistent nonanswer loops, or an unresolved main request or explicitly essential issue.
+  - Select 'frequently' when most issues are handled, with only minor omissions or brief repaired misunderstanding and no 'occasionally' condition.
+  - Select 'always' when every assessable substantive part is appropriately addressed without material misunderstanding or unresolved omission; genuine clarification is allowed.
+
+  ## Explanation
+  Identify the decisive question or subquestion, the response or omission, and supporting evidence; do not equate answering the main request with answering every part.
+
+  ## Inputs
+  <conversation>{{conversation}}</conversation>
+
 eval_tags:
 - Agents
 - Conversation
@@ -45,18 +61,34 @@ config:
     - DATETIME
   config_params_desc:
     conversation: The conversation to be evaluated
-  rule_prompt: "You are evaluating whether the agent correctly interprets and responds to customer queries.\n\n## Criteria\n\
-    \n1. Query comprehension: The agent should understand what the customer is asking, even if informally phrased.\n   - Always:\
-    \ Correctly interprets every query regardless of phrasing.\n   - Never: Consistently misunderstands what the customer\
-    \ is asking.\n\n2. Response relevance: Answers should directly address the customer's question.\n   - Always: Every response\
-    \ is targeted and relevant.\n   - Never: Responses are generic, off-topic, or scripted regardless of the question.\n   - A reply in a language other than the one the customer is using, an answer about a different product or service than the one asked for, or a customer question left unanswered or met with the same non-answer each time does not address the query.\n\n\
-    3. Unexpected query handling: Out-of-scope questions should be handled gracefully.\n   - Always: Politely redirects or\
-    \ provides the best available help.\n   - Never: Ignores or crashes on unexpected questions.\n\n## Anti-bias Rules\n\n\
-    - Asking for clarification when a query is genuinely ambiguous counts as GOOD handling.\n- Redirecting out-of-scope queries\
-    \ politely is appropriate, not a failure.\n- A short relevant answer scores higher than a long irrelevant one.\n\n## Scoring\n\
-    \nSelect 'never' if consistently misinterprets queries. Select 'occasionally' if handles some well but misinterprets others, or if any of the customer's main requests is misunderstood or left unanswered.\
-    \ Select 'frequently' if correctly handles most queries. Select 'always' if accurately interprets and helpfully responds\
-    \ to every query.\n\n## Inputs\n\n<conversation>{{conversation}}</conversation>"
+  rule_prompt: |-
+    Evaluate whether the agent understands and addresses each substantive question and request in the conversation.
+
+    ## Criteria
+    1. Separate multipart queries into distinct issues, including secondary questions, corrections, and follow-ups.
+    2. Match each issue to a direct answer, necessary clarification, or relevant limitation; answering one part does not satisfy the others.
+    3. Track deferred and repeated questions until addressed; a completed task or repeated acknowledgment does not erase unanswered issues.
+    4. Judge importance and scope from the interaction, not assumed domain rules or the agent's unsupported claim that a question is unrelated.
+    5. Address the requested subject and expressed language needs; unrelated or unintelligible replies do not resolve the query.
+
+    ## Anti-bias Rules
+    - Allow genuine clarification and relevant admissions of uncertainty; do not require invented answers or unavailable capabilities.
+    - One concise response may address several issues; exclude greetings, filler, and statements needing no response.
+    - Exclude unclear or missing content from omission judgments rather than assuming an answer was given or withheld.
+    - Judge observable responses, not unseen execution; politeness does not compensate for material nonanswers.
+
+    ## Scoring
+    - Select 'never' when no substantive issue is meaningfully handled or misunderstanding and nonanswers dominate.
+    - Select 'occasionally' for material gaps, persistent nonanswer loops, or an unresolved main request or explicitly essential issue.
+    - Select 'frequently' when most issues are handled, with only minor omissions or brief repaired misunderstanding and no 'occasionally' condition.
+    - Select 'always' when every assessable substantive part is appropriately addressed without material misunderstanding or unresolved omission; genuine clarification is allowed.
+
+    ## Explanation
+    Identify the decisive question or subquestion, the response or omission, and supporting evidence; do not equate answering the main request with answering every part.
+
+    ## Inputs
+    <conversation>{{conversation}}</conversation>
+
 choice_scores:
   never: 0.0
   occasionally: 0.33
