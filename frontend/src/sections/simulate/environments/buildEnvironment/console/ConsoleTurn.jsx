@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { alpha } from "@mui/material/styles";
 import { Box, Stack, Typography, Collapse } from "@mui/material";
 import ReactMarkdown from "react-markdown";
@@ -63,7 +63,10 @@ export function Turn({ turn }) {
             borderColor: (t) => alpha(BUILD_TONES.accent, t.palette.mode === "dark" ? 0.22 : 0.16),
           }}
         >
-          <Typography sx={{ typography: "s2", lineHeight: 1.55, color: "text.primary" }}>{turn.text}</Typography>
+          {/* pre-wrap keeps the line breaks the user typed. */}
+          <Typography sx={{ typography: "s2", lineHeight: 1.55, color: "text.primary", whiteSpace: "pre-wrap" }}>
+            {turn.text}
+          </Typography>
         </Box>
       </Stack>
     );
@@ -142,7 +145,7 @@ export function Step({ step }) {
   if (step.kind === "file") {
     return (
       <QuietRow tint={BUILD_TONES.green}>
-        <Typography sx={{ typography: "s3", fontFamily: MONO, flexShrink: 0, color: "text.primary" }}>
+        <Typography sx={{ typography: "s3", fontFamily: MONO, flexShrink: 0, maxWidth: "60%", color: "text.primary" }}>
           {step.path}
         </Typography>
         <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", flex: 1, minWidth: 0 }}>
@@ -261,21 +264,108 @@ export function Step({ step }) {
     return <HeartbeatRow since={step.since} />;
   }
 
-  // tool call — a quiet reading row that goes amber while running, green on
-  // success, red on failure. The running dot pulses.
+  return <ToolStep step={step} />;
+}
+Step.propTypes = { step: STEP_SHAPE };
+
+// Pretty-print a tool result that is JSON; anything else is shown as written.
+function formatToolOutput(text) {
+  try {
+    const parsed = JSON.parse(text);
+    return parsed !== null && typeof parsed === "object" ? JSON.stringify(parsed, null, 2) : text;
+  } catch {
+    return text;
+  }
+}
+
+// A tool call — a quiet reading row that goes amber while running, green on
+// success, red on failure; the running dot pulses. Like Claude's tool rows, a
+// finished call is collapsed to a one-line preview and opens to its full output
+// on click (or Enter/Space). There are no inputs to show: the conversation
+// events carry only the tool name and its result.
+function ToolStep({ step }) {
+  const [open, setOpen] = useState(false);
   const tone = TOOL_TONE[step.state] || BUILD_TONES.green;
-  return (
-    <QuietRow tint={tone} pulse={step.state === "running"}>
-      <Typography sx={{ typography: "s3", fontFamily: MONO, flexShrink: 0, color: "text.primary" }}>
+  const running = step.state === "running";
+  const expandable = !running && !!step.result;
+  // Formatted once per result: every turn re-renders on each keystroke and poll.
+  const output = useMemo(
+    () => (expandable ? formatToolOutput(step.result) : null),
+    [expandable, step.result],
+  );
+
+  const row = (
+    <QuietRow tint={tone} pulse={running}>
+      <Typography sx={{ typography: "s3", fontFamily: MONO, flexShrink: 0, maxWidth: "60%", color: "text.primary" }}>
         {step.label}
       </Typography>
       <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", flex: 1, minWidth: 0 }}>
-        {step.state === "running" ? "…" : step.result}
+        {running ? "…" : step.result}
       </Typography>
+      {expandable && (
+        <Iconify
+          className="tool-step-chevron"
+          icon="solar:alt-arrow-down-linear"
+          width={12}
+          sx={{
+            flexShrink: 0,
+            color: "text.subtitle",
+            opacity: open ? 1 : 0,
+            transform: open ? "rotate(180deg)" : "none",
+            transition: (t) => t.transitions.create(["opacity", "transform"], { duration: t.transitions.duration.shorter }),
+          }}
+        />
+      )}
     </QuietRow>
   );
+
+  if (!expandable) return row;
+
+  const toggle = () => setOpen((o) => !o);
+  return (
+    <Box>
+      <Box
+        role="button"
+        tabIndex={0}
+        aria-expanded={open}
+        // Named by the tool alone; otherwise the whole result preview becomes
+        // the button's name.
+        aria-label={step.label}
+        onClick={toggle}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            toggle();
+          }
+        }}
+        sx={{
+          cursor: "pointer",
+          borderRadius: 1,
+          outline: "none",
+          "&:hover, &:focus-visible": { bgcolor: "action.hover" },
+          "&:hover .tool-step-chevron, &:focus-visible .tool-step-chevron": { opacity: 1 },
+        }}
+      >
+        {row}
+      </Box>
+      <Collapse in={open} unmountOnExit>
+        <Typography
+          data-testid="tool-step-output"
+          sx={{
+            ml: 2.75, mt: 0.5, mb: 0.5, px: 1.25, py: 1, borderRadius: 1,
+            typography: "s3", fontFamily: MONO, color: "text.secondary",
+            whiteSpace: "pre-wrap", overflowWrap: "anywhere",
+            maxHeight: 320, overflowY: "auto",
+            bgcolor: "background.neutral", border: "1px solid", borderColor: "divider",
+          }}
+        >
+          {output}
+        </Typography>
+      </Collapse>
+    </Box>
+  );
 }
-Step.propTypes = { step: STEP_SHAPE };
+ToolStep.propTypes = { step: STEP_SHAPE };
 
 /* ── markdown prose ──────────────────────────────────────────────────────── */
 
@@ -290,6 +380,20 @@ function Markdown({ text, dim }) {
         "& ul, & ol": { m: 0, mb: 0.75, pl: 2.5 },
         "& code": { fontFamily: MONO, fontSize: "0.85em" },
         "& a": { color: BUILD_TONES.accent },
+        // Code keeps its lines and tables keep whole words, so both scroll
+        // sideways inside their own box rather than widening the chat.
+        "& pre": {
+          m: 0, mb: 0.75, px: 1.25, py: 1, borderRadius: 1,
+          bgcolor: "background.neutral", overflowX: "auto", maxWidth: "100%",
+        },
+        "& table": {
+          display: "block", maxWidth: "100%", overflowX: "auto",
+          borderCollapse: "collapse", mb: 0.75,
+        },
+        "& th, & td": {
+          px: 1, py: 0.5, border: "1px solid", borderColor: "divider",
+          textAlign: "left", overflowWrap: "normal",
+        },
       }}
     >
       <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>
