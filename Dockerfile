@@ -15,11 +15,20 @@ RUN pip install --no-cache-dir \
     "aiohttp>=3.13.3" \
     "granian[uvloop,reload]==2.8.3" \
     "channels-redis==4.3.0" \
-    "asgiref==3.11.0"
+    "asgiref==3.11.0" \
+    "django==5.1.15" \
+    "litellm==1.84.10" \
+    "pyjwt==2.15.1" \
+    "openai==2.54.0"
 # daytona, httpx-ws and e2b mirror the `sandbox` extra of
 # futureagi/pyproject.toml and claude-agent-sdk its `localizer` extra;
 # aiohttp, granian, channels-redis and asgiref mirror futureagi/requirements.txt
 # until a future-agi-base rebuilt from it (v1.0.5) replaces v1.0.4.
+# django, litellm, pyjwt and openai are the critical-CVE upgrades of TH-8369
+# (CVE-2025-64459, CVE-2026-35030, CVE-2026-49468, CVE-2026-48526); v1.0.5 still
+# carries the vulnerable django 5.1.8 / litellm 1.81.11 / pyjwt 2.10.1, so they
+# are reinstalled here until the base is rebuilt. openai>=2.20.0 is required by
+# litellm 1.84.x, so the base's 2.15.0 has to move with it.
 # deploy/tests/test_image_standards.py compares the pins.
 # granian>=2.7.1 fixes granian#798. channels-redis (CHANNEL_LAYER_BACKEND=redis)
 # needs asgiref>=3.9.1; pinning it stops pip from replacing the base's 3.8.1

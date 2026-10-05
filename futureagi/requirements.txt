@@ -146,7 +146,7 @@ distro==1.9.0
     #   google-genai
     #   openai
     #   posthog
-django==5.1.8
+django==5.1.15
     # via
     #   channels
     #   core-backend
@@ -371,7 +371,7 @@ lark==1.3.1
     # via django-socio-grpc
 levenshtein==0.27.3
     # via python-levenshtein
-litellm==1.81.11
+litellm==1.84.10
     # via
     #   core-backend
     #   traceai-litellm
@@ -411,7 +411,7 @@ numpy==2.3.5
     #   rouge-score
     #   scikit-learn
     #   scipy
-openai==2.15.0
+openai==2.54.0
     # via
     #   core-backend
     #   litellm
@@ -660,7 +660,7 @@ pydantic-settings==2.12.0
     # via mcp
 pydub==0.25.1
     # via core-backend
-pyjwt==2.10.1
+pyjwt==2.15.1
     # via
     #   core-backend
     #   djangorestframework-simplejwt
