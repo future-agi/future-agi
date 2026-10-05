@@ -281,6 +281,52 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
     interval && passRate?.value != null
       ? Math.max(passRate.value - interval.low, interval.high - passRate.value)
       : null;
+  const metricTile = (key, label, coverage, unit) => {
+    const metric = metricsByKey[key];
+    if (!metric) return null;
+    return {
+      key,
+      label,
+      value: format(metric.value, unit ?? metric.unit),
+      reported: metric.value != null,
+      coverage: coverage(metric),
+      note: metric.note,
+    };
+  };
+  const measuredOf = (metric) =>
+    `${metric.measured ?? 0} / ${metric.total ?? 0} measured`;
+  // Voice-only metrics are absent from chat runs, so their tiles drop out.
+  const callTiles = [
+    metricTile("total", "Total Calls", () => "this run"),
+    health && {
+      key: "connected",
+      label: "Connected",
+      value: format(health.connected),
+      reported: health.connected != null,
+      coverage: `of ${health.attempted ?? 0}`,
+      note: "Calls that exchanged at least one message",
+    },
+    metricTile(
+      "connected_rate",
+      "Calls Connected (%)",
+      (metric) => `${metric.measured ?? 0} / ${metric.total ?? 0} calls`,
+    ),
+    metricTile("agent_latency", "Agent Latency", measuredOf),
+    metricTile("wpm", "Agent WPM", () => "words/min"),
+    metricTile("stop", "Agent Stop Latency", measuredOf),
+    // API sends the agent's share as a percent; show it as agent/customer.
+    metricTile("talk", "Talk Ratio", () => "agent/customer", "ratio"),
+    metricTile(
+      "duration",
+      "Avg duration",
+      (metric) => `${metric.measured ?? 0} timed calls`,
+    ),
+    metricTile(
+      "turns",
+      "Avg turns",
+      (metric) => `${metric.measured ?? 0} calls`,
+    ),
+  ].filter(Boolean);
   const headlines = [
     {
       key: "pass_rate",
@@ -335,6 +381,7 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
         : "No previous comparable run",
       note: "Newly passing / newly failing, on scenarios evaluated in both runs",
     },
+    ...callTiles,
   ];
   const healthIssues = [];
   const notConnected = (health?.attempted ?? 0) - (health?.connected ?? 0);
@@ -707,7 +754,7 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
             gridTemplateColumns: {
               xs: "repeat(2,minmax(0,1fr))",
               md: "repeat(3,minmax(0,1fr))",
-              lg: "repeat(6,minmax(0,1fr))",
+              lg: "repeat(5,minmax(0,1fr))",
             },
             border: "1px solid",
             borderColor: "divider",
