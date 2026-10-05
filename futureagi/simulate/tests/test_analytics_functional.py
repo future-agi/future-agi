@@ -1430,6 +1430,24 @@ class TestRunResultsV3Views:
         assert "simulate_hosted_harness_scenario" in sql
         assert "simulate_hosted_harness_job" not in sql
 
+    def test_calls_read_their_large_json_columns_once_per_row(
+        self, test_execution, analytics_call_executions
+    ):
+        queryset = run_calls_queryset(test_execution)
+        sql = str(queryset.query)
+
+        assert "jsonb_path_query_first(\"eval_outputs\", '$')" in sql
+        assert "jsonb_path_query_first(\"call_metadata\", '$')" in sql
+        assert queryset.count() == len(analytics_call_executions)
+        assert CallExecution.objects.filter(
+            pk__in=queryset.values("pk")
+        ).count() == len(analytics_call_executions)
+
+    def test_an_empty_run_list_reads_no_calls(
+        self, test_execution, analytics_call_executions
+    ):
+        assert list(run_calls_queryset(test_execution, [])) == []
+
     def test_non_numeric_json_metrics_do_not_break_list_or_analytics(
         self,
         auth_client,

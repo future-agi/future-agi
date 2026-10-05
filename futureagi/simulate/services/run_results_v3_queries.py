@@ -49,6 +49,7 @@ from django.db.models.lookups import (
     LessThan,
     LessThanOrEqual,
 )
+from django.db.models.sql.datastructures import BaseTable
 
 from model_hub.models.develop_dataset import Cell
 from simulate.models import CallExecution, SimulateEvalConfig, TestExecution
@@ -87,6 +88,55 @@ GROUP_FIELDS = {
 }
 UNGROUPED = "Ungrouped"
 LIST_AXES = frozenset({"sub_goal"})
+READ_ONCE_JSON_COLUMNS = frozenset({"call_metadata", "eval_outputs"})
+
+
+class _RunCallsTable(BaseTable):
+    def __init__(self, table_name, alias, execution_ids):
+        super().__init__(table_name, alias)
+        self.execution_ids = tuple(str(execution_id) for execution_id in execution_ids)
+
+    def as_sql(self, compiler, connection):
+        quote = connection.ops.quote_name
+        columns = ", ".join(
+            (
+                f"jsonb_path_query_first({quote(column)}, '$') AS {quote(column)}"
+                if column in READ_ONCE_JSON_COLUMNS
+                else quote(column)
+            )
+            for column in (
+                field.column for field in CallExecution._meta.concrete_fields
+            )
+        )
+        placeholders = ", ".join(["%s"] * len(self.execution_ids))
+        sql = (
+            f"(SELECT {columns} FROM {quote(self.table_name)} "
+            f"WHERE {quote('test_execution_id')} IN ({placeholders}) OFFSET 0) "
+            f"{compiler.quote_name_unless_alias(self.table_alias)}"
+        )
+        return sql, list(self.execution_ids)
+
+    def relabeled_clone(self, change_map):
+        return self.__class__(
+            self.table_name,
+            change_map.get(self.table_alias, self.table_alias),
+            self.execution_ids,
+        )
+
+    @property
+    def identity(self):
+        return (*super().identity, self.execution_ids)
+
+
+def _read_large_json_once(queryset: QuerySet, execution_ids: list[Any]) -> QuerySet:
+    if not execution_ids:
+        return queryset
+    query = queryset.query
+    alias = query.base_table
+    query.alias_map[alias] = _RunCallsTable(
+        query.alias_map[alias].table_name, alias, execution_ids
+    )
+    return queryset
 
 
 def _authored_level(field: str):
@@ -565,6 +615,7 @@ def run_calls_queryset(
     # The common hosted-harness fields live in JSONB today. These annotations
     # keep filtering, grouping, ordering and aggregation inside PostgreSQL while
     # the page serializer continues to preserve the richer fallback behavior.
+    run_ids = execution_ids if execution_ids is not None else [execution.id]
     execution_filter = (
         Q(test_execution_id__in=execution_ids)
         if execution_ids is not None
@@ -594,9 +645,7 @@ def run_calls_queryset(
     own_run = Q(pk__in=[])
     own_environment = Q(pk__in=[])
     run_jobs = HostedHarnessJob.all_objects.filter(
-        test_execution_id__in=(
-            execution_ids if execution_ids is not None else [execution.id]
-        )
+        test_execution_id__in=run_ids
     ).values_list("test_execution_id", "id", "environment_id")
     for run_id, job_id, environment_id in run_jobs:
         this_run = Exact(OuterRef("test_execution_id"), Value(run_id))
@@ -618,9 +667,9 @@ def run_calls_queryset(
         )
         .order_by("match_rank", "-created_at")
     )
-    queryset = CallExecution.objects.filter(execution_filter).annotate(
-        result_scenario_key=_json_text("call_metadata", "harness_scenario_key")
-    )
+    queryset = _read_large_json_once(
+        CallExecution.objects.filter(execution_filter), run_ids
+    ).annotate(result_scenario_key=_json_text("call_metadata", "harness_scenario_key"))
     queryset = queryset.annotate(
         **{
             GROUP_FIELDS[axis]: Coalesce(
