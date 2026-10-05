@@ -100,7 +100,7 @@ export function mapCallRow(row, evalColumns = []) {
   return {
     id: row?.id,
     goal: row?.goal || row?.scenario || "Untitled goal",
-    subGoals: row?.sub_goals ?? [],
+    subGoalResults: row?.sub_goal_results ?? [],
     scenario: trialIndex
       ? `${scenarioName} · Trial ${trialIndex}`
       : scenarioName,
