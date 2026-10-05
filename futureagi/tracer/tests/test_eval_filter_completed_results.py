@@ -160,13 +160,21 @@ def test_tile_counts_and_filter_use_one_predicate(settings, table, tile):
         assert f"countIf( output_bool = {verdict} AND {COMPLETED} )" in collapsed, (
             collapsed
         )
+    # Choices tiles: the label lists and the gate that decides whether a
+    # cell has any result at all.
+    assert f"groupArrayIf( output_str_list, {COMPLETED} ) AS str_lists" in collapsed
+    assert f"countIf( {COMPLETED} ) AS success_count" in collapsed
 
-    for op, value in (("equals", ["Passed"]), ("equals", ["Failed"])):
+    for eval_type, op, value in (
+        ("PASS_FAIL", "equals", ["Passed"]),
+        ("PASS_FAIL", "equals", ["Failed"]),
+        ("CHOICES", "equals", ["clear"]),
+    ):
         where = _where(
             ClickHouseFilterBuilderV2,
-            "PASS_FAIL",
+            eval_type,
             op,
             value,
             query_mode=query_mode,
         )
-        assert COMPLETED in where
+        assert COMPLETED in where, (eval_type, where)
