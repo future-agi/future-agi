@@ -360,6 +360,41 @@ describe("buildFlowData keeps same-level nodes on one level (TH-4321)", () => {
       });
     },
   );
+
+  it.each(["TB", "LR"])(
+    "lays out recorded nodes exactly as if Stop were absent (%s)",
+    (direction) => {
+      const graph = buildTraceGraph(randomTrace(7).trace);
+      const withoutStop = {
+        ...graph,
+        nodes: graph.nodes.filter((node) => node.type !== "end"),
+        edges: graph.edges.filter((edge) => edge.target !== "__end__"),
+      };
+      const positions = (flow) =>
+        Object.fromEntries(
+          flow.nodes
+            .filter((node) => node.id !== "__end__")
+            .map((node) => [node.id, node.position]),
+        );
+
+      const flow = buildFlowData(graph, direction);
+      expect(positions(flow)).toEqual(
+        positions(buildFlowData(withoutStop, direction)),
+      );
+
+      const at = rankCoordinates(flow, direction);
+      const deepest = Math.max(
+        ...flow.nodes
+          .filter((node) => node.id !== "__end__")
+          .map((node) => at[node.id]),
+      );
+      expect(at.__end__).toBeGreaterThan(deepest);
+      flow.nodes.forEach((node) => {
+        expect(Number.isFinite(node.position.x)).toBe(true);
+        expect(Number.isFinite(node.position.y)).toBe(true);
+      });
+    },
+  );
 });
 
 describe("AgentGraph request states", () => {

@@ -566,43 +566,65 @@ const nodeTypes = { agentNode: AgentNode };
 // Dagre layout — direction-aware (LR for trace list, TB for trace detail)
 // ---------------------------------------------------------------------------
 
-// Edges into the Stop sentinel only close the drawing; they record no
-// relation between spans. With dagre's default weight of 1, a leaf's distance
-// to its parent and to Stop cost the same, so dagre is free to sink every leaf
-// onto the row above Stop. Parallel siblings then land on different levels
-// and read as a sequence (TH-4321). Weight 0 keeps Stop below the deepest node
-// while each node's level follows its recorded parent alone.
-const STOP_EDGE_LAYOUT = { weight: 0 };
+// Stop closes the drawing; its edges record no relation between spans. If
+// they took part in the layout, a leaf's distance to its parent and to Stop
+// would cost the same, so dagre sank leaf siblings onto the row above Stop
+// while siblings with nested work stayed one level below the parent:
+// parallel steps landed on different levels and read as a sequence
+// (TH-4321). Lay out the recorded graph alone, then put Stop one level past
+// its deepest node.
+const SENTINEL_WIDTH = 50;
+const SENTINEL_HEIGHT = 32;
+
+const isStopNode = (node) => node.data?.type === "end";
+
+const placeStop = (g, laidOutIds, direction, ranksep) => {
+  if (!laidOutIds.length) return { x: 0, y: 0 };
+  const boxes = laidOutIds.map((id) => g.node(id));
+  const min = (pick) => Math.min(...boxes.map(pick));
+  const max = (pick) => Math.max(...boxes.map(pick));
+  if (direction === "TB") {
+    return {
+      x: (min((b) => b.x - b.width / 2) + max((b) => b.x + b.width / 2)) / 2,
+      y: max((b) => b.y + b.height / 2) + ranksep + SENTINEL_HEIGHT / 2,
+    };
+  }
+  return {
+    x: max((b) => b.x + b.width / 2) + ranksep + SENTINEL_WIDTH / 2,
+    y: (min((b) => b.y - b.height / 2) + max((b) => b.y + b.height / 2)) / 2,
+  };
+};
 
 const layoutGraph = (nodes, edges, direction = "LR") => {
+  const ranksep = direction === "LR" ? 80 : 50;
   const g = new Dagre.graphlib.Graph().setDefaultEdgeLabel(() => ({}));
   g.setGraph({
     rankdir: direction,
-    ranksep: direction === "LR" ? 80 : 50,
+    ranksep,
     nodesep: 25,
   });
 
-  const stopIds = new Set();
+  const stopIds = new Set(nodes.filter(isStopNode).map((node) => node.id));
+  const laidOutIds = [];
   nodes.forEach((node) => {
-    const isSentinel = node.data?.type === "start" || node.data?.type === "end";
-    if (node.data?.type === "end") stopIds.add(node.id);
+    if (stopIds.has(node.id)) return;
+    const isSentinel = node.data?.type === "start";
     g.setNode(node.id, {
-      width: isSentinel ? 50 : 140,
-      height: isSentinel ? 32 : 44,
+      width: isSentinel ? SENTINEL_WIDTH : 140,
+      height: isSentinel ? SENTINEL_HEIGHT : 44,
     });
+    laidOutIds.push(node.id);
   });
   edges.forEach((edge) => {
-    if (stopIds.has(edge.target)) {
-      g.setEdge(edge.source, edge.target, { ...STOP_EDGE_LAYOUT });
-    } else {
-      g.setEdge(edge.source, edge.target);
-    }
+    if (stopIds.has(edge.source) || stopIds.has(edge.target)) return;
+    g.setEdge(edge.source, edge.target);
   });
 
   Dagre.layout(g);
+  const stop = placeStop(g, laidOutIds, direction, ranksep);
 
   return nodes.map((node) => {
-    const pos = g.node(node.id);
+    const pos = stopIds.has(node.id) ? stop : g.node(node.id);
     return { ...node, position: { x: pos.x - 70, y: pos.y - 22 } };
   });
 };
