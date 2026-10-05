@@ -4,12 +4,17 @@ ENV NLTK_DATA=/usr/local/share/nltk_data
 
 # Mirrors the root Dockerfile until a future-agi-base rebuilt from
 # requirements.txt (v1.0.5) replaces v1.0.4: granian>=2.7.1 (granian#798),
-# channels-redis and the asgiref it needs. Installed before the source copy,
-# so a source change reuses this layer.
+# channels-redis and the asgiref it needs, plus the critical-CVE upgrades of
+# TH-8369 (django, litellm, pyjwt and the openai that litellm 1.84.x requires).
+# Installed before the source copy, so a source change reuses this layer.
 RUN pip install --no-cache-dir \
     "granian[uvloop,reload]==2.8.3" \
     "channels-redis==4.3.0" \
-    "asgiref==3.11.0"
+    "asgiref==3.11.0" \
+    "django==5.1.15" \
+    "litellm==1.84.10" \
+    "pyjwt==2.15.1" \
+    "openai==2.54.0"
 
 COPY . .
 

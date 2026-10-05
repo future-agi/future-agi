@@ -268,7 +268,7 @@ distro==1.9.0
     #   openai
     #   posthog
     #   retell-sdk
-django==5.1.8
+django==5.1.15
     # via
     #   channels
     #   core-backend
@@ -618,7 +618,7 @@ librosa==0.11.0
     # via core-backend
 lightning-utilities==0.15.3
     # via torchmetrics
-litellm==1.81.11
+litellm==1.84.10
     # via
     #   core-backend
     #   traceai-litellm
@@ -768,7 +768,7 @@ obstore==0.11.1
     # via daytona
 onnxruntime==1.23.2
     # via chromadb
-openai==2.15.0
+openai==2.54.0
     # via
     #   core-backend
     #   litellm
@@ -1126,7 +1126,7 @@ pydub==0.25.1
     # via core-backend
 pygments==2.19.2
     # via rich
-pyjwt==2.10.1
+pyjwt==2.15.1
     # via
     #   core-backend
     #   djangorestframework-simplejwt

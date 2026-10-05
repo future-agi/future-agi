@@ -5,7 +5,9 @@ description = "Core backend for FutureAGI platform"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "django==5.1.8",
+    # 5.1.14 fixes CVE-2025-64459 (SQL injection via QuerySet keyword
+    # arguments); 5.1.15 is the last patch of the 5.1 series.
+    "django==5.1.15",
     "djangorestframework",
     "djangorestframework-simplejwt",
     # >=2.7.1 fixes granian#798: after a server-side websocket.close, the next
@@ -23,7 +25,9 @@ dependencies = [
     # Without it the boot hook in model_hub/apps.py:_migrate_v1_spans_if_needed
     # can't re-apply the v2 schema after dropping a v1 spans table.
     "clickhouse-connect",
-    "openai>=2.15.0",  # Latest with pydantic v2.11 compatibility
+    # litellm 1.84.x requires openai>=2.20.0; the floor records that so a
+    # resolution without litellm cannot drop back to a version it rejects.
+    "openai>=2.20.0",
     "multidict>=6.7.0",  # Fix memory corruption in 6.6.0 (yanked)
     "watchdog",
     "watchfiles",  # Rust-based file watcher (faster, works in Docker)
@@ -40,9 +44,13 @@ dependencies = [
     "jsonpath-ng",
     "nltk",
     "retrying",
-    "litellm==1.81.11",  # Latest with pydantic compatibility fixes
+    # 1.84.0 is the first release to close CVE-2026-35030 and CVE-2026-49468
+    # (auth bypass / privilege escalation / RCE); the 1.83.x fixes leave the
+    # Host-header bypass open. 1.84.10 is the last patch of that series.
+    "litellm==1.84.10",
     "django-filter",
-    "pyjwt",
+    # >=2.13.0 fixes CVE-2026-48526 (forged-JWT authentication bypass).
+    "pyjwt>=2.13.0",
     # urllib3>=2.1 (PoolKey.key_ca_cert_data) is also what the Daytona SDK in
     # the `sandbox` extra needs; keep it constrained in the base resolution.
     "urllib3>=2.1,<3",
