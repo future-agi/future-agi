@@ -30,7 +30,7 @@ const rowHover = (t) => {
   return `linear-gradient(${tint}, ${tint})`;
 };
 
-// The collapsible group header: chevron + label + count on the first descriptive
+// The collapsible group header: chevron + label on the first descriptive
 // column, a per-column aggregate summary on the rest, and a heat-tinted mean
 // score per eval column. Clicking anywhere toggles the group.
 export default function TraceGroupHeaderRow({
@@ -68,25 +68,21 @@ export default function TraceGroupHeaderRow({
 
   const descColumns = DESC_KEYS.filter((k) => show(k));
   const a = group.agg || {};
-  const uniqueBy = (fn) => new Set(group.rows.map(fn).filter(Boolean)).size;
-  const personaCount = uniqueBy((t) => t.persona);
 
   const descSummary = (key) => {
     if (key === "status") {
       // The group's calls load a page at a time, so only count once all of
       // them are here — a partial count would read as the whole group.
-      if (group.rows.length < group.count) return "-";
+      if (group.rows.length < group.count) return null;
       const done = group.rows.filter(
         (t) => t.executionStatus === "completed",
       ).length;
       return `${done}/${group.count} completed`;
     }
-    if (key === "persona")
-      return personaCount
-        ? `${personaCount} persona${personaCount === 1 ? "" : "s"}`
-        : "-";
-    if (key === "scenario")
-      return `${group.count} scenario${group.count === 1 ? "" : "s"}`;
+    // Left empty: the page only holds part of the group's calls, so a persona
+    // count would be the page's share, and a scenario count would repeat the
+    // task count (one call per scenario trial).
+    if (key === "persona" || key === "scenario") return null;
     if (key === "situation")
       return `${group.count} situation${group.count === 1 ? "" : "s"}`;
     if (key === "subGoals") {
@@ -178,11 +174,6 @@ export default function TraceGroupHeaderRow({
         }}
       >
         {group.label}
-      </Typography>
-      <Typography
-        sx={{ typography: "s3", color: "text.subtitle", whiteSpace: "nowrap" }}
-      >
-        · {group.count} task{group.count === 1 ? "" : "s"}
       </Typography>
     </Stack>
   );
