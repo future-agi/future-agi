@@ -586,3 +586,95 @@ func TestRequestToCanonical_InvalidJSON(t *testing.T) {
 		t.Error("expected error for invalid JSON, got nil")
 	}
 }
+
+func TestRequestToCanonical_ToolStrictPreservation(t *testing.T) {
+	t.Run("VALIDATED mode sets Strict=true on canonical tools and tool_choice=auto", func(t *testing.T) {
+		input := `{
+			"contents": [{"role":"user","parts":[{"text":"hi"}]}],
+			"tools": [{
+				"functionDeclarations": [{
+					"name": "search",
+					"description": "search tool",
+					"parameters": {"type": "object"}
+				}]
+			}],
+			"toolConfig": {
+				"functionCallingConfig": {"mode": "VALIDATED"}
+			}
+		}`
+		tr := translator()
+		req, _, err := tr.RequestToCanonical([]byte(input))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(req.Tools) != 1 {
+			t.Fatalf("expected 1 tool, got %d", len(req.Tools))
+		}
+		if req.Tools[0].Function.Strict == nil || !*req.Tools[0].Function.Strict {
+			t.Errorf("expected Strict == true, got %v", req.Tools[0].Function.Strict)
+		}
+		var choice string
+		if err := json.Unmarshal(req.ToolChoice, &choice); err != nil {
+			t.Fatalf("unmarshal tool_choice: %v", err)
+		}
+		if choice != "auto" {
+			t.Errorf("tool_choice: got %q, want %q", choice, "auto")
+		}
+	})
+
+	t.Run("AUTO mode must NOT imply Strict=true", func(t *testing.T) {
+		input := `{
+			"contents": [{"role":"user","parts":[{"text":"hi"}]}],
+			"tools": [{
+				"functionDeclarations": [{
+					"name": "search",
+					"description": "search tool",
+					"parameters": {"type": "object"}
+				}]
+			}],
+			"toolConfig": {
+				"functionCallingConfig": {"mode": "AUTO"}
+			}
+		}`
+		tr := translator()
+		req, _, err := tr.RequestToCanonical([]byte(input))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(req.Tools) != 1 {
+			t.Fatalf("expected 1 tool, got %d", len(req.Tools))
+		}
+		if req.Tools[0].Function.Strict != nil {
+			t.Errorf("expected Strict == nil, got %v", *req.Tools[0].Function.Strict)
+		}
+	})
+
+	t.Run("no fictitious FunctionDeclaration.strict inference", func(t *testing.T) {
+		input := `{
+			"contents": [{"role":"user","parts":[{"text":"hi"}]}],
+			"tools": [{
+				"functionDeclarations": [{
+					"name": "search",
+					"description": "search tool",
+					"parameters": {"type": "object"},
+					"strict": true
+				}]
+			}],
+			"toolConfig": {
+				"functionCallingConfig": {"mode": "AUTO"}
+			}
+		}`
+		tr := translator()
+		req, _, err := tr.RequestToCanonical([]byte(input))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(req.Tools) != 1 {
+			t.Fatalf("expected 1 tool, got %d", len(req.Tools))
+		}
+		if req.Tools[0].Function.Strict != nil {
+			t.Errorf("fictitious strict field must not be inferred, got %v", *req.Tools[0].Function.Strict)
+		}
+	})
+}
+

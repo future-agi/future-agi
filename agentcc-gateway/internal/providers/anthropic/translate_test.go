@@ -1927,3 +1927,92 @@ func TestStreamParse_ServerToolUseDoesNotCorruptAnInFlightToolCall(t *testing.T)
 			chunk.Choices[0].Delta.ToolCalls)
 	}
 }
+
+func TestTranslateRequest_ToolStrictPreservation(t *testing.T) {
+	bTrue := true
+	bFalse := false
+
+	tests := []struct {
+		name       string
+		strict     *bool
+		wantStrict bool
+		wantField  bool
+	}{
+		{
+			name:       "strict=true preserved",
+			strict:     &bTrue,
+			wantStrict: true,
+			wantField:  true,
+		},
+		{
+			name:       "strict=false preserved",
+			strict:     &bFalse,
+			wantStrict: false,
+			wantField:  true,
+		},
+		{
+			name:       "strict=nil omitted",
+			strict:     nil,
+			wantStrict: false,
+			wantField:  false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := &models.ChatCompletionRequest{
+				Model: "claude-3-sonnet-20240229",
+				Messages: []models.Message{
+					{Role: "user", Content: json.RawMessage(`"hello"`)},
+				},
+				Tools: []models.Tool{
+					{
+						Type: "function",
+						Function: models.ToolFunction{
+							Name:        "my_tool",
+							Description: "test tool",
+							Parameters:  json.RawMessage(`{"type":"object"}`),
+							Strict:      tc.strict,
+						},
+					},
+				},
+			}
+
+			ar, err := translateRequest(req)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(ar.Tools) != 1 {
+				t.Fatalf("expected 1 tool, got %d", len(ar.Tools))
+			}
+
+			var wire map[string]any
+			if err := json.Unmarshal(ar.Tools[0], &wire); err != nil {
+				t.Fatalf("unmarshal tool: %v", err)
+			}
+
+			rawStrict, hasStrict := wire["strict"]
+			if tc.wantField {
+				if !hasStrict {
+					t.Fatalf("expected strict field on wire tool, but it was omitted")
+				}
+				strictVal, ok := rawStrict.(bool)
+				if !ok || strictVal != tc.wantStrict {
+					t.Errorf("got strict = %v, want %v", rawStrict, tc.wantStrict)
+				}
+			} else {
+				if hasStrict {
+					t.Errorf("expected strict field to be omitted, got %v", rawStrict)
+				}
+			}
+
+			// Ensure strict is NOT injected into input_schema
+			if inputSchema, ok := wire["input_schema"].(map[string]any); ok {
+				if _, ok := inputSchema["strict"]; ok {
+					t.Errorf("strict must not be injected into input_schema")
+				}
+			}
+		})
+	}
+}
+
