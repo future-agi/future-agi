@@ -32,6 +32,7 @@ import StatusFilterChips from "./StatusFilterChips";
 import {
   CLOSED_GROUP_VIEW,
   GROUPINGS,
+  OUTCOME_LABELS,
   VOICE_ONLY_COLUMNS,
   compactHiddenSx,
   defaultTraceColumns,
@@ -239,8 +240,8 @@ export default function RunTraceTable({
         value: "status",
         label: "Status",
         type: "enum",
-        choices: Object.keys(STATUS_LABELS),
-        choiceLabels: STATUS_LABELS,
+        choices: Object.keys(OUTCOME_LABELS),
+        choiceLabels: OUTCOME_LABELS,
       },
     ],
     [goalOptions, subGoalOptions],
@@ -259,11 +260,7 @@ export default function RunTraceTable({
     );
     return {
       all: Object.values(byStatus).reduce((sum, count) => sum + count, 0),
-      failing: byStatus.failed ?? 0,
-      errored: byStatus.error ?? 0,
-      mixed: 0,
-      inconclusive: byStatus.inconclusive ?? 0,
-      passing: byStatus.passed ?? 0,
+      ...byStatus,
     };
   }, [facets.status]);
 

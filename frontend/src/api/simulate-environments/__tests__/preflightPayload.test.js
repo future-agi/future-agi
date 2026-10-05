@@ -182,6 +182,18 @@ describe("draftToPreflightPayload — platform", () => {
       contact,
     });
 
+  it("preserves the complete Others system prompt", () => {
+    const prompt = `You are the complete phone agent.\n${"Keep this rule verbatim.\n".repeat(100)}`;
+    expect(prompt.length).toBeGreaterThan(310);
+
+    const { payload } = draftToPreflightPayload({
+      ...phoneDraft({ countryCode: "+1", number: "4155550100" }),
+      prompt,
+    });
+
+    expect(payload.agent.config.target_system_prompt).toBe(prompt.trim());
+  });
+
   it("prefixes a national number with the selected dial code", () => {
     // India +91 with a national number that happens to begin with 91 must not
     // be mistaken for an already-international number.
