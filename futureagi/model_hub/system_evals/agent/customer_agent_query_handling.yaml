@@ -5,12 +5,12 @@ criteria: "You are evaluating whether the agent correctly interprets and respond
   1. Query comprehension: The agent should understand what the customer is asking, even if informally phrased.\n   - Always:\
   \ Correctly interprets every query regardless of phrasing.\n   - Never: Consistently misunderstands what the customer is\
   \ asking.\n\n2. Response relevance: Answers should directly address the customer's question.\n   - Always: Every response\
-  \ is targeted and relevant.\n   - Never: Responses are generic, off-topic, or scripted regardless of the question.\n\n3.\
+  \ is targeted and relevant.\n   - Never: Responses are generic, off-topic, or scripted regardless of the question.\n   - A reply in a language other than the one the customer is using, an answer about a different product or service than the one asked for, or a customer question left unanswered or met with the same non-answer each time does not address the query.\n\n3.\
   \ Unexpected query handling: Out-of-scope questions should be handled gracefully.\n   - Always: Politely redirects or provides\
   \ the best available help.\n   - Never: Ignores or crashes on unexpected questions.\n\n## Anti-bias Rules\n\n- Asking for\
   \ clarification when a query is genuinely ambiguous counts as GOOD handling.\n- Redirecting out-of-scope queries politely\
   \ is appropriate, not a failure.\n- A short relevant answer scores higher than a long irrelevant one.\n\n## Scoring\n\n\
-  Select 'never' if consistently misinterprets queries. Select 'occasionally' if handles some well but misinterprets others.\
+  Select 'never' if consistently misinterprets queries. Select 'occasionally' if handles some well but misinterprets others, or if any of the customer's main requests is misunderstood or left unanswered.\
   \ Select 'frequently' if correctly handles most queries. Select 'always' if accurately interprets and helpfully responds\
   \ to every query.\n\n## Inputs\n\n<conversation>{{conversation}}</conversation>"
 eval_tags:
@@ -49,12 +49,12 @@ config:
     \n1. Query comprehension: The agent should understand what the customer is asking, even if informally phrased.\n   - Always:\
     \ Correctly interprets every query regardless of phrasing.\n   - Never: Consistently misunderstands what the customer\
     \ is asking.\n\n2. Response relevance: Answers should directly address the customer's question.\n   - Always: Every response\
-    \ is targeted and relevant.\n   - Never: Responses are generic, off-topic, or scripted regardless of the question.\n\n\
+    \ is targeted and relevant.\n   - Never: Responses are generic, off-topic, or scripted regardless of the question.\n   - A reply in a language other than the one the customer is using, an answer about a different product or service than the one asked for, or a customer question left unanswered or met with the same non-answer each time does not address the query.\n\n\
     3. Unexpected query handling: Out-of-scope questions should be handled gracefully.\n   - Always: Politely redirects or\
     \ provides the best available help.\n   - Never: Ignores or crashes on unexpected questions.\n\n## Anti-bias Rules\n\n\
     - Asking for clarification when a query is genuinely ambiguous counts as GOOD handling.\n- Redirecting out-of-scope queries\
     \ politely is appropriate, not a failure.\n- A short relevant answer scores higher than a long irrelevant one.\n\n## Scoring\n\
-    \nSelect 'never' if consistently misinterprets queries. Select 'occasionally' if handles some well but misinterprets others.\
+    \nSelect 'never' if consistently misinterprets queries. Select 'occasionally' if handles some well but misinterprets others, or if any of the customer's main requests is misunderstood or left unanswered.\
     \ Select 'frequently' if correctly handles most queries. Select 'always' if accurately interprets and helpfully responds\
     \ to every query.\n\n## Inputs\n\n<conversation>{{conversation}}</conversation>"
 choice_scores:

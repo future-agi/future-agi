@@ -1836,6 +1836,7 @@ customer_agent_query_handling:
     2. Response relevance: Answers should directly address the customer's question.
        - Always: Every response is targeted and relevant.
        - Never: Responses are generic, off-topic, or scripted regardless of the question.
+       - A reply in a language other than the one the customer is using, an answer about a different product or service than the one asked for, or a customer question left unanswered or met with the same non-answer each time does not address the query.
 
     3. Unexpected query handling: Out-of-scope questions should be handled gracefully.
        - Always: Politely redirects or provides the best available help.
@@ -1849,7 +1850,7 @@ customer_agent_query_handling:
 
     ## Scoring
 
-    Select 'never' if consistently misinterprets queries. Select 'occasionally' if handles some well but misinterprets others. Select 'frequently' if correctly handles most queries. Select 'always' if accurately interprets and helpfully responds to every query.
+    Select 'never' if consistently misinterprets queries. Select 'occasionally' if handles some well but misinterprets others, or if any of the customer's main requests is misunderstood or left unanswered. Select 'frequently' if correctly handles most queries. Select 'always' if accurately interprets and helpfully responds to every query.
 
     ## Inputs
 
