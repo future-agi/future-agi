@@ -132,11 +132,13 @@ const UserList = () => {
                     Users
                   </Typography>
                 </Box>
+                {/* The API lists one row per user *within a project*; say so
+                    rather than implying de-duplicated people (TH-5037). */}
                 <Typography
                   variant="caption"
                   sx={{ color: "text.secondary", ml: 0.5 }}
                 >
-                  All users across your projects
+                  One row per user per project
                 </Typography>
               </Box>
             </Box>
