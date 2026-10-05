@@ -11,6 +11,7 @@ from __future__ import annotations
 import functools
 import hashlib
 import json
+import logging
 from collections.abc import Callable
 from typing import Any
 
@@ -32,6 +33,8 @@ from simulate.services.run_results_v3_queries import (
     _summary_from_values,
     apply_run_call_query,
 )
+
+logger = logging.getLogger(__name__)
 
 CALL_VALUE_FIELDS = (
     "id",
@@ -114,18 +117,22 @@ def _cache_key(
         .order_by("id")
         .values_list("id", "updated_at", "config", "eval_template__updated_at")
     )
+    # A call leaves a finished run only by deletion, which moves nothing else here.
+    calls = CallExecution.objects.filter(test_execution=execution).count()
     fingerprint = hashlib.sha1(
         json.dumps(
             {
                 "subset": subset,
                 "columns": [str(column["id"]) for column in columns],
                 "configs": configs,
+                "calls": calls,
             },
             sort_keys=True,
             default=str,
         ).encode()
     ).hexdigest()
-    return f"simulate:v3:calls:{execution.id}:{version.timestamp()}:{fingerprint}"
+    # v1 names the shape of a cached row; an entry written in another shape must miss.
+    return f"simulate:v3:calls:v1:{execution.id}:{version.timestamp()}:{fingerprint}"
 
 
 def _cached_call_values(
@@ -139,7 +146,16 @@ def _cached_call_values(
         return cached
     rows = read_rows()
     if key:
-        cache.set(key, rows, timeout=CACHE_TIMEOUT)
+        try:
+            cache.set(key, rows, timeout=CACHE_TIMEOUT)
+        except Exception:
+            # The rows are already read; a refused write must not fail the page.
+            logger.warning(
+                "Could not cache %s calls of run %s",
+                len(rows),
+                execution.id,
+                exc_info=True,
+            )
     return rows
 
 
@@ -263,6 +279,9 @@ def run_calls_page(
 ) -> dict[str, Any]:
     scores = functools.cache(lambda: _score_expressions(execution, columns))
     subset = {name: query.get(name) for name in SUBSET_PARAMS}
+    if subset["group_key"] is None:
+        # A grouping with no key filters nothing, so every grouping reads the same rows.
+        subset["group_by"] = None
     rows = _cached_call_values(
         execution,
         subset,

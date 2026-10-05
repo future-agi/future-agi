@@ -560,8 +560,10 @@ class RunCallsV3View(APIView):
             )
         elif execution.status == TestExecution.ExecutionStatus.COMPLETED:
             version = execution.completed_at or execution.updated_at
+            # A deleted call moves the run's total and nothing else in this key.
             facets_cache_key = (
                 f"simulate:v3:facets:outcomes-v2:{execution.id}:{version.timestamp()}"
+                f":{calls_page['execution_summary']['total']}"
             )
         response = {
             "execution": _execution_payload(execution, calls_page["execution_summary"]),
