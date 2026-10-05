@@ -1,5 +1,59 @@
 # Changelog
 
+## [1.47.0](https://github.com/future-agi/future-agi/compare/v1.46.0...v1.47.0) (2026-10-05)
+
+
+### Features
+
+* add call and voice metric tiles to run analytics ([ee4cc51](https://github.com/future-agi/future-agi/commit/ee4cc51e64af98cba6115dd4e92d91fb21cf0129))
+* **simulate:** collapsible, resizable builder chat on the environment page ([0605508](https://github.com/future-agi/future-agi/commit/06055088cd987a33a6e357ba8a5f1f7df98e61ad))
+* **simulate:** collapsible, resizable builder chat on the environment page ([#3260](https://github.com/future-agi/future-agi/issues/3260)) ([7e29023](https://github.com/future-agi/future-agi/commit/7e2902397486614ac7a3c3f16c06438e01f1350a))
+
+
+### Bug Fixes
+
+* align simulation call outcomes and run details ([4e178c3](https://github.com/future-agi/future-agi/commit/4e178c311c7ee73173934dc3ce27daa73f748cbc))
+* **evals:** count wrong-language, wrong-product and unanswered replies as unhandled queries ([2507764](https://github.com/future-agi/future-agi/commit/2507764c6a5afc9162fa8628167ae10d9426cae6))
+* **evals:** generalise customer-agent criteria and give harness evals the full prompt and correct speaker labels ([8edb063](https://github.com/future-agi/future-agi/commit/8edb063a356991e5c8696e9ea1164b863801040b))
+* **evals:** generalize and shorten conversation criteria ([e113b27](https://github.com/future-agi/future-agi/commit/e113b27daedcdeb39ad87ca7e9bc91d57901e16d))
+* **evals:** keep the added-eval action button still while it loads ([ffb29d4](https://github.com/future-agi/future-agi/commit/ffb29d430eddd24906a01e2279fb2b9902a51002))
+* **evals:** keep the added-eval action button still while it loads ([524472b](https://github.com/future-agi/future-agi/commit/524472bc3f974e5ce357e01f594d22065fa83281))
+* **evals:** tighten conversation criteria from voice-call audit ([8aa8bd3](https://github.com/future-agi/future-agi/commit/8aa8bd3df990f2d924332e4e496246206d99e957))
+* **evals:** tighten generic conversation criteria ([1a641c8](https://github.com/future-agi/future-agi/commit/1a641c8115eefd8f1ce513b00967083d9a551e07))
+* **simulate:** builder chat collapse/resize and run calls toolbar wrap ([#3260](https://github.com/future-agi/future-agi/issues/3260), [#3299](https://github.com/future-agi/future-agi/issues/3299)) to main ([0f59200](https://github.com/future-agi/future-agi/commit/0f59200a9c317c9c42492c0bc2f5f4d20cf46127))
+* **simulate:** drop the collapsed chat's dot once the chat can't take an answer ([dbedcd6](https://github.com/future-agi/future-agi/commit/dbedcd6fe667fdb95117a6b60aa2a8507342dab2))
+* **simulate:** hide only reliability behind the detailed analytics toggle ([aab6ba4](https://github.com/future-agi/future-agi/commit/aab6ba49eb5e1e20bf8e6ed42ee99cbb2f5a30e4))
+* **simulate:** hide only the reliability section behind the detailed analytics toggle ([d39d4ae](https://github.com/future-agi/future-agi/commit/d39d4aee21e64fb4b8e0fcd899741d98699eee5c))
+* **simulate:** keep run analytics up when the response has no reliability block ([116bef8](https://github.com/future-agi/future-agi/commit/116bef846e526c8a37029643c3f26fcd48a980e8))
+* **simulate:** keep the chosen chat width through window resizes and announce the real maximum ([aa6ff43](https://github.com/future-agi/future-agi/commit/aa6ff43b750c17f752b90540d8fcf3a58aff9812))
+* **simulate:** keep the chosen chat width when the divider is used in a narrow window; count the divider in the max ([6bae721](https://github.com/future-agi/future-agi/commit/6bae7211af13f0d6e3457c968afdf1406e6cbec0))
+* **simulate:** keep the collapsed chat's dot on while the builder waits for an answer ([8e2f8d3](https://github.com/future-agi/future-agi/commit/8e2f8d304a303064f280dbfa4b6753e31540981e))
+* **simulate:** keep the run calls toolbar tidy at narrow widths ([24fc3bd](https://github.com/future-agi/future-agi/commit/24fc3bddffc2e92024ecde8dc365eafac8bd8b7f))
+* **simulate:** keep the run calls toolbar tidy at narrow widths ([62d8d42](https://github.com/future-agi/future-agi/commit/62d8d4254a48c8ab498ff8e12f568a222726ca57))
+* **simulate:** keep the run calls toolbar tidy at narrow widths ([#3299](https://github.com/future-agi/future-agi/issues/3299)) ([7e30a4d](https://github.com/future-agi/future-agi/commit/7e30a4d112ac3298c5e94bc38bf5c7740fc42f89))
+* **simulate:** leave the run calls group header's partial counts empty ([a555999](https://github.com/future-agi/future-agi/commit/a55599975bf7e867173274688c233931a63e8f65))
+* **simulate:** leave the run calls group header's partial counts empty ([aebd97c](https://github.com/future-agi/future-agi/commit/aebd97c9d91e2d4016135d013a3a1bb433ce0c52))
+* **simulate:** lock and re-read each call before the backfill rewrites its metadata ([8557cb0](https://github.com/future-agi/future-agi/commit/8557cb0f1b32b8c4bbc4c8ea89885ebd1dcb9cbf))
+* **simulate:** preserve full Others agent prompt ([71f2c07](https://github.com/future-agi/future-agi/commit/71f2c07d4ef4f29a17796e3868b572af29308e5a))
+* **simulate:** restore the persona count and partial status dash in the group header ([a24c0e0](https://github.com/future-agi/future-agi/commit/a24c0e0f4e6573bf44d09892f7ab7fdfdffa7d0d))
+* **simulate:** restore the persona count in the run calls group header ([1366080](https://github.com/future-agi/future-agi/commit/1366080c6a05062e6444af2c08157497595f65e4))
+* **temporal:** leave register_temporal_schedules without interpreter teardown ([6e2fdd4](https://github.com/future-agi/future-agi/commit/6e2fdd4e0acb3ca447b93105b1b74ab2b19b5779))
+* **temporal:** leave register_temporal_schedules without interpreter teardown ([066d8b3](https://github.com/future-agi/future-agi/commit/066d8b388961461bb0597beac8d58cf5a1b8cfc6))
+* **tracer:** log grouping control conflict reasons ([0f77b87](https://github.com/future-agi/future-agi/commit/0f77b87daa6628f5f9387bbc80e54899b56fee55))
+* **tracer:** log grouping control conflict reasons ([4c2914c](https://github.com/future-agi/future-agi/commit/4c2914c043bd11c250b568e25f5e1324c64817ab))
+* **tracer:** stop the PeerDB Temporal setup job crashing as it exits ([01d0829](https://github.com/future-agi/future-agi/commit/01d08291edbfd4a645eea2e55dad5d87e07f6fd8))
+* **tracer:** stop the PeerDB Temporal setup job crashing as it exits ([05e2707](https://github.com/future-agi/future-agi/commit/05e27073bf88e06a1c8759ea36c1e9c2974b1dde))
+
+
+### Performance Improvements
+
+* **simulate:** format a tool row's output once per result, not on every render ([e0749dd](https://github.com/future-agi/future-agi/commit/e0749dd2354ab3533fc09c8fc9135954ec4bed4f))
+
+
+### Reverts
+
+* **evals:** keep the termination handling criteria as on dev ([a1dda02](https://github.com/future-agi/future-agi/commit/a1dda02a62e4288b2771f10c059b7d1a65971223))
+
 ## [1.46.0](https://github.com/future-agi/future-agi/compare/v1.45.0...v1.46.0) (2026-10-04)
 
 
