@@ -27,6 +27,9 @@ from tracer.services.clickhouse.query_builders.filters import (
 from tracer.services.clickhouse.v2.query_builders.filters import (
     ClickHouseFilterBuilderV2,
 )
+from tracer.services.clickhouse.v2.query_builders.span_list import (
+    SpanListQueryBuilderV2,
+)
 from tracer.services.clickhouse.v2.query_builders.trace_list import (
     TraceListQueryBuilderV2,
 )
@@ -134,11 +137,23 @@ def test_v2_table_has_no_status_column_and_stays_terminal(
 
 @pytest.mark.unit
 @pytest.mark.parametrize("table", ["tracer_eval_logger", "tracer_eval_logger_v2"])
-def test_tile_counts_and_filter_use_one_predicate(settings, table):
+@pytest.mark.parametrize("tile", ["trace_list", "span_list"])
+def test_tile_counts_and_filter_use_one_predicate(settings, table, tile):
+    # Both Observe tiles (trace list and span list) must count with the same
+    # rule the filter applies, in both query modes.
     settings.CH25_EVAL_LOGGER_TABLE = table
-    count_sql, _ = TraceListQueryBuilderV2(
-        project_id=PROJECT_ID, eval_config_ids=[CONFIG_ID]
-    ).build_eval_query(["trace-1"], count_mode=True)
+    if tile == "trace_list":
+        count_sql, _ = TraceListQueryBuilderV2(
+            project_id=PROJECT_ID, eval_config_ids=[CONFIG_ID]
+        ).build_eval_query(["trace-1"], count_mode=True)
+        query_mode = ClickHouseFilterBuilder.QUERY_MODE_TRACE
+    else:
+        count_sql, _ = SpanListQueryBuilderV2(
+            project_id=PROJECT_ID, eval_config_ids=[CONFIG_ID]
+        ).build_eval_query(
+            ["span-1"], span_entities=[("trace-1", "span-1")], count_mode=True
+        )
+        query_mode = ClickHouseFilterBuilder.QUERY_MODE_SPAN
     collapsed = " ".join(count_sql.split())
 
     for verdict in (1, 0):
@@ -152,6 +167,6 @@ def test_tile_counts_and_filter_use_one_predicate(settings, table):
             "PASS_FAIL",
             op,
             value,
-            query_mode=ClickHouseFilterBuilder.QUERY_MODE_TRACE,
+            query_mode=query_mode,
         )
         assert COMPLETED in where

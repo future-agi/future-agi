@@ -249,8 +249,13 @@ def _v2_rows(legacy: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """The same history on the direct-write v2 table.
 
     v2 rows carry no lifecycle column: the engine writes them with a result.
-    Pending/running/skipped work items therefore have no v2 shape and are
-    dropped; tombstones become ``is_deleted``.
+    Pending/running/skipped/errored work-item versions therefore have no v2
+    shape and are dropped, as are CDC delete markers; app tombstones become
+    ``is_deleted``. Where such a version superseded a completed one, the older
+    completed version is what v2 keeps. So the v2 run proves the filter's
+    v2 status literal and that both sides agree on plain completed, errored,
+    ``ERROR``-output, version-flip and app-tombstone rows. The stale-verdict
+    rerun cases are proven on the legacy table, the only one that stores them.
     """
 
     rows = []
