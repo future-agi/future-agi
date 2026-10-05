@@ -202,7 +202,8 @@ def eval_latest_table(ch_client, request):
     suffix = "_v2" if request.param == "v2" else ""
     table = f"_test_eval_latest_{uuid.uuid4().hex[:8]}{suffix}"
     # The legacy CDC table carries the work-item ``status`` column
-    # (schema.py migration list); eval filters read it. v2 has no status.
+    # (schema.py CREATE TABLE tracer_eval_logger); eval filters read it.
+    # v2 has no status.
     state_columns = (
         "is_deleted UInt8, _version UInt64"
         if request.param == "v2"

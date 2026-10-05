@@ -87,7 +87,14 @@ def relational_engine(scored_engine, request, settings):  # noqa: F811 -- pytest
     settings.CH25_EVAL_LOGGER_TABLE = table
     direct = table.endswith("_v2")
     version = "_version" if direct else "_peerdb_version"
-    state = "is_deleted UInt8" if direct else "deleted UInt8, _peerdb_is_deleted UInt8"
+    # The legacy CDC table carries the work-item ``status`` column
+    # (schema.py CREATE TABLE tracer_eval_logger); eval filters read it.
+    state = (
+        "is_deleted UInt8"
+        if direct
+        else "status LowCardinality(String) DEFAULT 'completed', "
+        "deleted UInt8, _peerdb_is_deleted UInt8"
+    )
     execute(f"""CREATE TABLE {table} (
         id UUID, trace_id Nullable(UUID), observation_span_id Nullable(String),
         custom_eval_config_id UUID, created_at DateTime64(6, 'UTC'),

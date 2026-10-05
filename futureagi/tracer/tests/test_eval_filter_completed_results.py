@@ -164,6 +164,11 @@ def test_tile_counts_and_filter_use_one_predicate(settings, table, tile):
     # cell has any result at all.
     assert f"groupArrayIf( output_str_list, {COMPLETED} ) AS str_lists" in collapsed
     assert f"countIf( {COMPLETED} ) AS success_count" in collapsed
+    # Score tiles average the same completed results.
+    assert (
+        f"ifNotFinite(avgIf( output_float, {COMPLETED} ), NULL) AS avg_score"
+        in collapsed
+    )
 
     for eval_type, op, value in (
         ("PASS_FAIL", "equals", ["Passed"]),

@@ -122,7 +122,14 @@ def history_engine(session_engine, request, settings):  # noqa: F811 - pytest in
     settings.CH25_EVAL_LOGGER_TABLE = table
     direct = table.endswith("_v2")
     version = "_version" if direct else "_peerdb_version"
-    state = "is_deleted UInt8" if direct else "deleted UInt8, _peerdb_is_deleted UInt8"
+    # The legacy CDC table carries the work-item ``status`` column
+    # (schema.py CREATE TABLE tracer_eval_logger); eval filters read it.
+    state = (
+        "is_deleted UInt8"
+        if direct
+        else "status LowCardinality(String) DEFAULT 'completed', "
+        "deleted UInt8, _peerdb_is_deleted UInt8"
+    )
     engine.execute("""CREATE TABLE model_hub_score (
         id String, trace_id Nullable(UUID), observation_span_id Nullable(String),
         tracer_project_id UUID, label_id UUID, annotator_id Nullable(UUID),
