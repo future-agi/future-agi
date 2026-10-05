@@ -71,6 +71,36 @@ for (const malformed of ['{', '{"action":"finish"}']) {
   });
 }
 
+test('controller and verifier ask for plain-language finding statements', async () => {
+  const scratch = await mkdtemp(join(tmpdir(), 'omega-wording-test-'));
+  try {
+    const claim = makeClaim();
+    const row = {id: 'span-wording', project_id: claim.project_id, trace_id: claim.trace_id,
+      input: 'Check the trace'};
+    const assessment = {outcome: 'unknown', findings: [], requirement_checks: []};
+    const systems = [];
+    const result = await investigateTrace(claim, {scratchRoot: scratch,
+      fetchEvidence: async (c, path) => storeEvidence([Buffer.from(JSON.stringify(row) + '\n')], path, c),
+      gatewayConfig: {baseUrl: 'http://fixture/v1', model: 'fixture', apiKey: 'fixture',
+        fetchImpl: async (_url, init) => {
+          const system = JSON.parse(init.body).messages.find(message => message.role === 'system').content;
+          systems.push(system);
+          const content = JSON.stringify(system.includes('Independently check') ? assessment
+            : {action: 'finish', question: '', child_instructions: '', assessment});
+          return new Response(JSON.stringify({choices: [{message: {role: 'assistant', content},
+            finish_reason: 'stop'}], usage: {prompt_tokens: 10, completion_tokens: 10}}),
+          {headers: {'content-type': 'application/json', 'x-agentcc-cost': '0.000100'}});
+        }}});
+    assert.equal(result.execution_status, 'completed');
+    assert.equal(systems.length, 2);
+    for (const system of systems) {
+      assert.match(system, /finding statement in plain words for a product reader/);
+      assert.match(system, /short sentences of at most 25 words, one idea each, in active voice/);
+      assert.match(system, /Never stack more than three nouns in a row/);
+    }
+  } finally { await rm(scratch, {recursive: true, force: true}); }
+});
+
 test('upstream HTTP status is retained in a failed investigation receipt', async () => {
   const scratch = await mkdtemp(join(tmpdir(), 'omega-upstream-test-'));
   try {
@@ -389,6 +419,7 @@ test('simulation investigation reads call evidence and returns a scoped report',
       {requirement_id: goalName, requirement: 'Agent greets the caller', status: 'satisfied',
         evidence_ids: [evidenceId]}]};
     const controlCalls = [];
+    const systems = [];
     const result = await investigateSimulation(claim, {scratchRoot: scratch,
       control: async (path, body) => {
         controlCalls.push({path, body});
@@ -398,6 +429,7 @@ test('simulation investigation reads call evidence and returns a scoped report',
         fetchImpl: async (_url, init) => {
           const request = JSON.parse(init.body);
           const system = request.messages.find(message => message.role === 'system').content;
+          systems.push(system);
           const verifier = system.includes('Independently check');
           const toolMessage = request.messages.find(message => message.role === 'tool');
           const message = !toolMessage
@@ -416,6 +448,12 @@ test('simulation investigation reads call evidence and returns a scoped report',
     assert.deepEqual(result.evidence_receipts.map(item => item.call_execution_id), [row.call_execution_id]);
     assert.deepEqual(controlCalls, [{path: `/attempts/${claim.attempt_id}/simulation-evidence/`,
       body: {lease_token: claim.lease_token, cursor: 0}}]);
+    assert.ok(systems.length > 0);
+    for (const system of systems) {
+      assert.match(system, /finding statement in plain words for a product reader/);
+      assert.match(system, /short sentences of at most 25 words, one idea each, in active voice/);
+      assert.match(system, /Never stack more than three nouns in a row/);
+    }
   } finally {
     await rm(scratch, {recursive: true, force: true});
   }
@@ -533,6 +571,77 @@ test('verifier rechecks an unread child after an unsupported success', async () 
   } finally { await rm(scratch, {recursive: true, force: true}); }
 });
 
+test('an audio-grounded finding survives the verifier and publishes its audio receipt', async () => {
+  const scratch = await mkdtemp(join(tmpdir(), 'omega-audio-evidence-test-'));
+  try {
+    const claim = makeClaim();
+    const row = {id: 'audio-span', project_id: claim.project_id, trace_id: claim.trace_id, parent_span_id: '',
+      input: 'Leave a voicemail when nobody answers', output: '(unintelligible audio)'};
+    const raw = JSON.stringify(row);
+    const spanEvidence = `${row.id}:0:${Buffer.byteLength(raw)}`;
+    const audioEvidence = 'audio:audio-span:1';
+    const role = (status, ids) => status === 'supported'
+      ? {status, span_id: row.id, evidence_ids: ids, explanation: 'The recording shows a Spanish voicemail greeting.'}
+      : {status, span_id: null, evidence_ids: []};
+    const assessment = {outcome: 'failure', requirement_checks: [{requirement_id: 'voicemail',
+      requirement: 'Leave a voicemail when nobody answers', status: 'violated', evidence_ids: [audioEvidence]}],
+      findings: [{finding_id: 'spanish-voicemail', kind: 'unhandled_non_english_voicemail',
+        statement: 'When the call reached a Spanish voicemail greeting, the agent repeated its English opener instead of leaving a message.',
+        requirement_id: 'voicemail', evidence_ids: [audioEvidence, spanEvidence], recovery: 'unrecovered',
+        attribution: {origin: role('unknown'), decisive: role('supported', [audioEvidence]), symptom: role('unknown')}}]};
+    let controllerStep = 0, verifierInput, verifierSystem;
+    const result = await investigateTrace(claim, {scratchRoot: scratch,
+      resolveRecording: async () => ({url: 'https://media.example.test/call.wav', format: 'wav'}),
+      fetchEvidence: async (c, path) => storeEvidence([Buffer.from(raw + '\n')], path, c),
+      gatewayConfig: {baseUrl: 'https://gateway.invalid/v1', model: 'fixture', apiKey: 'fixture',
+        fetchImpl: async (_url, init) => {
+          const request = JSON.parse(init.body);
+          let message;
+          if (Array.isArray(request.messages[0]?.content)) {
+            message = {role: 'assistant', content: JSON.stringify({answer: 'An automated voicemail greeting in Spanish',
+              observations: [{statement: 'Tu llamada se reenvio al buzon de voz', start_seconds: 0, end_seconds: 11,
+                speaker: 'voicemail', confidence: 0.1}],
+              metrics: [{name: 'silence_duration', value: '17', unit: 'seconds', method: 'gap from the beep to hangup'}],
+              uncertainty: null})};
+          } else if (request.messages.find(m => m.role === 'system').content.includes('Independently check')) {
+            verifierInput = JSON.parse(request.messages.find(m => m.role === 'user').content);
+            verifierSystem = request.messages.find(m => m.role === 'system').content;
+            message = {role: 'assistant', content: JSON.stringify(assessment)};
+          } else if (controllerStep++ === 0) {
+            message = {role: 'assistant', content: '', tool_calls: [{id: 'read-span', type: 'function',
+              function: {name: 'read_span', arguments: JSON.stringify({span_id: row.id, offset: 0, length: 4096})}}]};
+          } else if (controllerStep === 2) {
+            message = {role: 'assistant', content: '', tool_calls: [{id: 'ask-audio', type: 'function',
+              function: {name: 'inspect_audio', arguments: JSON.stringify({span_id: row.id,
+                message: 'Who answered the call, and in which language?'})}}]};
+          } else {
+            message = {role: 'assistant', content: JSON.stringify({action: 'finish', question: '',
+              child_instructions: '', assessment})};
+          }
+          return new Response(JSON.stringify({choices: [{message}], usage: {prompt_tokens: 20, completion_tokens: 20}}),
+            {headers: {'content-type': 'application/json', 'x-agentcc-cost': '0.000100', 'x-request-id': 'gateway-request'}});
+        }}});
+    assert.equal(result.execution_status, 'completed');
+    assert.equal(result.outcome, 'failure');
+    assert.deepEqual(verifierInput.audio_observations.map(item => item.evidence_id), [audioEvidence]);
+    assert.match(verifierInput.audio_observations[0].excerpt, /voicemail greeting in Spanish/);
+    assert.ok(verifierInput.observed_evidence_ids.includes(audioEvidence));
+    assert.equal(result.findings[0].evidence_ids[0], audioEvidence);
+    const published = result.evidence_receipts.find(item => item.evidence_id === audioEvidence);
+    assert.equal(published.span_id, row.id);
+    assert.match(published.excerpt, /^Audio model observation of the recording/);
+    for (const excerpt of [verifierInput.audio_observations[0].excerpt, published.excerpt]) {
+      assert.match(excerpt, /buzon de voz \(confidence 0\.1\)/);
+      assert.match(excerpt, /Metric silence_duration: 17 seconds \(method: gap from the beep to hangup\)/);
+    }
+    assert.match(verifierSystem, /primary evidence of what was said and heard/);
+    assert.match(verifierSystem, /Timed transcript words are still evidence that speech happened/);
+    assert.match(verifierSystem, /must cite evidence IDs returned by read_span or inspect_audio\./);
+    assert.match(verifierSystem, /an audio receipt supports what the audio model heard even when no span text contains it/);
+    assert.doesNotMatch(verifierSystem, /returned by read_span\. /);
+  } finally {await rm(scratch, {recursive: true, force: true});}
+});
+
 test('question-driven audio inspection runs inside the investigator and keeps the existing report contract', async () => {
   const scratch = await mkdtemp(join(tmpdir(), 'omega-audio-investigation-test-'));
   try {
@@ -572,7 +681,7 @@ test('question-driven audio inspection runs inside the investigator and keeps th
           } else if (controllerStep === 2) {
             message = {role: 'assistant', content: '', tool_calls: [{id: 'inspect-audio', type: 'function',
               function: {name: 'inspect_audio', arguments: JSON.stringify({span_id: row.id,
-                question: 'Did the assistant interrupt the caller?'})}}]};
+                message: 'Did the assistant interrupt the caller?'})}}]};
           } else {
             message = {role: 'assistant', content: JSON.stringify({action: 'finish', question: '',
               child_instructions: '', assessment})};

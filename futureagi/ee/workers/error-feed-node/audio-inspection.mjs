@@ -56,29 +56,52 @@ export function createStorageRecordingResolver({allowedOrigins}) {
   };
 }
 
+function audioExcerpt(turn, question, result) {
+  const lines = result.observations.map(item => {
+    const when = item.start_seconds === null ? '' : `${item.start_seconds}-${item.end_seconds ?? '?'}s `;
+    const confidence = item.confidence == null ? '' : ` (confidence ${item.confidence})`;
+    return `${when}${item.speaker ?? 'unknown speaker'}: ${item.statement}${confidence}`;
+  });
+  const metrics = result.metrics.filter(item => item.name || item.value).map(item =>
+    `Metric ${item.name}: ${item.value}${item.unit ? ` ${item.unit}` : ''}${item.method ? ` (method: ${item.method})` : ''}`);
+  return [`Audio model observation of the recording (gateway request ${result.gateway_request_id ?? 'unknown'}, turn ${turn}).`,
+    `Q: ${question}`, `A: ${result.answer}`, ...lines, ...metrics,
+    ...(result.uncertainty ? [`Uncertainty: ${result.uncertainty}`] : [])].join('\n').slice(0, 8000);
+}
+
 // The resolver reads a URL only from the claimed trace; no model-supplied URL reaches it.
+// Each recording keeps one conversation per investigation; every answered turn is a citable receipt.
+// Controller and children leave the last turn to the verifier, and only answered turns count.
 export function createAudioInspectionTool({claim, store, gateway, resolveRecording, callsRemaining,
-  canSpendOutput = () => true, onModelUsage = () => {}, maxResultBytes = 8000, signal}) {
+  phase = () => 'controller', maxTurns = 4, canSpendOutput = () => true, onModelUsage = () => {},
+  maxResultBytes = 8000, signal}) {
   if (typeof resolveRecording !== 'function') throw new Error('Audio resolver required');
-  let inspections = 0;
+  const conversations = new Map();
+  const receipts = new Map();
   const inspect = tool({name: 'inspect_audio',
-    description: 'Ask one focused question about audio attached to a recorded span. The answer is a fallible model observation, not independently verified task outcome. Read the span separately for a citation.',
-    inputSchema: {type: 'object', additionalProperties: false, required: ['span_id', 'question'], properties: {
+    description: 'Talk to an audio-native model that hears the recording attached to a span. Ask, follow up or challenge an earlier answer; it remembers this investigation\'s conversation about that recording. Each answer is a citable audio receipt (evidence_id audio:...), a fallible model observation rather than span text.',
+    inputSchema: {type: 'object', additionalProperties: false, required: ['span_id', 'message'], properties: {
       span_id: {type: 'string', minLength: 1, maxLength: 64},
-      question: {type: 'string', minLength: 8, maxLength: 1000},
+      message: {type: 'string', minLength: 2, maxLength: 1000},
     }},
-    async execute({span_id: spanId, question}) {
+    async execute({span_id: spanId, message}) {
       signal?.throwIfAborted();
       const span = store.index.get(spanId);
       if (!span) throw new Error('Audio span outside claimed trace');
-      if (++inspections > 1 || callsRemaining() < 2 || !canSpendOutput()) {
-        return {status: 'unavailable', reason: 'audio_or_model_budget'};
+      if (receipts.size >= (phase() === 'verifier' ? maxTurns : maxTurns - 1)) {
+        return {status: 'unavailable', reason: 'audio_turn_cap'};
       }
-      const recording = await resolveRecording({claim, store, span_id: spanId, signal});
-      if (!recording) return {status: 'unavailable', reason: 'no_trusted_recording'};
-      const {url, format} = recording;
+      if (callsRemaining() < 2 || !canSpendOutput()) return {status: 'unavailable', reason: 'model_call_budget'};
+      let conversation = conversations.get(spanId);
+      if (!conversation) {
+        const recording = await resolveRecording({claim, store, span_id: spanId, signal});
+        if (!recording) return {status: 'unavailable', reason: 'no_trusted_recording'};
+        conversation = {url: recording.url, format: recording.format, history: []};
+        conversations.set(spanId, conversation);
+      }
+      const {url, format, history} = conversation;
       const {observation, request_id: requestId, model_used: modelUsed} =
-        await gateway.inspectAudio({url, format, question});
+        await gateway.inspectAudio({url, format, history, question: message});
       onModelUsage(gateway.accounting?.().calls.at(-1)?.usage?.completion_tokens ?? 1200);
       const statements = observation.observations.filter(item => item && typeof item.statement === 'string'
         && item.statement.length > 0).slice(0, 5);
@@ -88,7 +111,9 @@ export function createAudioInspectionTool({claim, store, gateway, resolveRecordi
         return {statement: item.statement.slice(0, 500), start_seconds: start,
           end_seconds: end, speaker: item.speaker ?? null, confidence: item.confidence ?? null};
       });
-      const result = {status: 'observed', answer: observation.answer.slice(0, 1000), observations: entries,
+      const turn = history.length + 1;
+      const evidenceId = `audio:${spanId}:${turn}`;
+      const result = {status: 'observed', evidence_id: evidenceId, answer: observation.answer.slice(0, 1000), observations: entries,
         metrics: observation.metrics.filter(item => item && typeof item === 'object').slice(0, 5).map(item => ({
           name: String(item.name ?? '').slice(0, 100), value: String(item.value ?? '').slice(0, 100),
           unit: String(item.unit ?? '').slice(0, 30), method: String(item.method ?? '').slice(0, 200)})),
@@ -98,7 +123,10 @@ export function createAudioInspectionTool({claim, store, gateway, resolveRecordi
       if (Buffer.byteLength(JSON.stringify(result)) > maxResultBytes) {
         return {status: 'unavailable', reason: 'audio_result_exceeded_budget'};
       }
+      history.push({question: message, answer: JSON.stringify(observation)});
+      receipts.set(evidenceId, {evidence_id: evidenceId, span_id: spanId, parent_span_id: span.parent_span_id || null,
+        excerpt: audioExcerpt(turn, message, result)});
       return result;
     }});
-  return {tool: inspect};
+  return {tool: inspect, receipts: () => [...receipts.values()]};
 }

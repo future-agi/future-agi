@@ -146,17 +146,23 @@ export function createGatewayProvider({baseUrl, model, apiKey, signal, maxCalls 
   };
   return {
     provider,
-    async inspectAudio({url, format, question}) {
+    async inspectAudio({url, format, question, history = []}) {
       const before = calls.length;
       return observe('error_feed.audio_model', 'LLM', {'gen_ai.request.model': model}, async () => {
       try {
+      const questions = [...(Array.isArray(history) ? history.map(turn => turn?.question) : [null]), question];
       if (typeof url !== 'string' || !url.startsWith('https://') || url.length > 2048
-          || !['wav', 'mp3'].includes(format) || typeof question !== 'string'
-          || !question.trim() || question.length > 1000) throw new Error('Invalid audio inspection input');
-      const body = JSON.stringify({model, max_tokens: 1200, messages: [{role: 'user', content: [
-        {type: 'text', text: `Answer only this question about the attached recording: ${question}\nReturn JSON with answer, observations (each with start_seconds, end_seconds, speaker, statement, confidence), metrics (name, value, unit, method), and uncertainty. Do not invent timestamps or measurements. Use null when unavailable.`},
-        {type: 'file', file: {file_id: url, format: format === 'wav' ? 'audio/wav' : 'audio/mpeg'}},
-      ]}]});
+          || !['wav', 'mp3'].includes(format) || questions.length > 8
+          || questions.some(item => typeof item !== 'string' || !item.trim() || item.length > 1000)
+          || history.some(turn => typeof turn.answer !== 'string' || turn.answer.length > 16000)) throw new Error('Invalid audio inspection input');
+      // The recording rides on the first turn; later turns replay the conversation so follow-ups keep context.
+      const messages = questions.flatMap((text, index) => {
+        const prompt = `${index ? 'Follow-up about the same recording' : 'Answer only this question about the attached recording'}: ${text}\nReturn JSON with answer, observations (each with start_seconds, end_seconds, speaker, statement, confidence), metrics (name, value, unit, method), and uncertainty. Do not invent timestamps or measurements. Use null when unavailable.`;
+        const turn = {role: 'user', content: index ? prompt : [{type: 'text', text: prompt},
+          {type: 'file', file: {file_id: url, format: format === 'wav' ? 'audio/wav' : 'audio/mpeg'}}]};
+        return index < history.length ? [turn, {role: 'assistant', content: history[index].answer}] : [turn];
+      });
+      const body = JSON.stringify({model, max_tokens: 1200, messages});
       const response = await trackedFetch(baseUrl.replace(/\/$/, '') + '/chat/completions', {
         method: 'POST', headers: {Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json',
           'Cache-Control': 'no-store', 'X-AgentCC-Cache': 'skip'}, body,

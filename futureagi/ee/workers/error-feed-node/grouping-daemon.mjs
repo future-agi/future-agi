@@ -3,7 +3,7 @@ import {readFile} from 'node:fs/promises';
 import {hostname} from 'node:os';
 import {pathToFileURL} from 'node:url';
 import {resolve} from 'node:path';
-import {createControlClient} from './control-client.mjs';
+import {createControlClient, controlFailureDetails} from './control-client.mjs';
 import {createEmbeddingClient} from './grouping/embedding-client.mjs';
 import {runGroupingCoordinator} from './grouping/coordinator.mjs';
 import {createWakeup} from './grouping/wakeup.mjs';
@@ -100,11 +100,12 @@ async function executeDaemon(env=process.env,signal) {
   const combined=AbortSignal.any([signal,stop.signal]);
   const wakeup=createWakeup();
   const log=(event,attemptId,error)=>{
-    // Emit code locations only, never exception messages/provider bodies or data.
+    // Emit locations and bounded control diagnostics, never provider bodies or data.
     const locations=String(error?.stack??'').split('\n').slice(1)
       .map(line=>line.match(/(?:file:\/\/)?\/app\/worker\/([a-zA-Z0-9_./-]+:\d+:\d+)/)?.[1])
       .filter(Boolean).slice(0,5);
-    process.stderr.write(JSON.stringify({event,attempt_id:attemptId??null,...(locations.length?{locations}:{})})+'\n');
+    process.stderr.write(JSON.stringify({event,attempt_id:attemptId??null,
+      ...controlFailureDetails(error),...(locations.length?{locations}:{})})+'\n');
   };
   // Kafka failure never erases durable jobs or stops polling recovery.
   const hints=env.OMEGA_KAFKA_BROKERS

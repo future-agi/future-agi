@@ -1,5 +1,6 @@
 import {AsyncLocalStorage} from 'node:async_hooks';
 import {readFile} from 'node:fs/promises';
+import {controlFailureDetails} from './control-client.mjs';
 
 const active = new AsyncLocalStorage();
 let telemetry;
@@ -140,6 +141,11 @@ export async function observe(name, kind, attributes, run, {root = false, input,
       return result;
     });
   } catch (error) {
+    // The control client supplies only bounded, safe diagnostics. Attach them
+    // directly: active.run has exited here, so there is no active span scope.
+    const details = controlFailureDetails(error);
+    safely(() => span.setAttributes(Object.fromEntries(Object.entries(details)
+      .map(([key, value]) => ['error_feed.control.' + key.replace(/^control_/, ''), value]))));
     // Exception messages, stacks, prompts, recordings and evidence may contain customer data.
     safely(() => span.setStatus({code: 2, message: 'operation_failed'}));
     throw error;
