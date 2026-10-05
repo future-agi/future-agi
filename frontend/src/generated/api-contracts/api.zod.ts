@@ -22316,6 +22316,7 @@ export const modelHubEvalTemplatesListCreateBodyPageSizeMax = 100;
 
 export const modelHubEvalTemplatesListCreateBodyOwnerFilterDefault = `all`;
 
+export const modelHubEvalTemplatesListCreateBodyFilterCombinatorDefault = `and`;
 export const modelHubEvalTemplatesListCreateBodySortByDefault = `updated_at`;
 export const modelHubEvalTemplatesListCreateBodySortOrderDefault = `desc`;
 
@@ -22355,6 +22356,9 @@ export const ModelHubEvalTemplatesListCreateBody = zod.object({
       names_not: zod.array(zod.string().min(1)).optional(),
     })
     .optional(),
+  filter_combinator: zod
+    .enum(["and", "or"])
+    .default(modelHubEvalTemplatesListCreateBodyFilterCombinatorDefault),
   sort_by: zod
     .enum(["name", "updated_at", "created_at"])
     .default(modelHubEvalTemplatesListCreateBodySortByDefault),
@@ -57649,6 +57653,7 @@ export const TracerObservationSpanGetGraphMethodsQueryParams = zod.object({
 });
 
 export const tracerObservationSpanGetGraphMethodsBodyFiltersDefault = [];
+export const tracerObservationSpanGetGraphMethodsBodyFilterCombinatorDefault = `and`;
 export const tracerObservationSpanGetGraphMethodsBodyIntervalDefault = `day`;
 export const tracerObservationSpanGetGraphMethodsBodyPropertyDefault = `average`;
 
@@ -57716,6 +57721,9 @@ export const TracerObservationSpanGetGraphMethodsBody = zod.object({
     .describe(
       "On trace, span, session, graph, and eval-task bounded reads, created_at/start_time datetime filters support equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal, between, not_equals, not_between, is_null, and is_not_null. Missing bounds retain the finite default window: 30 days ago for the lower bound and request-time now for the upper bound. Between and not_between use half-open [start, end) ranges; not_equals excludes one DateTime64(6) microsecond. Because the physical created_at/start_time field is non-null, is_null returns an exact empty result without a ClickHouse read and is_not_null preserves the base window. Valid contradictions also return an exact empty result.",
     ),
+  filter_combinator: zod
+    .enum(["and", "or"])
+    .default(tracerObservationSpanGetGraphMethodsBodyFilterCombinatorDefault),
   interval: zod
     .enum(["hour", "day", "week", "month"])
     .default(tracerObservationSpanGetGraphMethodsBodyIntervalDefault),
@@ -58460,6 +58468,7 @@ export const TracerObservationSpanListSpansCreateResponse =
 
 export const tracerObservationSpanListSpansObserveQueryFiltersDefault = `[]`;
 
+export const tracerObservationSpanListSpansObserveQueryFilterCombinatorDefault = `and`;
 export const tracerObservationSpanListSpansObserveQueryPageNumberDefault = 0;
 export const tracerObservationSpanListSpansObserveQueryPageNumberMin = 0;
 
@@ -58478,6 +58487,9 @@ export const TracerObservationSpanListSpansObserveQueryParams = zod.object({
     .string()
     .min(1)
     .default(tracerObservationSpanListSpansObserveQueryFiltersDefault),
+  filter_combinator: zod
+    .enum(["and", "or"])
+    .default(tracerObservationSpanListSpansObserveQueryFilterCombinatorDefault),
   page_number: zod
     .number()
     .min(tracerObservationSpanListSpansObserveQueryPageNumberMin)
@@ -58635,6 +58647,7 @@ export const TracerObservationSpanListSpansObserveResponse = zod.object({
 
 export const tracerObservationSpanListSpansObserveCreateBodyFiltersDefault = `[]`;
 
+export const tracerObservationSpanListSpansObserveCreateBodyFilterCombinatorDefault = `and`;
 export const tracerObservationSpanListSpansObserveCreateBodyPageNumberDefault = 0;
 export const tracerObservationSpanListSpansObserveCreateBodyPageNumberMin = 0;
 
@@ -58655,6 +58668,11 @@ export const TracerObservationSpanListSpansObserveCreateBody = zod.object({
     .default(tracerObservationSpanListSpansObserveCreateBodyFiltersDefault)
     .describe(
       "JSON-encoded canonical filter list. On trace, span, session, graph, and eval-task bounded reads, created_at/start_time datetime filters support equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal, between, not_equals, not_between, is_null, and is_not_null. Missing bounds retain the finite default window: 30 days ago for the lower bound and request-time now for the upper bound. Between and not_between use half-open [start, end) ranges; not_equals excludes one DateTime64(6) microsecond. Because the physical created_at/start_time field is non-null, is_null returns an exact empty result without a ClickHouse read and is_not_null preserves the base window. Valid contradictions also return an exact empty result.",
+    ),
+  filter_combinator: zod
+    .enum(["and", "or"])
+    .default(
+      tracerObservationSpanListSpansObserveCreateBodyFilterCombinatorDefault,
     ),
   page_number: zod
     .number()
@@ -62859,6 +62877,7 @@ export const TracerTraceSessionGetSessionGraphDataQueryParams = zod.object({
 });
 
 export const tracerTraceSessionGetSessionGraphDataBodyFiltersDefault = [];
+export const tracerTraceSessionGetSessionGraphDataBodyFilterCombinatorDefault = `and`;
 export const tracerTraceSessionGetSessionGraphDataBodyIntervalDefault = `day`;
 export const tracerTraceSessionGetSessionGraphDataBodyPropertyDefault = `average`;
 
@@ -62926,6 +62945,9 @@ export const TracerTraceSessionGetSessionGraphDataBody = zod.object({
     .describe(
       "On trace, span, session, graph, and eval-task bounded reads, created_at/start_time datetime filters support equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal, between, not_equals, not_between, is_null, and is_not_null. Missing bounds retain the finite default window: 30 days ago for the lower bound and request-time now for the upper bound. Between and not_between use half-open [start, end) ranges; not_equals excludes one DateTime64(6) microsecond. Because the physical created_at/start_time field is non-null, is_null returns an exact empty result without a ClickHouse read and is_not_null preserves the base window. Valid contradictions also return an exact empty result.",
     ),
+  filter_combinator: zod
+    .enum(["and", "or"])
+    .default(tracerTraceSessionGetSessionGraphDataBodyFilterCombinatorDefault),
   interval: zod
     .enum(["hour", "day", "week", "month"])
     .default(tracerTraceSessionGetSessionGraphDataBodyIntervalDefault),
@@ -64055,6 +64077,7 @@ export const TracerTraceGetGraphMethodsQueryParams = zod.object({
 });
 
 export const tracerTraceGetGraphMethodsBodyFiltersDefault = [];
+export const tracerTraceGetGraphMethodsBodyFilterCombinatorDefault = `and`;
 export const tracerTraceGetGraphMethodsBodyIntervalDefault = `day`;
 export const tracerTraceGetGraphMethodsBodyPropertyDefault = `average`;
 export const tracerTraceGetGraphMethodsBodyObserveTypeDefault = `trace`;
@@ -64124,6 +64147,9 @@ export const TracerTraceGetGraphMethodsBody = zod.object({
     .describe(
       "On trace, span, session, graph, and eval-task bounded reads, created_at/start_time datetime filters support equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal, between, not_equals, not_between, is_null, and is_not_null. Missing bounds retain the finite default window: 30 days ago for the lower bound and request-time now for the upper bound. Between and not_between use half-open [start, end) ranges; not_equals excludes one DateTime64(6) microsecond. Because the physical created_at/start_time field is non-null, is_null returns an exact empty result without a ClickHouse read and is_not_null preserves the base window. Valid contradictions also return an exact empty result.",
     ),
+  filter_combinator: zod
+    .enum(["and", "or"])
+    .default(tracerTraceGetGraphMethodsBodyFilterCombinatorDefault),
   interval: zod
     .enum(["hour", "day", "week", "month"])
     .default(tracerTraceGetGraphMethodsBodyIntervalDefault),
@@ -64424,6 +64450,7 @@ export const TracerTraceGetTraceIdByIndexObserveCreateResponse =
 export const tracerTraceListTracesQueryTraceIdsDefault = [];
 export const tracerTraceListTracesQueryFiltersDefault = `[]`;
 
+export const tracerTraceListTracesQueryFilterCombinatorDefault = `and`;
 export const tracerTraceListTracesQuerySortParamsDefault = `[]`;
 
 export const tracerTraceListTracesQueryPageNumberDefault = 0;
@@ -64447,6 +64474,9 @@ export const TracerTraceListTracesQueryParams = zod.object({
     .string()
     .min(1)
     .default(tracerTraceListTracesQueryFiltersDefault),
+  filter_combinator: zod
+    .enum(["and", "or"])
+    .default(tracerTraceListTracesQueryFilterCombinatorDefault),
   sort_params: zod
     .string()
     .min(1)
@@ -64577,6 +64607,7 @@ export const TracerTraceListTracesResponse = zod.object({
 export const tracerTraceListTracesCreateBodyTraceIdsDefault = [];
 export const tracerTraceListTracesCreateBodyFiltersDefault = `[]`;
 
+export const tracerTraceListTracesCreateBodyFilterCombinatorDefault = `and`;
 export const tracerTraceListTracesCreateBodySortParamsDefault = `[]`;
 
 export const tracerTraceListTracesCreateBodyPageNumberDefault = 0;
@@ -64597,6 +64628,9 @@ export const TracerTraceListTracesCreateBody = zod.object({
     .describe(
       "JSON-encoded canonical filter list. On trace, span, session, graph, and eval-task bounded reads, created_at/start_time datetime filters support equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal, between, not_equals, not_between, is_null, and is_not_null. Missing bounds retain the finite default window: 30 days ago for the lower bound and request-time now for the upper bound. Between and not_between use half-open [start, end) ranges; not_equals excludes one DateTime64(6) microsecond. Because the physical created_at/start_time field is non-null, is_null returns an exact empty result without a ClickHouse read and is_not_null preserves the base window. Valid contradictions also return an exact empty result.",
     ),
+  filter_combinator: zod
+    .enum(["and", "or"])
+    .default(tracerTraceListTracesCreateBodyFilterCombinatorDefault),
   sort_params: zod
     .string()
     .min(1)
@@ -64640,6 +64674,7 @@ export const TracerTraceListTracesCreateResponse =
 
 export const tracerTraceListTracesOfSessionQueryFiltersDefault = `[]`;
 
+export const tracerTraceListTracesOfSessionQueryFilterCombinatorDefault = `and`;
 export const tracerTraceListTracesOfSessionQueryPageNumberDefault = 0;
 export const tracerTraceListTracesOfSessionQueryPageNumberMin = 0;
 
@@ -64658,6 +64693,9 @@ export const TracerTraceListTracesOfSessionQueryParams = zod.object({
     .string()
     .min(1)
     .default(tracerTraceListTracesOfSessionQueryFiltersDefault),
+  filter_combinator: zod
+    .enum(["and", "or"])
+    .default(tracerTraceListTracesOfSessionQueryFilterCombinatorDefault),
   page_number: zod
     .number()
     .min(tracerTraceListTracesOfSessionQueryPageNumberMin)
@@ -64803,6 +64841,7 @@ export const TracerTraceListTracesOfSessionResponse = zod.object({
  */
 export const tracerTraceListTracesOfSessionCreateBodyFiltersDefault = `[]`;
 
+export const tracerTraceListTracesOfSessionCreateBodyFilterCombinatorDefault = `and`;
 export const tracerTraceListTracesOfSessionCreateBodyPageNumberDefault = 0;
 export const tracerTraceListTracesOfSessionCreateBodyPageNumberMin = 0;
 
@@ -64824,6 +64863,9 @@ export const TracerTraceListTracesOfSessionCreateBody = zod.object({
     .describe(
       "JSON-encoded canonical filter list. On trace, span, session, graph, and eval-task bounded reads, created_at/start_time datetime filters support equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal, between, not_equals, not_between, is_null, and is_not_null. Missing bounds retain the finite default window: 30 days ago for the lower bound and request-time now for the upper bound. Between and not_between use half-open [start, end) ranges; not_equals excludes one DateTime64(6) microsecond. Because the physical created_at/start_time field is non-null, is_null returns an exact empty result without a ClickHouse read and is_not_null preserves the base window. Valid contradictions also return an exact empty result.",
     ),
+  filter_combinator: zod
+    .enum(["and", "or"])
+    .default(tracerTraceListTracesOfSessionCreateBodyFilterCombinatorDefault),
   page_number: zod
     .number()
     .min(tracerTraceListTracesOfSessionCreateBodyPageNumberMin)

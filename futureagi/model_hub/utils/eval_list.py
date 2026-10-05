@@ -5,10 +5,12 @@ Handles: queryset building, eval type derivation, output type derivation,
 30-day chart data computation.
 """
 
+import operator
 from collections import defaultdict
 from collections.abc import Iterable
 from copy import deepcopy
 from datetime import timedelta
+from functools import reduce
 from typing import TYPE_CHECKING
 
 from django.db.models import Count, Q, QuerySet
@@ -377,6 +379,7 @@ def build_eval_list_queryset(
     owner_filter: str = "all",
     search: str | None = None,
     filters: dict | EvalListFilters | None = None,
+    filter_combinator: str = "and",
 ) -> QuerySet:
     """
     Build a filtered, scoped QuerySet for EvalTemplate.
@@ -387,6 +390,8 @@ def build_eval_list_queryset(
         owner_filter: "all", "user", or "system"
         search: Search string for name filtering
         filters: Advanced filters (eval_type, output_type, tags)
+        filter_combinator: "and" (default) or "or" — one operator across all
+            advanced filters.
 
     Returns:
         Filtered QuerySet of EvalTemplate
@@ -430,6 +435,16 @@ def build_eval_list_queryset(
                 return filters.get(key)
             return getattr(filters, key, None)
 
+        # One operator for the whole filter list (default AND). OR is applied
+        # across every advanced filter below, matching the tracing filter
+        # contract's single ``filter_combinator``.
+        is_or = filter_combinator == "or"
+        positive: list[Q] = []
+        negative: list[Q] = []
+
+        def add(q, *, negate=False):
+            (negative if negate else positive).append(q)
+
         # Output type filter
         if _f("output_type"):
             filter_types = set(_f("output_type"))
@@ -460,7 +475,7 @@ def build_eval_list_queryset(
                 combined = parts[0]
                 for p in parts[1:]:
                     combined |= p
-                qs = qs.filter(combined)
+                add(combined)
 
         # Tags filter — case-insensitive by lowercasing both sides.
         # The DB expression ARRAY(SELECT LOWER(u) FROM UNNEST(eval_tags) u)
@@ -482,22 +497,22 @@ def build_eval_list_queryset(
 
             if _f("tags"):
                 lower_filter = [t.lower() for t in _f("tags")]
-                qs = qs.filter(_tags_lower__overlap=lower_filter)
+                add(Q(_tags_lower__overlap=lower_filter))
             if _f("tags_not"):
                 lower_not = [t.lower() for t in _f("tags_not")]
-                qs = qs.exclude(_tags_lower__overlap=lower_not)
+                add(Q(_tags_lower__overlap=lower_not), negate=True)
 
         # Template type filter (single/composite)
         if _f("template_type"):
-            qs = qs.filter(template_type__in=_f("template_type"))
+            add(Q(template_type__in=_f("template_type")))
         if _f("template_type_not"):
-            qs = qs.exclude(template_type__in=_f("template_type_not"))
+            add(Q(template_type__in=_f("template_type_not")), negate=True)
 
         # Exact-name multi-select (dropdown picker)
         if _f("names"):
-            qs = qs.filter(name__in=_f("names"))
+            add(Q(name__in=_f("names")))
         if _f("names_not"):
-            qs = qs.exclude(name__in=_f("names_not"))
+            add(Q(name__in=_f("names_not")), negate=True)
 
         # Created by filter (user names)
         if _f("created_by"):
@@ -518,14 +533,14 @@ def build_eval_list_queryset(
                 organization__name__in=created_by_list
             )
             if "System" in created_by_list:
-                qs = qs.filter(
+                add(
                     Q(id__in=version_template_ids)
                     | Q(id__in=version_template_ids_email)
                     | org_q
                     | Q(owner="system")
                 )
             else:
-                qs = qs.filter(
+                add(
                     Q(id__in=version_template_ids)
                     | Q(id__in=version_template_ids_email)
                     | org_q
@@ -561,7 +576,7 @@ def build_eval_list_queryset(
                 combined = parts[0]
                 for p in parts[1:]:
                     combined |= p
-                qs = qs.exclude(combined)
+                add(combined, negate=True)
 
         # Created by exclusion filter
         if _f("created_by_not"):
@@ -582,12 +597,26 @@ def build_eval_list_queryset(
             org_q = Q(organization__display_name__in=excluded_by_list) | Q(
                 organization__name__in=excluded_by_list
             )
-            qs = qs.exclude(Q(id__in=exc_ids) | org_q)
+            add(Q(id__in=exc_ids) | org_q, negate=True)
 
-        # Note: eval_type filter is applied in-memory after fetching because
-        # eval_type is derived from multiple fields (config + tags), not a single
-        # DB column. For better performance with large datasets, consider adding
-        # a denormalized eval_type field to EvalTemplate in a future phase.
+        # Eval type filter (denormalized column; previously applied in the view)
+        if _f("eval_type"):
+            add(Q(eval_type__in=_f("eval_type")))
+        if _f("eval_type_not"):
+            add(Q(eval_type__in=_f("eval_type_not")), negate=True)
+
+        # Apply the combined conditions with the configured combinator.
+        if is_or:
+            # Negate the "not" filters before OR-ing so `*_not` keeps its
+            # exclude semantics (AND mode applies them via `.exclude()`).
+            conditions = positive + [~q for q in negative]
+            if conditions:
+                qs = qs.filter(reduce(operator.or_, conditions))
+        else:
+            for q in positive:
+                qs = qs.filter(q)
+            for q in negative:
+                qs = qs.exclude(q)
 
     return qs
 

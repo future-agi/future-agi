@@ -36162,6 +36162,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
               default: "[]",
             },
           },
+          filter_combinator: {
+            required: false,
+            schema: {
+              type: "string",
+              enum: ["and", "or"],
+              default: "and",
+            },
+          },
           page_number: {
             required: false,
             schema: {
@@ -39315,6 +39323,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
               default: "[]",
             },
           },
+          filter_combinator: {
+            required: false,
+            schema: {
+              type: "string",
+              enum: ["and", "or"],
+              default: "and",
+            },
+          },
           sort_params: {
             required: false,
             schema: {
@@ -39433,6 +39449,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
               type: "string",
               minLength: 1,
               default: "[]",
+            },
+          },
+          filter_combinator: {
+            required: false,
+            schema: {
+              type: "string",
+              enum: ["and", "or"],
+              default: "and",
             },
           },
           page_number: {
@@ -57712,6 +57736,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         filters: {
           $ref: "#/definitions/EvalListFilters",
         },
+        filter_combinator: {
+          title: "Filter combinator",
+          type: "string",
+          enum: ["and", "or"],
+          default: "and",
+        },
         sort_by: {
           title: "Sort by",
           type: "string",
@@ -67301,6 +67331,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "not_equals",
           ],
         },
+        filter_combinator: {
+          title: "Filter combinator",
+          type: "string",
+          enum: ["and", "or"],
+          default: "and",
+        },
         interval: {
           title: "Interval",
           type: "string",
@@ -76155,6 +76191,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "not_equals",
           ],
         },
+        filter_combinator: {
+          title: "Filter combinator",
+          type: "string",
+          enum: ["and", "or"],
+          default: "and",
+        },
         page_number: {
           title: "Page number",
           description:
@@ -78020,6 +78062,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "not_equals",
           ],
         },
+        filter_combinator: {
+          title: "Filter combinator",
+          type: "string",
+          enum: ["and", "or"],
+          default: "and",
+        },
         interval: {
           title: "Interval",
           type: "string",
@@ -78147,6 +78195,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "not_equals",
           ],
         },
+        filter_combinator: {
+          title: "Filter combinator",
+          type: "string",
+          enum: ["and", "or"],
+          default: "and",
+        },
         sort_params: {
           title: "Sort params",
           type: "string",
@@ -78250,6 +78304,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "not_between",
             "not_equals",
           ],
+        },
+        filter_combinator: {
+          title: "Filter combinator",
+          type: "string",
+          enum: ["and", "or"],
+          default: "and",
         },
         page_number: {
           title: "Page number",
@@ -78479,6 +78539,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "not_between",
             "not_equals",
           ],
+        },
+        filter_combinator: {
+          title: "Filter combinator",
+          type: "string",
+          enum: ["and", "or"],
+          default: "and",
         },
         interval: {
           title: "Interval",
