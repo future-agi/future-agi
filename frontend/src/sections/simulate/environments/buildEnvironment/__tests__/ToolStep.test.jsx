@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "src/utils/test-utils";
 
 import { Step } from "../console/ConsoleTurn";
@@ -32,7 +32,9 @@ describe("tool step", () => {
 
     expect(toggle()).toHaveAttribute("aria-expanded", "true");
     const output = screen.getByTestId("tool-step-output");
-    expect(output.textContent).toBe(JSON.stringify(JSON.parse(RESULT), null, 2));
+    expect(output.textContent).toBe(
+      JSON.stringify(JSON.parse(RESULT), null, 2),
+    );
     expect(output.textContent).toContain('"state": "provisioning"');
   });
 
@@ -52,15 +54,36 @@ describe("tool step", () => {
   });
 
   it("shows non-JSON output as written", () => {
-    render(<Step step={tool({ result: "explain_monthly_billing passes when the agent declines" })} />);
+    render(
+      <Step
+        step={tool({
+          result: "explain_monthly_billing passes when the agent declines",
+        })}
+      />,
+    );
     fireEvent.click(toggle());
     expect(screen.getByTestId("tool-step-output").textContent).toBe(
       "explain_monthly_billing passes when the agent declines",
     );
   });
 
+  it("formats the output once, not on every re-render (typing re-renders every turn)", () => {
+    const step = tool();
+    const parse = vi.spyOn(JSON, "parse");
+    try {
+      const { rerender } = render(<Step step={step} />);
+      const afterMount = parse.mock.calls.length;
+      for (let i = 0; i < 5; i += 1) rerender(<Step step={step} />);
+      expect(parse.mock.calls.length).toBe(afterMount);
+    } finally {
+      parse.mockRestore();
+    }
+  });
+
   it("is not expandable while running or without output", () => {
-    const { rerender } = render(<Step step={tool({ state: "running", result: undefined })} />);
+    const { rerender } = render(
+      <Step step={tool({ state: "running", result: undefined })} />,
+    );
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
     expect(screen.getByText("…")).toBeInTheDocument();
 

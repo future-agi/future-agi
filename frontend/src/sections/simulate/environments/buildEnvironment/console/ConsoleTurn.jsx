@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { alpha } from "@mui/material/styles";
 import { Box, Stack, Typography, Collapse } from "@mui/material";
 import ReactMarkdown from "react-markdown";
@@ -288,6 +288,11 @@ function ToolStep({ step }) {
   const tone = TOOL_TONE[step.state] || BUILD_TONES.green;
   const running = step.state === "running";
   const expandable = !running && !!step.result;
+  // Formatted once per result: every turn re-renders on each keystroke and poll.
+  const output = useMemo(
+    () => (expandable ? formatToolOutput(step.result) : null),
+    [expandable, step.result],
+  );
 
   const row = (
     <QuietRow tint={tone} pulse={running}>
@@ -354,7 +359,7 @@ function ToolStep({ step }) {
             bgcolor: "background.neutral", border: "1px solid", borderColor: "divider",
           }}
         >
-          {formatToolOutput(step.result)}
+          {output}
         </Typography>
       </Collapse>
     </Box>
