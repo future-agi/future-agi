@@ -32,24 +32,12 @@ import StatusFilterChips from "./StatusFilterChips";
 import {
   CLOSED_GROUP_VIEW,
   GROUPINGS,
+  OUTCOME_LABELS,
   VOICE_ONLY_COLUMNS,
   compactHiddenSx,
   defaultTraceColumns,
   toolbarButtonSx,
 } from "./traceTable.constants";
-
-const STATUS_CHIP_API = {
-  failing: "failed",
-  errored: "error",
-  inconclusive: "inconclusive",
-  passing: "passed",
-};
-const STATUS_LABELS = {
-  passed: "Passed",
-  failed: "Failed",
-  error: "Errored",
-  inconclusive: "Not measured",
-};
 
 const PAGE_SIZE = 50;
 // Room left under the table box for the pager row and the page's bottom gutter.
@@ -120,7 +108,7 @@ export default function RunTraceTable({
     if (filters.subGoal?.length) next.sub_goal = filters.subGoal;
     if (filters.status?.length) next.status = filters.status;
     if (filters.goal_outcome?.length) next.goal_outcome = filters.goal_outcome;
-    if (statusChip !== "all") next.status = [STATUS_CHIP_API[statusChip]];
+    if (statusChip !== "all") next.status = [statusChip];
     return next;
   }, [filters, statusChip]);
 
@@ -239,8 +227,8 @@ export default function RunTraceTable({
         value: "status",
         label: "Status",
         type: "enum",
-        choices: Object.keys(STATUS_LABELS),
-        choiceLabels: STATUS_LABELS,
+        choices: Object.keys(OUTCOME_LABELS),
+        choiceLabels: OUTCOME_LABELS,
       },
     ],
     [goalOptions, subGoalOptions],
@@ -259,11 +247,7 @@ export default function RunTraceTable({
     );
     return {
       all: Object.values(byStatus).reduce((sum, count) => sum + count, 0),
-      failing: byStatus.failed ?? 0,
-      errored: byStatus.error ?? 0,
-      mixed: 0,
-      inconclusive: byStatus.inconclusive ?? 0,
-      passing: byStatus.passed ?? 0,
+      ...byStatus,
     };
   }, [facets.status]);
 

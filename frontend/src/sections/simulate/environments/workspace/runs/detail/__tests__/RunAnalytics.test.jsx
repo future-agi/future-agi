@@ -465,6 +465,31 @@ describe("RunAnalytics", () => {
     expect(open).toHaveBeenLastCalledWith({ goal_outcome: ["escalated"] });
   });
 
+  it.each([
+    ["queued", "Queued"],
+    ["in_progress", "In progress"],
+  ])("opens %s calls from the goal-outcome chart", (outcome, label) => {
+    const data = structuredClone(analytics);
+    const chart = data.dashboard.breakdowns.find(
+      (item) => item.key === "goal_outcome",
+    );
+    chart.total = 4;
+    chart.headline = { label: "passed", count: 0, share: 0 };
+    chart.segments = [
+      { label: outcome, count: 4, share: 100, statuses: [outcome] },
+    ];
+    useRunAnalytics.mockReturnValue({ data, isPending: false, isError: false });
+    const open = vi.fn();
+    render(<RunAnalytics executionId="execution-1" onOpenCalls={open} />);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Show detailed analytics" }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: `Show ${label} calls` }),
+    );
+    expect(open).toHaveBeenCalledWith({ goal_outcome: [outcome] });
+  });
+
   it("opens the actual call from a performance-tail widget", () => {
     const open = vi.fn();
     render(<RunAnalytics executionId="execution-1" onOpenCall={open} />);
