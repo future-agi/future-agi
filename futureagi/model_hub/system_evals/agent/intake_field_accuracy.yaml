@@ -1,24 +1,34 @@
 eval_id: 208
 name: intake_field_accuracy
-description: Evaluates how accurately an agent captured the details a customer gave during a voice or chat conversation, judged
-  against the conversation itself rather than an external gold record - values match what the customer said, critical values
-  are confirmed, nothing is invented, corrections are absorbed, and required fields are obtained or flagged.
-criteria: "You are evaluating how accurately an agent captured the details a customer gave during a conversation. There is\
-  \ no external gold record: a value is correct when it matches what the customer said, and wrong if it contradicts them.\n\
-  \n## Criteria\n1. Faithful capture: Every value the agent records, reads back, or carries into a summary or handoff matches\
-  \ what the customer said.\n2. Confirmed, never invented: The agent explicitly confirms values where an error would be costly,\
-  \ and never records or carries forward a detail the customer did not give.\n3. Corrections absorbed and required fields\
-  \ covered: The agent adopts a corrected value from that point on, and obtains the details its prompt requires or notes which\
-  \ it could not get.\n\n## Anti-bias Rules\n- Transcription renders one value in many forms; treat \"(555) 123-4567\" and\
-  \ \"555 123 4567\", or \"double four\" and \"44\", as the same value; only a genuine difference in the value itself is a\
-  \ capture error.\n- Where audio or transcript is inaudible or cut off, do not infer an error; a value the customer never\
-  \ stated is a coverage gap, not an inaccuracy.\n- Details may arrive across several turns in any order, and a read-back\
-  \ the customer then corrects is the mechanism working, not a mistake.\n\n## Scoring\n- Score 0.0 if the agent misstates,\
-  \ fabricates, or loses values the customer gave, ignores corrections, or captures little of what its flow requires.\n- Score\
-  \ 0.5 if the details are broadly right but critical values go unconfirmed, required fields are missed without being noted,\
-  \ or a value drifts before recovering.\n- Score 1.0 if every captured value matches what the customer said, critical values\
-  \ are confirmed, corrections are absorbed, and required fields are obtained or flagged.\n\n## Input\n<agent_prompt>{{agent_prompt}}</agent_prompt>\n\
-  <conversation>{{conversation}}</conversation>"
+description: "Evaluates customer-provided fields against the agent's read-backs and final summary, including exact values, field roles, explicit corrections, and consequential confirmations, using only observable conversation evidence."
+criteria: |-
+  You are evaluating how accurately the agent captures and confirms customer-provided details in the conversation. The customer's statements and explicit updates are the reference; there is no external gold record or access to hidden stored fields.
+
+  ## Criteria
+  1. Compare fields individually: For each material field, follow the customer's original value, explicit corrections, and the agent's subsequent read-backs or final summary. Compare individual numbers, names, dates, times, units, and qualifiers rather than the gist. A missing digit, different street number, changed time, or omitted meaningful qualifier can change the value even when the rest matches.
+  2. Preserve field roles: Keep each value attached to what it describes. Do not swap origin and destination, sender and recipient, old and new values, or appointment and arrival times. Treat a value as updated when the customer explicitly supplies or accepts that update, not merely because the agent repeats a different value.
+  3. Absorb corrections: An initial tentative read-back that the customer corrects and the agent then accurately confirms and retains is successful verification. Repeating the same wrong value after an explicit correction, reverting to an earlier value, or carrying an unresolved mismatch into the final summary is a capture failure. A later generic success announcement does not repair it.
+  4. Confirm consequential details: Identify fields whose error would change the requested outcome or violate an explicit customer condition. Confirm those values and resolve ambiguities before announcing the dependent action as completed. An outstanding conditional approval is not confirmation of the condition. Obtain required fields identified by the supplied prompt or conversation, or explicitly flag those that cannot be obtained without claiming the dependent action is complete.
+  5. Do not invent customer data: A value never supplied by the customer must not be attributed to them. Clearly presenting a new candidate or alternative for the customer's selection is not fabrication; distinguish a proposal from a claim about what the customer already said.
+
+  ## Anti-bias Rules
+  - Equivalent formats and unambiguous spoken-number forms represent the same value. Do not penalize harmless pronunciation, formatting, or transcription differences.
+  - Where speech is inaudible, clipped, or capture is incomplete, exclude the uncertain field from error judgments and explain the limitation. Do not reconstruct missing digits or assume a value was never spoken. Clear repeated customer corrections can establish a mismatch independently of uncertain spelling.
+  - Details may arrive across turns. Do not penalize a single successful verification-and-correction cycle or a customer-authorized change of preference. An agent asking for genuine clarification is not the same as ignoring an already clear correction.
+  - A detail the customer has not supplied is a coverage issue, not fabricated data unless the agent invents or falsely attributes it. Do not demand unrelated fields, repeated full recaps, or unstated domain-specific requirements.
+  - Evaluate only capture visible in the conversation. Do not infer hidden tool arguments, database values, or whether an action actually executed.
+
+  ## Scoring
+  - Score 0.0 for an unresolved misstated or fabricated customer value, swapped field roles, an ignored explicit correction, repeated loss of a corrected value, or broadly failed intake. Also score 0.0 when the agent announces a dependent action as complete while a consequential field or explicit customer condition remains unconfirmed or unresolved. Correctly captured unrelated fields do not cancel these failures.
+  - Score 0.5 when capture is broadly accurate and none of the 0.0 conditions applies, but noncritical required details are missed without acknowledgment or consequential confirmations remain pending before any dependent completion is announced. A single successfully corrected read-back is not, by itself, a reason for 0.5.
+  - Score 1.0 when all assessable captured values match the customer's stated or explicitly updated values, consequential details are confirmed, corrections are retained, and required details are obtained or explicitly flagged without falsely implying completion. If no applicable details were supplied, state the limited scope rather than claiming a complete intake was verified.
+
+  ## Explanation
+  Identify the decisive field, its customer-stated or corrected value, the agent's value, and whether the correction or confirmation was resolved. Quote numbers exactly and distinguish unclear audio from an established mismatch. For a passing score, do not claim a confirmation that is absent from the assessable conversation.
+
+  ## Input
+  <agent_prompt>{{agent_prompt}}</agent_prompt>
+  <conversation>{{conversation}}</conversation>
 eval_tags:
 - Agents
 - Conversation
@@ -47,19 +57,31 @@ config:
     - AUDIO
     - JSON
     - LIST
-  rule_prompt: "You are evaluating how accurately an agent captured the details a customer gave during a conversation. There\
-    \ is no external gold record: a value is correct when it matches what the customer said, and wrong if it contradicts them.\n\
-    \n## Criteria\n1. Faithful capture: Every value the agent records, reads back, or carries into a summary or handoff matches\
-    \ what the customer said.\n2. Confirmed, never invented: The agent explicitly confirms values where an error would be\
-    \ costly, and never records or carries forward a detail the customer did not give.\n3. Corrections absorbed and required\
-    \ fields covered: The agent adopts a corrected value from that point on, and obtains the details its prompt requires or\
-    \ notes which it could not get.\n\n## Anti-bias Rules\n- Transcription renders one value in many forms; treat \"(555)\
-    \ 123-4567\" and \"555 123 4567\", or \"double four\" and \"44\", as the same value; only a genuine difference in the\
-    \ value itself is a capture error.\n- Where audio or transcript is inaudible or cut off, do not infer an error; a value\
-    \ the customer never stated is a coverage gap, not an inaccuracy.\n- Details may arrive across several turns in any order,\
-    \ and a read-back the customer then corrects is the mechanism working, not a mistake.\n\n## Scoring\n- Score 0.0 if the\
-    \ agent misstates, fabricates, or loses values the customer gave, ignores corrections, or captures little of what its\
-    \ flow requires.\n- Score 0.5 if the details are broadly right but critical values go unconfirmed, required fields are\
-    \ missed without being noted, or a value drifts before recovering.\n- Score 1.0 if every captured value matches what the\
-    \ customer said, critical values are confirmed, corrections are absorbed, and required fields are obtained or flagged.\n\
-    \n## Input\n<agent_prompt>{{agent_prompt}}</agent_prompt>\n<conversation>{{conversation}}</conversation>"
+  rule_prompt: |-
+    You are evaluating how accurately the agent captures and confirms customer-provided details in the conversation. The customer's statements and explicit updates are the reference; there is no external gold record or access to hidden stored fields.
+
+    ## Criteria
+    1. Compare fields individually: For each material field, follow the customer's original value, explicit corrections, and the agent's subsequent read-backs or final summary. Compare individual numbers, names, dates, times, units, and qualifiers rather than the gist. A missing digit, different street number, changed time, or omitted meaningful qualifier can change the value even when the rest matches.
+    2. Preserve field roles: Keep each value attached to what it describes. Do not swap origin and destination, sender and recipient, old and new values, or appointment and arrival times. Treat a value as updated when the customer explicitly supplies or accepts that update, not merely because the agent repeats a different value.
+    3. Absorb corrections: An initial tentative read-back that the customer corrects and the agent then accurately confirms and retains is successful verification. Repeating the same wrong value after an explicit correction, reverting to an earlier value, or carrying an unresolved mismatch into the final summary is a capture failure. A later generic success announcement does not repair it.
+    4. Confirm consequential details: Identify fields whose error would change the requested outcome or violate an explicit customer condition. Confirm those values and resolve ambiguities before announcing the dependent action as completed. An outstanding conditional approval is not confirmation of the condition. Obtain required fields identified by the supplied prompt or conversation, or explicitly flag those that cannot be obtained without claiming the dependent action is complete.
+    5. Do not invent customer data: A value never supplied by the customer must not be attributed to them. Clearly presenting a new candidate or alternative for the customer's selection is not fabrication; distinguish a proposal from a claim about what the customer already said.
+
+    ## Anti-bias Rules
+    - Equivalent formats and unambiguous spoken-number forms represent the same value. Do not penalize harmless pronunciation, formatting, or transcription differences.
+    - Where speech is inaudible, clipped, or capture is incomplete, exclude the uncertain field from error judgments and explain the limitation. Do not reconstruct missing digits or assume a value was never spoken. Clear repeated customer corrections can establish a mismatch independently of uncertain spelling.
+    - Details may arrive across turns. Do not penalize a single successful verification-and-correction cycle or a customer-authorized change of preference. An agent asking for genuine clarification is not the same as ignoring an already clear correction.
+    - A detail the customer has not supplied is a coverage issue, not fabricated data unless the agent invents or falsely attributes it. Do not demand unrelated fields, repeated full recaps, or unstated domain-specific requirements.
+    - Evaluate only capture visible in the conversation. Do not infer hidden tool arguments, database values, or whether an action actually executed.
+
+    ## Scoring
+    - Score 0.0 for an unresolved misstated or fabricated customer value, swapped field roles, an ignored explicit correction, repeated loss of a corrected value, or broadly failed intake. Also score 0.0 when the agent announces a dependent action as complete while a consequential field or explicit customer condition remains unconfirmed or unresolved. Correctly captured unrelated fields do not cancel these failures.
+    - Score 0.5 when capture is broadly accurate and none of the 0.0 conditions applies, but noncritical required details are missed without acknowledgment or consequential confirmations remain pending before any dependent completion is announced. A single successfully corrected read-back is not, by itself, a reason for 0.5.
+    - Score 1.0 when all assessable captured values match the customer's stated or explicitly updated values, consequential details are confirmed, corrections are retained, and required details are obtained or explicitly flagged without falsely implying completion. If no applicable details were supplied, state the limited scope rather than claiming a complete intake was verified.
+
+    ## Explanation
+    Identify the decisive field, its customer-stated or corrected value, the agent's value, and whether the correction or confirmation was resolved. Quote numbers exactly and distinguish unclear audio from an established mismatch. For a passing score, do not claim a confirmation that is absent from the assessable conversation.
+
+    ## Input
+    <agent_prompt>{{agent_prompt}}</agent_prompt>
+    <conversation>{{conversation}}</conversation>

@@ -1,22 +1,32 @@
 eval_id: 133
 name: customer_agent_task_completion
-description: Evaluates whether the agent successfully completes the task assigned to it based on the customer-agent interaction,
-  including execution finality, outcome delivery, and correct handling of blockers or policy boundaries.
-criteria: "You are evaluating whether the agent successfully completes the task assigned to it based on the customer-agent\
-  \ interaction.\n\n## Criteria\n1. Task execution and finality: The agent carries out the necessary actions to fully resolve\
-  \ the primary objective or core request of the customer.\n2. Explicit confirmation or outcome delivery: The agent clearly\
-  \ communicates the final result, confirmation, or status of the task so that the customer is aware it has been handled.\n\
-  3. Handling blockers or policy boundaries: The agent correctly navigates system constraints, accurately applying company\
-  \ policies or executing valid workarounds to reach the closest possible resolution. A blocker that leaves the primary objective unmet means the task is not completed, however clearly it is communicated.\n\n## Anti-bias Rules\n- If the customer\
-  \ abruptly terminates the conversation for reasons unrelated to the agent's handling, or refuses to provide mandatory information (e.g., account verification), do not penalize\
-  \ the agent for non-completion.\n- An accurate, policy-compliant refusal (e.g., correctly denying a refund because it violates\
-  \ terms of service) counts as a successful task completion, as the inquiry was definitively resolved according to business\
-  \ logic. A temporary system limit or error that blocks an otherwise valid request is not a policy refusal.\n- If the task requires back-end processing that takes hours or days to complete, the agent fulfills the criteria\
-  \ by successfully initiating the workflow and setting clear timeline expectations.\n\n## Scoring\n- Return PASS if the agent\
-  \ completely resolves the customer's request, delivers a clear and definitive outcome (including valid policy-based refusals),\
-  \ and ensures all necessary execution steps within the scope of the chat are completed.\n- Return FAIL if the agent leaves\
-  \ the request pending, promises an action but fails to execute it, abandons the interaction mid-process, or incorrectly states\
-  \ a task cannot be done due to agent error.\n\n## Input\n<agent_prompt>{{agent_prompt}}</agent_prompt>\n<conversation>{{conversation}}</conversation>"
+description: "Evaluates whether the customer's primary objective and material conditions were fulfilled in the conversation, without treating an explanation, refusal, or unresolved blocker as completion or requiring backend verification."
+criteria: |-
+  You are evaluating whether the customer's primary objective was completed, as established by the conversation. Judge the communicated outcome, not unseen tool execution or backend state.
+
+  ## Criteria
+  1. Identify the objective: State what the customer wanted to accomplish and any explicit conditions on success. Follow explicit changes or accepted alternatives; do not replace the objective with the easier task the agent happened to perform.
+  2. Check the final outcome against that objective: A clear final confirmation or delivered answer is evidence of completion in the conversation. A promise to act, an apology, a referral, or an explanation of a limitation is not completion of an unmet objective. A later announcement of success does not override an unresolved wrong detail, correction, or customer condition.
+  3. Preserve material conditions: Check that conditions affecting the requested outcome are resolved before the agent announces completion. For example, an action requested only for a particular date, recipient, amount, or service must not pass with that condition unanswered or contradicted. Respect confirmation requirements expressed in the conversation or supplied agent prompt; do not invent additional workflow requirements.
+  4. Handle blockers without redefining success: A system limit, error, or policy refusal that leaves the requested action undone means the objective was not completed, however reasonably the agent handled it. If the customer only asked about eligibility, availability, or policy, a direct answer can complete that informational objective. An alternative counts only when the customer explicitly adopts it and it is fulfilled; acknowledgment of a refusal alone is not a new objective.
+
+  ## Anti-bias Rules
+  - Completion and agent fault are different. A customer declining mandatory information or leaving before completion does not make the agent at fault, but it does not turn an unfinished objective into a completed one. Do not excuse repeated errors or nonanswers merely because the customer eventually hangs up.
+  - For work that finishes later, distinguish a request to initiate a process from a request for its final outcome. Confirmation that the requested initiation is complete, with clear next steps or timing, can satisfy the former. A future-tense promise to initiate it does not.
+  - Use the recording or conversation supplied. Do not require tool logs, infer whether a tool was called, or claim independent verification of a booking, payment, submission, or other backend action.
+  - Do not infer mistakes or missing steps from inaudible speech, clipping, or incomplete capture. Judge the assessable evidence and state any limitation; do not invent a successful or failed exchange in the missing portion.
+  - Politeness, conversation length, and a generic "done" are not substitutes for resolving the actual request. Minor unrelated query-handling issues do not independently fail an otherwise completed primary objective.
+
+  ## Scoring
+  - Return PASS when the conversation establishes a clear outcome that fulfills the customer's primary objective and its material conditions, including an explicitly accepted and fulfilled alternative.
+  - Return FAIL when the assessable conversation leaves the objective pending or unmet, ends with a refusal or blocker instead of the requested outcome, or announces completion while a material condition or correction remains unresolved. Explain whether the non-completion reflects an agent error, a stated limitation, or customer withdrawal; do not assume fault from non-completion alone.
+
+  ## Explanation
+  Briefly identify the objective, the outcome actually communicated, and the decisive supporting exchange or unresolved condition. Quote material details accurately. Describe only what the conversation establishes, including evidence limitations.
+
+  ## Input
+  <agent_prompt>{{agent_prompt}}</agent_prompt>
+  <conversation>{{conversation}}</conversation>
 eval_tags:
 - Agents
 - Conversation
@@ -61,19 +71,29 @@ config:
     - FLOAT
     - ARRAY
     - DATETIME
-  rule_prompt: "You are evaluating whether the agent successfully completes the task assigned to it based on the customer-agent\
-    \ interaction.\n\n## Criteria\n1. Task execution and finality: The agent carries out the necessary actions to fully resolve\
-    \ the primary objective or core request of the customer.\n2. Explicit confirmation or outcome delivery: The agent clearly\
-    \ communicates the final result, confirmation, or status of the task so that the customer is aware it has been handled.\n\
-    3. Handling blockers or policy boundaries: The agent correctly navigates system constraints, accurately applying company\
-    \ policies or executing valid workarounds to reach the closest possible resolution. A blocker that leaves the primary objective unmet means the task is not completed, however clearly it is communicated.\n\n## Anti-bias Rules\n- If the customer\
-    \ abruptly terminates the conversation for reasons unrelated to the agent's handling, or refuses to provide mandatory information (e.g., account verification), do not\
-    \ penalize the agent for non-completion.\n- An accurate, policy-compliant refusal (e.g., correctly denying a refund because\
-    \ it violates terms of service) counts as a successful task completion, as the inquiry was definitively resolved according\
-    \ to business logic. A temporary system limit or error that blocks an otherwise valid request is not a policy refusal.\n- If the task requires back-end processing that takes hours or days to complete, the agent fulfills\
-    \ the criteria by successfully initiating the workflow and setting clear timeline expectations.\n\n## Scoring\n- Return\
-    \ PASS if the agent completely resolves the customer's request, delivers a clear and definitive outcome (including valid\
-    \ policy-based refusals), and ensures all necessary execution steps within the scope of the chat are completed.\n- Return\
-    \ FAIL if the agent leaves the request pending, promises an action but fails to execute it, abandons the interaction mid-process,\
-    \ or incorrectly states a task cannot be done due to agent error.\n\n## Input\n<agent_prompt>{{agent_prompt}}</agent_prompt>\n\
-    <conversation>{{conversation}}</conversation>"
+  rule_prompt: |-
+    You are evaluating whether the customer's primary objective was completed, as established by the conversation. Judge the communicated outcome, not unseen tool execution or backend state.
+
+    ## Criteria
+    1. Identify the objective: State what the customer wanted to accomplish and any explicit conditions on success. Follow explicit changes or accepted alternatives; do not replace the objective with the easier task the agent happened to perform.
+    2. Check the final outcome against that objective: A clear final confirmation or delivered answer is evidence of completion in the conversation. A promise to act, an apology, a referral, or an explanation of a limitation is not completion of an unmet objective. A later announcement of success does not override an unresolved wrong detail, correction, or customer condition.
+    3. Preserve material conditions: Check that conditions affecting the requested outcome are resolved before the agent announces completion. For example, an action requested only for a particular date, recipient, amount, or service must not pass with that condition unanswered or contradicted. Respect confirmation requirements expressed in the conversation or supplied agent prompt; do not invent additional workflow requirements.
+    4. Handle blockers without redefining success: A system limit, error, or policy refusal that leaves the requested action undone means the objective was not completed, however reasonably the agent handled it. If the customer only asked about eligibility, availability, or policy, a direct answer can complete that informational objective. An alternative counts only when the customer explicitly adopts it and it is fulfilled; acknowledgment of a refusal alone is not a new objective.
+
+    ## Anti-bias Rules
+    - Completion and agent fault are different. A customer declining mandatory information or leaving before completion does not make the agent at fault, but it does not turn an unfinished objective into a completed one. Do not excuse repeated errors or nonanswers merely because the customer eventually hangs up.
+    - For work that finishes later, distinguish a request to initiate a process from a request for its final outcome. Confirmation that the requested initiation is complete, with clear next steps or timing, can satisfy the former. A future-tense promise to initiate it does not.
+    - Use the recording or conversation supplied. Do not require tool logs, infer whether a tool was called, or claim independent verification of a booking, payment, submission, or other backend action.
+    - Do not infer mistakes or missing steps from inaudible speech, clipping, or incomplete capture. Judge the assessable evidence and state any limitation; do not invent a successful or failed exchange in the missing portion.
+    - Politeness, conversation length, and a generic "done" are not substitutes for resolving the actual request. Minor unrelated query-handling issues do not independently fail an otherwise completed primary objective.
+
+    ## Scoring
+    - Return PASS when the conversation establishes a clear outcome that fulfills the customer's primary objective and its material conditions, including an explicitly accepted and fulfilled alternative.
+    - Return FAIL when the assessable conversation leaves the objective pending or unmet, ends with a refusal or blocker instead of the requested outcome, or announces completion while a material condition or correction remains unresolved. Explain whether the non-completion reflects an agent error, a stated limitation, or customer withdrawal; do not assume fault from non-completion alone.
+
+    ## Explanation
+    Briefly identify the objective, the outcome actually communicated, and the decisive supporting exchange or unresolved condition. Quote material details accurately. Describe only what the conversation establishes, including evidence limitations.
+
+    ## Input
+    <agent_prompt>{{agent_prompt}}</agent_prompt>
+    <conversation>{{conversation}}</conversation>
