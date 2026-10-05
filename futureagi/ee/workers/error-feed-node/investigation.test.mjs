@@ -562,7 +562,9 @@ test('an audio-grounded finding survives the verifier and publishes its audio re
           if (Array.isArray(request.messages[0]?.content)) {
             message = {role: 'assistant', content: JSON.stringify({answer: 'An automated voicemail greeting in Spanish',
               observations: [{statement: 'Tu llamada se reenvio al buzon de voz', start_seconds: 0, end_seconds: 11,
-                speaker: 'voicemail', confidence: 0.95}], metrics: [], uncertainty: null})};
+                speaker: 'voicemail', confidence: 0.1}],
+              metrics: [{name: 'silence_duration', value: '17', unit: 'seconds', method: 'gap from the beep to hangup'}],
+              uncertainty: null})};
           } else if (request.messages.find(m => m.role === 'system').content.includes('Independently check')) {
             verifierInput = JSON.parse(request.messages.find(m => m.role === 'user').content);
             verifierSystem = request.messages.find(m => m.role === 'system').content;
@@ -590,8 +592,15 @@ test('an audio-grounded finding survives the verifier and publishes its audio re
     const published = result.evidence_receipts.find(item => item.evidence_id === audioEvidence);
     assert.equal(published.span_id, row.id);
     assert.match(published.excerpt, /^Audio model observation of the recording/);
+    for (const excerpt of [verifierInput.audio_observations[0].excerpt, published.excerpt]) {
+      assert.match(excerpt, /buzon de voz \(confidence 0\.1\)/);
+      assert.match(excerpt, /Metric silence_duration: 17 seconds \(method: gap from the beep to hangup\)/);
+    }
     assert.match(verifierSystem, /primary evidence of what was said and heard/);
     assert.match(verifierSystem, /Timed transcript words are still evidence that speech happened/);
+    assert.match(verifierSystem, /must cite evidence IDs returned by read_span or inspect_audio\./);
+    assert.match(verifierSystem, /an audio receipt supports what the audio model heard even when no span text contains it/);
+    assert.doesNotMatch(verifierSystem, /returned by read_span\. /);
   } finally {await rm(scratch, {recursive: true, force: true});}
 });
 

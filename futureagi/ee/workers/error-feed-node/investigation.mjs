@@ -54,9 +54,17 @@ Look for omissions, wrong identities, all-items coverage, exceptions, incorrect 
 Every finding and every satisfied or violated requirement must cite evidence IDs returned by read_simulation_call. Do not cite an inventory entry as if you inspected its payload. For each mistake separate earliest supported origin, decisive call and downstream symptom. For each supported role, use call_execution_id and add one concise explanation (at most 600 characters) grounded in its cited evidence. Omit explanation for unknown or unsupported roles. Leave unsupported roles unknown; a bad outcome alone does not identify the responsible call.
 Use descriptive, evidence-specific kinds; no fixed failure taxonomy. A recovered issue may be a finding without making the final outcome a failure. Unknown is different from success. Do not manufacture agreement to close the case.`;
 
+// With audio enabled, an audio receipt is citable evidence in its own right, so every
+// read_span-only citation rule widens with it.
+const audioRuleEdits = [
+  ['must cite evidence IDs returned by read_span.', 'must cite evidence IDs returned by read_span or inspect_audio.'],
+  ['do not claim facts absent from the cited span.',
+    'do not claim facts absent from the cited evidence; an audio receipt supports what the audio model heard even when no span text contains it.'],
+];
+
 function assessmentRules(simulation, audioInspection) {
   if (simulation) return simulationEvidenceRules;
-  return audioInspection ? evidenceRules.replace(
+  return audioInspection ? audioRuleEdits.reduce((rules, [from, to]) => rules.replace(from, to), evidenceRules).replace(
     'no external payload resolver is available, you must not access them, and read_complete=false prevents a success conclusion.',
     'inspect_audio talks to an audio-native model that hears the trusted recording attached to a span; you write the questions and may follow up or challenge its answers, but never open a URL. Each answer is an audio receipt (evidence_id audio:...): a fallible model observation, yet the primary evidence of what was said and heard, including language, voicemail or call screener, silence, overlap, repetition and who spoke. The transcript is supporting context; where they disagree, cite the audio receipt and say so. Timed transcript words are still evidence that speech happened: when an audio answer leaves them out, ask the audio model a follow-up that names their timestamps before you discard them. If the recording is missing or the audio model cannot answer, say the finding relies on the transcript. Before accepting an audio claim you doubt, ask the audio model your own question. Other unresolved payloads still prevent a success conclusion.') : evidenceRules;
 }

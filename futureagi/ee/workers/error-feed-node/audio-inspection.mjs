@@ -59,10 +59,13 @@ export function createStorageRecordingResolver({allowedOrigins}) {
 function audioExcerpt(turn, question, result) {
   const lines = result.observations.map(item => {
     const when = item.start_seconds === null ? '' : `${item.start_seconds}-${item.end_seconds ?? '?'}s `;
-    return `${when}${item.speaker ?? 'unknown speaker'}: ${item.statement}`;
+    const confidence = item.confidence == null ? '' : ` (confidence ${item.confidence})`;
+    return `${when}${item.speaker ?? 'unknown speaker'}: ${item.statement}${confidence}`;
   });
+  const metrics = result.metrics.filter(item => item.name || item.value).map(item =>
+    `Metric ${item.name}: ${item.value}${item.unit ? ` ${item.unit}` : ''}${item.method ? ` (method: ${item.method})` : ''}`);
   return [`Audio model observation of the recording (gateway request ${result.gateway_request_id ?? 'unknown'}, turn ${turn}).`,
-    `Q: ${question}`, `A: ${result.answer}`, ...lines,
+    `Q: ${question}`, `A: ${result.answer}`, ...lines, ...metrics,
     ...(result.uncertainty ? [`Uncertainty: ${result.uncertainty}`] : [])].join('\n').slice(0, 8000);
 }
 
