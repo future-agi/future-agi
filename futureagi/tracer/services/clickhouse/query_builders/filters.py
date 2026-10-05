@@ -13,6 +13,9 @@ import uuid
 from collections.abc import Callable
 from typing import Any, NamedTuple
 
+from tracer.services.clickhouse.eval_expressions import (
+    eval_completed_result_predicate,
+)
 from tracer.services.clickhouse.query_builders.voice_filter_expressions import (
     VOICE_NORMALIZED_ROOT_SYSTEM_METRIC_EXPRS,
     voice_conversation_root_expression,
@@ -2773,11 +2776,15 @@ class ClickHouseFilterBuilder:
         values = [v for v in values if v not in (None, "")]
         single_value = values[0] if values else _fv
 
-        # Exclude errored eval rows from all value-match filters — an errored
-        # eval has no meaningful Passed/Failed/score/choice value, so it
-        # should never match a specific value. Traces/spans without an eval
-        # row at all are naturally excluded by the outer IN subquery.
-        error_clause = "AND error = 0"
+        # Only completed results match a value or presence filter: the same
+        # rule the Observe roll-up tile counts with (TH-8106). An errored eval
+        # has no meaningful Passed/Failed/score/choice value, and a work item
+        # that is pending, running or skipped still stores the verdict of its
+        # previous run (a requeue resets the status, not the outputs). With
+        # the error flag alone, ``Failed`` returned traces whose tile shows no
+        # failure. Traces/spans without an eval row at all are naturally
+        # excluded by the outer IN subquery.
+        error_clause = f"AND {eval_completed_result_predicate()}"
 
         # Span-list mode: match the span whose ``id`` has the eval value.
         # Trace-list mode: match any trace that has at least one span with
@@ -2821,6 +2828,15 @@ class ClickHouseFilterBuilder:
         eval_live_projection = ", ".join(
             f"eval_scan.{column.strip()}" for column in eval_live_columns.split(",")
         )
+        # The lifecycle status travels through the version collapse with the
+        # outputs, so the completed-result rule reads the newest version's
+        # status. The direct-write v2 table has no lifecycle column: its rows
+        # are written with a result, and the list tiles read them as completed.
+        eval_status_projection = (
+            "'completed' AS status"
+            if eval_table.endswith("_v2")
+            else "eval_scan.status"
+        )
 
         # PERF + correctness: do not use table-level FINAL (it can merge the
         # whole eval table before candidate pruning). First restrict the scan
@@ -2855,6 +2871,7 @@ class ClickHouseFilterBuilder:
                 "eval_scan.observation_span_id, eval_scan.output_bool, "
                 "eval_scan.output_float, eval_scan.output_str, "
                 "eval_scan.output_str_list, eval_scan.error, "
+                f"{eval_status_projection}, "
                 f"{eval_live_projection} "
                 f"FROM {eval_table} AS eval_scan "
                 f"WHERE eval_scan.custom_eval_config_id IN %({param_cfg})s "

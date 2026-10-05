@@ -6,6 +6,12 @@ EVAL_STRUCTURED_SCORE_KEY = "score"
 EVAL_TRUTHY_OUTPUTS = ("passed", "pass", "true", "1")
 EVAL_FALSY_OUTPUTS = ("failed", "fail", "false", "0")
 
+# Lifecycle states of an eval work item that is not a current result. A
+# requeued entry goes back to ``pending`` and keeps the verdict of its previous
+# run until a worker finishes it, so readers must test the status as well as
+# the error flag.
+EVAL_NON_RESULT_STATUSES = ("pending", "running", "skipped", "errored")
+
 # JSONType names for a real number. A null or a string score is not scorable.
 EVAL_NUMERIC_JSON_TYPES = ("Double", "Int64", "UInt64")
 
@@ -16,6 +22,20 @@ EVAL_NUMERIC_OUTPUT_PATTERN = "^-?[0-9]+\\.?[0-9]*$"
 def sql_str_set(values: tuple[str, ...]) -> str:
     """Render a tuple of strings as a SQL ``IN`` list, e.g. ``('pass', '1')``."""
     return "(" + ", ".join(f"'{v}'" for v in values) + ")"
+
+
+def eval_completed_result_predicate() -> str:
+    """SQL predicate: is this eval-logger row a completed result?
+
+    The Observe list tiles count exactly these rows, so a filter on an eval
+    value must test the same rule or it returns traces the tile does not
+    count. ``status`` is NULL-safe: legacy rows written before the lifecycle
+    column existed have an empty status and still count as completed.
+    """
+    return (
+        "error = 0 AND ifNull(output_str, '') != 'ERROR' AND "
+        f"ifNull(status, '') NOT IN {sql_str_set(EVAL_NON_RESULT_STATUSES)}"
+    )
 
 
 def eval_has_structured_score(json_args: str) -> str:
