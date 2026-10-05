@@ -6052,6 +6052,7 @@ export interface AnnotationQueueApi {
   readonly project?: string;
   readonly dataset?: string;
   readonly agent_definition?: string;
+  custom_eval_config?: string;
   readonly is_default?: boolean;
   readonly labels?: readonly QueueLabelNestedApi[];
   readonly annotators?: readonly QueueAnnotatorNestedApi[];
@@ -6207,6 +6208,28 @@ export interface QueueAgreementAnnotatorPairApi {
   total_comparisons: number;
 }
 
+export interface QueueAgreementJudgeVsHumanLabelApi {
+  /** @minLength 1 */
+  label_name: string;
+  /** @minLength 1 */
+  label_type: string;
+  judge_human_agreement: number;
+  total_comparisons: number;
+  comparable?: boolean;
+}
+
+export type QueueAgreementJudgeVsHumanApiLabels = {
+  [key: string]: QueueAgreementJudgeVsHumanLabelApi;
+};
+
+export interface QueueAgreementJudgeVsHumanApi {
+  /** @minLength 1 */
+  evaluator_name: string;
+  overall_agreement: number;
+  total_comparisons: number;
+  labels: QueueAgreementJudgeVsHumanApiLabels;
+}
+
 export type QueueAgreementResultApiLabels = {
   [key: string]: QueueAgreementLabelApi;
 };
@@ -6215,6 +6238,7 @@ export interface QueueAgreementResultApi {
   overall_agreement: number;
   labels: QueueAgreementResultApiLabels;
   annotator_pairs: QueueAgreementAnnotatorPairApi[];
+  judge_vs_human?: QueueAgreementJudgeVsHumanApi;
 }
 
 export interface QueueAgreementResponseApi {

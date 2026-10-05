@@ -49981,6 +49981,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           readOnly: true,
           "x-nullable": true,
         },
+        custom_eval_config: {
+          title: "Custom eval config",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
         is_default: {
           title: "Is default",
           type: "boolean",
@@ -96941,6 +96947,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/QueueAgreementAnnotatorPair",
           },
         },
+        judge_vs_human: {
+          $ref: "#/definitions/QueueAgreementJudgeVsHuman",
+        },
       },
     },
     QueueAnalyticsResult: {
@@ -111216,6 +111225,39 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    QueueAgreementJudgeVsHuman: {
+      required: [
+        "evaluator_name",
+        "overall_agreement",
+        "total_comparisons",
+        "labels",
+      ],
+      type: "object",
+      properties: {
+        evaluator_name: {
+          title: "Evaluator name",
+          type: "string",
+          minLength: 1,
+        },
+        overall_agreement: {
+          title: "Overall agreement",
+          type: "number",
+          "x-nullable": true,
+        },
+        total_comparisons: {
+          title: "Total comparisons",
+          type: "integer",
+        },
+        labels: {
+          title: "Labels",
+          type: "object",
+          additionalProperties: {
+            $ref: "#/definitions/QueueAgreementJudgeVsHumanLabel",
+          },
+        },
+      },
+      "x-nullable": true,
+    },
     QueueAgreementLabel: {
       required: [
         "label_name",
@@ -116147,6 +116189,41 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         symptom: {
           $ref: "#/definitions/FindingAttributionRole",
+        },
+      },
+    },
+    QueueAgreementJudgeVsHumanLabel: {
+      required: [
+        "label_name",
+        "label_type",
+        "judge_human_agreement",
+        "total_comparisons",
+      ],
+      type: "object",
+      properties: {
+        label_name: {
+          title: "Label name",
+          type: "string",
+          minLength: 1,
+        },
+        label_type: {
+          title: "Label type",
+          type: "string",
+          minLength: 1,
+        },
+        judge_human_agreement: {
+          title: "Judge human agreement",
+          type: "number",
+          "x-nullable": true,
+        },
+        total_comparisons: {
+          title: "Total comparisons",
+          type: "integer",
+        },
+        comparable: {
+          title: "Comparable",
+          type: "boolean",
+          default: true,
         },
       },
     },

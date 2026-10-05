@@ -12373,6 +12373,7 @@ export const ModelHubAnnotationQueuesListResponse = zod.object({
       project: zod.string().uuid().optional(),
       dataset: zod.string().uuid().optional(),
       agent_definition: zod.string().uuid().optional(),
+      custom_eval_config: zod.string().uuid().optional(),
       is_default: zod.boolean().optional(),
       labels: zod
         .array(
@@ -12473,6 +12474,7 @@ export const ModelHubAnnotationQueuesCreateBody = zod.object({
     .describe(
       "When enabled, all queue members can annotate any item without explicit assignment.",
     ),
+  custom_eval_config: zod.string().uuid().optional(),
   label_ids: zod.array(zod.string().uuid()).min(1),
   annotator_ids: zod
     .array(zod.string().uuid())
@@ -12668,6 +12670,7 @@ export const ModelHubAnnotationQueuesReadResponse = zod.object({
   project: zod.string().uuid().optional(),
   dataset: zod.string().uuid().optional(),
   agent_definition: zod.string().uuid().optional(),
+  custom_eval_config: zod.string().uuid().optional(),
   is_default: zod.boolean().optional(),
   labels: zod
     .array(
@@ -12768,6 +12771,7 @@ export const ModelHubAnnotationQueuesUpdateBody = zod.object({
     .describe(
       "When enabled, all queue members can annotate any item without explicit assignment.",
     ),
+  custom_eval_config: zod.string().uuid().optional(),
   label_ids: zod.array(zod.string().uuid()).min(1),
   annotator_ids: zod
     .array(zod.string().uuid())
@@ -12826,6 +12830,7 @@ export const ModelHubAnnotationQueuesUpdateResponse = zod.object({
   project: zod.string().uuid().optional(),
   dataset: zod.string().uuid().optional(),
   agent_definition: zod.string().uuid().optional(),
+  custom_eval_config: zod.string().uuid().optional(),
   is_default: zod.boolean().optional(),
   labels: zod
     .array(
@@ -12927,6 +12932,7 @@ export const ModelHubAnnotationQueuesPartialUpdateBody = zod.object({
     .describe(
       "When enabled, all queue members can annotate any item without explicit assignment.",
     ),
+  custom_eval_config: zod.string().uuid().optional(),
   label_ids: zod.array(zod.string().uuid()).min(1),
   annotator_ids: zod
     .array(zod.string().uuid())
@@ -12994,6 +13000,7 @@ export const ModelHubAnnotationQueuesPartialUpdateResponse = zod.object({
   project: zod.string().uuid().optional(),
   dataset: zod.string().uuid().optional(),
   agent_definition: zod.string().uuid().optional(),
+  custom_eval_config: zod.string().uuid().optional(),
   is_default: zod.boolean().optional(),
   labels: zod
     .array(
@@ -13122,6 +13129,9 @@ export const ModelHubAnnotationQueuesAgreementParams = zod.object({
 
 export const modelHubAnnotationQueuesAgreementResponseStatusDefault = true;
 
+export const modelHubAnnotationQueuesAgreementResponseResultJudgeVsHumanLabelsComparableDefault =
+  true;
+
 export const ModelHubAnnotationQueuesAgreementResponse = zod.object({
   status: zod
     .boolean()
@@ -13147,6 +13157,27 @@ export const ModelHubAnnotationQueuesAgreementResponse = zod.object({
         total_comparisons: zod.number(),
       }),
     ),
+    judge_vs_human: zod
+      .object({
+        evaluator_name: zod.string().min(1),
+        overall_agreement: zod.number(),
+        total_comparisons: zod.number(),
+        labels: zod.record(
+          zod.string(),
+          zod.object({
+            label_name: zod.string().min(1),
+            label_type: zod.string().min(1),
+            judge_human_agreement: zod.number(),
+            total_comparisons: zod.number(),
+            comparable: zod
+              .boolean()
+              .default(
+                modelHubAnnotationQueuesAgreementResponseResultJudgeVsHumanLabelsComparableDefault,
+              ),
+          }),
+        ),
+      })
+      .optional(),
   }),
 });
 
@@ -13499,6 +13530,7 @@ export const ModelHubAnnotationQueuesRestoreResponse = zod.object({
     project: zod.string().uuid().optional(),
     dataset: zod.string().uuid().optional(),
     agent_definition: zod.string().uuid().optional(),
+    custom_eval_config: zod.string().uuid().optional(),
     is_default: zod.boolean().optional(),
     labels: zod
       .array(
@@ -13639,6 +13671,7 @@ export const ModelHubAnnotationQueuesUpdateStatusResponse = zod.object({
     project: zod.string().uuid().optional(),
     dataset: zod.string().uuid().optional(),
     agent_definition: zod.string().uuid().optional(),
+    custom_eval_config: zod.string().uuid().optional(),
     is_default: zod.boolean().optional(),
     labels: zod
       .array(
