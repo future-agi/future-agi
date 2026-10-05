@@ -25,7 +25,11 @@ from simulate.services.harness_evals import (
     resolve_eval_mapping,
     runnable_eval_config_ids,
 )
-from simulate.services.hosted_harness import create_hosted_job, register_attempt
+from simulate.services.hosted_harness import (
+    _record_target_agent_facts,
+    create_hosted_job,
+    register_attempt,
+)
 
 from .test_hosted_harness_channels import _headers, _payload
 
@@ -1286,6 +1290,55 @@ def test_provision_records_the_agent_prompt_and_creates_a_version(
 
 
 @pytest.mark.django_db
+def test_others_provision_preserves_the_complete_environment_prompt(
+    organization, workspace
+):
+    full_prompt = "\n".join(
+        [
+            "You are the complete phone-agent prompt.",
+            *(
+                f"Policy {index}: retain this instruction verbatim."
+                for index in range(100)
+            ),
+        ]
+    )
+    assert len(full_prompt) > 310
+    payload = _payload()
+    payload["agent"] = {
+        "connector": "phone",
+        "mode": "connect_only",
+        "config": {
+            "phone_number": "+19258565786",
+            "target_system_prompt": full_prompt,
+            "inbound": True,
+        },
+        "secret_refs": {},
+    }
+    job, _ = create_hosted_job(
+        organization,
+        payload,
+        idempotency_key="others-full-prompt-key",
+        workspace=workspace,
+    )
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+
+    response = _provision(
+        APIClient(),
+        capability,
+        agent_prompt="Short authored contract excerpt.",
+    )
+    assert response.status_code == 200, response.content
+
+    job.refresh_from_db()
+    agent = job.run_test.agent_definition
+    assert agent.description == full_prompt
+    version = agent.latest_version
+    assert version is not None
+    assert version.description == full_prompt
+    assert version.configuration_snapshot["description"] == full_prompt
+
+
+@pytest.mark.django_db
 def test_provision_falls_back_to_the_authored_contract_excerpt(organization, workspace):
     job, _ = create_hosted_job(
         organization, _payload(), idempotency_key="excerpt-key", workspace=workspace
@@ -1312,6 +1365,23 @@ def test_provision_falls_back_to_the_authored_contract_excerpt(organization, wor
     # Base derives human-readable names, so the snake_case value arrives title-cased.
     assert agent.agent_name == "Cab Voice Agent"
     assert agent.inbound is True
+
+
+@pytest.mark.django_db
+def test_a_changed_agent_prompt_reaches_a_new_version(organization, workspace):
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="reprompt-key", workspace=workspace
+    )
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    assert _provision(APIClient(), capability, agent_prompt="First.").status_code == 200
+    job.refresh_from_db()
+    agent = job.run_test.agent_definition
+
+    _record_target_agent_facts(job, agent, {"agent_prompt": "Second."})
+
+    agent.refresh_from_db()
+    assert agent.description == "Second."
+    assert agent.latest_version.configuration_snapshot["description"] == "Second."
 
 
 @pytest.mark.django_db

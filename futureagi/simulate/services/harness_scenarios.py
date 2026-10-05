@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from typing import Any
+from uuid import UUID
 
-from django.db.models import Q, QuerySet, Value
+from django.db.models import Case, IntegerField, Q, QuerySet, Value, When
 from django.db.models.functions import Replace
 from django.utils import timezone
 
 from simulate.models.hosted_harness import HostedHarnessJob, HostedHarnessScenario
+from simulate.models.test_execution import CallExecution
 
 # Filter panel properties; a dotted `value` reads into that JSON column.
 FIELDS: tuple[dict[str, Any], ...] = (
@@ -226,23 +228,48 @@ def authored_scenarios(run_test_id, *, call_execution_id, scenario_key) -> Query
     ).order_by("-created_at")
 
 
-def authored_scenarios_for_calls(run_test_id, calls) -> dict:
-    """Each call's authored scenario, found with one query for the whole run."""
-    run_jobs = HostedHarnessJob.no_workspace_objects.filter(run_test_id=run_test_id)
+def authored_scenarios_for_calls(
+    run_test_id: UUID,
+    calls: list[CallExecution],
+    *,
+    test_execution_id: UUID | None = None,
+) -> dict[UUID, HostedHarnessScenario | None]:
+    """Resolve linked scenarios first, optionally restricted to one execution."""
+    source_keys = {}
+    for call in calls:
+        metadata = call.call_metadata if isinstance(call.call_metadata, dict) else {}
+        key = metadata.get("harness_scenario_key")
+        source_keys[call.id] = key if isinstance(key, str) and key.strip() else None
     call_ids = [call.id for call in calls]
+    keys = set(source_keys.values()) - {None}
+    if test_execution_id is not None:
+        own_run = Q(job__test_execution_id=test_execution_id)
+        scope = own_run | Q(job__simulation_runs__test_execution_id=test_execution_id)
+    else:
+        run_jobs = HostedHarnessJob.no_workspace_objects.filter(run_test_id=run_test_id)
+        scope = Q(job_id__in=run_jobs.values("id")) | Q(
+            job_id__in=run_jobs.values("environment_id")
+        )
     rows = HostedHarnessScenario.all_objects.filter(
-        Q(call_execution_id__in=call_ids)
-        | Q(job_id__in=run_jobs.values("id"))
-        | Q(job_id__in=run_jobs.values("environment_id"))
-    ).order_by("created_at")
+        Q(call_execution_id__in=call_ids) | (scope & Q(scenario_key__in=keys))
+    )
+    if test_execution_id is not None:
+        rows = rows.annotate(
+            match_rank=Case(
+                When(own_run, then=Value(0)),
+                default=Value(1),
+                output_field=IntegerField(),
+            )
+        ).order_by("match_rank", "-created_at")
+    else:
+        rows = rows.order_by("-created_at")
     linked, by_key = {}, {}
     for row in rows:
         if row.call_execution_id:
-            linked[row.call_execution_id] = row
-        by_key[row.scenario_key] = row  # newest wins, as in authored_scenarios
+            linked.setdefault(row.call_execution_id, row)
+        by_key.setdefault(row.scenario_key, row)
     return {
-        call.id: linked.get(call.id)
-        or by_key.get((call.call_metadata or {}).get("harness_scenario_key"))
+        call.id: linked.get(call.id) or by_key.get(source_keys[call.id])
         for call in calls
     }
 

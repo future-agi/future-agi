@@ -21,7 +21,9 @@ from rest_framework.views import APIView
 from simulate.models import CallExecution, TestExecution
 from simulate.serializers.run_dashboard_v3 import RunDashboardV3Serializer
 from simulate.serializers.test_execution import CallExecutionDetailSerializer
+from simulate.services.run_dashboard_v3 import GOAL_OUTCOMES
 from simulate.services.run_results_v3 import (
+    OUTCOME_LABELS,
     build_call_rows,
     build_evaluation_catalog,
     function_calls,
@@ -33,6 +35,7 @@ from simulate.services.run_results_v3_queries import (
     build_run_analytics,
     group_run_calls,
     run_call_facets,
+    run_call_rows_queryset,
     run_calls_queryset,
     summarize_run_calls,
 )
@@ -86,7 +89,7 @@ class RunCallFiltersSerializer(serializers.Serializer):
     )
 
     def validate_filters(self, value):
-        allowed = {"goal", "sub_goal", "status", "call_execution_id"}
+        allowed = {"goal", "sub_goal", "status", "goal_outcome", "call_execution_id"}
         unknown = set(value) - allowed
         if unknown:
             raise serializers.ValidationError(
@@ -99,15 +102,16 @@ class RunCallFiltersSerializer(serializers.Serializer):
                 raise serializers.ValidationError(
                     f"Filter '{field}' must be a list of strings."
                 )
-        invalid_statuses = set(value.get("status", [])) - {
-            "passed",
-            "failed",
-            "error",
-            "inconclusive",
-        }
+        invalid_statuses = set(value.get("status", [])) - set(OUTCOME_LABELS)
         if invalid_statuses:
             raise serializers.ValidationError(
                 f"Unsupported statuses: {', '.join(sorted(invalid_statuses))}."
+            )
+        invalid_goal_outcomes = set(value.get("goal_outcome", [])) - set(GOAL_OUTCOMES)
+        if invalid_goal_outcomes:
+            raise serializers.ValidationError(
+                "Unsupported goal outcomes: "
+                f"{', '.join(sorted(invalid_goal_outcomes))}."
             )
         for call_id in value.get("call_execution_id", []):
             try:
@@ -150,6 +154,8 @@ class TotalMetricStatsSerializer(MetricStatsSerializer):
 
 
 class OutcomeCountsSerializer(serializers.Serializer):
+    queued = serializers.IntegerField()
+    in_progress = serializers.IntegerField()
     passed = serializers.IntegerField()
     failed = serializers.IntegerField()
     error = serializers.IntegerField()
@@ -213,6 +219,11 @@ class CostBreakdownSerializer(serializers.Serializer):
     customer = serializers.FloatField(allow_null=True)
 
 
+class SubGoalResultSerializer(serializers.Serializer):
+    name = serializers.CharField()
+    passed = serializers.BooleanField(allow_null=True)
+
+
 class RunCallSerializer(serializers.Serializer):
     id = serializers.UUIDField()
     scenario = serializers.CharField()
@@ -223,12 +234,11 @@ class RunCallSerializer(serializers.Serializer):
     persona = serializers.CharField(allow_null=True)
     persona_details = PersonaDetailsSerializer(allow_null=True)
     sub_goals = serializers.ListField(child=serializers.CharField())
+    sub_goal_results = SubGoalResultSerializer(many=True)
     harness_outcome_status = serializers.CharField(allow_null=True)
     source_scenario_key = serializers.CharField(allow_null=True)
     trial_index = serializers.IntegerField(allow_null=True)
-    outcome = serializers.ChoiceField(
-        choices=["passed", "failed", "error", "inconclusive"]
-    )
+    outcome = serializers.ChoiceField(choices=list(OUTCOME_LABELS))
     execution_status = serializers.CharField()
     modality = serializers.CharField()
     provider = serializers.CharField(allow_null=True)
@@ -316,7 +326,39 @@ class AnalyticsSummarySerializer(RunSummarySerializer):
 
 
 class RiskSerializer(RunSummarySerializer):
-    goal = serializers.CharField()
+    scenario = serializers.CharField()
+    scenario_key = serializers.CharField()
+
+
+class ReliabilityIntervalSerializer(serializers.Serializer):
+    low = serializers.FloatField()
+    high = serializers.FloatField()
+    effective_n = serializers.FloatField()
+    evaluated = serializers.IntegerField()
+    clusters = serializers.IntegerField()
+
+
+class ReliabilityRowSerializer(OutcomeCountsSerializer):
+    scenario = serializers.CharField()
+    scenario_key = serializers.CharField()
+    runs = serializers.IntegerField()
+    evaluated = serializers.IntegerField()
+    pass_rate = serializers.FloatField(allow_null=True)
+    verdict = serializers.ChoiceField(
+        choices=["passed", "failed", "flaky", "not_evaluated"]
+    )
+
+
+class ReliabilitySerializer(serializers.Serializer):
+    trials = serializers.IntegerField()
+    scenarios = serializers.IntegerField()
+    consistent_pass = serializers.IntegerField()
+    passed_at_least_once = serializers.IntegerField()
+    repeated = serializers.IntegerField()
+    flaky = serializers.IntegerField()
+    flip_rate = serializers.FloatField(allow_null=True)
+    pass_rate_interval = ReliabilityIntervalSerializer(allow_null=True)
+    rows = ReliabilityRowSerializer(many=True)
 
 
 class TurnDistributionSerializer(OutcomeCountsSerializer):
@@ -329,6 +371,7 @@ class EvaluationSummarySerializer(serializers.Serializer):
     passed = serializers.IntegerField()
     failed = serializers.IntegerField()
     measured = serializers.IntegerField()
+    errored = serializers.IntegerField()
     missing = serializers.IntegerField()
     pass_rate = serializers.FloatField(allow_null=True)
     average_score = serializers.FloatField(allow_null=True)
@@ -379,6 +422,7 @@ class RunAnalyticsV3ResponseSerializer(serializers.Serializer):
     execution = AnalyticsExecutionSerializer()
     summary = AnalyticsSummarySerializer()
     scenario_risk = RiskSerializer(many=True)
+    reliability = ReliabilitySerializer()
     turn_distribution = TurnDistributionSerializer(many=True)
     evaluations = EvaluationSummarySerializer(many=True)
     failure_breakdown = FailureBreakdownSerializer(many=True)
@@ -410,9 +454,8 @@ class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
     persona = serializers.CharField(allow_null=True)
     persona_details = PersonaDetailsSerializer(allow_null=True)
     sub_goals = serializers.ListField(child=serializers.CharField())
-    outcome = serializers.ChoiceField(
-        choices=["passed", "failed", "error", "inconclusive"]
-    )
+    sub_goal_results = SubGoalResultSerializer(many=True)
+    outcome = serializers.ChoiceField(choices=list(OUTCOME_LABELS))
     cost_breakdown_cents = CostBreakdownSerializer()
     evaluations = EvaluationResultSerializer(many=True)
     function_calls = FunctionCallSerializer(many=True)
@@ -427,6 +470,7 @@ class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
             "persona",
             "persona_details",
             "sub_goals",
+            "sub_goal_results",
             "outcome",
             "cost_breakdown_cents",
             "evaluations",
@@ -499,7 +543,9 @@ class RunCallsV3View(APIView):
         )
         count = filtered_summary["total"]
         columns, live_eval_ids = build_evaluation_catalog(execution)
-        page_calls = list(filtered_queryset[start : start + page_size])
+        page_calls = list(
+            run_call_rows_queryset(filtered_queryset)[start : start + page_size]
+        )
         page_rows, columns = build_call_rows(
             execution, page_calls, columns, live_eval_ids
         )
@@ -524,7 +570,7 @@ class RunCallsV3View(APIView):
         elif execution.status == TestExecution.ExecutionStatus.COMPLETED:
             version = execution.completed_at or execution.updated_at
             facets_cache_key = (
-                f"simulate:v3:facets:{execution.id}:{version.timestamp()}"
+                f"simulate:v3:facets:outcomes-v2:{execution.id}:{version.timestamp()}"
             )
         response = {
             "execution": _execution_payload(execution, execution_summary),
@@ -535,7 +581,11 @@ class RunCallsV3View(APIView):
             "total_pages": max(1, (count + page_size - 1) // page_size),
             "results": page_rows,
             "groups": group_run_calls(
-                filtered_queryset, query.get("group_by"), page_rows, columns
+                filtered_queryset,
+                query.get("group_by"),
+                page_rows,
+                columns,
+                execution=execution,
             ),
             "facets": run_call_facets(facet_queryset, facets_cache_key),
             "evaluation_columns": columns,
@@ -581,7 +631,10 @@ def build_call_execution_detail(
             "persona": normalized["persona"],
             "persona_details": normalized["persona_details"],
             "sub_goals": normalized["sub_goals"],
+            "sub_goal_results": normalized["sub_goal_results"],
             "outcome": normalized["outcome"],
+            "overall_score": normalized["csat"],
+            "csat_score": normalized["csat"],
             "cost_breakdown_cents": normalized["cost_breakdown_cents"],
             "evaluations": normalized["evaluations"],
             "function_calls": function_calls(call),
@@ -672,6 +725,14 @@ def _csv_rows(
     yield writer.writerow([_escape_csv_cell(value) for value in headers])
     for row in rows:
         evaluations = {item["id"]: item.get("value") for item in row["evaluations"]}
+        sub_goals = []
+        for goal in row["sub_goal_results"]:
+            verdict = (
+                "passed"
+                if goal["passed"] is True
+                else "failed" if goal["passed"] is False else "inconclusive"
+            )
+            sub_goals.append(f"{goal['name']} ({OUTCOME_LABELS[verdict]})")
         yield writer.writerow(
             [
                 _escape_csv_cell(value)
@@ -682,7 +743,7 @@ def _csv_rows(
                     row["goal"],
                     row["ideal_outcome"],
                     row["conversation_branch"],
-                    ", ".join(row["sub_goals"]),
+                    ", ".join(sub_goals),
                     row["persona"],
                     row["outcome"],
                     row["execution_status"],
@@ -705,7 +766,7 @@ def _csv_rows(
 def _csv_rows_from_queryset(execution: TestExecution, queryset) -> Iterator[str]:
     columns, live_eval_ids = build_evaluation_catalog(execution)
     yield from _csv_rows([], columns)
-    iterator = queryset.iterator(chunk_size=500)
+    iterator = run_call_rows_queryset(queryset).iterator(chunk_size=500)
     while chunk := list(islice(iterator, 500)):
         rows, _ = build_call_rows(execution, chunk, columns, live_eval_ids)
         chunk_rows = _csv_rows(rows, columns)
