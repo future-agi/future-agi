@@ -1286,6 +1286,55 @@ def test_provision_records_the_agent_prompt_and_creates_a_version(
 
 
 @pytest.mark.django_db
+def test_others_provision_preserves_the_complete_environment_prompt(
+    organization, workspace
+):
+    full_prompt = "\n".join(
+        [
+            "You are the complete phone-agent prompt.",
+            *(
+                f"Policy {index}: retain this instruction verbatim."
+                for index in range(100)
+            ),
+        ]
+    )
+    assert len(full_prompt) > 310
+    payload = _payload()
+    payload["agent"] = {
+        "connector": "phone",
+        "mode": "connect_only",
+        "config": {
+            "phone_number": "+19258565786",
+            "target_system_prompt": full_prompt,
+            "inbound": True,
+        },
+        "secret_refs": {},
+    }
+    job, _ = create_hosted_job(
+        organization,
+        payload,
+        idempotency_key="others-full-prompt-key",
+        workspace=workspace,
+    )
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+
+    response = _provision(
+        APIClient(),
+        capability,
+        agent_prompt="Short authored contract excerpt.",
+    )
+    assert response.status_code == 200, response.content
+
+    job.refresh_from_db()
+    agent = job.run_test.agent_definition
+    assert agent.description == full_prompt
+    version = agent.latest_version
+    assert version is not None
+    assert version.description == full_prompt
+    assert version.configuration_snapshot["description"] == full_prompt
+
+
+@pytest.mark.django_db
 def test_provision_falls_back_to_the_authored_contract_excerpt(organization, workspace):
     job, _ = create_hosted_job(
         organization, _payload(), idempotency_key="excerpt-key", workspace=workspace
