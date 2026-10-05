@@ -2140,7 +2140,7 @@ customer_agent_termination_handling:
     ## Anti-bias Rules
 
     - If the customer terminates abruptly (hangs up), this is NOT the agent's fault; evaluate only agent-side behavior.
-    - Truncated transcription logs should NOT be confused with actual termination problems; an agent turn cut off before the conversation is closed is an abnormal ending.
+    - Truncated transcription logs should NOT be confused with actual termination problems.
     - A short properly-closed conversation scores higher than a long one that ends abnormally.
 
     ## Scoring

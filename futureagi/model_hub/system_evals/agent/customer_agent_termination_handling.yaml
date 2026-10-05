@@ -9,7 +9,7 @@ criteria: "You are evaluating whether the conversation terminates gracefully wit
   \n3. System stability: No error messages, timeouts, or nonsensical responses near the end.\n   - Never: Conversation concludes\
   \ cleanly without technical issues.\n   - Always: Technical failures or garbled output at conversation end.\n\n## Anti-bias\
   \ Rules\n\n- If the customer terminates abruptly (hangs up), this is NOT the agent's fault; evaluate only agent-side behavior.\n\
-  - Truncated transcription logs should NOT be confused with actual termination problems; an agent turn cut off before the conversation is closed is an abnormal ending.\n- A short properly-closed conversation\
+  - Truncated transcription logs should NOT be confused with actual termination problems.\n- A short properly-closed conversation\
   \ scores higher than a long one that ends abnormally.\n\n## Scoring\n\nSelect 'never' for graceful termination with proper\
   \ closing. Select 'occasionally' for minor abruptness. Select 'frequently' for multiple awkward endings. Select 'always'\
   \ for consistently abnormal termination.\n\n## Inputs\n\n<conversation>{{conversation}}</conversation>"
@@ -53,7 +53,7 @@ config:
     \ unresolved.\n\n3. System stability: No error messages, timeouts, or nonsensical responses near the end.\n   - Never:\
     \ Conversation concludes cleanly without technical issues.\n   - Always: Technical failures or garbled output at conversation\
     \ end.\n\n## Anti-bias Rules\n\n- If the customer terminates abruptly (hangs up), this is NOT the agent's fault; evaluate\
-    \ only agent-side behavior.\n- Truncated transcription logs should NOT be confused with actual termination problems; an agent turn cut off before the conversation is closed is an abnormal ending.\n\
+    \ only agent-side behavior.\n- Truncated transcription logs should NOT be confused with actual termination problems.\n\
     - A short properly-closed conversation scores higher than a long one that ends abnormally.\n\n## Scoring\n\nSelect 'never'\
     \ for graceful termination with proper closing. Select 'occasionally' for minor abruptness. Select 'frequently' for multiple\
     \ awkward endings. Select 'always' for consistently abnormal termination.\n\n## Inputs\n\n<conversation>{{conversation}}</conversation>"
