@@ -111,10 +111,20 @@ for the default Standalone setup **2 vCPUs and 4 GB of memory** given to Docker.
 
 **1. Install**
 
+macOS / Linux / WSL:
+
 ```bash
 git clone https://github.com/future-agi/future-agi.git
 cd future-agi
-./bin/install          # Windows (PowerShell): .\bin\install.ps1
+./bin/install
+```
+
+Windows (PowerShell):
+
+```powershell
+git clone https://github.com/future-agi/future-agi.git
+cd future-agi
+.\bin\install.ps1
 ```
 
 The installer checks your machine, writes this install's secrets to `.env`,
