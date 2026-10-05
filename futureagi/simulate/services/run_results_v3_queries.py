@@ -6,6 +6,7 @@ import json
 import re
 import sys
 from collections import Counter, defaultdict
+from collections.abc import Callable
 from typing import Any
 
 from django.core.cache import cache
@@ -960,10 +961,12 @@ def summarize_run_calls(
 
 
 def run_call_facets(
-    queryset: QuerySet, facets_cache_key: str | None = None
+    queryset: QuerySet | Callable[[], QuerySet], facets_cache_key: str | None = None
 ) -> dict[str, list[dict[str, Any]]]:
     if facets_cache_key and (cached := cache.get(facets_cache_key)) is not None:
         return cached
+    if callable(queryset):
+        queryset = queryset()
     facets = {}
     for name, field in (("goal", "result_goal"), ("status", "result_outcome")):
         facets[name] = [
