@@ -9,6 +9,7 @@ from django.conf import settings
 from django.db import transaction
 from django.db.models import Sum
 
+from tracer.constants.grouping_versions import SAMPLED_GROUPING_POLICY_VERSION
 from tracer.models.trace_grouping import (
     TraceGroupingAttempt,
     TraceGroupingCall,
@@ -156,6 +157,25 @@ def reserve_call(
             # A prior reservation could have been sent before a crash. It is
             # never permission to send a second paid call.
             return {**_receipt(existing), "created": False}
+        if request_key.startswith("merge-review:"):
+            # Reservations survive worker retries. Unknown usage consumes the
+            # full reservation; known usage still cannot increase the call cap.
+            merge_calls = TraceGroupingCall.no_workspace_objects.filter(
+                work=attempt.work, request_key__startswith="merge-review:"
+            )
+            limit = _money(
+                getattr(settings, "ERROR_FEED_GROUPING_MERGE_BUDGET_USD", "1")
+            )
+            reserved = merge_calls.aggregate(total=Sum("max_cost_usd"))[
+                "total"
+            ] or Decimal(0)
+            if merge_calls.count() >= 10 or limit <= 0 or reserved + amount > limit:
+                return {
+                    "status": "budget_exhausted",
+                    "reason": "Merge review call or spending limit reached",
+                    "request_digest": request_digest,
+                    "created": False,
+                }
         budget = _money(
             getattr(settings, "ERROR_FEED_GROUPING_PROJECT_BUDGET_USD", "0")
         )
@@ -188,6 +208,16 @@ def reserve_call(
             or work_committed + amount > work_budget
             or tenant_committed + amount > tenant_budget
         ):
+            if (
+                severity_job_id is None
+                and scope.policy_version == SAMPLED_GROUPING_POLICY_VERSION
+            ):
+                return {
+                    "status": "budget_exhausted",
+                    "reason": "Grouping project, work or tenant spending limit reached",
+                    "request_digest": request_digest,
+                    "created": False,
+                }
             raise GroupingConflict("grouping project budget exhausted or disabled")
         call = TraceGroupingCall.no_workspace_objects.create(
             scope=scope,
