@@ -8,15 +8,19 @@ and recovery mechanisms work correctly.
 Run with: pytest tfc/temporal/background_tasks/tests/test_e2e_flows.py -v
 """
 
-import concurrent.futures
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import timedelta
-from unittest.mock import MagicMock, PropertyMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
-from django.utils import timezone
+
+from model_hub.tests.test_run_prompt_tasks import (
+    mock_prompt_ownership as mock_prompt_ownership,
+)
+from model_hub.tests.test_run_prompt_tasks import (
+    mock_recovery_persistence as mock_recovery_persistence,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -32,6 +36,7 @@ def _allow_usage_metering():
 
 
 @pytest.mark.django_db
+@pytest.mark.usefixtures("mock_prompt_ownership")
 class TestRunPromptE2EFlow:
     """End-to-end tests for run prompt processing flows."""
 
@@ -50,8 +55,8 @@ class TestRunPromptE2EFlow:
         from model_hub.models.choices import StatusType
         from model_hub.tasks.run_prompt import process_prompts_single
 
-        # Setup: Prompt exists and is in RUNNING status
-        mock_tracker.is_running.return_value = False
+        # Setup: Prompt exists and is in RUNNING status, no lease held
+        mock_tracker.get_running_info.return_value = None
         mock_tracker.instance_id = "test-instance-1"
         mock_prompt_obj = MagicMock()
         mock_prompt_obj.status = StatusType.RUNNING.value
@@ -67,7 +72,10 @@ class TestRunPromptE2EFlow:
         mock_prompter.objects.get.assert_called_once_with(id="prompt-123")
         mock_tracker.mark_running.assert_called_once()
         mock_runner.run_prompt.assert_called_once()
-        mock_tracker.mark_completed.assert_called_once_with("prompt-123")
+        token = mock_tracker.mark_running.call_args.kwargs["runner_info"]["run_token"]
+        mock_tracker.mark_completed.assert_called_once_with(
+            "prompt-123", run_token=token
+        )
 
     @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
     @patch("model_hub.tasks.run_prompt.distributed_lock_manager")
@@ -84,7 +92,7 @@ class TestRunPromptE2EFlow:
         from model_hub.models.choices import StatusType
         from model_hub.tasks.run_prompt import process_prompts_single
 
-        mock_tracker.is_running.return_value = False
+        mock_tracker.get_running_info.return_value = None
         mock_tracker.instance_id = "test-instance-1"
         mock_prompt_obj = MagicMock()
         mock_prompt_obj.status = StatusType.RUNNING.value
@@ -96,8 +104,11 @@ class TestRunPromptE2EFlow:
         process_prompts_single({"type": "editing", "prompt_id": "prompt-123"})
 
         # Verify edit mode was used
-        mock_runner.run_prompt.assert_called_once_with(edit_mode=True)
-        mock_tracker.mark_completed.assert_called_once_with("prompt-123")
+        mock_runner.run_prompt.assert_called_once_with(edit_mode=True, row_ids=None)
+        token = mock_tracker.mark_running.call_args.kwargs["runner_info"]["run_token"]
+        mock_tracker.mark_completed.assert_called_once_with(
+            "prompt-123", run_token=token
+        )
 
     @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
     @patch("model_hub.tasks.run_prompt.distributed_lock_manager")
@@ -107,22 +118,31 @@ class TestRunPromptE2EFlow:
     def test_prompt_already_running_on_different_instance(
         self, mock_close, mock_prompter, mock_runner_class, mock_lock_mgr, mock_tracker
     ):
-        """Test that duplicate execution is prevented across instances."""
+        """Duplicate execution across instances fails the attempt (retryable)
+        instead of returning a false success that ends the workflow."""
         from model_hub.models.choices import StatusType
-        from model_hub.tasks.run_prompt import process_prompts_single
+        from model_hub.models.run_prompt import RunPrompter
+        from model_hub.tasks.run_prompt import (
+            PromptAlreadyRunningElsewhere,
+            process_prompts_single,
+        )
 
-        # Simulate prompt already running on another instance
-        mock_tracker.is_running.return_value = True
+        # Keep the real exception class so `except RunPrompter.DoesNotExist`
+        # stays valid while the module attribute is mocked.
+        mock_prompter.DoesNotExist = RunPrompter.DoesNotExist
+        # Simulate a live lease held by another instance
         mock_tracker.instance_id = "current-instance"
         mock_running_info = MagicMock()
         mock_running_info.instance_id = "other-instance"
+        # metadata is a MagicMock -> renewal age unknown -> treated as live
         mock_tracker.get_running_info.return_value = mock_running_info
 
         mock_prompt_obj = MagicMock()
         mock_prompt_obj.status = StatusType.RUNNING.value
         mock_prompter.objects.get.return_value = mock_prompt_obj
 
-        process_prompts_single({"type": "not_started", "prompt_id": "prompt-123"})
+        with pytest.raises(PromptAlreadyRunningElsewhere):
+            process_prompts_single({"type": "not_started", "prompt_id": "prompt-123"})
 
         # Should not process - already running elsewhere
         mock_runner_class.assert_not_called()
@@ -137,10 +157,9 @@ class TestRunPromptE2EFlow:
         self, mock_close, mock_prompter, mock_runner_class, mock_lock_mgr, mock_tracker
     ):
         """Test that failures correctly mark prompt as FAILED."""
-        from model_hub.models.choices import StatusType
         from model_hub.tasks.run_prompt import process_not_started_prompt
 
-        mock_tracker.is_running.return_value = False
+        mock_tracker.get_running_info.return_value = None
         mock_tracker.instance_id = "test-instance"
         mock_runner = MagicMock()
         mock_runner.run_prompt.side_effect = Exception("LLM API Error")
@@ -331,6 +350,7 @@ class TestUserEvaluationE2EFlow:
 # =============================================================================
 
 
+@pytest.mark.usefixtures("mock_prompt_ownership")
 class TestDistributedLockingE2E:
     """End-to-end tests for distributed locking mechanism."""
 
@@ -409,22 +429,27 @@ class TestDistributedLockingE2E:
     @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
     @patch("model_hub.tasks.run_prompt.RunPrompts")
     @patch("model_hub.tasks.run_prompt.close_old_connections")
-    def test_run_prompt_uses_one_hour_lock_timeout(
+    def test_run_prompt_uses_renewable_lock_timeout(
         self, mock_close, mock_runner_class, mock_tracker, mock_lock_mgr
     ):
-        """Verify run prompt uses 1-hour (3600s) lock timeout."""
-        from model_hub.tasks.run_prompt import process_not_started_prompt
+        """The lock uses the short renewable TTL: the OwnershipLease renewer
+        extends it while the worker is alive, so a dead worker frees the
+        lock quickly instead of holding it for a fixed hour."""
+        from model_hub.tasks.run_prompt import (
+            LOCK_TTL_SECONDS,
+            process_not_started_prompt,
+        )
 
-        mock_tracker.is_running.return_value = False
+        mock_tracker.get_running_info.return_value = None
         mock_tracker.instance_id = "test-instance"
         mock_runner_class.return_value = MagicMock()
 
         process_not_started_prompt("prompt-123")
 
-        # Verify lock was called with 3600 second timeout
         mock_lock_mgr.lock.assert_called_once()
         call_kwargs = mock_lock_mgr.lock.call_args[1]
-        assert call_kwargs["timeout"] == 3600
+        assert call_kwargs["timeout"] == LOCK_TTL_SECONDS
+        assert call_kwargs["thread_local"] is False
 
 
 # =============================================================================
@@ -513,29 +538,40 @@ class TestDistributedStateE2E:
 
 
 @pytest.mark.django_db
+@pytest.mark.usefixtures("mock_recovery_persistence")
 class TestRecoveryMechanismsE2E:
     """End-to-end tests for stuck task recovery mechanisms."""
 
+    @patch("model_hub.tasks.run_prompt.fail_pending_run_prompt_cells", return_value=0)
     @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
     @patch("model_hub.tasks.run_prompt.RunPrompter")
     @patch("model_hub.tasks.run_prompt.close_old_connections")
     def test_recover_stuck_prompts_finds_old_running(
-        self, mock_close, mock_prompter, mock_tracker
+        self, mock_close, mock_prompter, mock_tracker, mock_fail_cells
     ):
         """Test that recovery finds prompts stuck in RUNNING for > 1 hour."""
         from model_hub.models.choices import StatusType
         from model_hub.tasks.run_prompt import recover_stuck_run_prompts
 
-        # Setup stuck prompts query to return some IDs
+        # Setup stuck prompts query to return some IDs:
+        # filter(...).filter(~Exists(...)).order_by(...).values_list(...)[:20]
         stuck_ids = ["prompt-1", "prompt-2", "prompt-3"]
         mock_queryset = MagicMock()
-        mock_queryset.values_list.return_value.__getitem__.return_value = stuck_ids
+        (
+            mock_queryset.filter.return_value.order_by.return_value.values_list.return_value.__getitem__.return_value
+        ) = stuck_ids
         mock_prompter.objects.filter.return_value = mock_queryset
+
+        # No lease and no recent cell writes -> all candidates are truly stuck
+        mock_tracker.get_running_info.return_value = None
 
         recover_stuck_run_prompts()
 
+        # Cells of the dead prompts are flipped to ERROR via the shared helper
+        assert [call.args[0][0] for call in mock_fail_cells.call_args_list] == stuck_ids
+
         # Should mark stuck prompts as FAILED
-        mock_queryset.update.assert_called_once()
+        assert mock_queryset.update.call_count == len(stuck_ids)
         # Update should set status to FAILED
         call_args = mock_queryset.update.call_args
         assert call_args[1]["status"] == StatusType.FAILED.value
@@ -554,9 +590,9 @@ class TestRecoveryMechanismsE2E:
         from model_hub.tasks.run_prompt import recover_stuck_run_prompts
 
         # No stuck prompts
-        mock_prompter.objects.filter.return_value.values_list.return_value.__getitem__.return_value = (
-            []
-        )
+        (
+            mock_prompter.objects.filter.return_value.filter.return_value.order_by.return_value.values_list.return_value.__getitem__.return_value
+        ) = []
 
         # But there are stale tracker entries
         mock_tracker.cleanup_stale.return_value = 5
@@ -564,7 +600,7 @@ class TestRecoveryMechanismsE2E:
         recover_stuck_run_prompts()
 
         # Should call cleanup_stale
-        mock_tracker.cleanup_stale.assert_called_once()
+        mock_tracker.cleanup_stale.assert_not_called()
 
     @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
     @patch("model_hub.tasks.run_prompt.RunPrompter")
@@ -575,9 +611,9 @@ class TestRecoveryMechanismsE2E:
         """Test recovery gracefully handles when no prompts are stuck."""
         from model_hub.tasks.run_prompt import recover_stuck_run_prompts
 
-        mock_prompter.objects.filter.return_value.values_list.return_value.__getitem__.return_value = (
-            []
-        )
+        (
+            mock_prompter.objects.filter.return_value.filter.return_value.order_by.return_value.values_list.return_value.__getitem__.return_value
+        ) = []
         mock_tracker.cleanup_stale.return_value = 0
 
         # Should not raise
@@ -666,7 +702,6 @@ class TestConcurrentOperationsE2E:
     @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
     def test_instance_isolation_for_running_checks(self, mock_tracker):
         """Test that running checks properly identify instance ownership."""
-        from model_hub.tasks.run_prompt import run_prompt_tracker
 
         # Simulate check from different instances
         mock_tracker.instance_id = "instance-A"
@@ -690,6 +725,7 @@ class TestConcurrentOperationsE2E:
 
 
 @pytest.mark.django_db
+@pytest.mark.usefixtures("mock_prompt_ownership")
 class TestErrorHandlingE2E:
     """End-to-end tests for error handling scenarios."""
 
@@ -702,10 +738,9 @@ class TestErrorHandlingE2E:
         self, mock_close, mock_prompter, mock_runner_class, mock_lock_mgr, mock_tracker
     ):
         """Test that DB errors during status update are properly handled."""
-        from model_hub.models.choices import StatusType
         from model_hub.tasks.run_prompt import process_not_started_prompt
 
-        mock_tracker.is_running.return_value = False
+        mock_tracker.get_running_info.return_value = None
         mock_tracker.instance_id = "test-instance"
 
         # Runner fails

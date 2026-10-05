@@ -151,7 +151,7 @@ class DistributedStateManager:
             logger.error(f"Failed to set key {key}: {e}")
             return False
 
-    def get(self, key: str, default: Any = None) -> Any:
+    def get(self, key: str, default: Any = None, *, strict: bool = False) -> Any:
         """
         Get a value from distributed state.
 
@@ -163,6 +163,8 @@ class DistributedStateManager:
             The stored value or default.
         """
         if not self._redis_available:
+            if strict:
+                raise RedisError("Distributed state is unavailable")
             return default
 
         full_key = self._get_key(key)
@@ -177,6 +179,8 @@ class DistributedStateManager:
                 return value
         except RedisError as e:
             logger.error(f"Failed to get key {key}: {e}")
+            if strict:
+                raise
             return default
 
     def delete(self, key: str) -> bool:
@@ -334,12 +338,14 @@ class DistributedEvaluationTracker(DistributedStateManager):
             )
             return False
 
-    def mark_completed(self, eval_id: int) -> bool:
+    def mark_completed(self, eval_id: int, run_token: str | None = None) -> bool:
         """
         Mark an evaluation as completed and remove from tracking.
 
         Args:
             eval_id: The evaluation ID.
+            run_token: When set, delete only if the entry still carries this
+                token, so a run that lost ownership cannot remove its successor.
 
         Returns:
             True if successfully removed.
@@ -348,6 +354,8 @@ class DistributedEvaluationTracker(DistributedStateManager):
         self._local_running.discard(key)
 
         try:
+            if run_token is not None:
+                return self._delete_if_token(key, run_token)
             result = self.delete(key)
             if result:
                 logger.info(
@@ -365,6 +373,76 @@ class DistributedEvaluationTracker(DistributedStateManager):
                 f"Error marking evaluation {eval_id} as completed: {e}",
                 extra={"eval_id": str(eval_id), "error": str(e)},
             )
+            return False
+
+    def _delete_if_token(self, key: str, run_token: str) -> bool:
+        """Owner-only delete: WATCH/MULTI so a successor's freshly published entry is never removed."""
+        if not self._redis_available:
+            return False
+        full_key = self._get_key(key)
+
+        def _release(pipe: redis.client.Pipeline) -> bool:
+            raw = pipe.get(full_key)
+            if raw is None:
+                return False
+            info = RunningTaskInfo.from_dict(json.loads(raw))
+            if (info.metadata or {}).get("run_token") != run_token:
+                logger.info(
+                    f"Not releasing {key}: entry now belongs to another run",
+                    extra={"key": key},
+                )
+                return False
+            pipe.multi()
+            pipe.delete(full_key)
+            return True
+
+        return bool(
+            self._redis_client.transaction(_release, full_key, value_from_callable=True)
+        )
+
+    def is_reachable(self) -> bool:
+        """True if Redis answers right now (is_available() is only the boot-time flag)."""
+        if not self._redis_available:
+            return False
+        try:
+            return bool(self._redis_client.ping())
+        except Exception:
+            return False
+
+    def refresh_running(
+        self, eval_id: int, ttl: int | None = None, run_token: str | None = None
+    ) -> bool:
+        """Owner-only lease renewal: re-sets the entry with a fresh TTL and stamps metadata["renewed_at"]."""
+        if not self._redis_available:
+            return False
+        full_key = self._get_key(str(eval_id))
+        ttl = ttl or self.default_ttl
+
+        def _renew(pipe: redis.client.Pipeline) -> bool:
+            raw = pipe.get(full_key)
+            if raw is None:
+                return False
+            info = RunningTaskInfo.from_dict(json.loads(raw))
+            if info.instance_id != self._instance_id or (
+                run_token is not None
+                and (info.metadata or {}).get("run_token") != run_token
+            ):
+                return False
+            info.metadata = dict(info.metadata or {})
+            info.metadata["renewed_at"] = datetime.utcnow().isoformat()
+            pipe.multi()
+            pipe.set(full_key, json.dumps(info.to_dict()), ex=ttl)
+            return True
+
+        try:
+            # WATCH aborts the write if the entry changed (e.g. mark_completed deleted it) between GET and SET.
+            return bool(
+                self._redis_client.transaction(
+                    _renew, full_key, value_from_callable=True
+                )
+            )
+        except Exception as e:
+            logger.warning(f"Failed to refresh running entry {eval_id}: {e}")
             return False
 
     def is_running(self, eval_id: int) -> bool:
@@ -391,7 +469,9 @@ class DistributedEvaluationTracker(DistributedStateManager):
         """
         return str(eval_id) in self._local_running
 
-    def get_running_info(self, eval_id: int) -> Optional[RunningTaskInfo]:
+    def get_running_info(
+        self, eval_id: int, *, strict: bool = False
+    ) -> RunningTaskInfo | None:
         """
         Get information about a running evaluation.
 
@@ -401,12 +481,25 @@ class DistributedEvaluationTracker(DistributedStateManager):
         Returns:
             RunningTaskInfo if running, None otherwise.
         """
-        data = self.get(str(eval_id))
+        data = self.get(str(eval_id), strict=strict)
         if data:
-            return RunningTaskInfo.from_dict(data)
+            info = RunningTaskInfo.from_dict(data)
+            info.cancel_requested = (
+                self.get_cancel_request(
+                    eval_id, (info.metadata or {}).get("run_token"), strict=strict
+                )
+                is not None
+            )
+            return info
         return None
 
-    def request_cancel(self, eval_id: int, reason: str = "") -> bool:
+    def request_cancel(
+        self,
+        eval_id: int,
+        reason: str = "",
+        target: str | None = None,
+        replacement: bool = False,
+    ) -> bool:
         """
         Request cancellation of an evaluation.
 
@@ -415,6 +508,7 @@ class DistributedEvaluationTracker(DistributedStateManager):
         Args:
             eval_id: The evaluation ID to cancel.
             reason: Optional reason for cancellation.
+            target: Optional run token; when set only that run honours the flag.
 
         Returns:
             True if cancel request was sent.
@@ -430,28 +524,15 @@ class DistributedEvaluationTracker(DistributedStateManager):
                 "requested_by": self._instance_id,
                 "reason": reason,
             }
-            self.set(cancel_key, cancel_info, ttl=3600)
+            if target:
+                cancel_info["target"] = target
+            if replacement:
+                cancel_info["replacement"] = True
+            if not self.set(cancel_key, cancel_info, ttl=3600):
+                return False
 
-            # Update the running info to mark cancel requested
-            info = self.get_running_info(eval_id)
-            if info:
-                info.cancel_requested = True
-                self.set(key, info.to_dict())
-                logger.info(
-                    f"Requested cancellation for evaluation {eval_id}",
-                    extra={
-                        "eval_id": str(eval_id),
-                        "reason": reason,
-                        "running_on": info.instance_id,
-                        "requested_by": self._instance_id,
-                    },
-                )
-            else:
-                logger.warning(
-                    f"Cancellation requested for evaluation {eval_id} but it is not currently running",
-                    extra={"eval_id": str(eval_id), "reason": reason},
-                )
-
+            # The cancel key is authoritative. Rewriting the lease here would
+            # race a renewal/reclaim and could restore a previous owner's token.
             # Publish cancel message for immediate notification
             self.publish(f"cancel:{eval_id}", cancel_info)
 
@@ -463,20 +544,21 @@ class DistributedEvaluationTracker(DistributedStateManager):
             )
             return False
 
-    def should_cancel(self, eval_id: int) -> bool:
-        """
-        Check if an evaluation should be cancelled.
+    def get_cancel_request(
+        self, eval_id: int, run_token: str | None = None, *, strict: bool = False
+    ) -> dict | None:
+        """Read a cancellation only when it applies to this run."""
+        info = self.get(f"cancel:{eval_id}", strict=strict)
+        if not isinstance(info, dict):
+            return None
+        target = info.get("target")
+        if run_token is not None and target and target != run_token:
+            return None
+        return info
 
-        Call this periodically in long-running evaluation loops.
-
-        Args:
-            eval_id: The evaluation ID.
-
-        Returns:
-            True if cancellation was requested.
-        """
-        cancel_key = f"cancel:{str(eval_id)}"
-        return self.exists(cancel_key)
+    def should_cancel(self, eval_id: int, run_token: str | None = None) -> bool:
+        """Whether an untargeted cancellation or one for this run exists."""
+        return self.get_cancel_request(eval_id, run_token) is not None
 
     def clear_cancel_flag(self, eval_id: int) -> bool:
         """Clear the cancel flag after handling cancellation."""
@@ -507,6 +589,9 @@ class DistributedEvaluationTracker(DistributedStateManager):
                 if data:
                     try:
                         info = RunningTaskInfo.from_dict(json.loads(data))
+                        info.cancel_requested = self.should_cancel(
+                            info.task_id, (info.metadata or {}).get("run_token")
+                        )
                         running.append(info)
                     except (json.JSONDecodeError, TypeError):
                         pass

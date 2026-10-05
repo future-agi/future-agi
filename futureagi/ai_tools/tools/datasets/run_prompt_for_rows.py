@@ -100,7 +100,12 @@ class RunPromptForRowsTool(BaseTool):
 
         # Queue async task
         run_prompt_ids = [str(rid) for rid in params.run_prompt_ids]
-        run_all_prompts_task.apply_async(args=(run_prompt_ids, row_ids))
+        from model_hub.services.run_prompt_ownership import queue_prompt_rows
+
+        revisions = queue_prompt_rows(run_prompt_ids, row_ids)
+        run_all_prompts_task.apply_async(
+            args=(run_prompt_ids, row_ids), kwargs={"revisions": revisions}
+        )
 
         prompt_names = [rp.name for rp in run_prompters]
         info = key_value_block(

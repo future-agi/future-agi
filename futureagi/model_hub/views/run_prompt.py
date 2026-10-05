@@ -5,6 +5,7 @@ import re
 import traceback
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import nullcontext
 from typing import Any
 
 import chevron
@@ -17,11 +18,18 @@ from django.db.models import Q
 from django.http import Http404
 from drf_yasg.utils import swagger_auto_schema
 from jinja2.sandbox import SandboxedEnvironment
+from redis.exceptions import RedisError
 from rest_framework import viewsets
 from rest_framework.generics import CreateAPIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+
+from model_hub.services.run_prompt_ownership import (
+    OwnershipLostError,
+    PromptSupersededError,
+    queue_prompt_rows,
+)
 
 logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.run_prompt.available_models import AVAILABLE_MODELS
@@ -45,6 +53,7 @@ from model_hub.models.custom_models import CustomAIModel
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.models.openai_tools import Tools
 from model_hub.models.run_prompt import RunPrompter, UserResponseSchema
+
 from model_hub.queries.tts_voices import get_custom_voices
 from model_hub.serializers.contracts import (
     MODEL_HUB_ERROR_RESPONSES,
@@ -1117,12 +1126,18 @@ class LitellmAPIView(CreateAPIView):
 
         try:
             # Set status to RUNNING before triggering workflow
-            RunPrompter.objects.filter(id=run_prompter_id).update(
-                status=StatusType.RUNNING.value
-            )
+            RunPrompter.objects.filter(
+                id=run_prompter_id, updated_at=run_prompter.updated_at
+            ).update(status=StatusType.RUNNING.value)
 
             result = process_prompts_single.apply_async(
-                args=({"type": "not_started", "prompt_id": run_prompter_id},)
+                args=(
+                    {
+                        "type": "not_started",
+                        "prompt_id": run_prompter_id,
+                        "revision": run_prompter.updated_at.isoformat(),
+                    },
+                )
             )
             logger.info(
                 "run_prompt_workflow_started",
@@ -1135,10 +1150,8 @@ class LitellmAPIView(CreateAPIView):
                 run_prompt_id=run_prompter_id,
                 error=str(e),
             )
-            # Set status to FAILED if workflow couldn't start
-            RunPrompter.objects.filter(id=run_prompter_id).update(
-                status=StatusType.FAILED.value
-            )
+            # Dispatch may have succeeded before the response failed. Leave
+            # this revision visible to its worker or the recovery sweep.
             return self._gm.internal_server_error_response(
                 "Failed to start run prompt workflow"
             )
@@ -1146,9 +1159,33 @@ class LitellmAPIView(CreateAPIView):
         return self._gm.success_response("success")
 
 
+PENDING_CELL_MESSAGE = (
+    "Run prompt was interrupted before this cell completed. Please rerun this cell."
+)
+
+
+def fail_pending_run_prompt_cells(run_prompt_ids, message=PENDING_CELL_MESSAGE) -> int:
+    """Flip still-running cells of these prompts to ERROR; legacy "Running" matched because older reruns wrote the wrong enum."""
+    return Cell.objects.filter(
+        column__source=SourceChoices.RUN_PROMPT.value,
+        column__source_id__in=[str(p) for p in run_prompt_ids],
+        status__in=[CellStatus.RUNNING.value, StatusType.RUNNING.value],
+        deleted=False,
+    ).update(
+        status=CellStatus.ERROR.value,
+        value=message,
+        value_infos=json.dumps({"reason": message}),
+    )
+
+
 class RunPrompts:
-    def __init__(self, run_prompt_id):
+    def __init__(self, run_prompt_id, run_token=None, fence=None, ownership_guard=None):
         self.run_prompt_id = run_prompt_id
+        self.run_token = run_token  # identifies this run to owner-scoped cancel flags
+        self._ownership_guard = ownership_guard
+        self._fence = (
+            fence  # threading.Event set by OwnershipLease when the lock is lost
+        )
         self.run_prompt_model = None
         self.tools_config = []
         logger.info(
@@ -1187,44 +1224,55 @@ class RunPrompts:
             )
             raise ValueError("Invalid run prompt ID or  does not exist.")  # noqa: B904
 
-    def run_prompt(self, edit_mode=False):
+    def run_prompt(self, edit_mode=False, row_ids=None):
         try:
             self.load_run_prompt_id()
 
             # Capture updated_at at start to detect if prompt was edited during processing
             start_updated_at = self.run_prompt_model.updated_at
 
-            dataset = Dataset.objects.filter(id=self.run_prompt_model.dataset.id).get()
-            self.is_editing = True if edit_mode else False
-
-            if not self.is_editing:
-                column_order = dataset.column_order
-                column, created = create_run_prompt_column(
-                    dataset=dataset,
-                    source_id=self.run_prompt_id,
-                    name=self.run_prompt_model.name,
-                    output_format=self.run_prompt_model.output_format,
-                    response_format=self.run_prompt_model.response_format,
-                )
-                if created:
-                    column_order.append(str(column.id))
-                    dataset.column_order = column_order
-                    dataset.save()
-            elif self.is_editing:
-                column = Column.objects.filter(
-                    source_id=self.run_prompt_id, dataset=self.run_prompt_model.dataset
+            with self._write_guard():
+                if self._fenced():
+                    raise OwnershipLostError(str(self.run_prompt_id))
+                dataset = Dataset.objects.filter(
+                    id=self.run_prompt_model.dataset.id
                 ).get()
-                # Update column data_type in case response_format changed
-                update_column_for_rerun(
-                    column=column,
-                    output_format=self.run_prompt_model.output_format,
-                    response_format=self.run_prompt_model.response_format,
-                    status=None,  # Don't change status here
-                )
+                self.is_editing = True if edit_mode else False
+
+                if not self.is_editing:
+                    column_order = dataset.column_order
+                    column, created = create_run_prompt_column(
+                        dataset=dataset,
+                        source_id=self.run_prompt_id,
+                        name=self.run_prompt_model.name,
+                        output_format=self.run_prompt_model.output_format,
+                        response_format=self.run_prompt_model.response_format,
+                    )
+                    if created:
+                        column_order.append(str(column.id))
+                        dataset.column_order = column_order
+                        dataset.save()
+                elif self.is_editing:
+                    column = Column.objects.filter(
+                        source_id=self.run_prompt_id,
+                        dataset=self.run_prompt_model.dataset,
+                    ).get()
+                    # Update column data_type in case response_format changed
+                    update_column_for_rerun(
+                        column=column,
+                        output_format=self.run_prompt_model.output_format,
+                        response_format=self.run_prompt_model.response_format,
+                        status=None,  # Don't change status here
+                    )
 
             rows = Row.objects.filter(
                 dataset_id=self.run_prompt_model.dataset.id, deleted=False
-            ).order_by("order")
+            )
+            if row_ids is not None:
+                rows = rows.filter(
+                    id__in=self.run_prompt_model.queued_row_ids or row_ids
+                )
+            rows = rows.order_by("order")
 
             # Execute with a maximum of 5 threads
             # Wrap process_row with OTel context propagation for thread safety
@@ -1242,47 +1290,13 @@ class RunPrompts:
                 for future in as_completed(futures):
                     future.result()  # This will raise exceptions if any occurred in a thread
 
-            # Check if prompt was edited during processing by comparing updated_at
-            # This prevents this workflow from overwriting status when a new workflow was started
-            current_prompt = (
-                RunPrompter.objects.filter(id=self.run_prompt_id)
-                .values("status", "updated_at")
-                .first()
-            )
+            if self._fenced():
+                # Ownership lapsed: whoever reclaimed owns the status; fail this attempt so Temporal retries if nobody did.
+                raise OwnershipLostError(str(self.run_prompt_id))
 
-            if not current_prompt:
-                logger.warning(
-                    f"run_prompt {self.run_prompt_id} was deleted during processing"
-                )
-                return
-
-            current_status = current_prompt["status"]
-            current_updated_at = current_prompt["updated_at"]
-
-            # Only set COMPLETED if:
-            # 1. Status is still RUNNING
-            # 2. updated_at hasn't changed (no edit happened during processing)
-            if (
-                current_status == StatusType.RUNNING.value
-                and current_updated_at == start_updated_at
-            ):
-                RunPrompter.objects.filter(id=self.run_prompt_id).update(
-                    status=StatusType.COMPLETED.value
-                )
-            else:
-                # Either status changed or prompt was edited during processing
-                # Don't overwrite - let the new workflow handle final status
-                logger.info(
-                    f"run_prompt {self.run_prompt_id} was modified during processing "
-                    f"(status={current_status}, updated_at changed={current_updated_at != start_updated_at}). "
-                    "Not setting to COMPLETED."
-                )
-
-        except Exception as e:
-            # Set status to FAILED so it doesn't get stuck in RUNNING
-            logger.exception(f"run_prompt failed for {self.run_prompt_id}: {e}")
-            try:
-                # Check current state before setting FAILED
+            with self._write_guard():
+                # Check if prompt was edited during processing by comparing updated_at
+                # This prevents this workflow from overwriting status when a new workflow was started
                 current_prompt = (
                     RunPrompter.objects.filter(id=self.run_prompt_id)
                     .values("status", "updated_at")
@@ -1290,35 +1304,176 @@ class RunPrompts:
                 )
 
                 if not current_prompt:
-                    logger.warning(f"run_prompt {self.run_prompt_id} was deleted")
-                    raise
+                    logger.warning(
+                        f"run_prompt {self.run_prompt_id} was deleted during processing"
+                    )
+                    return
 
                 current_status = current_prompt["status"]
                 current_updated_at = current_prompt["updated_at"]
 
-                # Only set FAILED if:
+                # Only set COMPLETED if:
                 # 1. Status is still RUNNING
-                # 2. updated_at hasn't changed (if we captured it)
-                should_set_failed = current_status == StatusType.RUNNING.value
-                if should_set_failed and "start_updated_at" in dir():
-                    should_set_failed = current_updated_at == start_updated_at
+                # 2. updated_at hasn't changed (no edit happened during processing)
+                if (
+                    current_status == StatusType.RUNNING.value
+                    and current_updated_at == start_updated_at
+                ):
+                    if self._fenced():
+                        raise OwnershipLostError(str(self.run_prompt_id))
+                    from model_hub.tasks.run_prompt import run_prompt_tracker
 
-                if should_set_failed:
-                    RunPrompter.objects.filter(id=self.run_prompt_id).update(
-                        status=StatusType.FAILED.value
+                    cancellation = run_prompt_tracker.get_cancel_request(
+                        self.run_prompt_id, self.run_token, strict=True
                     )
+                    if cancellation is not None:
+                        # An unchanged config timestamp does not mean no replacement
+                        # exists: both jobs may have been queued before either began.
+                        if cancellation.get("replacement") is True:
+                            return
+                        if self._fenced():
+                            raise OwnershipLostError(str(self.run_prompt_id))
+                        RunPrompter.objects.filter(id=self.run_prompt_id).update(
+                            status=StatusType.FAILED.value
+                        )
+                        fail_pending_run_prompt_cells([self.run_prompt_id])
+                    else:
+                        RunPrompter.objects.filter(id=self.run_prompt_id).update(
+                            status=StatusType.COMPLETED.value
+                        )
                 else:
-                    # Prompt was modified during processing - don't overwrite with FAILED
+                    # Either status changed or prompt was edited during processing
+                    # Don't overwrite - let the new workflow handle final status
                     logger.info(
-                        f"run_prompt {self.run_prompt_id} was modified during failed execution "
-                        f"(status={current_status}). Not setting to FAILED."
+                        f"run_prompt {self.run_prompt_id} was modified during processing "
+                        f"(status={current_status}, updated_at changed={current_updated_at != start_updated_at}). "
+                        "Not setting to COMPLETED."
                     )
-            except Exception:
-                pass
+
+        except (OwnershipLostError, PromptSupersededError, RedisError):
             raise
+        except Exception as e:
+            if self._fenced():
+                # A row failed while ownership lapsed; the status is the reclaiming run's to write, not ours.
+                raise OwnershipLostError(str(self.run_prompt_id)) from e
+            # Set status to FAILED so it doesn't get stuck in RUNNING
+            logger.exception(f"run_prompt failed for {self.run_prompt_id}: {e}")
+            try:
+                with self._write_guard():
+                    # Check current state before setting FAILED
+                    current_prompt = (
+                        RunPrompter.objects.filter(id=self.run_prompt_id)
+                        .values("status", "updated_at")
+                        .first()
+                    )
+
+                    if not current_prompt:
+                        logger.warning(f"run_prompt {self.run_prompt_id} was deleted")
+                        raise
+
+                    current_status = current_prompt["status"]
+                    current_updated_at = current_prompt["updated_at"]
+
+                    # Only set FAILED if:
+                    # 1. Status is still RUNNING
+                    # 2. updated_at hasn't changed (if we captured it)
+                    should_set_failed = current_status == StatusType.RUNNING.value
+                    if should_set_failed and "start_updated_at" in dir():
+                        should_set_failed = current_updated_at == start_updated_at
+
+                    if should_set_failed:
+                        RunPrompter.objects.filter(id=self.run_prompt_id).update(
+                            status=StatusType.FAILED.value
+                        )
+                        fail_pending_run_prompt_cells([self.run_prompt_id])
+                    else:
+                        # Prompt was modified during processing - don't overwrite with FAILED
+                        logger.info(
+                            f"run_prompt {self.run_prompt_id} was modified during failed execution "
+                            f"(status={current_status}). Not setting to FAILED."
+                        )
+            except (OwnershipLostError, PromptSupersededError, RedisError):
+                raise
+            except Exception:
+                logger.exception(
+                    "run_prompt_failure_status_not_written",
+                    run_prompt_id=str(self.run_prompt_id),
+                )
+            raise
+
+    def _write_guard(self):
+        if self._ownership_guard is None:
+            return nullcontext()
+        return self._ownership_guard(self.run_prompt_model.updated_at)
+
+    def _cell_was_processed(self, row, column):
+        cell = Cell.objects.filter(
+            dataset=self.run_prompt_model.dataset,
+            column=column,
+            row=row,
+            deleted=False,
+            status__in=[CellStatus.PASS.value, CellStatus.ERROR.value],
+            value__isnull=False,
+            updated_at__gte=self.run_prompt_model.updated_at,
+        ).first()
+        return cell is not None
+
+    def _save_result(self, row, column, response, value_info, status):
+        with self._write_guard():
+            if self._fenced():
+                raise OwnershipLostError(str(self.run_prompt_id))
+            cell = (
+                Cell.objects.filter(
+                    dataset=self.run_prompt_model.dataset,
+                    column=column,
+                    row=row,
+                    deleted=False,
+                )
+                .order_by("created_at", "id")
+                .first()
+            )
+            if cell is None:
+                cell = Cell(
+                    dataset=self.run_prompt_model.dataset, column=column, row=row
+                )
+            info = value_info or {}
+            usage = info.get("metadata", {}).get("usage", {})
+            cell.value = str(response)
+            cell.value_infos = json.dumps(info)
+            cell.status = status
+            cell.prompt_tokens = usage.get("prompt_tokens")
+            cell.completion_tokens = usage.get("completion_tokens")
+            cell.response_time = info.get("metadata", {}).get("response_time")
+            cell.save()
+
+    def _fenced(self) -> bool:
+        """True once OwnershipLease reports the lock is gone."""
+        return self._fence is not None and self._fence.is_set()
+
+    def _should_stop(self) -> bool:
+        """True if ownership was lost (local fence) or a cancel aimed at this run exists; Redis errors count as no."""
+        if self._fenced():
+            return True
+        # Local import: tasks.run_prompt imports this module.
+        from model_hub.tasks.run_prompt import run_prompt_tracker
+
+        try:
+            return run_prompt_tracker.should_cancel(
+                self.run_prompt_id, run_token=self.run_token
+            )
+        except Exception:
+            return False
 
     def process_row(self, row, column, edit_mode=False):
         row_id = str(row.id)
+        if self._should_stop():
+            # Skip the LLM call; the run that requested the cancel will redo this cell.
+            logger.info(
+                "RunPrompts_process_row_skipped_cancelled",
+                run_prompt_id=str(self.run_prompt_id),
+                row_id=row_id,
+            )
+            return
         logger.info(
             "RunPrompts_process_row_started",
             run_prompt_id=str(self.run_prompt_id),
@@ -1327,6 +1482,10 @@ class RunPrompts:
             edit_mode=edit_mode,
         )
         try:
+            if self._ownership_guard is not None:
+                with self._write_guard():
+                    if self._cell_was_processed(row, column):
+                        return
             # Call litellm with the validated data
             if edit_mode:
                 self.is_editing = True
@@ -1526,148 +1685,16 @@ class RunPrompts:
             #     except Exception as e:
             #         print(f"Error updating api call status to processed: {str(e)}")
 
-            if self.is_editing:
-                logger.info(
-                    "RunPrompts_process_row_editing_mode_saving_cell",
+            if self._should_stop():
+                # Ownership lost or cancelled during the LLM call: another run owns this cell now, don't write it.
+                logger.warning(
+                    "RunPrompts_process_row_cell_write_fenced",
                     run_prompt_id=str(self.run_prompt_id),
                     row_id=row_id,
                 )
-                try:
-                    # First try to get the existing cell
-                    cell = Cell.objects.get(
-                        dataset=self.run_prompt_model.dataset,
-                        column=column,
-                        row=row,
-                        deleted=False,  # Add this to ensure we only get active cells
-                    )
-                    logger.info(
-                        "RunPrompts_process_row_existing_cell_found",
-                        run_prompt_id=str(self.run_prompt_id),
-                        row_id=row_id,
-                        cell_id=str(cell.id),
-                    )
-                    # Update the existing cell
-                    # Note: Media (image/audio) is already uploaded to S3 in litellm_response()
-                    cell.value = str(response)
-                    cell.value_infos = (
-                        json.dumps(value_info) if value_info else json.dumps({})
-                    )
-                    cell.status = status
+                return
 
-                    if value_info:
-                        cell.prompt_tokens = (
-                            value_info.get("metadata", {})
-                            .get("usage", {})
-                            .get("prompt_tokens", None)
-                        )
-                        cell.completion_tokens = (
-                            value_info.get("metadata", {})
-                            .get("usage", {})
-                            .get("completion_tokens", None)
-                        )
-                        cell.response_time = value_info.get("metadata", {}).get(
-                            "response_time", None
-                        )
-
-                    cell.save()
-                    logger.info(
-                        "cell_updated",
-                        cell_id=str(cell.id),
-                        row_id=row_id,
-                        run_prompt_id=str(self.run_prompt_id),
-                        status=status,
-                    )
-                except Cell.DoesNotExist:
-                    logger.info(
-                        "RunPrompts_process_row_cell_not_found_creating_new",
-                        run_prompt_id=str(self.run_prompt_id),
-                        row_id=row_id,
-                    )
-                    # Create a new cell if none exists
-                    prompt_tokens = None
-                    completion_tokens = None
-                    response_time = None
-                    if value_info:
-                        prompt_tokens = (
-                            value_info.get("metadata", {})
-                            .get("usage", {})
-                            .get("prompt_tokens", None)
-                        )
-                        completion_tokens = (
-                            value_info.get("metadata", {})
-                            .get("usage", {})
-                            .get("completion_tokens", None)
-                        )
-                        response_time = value_info.get("metadata", {}).get(
-                            "response_time", None
-                        )
-
-                    cell = Cell.objects.create(
-                        dataset=self.run_prompt_model.dataset,
-                        column=column,
-                        row=row,
-                        value=str(response),
-                        value_infos=(
-                            json.dumps(value_info) if value_info else json.dumps({})
-                        ),
-                        status=status,
-                        prompt_tokens=prompt_tokens,
-                        completion_tokens=completion_tokens,
-                        response_time=response_time,
-                    )
-                    logger.info(
-                        "cell_created_in_edit_mode",
-                        cell_id=str(cell.id),
-                        row_id=row_id,
-                        run_prompt_id=str(self.run_prompt_id),
-                        status=status,
-                    )
-            else:
-                logger.info(
-                    "RunPrompts_process_row_creating_new_cell",
-                    run_prompt_id=str(self.run_prompt_id),
-                    row_id=row_id,
-                )
-                prompt_tokens = (None,)
-                completion_tokens = (None,)
-                response_time = (None,)
-                if value_info:
-                    prompt_tokens = (
-                        value_info.get("metadata", {})
-                        .get("usage", {})
-                        .get("prompt_tokens", None)
-                    )
-                    completion_tokens = (
-                        value_info.get("metadata", {})
-                        .get("usage", {})
-                        .get("completion_tokens", None)
-                    )
-                    response_time = value_info.get("metadata", {}).get(
-                        "response_time", None
-                    )
-
-                # Create a Cell object for each processed row
-                # Note: Media (image/audio) is already uploaded to S3 in litellm_response()
-                cell = Cell.objects.create(
-                    dataset=self.run_prompt_model.dataset,
-                    column=column,
-                    row=row,
-                    value=str(response),
-                    value_infos=(
-                        json.dumps(value_info) if value_info else json.dumps({})
-                    ),
-                    status=status,
-                    prompt_tokens=prompt_tokens,
-                    completion_tokens=completion_tokens,
-                    response_time=response_time,
-                )
-                logger.info(
-                    "cell_created",
-                    cell_id=str(cell.id),
-                    row_id=row_id,
-                    run_prompt_id=str(self.run_prompt_id),
-                    status=status,
-                )
+            self._save_result(row, column, response, value_info, status)
             logger.info(
                 "RunPrompts_process_row_completed",
                 run_prompt_id=str(self.run_prompt_id),
@@ -1810,12 +1837,18 @@ class AddRunPromptColumnView(APIView):
 
             try:
                 # Set status to RUNNING before triggering workflow
-                RunPrompter.objects.filter(id=run_prompter_id).update(
-                    status=StatusType.RUNNING.value
-                )
+                RunPrompter.objects.filter(
+                    id=run_prompter_id, updated_at=run_prompter.updated_at
+                ).update(status=StatusType.RUNNING.value)
 
                 result = process_prompts_single.apply_async(
-                    args=({"type": "not_started", "prompt_id": run_prompter_id},)
+                    args=(
+                        {
+                            "type": "not_started",
+                            "prompt_id": run_prompter_id,
+                            "revision": run_prompter.updated_at.isoformat(),
+                        },
+                    )
                 )
                 logger.info(
                     "run_prompt_workflow_started",
@@ -1828,10 +1861,8 @@ class AddRunPromptColumnView(APIView):
                     run_prompt_id=run_prompter_id,
                     error=str(e),
                 )
-                # Set status to FAILED if workflow couldn't start
-                RunPrompter.objects.filter(id=run_prompter_id).update(
-                    status=StatusType.FAILED.value
-                )
+                # Dispatch may have succeeded before the response failed. Leave
+                # this revision visible to its worker or the recovery sweep.
                 return self._gm.internal_server_error_response(
                     "Failed to start run prompt workflow"
                 )
@@ -2095,6 +2126,8 @@ class EditRunPromptColumnView(APIView):
                 run_prompter.concurrency = config.get(
                     "concurrency", run_prompter.concurrency
                 )
+                run_prompter.queued_row_ids = None
+                run_prompter.queued_request_id = None
                 run_prompter.status = (
                     StatusType.RUNNING.value
                 )  # Set to RUNNING immediately
@@ -2133,7 +2166,13 @@ class EditRunPromptColumnView(APIView):
 
             try:
                 result = process_prompts_single.apply_async(
-                    args=({"type": "editing", "prompt_id": run_prompter_id},)
+                    args=(
+                        {
+                            "type": "editing",
+                            "prompt_id": run_prompter_id,
+                            "revision": run_prompter.updated_at.isoformat(),
+                        },
+                    )
                 )
                 logger.info(
                     "run_prompt_edit_workflow_started",
@@ -2146,10 +2185,8 @@ class EditRunPromptColumnView(APIView):
                     run_prompt_id=run_prompter_id,
                     error=str(e),
                 )
-                # Set status to FAILED if workflow couldn't start
-                RunPrompter.objects.filter(id=run_prompter_id).update(
-                    status=StatusType.FAILED.value
-                )
+                # Dispatch may have succeeded before the response failed. Leave
+                # this revision visible to its worker or the recovery sweep.
                 return self._gm.internal_server_error_response(
                     "Failed to start run prompt workflow"
                 )
@@ -2813,7 +2850,10 @@ class RunPromptForRowsView(APIView):
                             dataset=run_prompt.dataset, deleted=False
                         ).values_list("id", flat=True)
                     )
-            run_all_prompts_task.apply_async(args=(run_prompt_ids, row_ids))
+            revisions = queue_prompt_rows(run_prompt_ids, row_ids)
+            run_all_prompts_task.apply_async(
+                args=(run_prompt_ids, row_ids), kwargs={"revisions": revisions}
+            )
             return self._gm.success_response(
                 {"success": "Run prompts queued for processing."}
             )
@@ -2823,47 +2863,37 @@ class RunPromptForRowsView(APIView):
             return self._gm.internal_server_error_response(error_message)
 
 
-@temporal_activity(time_limit=3600, queue="tasks_l")
-def run_all_prompts_task(run_prompt_ids, row_ids):
-    try:
-        for run_prompt_id in run_prompt_ids:
-            run_prompt = RunPrompter.objects.get(id=run_prompt_id)
-            run_prompt.status = StatusType.RUNNING.value
-            run_prompt.save(update_fields=["status"])
+@temporal_activity(time_limit=4 * 3600, queue="tasks_l", max_retries=5, retry_delay=60)
+def run_all_prompts_task(run_prompt_ids, row_ids, revisions=None):
+    """Run selected rows through the same lease/ownership path as full runs."""
+    from django.utils.dateparse import parse_datetime
 
-            # Initialize the RunPrompts with the provided run_prompt_id
-            run_prompts = RunPrompts(run_prompt_id=run_prompt_id)
-            run_prompts.load_run_prompt_id()
+    from model_hub.tasks.run_prompt import process_editing_prompt
 
-            # Update the status of the cells to RUNNING
-            Cell.objects.filter(
-                row_id__in=row_ids, column__source_id=run_prompt_id, deleted=False
-            ).update(
-                status=StatusType.RUNNING.value, value=None, value_infos=json.dumps({})
-            )
+    # Compatibility for activities queued before revisions were included.
+    if revisions is None:
+        from tfc.logging.temporal.context import try_activity_info
 
-            # Run the prompt for each row ID
-            for row_id in row_ids:
-                try:
-                    row = Row.objects.get(id=row_id)
-                    column = Column.objects.get(source_id=run_prompt_id)
-                    run_prompts.process_row(row, column, edit_mode=True)
-                except Exception as e:
-                    run_prompt.status = StatusType.FAILED.value
-                    run_prompt.save(update_fields=["status"])
-                    raise e
-
-            run_prompt.status = StatusType.COMPLETED.value
-            run_prompt.save(update_fields=["status"])
-
-    except Exception as e:
-        # Handle exceptions and log errors
-        error_message = get_specific_error_message(e)
-        logger.exception(f"Error in run all prompts task: {error_message}")
-        # Optionally update the run prompt status to FAILED
-        try:
-            run_prompt = RunPrompter.objects.get(id=run_prompt_id)
-            run_prompt.status = StatusType.FAILED.value
-            run_prompt.save(update_fields=["status"])
-        except Exception:
-            pass
+        info = try_activity_info()
+        legacy_request = {}
+        if info is not None:
+            legacy_request = {
+                "request_id": uuid.uuid5(
+                    uuid.NAMESPACE_URL,
+                    f"{info.workflow_run_id}:{info.activity_id}",
+                ).hex,
+                "scheduled_at": info.scheduled_time,
+            }
+        revisions = queue_prompt_rows(run_prompt_ids, row_ids, **legacy_request)
+    for run_prompt_id in run_prompt_ids:
+        revision = revisions.get(str(run_prompt_id))
+        if (
+            not revision
+            or not RunPrompter.objects.filter(
+                id=run_prompt_id,
+                status=StatusType.RUNNING.value,
+                updated_at=parse_datetime(revision),
+            ).exists()
+        ):
+            continue
+        process_editing_prompt(run_prompt_id, row_ids=row_ids, revision=revision)

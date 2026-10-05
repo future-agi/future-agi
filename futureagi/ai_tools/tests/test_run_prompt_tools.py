@@ -354,6 +354,13 @@ class TestRunPromptForRowsTool:
         assert not result.is_error
         assert result.data["rows_queued"] == 2
         mock_run_all_prompts.assert_called_once()
+        from model_hub.models.run_prompt import RunPrompter
+
+        prompt = RunPrompter.objects.get(id=rp_id)
+        assert set(prompt.queued_row_ids) == {str(rows[0].id), str(rows[1].id)}
+        assert mock_run_all_prompts.call_args.kwargs["kwargs"]["revisions"] == {
+            rp_id: prompt.updated_at.isoformat()
+        }
 
     def test_run_all_rows(
         self, tool_context, populated_dataset, mock_celery, mock_run_all_prompts
@@ -515,6 +522,92 @@ class TestEditRunPromptColumnTool:
         assert not result.is_error
         assert result.data["name"] == "Updated"
         assert result.data["model"] == "gpt-4o-mini"
+
+    def test_edit_rerun_resets_cells_with_cell_status_enum(
+        self, tool_context, writable_dataset, mock_celery
+    ):
+        """Rerun must write CellStatus ("running") into Cell.status, not
+        StatusType ("Running") — the wrong enum makes the UI ignore the
+        cells and the stuck-run recovery unable to match them."""
+        from model_hub.models.choices import CellStatus
+        from model_hub.models.develop_dataset import Cell, Column, Row
+
+        create_result = run_tool(
+            "add_run_prompt_column",
+            {
+                "dataset_id": str(writable_dataset.id),
+                "name": "Rerun Column",
+                "model": "gpt-4o",
+                "messages": [{"role": "user", "content": "test"}],
+                "run": False,
+            },
+            tool_context,
+        )
+        column = Column.objects.get(id=create_result.data["column_id"])
+        row = Row.objects.create(dataset=writable_dataset, order=0)
+        cell = Cell.objects.create(
+            dataset=writable_dataset,
+            column=column,
+            row=row,
+            value="old value",
+            status=CellStatus.PASS.value,
+        )
+
+        result = run_tool(
+            "edit_run_prompt_column",
+            {
+                "dataset_id": str(writable_dataset.id),
+                "column_id": str(column.id),
+                "model": "gpt-4o-mini",
+                "run": True,
+            },
+            tool_context,
+        )
+        assert not result.is_error
+
+        cell.refresh_from_db()
+        assert cell.status == CellStatus.RUNNING.value  # "running", not "Running"
+        assert cell.value is None
+
+    @pytest.mark.parametrize("selected", [False, True])
+    def test_save_without_run_cannot_orphan_active_work(
+        self, tool_context, writable_dataset, mock_celery, selected
+    ):
+        from model_hub.models.choices import StatusType
+        from model_hub.models.run_prompt import RunPrompter
+
+        created = run_tool(
+            "add_run_prompt_column",
+            {
+                "dataset_id": str(writable_dataset.id),
+                "name": "Active",
+                "model": "gpt-4o",
+                "messages": [{"role": "user", "content": "hi"}],
+                "run": True,
+            },
+            tool_context,
+        )
+        assert not created.is_error
+        prompt = RunPrompter.objects.get(id=created.data["run_prompter_id"])
+        if selected:
+            prompt.queued_row_ids = [str(uuid.uuid4())]
+            prompt.save()
+        revision = prompt.updated_at
+        result = run_tool(
+            "edit_run_prompt_column",
+            {
+                "dataset_id": str(writable_dataset.id),
+                "column_id": created.data["column_id"],
+                "name": "Changed",
+                "run": False,
+            },
+            tool_context,
+        )
+        assert result.is_error
+        prompt.refresh_from_db()
+        assert prompt.name == "Active"
+        assert prompt.updated_at == revision
+        assert prompt.status == StatusType.RUNNING.value
 
     def test_edit_nonexistent_column(self, tool_context, writable_dataset):
         result = run_tool(
