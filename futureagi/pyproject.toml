@@ -42,7 +42,12 @@ dependencies = [
     "humanize",
     "pydantic>=2.11.10",  # Use latest with thread-safety fixes
     "jsonpath-ng",
-    "nltk",
+    # >=3.10.3 clears the high-severity findings of TH-8370: remote code
+    # execution and unsafe pickle loading from a downloaded corpus, plus the
+    # path traversal and SSRF in nltk.download. The corpora the backend loads
+    # (stopwords, punkt_tab, averaged_perceptron_tagger_eng, wordnet) are
+    # unchanged, so bin/install_nltk_data.py keeps its revision and checksums.
+    "nltk>=3.10.3",
     "retrying",
     # 1.84.0 is the first release to close CVE-2026-35030 and CVE-2026-49468
     # (auth bypass / privilege escalation / RCE); the 1.83.x fixes leave the
@@ -116,17 +121,31 @@ dependencies = [
     "filetype",
     "google-genai",
     "json-repair",
-    # Pinned: 20250327+ dropped PDFStackT which pdfplumber<0.11.10 still imports.
-    "pdfminer.six<=20240706",
+    # Unpinned on purpose: pdfplumber pins pdfminer.six to an exact release,
+    # so the pdfplumber floor further down is what moves it. 0.11.10 is the
+    # first pdfplumber that stopped importing PDFStackT (dropped in
+    # pdfminer.six 20250327, which is why this used to be capped at
+    # <=20240706) and it requires pdfminer.six==20260107 — the release that
+    # clears the document-parsing findings of TH-8370.
+    "pdfminer.six",
+    # Declared even though python-docx and xmlsec both pull it in:
+    # ee/agenthub/deterministic_agent/deterministic_agent.py parses
+    # user-supplied markup with lxml.etree.HTML directly, and neither of them
+    # constrains the version (both ask for lxml>=3.x), so nothing but this
+    # floor keeps a re-resolution off the lxml releases TH-8370 flags —
+    # verified: without it `uv lock` leaves lxml at 6.0.2.
+    "lxml>=6.1.0",
     "python-docx",
     "striprtf",
     "openpyxl>=3.1.0",
-    "pdfplumber>=0.10.0",
+    "pdfplumber>=0.11.10",
     "beautifulsoup4>=4.12.0",
     "partial-json-parser",
     "chevron",
     "jinja2",
-    "pypdf",
+    # >=6.14.2 clears the high-severity pypdf findings of TH-8370 (crafted
+    # PDFs reaching kb_indexer.py and the dataset/document upload paths).
+    "pypdf>=6.14.2",
     # Imported by integrations/services/cloud_storage_service.py; it used to
     # arrive only via google-cloud-aiplatform (now the `gcp` extra).
     "google-cloud-storage",
@@ -146,7 +165,10 @@ dependencies = [
     "structlog>=24.1.0",
     "django-structlog>=8.1.0",
     "django-socio-grpc",
-    "pillow",
+    # >=12.3.0 clears the high-severity Pillow findings of TH-8370; every
+    # user-supplied image (tfc/utils/storage.py, the image evals) is decoded
+    # by it.
+    "pillow>=12.3.0",
     "pandas",
     # RecursiveCharacterTextSplitter for knowledge-base chunking
     # (model_hub/utils/kb_indexer.py); langchain itself is the `langchain` extra.
@@ -160,7 +182,12 @@ dependencies = [
     "pyotp>=2.9.0",  # TOTP generation and verification
     "qrcode[pil]>=7.4",  # QR code generation for TOTP provisioning URIs
     "webauthn>=2.2.0",  # WebAuthn server-side (py_webauthn by Duo Labs)
-    "mcp>=1.26.0,<2",  # Claude Agent SDK uses the MCP v1 server API
+    # Claude Agent SDK uses the MCP v1 server API, so stay on the 1.x line.
+    # >=1.28.1 fixes CVE-2026-52869 and CVE-2026-52870 (a session usable
+    # without the authorization that created it) and CVE-2026-59950 (missing
+    # origin/host validation); mcp_server/mcp_app.py configures the shared
+    # transport-security middleware those fixes harden.
+    "mcp>=1.28.1,<2",
     "restrictedpython>=8.0",
     # Explicit pins — previously transitive via packages now in extras:
     "scikit-learn",  # TF-IDF in tracer/queries/feed.py (was via hdbscan)
