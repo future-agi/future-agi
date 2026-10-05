@@ -18,17 +18,8 @@ import {
   defaultTraceColumns,
   GROUPINGS,
   neutralCheckboxSx,
+  toolbarButtonSx,
 } from "./traceTable.constants";
-
-const pickerButtonSx = {
-  typography: "s2",
-  fontWeight: "fontWeightBold",
-  textTransform: "none",
-  height: 32,
-  color: "text.primary",
-  borderColor: "divider",
-  "&:hover": { borderColor: "text.disabled", bgcolor: "transparent" },
-};
 
 // Group-by axis picker.
 export function TraceGroupByPicker({ value, onChange }) {
@@ -54,7 +45,7 @@ export function TraceGroupByPicker({ value, onChange }) {
             sx={{ color: "text.subtitle" }}
           />
         }
-        sx={pickerButtonSx}
+        sx={toolbarButtonSx}
       >
         Group by
         <Box
@@ -136,7 +127,7 @@ export function TraceColumnsPicker({ value, onChange, hidden }) {
             sx={{ color: "text.subtitle" }}
           />
         }
-        sx={pickerButtonSx}
+        sx={toolbarButtonSx}
       >
         Columns
         <Box

@@ -191,6 +191,24 @@ export const neutralCheckboxSx = {
   "&.MuiCheckbox-indeterminate": { color: "text.primary" },
 };
 
+export const TOOLBAR_COMPACT = "@container (max-width: 1240px)";
+
+export const toolbarButtonSx = {
+  typography: "s2",
+  fontWeight: "fontWeightBold",
+  textTransform: "none",
+  height: 28,
+  minWidth: 0,
+  px: 1,
+  flexShrink: 0,
+  whiteSpace: "nowrap",
+  color: "text.primary",
+  borderColor: "divider",
+  "&:hover": { borderColor: "text.disabled", bgcolor: "transparent" },
+};
+
+export const compactHiddenSx = { [TOOLBAR_COMPACT]: { display: "none" } };
+
 // The head row stays pinned while the calls scroll and the group rows pin just
 // below it, so they need its height. Both measured in the browser.
 export const HEAD_ROW_PX = 44;
