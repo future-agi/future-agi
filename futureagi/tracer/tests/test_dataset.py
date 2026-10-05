@@ -745,6 +745,46 @@ class TestAddToNewDatasetAPI:
         logger.exception.assert_not_called()
 
     @patch("tracer.views.dataset.process_spans_chunk_task")
+    def test_reached_limit_still_refuses_when_the_alert_cannot_be_sent(
+        self, mock_task, auth_client, organization, observe_project, observe_spans
+    ):
+        """A failed websocket push never turns the refusal into a creation."""
+        with (
+            patch(
+                "tracer.views.dataset.check_if_dataset_creation_is_allowed",
+                return_value=DatasetLimitCheck(
+                    DatasetLimitOutcome.LIMIT_REACHED, limit=3
+                ),
+            ),
+            patch(
+                "ee.usage.utils.usage_entries.call_websocket",
+                side_effect=ConnectionError("websocket relay down"),
+            ) as websocket,
+        ):
+            response = auth_client.post(
+                "/tracer/dataset/add_to_new_dataset/",
+                {
+                    "new_dataset_name": "Alert Down Dataset",
+                    "project": str(observe_project.id),
+                    "span_ids": [s.id for s in observe_spans],
+                    "mapping_config": [
+                        {"col_name": "input", "data_type": "text"},
+                    ],
+                },
+                format="json",
+            )
+
+        websocket.assert_called_once()
+        assert response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
+        assert response.json()["message"] == get_error_message(
+            "DATASET_CREATE_LIMIT_REACHED"
+        )
+        assert not Dataset.no_workspace_objects.filter(
+            name="Alert Down Dataset", organization=organization
+        ).exists()
+        mock_task.delay.assert_not_called()
+
+    @patch("tracer.views.dataset.process_spans_chunk_task")
     def test_denied_entitlement_answers_429_with_upgrade_alert(
         self, mock_task, auth_client, organization, observe_project, observe_spans
     ):
