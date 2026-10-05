@@ -71,6 +71,36 @@ for (const malformed of ['{', '{"action":"finish"}']) {
   });
 }
 
+test('controller and verifier ask for plain-language finding statements', async () => {
+  const scratch = await mkdtemp(join(tmpdir(), 'omega-wording-test-'));
+  try {
+    const claim = makeClaim();
+    const row = {id: 'span-wording', project_id: claim.project_id, trace_id: claim.trace_id,
+      input: 'Check the trace'};
+    const assessment = {outcome: 'unknown', findings: [], requirement_checks: []};
+    const systems = [];
+    const result = await investigateTrace(claim, {scratchRoot: scratch,
+      fetchEvidence: async (c, path) => storeEvidence([Buffer.from(JSON.stringify(row) + '\n')], path, c),
+      gatewayConfig: {baseUrl: 'http://fixture/v1', model: 'fixture', apiKey: 'fixture',
+        fetchImpl: async (_url, init) => {
+          const system = JSON.parse(init.body).messages.find(message => message.role === 'system').content;
+          systems.push(system);
+          const content = JSON.stringify(system.includes('Independently check') ? assessment
+            : {action: 'finish', question: '', child_instructions: '', assessment});
+          return new Response(JSON.stringify({choices: [{message: {role: 'assistant', content},
+            finish_reason: 'stop'}], usage: {prompt_tokens: 10, completion_tokens: 10}}),
+          {headers: {'content-type': 'application/json', 'x-agentcc-cost': '0.000100'}});
+        }}});
+    assert.equal(result.execution_status, 'completed');
+    assert.equal(systems.length, 2);
+    for (const system of systems) {
+      assert.match(system, /finding statement in plain words for a product reader/);
+      assert.match(system, /short sentences of at most 25 words, one idea each, in active voice/);
+      assert.match(system, /Never stack more than three nouns in a row/);
+    }
+  } finally { await rm(scratch, {recursive: true, force: true}); }
+});
+
 test('upstream HTTP status is retained in a failed investigation receipt', async () => {
   const scratch = await mkdtemp(join(tmpdir(), 'omega-upstream-test-'));
   try {
@@ -389,6 +419,7 @@ test('simulation investigation reads call evidence and returns a scoped report',
       {requirement_id: goalName, requirement: 'Agent greets the caller', status: 'satisfied',
         evidence_ids: [evidenceId]}]};
     const controlCalls = [];
+    const systems = [];
     const result = await investigateSimulation(claim, {scratchRoot: scratch,
       control: async (path, body) => {
         controlCalls.push({path, body});
@@ -398,6 +429,7 @@ test('simulation investigation reads call evidence and returns a scoped report',
         fetchImpl: async (_url, init) => {
           const request = JSON.parse(init.body);
           const system = request.messages.find(message => message.role === 'system').content;
+          systems.push(system);
           const verifier = system.includes('Independently check');
           const toolMessage = request.messages.find(message => message.role === 'tool');
           const message = !toolMessage
@@ -416,6 +448,12 @@ test('simulation investigation reads call evidence and returns a scoped report',
     assert.deepEqual(result.evidence_receipts.map(item => item.call_execution_id), [row.call_execution_id]);
     assert.deepEqual(controlCalls, [{path: `/attempts/${claim.attempt_id}/simulation-evidence/`,
       body: {lease_token: claim.lease_token, cursor: 0}}]);
+    assert.ok(systems.length > 0);
+    for (const system of systems) {
+      assert.match(system, /finding statement in plain words for a product reader/);
+      assert.match(system, /short sentences of at most 25 words, one idea each, in active voice/);
+      assert.match(system, /Never stack more than three nouns in a row/);
+    }
   } finally {
     await rm(scratch, {recursive: true, force: true});
   }

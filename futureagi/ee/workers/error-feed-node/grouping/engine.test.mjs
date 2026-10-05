@@ -6,6 +6,7 @@ import {digest} from './f6/common.mjs';
 import {runGrouping} from './engine.mjs';
 import {F6_MINILM_POLICY} from './policy.mjs';
 import {Paused} from './f6/provider.mjs';
+import {issueWording} from './f6/admission.mjs';
 
 function fixture() {
   const [row] = adaptGroupingSnapshot(makeGroupingSnapshotFixture());
@@ -289,6 +290,26 @@ test('reconciliation merge creates a new target with exact member coverage', asy
     result.commands.slice(0, 2).map(command => command.temporary_id).sort());
   assert.deepEqual(result.registry.issues.find(issue => issue.id === merged.temporary_id).members,
     rows.map(row => row.id).sort());
+});
+
+test('discovery and reconciliation prompts ask for plain-language titles and descriptions', async () => {
+  const setup = fixture();
+  const second = addSecondFinding(setup);
+  const rows = [setup.row, second];
+  const seen = new Map();
+  await runGrouping({rows, pendingIds: rows.map(row => row.id),
+    features: setup.features, candidateWindow: setup.candidateWindow, store: setup.store,
+    investigate: withReceipts(async prompt => {
+      seen.set(prompt.candidate?.type ?? 'discovery', prompt.instructions);
+      if (prompt.candidate) return {action: 'hold', groups: [], removed_ids: [], reason: 'Not reviewed'};
+      return {groups: [groupFor(prompt, [prompt.findings[0].id])],
+        deferred: prompt.findings.slice(1).map(item => ({finding_id: item.id,
+          reason: 'Independent review required'}))};
+    })});
+  assert.ok(seen.has('discovery') && seen.has('merge_review'));
+  for (const instructions of seen.values()) assert.ok(instructions.includes(issueWording));
+  assert.match(issueWording, /agent the subject of the title, in active voice, and never stack more than three nouns/);
+  assert.match(issueWording, /short sentences of at most 25 words/);
 });
 
 test('reconciliation split retires the source and partitions all current members', async () => {
