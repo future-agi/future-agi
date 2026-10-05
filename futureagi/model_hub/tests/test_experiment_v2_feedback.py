@@ -1689,3 +1689,42 @@ class TestFeedbackUniqueKeySelection:
         kwargs = mgr.insert_embedding.call_args.kwargs
         assert kwargs["unique_key"] == "item_id"
         assert kwargs["unique_key_value"]
+
+
+class TestMarkDeletedByMetadata:
+    """ch_vector tombstone helper emits a scoped ALTER … UPDATE deleted = 1."""
+
+    def test_scoped_tombstone_sql(self):
+        from agentic_eval.core.database.ch_vector import ClickHouseVectorDB
+
+        with patch.object(
+            ClickHouseVectorDB, "__init__", lambda self, *a, **k: None
+        ):
+            db = ClickHouseVectorDB()
+        db.client = MagicMock()
+
+        db.mark_deleted_by_metadata(
+            "feedbacks", {"feedback_id": "fb-9"}, eval_id="eval-7"
+        )
+
+        sql = db.client.execute.call_args.args[0]
+        assert sql.startswith("ALTER TABLE feedbacks UPDATE deleted = 1")
+        assert "deleted = 0" in sql
+        assert "eval_id = 'eval-7'" in sql
+        assert "has(metadata.key, 'feedback_id')" in sql
+        assert "'fb-9'" in sql
+
+    def test_unscoped_tombstone_sql(self):
+        from agentic_eval.core.database.ch_vector import ClickHouseVectorDB
+
+        with patch.object(
+            ClickHouseVectorDB, "__init__", lambda self, *a, **k: None
+        ):
+            db = ClickHouseVectorDB()
+        db.client = MagicMock()
+
+        db.mark_deleted_by_metadata("feedbacks", {"feedback_id": "fb-9"})
+
+        sql = db.client.execute.call_args.args[0]
+        assert "eval_id" not in sql
+        assert "has(metadata.key, 'feedback_id')" in sql
