@@ -16,6 +16,7 @@ function liveEvalCell(col, data) {
     data.value && typeof data.value === "object" ? storedEvalCell(col, data) : null;
   return {
     id: col.id,
+    kind: col.kind ?? "evaluation",
     name: data.name || col.name || col.column_name || col.id,
     score: data.score ?? stored?.score ?? to01(data.value?.score) ?? null,
     passed: data.passed ?? stored?.passed ?? null,
@@ -53,6 +54,7 @@ function storedEvalCell(col, data) {
   }
   return {
     id: col.id,
+    kind: col.kind ?? "evaluation",
     name: data.name || col.column_name || col.name || col.id,
     score,
     passed,
@@ -175,21 +177,21 @@ export function taskFromCallDetail(detail) {
  * @returns {import("./runDetail").TraceColumn[]}
  */
 export function buildTraceColumns(columnOrder = []) {
-  const staticCols = TRACE_COLUMNS.filter((c) => c.key !== "evals").map(
-    (c) => ({
-      key: c.key,
-      label: c.label,
-      defaultOn: c.defaultOn,
-      width: c.width,
-      group: c.group,
-    }),
-  );
+  const staticCols = TRACE_COLUMNS.filter(
+    (c) => c.key !== "evals" && c.key !== "subGoalEvals",
+  ).map((c) => ({
+    key: c.key,
+    label: c.label,
+    defaultOn: c.defaultOn,
+    width: c.width,
+    group: c.group,
+  }));
   const evalCols = (columnOrder || []).map((c) => ({
     key: c.id,
     label: c.name || c.id,
     defaultOn: true,
     width: 150,
-    group: "Evaluations",
+    group: c.kind === "sub_goal" ? "Sub-goal Results" : "Evaluations",
   }));
   return [...staticCols, ...evalCols];
 }

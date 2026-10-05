@@ -51,9 +51,11 @@ describe("TraceTable interruption metrics", () => {
       );
 
       expect(
-        screen.getAllByRole("columnheader").map((cell) => cell.textContent),
+        within(document.querySelector("thead tr:last-of-type"))
+          .getAllByRole("columnheader")
+          .map((cell) => cell.textContent),
       ).toEqual(["Run details", "Stop latency", "AI interruptions"]);
-      const cells = within(screen.getAllByRole("row")[1]).getAllByRole("cell");
+      const cells = within(screen.getAllByRole("row")[2]).getAllByRole("cell");
       expect(cells[1]).toHaveTextContent(latencyText);
       expect(cells[2]).toHaveTextContent(countText);
     },
@@ -164,7 +166,7 @@ describe("TraceTable — sticky header and group rows", () => {
     ["A", "B"].forEach((label) => {
       const td = screen.getByText(label).closest("td");
       expect(position(td)).toBe("sticky");
-      expect(window.getComputedStyle(td).top).toBe("44px");
+      expect(window.getComputedStyle(td).top).toBe("72px");
     });
   });
 
@@ -194,9 +196,9 @@ describe("TraceTable — call status column", () => {
 
   it("sits between Run details and Persona", () => {
     render(table());
-    const heads = [...document.querySelectorAll("thead th")].map((th) =>
-      th.textContent.trim(),
-    );
+    const heads = [
+      ...document.querySelectorAll("thead tr:last-of-type th"),
+    ].map((th) => th.textContent.trim());
     expect(heads.slice(0, 3)).toEqual(["Run details", "Status", "Persona"]);
   });
 
@@ -215,6 +217,26 @@ describe("TraceTable — call status column", () => {
   it("shows no completed count while only some of the group's calls are loaded", () => {
     render(table({ groups: [{ ...statusGroups[0], count: 25 }] }));
     expect(screen.queryByText(/completed$/)).toBeNull();
+  });
+});
+
+describe("TraceTable — column group band", () => {
+  it("heads sub-goal checks with Sub-goal Results, ahead of the evaluations", () => {
+    render(
+      table({
+        columns: new Set(["callDetails", "subGoalEvals", "evals"]),
+        subGoalEvals: [{ id: "sg-1", name: "pin_verified" }],
+        evals: [{ id: "e1", name: "Tone" }],
+      }),
+    );
+    const band = [...document.querySelectorAll("thead tr:first-of-type th")].map(
+      (th) => th.textContent.trim(),
+    );
+    expect(band).toEqual(["Run details", "Sub-goal Results", "Evaluations"]);
+    const heads = [...document.querySelectorAll("thead tr:last-of-type th")].map(
+      (th) => th.textContent.trim(),
+    );
+    expect(heads.slice(-2)).toEqual(["pin_verified", "Tone"]);
   });
 });
 
@@ -254,14 +276,33 @@ describe("TraceTable — group row while its calls run", () => {
   // The group row's cell under a column header, so the checks hold whatever
   // other columns the table has.
   const cellUnder = (heading) => {
-    const heads = [...document.querySelectorAll("thead th")].map((th) =>
-      th.textContent.trim(),
-    );
+    const heads = [
+      ...document.querySelectorAll("thead tr:last-of-type th"),
+    ].map((th) => th.textContent.trim());
     return screen.getByText("G").closest("tr").children[heads.indexOf(heading)];
   };
   const COLUMNS = ["CSAT", "Turns", "Latency", "Tokens", "Tone"];
   const loads = (heading) =>
     cellUnder(heading).querySelector(".MuiSkeleton-root") !== null;
+  // The sub-goal count comes from the rows on this page, so it only shows
+  // once the whole group is here.
+  const subGoalColumns = new Set(["callDetails", "subGoals"]);
+  const subGoalCalls = [
+    {
+      ...call("g1", "completed"),
+      subGoals: ["pin_verified", "exact_greeting"],
+    },
+  ];
+
+  it("hides the sub-goal count while some of the group's calls are on another page", () => {
+    renderGroup({ rows: subGoalCalls, count: 2 }, { columns: subGoalColumns });
+    expect(cellUnder("Sub-goals")).toHaveTextContent("-");
+  });
+
+  it("counts the group's distinct sub-goals once every call is on the page", () => {
+    renderGroup({ rows: subGoalCalls, count: 1 }, { columns: subGoalColumns });
+    expect(cellUnder("Sub-goals")).toHaveTextContent("2 sub-goals");
+  });
 
   it("shows a skeleton in each empty metric and eval cell while a call is running", () => {
     renderGroup({ rows: [call("g1", "ongoing"), call("g2", "completed")] });

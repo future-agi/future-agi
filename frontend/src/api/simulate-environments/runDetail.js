@@ -514,7 +514,9 @@ export function mapCallDetail(raw) {
     raw.eval_metrics && typeof raw.eval_metrics === "object"
       ? raw.eval_metrics
       : {};
+  // A sub-goal check is the scenario's, not an eval: the evals tab skips it.
   const evalResults = Object.entries(evalMetrics)
+    .filter(([, data]) => data?.kind !== "sub_goal")
     .map(([id, data]) => callEvalResult(id, data))
     .filter(Boolean);
 
