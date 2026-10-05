@@ -551,7 +551,7 @@ test('an audio-grounded finding survives the verifier and publishes its audio re
         statement: 'When the call reached a Spanish voicemail greeting, the agent repeated its English opener instead of leaving a message.',
         requirement_id: 'voicemail', evidence_ids: [audioEvidence, spanEvidence], recovery: 'unrecovered',
         attribution: {origin: role('unknown'), decisive: role('supported', [audioEvidence]), symptom: role('unknown')}}]};
-    let controllerStep = 0, verifierInput;
+    let controllerStep = 0, verifierInput, verifierSystem;
     const result = await investigateTrace(claim, {scratchRoot: scratch,
       resolveRecording: async () => ({url: 'https://media.example.test/call.wav', format: 'wav'}),
       fetchEvidence: async (c, path) => storeEvidence([Buffer.from(raw + '\n')], path, c),
@@ -565,6 +565,7 @@ test('an audio-grounded finding survives the verifier and publishes its audio re
                 speaker: 'voicemail', confidence: 0.95}], metrics: [], uncertainty: null})};
           } else if (request.messages.find(m => m.role === 'system').content.includes('Independently check')) {
             verifierInput = JSON.parse(request.messages.find(m => m.role === 'user').content);
+            verifierSystem = request.messages.find(m => m.role === 'system').content;
             message = {role: 'assistant', content: JSON.stringify(assessment)};
           } else if (controllerStep++ === 0) {
             message = {role: 'assistant', content: '', tool_calls: [{id: 'read-span', type: 'function',
@@ -589,6 +590,8 @@ test('an audio-grounded finding survives the verifier and publishes its audio re
     const published = result.evidence_receipts.find(item => item.evidence_id === audioEvidence);
     assert.equal(published.span_id, row.id);
     assert.match(published.excerpt, /^Audio model observation of the recording/);
+    assert.match(verifierSystem, /primary evidence of what was said and heard/);
+    assert.match(verifierSystem, /Timed transcript words are still evidence that speech happened/);
   } finally {await rm(scratch, {recursive: true, force: true});}
 });
 
