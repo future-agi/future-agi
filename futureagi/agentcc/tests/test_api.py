@@ -2268,6 +2268,93 @@ class TestAnalyticsOverview:
         assert response.json()["result"]["total_requests"]["value"] == 10
 
 
+# The gateway key id the proxy stamps on every request log. It is the value
+# `AgentccRequestLog.api_key_id` (a CharField) holds and the value
+# `AgentccAPIKey.gateway_key_id` is matched on during log ingestion, so it is
+# what the dashboard has to filter by. It is not, and never was, a UUID.
+GATEWAY_KEY_ID = "gw-key-7f3a"
+
+
+@pytest.fixture
+def keyed_logs(organization, workspace):
+    """Two logs stamped with a gateway key id, one without."""
+    now = timezone.now()
+    created = []
+    for request_id, key_id in (
+        ("keyed-req-001", GATEWAY_KEY_ID),
+        ("keyed-req-002", GATEWAY_KEY_ID),
+        ("keyed-req-003", "gw-key-other"),
+    ):
+        created.append(
+            AgentccRequestLog.objects.create(
+                organization=organization,
+                workspace=workspace,
+                request_id=request_id,
+                model="gpt-4",
+                provider="openai",
+                status_code=200,
+                latency_ms=100,
+                cost=Decimal("0.001000"),
+                input_tokens=10,
+                output_tokens=10,
+                total_tokens=20,
+                is_error=False,
+                api_key_id=key_id,
+                started_at=now,
+            )
+        )
+    return created
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestApiKeyIdFilter:
+    """`api_key_id` filters on gateway key ids, which are not UUIDs."""
+
+    def test_overview_accepts_gateway_key_id(self, auth_client, keyed_logs):
+        response = auth_client.get(
+            f"/agentcc/analytics/overview/?api_key_id={GATEWAY_KEY_ID}"
+        )
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["result"]["total_requests"]["value"] == 2
+
+    def test_overview_blank_api_key_id_is_no_filter(self, auth_client, keyed_logs):
+        """An unset filter arrives as `api_key_id=`; that is not a failure."""
+        response = auth_client.get("/agentcc/analytics/overview/?api_key_id=")
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["result"]["total_requests"]["value"] == 3
+
+    def test_overview_rejects_impossible_key_reference(self, auth_client):
+        """Longer than the column can hold: a real bad reference still errors."""
+        response = auth_client.get(
+            "/agentcc/analytics/overview/?api_key_id=" + "x" * 256
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "api_key_id" in response.json()["result"]
+
+    def test_request_logs_accept_gateway_key_id(self, auth_client, keyed_logs):
+        response = auth_client.get(
+            f"/agentcc/request-logs/?api_key_id={GATEWAY_KEY_ID}"
+        )
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["count"] == 2
+        assert {row["request_id"] for row in data["results"]} == {
+            "keyed-req-001",
+            "keyed-req-002",
+        }
+
+    def test_request_logs_blank_api_key_id_is_no_filter(self, auth_client, keyed_logs):
+        response = auth_client.get("/agentcc/request-logs/?api_key_id=")
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["count"] == 3
+
+    def test_request_logs_reject_impossible_key_reference(self, auth_client):
+        response = auth_client.get("/agentcc/request-logs/?api_key_id=" + "x" * 256)
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "api_key_id" in response.json()["result"]
+
+
 @pytest.mark.integration
 @pytest.mark.api
 class TestAnalyticsUsageTimeseries:

@@ -19,7 +19,10 @@ import {
   Box,
 } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
+import { useQueryClient } from "@tanstack/react-query";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 import {
+  gatewayConfigRefreshFailed,
   useUpdateProvider,
   useFetchProviderModels,
 } from "./hooks/useGatewayConfig";
@@ -214,6 +217,7 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
   // The body scrolls, so a failed Save has to bring the summary back into view.
   const contentRef = useRef(null);
 
+  const queryClient = useQueryClient();
   const updateProvider = useUpdateProvider();
   const fetchModels = useFetchProviderModels();
   const [modelOptions, setModelOptions] = useState([]);
@@ -634,17 +638,29 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
       { gatewayId, name, config },
       {
         onSuccess: () => {
-          enqueueSnackbar(
-            isEditMode
-              ? `Provider "${name}" updated`
-              : `Provider "${name}" added`,
-            { variant: "success" },
-          );
+          // The write landed. Only the re-read that follows it can still have
+          // failed, and that is a stale screen, not a lost save — say which.
+          const saved = isEditMode
+            ? `Provider "${name}" updated`
+            : `Provider "${name}" added`;
+          if (gatewayConfigRefreshFailed(queryClient)) {
+            enqueueSnackbar(
+              `${saved}, but the provider list could not be reloaded — refresh the page to see it.`,
+              { variant: "warning" },
+            );
+          } else {
+            enqueueSnackbar(saved, { variant: "success" });
+          }
           handleClose();
         },
-        onError: () => {
+        onError: (err) => {
           enqueueSnackbar(
-            isEditMode ? "Failed to update provider" : "Failed to add provider",
+            getSafeActionErrorMessage(
+              err,
+              isEditMode
+                ? "Failed to update provider"
+                : "Failed to add provider",
+            ),
             { variant: "error" },
           );
         },
