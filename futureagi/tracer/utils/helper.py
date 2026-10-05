@@ -340,7 +340,15 @@ def update_column_config_based_on_eval_config(
     property_source: str | None = None,
     target_types: dict[str, str | None] | None = None,
     observed_choice_labels: dict[str, list[str]] | None = None,
+    count_mode: bool = False,
 ):
+    """Append one column per eval config (or per choice for CHOICES evals).
+
+    ``count_mode`` marks the Observe trace/span lists, whose Pass/Fail and
+    Choices cells are roll-up counts ("2 pass / 1 fail"), not averages. Those
+    columns are named without the ``Avg.`` prefix. Score columns are still a
+    mean in every view and keep it.
+    """
     if not column_config:
         column_config = []
 
@@ -374,8 +382,15 @@ def update_column_config_based_on_eval_config(
                     )
                 )
 
-        # For simulator projects, don't add "Avg." prefix
-        name_prefix = "" if is_simulator else "Avg. "
+        # For simulator projects, don't add "Avg." prefix. A count-mode
+        # roll-up tile is a count, not an average (TH-8106).
+        is_count_tile = (
+            count_mode
+            and skip_choices
+            and _normalize_eval_output_type(output_type)
+            in {"PASS_FAIL", "CHOICE", "CHOICES"}
+        )
+        name_prefix = "" if is_simulator or is_count_tile else "Avg. "
 
         eval_template_id = str(item.eval_template.id)
 

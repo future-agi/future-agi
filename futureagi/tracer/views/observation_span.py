@@ -2700,6 +2700,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             skip_choices=True,
             target_types=eval_target_types,
             observed_choice_labels=eval_observed_choice_labels,
+            count_mode=True,
         )
         column_config = update_span_column_config_based_on_annotations(
             column_config, annotation_labels
