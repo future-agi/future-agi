@@ -414,6 +414,19 @@ describe("RunAnalytics", () => {
     ).toBeInTheDocument();
   });
 
+  it("renders when the response has no reliability block", () => {
+    const data = structuredClone(analytics);
+    delete data.reliability;
+    useRunAnalytics.mockReturnValue({ data, isPending: false, isError: false });
+
+    render(<RunAnalytics executionId="execution-1" />);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Show detailed analytics" }),
+    );
+
+    expect(screen.getByText(/0 scenarios × 0 trials/)).toBeInTheDocument();
+  });
+
   it("distinguishes evaluated-trial row verdicts from the strict pass tile", () => {
     const data = structuredClone(analytics);
     data.reliability.scenarios = 5;

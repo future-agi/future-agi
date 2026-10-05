@@ -224,7 +224,8 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
           provider: task.provider,
         })
     : undefined;
-  const { summary, reliability } = data;
+  const { summary } = data;
+  const reliability = data.reliability ?? {};
   const interval = reliability?.pass_rate_interval;
   const evalSummary = dashboard.evaluation_summary;
   const subtitles = {
@@ -235,7 +236,7 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
       "The provider's own judgement as reported; it never replaces your evals",
     sentiment:
       "As reported by the provider; the platform does not compute sentiment",
-    reliability: `${reliability.scenarios} scenarios × ${reliability.trials} trial${reliability.trials === 1 ? "" : "s"}${interval ? ` · pass rate 95% range ${format(interval.low, "percent")}–${format(interval.high, "percent")}` : ""}`,
+    reliability: `${reliability.scenarios ?? 0} scenarios × ${reliability.trials ?? 0} trial${reliability.trials === 1 ? "" : "s"}${interval ? ` · pass rate 95% range ${format(interval.low, "percent")}–${format(interval.high, "percent")}` : ""}`,
     evaluations: `${evalSummary.graders} evals · ${evalSummary.passed} of ${evalSummary.measured} evaluated calls passed every eval (${format(evalSummary.pass_rate, "percent")})${evalSummary.errored_checks ? ` · ${evalSummary.errored_checks} checks could not run` : ""}`,
     csat: "Scorer CSAT on a 0–10 scale; a provider success flag is never mixed in",
     response_time:
