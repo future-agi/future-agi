@@ -213,6 +213,49 @@ class TestUsersEndpointNamesProjects:
             str(deleted.id),
         ]
 
+    def test_dashboard_projection_with_project_name_is_accepted(
+        self, auth_client, organization, workspace
+    ):
+        # /dashboard/users now lists `project_name` among its visible columns,
+        # so it rides in `requested_columns`; the API must accept it.
+        support = self._project(organization, workspace, "Support Bot")
+        with patch.object(
+            UsersListManager,
+            "_fetch_rows",
+            return_value=([_user_row(support.id)], 1, MagicMock()),
+        ):
+            response = auth_client.get(
+                "/tracer/users/",
+                {
+                    "page_size": 25,
+                    "current_page_index": 0,
+                    "requested_columns": '["user_id", "project_name"]',
+                },
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["result"]["table"][0]["project_name"] == "Support Bot"
+
+    def test_csv_export_names_each_row_through_the_cursor_wrapper(
+        self, auth_client, organization, workspace
+    ):
+        # Real view export branch -> real list_cursor_payload wrapper -> real
+        # iter_export_csv; only the ClickHouse page read is stubbed.
+        support = self._project(organization, workspace, "Support Bot")
+        sales = self._project(organization, workspace, "Sales Bot")
+        page = _cursor_read([_user_row(support.id), _user_row(sales.id)])
+        with patch.object(UsersListManager, "_read_cursor_page", return_value=page):
+            response = auth_client.get("/tracer/users/", {"export": "true"})
+            body = b"".join(response.streaming_content).decode("utf-8")
+
+        assert response.status_code == status.HTTP_200_OK
+        header, *rows = [r for r in csv.reader(io.StringIO(body)) if r]
+        assert header[-1] == "Project"
+        assert [(row[0], row[-1]) for row in rows] == [
+            ("user_123", "Support Bot"),
+            ("user_123", "Sales Bot"),
+        ]
+
 
 class TestUsersExportNamesProject:
     def test_export_appends_project_and_keeps_existing_column_positions(self):
@@ -226,3 +269,14 @@ class TestUsersExportNamesProject:
         assert header == [name for name, _ in USERS_EXPORT_COLUMNS]
         assert data[0] == "user_123"
         assert data[-1] == "Support Bot"
+
+    def test_export_guards_a_formula_project_name(self):
+        # Project names are customer-controlled text; the CSV-injection guard
+        # must cover the new column like every other string cell.
+        manager = _manager(project_id=SUPPORT)
+        row = {**_user_row(SUPPORT), "project_name": '=HYPERLINK("https://x")'}
+
+        body = "".join(manager.iter_export_csv(cursor_read=_cursor_read([row])))
+        _header, data = [r for r in csv.reader(io.StringIO(body)) if r]
+
+        assert data[-1] == '\'=HYPERLINK("https://x")'
