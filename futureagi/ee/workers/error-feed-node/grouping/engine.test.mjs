@@ -308,6 +308,8 @@ test('discovery and reconciliation prompts ask for plain-language titles and des
     })});
   assert.ok(seen.has('discovery') && seen.has('merge_review'));
   for (const instructions of seen.values()) assert.ok(instructions.includes(issueWording));
+  assert.match(issueWording, /agent the subject of the title, in active voice, and never stack more than three nouns/);
+  assert.match(issueWording, /short sentences of at most 25 words/);
 });
 
 test('reconciliation split retires the source and partitions all current members', async () => {

@@ -93,7 +93,11 @@ test('controller and verifier ask for plain-language finding statements', async 
         }}});
     assert.equal(result.execution_status, 'completed');
     assert.equal(systems.length, 2);
-    for (const system of systems) assert.match(system, /finding statement in plain words for a product reader/);
+    for (const system of systems) {
+      assert.match(system, /finding statement in plain words for a product reader/);
+      assert.match(system, /short sentences of at most 25 words, one idea each, in active voice/);
+      assert.match(system, /Never stack more than three nouns in a row/);
+    }
   } finally { await rm(scratch, {recursive: true, force: true}); }
 });
 
@@ -445,7 +449,11 @@ test('simulation investigation reads call evidence and returns a scoped report',
     assert.deepEqual(controlCalls, [{path: `/attempts/${claim.attempt_id}/simulation-evidence/`,
       body: {lease_token: claim.lease_token, cursor: 0}}]);
     assert.ok(systems.length > 0);
-    for (const system of systems) assert.match(system, /finding statement in plain words for a product reader/);
+    for (const system of systems) {
+      assert.match(system, /finding statement in plain words for a product reader/);
+      assert.match(system, /short sentences of at most 25 words, one idea each, in active voice/);
+      assert.match(system, /Never stack more than three nouns in a row/);
+    }
   } finally {
     await rm(scratch, {recursive: true, force: true});
   }
