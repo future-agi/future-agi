@@ -9,6 +9,7 @@ criteria: |-
   2. Match each issue to a direct answer, necessary clarification, or relevant limitation; answering one part does not satisfy the others.
   3. Track deferred and repeated questions until addressed; a completed task or repeated acknowledgment does not erase unanswered issues.
   4. Judge importance and scope from the interaction, not assumed domain rules or the agent's unsupported claim that a question is unrelated.
+  5. Address the requested subject and expressed language needs; unrelated or unintelligible replies do not resolve the query.
 
   ## Anti-bias Rules
   - Allow genuine clarification and relevant admissions of uncertainty; do not require invented answers or unavailable capabilities.
@@ -18,7 +19,7 @@ criteria: |-
 
   ## Scoring
   - Select 'never' when no substantive issue is meaningfully handled or misunderstanding and nonanswers dominate.
-  - Select 'occasionally' for material gaps, persistent nonanswer loops, or an unresolved issue explicitly essential to the user's decision or outcome.
+  - Select 'occasionally' for material gaps, persistent nonanswer loops, or an unresolved main request or explicitly essential issue.
   - Select 'frequently' when most issues are handled, with only minor omissions or brief repaired misunderstanding and no 'occasionally' condition.
   - Select 'always' when every assessable substantive part is appropriately addressed without material misunderstanding or unresolved omission; genuine clarification is allowed.
 
@@ -68,6 +69,7 @@ config:
     2. Match each issue to a direct answer, necessary clarification, or relevant limitation; answering one part does not satisfy the others.
     3. Track deferred and repeated questions until addressed; a completed task or repeated acknowledgment does not erase unanswered issues.
     4. Judge importance and scope from the interaction, not assumed domain rules or the agent's unsupported claim that a question is unrelated.
+    5. Address the requested subject and expressed language needs; unrelated or unintelligible replies do not resolve the query.
 
     ## Anti-bias Rules
     - Allow genuine clarification and relevant admissions of uncertainty; do not require invented answers or unavailable capabilities.
@@ -77,7 +79,7 @@ config:
 
     ## Scoring
     - Select 'never' when no substantive issue is meaningfully handled or misunderstanding and nonanswers dominate.
-    - Select 'occasionally' for material gaps, persistent nonanswer loops, or an unresolved issue explicitly essential to the user's decision or outcome.
+    - Select 'occasionally' for material gaps, persistent nonanswer loops, or an unresolved main request or explicitly essential issue.
     - Select 'frequently' when most issues are handled, with only minor omissions or brief repaired misunderstanding and no 'occasionally' condition.
     - Select 'always' when every assessable substantive part is appropriately addressed without material misunderstanding or unresolved omission; genuine clarification is allowed.
 
