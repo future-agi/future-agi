@@ -68,21 +68,26 @@ export default function TraceGroupHeaderRow({
 
   const descColumns = DESC_KEYS.filter((k) => show(k));
   const a = group.agg || {};
+  const uniqueBy = (fn) => new Set(group.rows.map(fn).filter(Boolean)).size;
+  const personaCount = uniqueBy((t) => t.persona);
 
   const descSummary = (key) => {
     if (key === "status") {
       // The group's calls load a page at a time, so only count once all of
       // them are here — a partial count would read as the whole group.
-      if (group.rows.length < group.count) return null;
+      if (group.rows.length < group.count) return "-";
       const done = group.rows.filter(
         (t) => t.executionStatus === "completed",
       ).length;
       return `${done}/${group.count} completed`;
     }
-    // Left empty: the page only holds part of the group's calls, so a persona
-    // count would be the page's share, and a scenario count would repeat the
-    // task count (one call per scenario trial).
-    if (key === "persona" || key === "scenario") return null;
+    if (key === "persona")
+      return personaCount
+        ? `${personaCount} persona${personaCount === 1 ? "" : "s"}`
+        : "-";
+    // Left empty: a scenario count would repeat the task count (one call per
+    // scenario trial).
+    if (key === "scenario") return null;
     if (key === "situation")
       return `${group.count} situation${group.count === 1 ? "" : "s"}`;
     if (key === "subGoals") {
