@@ -21,6 +21,10 @@ from model_hub.models.evals_metric import EvalTemplate, UserEvalMetric
 from model_hub.models.experiments import ExperimentDatasetTable, ExperimentPromptConfig
 from model_hub.services.column_service import create_experiment_column
 from model_hub.views.experiment_runner import ExperimentRunner
+
+# Import aliases before patching: otherwise client.py can capture a mock bridge
+# bound to the first parametrized test's subsequently closed event loop.
+from tfc.temporal.experiments import client as experiment_client
 from tfc.temporal.experiments import (
     get_activities,
     get_workflows,
@@ -142,7 +146,9 @@ async def _wait_until(check, timeout, description):
 
 
 @pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("finish_mode", ["complete", "stop", "already-completed"])
 async def test_put_add_eval_preserves_inflight_run(
+    finish_mode,
     workflow_environment,
     experiment,
     snapshot_dataset,
@@ -153,6 +159,8 @@ async def test_put_add_eval_preserves_inflight_run(
     organization,
 ):
     release = threading.Event()
+    if finish_mode == "already-completed":
+        release.set()
     test_loop = asyncio.get_running_loop()
     client = workflow_environment.client
 
@@ -285,6 +293,14 @@ async def test_put_add_eval_preserves_inflight_run(
                     fn(), test_loop
                 ).result(timeout=60),
             ),
+            patch.object(
+                experiment_client,
+                "_run_async_in_sync_context",
+                side_effect=lambda fn: asyncio.run_coroutine_threadsafe(
+                    fn(), test_loop
+                ).result(timeout=60),
+            ),
+            patch.object(experiment_client, "get_client", get_client),
             patch(
                 "tfc.temporal.experiments.activities._process_row_sync",
                 side_effect=process_row,
@@ -313,21 +329,58 @@ async def test_put_add_eval_preserves_inflight_run(
                 main_handle = client.get_workflow_handle(
                     main_workflow_id, run_id=initial_run.run_id
                 )
-                await _wait_until(
-                    outputs_inflight, 30, "fast PASS and slow RUNNING outputs"
-                )
+                if finish_mode == "already-completed":
+                    await asyncio.wait_for(main_handle.result(), timeout=60)
+                else:
+                    await _wait_until(
+                        outputs_inflight, 30, "fast PASS and slow RUNNING outputs"
+                    )
                 response = await sync_to_async(api_client.put)(
                     f"/model-hub/experiments/v2/{experiment.id}/",
                     payload,
                     format="json",
                 )
                 assert response.status_code == 200, response.data
-                await asyncio.sleep(4)
+                if finish_mode != "already-completed":
+
+                    @sync_to_async
+                    def queued_status():
+                        experiment.refresh_from_db()
+                        metric = experiment.user_eval_template_ids.get(
+                            name="Added input and output eval"
+                        )
+                        statuses = list(
+                            Cell.objects.filter(
+                                column__source=SourceChoices.EXPERIMENT_EVALUATION.value,
+                                column__source_id__endswith=f"-sourceid-{metric.id}",
+                            ).values_list("status", flat=True)
+                        )
+                        return experiment.status, statuses
+
+                    exp_status, queued_cells = await queued_status()
+                    assert exp_status == StatusType.RUNNING.value
+                    assert queued_cells == [CellStatus.RUNNING.value] * (row_count * 2)
+                    if finish_mode == "stop":
+                        await asyncio.sleep(1)
+                        stop_response = await sync_to_async(api_client.post)(
+                            f"/model-hub/experiments/v2/{experiment.id}/stop/",
+                            {},
+                            format="json",
+                        )
+                        assert stop_response.status_code == 200, stop_response.data
+                    else:
+                        await asyncio.sleep(4)
                 release.set()
                 await _wait_until(
                     all_closed, 90, "all cells and experiment workflows to finish"
                 )
                 main_status = (await main_handle.describe()).status
+                main_result = await main_handle.result()
+                main_result_status = (
+                    main_result.get("status")
+                    if isinstance(main_result, dict)
+                    else main_result.status
+                )
                 await asyncio.sleep(0.1)
     finally:
         release.set()
@@ -359,7 +412,18 @@ async def test_put_add_eval_preserves_inflight_run(
         return outputs, evals
 
     outputs, evals = await final_cells()
+    if finish_mode == "stop":
+        assert main_result_status == "CANCELLED"
+        assert evals == [CellStatus.ERROR.value] * (row_count * 2)
+        assert not any(
+            name.startswith("Added input and output eval") and value == "Passed"
+            for _, name, _, _, value, _ in recorder.timeline
+        ), "Queued evaluation ran after Stop"
+        assert not recorder.errors, recorder.errors
+        return
     failures = []
+    if main_result_status == "CANCELLED":
+        failures.append("Main workflow returned CANCELLED")
     if any(
         value == "Execution was stopped by user"
         or reason == "Execution was stopped by user"

@@ -47,11 +47,57 @@ def queue_eval_only_rerun(experiment, eval_template_ids) -> str | None:
 
     experiment.status = StatusType.RUNNING.value
     experiment.save(update_fields=["status"])
-    return start_experiment_eval_rerun_workflow(
-        experiment_id=str(experiment.id),
-        dataset_id=str(snapshot.id),
-        eval_template_ids=[str(eval_id) for eval_id in ids],
+    try:
+        return start_experiment_eval_rerun_workflow(
+            experiment_id=str(experiment.id),
+            dataset_id=str(snapshot.id),
+            eval_template_ids=[str(eval_id) for eval_id in ids],
+        )
+    except Exception:
+        fail_eval_only_rerun(
+            experiment, ids, "Could not queue evaluation. Retry evaluation."
+        )
+        raise
+
+
+def fail_eval_only_rerun(experiment, eval_template_ids, reason):
+    """Close scoped queued evaluations without cancelling output generation."""
+    from model_hub.models.develop_dataset import Cell
+    from model_hub.views.experiment_runner import check_and_update_experiment_status
+
+    snapshot = experiment.snapshot_dataset
+    if snapshot is None:
+        return
+    targets = Q(pk__in=[])
+    eval_sources = [
+        SourceChoices.EXPERIMENT_EVALUATION.value,
+        SourceChoices.EVALUATION.value,
+        SourceChoices.EVALUATION_REASON.value,
+        SourceChoices.EVALUATION_TAGS.value,
+        SourceChoices.EXPERIMENT_EVALUATION_TAGS.value,
+    ]
+    for eval_id in eval_template_ids:
+        targets |= Q(source_id__endswith=f"-sourceid-{eval_id}") | Q(
+            source_id=str(eval_id)
+        )
+    columns = Column.objects.filter(
+        targets, dataset=snapshot, deleted=False, source__in=eval_sources
     )
+    Cell.objects.filter(
+        dataset=snapshot,
+        column__in=columns,
+        deleted=False,
+        status=CellStatus.RUNNING.value,
+    ).update(
+        status=CellStatus.ERROR.value,
+        value="error",
+        value_infos=json.dumps({"reason": reason}),
+    )
+    columns.filter(status=StatusType.RUNNING.value).update(
+        status=StatusType.COMPLETED.value
+    )
+    if not is_experiment_cancelled(experiment.id):
+        check_and_update_experiment_status(experiment.id)
 
 
 def is_experiment_cancelled(experiment_id: uuid.UUID) -> bool:

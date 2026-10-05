@@ -275,6 +275,15 @@ class WaitForExperimentRunsInput:
 
 
 @dataclass
+class FailEvalOnlyRerunInput:
+    """Close only this eval rerun's loading cells after a wait failure."""
+
+    experiment_id: str
+    eval_template_ids: List[str]
+    reason: str = "Could not wait for final outputs. Retry evaluation."
+
+
+@dataclass
 class WaitForExperimentRunsOutput:
     """Outcome of waiting for output-producing experiment runs."""
 
@@ -589,6 +598,7 @@ __all__ = [
     "CleanupRunningCellsInput",
     "CleanupRunningCellsOutput",
     # V2 activity types
+    "FailEvalOnlyRerunInput",
     "WaitForExperimentRunsInput",
     "WaitForExperimentRunsOutput",
     "SetupPromptV2Input",

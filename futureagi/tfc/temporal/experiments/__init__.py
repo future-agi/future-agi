@@ -52,6 +52,7 @@ from tfc.temporal.experiments.types import (  # V2 types; Rerun cells types; Err
     SetupExperimentOutput,
     SetupPromptV2Input,
     SetupPromptV2Output,
+    FailEvalOnlyRerunInput,
     WaitForExperimentRunsInput,
     WaitForExperimentRunsOutput,
 )
@@ -94,6 +95,7 @@ def get_activities():
         setup_prompt_v2_activity,
         stop_experiment_cleanup_activity,
         wait_for_experiment_runs_activity,
+        fail_eval_only_rerun_activity,
     )
 
     return [
@@ -119,6 +121,7 @@ def get_activities():
         create_error_eval_cells_activity,
         create_error_agent_cells_activity,
         wait_for_experiment_runs_activity,
+        fail_eval_only_rerun_activity,
     ]
 
 
@@ -314,6 +317,7 @@ __all__ = [
     # Rerun cells types & workflow
     "MarkExperimentRunningInput",
     "MarkExperimentRunningOutput",
+    "FailEvalOnlyRerunInput",
     "WaitForExperimentRunsInput",
     "WaitForExperimentRunsOutput",
     "RerunCellsV2WorkflowInput",

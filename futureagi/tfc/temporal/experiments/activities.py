@@ -16,6 +16,7 @@ from typing import Optional
 from django.db import close_old_connections
 from temporalio import activity
 from temporalio.client import WorkflowExecutionStatus
+from temporalio.service import RPCError, RPCStatusCode
 
 from tfc.telemetry import otel_sync_to_async
 from tfc.temporal.common.heartbeat import Heartbeater
@@ -58,6 +59,7 @@ from tfc.temporal.experiments.types import (  # V2 types; Rerun cells types; Sto
     SetupPromptV2Output,
     StopExperimentCleanupInput,
     StopExperimentCleanupOutput,
+    FailEvalOnlyRerunInput,
     WaitForExperimentRunsInput,
     WaitForExperimentRunsOutput,
 )
@@ -70,15 +72,18 @@ from tfc.temporal.experiments.types import (  # V2 types; Rerun cells types; Sto
 async def _experiment_runs_in_flight(
     client, experiment_id: str, exclude_workflow_id: str
 ) -> list[str]:
-    """Find output-producing runs, using best-effort Temporal visibility."""
+    """Find output-producing runs; unknown observations remain pending."""
     running_ids = []
     main_workflow_id = f"experiment-{experiment_id}"
     try:
         description = await client.get_workflow_handle(main_workflow_id).describe()
         if description.status == WorkflowExecutionStatus.RUNNING:
             running_ids.append(main_workflow_id)
+    except RPCError as exc:
+        if exc.status != RPCStatusCode.NOT_FOUND:
+            running_ids.append(main_workflow_id)  # Unknown is not final.
     except Exception:
-        pass  # Main workflow does not exist or cannot be described
+        running_ids.append(main_workflow_id)
 
     rerun_prefix = f"rerun-experiment-cells-{experiment_id}-"
     eval_rerun_prefix = f"{rerun_prefix}evals-"
@@ -93,7 +98,7 @@ async def _experiment_runs_in_flight(
             ):
                 running_ids.append(workflow_info.id)
     except Exception:
-        pass  # Visibility may be unavailable
+        running_ids.append(f"{rerun_prefix}visibility-unknown")
 
     return running_ids
 
@@ -1249,6 +1254,26 @@ def _check_experiment_dataset_status_sync(entity_id: str) -> dict:
 # =============================================================================
 # Activities (async wrappers around sync functions)
 # =============================================================================
+
+
+@activity.defn
+async def fail_eval_only_rerun_activity(input: FailEvalOnlyRerunInput) -> None:
+    """Close this rerun's placeholders without failing a separate main run."""
+
+    def cleanup():
+        from model_hub.models.experiments import ExperimentsTable
+        from model_hub.services.experiment_utils import fail_eval_only_rerun
+
+        close_old_connections()
+        try:
+            experiment = ExperimentsTable.objects.get(
+                id=input.experiment_id, deleted=False
+            )
+            fail_eval_only_rerun(experiment, input.eval_template_ids, input.reason)
+        finally:
+            close_old_connections()
+
+    await otel_sync_to_async(cleanup, thread_sensitive=False)()
 
 
 @activity.defn
@@ -2875,6 +2900,7 @@ __all__ = [
     "CleanupRunningCellsInput",
     "CleanupRunningCellsOutput",
     # V2 types
+    "FailEvalOnlyRerunInput",
     "WaitForExperimentRunsInput",
     "WaitForExperimentRunsOutput",
     "SetupPromptV2Input",
@@ -2891,6 +2917,7 @@ __all__ = [
     "MarkExperimentRunningInput",
     "MarkExperimentRunningOutput",
     # Activities
+    "fail_eval_only_rerun_activity",
     "wait_for_experiment_runs_activity",
     "setup_experiment_activity",
     "process_prompt_activity",

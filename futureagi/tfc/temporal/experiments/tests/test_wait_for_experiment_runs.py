@@ -58,13 +58,18 @@ class FakeClient:
             False,
             ["rerun-experiment-cells-exp-prompt"],
         ),
-        (WorkflowExecutionStatus.RUNNING, [], True, []),
+        (
+            WorkflowExecutionStatus.RUNNING,
+            [],
+            True,
+            ["experiment-exp", "rerun-experiment-cells-exp-visibility-unknown"],
+        ),
     ],
     ids=[
         "main-running",
         "eval-and-self-excluded",
         "prompt-rerun",
-        "best-effort-errors",
+        "outage-keeps-waiting",
     ],
 )
 async def test_experiment_runs_in_flight(main_status, listed, fail, expected):
@@ -77,6 +82,20 @@ async def test_experiment_runs_in_flight(main_status, listed, fail, expected):
     assert client.queries == [
         "WorkflowId STARTS_WITH \"rerun-experiment-cells-exp-\" AND ExecutionStatus = 'Running'"
     ]
+
+
+async def test_not_found_main_is_absent_not_an_outage():
+    from temporalio.service import RPCError, RPCStatusCode
+
+    class NotFoundClient(FakeClient):
+        def get_workflow_handle(self, workflow_id):
+            async def describe():
+                raise RPCError("No such workflow", RPCStatusCode.NOT_FOUND, b"")
+
+            return SimpleNamespace(describe=describe)
+
+    client = NotFoundClient(WorkflowExecutionStatus.COMPLETED)
+    assert await activities._experiment_runs_in_flight(client, "exp", "self") == []
 
 
 @pytest.mark.parametrize(
