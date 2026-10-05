@@ -15,6 +15,7 @@
 package server
 
 import (
+	"compress/gzip"
 	"context"
 	"fmt"
 	"io"
@@ -34,6 +35,10 @@ import (
 	"go.opentelemetry.io/collector/pdata/ptrace/ptraceotlp"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	// Registers the gzip codec so OTLP/gRPC clients sending grpc-encoding: gzip
+	// (the OTel Collector's otlp exporter default) are decoded. MaxRecvMsgSize
+	// still bounds the decompressed message.
+	_ "google.golang.org/grpc/encoding/gzip"
 	"google.golang.org/grpc/stats"
 	"google.golang.org/grpc/status"
 )
@@ -414,7 +419,27 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 	}
 	ct = trimSpace(ct)
 
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxOTLPHTTPBodyBytes+1))
+	// OTLP requires servers to accept gzip, and the OTel Collector's otlphttp
+	// exporter sends it by default. The size cap below applies to the
+	// decompressed bytes, so a small gzip body can't expand past it.
+	src := io.Reader(r.Body)
+	switch enc := strings.ToLower(trimSpace(r.Header.Get("Content-Encoding"))); enc {
+	case "", "identity":
+	case "gzip":
+		zr, err := gzip.NewReader(r.Body)
+		if err != nil {
+			http.Error(w, "decode gzip: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		defer zr.Close()
+		src = zr
+	default:
+		w.Header().Set("Accept-Encoding", "gzip")
+		http.Error(w, "unsupported content encoding: "+enc, http.StatusUnsupportedMediaType)
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(src, maxOTLPHTTPBodyBytes+1))
 	if err != nil {
 		http.Error(w, "read body: "+err.Error(), http.StatusBadRequest)
 		return
