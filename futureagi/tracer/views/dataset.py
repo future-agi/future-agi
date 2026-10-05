@@ -10,12 +10,13 @@ from rest_framework.viewsets import ModelViewSet
 
 from model_hub.models.choices import DatasetSourceChoices, ModelTypes, SourceChoices
 from model_hub.models.develop_dataset import Column, Dataset
+from model_hub.utils.dataset_limit import DatasetLimitOutcome
 from model_hub.views.utils.dataset_limit import (
     DatasetLimitCheckFailed,
     DatasetLimitReached,
     dataset_limit_check_failed_response,
+    dataset_limit_reached_response,
 )
-from tfc.utils.api_errors import ApiErrorCode
 from tfc.utils.api_serializers import DatasetLimitCheckFailedErrorSerializer
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.error_codes import get_error_message
@@ -32,9 +33,13 @@ from tracer.tasks import CHUNK_SIZE, process_spans_chunk_task
 logger = structlog.get_logger(__name__)
 
 try:
-    from ee.usage.utils.usage_entries import check_if_dataset_creation_is_allowed
+    from ee.usage.utils.usage_entries import (
+        check_if_dataset_creation_is_allowed,
+        send_dataset_limit_alert,
+    )
 except ImportError:
     check_if_dataset_creation_is_allowed = None
+    send_dataset_limit_alert = None
 
 
 class DatasetView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
@@ -135,13 +140,14 @@ class DatasetView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
         except DatasetLimitCheckFailed:
             return dataset_limit_check_failed_response()
 
-        except DatasetLimitReached:
-            # 400, not the sibling routes' 429: the frontend shows a 429 only
-            # through the usage entry's upgrade alert, which this route does
-            # not send, so a 429 here would refuse without telling the user.
-            return self._gm.bad_request(
-                get_error_message("DATASET_CREATE_LIMIT_REACHED")
-            )
+        except DatasetLimitReached as reached:
+            # The sibling routes' refusal: 429 plus the upgrade alert, which is
+            # how the frontend tells the user about a 429. Unlike them this
+            # route records no DATASET_ADD usage row: it never has, and the
+            # limit counts Dataset rows, not usage rows.
+            if send_dataset_limit_alert is not None:
+                send_dataset_limit_alert(org, reached.limit)
+            return dataset_limit_reached_response()
 
         except (ValidationError, ValueError) as e:
             logger.exception(f"Error in creating dataset observe:  {str(e)}")
@@ -451,11 +457,12 @@ def create_new_dataset(new_dataset_name, organization, workspace, user_id):
         raise ValueError(get_error_message("DATASET_EXIST_IN_ORG"))
 
     if check_if_dataset_creation_is_allowed is not None:
-        allowed, detail = check_if_dataset_creation_is_allowed(organization)
-        if detail.get("error_code") == ApiErrorCode.DATASET_LIMIT_CHECK_FAILED:
+        # Observe creations are never SDK uploads, so the limit binds them.
+        check = check_if_dataset_creation_is_allowed(organization)
+        if check.outcome == DatasetLimitOutcome.UNVERIFIED:
             raise DatasetLimitCheckFailed
-        if not allowed:
-            raise DatasetLimitReached
+        if check.outcome == DatasetLimitOutcome.LIMIT_REACHED:
+            raise DatasetLimitReached(check.limit)
 
     return Dataset.no_workspace_objects.create(
         id=uuid.uuid4(),
