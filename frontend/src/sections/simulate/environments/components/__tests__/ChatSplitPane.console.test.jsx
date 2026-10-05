@@ -125,11 +125,16 @@ describe("ChatSplitPane with a long builder conversation", () => {
       screen.getByText(`user message ${TURN_COUNT + 2}`),
     ).toBeInTheDocument();
 
+    // jsdom reports scrollHeight 0; give the list a real height so the
+    // assertion pins where it scrolls, not just how.
+    Object.defineProperty(
+      screen.getByTestId("builder-console-list"),
+      "scrollHeight",
+      { configurable: true, value: 9876 },
+    );
     expand();
 
-    expect(scrollTo).toHaveBeenCalledWith(
-      expect.objectContaining({ behavior: "smooth" }),
-    );
+    expect(scrollTo).toHaveBeenCalledWith({ top: 9876, behavior: "smooth" });
     expect(chatPane()).toBeVisible();
     expect(screen.getAllByText(/^user message \d+$/)).toHaveLength(
       (TURN_COUNT + 3 + 1) / 2,

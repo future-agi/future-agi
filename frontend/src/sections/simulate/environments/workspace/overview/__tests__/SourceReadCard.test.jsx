@@ -16,7 +16,12 @@ describe("SourceReadCard", () => {
   });
 
   it("renders tools and rules from strings and objects", () => {
-    render(<SourceReadCard tools={[{ name: "lookup_order" }]} rules={[{ text: "Start in English." }]} />);
+    render(
+      <SourceReadCard
+        tools={[{ name: "lookup_order" }]}
+        rules={[{ text: "Start in English." }]}
+      />,
+    );
     expect(screen.getByText("lookup_order")).toBeInTheDocument();
     expect(screen.getByText("Start in English.")).toBeInTheDocument();
   });

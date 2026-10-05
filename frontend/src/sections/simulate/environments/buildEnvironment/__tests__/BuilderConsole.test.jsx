@@ -97,8 +97,14 @@ describe("BuilderConsole", () => {
       rerender(<BuilderConsole turns={[userTurn, builderTurn]} running={false} active={false} />);
       expect(scrollTo).not.toHaveBeenCalled();
 
+      // jsdom reports scrollHeight 0; give the list a real height so the
+      // assertion pins the target, not just the behaviour.
+      Object.defineProperty(screen.getByTestId("builder-console-list"), "scrollHeight", {
+        configurable: true,
+        value: 4321,
+      });
       rerender(<BuilderConsole turns={[userTurn, builderTurn]} running={false} active />);
-      expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({ behavior: "smooth" }));
+      expect(scrollTo).toHaveBeenCalledWith({ top: 4321, behavior: "smooth" });
       // scrollIntoView would also scroll the ancestors (the collapsing column).
       expect(scrollIntoView).not.toHaveBeenCalled();
     } finally {
