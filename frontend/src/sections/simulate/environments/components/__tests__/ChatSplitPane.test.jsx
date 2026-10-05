@@ -9,6 +9,7 @@ import {
   afterEach,
   vi,
 } from "vitest";
+import { act } from "@testing-library/react";
 import { render, screen, fireEvent } from "src/utils/test-utils";
 
 import ChatSplitPane from "../ChatSplitPane";
@@ -353,6 +354,85 @@ describe("ChatSplitPane", () => {
       // Hidden by visibility (after the fade), which also drops it from the
       // accessibility tree and the tab order.
       expect(chatPane()).not.toBeVisible();
+    });
+  });
+
+  describe("container width", () => {
+    // jsdom has no layout: stub the measured width and capture the
+    // ResizeObserver callback so a window resize can be replayed.
+    let containerWidth;
+    let resizeCallbacks;
+    let OriginalResizeObserver;
+
+    beforeEach(() => {
+      containerWidth = 900;
+      resizeCallbacks = [];
+      OriginalResizeObserver = globalThis.ResizeObserver;
+      globalThis.ResizeObserver = class {
+        constructor(cb) {
+          resizeCallbacks.push(cb);
+        }
+        observe() {}
+        disconnect() {}
+      };
+      vi.spyOn(
+        HTMLElement.prototype,
+        "getBoundingClientRect",
+      ).mockImplementation(() => ({
+        width: containerWidth,
+        height: 600,
+        top: 0,
+        left: 0,
+        right: containerWidth,
+        bottom: 600,
+      }));
+    });
+
+    afterEach(() => {
+      globalThis.ResizeObserver = OriginalResizeObserver;
+    });
+
+    const resizeContainer = (width) => {
+      containerWidth = width;
+      act(() => {
+        resizeCallbacks.forEach((cb) => cb([{ contentRect: { width } }]));
+      });
+    };
+
+    it("keeps the right pane at least 480px wide", () => {
+      renderSplit();
+      for (let i = 0; i < 20; i += 1) {
+        fireEvent.keyDown(separator(), { key: "ArrowRight", shiftKey: true });
+      }
+      expect(chatPane()).toHaveStyle({ width: "420px" });
+    });
+
+    it("tells assistive tech the real maximum for this container", () => {
+      renderSplit();
+      expect(separator()).toHaveAttribute("aria-valuemax", "420");
+      resizeContainer(1400);
+      expect(separator()).toHaveAttribute(
+        "aria-valuemax",
+        String(CHAT_PANE_MAX_WIDTH),
+      );
+    });
+
+    it("restores the chosen width when the window widens again", () => {
+      containerWidth = 1400;
+      renderSplit();
+      for (let i = 0; i < 5; i += 1) {
+        fireEvent.keyDown(separator(), { key: "ArrowRight", shiftKey: true });
+      }
+      expect(chatPane()).toHaveStyle({ width: "600px" });
+
+      resizeContainer(1000);
+      expect(chatPane()).toHaveStyle({ width: "520px" });
+
+      resizeContainer(1400);
+      expect(chatPane()).toHaveStyle({ width: "600px" });
+      expect(window.localStorage.getItem(CHAT_PANE_STORAGE_KEYS.width)).toBe(
+        "600",
+      );
     });
   });
 });

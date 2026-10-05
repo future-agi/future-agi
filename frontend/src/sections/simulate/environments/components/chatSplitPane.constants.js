@@ -1,7 +1,8 @@
 export const CHAT_PANE_DEFAULT_WIDTH = 400;
 export const CHAT_PANE_MIN_WIDTH = 320;
 export const CHAT_PANE_MAX_WIDTH = 640;
-// The right pane never gets squeezed below this while the chat is dragged wider.
+// Dragging the chat wider stops here for the right pane; only the chat's own
+// minimum wins over it, in a container narrower than the two together.
 export const CHAT_PANE_MIN_RIGHT_WIDTH = 480;
 export const CHAT_PANE_RAIL_WIDTH = 44;
 export const CHAT_PANE_KEY_STEP = 12;

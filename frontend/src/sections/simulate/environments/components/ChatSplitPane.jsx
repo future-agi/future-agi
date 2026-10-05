@@ -90,32 +90,41 @@ export default function ChatSplitPane({ chat, children, busy = false }) {
   // Set when a toggle hides the layer that holds focus, so focus follows to the
   // counterpart button instead of falling back to the page.
   const handOffFocus = useRef(false);
-  const [width, setWidth] = useState(initialWidth);
+  // The width the user chose, and the width the container allows right now.
+  // The shown width is derived from both, so narrowing the window never
+  // overwrites the choice and widening it again brings the choice back.
+  const [preferredWidth, setPreferredWidth] = useState(initialWidth);
+  const [containerWidth, setContainerWidth] = useState(0);
   const [collapsed, setCollapsed] = useState(
     () => readStored(CHAT_PANE_STORAGE_KEYS.collapsed) === "true",
   );
   const [dragging, setDragging] = useState(false);
 
-  const containerWidth = () =>
-    containerRef.current?.getBoundingClientRect().width || 0;
+  const width = clampWidth(preferredWidth, containerWidth);
 
-  // Keep the chat inside its bounds when the window narrows.
+  // Measure before the first paint, then follow window resizes.
+  useLayoutEffect(() => {
+    setContainerWidth(containerRef.current?.getBoundingClientRect().width || 0);
+  }, []);
   useEffect(() => {
     const el = containerRef.current;
     if (!el || typeof ResizeObserver === "undefined") return undefined;
     const observer = new ResizeObserver((entries) => {
       const next = entries[0]?.contentRect?.width || 0;
-      if (next) setWidth((prev) => clampWidth(prev, next));
+      if (next) setContainerWidth(next);
     });
     observer.observe(el);
     return () => observer.disconnect();
   }, []);
 
-  const resize = useCallback((next) => {
-    const clamped = clampWidth(next, containerWidth());
-    setWidth(clamped);
-    writeStored(CHAT_PANE_STORAGE_KEYS.width, clamped);
-  }, []);
+  const resize = useCallback(
+    (next) => {
+      const clamped = clampWidth(next, containerWidth);
+      setPreferredWidth(clamped);
+      writeStored(CHAT_PANE_STORAGE_KEYS.width, clamped);
+    },
+    [containerWidth],
+  );
 
   const setOpen = useCallback((open) => {
     const hiding = open ? railRef.current : chatLayerRef.current;
@@ -155,10 +164,10 @@ export default function ChatSplitPane({ chat, children, busy = false }) {
     const { startX, startWidth } = dragRef.current;
     const next = clampWidth(
       startWidth + event.clientX - startX,
-      containerWidth(),
+      containerWidth,
     );
     dragRef.current.width = next;
-    setWidth(next);
+    setPreferredWidth(next);
   };
 
   // Ends on pointerup, pointercancel and lost capture alike.
@@ -373,7 +382,7 @@ export default function ChatSplitPane({ chat, children, busy = false }) {
             aria-label={COPY.resize}
             aria-valuenow={width}
             aria-valuemin={CHAT_PANE_MIN_WIDTH}
-            aria-valuemax={CHAT_PANE_MAX_WIDTH}
+            aria-valuemax={maxWidthFor(containerWidth)}
             tabIndex={0}
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
@@ -429,6 +438,7 @@ ChatSplitPane.propTypes = {
   // ({ collapse, open }) => node
   chat: PropTypes.func.isRequired,
   children: PropTypes.node,
-  // Shows a dot on the collapsed rail while the builder is working.
+  // Shows a dot on the collapsed rail while the builder is working or waiting
+  // on an answer from the user.
   busy: PropTypes.bool,
 };
