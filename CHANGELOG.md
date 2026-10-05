@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.47.1](https://github.com/future-agi/future-agi/compare/v1.47.0...v1.47.1) (2026-10-05)
+
+
+### Bug Fixes
+
+* **simulate:** hide Add Label in the environment voice call drawer ([c66a3b7](https://github.com/future-agi/future-agi/commit/c66a3b707f7cd57dff868bd9c7707051ea37b60f))
+* **simulate:** hide the Annotations tab in the environment voice call drawer ([fe1d1ab](https://github.com/future-agi/future-agi/commit/fe1d1ab1bf9dc97b03f63db224e81e645c42d5d8))
+* **simulate:** refresh the cached calls page on a deleted call and pin its remaining cases ([7734e73](https://github.com/future-agi/future-agi/commit/7734e73700a14622501febf746924e192fed0e64))
+
+
+### Performance Improvements
+
+* **simulate:** serve the v3 calls page from one cached pass ([b80cda8](https://github.com/future-agi/future-agi/commit/b80cda878be59167e37da4c667cf24cb6829d9f3))
+
 ## [1.47.0](https://github.com/future-agi/future-agi/compare/v1.46.0...v1.47.0) (2026-10-05)
 
 
