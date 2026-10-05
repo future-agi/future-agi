@@ -279,7 +279,7 @@ class FailEvalOnlyRerunInput:
     """Close only this eval rerun's loading cells after a wait failure."""
 
     experiment_id: str
-    eval_template_ids: List[str]
+    eval_template_ids: list[str]
     reason: str = "Could not wait for final outputs. Retry evaluation."
 
 

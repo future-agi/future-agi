@@ -46,6 +46,7 @@ with workflow.unsafe.imports_passed_through():
         CleanupRunningCellsInput,
         CreateErrorAgentCellsInput,
         CreateErrorEvalCellsInput,
+        FailEvalOnlyRerunInput,
         GetEvalTemplatesInput,
         MarkExperimentRunningInput,
         PrepareAgentRowInput,
@@ -68,7 +69,6 @@ with workflow.unsafe.imports_passed_through():
         SetupExperimentInput,
         SetupPromptV2Input,
         StopExperimentCleanupInput,
-        FailEvalOnlyRerunInput,
         WaitForExperimentRunsInput,
     )
 

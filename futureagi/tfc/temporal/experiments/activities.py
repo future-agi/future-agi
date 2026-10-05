@@ -33,6 +33,7 @@ from tfc.temporal.experiments.types import (  # V2 types; Rerun cells types; Sto
     CreateErrorAgentCellsOutput,
     CreateErrorEvalCellsInput,
     CreateErrorEvalCellsOutput,
+    FailEvalOnlyRerunInput,
     GetEvalTemplatesInput,
     GetEvalTemplatesOutput,
     MarkExperimentRunningInput,
@@ -59,7 +60,6 @@ from tfc.temporal.experiments.types import (  # V2 types; Rerun cells types; Sto
     SetupPromptV2Output,
     StopExperimentCleanupInput,
     StopExperimentCleanupOutput,
-    FailEvalOnlyRerunInput,
     WaitForExperimentRunsInput,
     WaitForExperimentRunsOutput,
 )
