@@ -183,6 +183,11 @@ async def test_put_add_eval_preserves_inflight_run(
 
     @sync_to_async
     def setup():
+        # Import the real URL tree before blocking prompt rows. Cold imports of
+        # unrelated voice SDK routes can otherwise exhaust the slow-model guard.
+        from django.urls import resolve
+
+        resolve(f"/model-hub/experiments/v2/{experiment.id}/")
         fast = _make_epc(experiment, prompt_template, prompt_version, "fast-model", 0)
         slow = _make_epc(experiment, prompt_template, prompt_version, "slow-model", 1)
         existing_template = _make_template(["output"])
