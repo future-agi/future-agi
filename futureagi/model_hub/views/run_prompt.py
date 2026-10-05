@@ -43,7 +43,7 @@ from model_hub.models.choices import (
 )
 from model_hub.models.custom_models import CustomAIModel
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
-from model_hub.models.openai_tools import Tools
+from model_hub.models.openai_tools import Tools, ensure_openai_tool_envelope
 from model_hub.models.run_prompt import RunPrompter, UserResponseSchema
 from model_hub.queries.tts_voices import get_custom_voices
 from model_hub.serializers.contracts import (
@@ -168,6 +168,12 @@ def _extract_tool_ids(tools):
     for tool in tools or []:
         if isinstance(tool, dict):
             tool_id = tool.get("id")
+            if not tool_id and isinstance(tool.get("tool"), dict):
+                tool_id = tool.get("tool", {}).get("value") or tool.get(
+                    "tool", {}
+                ).get("tool", {}).get("id")
+            elif not tool_id and isinstance(tool.get("tool"), str):
+                tool_id = tool.get("tool")
         else:
             tool_id = tool
         if tool_id:
@@ -1798,7 +1804,7 @@ class AddRunPromptColumnView(APIView):
                 # Handle tools if provided in config
                 tools = config.get("tools", [])
                 if tools:
-                    tool_ids = [tool.get("id") for tool in tools if "id" in tool]
+                    tool_ids = _extract_tool_ids(tools)
                     if tool_ids:
                         tools_queryset = Tools.objects.filter(id__in=tool_ids)
                         run_prompter.tools.set(tools_queryset)
@@ -1901,10 +1907,24 @@ class PreviewRunPromptColumnView(APIView):
             # Process tools if provided in config
             tools_config = []
             if config.get("tools"):
-                tool_ids = [tool.get("id") for tool in config["tools"] if "id" in tool]
+                tool_ids = _extract_tool_ids(config["tools"])
+                tools_by_id = {}
                 if tool_ids:
-                    tools = Tools.objects.filter(id__in=tool_ids)
-                    tools_config = [tool.as_openai_tool() for tool in tools]
+                    try:
+                        for tool in Tools.objects.filter(id__in=tool_ids):
+                            tools_by_id[str(tool.id)] = tool.as_openai_tool()
+                    except Exception:
+                        logger.exception("Failed to query tools by id in preview")
+                for tool_item in config["tools"]:
+                    tid = str(
+                        tool_item.get("id")
+                        if isinstance(tool_item, dict)
+                        else tool_item
+                    )
+                    if tid in tools_by_id:
+                        tools_config.append(tools_by_id[tid])
+                    elif isinstance(tool_item, dict):
+                        tools_config.append(ensure_openai_tool_envelope(tool_item))
 
             rf = config.get("response_format")
             if rf and not isinstance(rf, dict):
@@ -2109,7 +2129,7 @@ class EditRunPromptColumnView(APIView):
                 # Handle tools update if provided
                 tools = config.get("tools")
                 if tools:
-                    tool_ids = [tool.get("id") for tool in tools if "id" in tool]
+                    tool_ids = _extract_tool_ids(tools)
                     if tool_ids:
                         tools_queryset = Tools.objects.filter(id__in=tool_ids)
                         run_prompter.tools.set(tools_queryset)
