@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeAll, afterEach } from "vitest";
 import { act } from "@testing-library/react";
-import { render, screen, fireEvent } from "src/utils/test-utils";
+import { render, screen, fireEvent, waitFor } from "src/utils/test-utils";
 
 import BuilderConsole from "../console/BuilderConsole";
 import { CONSOLE_COPY } from "../build.constants";
@@ -62,6 +62,56 @@ describe("BuilderConsole", () => {
     expect(screen.getByPlaceholderText(CONSOLE_COPY.placeholder)).not.toBeDisabled();
   });
 
+  it("shows no collapse button unless onCollapse is given", () => {
+    render(<BuilderConsole turns={[]} running={false} />);
+    expect(screen.queryByRole("button", { name: CONSOLE_COPY.collapse })).not.toBeInTheDocument();
+  });
+
+  it("calls onCollapse from the header button", () => {
+    const onCollapse = vi.fn();
+    render(<BuilderConsole turns={[]} running={false} onCollapse={onCollapse} />);
+    fireEvent.click(screen.getByRole("button", { name: CONSOLE_COPY.collapse }));
+    expect(onCollapse).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the collapse tooltip on hover only while the console is open", async () => {
+    const { rerender } = render(<BuilderConsole turns={[]} running={false} onCollapse={vi.fn()} />);
+    fireEvent.mouseOver(screen.getByRole("button", { name: CONSOLE_COPY.collapse }));
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(CONSOLE_COPY.collapse);
+
+    // Collapsed (hidden): the tooltip must not linger over the right pane.
+    rerender(<BuilderConsole turns={[]} running={false} onCollapse={vi.fn()} active={false} />);
+    await waitFor(() => expect(screen.queryByRole("tooltip")).not.toBeInTheDocument());
+  });
+
+  it("scrolls only its own list to the latest turn on reopen, and not while hidden", () => {
+    const scrollTo = vi.fn();
+    const original = window.HTMLElement.prototype.scrollTo;
+    window.HTMLElement.prototype.scrollTo = scrollTo;
+    const scrollIntoView = window.HTMLElement.prototype.scrollIntoView;
+    try {
+      const { rerender } = render(<BuilderConsole turns={[userTurn]} running={false} active={false} />);
+      scrollTo.mockClear();
+      scrollIntoView.mockClear();
+
+      rerender(<BuilderConsole turns={[userTurn, builderTurn]} running={false} active={false} />);
+      expect(scrollTo).not.toHaveBeenCalled();
+
+      // jsdom reports scrollHeight 0; give the list a real height so the
+      // assertion pins the target, not just the behaviour.
+      Object.defineProperty(screen.getByTestId("builder-console-list"), "scrollHeight", {
+        configurable: true,
+        value: 4321,
+      });
+      rerender(<BuilderConsole turns={[userTurn, builderTurn]} running={false} active />);
+      expect(scrollTo).toHaveBeenCalledWith({ top: 4321, behavior: "smooth" });
+      // scrollIntoView would also scroll the ancestors (the collapsing column).
+      expect(scrollIntoView).not.toHaveBeenCalled();
+    } finally {
+      window.HTMLElement.prototype.scrollTo = original;
+    }
+  });
+
   it("renders a builder turn: title, prose, tool, file and expandable json", () => {
     render(<BuilderConsole turns={[builderTurn]} running={false} />);
 
@@ -88,6 +138,42 @@ describe("BuilderConsole", () => {
   it("renders a user turn in the bubble", () => {
     render(<BuilderConsole turns={[userTurn]} running={false} />);
     expect(screen.getByText("make it harder")).toBeInTheDocument();
+  });
+
+  describe("long content stays inside the chat column", () => {
+    const LONG_URL =
+      "https://dev.app.futureagi.com/dashboard/simulate/environments/bece5ca5-a985-4583-8953-764333aab3eb/runs/c8e3b646-de9c-4a5c-bcab-2dfea9856e45?tab=scenarios&filter=failed";
+
+    it("breaks long unbroken tokens anywhere in the message list", () => {
+      render(<BuilderConsole turns={[{ id: "u1", role: "user", text: LONG_URL }]} running={false} />);
+      expect(window.getComputedStyle(screen.getByTestId("builder-console-list")).overflowWrap).toBe("anywhere");
+    });
+
+    it("keeps the line breaks the user typed", () => {
+      render(<BuilderConsole turns={[{ id: "u1", role: "user", text: "first line\nsecond line" }]} running={false} />);
+      const bubble = screen.getByText(/first line/);
+      expect(bubble.textContent).toBe("first line\nsecond line");
+      expect(window.getComputedStyle(bubble).whiteSpace).toBe("pre-wrap");
+    });
+
+    it("scrolls a builder code block inside its own box", () => {
+      const turn = {
+        id: "b1",
+        role: "builder",
+        steps: [
+          {
+            id: "s1",
+            kind: "note",
+            markdown: true,
+            text: '```\n{"guest_booking_pin_policy":{"target_phone_number":"+19258565786","pin":"7682"}}\n```',
+          },
+        ],
+      };
+      const { container } = render(<BuilderConsole turns={[turn]} running={false} />);
+      const pre = container.querySelector("pre");
+      expect(pre).not.toBeNull();
+      expect(window.getComputedStyle(pre).overflowX).toBe("auto");
+    });
   });
 
   it("shows no suggestion chips and no builder-mode picker", () => {
