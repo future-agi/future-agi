@@ -15,10 +15,11 @@ from collections.abc import Callable
 from typing import Any
 
 from django.core.cache import cache
-from django.db.models import Max, QuerySet
+from django.db.models import QuerySet
 
 from simulate.models import CallExecution, SimulateEvalConfig, TestExecution
 from simulate.services.harness_scenarios import level_label
+from simulate.services.run_results_v3 import OUTCOME_LABELS
 from simulate.services.run_results_v3_queries import (
     EVALUATED_OUTCOMES,
     GROUP_FIELDS,
@@ -52,13 +53,9 @@ METRIC_FIELDS = {
     "cost_cents": "result_cost_cents",
 }
 SUBSET_PARAMS = ("search", "filters", "group_by", "group_key", "ordering")
-CACHE_TIMEOUT = 60 * 60
-OUTCOME_LABELS = {
-    "passed": "Passed",
-    "failed": "Failed",
-    "error": "Errored",
-    "inconclusive": "Not measured",
-}
+# CSAT and other per-call metrics can still land after the run completes
+# without moving anything in the cache key, so a cached pass stays short-lived.
+CACHE_TIMEOUT = 5 * 60
 
 
 def _score_expressions(
@@ -109,20 +106,26 @@ def _cache_key(
     if execution.status != TestExecution.ExecutionStatus.COMPLETED:
         return None
     version = execution.completed_at or execution.updated_at
-    configs_version = SimulateEvalConfig.objects.filter(
-        run_test=execution.run_test
-    ).aggregate(latest=Max("updated_at"))["latest"]
+    # The live configs by content, not by their latest updated_at: a removal
+    # drops one from the set, a template edit moves its own stamp, and a
+    # save(update_fields=[...]) that skips updated_at still changes the config.
+    configs = list(
+        SimulateEvalConfig.objects.filter(run_test=execution.run_test, deleted=False)
+        .order_by("id")
+        .values_list("id", "updated_at", "config", "eval_template__updated_at")
+    )
     fingerprint = hashlib.sha1(
         json.dumps(
-            {"subset": subset, "columns": [str(column["id"]) for column in columns]},
+            {
+                "subset": subset,
+                "columns": [str(column["id"]) for column in columns],
+                "configs": configs,
+            },
             sort_keys=True,
             default=str,
         ).encode()
     ).hexdigest()
-    return (
-        f"simulate:v3:calls:{execution.id}:{version.timestamp()}:"
-        f"{configs_version.timestamp() if configs_version else 0}:{fingerprint}"
-    )
+    return f"simulate:v3:calls:{execution.id}:{version.timestamp()}:{fingerprint}"
 
 
 def _cached_call_values(

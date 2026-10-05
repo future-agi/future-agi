@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import re
-import sys
 from collections import Counter, defaultdict
 from collections.abc import Callable
 from typing import Any
@@ -57,11 +56,9 @@ from simulate.models import CallExecution, SimulateEvalConfig, TestExecution
 from simulate.models.hosted_harness import HostedHarnessJob, HostedHarnessScenario
 from simulate.semantics import SupportedProviders
 from simulate.services.harness_scenarios import GROUP_BY as SCENARIO_GROUP_BY
-from simulate.services.harness_scenarios import level_label
 from simulate.services.run_reliability_v3 import build_reliability
 from simulate.services.run_results_v3 import OUTCOME_LABELS, build_evaluation_catalog
 from simulate.services.run_results_v3_expressions import (
-    MatchingListGroups,
     NormalizedEvalNumber,
     PercentileCont,
     _json_text,
@@ -73,8 +70,6 @@ from simulate.services.run_results_v3_scoring import (
     resolve_eval_scoring_spec,
     warn_invalid_eval_threshold,
 )
-
-ALL_ROWS = sys.maxsize
 
 OUTCOMES = tuple(OUTCOME_LABELS)
 # Outcomes that judge the agent. Errored and inconclusive calls never ran to a verdict,
@@ -953,15 +948,6 @@ def _summary_from_values(values: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def summarize_run_calls(
-    queryset: QuerySet, include_percentiles: bool = True
-) -> dict[str, Any]:
-    rows = queryset.order_by()[:ALL_ROWS]
-    return _summary_from_values(
-        rows.aggregate(**_aggregate_expressions(include_percentiles))
-    )
-
-
 def run_call_facets(
     queryset: QuerySet | Callable[[], QuerySet], facets_cache_key: str | None = None
 ) -> dict[str, list[dict[str, Any]]]:
@@ -1015,110 +1001,6 @@ def run_call_facets(
     if facets_cache_key:
         cache.set(facets_cache_key, facets, timeout=60 * 60)
     return facets
-
-
-def group_run_calls(
-    queryset: QuerySet,
-    group_by: str | None,
-    page_rows: list[dict[str, Any]],
-    columns: list[dict[str, str]],
-    *,
-    execution: TestExecution,
-) -> list[dict[str, Any]]:
-    if group_by not in GROUP_FIELDS or not page_rows:
-        return []
-    field = GROUP_FIELDS[group_by]
-    expressions = _aggregate_expressions(include_percentiles=False)
-    expressions["stop_latency_average"] = Avg("avg_stop_time_after_interruption_ms")
-    expressions["ai_interruptions_average"] = Avg("ai_interruption_count")
-    scoring_configs = (
-        {
-            str(config.id): config
-            for config in SimulateEvalConfig.objects.filter(
-                run_test=execution.run_test, deleted=False
-            ).select_related("eval_template")
-        }
-        if columns
-        else {}
-    )
-
-    for index, column in enumerate(columns):
-        eval_id = str(column["id"])
-        config = scoring_configs.get(eval_id)
-        score = (
-            _configured_eval_verdict(eval_id, config)[0]
-            if config is not None
-            else _eval_score(eval_id)
-        )
-        expressions[f"eval_{index}_average"] = Avg(score)
-        expressions[f"eval_{index}_scored"] = Count(score)
-    page_ids = [str(row["id"]) for row in page_rows]
-    keys_by_id = {
-        str(call_id): _group_keys(group_by, value)
-        for call_id, value in queryset.filter(id__in=page_ids).values_list("id", field)
-    }
-    ids_by_key: dict[str, list[str]] = {}
-    for call_id in page_ids:
-        for key in keys_by_id.get(call_id, []):
-            ids_by_key.setdefault(key, []).append(call_id)
-    if group_by in LIST_AXES:
-        grouped = queryset.annotate(
-            result_group_key=MatchingListGroups(F(field), list(ids_by_key), UNGROUPED)
-        )
-        # Keep empty summaries for normalized page keys with no exact JSON match.
-        found = {
-            row["result_group_key"]: row
-            for row in grouped.order_by()
-            .values("result_group_key")
-            .annotate(**expressions)
-        }
-        summaries = [{field: key, **found.get(key, {})} for key in ids_by_key]
-    else:
-        visible = Q(**{f"{field}__in": list(ids_by_key)})
-        if str(None) in ids_by_key:
-            visible |= Q(**{f"{field}__isnull": True})
-        summaries = (
-            queryset.filter(visible).order_by().values(field).annotate(**expressions)
-        )
-    labels = OUTCOME_LABELS
-    # Levels read as the Scenarios tab names them ("none" is "No attack").
-    labelled_axis = group_by in {"sub_goal", "attack", "task"}
-    groups = []
-    for values in summaries:
-        key = str(values[field])
-        if key not in ids_by_key:
-            continue
-        summary = _summary_from_values(values)
-        evaluation_aggregates = {}
-        for index, column in enumerate(columns):
-            scored = values.get(f"eval_{index}_scored") or 0
-            average = values.get(f"eval_{index}_average")
-            evaluation_aggregates[str(column["id"])] = {
-                "scored": scored,
-                "score_sum": average * scored if average is not None else 0,
-            }
-        groups.append(
-            {
-                "key": key,
-                "label": (
-                    level_label(key)
-                    if labelled_axis and key != UNGROUPED
-                    else labels.get(key, key)
-                ),
-                "result_ids": ids_by_key[key],
-                "aggregates": {
-                    "csat": values.get("csat_average"),
-                    "turns": values.get("turns_average"),
-                    "latency_ms": summary["latency"]["average"],
-                    "avg_stop_time_after_interruption": values.get("stop_latency_average"),
-                    "ai_interruptions": values.get("ai_interruptions_average"),
-                    "tokens": summary["tokens"]["total_value"],
-                    "evaluations": evaluation_aggregates,
-                },
-                **summary,
-            }
-        )
-    return sorted(groups, key=lambda group: (-group["total"], group["label"].lower()))
 
 
 def _breakdown_run_calls(queryset: QuerySet, field: str) -> list[dict[str, Any]]:
