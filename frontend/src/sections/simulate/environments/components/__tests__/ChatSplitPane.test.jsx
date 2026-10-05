@@ -399,17 +399,18 @@ describe("ChatSplitPane", () => {
       });
     };
 
-    it("keeps the right pane at least 480px wide", () => {
+    it("keeps the right pane at least 480px wide, counting the 1px divider", () => {
       renderSplit();
       for (let i = 0; i < 20; i += 1) {
         fireEvent.keyDown(separator(), { key: "ArrowRight", shiftKey: true });
       }
-      expect(chatPane()).toHaveStyle({ width: "420px" });
+      // 900 = 419 chat + 1 divider + 480 right pane.
+      expect(chatPane()).toHaveStyle({ width: "419px" });
     });
 
     it("tells assistive tech the real maximum for this container", () => {
       renderSplit();
-      expect(separator()).toHaveAttribute("aria-valuemax", "420");
+      expect(separator()).toHaveAttribute("aria-valuemax", "419");
       resizeContainer(1400);
       expect(separator()).toHaveAttribute(
         "aria-valuemax",
@@ -426,13 +427,66 @@ describe("ChatSplitPane", () => {
       expect(chatPane()).toHaveStyle({ width: "600px" });
 
       resizeContainer(1000);
-      expect(chatPane()).toHaveStyle({ width: "520px" });
+      expect(chatPane()).toHaveStyle({ width: "519px" });
 
       resizeContainer(1400);
       expect(chatPane()).toHaveStyle({ width: "600px" });
       expect(window.localStorage.getItem(CHAT_PANE_STORAGE_KEYS.width)).toBe(
         "600",
       );
+    });
+
+    // A chosen width of 600 in a window that only allows 519.
+    const renderNarrowWithChoice = () => {
+      window.localStorage.setItem(CHAT_PANE_STORAGE_KEYS.width, "600");
+      containerWidth = 1000;
+      renderSplit();
+      expect(chatPane()).toHaveStyle({ width: "519px" });
+    };
+
+    it("ArrowRight at the max doesn't lower the chosen width", () => {
+      renderNarrowWithChoice();
+      fireEvent.keyDown(separator(), { key: "ArrowRight" });
+      expect(window.localStorage.getItem(CHAT_PANE_STORAGE_KEYS.width)).toBe(
+        "600",
+      );
+      resizeContainer(1400);
+      expect(chatPane()).toHaveStyle({ width: "600px" });
+    });
+
+    it("a click with a small wobble doesn't start a drag or save a width", () => {
+      renderNarrowWithChoice();
+      fireEvent.pointerDown(separator(), { button: 0, clientX: 500 });
+      fireEvent.pointerMove(separator(), { clientX: 501 });
+      fireEvent.pointerUp(separator(), { clientX: 501 });
+      expect(window.localStorage.getItem(CHAT_PANE_STORAGE_KEYS.width)).toBe(
+        "600",
+      );
+      resizeContainer(1400);
+      expect(chatPane()).toHaveStyle({ width: "600px" });
+    });
+
+    it("double-click resets the choice to 400, not to what fits right now", () => {
+      window.localStorage.setItem(CHAT_PANE_STORAGE_KEYS.width, "600");
+      containerWidth = 760;
+      renderSplit();
+      fireEvent.doubleClick(separator());
+      expect(window.localStorage.getItem(CHAT_PANE_STORAGE_KEYS.width)).toBe(
+        "400",
+      );
+      resizeContainer(1400);
+      expect(chatPane()).toHaveStyle({ width: "400px" });
+    });
+
+    it("keeps the announced width and max whole and consistent on a fractional container", () => {
+      containerWidth = 900.6;
+      renderSplit();
+      for (let i = 0; i < 20; i += 1) {
+        fireEvent.keyDown(separator(), { key: "ArrowRight", shiftKey: true });
+      }
+      expect(separator()).toHaveAttribute("aria-valuemax", "419");
+      expect(separator()).toHaveAttribute("aria-valuenow", "419");
+      expect(chatPane()).toHaveStyle({ width: "419px" });
     });
   });
 });

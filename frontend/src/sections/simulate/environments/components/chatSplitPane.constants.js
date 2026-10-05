@@ -5,6 +5,11 @@ export const CHAT_PANE_MAX_WIDTH = 640;
 // minimum wins over it, in a container narrower than the two together.
 export const CHAT_PANE_MIN_RIGHT_WIDTH = 480;
 export const CHAT_PANE_RAIL_WIDTH = 44;
+// The line between the chat and the right pane (the chat column's border).
+export const CHAT_PANE_DIVIDER_WIDTH = 1;
+// A pointer has to move this far before a press on the divider becomes a drag,
+// so a click with a small wobble doesn't resize (or save) anything.
+export const CHAT_PANE_DRAG_THRESHOLD = 3;
 export const CHAT_PANE_KEY_STEP = 12;
 export const CHAT_PANE_KEY_STEP_LARGE = 40;
 

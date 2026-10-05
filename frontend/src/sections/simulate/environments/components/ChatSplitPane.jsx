@@ -17,6 +17,8 @@ import { ENV_TAB_RAIL_HEIGHT } from "../environmentOptions";
 import {
   CHAT_PANE_COPY as COPY,
   CHAT_PANE_DEFAULT_WIDTH,
+  CHAT_PANE_DIVIDER_WIDTH as DIVIDER_WIDTH,
+  CHAT_PANE_DRAG_THRESHOLD as DRAG_THRESHOLD,
   CHAT_PANE_KEY_STEP as KEY_STEP,
   CHAT_PANE_KEY_STEP_LARGE as KEY_STEP_LARGE,
   CHAT_PANE_MAX_WIDTH,
@@ -45,12 +47,16 @@ const writeStored = (key, value) => {
 };
 
 // A zero container width means it hasn't been measured yet (or jsdom), so only
-// the absolute max applies.
+// the absolute max applies. Floored, so a fractional container (browser zoom)
+// still gives a whole-pixel max that the shown width can never round past.
 const maxWidthFor = (containerWidth) =>
   containerWidth > 0
     ? Math.max(
         CHAT_PANE_MIN_WIDTH,
-        Math.min(CHAT_PANE_MAX_WIDTH, containerWidth - MIN_RIGHT_WIDTH),
+        Math.min(
+          CHAT_PANE_MAX_WIDTH,
+          Math.floor(containerWidth - MIN_RIGHT_WIDTH - DIVIDER_WIDTH),
+        ),
       )
     : CHAT_PANE_MAX_WIDTH;
 
@@ -117,14 +123,23 @@ export default function ChatSplitPane({ chat, children, busy = false }) {
     return () => observer.disconnect();
   }, []);
 
+  // Arrow keys: a step that doesn't change what's shown (pressing past the max
+  // in a narrow window) leaves the chosen width alone.
   const resize = useCallback(
     (next) => {
       const clamped = clampWidth(next, containerWidth);
+      if (clamped === width) return;
       setPreferredWidth(clamped);
       writeStored(CHAT_PANE_STORAGE_KEYS.width, clamped);
     },
-    [containerWidth],
+    [containerWidth, width],
   );
+
+  // Double-click resets the choice itself, not to whatever fits right now.
+  const resetWidth = useCallback(() => {
+    setPreferredWidth(CHAT_PANE_DEFAULT_WIDTH);
+    writeStored(CHAT_PANE_STORAGE_KEYS.width, CHAT_PANE_DEFAULT_WIDTH);
+  }, []);
 
   const setOpen = useCallback((open) => {
     const hiding = open ? railRef.current : chatLayerRef.current;
@@ -155,18 +170,27 @@ export default function ChatSplitPane({ chat, children, busy = false }) {
     if (event.button !== 0) return;
     event.preventDefault();
     event.currentTarget.setPointerCapture?.(event.pointerId);
-    dragRef.current = { startX: event.clientX, startWidth: width };
-    setDragging(true);
+    dragRef.current = {
+      startX: event.clientX,
+      startWidth: width,
+      active: false,
+    };
   };
 
   const onPointerMove = (event) => {
-    if (!dragRef.current) return;
-    const { startX, startWidth } = dragRef.current;
-    const next = clampWidth(
-      startWidth + event.clientX - startX,
-      containerWidth,
-    );
-    dragRef.current.width = next;
+    const drag = dragRef.current;
+    if (!drag) return;
+    const dx = event.clientX - drag.startX;
+    if (!drag.active) {
+      if (Math.abs(dx) < DRAG_THRESHOLD) return;
+      drag.active = true;
+      setDragging(true);
+    }
+    const next = clampWidth(drag.startWidth + dx, containerWidth);
+    // Pushing past the max in a narrow window changes nothing on screen, so it
+    // must not replace the chosen width either.
+    if (drag.width == null && next === drag.startWidth) return;
+    drag.width = next;
     setPreferredWidth(next);
   };
 
@@ -205,7 +229,7 @@ export default function ChatSplitPane({ chat, children, busy = false }) {
   // crossfade inside it. The chat keeps its own width while the column narrows,
   // so it is clipped rather than reflowed, and the right pane grows smoothly.
   // Dragging and reduced motion skip the animation.
-  const columnWidth = (collapsed ? RAIL_WIDTH : width) + 1;
+  const columnWidth = (collapsed ? RAIL_WIDTH : width) + DIVIDER_WIDTH;
   const animate = (t, props) =>
     dragging
       ? "none"
@@ -390,7 +414,7 @@ export default function ChatSplitPane({ chat, children, busy = false }) {
             onPointerCancel={endDrag}
             onLostPointerCapture={endDrag}
             onKeyDown={onKeyDown}
-            onDoubleClick={() => resize(CHAT_PANE_DEFAULT_WIDTH)}
+            onDoubleClick={resetWidth}
             sx={{
               position: "absolute",
               top: 0,
