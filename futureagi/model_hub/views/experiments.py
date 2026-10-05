@@ -98,6 +98,7 @@ from model_hub.services.dataset_table_snapshot import (
     assert_dataset_table_cells_within_limits,
     assert_dataset_table_response_within_limits,
 )
+from model_hub.services.experiment_utils import queue_eval_only_rerun
 from model_hub.services.lifecycle import bulk_soft_delete
 from model_hub.tasks.experiment_runner import process_experiments
 from model_hub.utils.eval_result_columns import infer_eval_result_column_data_type
@@ -3401,14 +3402,9 @@ class RunAdditionalEvaluationsView(APIView):
                 id__in=eval_template_ids
             ).update(status=StatusType.EXPERIMENT_EVALUATION.value)
 
-            # Start V2 Temporal workflow to actually execute the evals
+            # Eval-only changes must not cancel an in-flight run (TH-5259).
             try:
-                from tfc.temporal.experiments import start_experiment_v2_workflow
-
-                start_experiment_v2_workflow(
-                    experiment_id=str(experiment.id),
-                    rerun_eval_template_ids=eval_template_ids,
-                )
+                queue_eval_only_rerun(experiment, eval_template_ids)
             except Exception as wf_err:
                 logger.warning(
                     "Failed to start eval workflow for run-evaluations",
@@ -3569,14 +3565,9 @@ class AddExperimentEvalView(APIView):
                         experiment, experiment.snapshot_dataset
                     )
 
-                # Start V2 Temporal workflow to actually execute the eval
+                # Eval-only changes must not cancel an in-flight run (TH-5259).
                 try:
-                    from tfc.temporal.experiments import start_experiment_v2_workflow
-
-                    start_experiment_v2_workflow(
-                        experiment_id=str(experiment.id),
-                        rerun_eval_template_ids=[str(user_eval_metric.id)],
-                    )
+                    queue_eval_only_rerun(experiment, [str(user_eval_metric.id)])
                 except Exception as wf_err:
                     logger.warning(
                         "Failed to start eval workflow for add-eval",
@@ -4405,15 +4396,24 @@ class ExperimentsTableV2View(APIView):
                 _build_and_save_v2_column_order(experiment, experiment.snapshot_dataset)
 
             if needs_rerun:
-                from tfc.temporal.experiments import start_experiment_v2_workflow
+                if (
+                    rerun_eval_ids
+                    and not rerun_prompt_ids
+                    and not rerun_agent_ids
+                    and not column_changed
+                ):
+                    # Eval-only changes must not cancel an in-flight run (TH-5259).
+                    workflow_id = queue_eval_only_rerun(experiment, rerun_eval_ids)
+                else:
+                    from tfc.temporal.experiments import start_experiment_v2_workflow
 
-                workflow_id = start_experiment_v2_workflow(
-                    experiment_id=str(experiment.id),
-                    rerun_prompt_config_ids=rerun_prompt_ids,
-                    rerun_agent_config_ids=rerun_agent_ids,
-                    rerun_eval_template_ids=rerun_eval_ids,
-                    column_changed=column_changed,
-                )
+                    workflow_id = start_experiment_v2_workflow(
+                        experiment_id=str(experiment.id),
+                        rerun_prompt_config_ids=rerun_prompt_ids,
+                        rerun_agent_config_ids=rerun_agent_ids,
+                        rerun_eval_template_ids=rerun_eval_ids,
+                        column_changed=column_changed,
+                    )
                 logger.info(
                     "Started selective V2 workflow for experiment update",
                     workflow_id=workflow_id,

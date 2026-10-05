@@ -419,6 +419,74 @@ def start_rerun_cells_v2_workflow(
     return handle.id
 
 
+async def start_experiment_eval_rerun_workflow_async(
+    experiment_id: str,
+    dataset_id: str,
+    eval_template_ids: list,
+    task_queue: str = "tasks_l",
+    max_concurrent_rows: int = 10,
+) -> str:
+    """Queue an eval-only rerun without cancelling output-producing runs."""
+    import uuid as _uuid
+
+    from tfc.temporal.experiments.types import RerunCellsV2WorkflowInput
+    from tfc.temporal.experiments.workflows import RerunCellsV2Workflow
+
+    workflow_id = f"rerun-experiment-cells-{experiment_id}-evals-{_uuid.uuid4()}"
+    handle = await start_workflow_async(
+        workflow_class=RerunCellsV2Workflow,
+        workflow_input=RerunCellsV2WorkflowInput(
+            experiment_id=experiment_id,
+            dataset_id=dataset_id,
+            eval_template_ids=eval_template_ids,
+            row_ids=[],
+            edt_ids=[],
+            eval_only=True,
+            wait_for_inflight_runs=True,
+            task_queue=task_queue,
+            max_concurrent_rows=max_concurrent_rows,
+        ),
+        workflow_id=workflow_id,
+        task_queue=task_queue,
+        cancel_existing=False,
+    )
+    return handle.id
+
+
+def start_experiment_eval_rerun_workflow(
+    experiment_id: str,
+    dataset_id: str,
+    eval_template_ids: list,
+    task_queue: str = "tasks_l",
+    max_concurrent_rows: int = 10,
+) -> str:
+    """Queue an eval-only rerun synchronously for Django views."""
+    import uuid as _uuid
+
+    from tfc.temporal.experiments.types import RerunCellsV2WorkflowInput
+    from tfc.temporal.experiments.workflows import RerunCellsV2Workflow
+
+    workflow_id = f"rerun-experiment-cells-{experiment_id}-evals-{_uuid.uuid4()}"
+    handle = start_workflow_sync(
+        workflow_class=RerunCellsV2Workflow,
+        workflow_input=RerunCellsV2WorkflowInput(
+            experiment_id=experiment_id,
+            dataset_id=dataset_id,
+            eval_template_ids=eval_template_ids,
+            row_ids=[],
+            edt_ids=[],
+            eval_only=True,
+            wait_for_inflight_runs=True,
+            task_queue=task_queue,
+            max_concurrent_rows=max_concurrent_rows,
+        ),
+        workflow_id=workflow_id,
+        task_queue=task_queue,
+        cancel_existing=False,
+    )
+    return handle.id
+
+
 __all__ = [
     "start_experiment_workflow",
     "start_experiment_workflow_async",
@@ -426,6 +494,8 @@ __all__ = [
     "start_experiment_v2_workflow_async",
     "start_rerun_cells_v2_workflow",
     "start_rerun_cells_v2_workflow_async",
+    "start_experiment_eval_rerun_workflow",
+    "start_experiment_eval_rerun_workflow_async",
     "get_experiment_workflow_status",
     "get_experiment_workflow_status_async",
     "cancel_experiment_workflow",

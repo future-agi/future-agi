@@ -52,6 +52,8 @@ from tfc.temporal.experiments.types import (  # V2 types; Rerun cells types; Err
     SetupExperimentOutput,
     SetupPromptV2Input,
     SetupPromptV2Output,
+    WaitForExperimentRunsInput,
+    WaitForExperimentRunsOutput,
 )
 
 # Import workflows (no Django dependencies)
@@ -91,6 +93,7 @@ def get_activities():
         setup_experiment_activity,
         setup_prompt_v2_activity,
         stop_experiment_cleanup_activity,
+        wait_for_experiment_runs_activity,
     )
 
     return [
@@ -115,6 +118,7 @@ def get_activities():
         stop_experiment_cleanup_activity,
         create_error_eval_cells_activity,
         create_error_agent_cells_activity,
+        wait_for_experiment_runs_activity,
     ]
 
 
@@ -231,6 +235,24 @@ def start_rerun_cells_v2_workflow_async(*args, **kwargs):
     return _start(*args, **kwargs)
 
 
+def start_experiment_eval_rerun_workflow(*args, **kwargs):
+    """Start a non-cancelling eval-only rerun synchronously."""
+    from tfc.temporal.experiments.client import (
+        start_experiment_eval_rerun_workflow as _start,
+    )
+
+    return _start(*args, **kwargs)
+
+
+def start_experiment_eval_rerun_workflow_async(*args, **kwargs):
+    """Start a non-cancelling eval-only rerun asynchronously."""
+    from tfc.temporal.experiments.client import (
+        start_experiment_eval_rerun_workflow_async as _start,
+    )
+
+    return _start(*args, **kwargs)
+
+
 __all__ = [
     # Types (activity inputs/outputs)
     "SetupExperimentInput",
@@ -287,9 +309,13 @@ __all__ = [
     "cancel_all_experiment_workflows_async",
     "start_rerun_cells_v2_workflow",
     "start_rerun_cells_v2_workflow_async",
+    "start_experiment_eval_rerun_workflow",
+    "start_experiment_eval_rerun_workflow_async",
     # Rerun cells types & workflow
     "MarkExperimentRunningInput",
     "MarkExperimentRunningOutput",
+    "WaitForExperimentRunsInput",
+    "WaitForExperimentRunsOutput",
     "RerunCellsV2WorkflowInput",
     "RerunCellsV2WorkflowOutput",
     "RerunCellsV2Workflow",

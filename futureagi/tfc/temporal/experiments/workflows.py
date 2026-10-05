@@ -68,6 +68,7 @@ with workflow.unsafe.imports_passed_through():
         SetupExperimentInput,
         SetupPromptV2Input,
         StopExperimentCleanupInput,
+        WaitForExperimentRunsInput,
     )
 
 
@@ -1405,6 +1406,25 @@ class RerunCellsV2Workflow:
         total_failed_rows = 0
 
         try:
+            if input.wait_for_inflight_runs:
+                wait_result = await workflow.execute_activity(
+                    "wait_for_experiment_runs_activity",
+                    WaitForExperimentRunsInput(
+                        experiment_id=input.experiment_id,
+                        exclude_workflow_id=workflow.info().workflow_id,
+                    ),
+                    start_to_close_timeout=timedelta(hours=12),
+                    heartbeat_timeout=timedelta(minutes=2),
+                    retry_policy=SETUP_RETRY_POLICY,
+                )
+                if get_result_field(wait_result, "status") == "CANCELLED":
+                    return RerunCellsV2WorkflowOutput(
+                        experiment_id=input.experiment_id,
+                        status="CANCELLED",
+                        total_rows_processed=0,
+                        failed_rows=0,
+                    )
+
             # Step 1: Mark experiment RUNNING (no eval column reset)
             mark_result = await workflow.execute_activity(
                 "mark_experiment_running_activity",

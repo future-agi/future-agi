@@ -265,6 +265,24 @@ class ProcessBatchEvalOutput:
 
 
 @dataclass
+class WaitForExperimentRunsInput:
+    """Input for waiting until an experiment's output-producing runs close."""
+
+    experiment_id: str
+    exclude_workflow_id: str = ""
+    poll_interval_seconds: float = 5.0
+    max_wait_seconds: float = 6 * 3600
+
+
+@dataclass
+class WaitForExperimentRunsOutput:
+    """Outcome of waiting for output-producing experiment runs."""
+
+    status: str
+    waited_seconds: float = 0.0
+
+
+@dataclass
 class MarkExperimentRunningInput:
     """Input for marking experiment as RUNNING without resetting eval columns."""
 
@@ -477,6 +495,7 @@ class RerunCellsV2WorkflowInput:
     eval_only: bool = False
     edt_ids: List[str] = field(default_factory=list)  # Filter EDT columns for eval-only
     base_eval_only: bool = False  # Skip per-EDT evals, only run base evals
+    wait_for_inflight_runs: bool = False
 
 
 @dataclass
@@ -570,6 +589,8 @@ __all__ = [
     "CleanupRunningCellsInput",
     "CleanupRunningCellsOutput",
     # V2 activity types
+    "WaitForExperimentRunsInput",
+    "WaitForExperimentRunsOutput",
     "SetupPromptV2Input",
     "SetupPromptV2Output",
     "SetupAgentInput",

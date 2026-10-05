@@ -1,8 +1,57 @@
+import json
 import uuid
 
-from model_hub.models.choices import StatusType
+import structlog
+from django.db.models import Q
+
+from model_hub.models.choices import CellStatus, SourceChoices, StatusType
+from model_hub.models.develop_dataset import Column, Row
 from model_hub.models.evals_metric import UserEvalMetric
 from model_hub.models.experiments import ExperimentsTable
+
+logger = structlog.get_logger(__name__)
+
+
+def queue_eval_only_rerun(experiment, eval_template_ids) -> str | None:
+    """Show eval cells as loading and queue a rerun after output generation."""
+    from model_hub.views.eval_runner import bulk_update_or_create_cells
+    from tfc.temporal.experiments import start_experiment_eval_rerun_workflow
+
+    snapshot = experiment.snapshot_dataset
+    if snapshot is None:
+        logger.warning(
+            "Cannot queue eval-only rerun without experiment snapshot",
+            experiment_id=str(experiment.id),
+        )
+        return None
+
+    ids = list(eval_template_ids)
+    row_ids = list(
+        Row.objects.filter(dataset=snapshot, deleted=False).values_list("id", flat=True)
+    )
+    empty_values = {
+        "value": "",
+        "value_infos": json.dumps({}),
+        "status": CellStatus.RUNNING.value,
+    }
+    for eval_id in ids:
+        columns = Column.objects.filter(dataset=snapshot, deleted=False).filter(
+            Q(
+                source=SourceChoices.EXPERIMENT_EVALUATION.value,
+                source_id__endswith=f"-sourceid-{eval_id}",
+            )
+            | Q(source=SourceChoices.EVALUATION.value, source_id=str(eval_id))
+        )
+        for column_id in columns.values_list("id", flat=True):
+            bulk_update_or_create_cells(row_ids, column_id, snapshot.id, empty_values)
+
+    experiment.status = StatusType.RUNNING.value
+    experiment.save(update_fields=["status"])
+    return start_experiment_eval_rerun_workflow(
+        experiment_id=str(experiment.id),
+        dataset_id=str(snapshot.id),
+        eval_template_ids=[str(eval_id) for eval_id in ids],
+    )
 
 
 def is_experiment_cancelled(experiment_id: uuid.UUID) -> bool:
