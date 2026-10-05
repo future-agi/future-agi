@@ -280,6 +280,88 @@ const randomTrace = (seed) => {
   return { trace: roots, depthByNodeId };
 };
 
+// Span trees whose leaves often reuse one LLM or tool name, as real agents
+// do (every call of ChatOpenAI groups into one node). Internal spans keep
+// unique names, so the grouped graph stays acyclic.
+const SHARED_LEAVES = [
+  ["llm", "ChatOpenAI"],
+  ["tool", "web_search"],
+];
+
+const randomSharedLeafTrace = (seed) => {
+  const rng = makeRng(seed);
+  let counter = 0;
+  const build = (depth) => {
+    const index = counter;
+    counter += 1;
+    const childCount =
+      depth >= 4 || counter > 24 ? 0 : Math.floor(rng() * (depth ? 4 : 5));
+    if (childCount === 0 && depth > 0 && rng() < 0.6) {
+      const [type, name] = SHARED_LEAVES[Math.floor(rng() * 2)];
+      return traceSpan(`s${index}`, name, type, depth, depth + 1);
+    }
+    const children = [];
+    for (let i = 0; i < childCount; i += 1) children.push(build(depth + 1));
+    return traceSpan(
+      `s${index}`,
+      `step_${index}`,
+      "chain",
+      depth,
+      depth + 1,
+      children,
+    );
+  };
+  return [build(0)];
+};
+
+// Level each recorded node should sit on: one past its deepest recorded
+// parent (roots at 0). Sentinels are ignored.
+const expectedLevels = (graph) => {
+  const isSentinel = (id) => id === "__start__" || id === "__end__";
+  const ids = graph.nodes
+    .map((node) => node.id)
+    .filter((id) => !isSentinel(id));
+  const edges = graph.edges.filter(
+    (edge) =>
+      !isSentinel(edge.source) &&
+      !isSentinel(edge.target) &&
+      edge.source !== edge.target,
+  );
+  const indegree = Object.fromEntries(ids.map((id) => [id, 0]));
+  edges.forEach((edge) => {
+    indegree[edge.target] += 1;
+  });
+  const level = Object.fromEntries(ids.map((id) => [id, 0]));
+  const queue = ids.filter((id) => indegree[id] === 0);
+  for (let i = 0; i < queue.length; i += 1) {
+    const source = queue[i];
+    edges
+      .filter((edge) => edge.source === source)
+      .forEach((edge) => {
+        level[edge.target] = Math.max(level[edge.target], level[source] + 1);
+        indegree[edge.target] -= 1;
+        if (indegree[edge.target] === 0) queue.push(edge.target);
+      });
+  }
+  expect(queue).toHaveLength(ids.length);
+  return level;
+};
+
+const expectRowsFollowLevels = (flow, levels) => {
+  const at = rankCoordinates(flow, "TB");
+  const rowByLevel = new Map();
+  Object.entries(levels).forEach(([id, level]) => {
+    if (!rowByLevel.has(level)) rowByLevel.set(level, at[id]);
+    expect({ id, row: at[id] }).toEqual({ id, row: rowByLevel.get(level) });
+  });
+  const sorted = [...rowByLevel.keys()].sort((a, b) => a - b);
+  sorted.slice(1).forEach((level, index) => {
+    expect(rowByLevel.get(level)).toBeGreaterThan(
+      rowByLevel.get(sorted[index]),
+    );
+  });
+};
+
 describe("buildFlowData keeps same-level nodes on one level (TH-4321)", () => {
   it.each(["TB", "LR"])(
     "draws the screenshot's parallel steps on one level directly after their parent (%s)",
@@ -358,6 +440,47 @@ describe("buildFlowData keeps same-level nodes on one level (TH-4321)", () => {
           levelByDepth.get(depths[index]),
         );
       });
+    },
+  );
+
+  it("keeps siblings on one level when one shares a grouped LLM node with a deeper branch", () => {
+    // Verify-r1 M1: every ChatOpenAI call groups into one node. It has a
+    // parent on level 1 (intent_classification) and one on level 2
+    // (prompt_building), so it must sit on level 3. intent_classification
+    // still belongs on level 1 with its siblings, not next to
+    // prompt_building.
+    const graph = buildTraceGraph([
+      traceSpan("agent", "Agent", "agent", 0, 10, [
+        traceSpan("ip", "input_processing", "chain", 1, 2),
+        traceSpan("ic", "intent_classification", "chain", 1, 3, [
+          traceSpan("llm1", "ChatOpenAI", "llm", 1.5, 2.5),
+        ]),
+        traceSpan("rg", "response_generation", "chain", 1, 9, [
+          traceSpan("pb", "prompt_building", "chain", 2, 8, [
+            traceSpan("llm2", "ChatOpenAI", "llm", 3, 7),
+          ]),
+        ]),
+      ]),
+    ]);
+    const flow = buildFlowData(graph, "TB");
+    const at = rankCoordinates(flow, "TB");
+
+    expect(at["chain:intent_classification"]).toBe(
+      at["chain:input_processing"],
+    );
+    expect(at["chain:response_generation"]).toBe(at["chain:input_processing"]);
+    expect(at["chain:prompt_building"]).toBeGreaterThan(
+      at["chain:intent_classification"],
+    );
+    expect(at["llm:ChatOpenAI"]).toBeGreaterThan(at["chain:prompt_building"]);
+    expectRowsFollowLevels(flow, expectedLevels(graph));
+  });
+
+  it.each(Array.from({ length: 40 }, (_, seed) => seed + 101))(
+    "puts every node of shared-leaf span tree #%i one level past its deepest parent",
+    (seed) => {
+      const graph = buildTraceGraph(randomSharedLeafTrace(seed));
+      expectRowsFollowLevels(buildFlowData(graph, "TB"), expectedLevels(graph));
     },
   );
 

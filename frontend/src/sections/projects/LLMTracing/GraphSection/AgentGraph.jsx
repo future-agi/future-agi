@@ -607,6 +607,25 @@ const placeStop = (g, laidOutIds, direction, ranksep) => {
   return { [main]: stopMain, [cross]: stopCross };
 };
 
+// A row means "runs after everything above it", so each node sits on the
+// first row after its deepest recorded parent. dagre's default ranker only
+// minimises total edge length, and whenever two rows cost the same it may
+// push a node down next to an unrelated deeper branch (for example when
+// every ChatOpenAI call is grouped into one node with parents on two
+// levels). Called on dagre's internal graph after its acyclic pass, so a
+// topological order exists; `minlen` already includes dagre's own spacing.
+const rankAtEarliestLevel = (g) => {
+  Dagre.graphlib.alg.topsort(g).forEach((v) => {
+    g.node(v).rank = g
+      .inEdges(v)
+      .reduce(
+        (rank, edge) =>
+          Math.max(rank, g.node(edge.v).rank + g.edge(edge).minlen),
+        0,
+      );
+  });
+};
+
 const layoutGraph = (nodes, edges, direction = "LR") => {
   const ranksep = direction === "LR" ? 80 : 50;
   const g = new Dagre.graphlib.Graph().setDefaultEdgeLabel(() => ({}));
@@ -614,6 +633,7 @@ const layoutGraph = (nodes, edges, direction = "LR") => {
     rankdir: direction,
     ranksep,
     nodesep: 25,
+    ranker: rankAtEarliestLevel,
   });
 
   const stopIds = new Set(nodes.filter(isStopNode).map((node) => node.id));
