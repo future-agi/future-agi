@@ -7,6 +7,7 @@ import {
   ACTIVE_EXECUTION_STATUSES,
   STOPPABLE_EXECUTION_STATUSES,
   runColor,
+  runStateFor,
 } from "src/sections/simulate/environments/workspace/runs/runs.constants";
 
 /**
@@ -32,6 +33,7 @@ import {
  * @property {"passed"|"failed"|"running"|"cancelling"|"cancelled"} status  Run-level outcome.
  * @property {?string} executionStatus  The execution's own status
  *                                   (`completed`, `evaluating`, …).
+ * @property {string} runState      Execution lifecycle shared with the runs list.
  */
 
 /**
@@ -83,6 +85,7 @@ export function buildRunIdentity(row, envName = null) {
     startedAt: row.startedAt ?? null,
     finishedAt: row.finishedAt ?? null,
     status: row.status,
+    runState: row.runState,
     scenarioIds: row.scenarioIds ?? [],
     trials: row.trials ?? 1,
   };
@@ -205,6 +208,7 @@ export function useRunDetail(runTestId, executionId, { envName } = {}) {
                 : summary?.outcomes?.passed > 0
                   ? "passed"
                   : "failed",
+      runState: runStateFor(execution.status),
       stoppable: STOPPABLE_EXECUTION_STATUSES.has(execution.status),
       // Evals can only be graded again once the execution is `completed`.
       executionStatus: execution.status ?? null,
@@ -257,8 +261,9 @@ export function useRunDetail(runTestId, executionId, { envName } = {}) {
  * `testExecutions.list(executionId)`.
  * @property {string} id           Call-execution id (opens the call drawer).
  * @property {string} scenario     Scenario / task name.
+ * @property {Array<{ name: string, passed: ?boolean }>} subGoalResults
  * @property {?string} persona     Simulated-user persona label.
- * @property {"passed"|"failed"|"flaky"|"error"|"unmeasured"} status
+ * @property {"queued"|"in_progress"|"passed"|"failed"|"error"|"inconclusive"} status
  * @property {?string} harnessOutcomeStatus Authoritative sealed trial verdict.
  * @property {?string} executionStatus Transport lifecycle status; kept separate.
  * @property {boolean} critical    Whether the scenario is a release blocker.

@@ -136,10 +136,12 @@ const VERDICTS = {
   not_evaluated: "Not evaluated",
 };
 const OUTCOMES = [
+  { key: "queued", label: "Queued", color: COLORS[5] },
+  { key: "in_progress", label: "In progress", color: COLORS[4] },
   { key: "passed", label: "Passed", color: COLORS[0] },
   { key: "failed", label: "Failed", color: COLORS[2] },
-  { key: "error", label: "Errored", color: COLORS[3] },
-  { key: "inconclusive", label: "Not evaluated", color: COLORS[5] },
+  { key: "error", label: "Error", color: COLORS[3] },
+  { key: "inconclusive", label: "Inconclusive", color: COLORS[5] },
 ];
 const DISTRIBUTIONS = {
   latency_ms: ["Agent response time", "ms"],
@@ -884,7 +886,7 @@ function Reliability({ data }) {
               <TableCell>Result</TableCell>
               <TableCell align="right">Passed / evaluated</TableCell>
               <TableCell align="right">Evaluated / total trials</TableCell>
-              <TableCell align="right">Errored</TableCell>
+              <TableCell align="right">Error</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>

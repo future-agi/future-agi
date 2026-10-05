@@ -22227,10 +22227,12 @@ export type CallExecutionV3DetailResponseApiOutcome =
   (typeof CallExecutionV3DetailResponseApiOutcome)[keyof typeof CallExecutionV3DetailResponseApiOutcome];
 
 export const CallExecutionV3DetailResponseApiOutcome = {
+  queued: "queued",
+  in_progress: "in_progress",
   passed: "passed",
   failed: "failed",
-  error: "error",
   inconclusive: "inconclusive",
+  error: "error",
 } as const;
 
 export interface PersonaDetailsApi {
@@ -22241,6 +22243,12 @@ export interface PersonaDetailsApi {
   /** @minLength 1 */
   age: string;
   traits: string[];
+}
+
+export interface SubGoalResultApi {
+  /** @minLength 1 */
+  name: string;
+  passed: boolean | null;
 }
 
 export interface CostBreakdownApi {
@@ -22430,6 +22438,7 @@ export interface CallExecutionV3DetailResponseApi {
   persona: string;
   persona_details: PersonaDetailsApi;
   sub_goals: string[];
+  sub_goal_results: SubGoalResultApi[];
   outcome: CallExecutionV3DetailResponseApiOutcome;
   cost_breakdown_cents: CostBreakdownApi;
   evaluations: SimulateRunV3EvaluationResultApi[];
@@ -22626,6 +22635,8 @@ export interface RunDashboardEvaluationSummaryApi {
 }
 
 export interface RunDashboardRiskApi {
+  queued: number;
+  in_progress: number;
   /** @minLength 1 */
   scenario: string;
   passed: number;
@@ -22686,6 +22697,8 @@ export interface AnalyticsExecutionApi {
 }
 
 export interface OutcomeCountsApi {
+  queued: number;
+  in_progress: number;
   passed: number;
   failed: number;
   error: number;
@@ -22761,6 +22774,8 @@ export const ReliabilityRowApiVerdict = {
 } as const;
 
 export interface ReliabilityRowApi {
+  queued: number;
+  in_progress: number;
   passed: number;
   failed: number;
   error: number;
@@ -22788,6 +22803,8 @@ export interface ReliabilityApi {
 }
 
 export interface TurnDistributionApi {
+  queued: number;
+  in_progress: number;
   passed: number;
   failed: number;
   error: number;
@@ -22927,10 +22944,12 @@ export type RunCallApiOutcome =
   (typeof RunCallApiOutcome)[keyof typeof RunCallApiOutcome];
 
 export const RunCallApiOutcome = {
+  queued: "queued",
+  in_progress: "in_progress",
   passed: "passed",
   failed: "failed",
-  error: "error",
   inconclusive: "inconclusive",
+  error: "error",
 } as const;
 
 export interface RunCallApi {
@@ -22949,6 +22968,7 @@ export interface RunCallApi {
   persona: string;
   persona_details: PersonaDetailsApi;
   sub_goals: string[];
+  sub_goal_results: SubGoalResultApi[];
   /** @minLength 1 */
   harness_outcome_status: string;
   /** @minLength 1 */

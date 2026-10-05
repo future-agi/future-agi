@@ -144,8 +144,12 @@ def test_warnings_are_per_loaded_config_not_per_call(caplog):
         patch(
             "simulate.services.run_results_v3_queries.SimulateEvalConfig.objects.filter"
         ) as filtered,
+        patch(
+            "simulate.services.run_results_v3_queries.HostedHarnessJob.all_objects.filter"
+        ) as jobs,
     ):
         filtered.return_value.select_related.return_value = list(configs.values())
+        jobs.return_value.values_list.return_value = []
         run_calls_queryset(SimpleNamespace(run_test=None), [uuid4()])
         assert len(caplog.records) == 2
         assert "evaluation config eval-1" in caplog.records[0].getMessage()
@@ -181,10 +185,16 @@ def test_malformed_binding_does_not_discard_valid_evaluations():
     assert rows["eval-1"]["passed"] is None
     assert rows["eval-2"]["score"] == 0.9
     assert rows["eval-2"]["passed"] is True
-    with patch(
-        "simulate.services.run_results_v3_queries.SimulateEvalConfig.objects.filter"
-    ) as filtered:
+    with (
+        patch(
+            "simulate.services.run_results_v3_queries.SimulateEvalConfig.objects.filter"
+        ) as filtered,
+        patch(
+            "simulate.services.run_results_v3_queries.HostedHarnessJob.all_objects.filter"
+        ) as jobs,
+    ):
         filtered.return_value.select_related.return_value = [invalid, valid]
+        jobs.return_value.values_list.return_value = []
         queryset = run_calls_queryset(SimpleNamespace(run_test=None), [uuid4()])
     sql = str(queryset.query)
     assert "result_outcome" in sql

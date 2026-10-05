@@ -19,6 +19,7 @@ import {
 } from "@mui/material";
 
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
 import { FilterPanel } from "src/components/filter-panel";
 import { useRunCalls } from "src/api/simulate-environments/runDetail";
 import { AGENT_TYPES } from "src/sections/agents/constants";
@@ -31,32 +32,12 @@ import StatusFilterChips from "./StatusFilterChips";
 import {
   CLOSED_GROUP_VIEW,
   GROUPINGS,
+  OUTCOME_LABELS,
   VOICE_ONLY_COLUMNS,
+  compactHiddenSx,
   defaultTraceColumns,
+  toolbarButtonSx,
 } from "./traceTable.constants";
-
-const STATUS_CHIP_API = {
-  failing: "failed",
-  errored: "error",
-  inconclusive: "inconclusive",
-  passing: "passed",
-};
-const STATUS_LABELS = {
-  passed: "Passed",
-  failed: "Failed",
-  error: "Errored",
-  inconclusive: "Not measured",
-};
-
-const filterButtonSx = {
-  typography: "s2",
-  fontWeight: "fontWeightBold",
-  textTransform: "none",
-  height: 32,
-  color: "text.primary",
-  borderColor: "divider",
-  "&:hover": { borderColor: "text.disabled", bgcolor: "transparent" },
-};
 
 const PAGE_SIZE = 50;
 // Room left under the table box for the pager row and the page's bottom gutter.
@@ -126,9 +107,8 @@ export default function RunTraceTable({
     if (filters.goal?.length) next.goal = filters.goal;
     if (filters.subGoal?.length) next.sub_goal = filters.subGoal;
     if (filters.status?.length) next.status = filters.status;
-    if (filters.goal_outcome?.length)
-      next.goal_outcome = filters.goal_outcome;
-    if (statusChip !== "all") next.status = [STATUS_CHIP_API[statusChip]];
+    if (filters.goal_outcome?.length) next.goal_outcome = filters.goal_outcome;
+    if (statusChip !== "all") next.status = [statusChip];
     return next;
   }, [filters, statusChip]);
 
@@ -247,8 +227,8 @@ export default function RunTraceTable({
         value: "status",
         label: "Status",
         type: "enum",
-        choices: Object.keys(STATUS_LABELS),
-        choiceLabels: STATUS_LABELS,
+        choices: Object.keys(OUTCOME_LABELS),
+        choiceLabels: OUTCOME_LABELS,
       },
     ],
     [goalOptions, subGoalOptions],
@@ -267,11 +247,7 @@ export default function RunTraceTable({
     );
     return {
       all: Object.values(byStatus).reduce((sum, count) => sum + count, 0),
-      failing: byStatus.failed ?? 0,
-      errored: byStatus.error ?? 0,
-      mixed: 0,
-      inconclusive: byStatus.inconclusive ?? 0,
-      passing: byStatus.passed ?? 0,
+      ...byStatus,
     };
   }, [facets.status]);
 
@@ -310,7 +286,13 @@ export default function RunTraceTable({
     groups.every((g) => groupView.all || groupView.expanded.has(g.label));
 
   const title = (
-    <Stack direction="row" alignItems="center" spacing={1.25}>
+    <Stack
+      direction="row"
+      alignItems="center"
+      flexWrap="wrap"
+      spacing={1.25}
+      useFlexGap
+    >
       <TraceGroupByPicker
         value={groupBy}
         onChange={(value) => {
@@ -345,49 +327,67 @@ export default function RunTraceTable({
           sx={{
             ml: 0.5,
             mr: 0,
-            ".MuiFormControlLabel-label": { typography: "s2" },
+            flexShrink: 0,
+            ".MuiFormControlLabel-label": {
+              typography: "s2",
+              whiteSpace: "nowrap",
+            },
           }}
         />
       )}
-      <Button
+      <CustomTooltip
+        show
         size="small"
-        variant="outlined"
-        onClick={(e) => setFilterAnchor(e.currentTarget)}
-        startIcon={
-          <Iconify
-            icon="mage:filter"
-            width={15}
-            sx={{ color: filterCount ? "primary.main" : "text.subtitle" }}
-          />
+        arrow
+        title={
+          filterCount - affectedCalls > 0
+            ? `Filter · ${filterCount - affectedCalls}`
+            : "Filter"
         }
-        endIcon={
-          <Iconify
-            icon="solar:alt-arrow-down-linear"
-            width={12}
-            sx={{ color: "text.subtitle" }}
-          />
-        }
-        sx={filterButtonSx}
       >
-        Filter
-        {filterCount - affectedCalls > 0 && (
-          <>
-            <Box
-              component="span"
-              sx={{
-                mx: 0.5,
-                color: "text.subtitle",
-                fontWeight: "fontWeightRegular",
-              }}
-            >
-              ·
-            </Box>
-            <Box component="span" sx={{ color: "primary.main" }}>
-              {filterCount - affectedCalls}
-            </Box>
-          </>
-        )}
-      </Button>
+        <Button
+          size="small"
+          variant="outlined"
+          onClick={(e) => setFilterAnchor(e.currentTarget)}
+          startIcon={
+            <Iconify
+              icon="mage:filter"
+              width={15}
+              sx={{ color: filterCount ? "primary.main" : "text.subtitle" }}
+            />
+          }
+          endIcon={
+            <Iconify
+              icon="solar:alt-arrow-down-linear"
+              width={12}
+              sx={{ color: "text.subtitle" }}
+            />
+          }
+          sx={toolbarButtonSx}
+        >
+          <Box component="span" sx={compactHiddenSx}>
+            Filter
+          </Box>
+          {filterCount - affectedCalls > 0 && (
+            <>
+              <Box
+                component="span"
+                sx={{
+                  mx: 0.5,
+                  color: "text.subtitle",
+                  fontWeight: "fontWeightRegular",
+                  ...compactHiddenSx,
+                }}
+              >
+                ·
+              </Box>
+              <Box component="span" sx={{ color: "primary.main" }}>
+                {filterCount - affectedCalls}
+              </Box>
+            </>
+          )}
+        </Button>
+      </CustomTooltip>
       {affectedCalls > 0 && (
         <Chip
           size="small"
@@ -403,7 +403,14 @@ export default function RunTraceTable({
   );
 
   const action = (
-    <Stack direction="row" alignItems="center" spacing={1.5}>
+    <Stack
+      direction="row"
+      alignItems="center"
+      flexWrap="wrap"
+      spacing={1.5}
+      useFlexGap
+      sx={{ ml: "auto" }}
+    >
       <StatusFilterChips
         value={statusChip}
         counts={statusCounts}
@@ -430,7 +437,12 @@ export default function RunTraceTable({
 
   return (
     <>
-      <SectionCard title={title} action={action}>
+      <SectionCard
+        title={title}
+        action={action}
+        wrap
+        sx={{ containerType: "inline-size" }}
+      >
         {/* A fixed-height box, like the Scenarios tab: the card keeps its size
             whatever the row count, and the pager below never moves. The table
             scrolls inside it, in its own box. */}

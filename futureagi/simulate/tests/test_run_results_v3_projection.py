@@ -35,10 +35,16 @@ def _queryset(config_count=1, *, scalar_only=False):
         for index in range(config_count)
     ]
     execution_id = uuid.UUID(int=1)
-    with patch(
-        "simulate.services.run_results_v3_queries.SimulateEvalConfig.objects.filter"
-    ) as filtered:
+    with (
+        patch(
+            "simulate.services.run_results_v3_queries.SimulateEvalConfig.objects.filter"
+        ) as filtered,
+        patch(
+            "simulate.services.run_results_v3_queries.HostedHarnessJob.all_objects.filter"
+        ) as jobs,
+    ):
         filtered.return_value.select_related.return_value = configs
+        jobs.return_value.values_list.return_value = []
         queryset = run_calls_queryset(
             SimpleNamespace(run_test=None), [execution_id]
         ).order_by()
