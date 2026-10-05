@@ -66,9 +66,10 @@ export default function RunTraceTable({
   // and empty states unmount the table, and its own state would go with it,
   // folding every group back up. Labels differ per axis, so each axis keeps
   // its own opened set and a change under one never touches another; Expand
-  // all carries over.
+  // all carries over. Calls handed over from a diagnosis issue start open: the
+  // user came to see those rows, not the groups folded over them.
   const [groupState, setGroupState] = useState({
-    all: false,
+    all: !!initialFilters.callExecutionId?.length,
     expandedByAxis: {},
   });
   const groupView = useMemo(
@@ -394,6 +395,9 @@ export default function RunTraceTable({
           label={`${affectedCalls} affected call${affectedCalls === 1 ? "" : "s"}`}
           onDelete={() => {
             setFilters(({ callExecutionId: _ids, ...rest }) => rest);
+            // The groups those calls sat in stay open; the rest of the run
+            // comes back closed.
+            setGroupState((prev) => ({ ...prev, all: false }));
             setPage(1);
           }}
           sx={{ typography: "s2", fontWeight: 600 }}

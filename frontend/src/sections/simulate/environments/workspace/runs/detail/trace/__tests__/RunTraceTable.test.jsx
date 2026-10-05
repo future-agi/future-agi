@@ -170,9 +170,12 @@ describe("RunTraceTable", () => {
   beforeEach(() => {
     useRunCalls.mockImplementation((_executionId, opts = {}) => {
       const status = opts.filters?.status?.[0];
-      const tasks = status
-        ? TASKS.filter((task) => task.status === status)
-        : TASKS;
+      const ids = opts.filters?.call_execution_id;
+      const tasks = TASKS.filter(
+        (task) =>
+          (!status || task.status === status) &&
+          (!ids || ids.includes(task.id)),
+      );
       return {
         tasks,
         columns: COLUMNS,
@@ -712,6 +715,61 @@ describe("RunTraceTable", () => {
       await user.click(chip("Failed"));
 
       expect(persona.escalate()).toBeNull();
+    });
+
+    it("opens the groups of handed-over calls, so their rows show without a click", () => {
+      renderTable({ initialFilters: { callExecutionId: ["t1", "t2"] } });
+
+      expect(persona.refund()).toBeInTheDocument();
+      expect(persona.escalate()).toBeInTheDocument();
+      expect(persona.timeout()).toBeNull();
+      expect(expandAll()).toBeChecked();
+    });
+
+    it("keeps only the handed-over calls' groups open once the chip is dismissed", async () => {
+      const user = userEvent.setup();
+      const { container } = renderTable({
+        initialFilters: { callExecutionId: ["t2"] },
+      });
+      expect(persona.escalate()).toBeInTheDocument();
+
+      await user.click(container.querySelector(".MuiChip-deleteIcon"));
+
+      expect(persona.escalate()).toBeInTheDocument();
+      expect(persona.refund()).toBeNull();
+      expect(persona.timeout()).toBeNull();
+      expect(expandAll()).not.toBeChecked();
+    });
+
+    it("starts an analytics hand-off closed, like any other filter", () => {
+      renderTable({ initialFilters: { goal_outcome: ["escalated"] } });
+
+      expect(persona.refund()).toBeNull();
+      expect(persona.escalate()).toBeNull();
+      expect(persona.timeout()).toBeNull();
+      expect(expandAll()).not.toBeChecked();
+    });
+
+    it("opens the groups on a later page of handed-over calls too", async () => {
+      const user = userEvent.setup();
+      useRunCalls.mockImplementation((_executionId, opts = {}) => {
+        const tasks = opts.page === 2 ? [TASKS[2]] : [TASKS[0], TASKS[1]];
+        return {
+          tasks,
+          columns: COLUMNS,
+          groups: groupsFor(tasks, opts.groupBy),
+          facets: FACETS,
+          count: 51,
+          totalPages: 2,
+          isLoading: false,
+        };
+      });
+      renderTable({ initialFilters: { callExecutionId: ["t1", "t2", "t3"] } });
+      expect(persona.refund()).toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "Go to page 2" }));
+
+      expect(persona.timeout()).toBeInTheDocument();
     });
   });
 
