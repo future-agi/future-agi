@@ -1,8 +1,8 @@
-import logging
 import re
 import uuid
 from typing import Any, Literal
 
+import structlog
 from django.contrib.postgres.fields import ArrayField
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import models
@@ -23,7 +23,7 @@ from model_hub.models.eval_groups import (  # Commented out to avoid circular im
 )
 from tfc.utils.base_model import BaseModel as ModelBaseModel
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 def validate_eval_name(value):
