@@ -526,6 +526,8 @@ def build_call_rows(
                 ),
                 "persona": persona,
                 "persona_details": persona_details,
+                # TODO: drop once clients read sub_goal_results.
+                "sub_goals": [goal["name"] for goal in sub_goal_results],
                 "sub_goal_results": sub_goal_results,
                 "outcome": call_outcome(call, live_eval_configs),
                 "execution_status": call.status,

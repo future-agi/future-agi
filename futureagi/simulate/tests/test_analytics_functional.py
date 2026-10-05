@@ -479,11 +479,11 @@ class TestRunResultsV3Views:
         assert response.status_code == 200
         result = response.json()["results"][0]
         assert result["sub_goal_results"] == expected
-        assert "sub_goals" not in result
+        assert result["sub_goals"] == [goal["name"] for goal in expected]
         detail = auth_client.get(f"/simulate/v3/call-executions/{call.id}/")
         assert detail.status_code == 200
         assert detail.json()["sub_goal_results"] == expected
-        assert "sub_goals" not in detail.json()
+        assert detail.json()["sub_goals"] == [goal["name"] for goal in expected]
 
     @pytest.mark.parametrize(
         "execution_status,expected,label",
@@ -1124,6 +1124,7 @@ class TestRunResultsV3Views:
             "age": "68",
             "traits": ["polite", "hard of hearing"],
         }
+        assert row["sub_goals"] == ["identity_verified"]
         assert row["sub_goal_results"] == [
             {"name": "identity_verified", "passed": True}
         ]
@@ -2732,6 +2733,7 @@ class TestRunResultsV3Views:
 
         row = self._call_row(auth_client, test_execution, call)
 
+        assert row["sub_goals"] == ["pin_verified", "exact_greeting"]
         assert row["sub_goal_results"] == [
             {"name": "pin_verified", "passed": None},
             {"name": "exact_greeting", "passed": None},
@@ -2761,6 +2763,7 @@ class TestRunResultsV3Views:
 
         row = self._call_row(auth_client, test_execution, call)
 
+        assert row["sub_goals"] == ["identity_verified"]
         assert row["sub_goal_results"] == [
             {"name": "identity_verified", "passed": True}
         ]
@@ -2828,6 +2831,7 @@ class TestRunResultsV3Views:
         assert response.status_code == status.HTTP_200_OK
         body = response.json()
         row = next(row for row in body["results"] if row["id"] == str(call.id))
+        assert row["sub_goals"] == ["pin_verified"]
         assert row["sub_goal_results"] == [{"name": "pin_verified", "passed": None}]
         assert body["facets"]["sub_goal"] == [{"value": "pin_verified", "count": 1}]
 

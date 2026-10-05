@@ -233,6 +233,7 @@ class RunCallSerializer(serializers.Serializer):
     conversation_branch = serializers.CharField(allow_null=True)
     persona = serializers.CharField(allow_null=True)
     persona_details = PersonaDetailsSerializer(allow_null=True)
+    sub_goals = serializers.ListField(child=serializers.CharField())
     sub_goal_results = SubGoalResultSerializer(many=True)
     harness_outcome_status = serializers.CharField(allow_null=True)
     source_scenario_key = serializers.CharField(allow_null=True)
@@ -452,6 +453,7 @@ class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
     conversation_branch = serializers.CharField(allow_null=True)
     persona = serializers.CharField(allow_null=True)
     persona_details = PersonaDetailsSerializer(allow_null=True)
+    sub_goals = serializers.ListField(child=serializers.CharField())
     sub_goal_results = SubGoalResultSerializer(many=True)
     outcome = serializers.ChoiceField(choices=list(OUTCOME_LABELS))
     cost_breakdown_cents = CostBreakdownSerializer()
@@ -467,6 +469,7 @@ class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
             "conversation_branch",
             "persona",
             "persona_details",
+            "sub_goals",
             "sub_goal_results",
             "outcome",
             "cost_breakdown_cents",
@@ -627,6 +630,7 @@ def build_call_execution_detail(
             "conversation_branch": normalized["conversation_branch"],
             "persona": normalized["persona"],
             "persona_details": normalized["persona_details"],
+            "sub_goals": normalized["sub_goals"],
             "sub_goal_results": normalized["sub_goal_results"],
             "outcome": normalized["outcome"],
             "overall_score": normalized["csat"],

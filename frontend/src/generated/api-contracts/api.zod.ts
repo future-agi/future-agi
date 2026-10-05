@@ -46772,6 +46772,7 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
     age: zod.string().min(1),
     traits: zod.array(zod.string().min(1)),
   }),
+  sub_goals: zod.array(zod.string().min(1)),
   sub_goal_results: zod.array(
     zod.object({
       name: zod.string().min(1),
@@ -47694,6 +47695,7 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
         age: zod.string().min(1),
         traits: zod.array(zod.string().min(1)),
       }),
+      sub_goals: zod.array(zod.string().min(1)),
       sub_goal_results: zod.array(
         zod.object({
           name: zod.string().min(1),

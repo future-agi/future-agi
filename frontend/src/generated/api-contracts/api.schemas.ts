@@ -22430,6 +22430,7 @@ export interface CallExecutionV3DetailResponseApi {
   /** @minLength 1 */
   persona: string;
   persona_details: PersonaDetailsApi;
+  sub_goals: string[];
   sub_goal_results: SubGoalResultApi[];
   outcome: CallExecutionV3DetailResponseApiOutcome;
   cost_breakdown_cents: CostBreakdownApi;
@@ -22959,6 +22960,7 @@ export interface RunCallApi {
   /** @minLength 1 */
   persona: string;
   persona_details: PersonaDetailsApi;
+  sub_goals: string[];
   sub_goal_results: SubGoalResultApi[];
   /** @minLength 1 */
   harness_outcome_status: string;

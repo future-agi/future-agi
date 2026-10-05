@@ -134398,6 +134398,7 @@
                 "conversation_branch",
                 "persona",
                 "persona_details",
+                "sub_goals",
                 "sub_goal_results",
                 "outcome",
                 "cost_breakdown_cents",
@@ -134832,6 +134833,13 @@
                 },
                 "persona_details": {
                     "$ref": "#/definitions/PersonaDetails"
+                },
+                "sub_goals": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
                 },
                 "sub_goal_results": {
                     "type": "array",
@@ -136816,6 +136824,7 @@
                 "conversation_branch",
                 "persona",
                 "persona_details",
+                "sub_goals",
                 "sub_goal_results",
                 "harness_outcome_status",
                 "source_scenario_key",
@@ -136882,6 +136891,13 @@
                 },
                 "persona_details": {
                     "$ref": "#/definitions/PersonaDetails"
+                },
+                "sub_goals": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
                 },
                 "sub_goal_results": {
                     "type": "array",

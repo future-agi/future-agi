@@ -113,6 +113,7 @@ def test_v3_detail_uses_explicit_csat_for_existing_score_fields(csat):
             "conversation_branch",
             "persona",
             "persona_details",
+            "sub_goals",
             "sub_goal_results",
             "outcome",
             "cost_breakdown_cents",

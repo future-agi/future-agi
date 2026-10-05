@@ -52163,6 +52163,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "conversation_branch",
         "persona",
         "persona_details",
+        "sub_goals",
         "sub_goal_results",
         "outcome",
         "cost_breakdown_cents",
@@ -52596,6 +52597,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         persona_details: {
           $ref: "#/definitions/PersonaDetails",
+        },
+        sub_goals: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
         },
         sub_goal_results: {
           type: "array",
@@ -98584,6 +98592,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "conversation_branch",
         "persona",
         "persona_details",
+        "sub_goals",
         "sub_goal_results",
         "harness_outcome_status",
         "source_scenario_key",
@@ -98650,6 +98659,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         persona_details: {
           $ref: "#/definitions/PersonaDetails",
+        },
+        sub_goals: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
         },
         sub_goal_results: {
           type: "array",
