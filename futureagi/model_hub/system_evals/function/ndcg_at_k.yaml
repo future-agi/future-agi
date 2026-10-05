@@ -62,8 +62,14 @@ config:
         ground_truth_set = set(str(x) for x in reference)
         # DCG: binary relevance (1 if relevant, 0 if not)
         dcg = 0.0
+        seen = set()
         for i, item in enumerate(hypothesis):
-            rel = 1.0 if str(item) in ground_truth_set else 0.0
+            # Credit each relevant item at most once. IDCG counts distinct
+            # ground-truth items, so repeats let NDCG exceed 1.0:
+            # hyp=["a","a"] against ref=["a"] scored 1.631.
+            key = str(item)
+            rel = 1.0 if key in ground_truth_set and key not in seen else 0.0
+            seen.add(key)
             dcg += rel / math.log2(i + 2)  # i+2 because rank starts at 1, log2(1)=0
         # Ideal DCG: all relevant items at the top
         n_relevant = min(len(ground_truth_set), len(hypothesis))
