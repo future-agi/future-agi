@@ -397,6 +397,38 @@ describe("buildFlowData keeps same-level nodes on one level (TH-4321)", () => {
   );
 });
 
+describe("buildFlowData places Stop on dagre's rank axis", () => {
+  // dagre reads rankdir case-insensitively and reverses the rank axis for
+  // BT/RL. Stop must follow the same reading or it lands beside the graph.
+  const extent = (flow, axis) => {
+    const values = flow.nodes
+      .filter((node) => node.id !== "__end__")
+      .map((node) => node.position[axis]);
+    return { min: Math.min(...values), max: Math.max(...values) };
+  };
+
+  it.each([
+    ["TB", "y", "after"],
+    ["tb", "y", "after"],
+    ["BT", "y", "before"],
+    ["LR", "x", "after"],
+    ["lr", "x", "after"],
+    ["RL", "x", "before"],
+  ])("%s puts Stop past the last level along %s", (direction, axis, side) => {
+    const flow = buildFlowData(buildTraceGraph(screenshotTrace()), direction);
+    const stop = flow.nodes.find((node) => node.id === "__end__").position;
+    const { min, max } = extent(flow, axis);
+
+    if (side === "after") expect(stop[axis]).toBeGreaterThan(max);
+    else expect(stop[axis]).toBeLessThan(min);
+
+    const cross = axis === "y" ? "x" : "y";
+    const span = extent(flow, cross);
+    expect(stop[cross]).toBeGreaterThanOrEqual(span.min);
+    expect(stop[cross]).toBeLessThanOrEqual(span.max);
+  });
+});
+
 describe("AgentGraph request states", () => {
   it("renders loading before validating absent pending data", () => {
     render(<AgentGraph data={undefined} isLoading isError={false} />);

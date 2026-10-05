@@ -578,21 +578,33 @@ const SENTINEL_HEIGHT = 32;
 
 const isStopNode = (node) => node.data?.type === "end";
 
+// Read rankdir the way dagre does: case-insensitive, LR/RL lay ranks along
+// x, BT/RL reverse the rank axis, anything else is top-to-bottom.
+const rankAxis = (direction) => {
+  const dir = String(direction).toLowerCase();
+  return {
+    horizontal: dir === "lr" || dir === "rl",
+    reversed: dir === "bt" || dir === "rl",
+  };
+};
+
 const placeStop = (g, laidOutIds, direction, ranksep) => {
   if (!laidOutIds.length) return { x: 0, y: 0 };
   const boxes = laidOutIds.map((id) => g.node(id));
   const min = (pick) => Math.min(...boxes.map(pick));
   const max = (pick) => Math.max(...boxes.map(pick));
-  if (direction === "TB") {
-    return {
-      x: (min((b) => b.x - b.width / 2) + max((b) => b.x + b.width / 2)) / 2,
-      y: max((b) => b.y + b.height / 2) + ranksep + SENTINEL_HEIGHT / 2,
-    };
-  }
-  return {
-    x: max((b) => b.x + b.width / 2) + ranksep + SENTINEL_WIDTH / 2,
-    y: (min((b) => b.y - b.height / 2) + max((b) => b.y + b.height / 2)) / 2,
-  };
+  const { horizontal, reversed } = rankAxis(direction);
+  const [main, mainSize, stopSize, cross, crossSize] = horizontal
+    ? ["x", "width", SENTINEL_WIDTH, "y", "height"]
+    : ["y", "height", SENTINEL_HEIGHT, "x", "width"];
+  const stopMain = reversed
+    ? min((b) => b[main] - b[mainSize] / 2) - ranksep - stopSize / 2
+    : max((b) => b[main] + b[mainSize] / 2) + ranksep + stopSize / 2;
+  const stopCross =
+    (min((b) => b[cross] - b[crossSize] / 2) +
+      max((b) => b[cross] + b[crossSize] / 2)) /
+    2;
+  return { [main]: stopMain, [cross]: stopCross };
 };
 
 const layoutGraph = (nodes, edges, direction = "LR") => {
