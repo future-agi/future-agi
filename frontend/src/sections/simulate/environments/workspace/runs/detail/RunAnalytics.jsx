@@ -39,7 +39,6 @@ const WIDGETS = [
     id: "disconnection",
     title: "How calls ended",
     section: "Outcomes",
-    shown: true,
   },
   {
     id: "provider_success",
@@ -58,7 +57,6 @@ const WIDGETS = [
     title: "Evaluations",
     section: "Evaluations",
     wide: true,
-    shown: true,
   },
   {
     id: "voice_slos",
@@ -87,7 +85,6 @@ const WIDGETS = [
     title: "Agent response time per call",
     section: "Latency",
     wide: true,
-    shown: true,
   },
   {
     id: "distribution",
@@ -100,7 +97,6 @@ const WIDGETS = [
     title: "Weakest scenarios",
     section: "Failure analysis",
     wide: true,
-    shown: true,
   },
   { id: "tools_volume", title: "Tool call volume", section: "Tools" },
   { id: "tools_failure", title: "Tool failure rate", section: "Tools" },
@@ -224,7 +220,8 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
           provider: task.provider,
         })
     : undefined;
-  const { summary, reliability } = data;
+  const { summary } = data;
+  const reliability = data.reliability ?? {};
   const interval = reliability?.pass_rate_interval;
   const evalSummary = dashboard.evaluation_summary;
   const subtitles = {
@@ -235,7 +232,7 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
       "The provider's own judgement as reported; it never replaces your evals",
     sentiment:
       "As reported by the provider; the platform does not compute sentiment",
-    reliability: `${reliability.scenarios} scenarios × ${reliability.trials} trial${reliability.trials === 1 ? "" : "s"}${interval ? ` · pass rate 95% range ${format(interval.low, "percent")}–${format(interval.high, "percent")}` : ""}`,
+    reliability: `${reliability.scenarios ?? 0} scenarios × ${reliability.trials ?? 0} trial${reliability.trials === 1 ? "" : "s"}${interval ? ` · pass rate 95% range ${format(interval.low, "percent")}–${format(interval.high, "percent")}` : ""}`,
     evaluations: `${evalSummary.graders} evals · ${evalSummary.passed} of ${evalSummary.measured} evaluated calls passed every eval (${format(evalSummary.pass_rate, "percent")})${evalSummary.errored_checks ? ` · ${evalSummary.errored_checks} checks could not run` : ""}`,
     csat: "Scorer CSAT on a 0–10 scale; a provider success flag is never mixed in",
     response_time:
@@ -266,8 +263,9 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
       !["provider_success", "sentiment"].includes(widget.id) ||
       breakdown(widget.id),
   );
+  // The details toggle only reveals the reliability section.
   const widgets = availableWidgets.filter(
-    (widget) => widget.shown || showDetails,
+    (widget) => widget.id !== "reliability" || showDetails,
   );
   const metricsByKey = Object.fromEntries(
     dashboard.metrics.map((metric) => [metric.key, metric]),
@@ -281,6 +279,52 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
     interval && passRate?.value != null
       ? Math.max(passRate.value - interval.low, interval.high - passRate.value)
       : null;
+  const metricTile = (key, label, coverage, unit) => {
+    const metric = metricsByKey[key];
+    if (!metric) return null;
+    return {
+      key,
+      label,
+      value: format(metric.value, unit ?? metric.unit),
+      reported: metric.value != null,
+      coverage: coverage(metric),
+      note: metric.note,
+    };
+  };
+  const measuredOf = (metric) =>
+    `${metric.measured ?? 0} / ${metric.total ?? 0} measured`;
+  // Voice-only metrics are absent from chat runs, so their tiles drop out.
+  const callTiles = [
+    metricTile("total", "Total Calls", () => "this run"),
+    health && {
+      key: "connected",
+      label: "Connected",
+      value: format(health.connected),
+      reported: health.connected != null,
+      coverage: `of ${health.attempted ?? 0}`,
+      note: "Calls that exchanged at least one message",
+    },
+    metricTile(
+      "connected_rate",
+      "Calls Connected (%)",
+      (metric) => `${metric.measured ?? 0} / ${metric.total ?? 0} calls`,
+    ),
+    metricTile("agent_latency", "Agent Latency", measuredOf),
+    metricTile("wpm", "Agent WPM", () => "words/min"),
+    metricTile("stop", "Agent Stop Latency", measuredOf),
+    // API sends the agent's share as a percent; show it as agent/customer.
+    metricTile("talk", "Talk Ratio", () => "agent/customer", "ratio"),
+    metricTile(
+      "duration",
+      "Avg duration",
+      (metric) => `${metric.measured ?? 0} timed calls`,
+    ),
+    metricTile(
+      "turns",
+      "Avg turns",
+      (metric) => `${metric.measured ?? 0} calls`,
+    ),
+  ].filter(Boolean);
   const headlines = [
     {
       key: "pass_rate",
@@ -335,6 +379,7 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
         : "No previous comparable run",
       note: "Newly passing / newly failing, on scenarios evaluated in both runs",
     },
+    ...callTiles,
   ];
   const healthIssues = [];
   const notConnected = (health?.attempted ?? 0) - (health?.connected ?? 0);
@@ -707,7 +752,7 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
             gridTemplateColumns: {
               xs: "repeat(2,minmax(0,1fr))",
               md: "repeat(3,minmax(0,1fr))",
-              lg: "repeat(6,minmax(0,1fr))",
+              lg: "repeat(5,minmax(0,1fr))",
             },
             border: "1px solid",
             borderColor: "divider",

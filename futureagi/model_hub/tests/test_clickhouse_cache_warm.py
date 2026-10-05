@@ -59,6 +59,7 @@ def test_python_c_without_deployment_env_skips_every_startup_mutation_path(monke
 @pytest.mark.parametrize(
     "command",
     [
+        "backfill_harness_agent_prompts",
         "backfill_legacy_scans",
         "backfill_score_tracer_project",
         "ch25_apply_schema",
@@ -78,6 +79,7 @@ def test_mutation_guard_rejects_unsafe_management_commands(command):
 @pytest.mark.parametrize(
     "command",
     [
+        "backfill_harness_agent_prompts",
         "backfill_legacy_scans",
         "backfill_score_tracer_project",
         "ch25_apply_schema",
