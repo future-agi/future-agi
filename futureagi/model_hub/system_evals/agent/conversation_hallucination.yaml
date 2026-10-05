@@ -1,31 +1,32 @@
 eval_id: 200
 name: conversation_hallucination
-description: "Identifies fabricated customer attributions, false accounts of prior dialogue, repeated contradictions, and claims contradicted by supplied context; does not verify unseen tool execution or unsupported external facts."
+description: "Detects fabricated attributions, false dialogue history, material contradictions, and misrepresentation of supplied factual context."
 criteria: |-
-  You are evaluating fabricated attributions and factual inconsistencies in the agent's conversation. Use the conversation and any relevant context actually supplied; do not infer hidden tool execution or backend truth.
+  Evaluate fabricated or misrepresented information in the agent's statements against the conversation and relevant supplied context.
 
   ## Criteria
-  1. Customer-attributed fabrication: Compare claims about what the customer said, requested, confirmed, or corrected with the customer's actual turns. Invented details, different numbers attributed to the customer, swapped roles, or denying a clearly given confirmation are failures when established by the conversation. Track who introduced a value; a false agent statement does not become grounded merely because it appears earlier in the history.
-  2. False accounts of earlier dialogue: Check claims such as "I already gave you the options" or "you have not confirmed" against the preceding exchanges. Distinguish a statement about an observable conversational action from an unverifiable claim about a hidden backend action.
-  3. Contradictions and repairs: Compare the agent's material statements about the same detail, service, requirement, or outcome across turns. An explicitly framed correction that is then consistently retained is allowed. Continuing a contradicted claim after a clear correction, or reverting to it after repair, is a failure; a later generic success announcement does not erase repeated contradictions. Legitimate changes supported by a customer update or new supplied evidence are not contradictions.
-  4. Context-grounded facts: When relevant factual context is supplied, check claims against that evidence. An instruction to use a tool is not the tool's result, and a topic being within the agent's scope does not establish a particular policy, entitlement, or capability. Without relevant evidence, external facts and claims about completed backend actions are outside what this evaluation can verify. Do not fail them solely for lacking independent support, or describe them as verified because the agent asserted them. An audible contradiction involving such a claim remains assessable.
+  1. Attribution: Claims about another participant's statements, requests, or agreement must match that participant's actual contributions.
+  2. Dialogue history: Claims about earlier exchanges must match the available history; the agent's own unsupported assertion is not independent evidence.
+  3. Consistency: Material claims must remain consistent unless new information or an explicit correction supports a change; repeated misrepresentation remains a failure.
+  4. Grounding: Assess factual claims against relevant supplied context, including unsupported additions falsely presented as grounded in that context.
 
   ## Anti-bias Rules
-  - Evaluate only the agent. Customer turns establish what the customer said, not whether every customer belief is true in the world.
-  - A single tentative read-back followed by explicit correction and consistent recovery is not fabrication. Repeatedly attributing the same corrected wrong value to the customer is different.
-  - Do not infer false statements from inaudible speech, incomplete capture, isolated transcription spellings, or clipped intent. For example, "I was asking" after an interruption need not claim an earlier question was fully delivered. State uncertainty rather than inventing missing dialogue.
-  - Reasonable inferences, generic filler, and explicit admissions of uncertainty are not hallucinations. Distinguish a clearly offered alternative from a fabricated claim about the customer's preference.
-  - No external lookup or tool trace is required. An announced completion is not a hallucination merely because the backend cannot be checked. Lack of context is not evidence of fabrication, and absence of a contradiction is not proof of external truth.
+  - Allow explicit corrections that are retained, reasonable supported inferences, labeled proposals or hypotheticals, and statements of uncertainty.
+  - Participant statements establish what was said, not necessarily its external truth; instructions describe expected behavior, not proof of events.
+  - Do not infer fabrication from unclear speech, transcription artifacts, incomplete capture, or missing context.
+  - If supplied inputs cannot verify an external claim, neither fail it solely for absent support nor describe it as verified.
 
   ## Scoring
-  Return 'Failed' when the assessable evidence establishes a fabricated customer attribution, a false account of earlier dialogue, an unrepaired or repeated material contradiction, or a factual claim contradicted by supplied context. Return 'Passed' when no such failure is established. A pass covers assessable conversation consistency and supplied grounding only; it does not certify external facts, policies, or backend execution that cannot be checked.
+  - Return 'Failed' for an established fabricated attribution, false account of prior dialogue, unresolved or repeated material contradiction, or misrepresentation of supplied factual context.
+  - Return 'Passed' when no such failure is established; this does not certify claims the supplied inputs cannot verify.
 
   ## Explanation
-  Quote the disputed claim and the customer turn, earlier agent statement, or supplied context that establishes the problem. Explain why any apparent repair does or does not resolve it. For a pass, describe the assessed scope and any uncheckable claims without calling them verified.
+  Identify the claim and decisive evidence, considering corrections or new information; distinguish a demonstrated error from an uncheckable claim.
 
   ## Inputs
   <conversation>{{conversation}}</conversation>
   <context>{{context}}</context>
+
 eval_tags:
 - Hallucination
 - Conversation
@@ -79,26 +80,26 @@ config:
     - DATETIME
     - IMAGES
   rule_prompt: |-
-    You are evaluating fabricated attributions and factual inconsistencies in the agent's conversation. Use the conversation and any relevant context actually supplied; do not infer hidden tool execution or backend truth.
+    Evaluate fabricated or misrepresented information in the agent's statements against the conversation and relevant supplied context.
 
     ## Criteria
-    1. Customer-attributed fabrication: Compare claims about what the customer said, requested, confirmed, or corrected with the customer's actual turns. Invented details, different numbers attributed to the customer, swapped roles, or denying a clearly given confirmation are failures when established by the conversation. Track who introduced a value; a false agent statement does not become grounded merely because it appears earlier in the history.
-    2. False accounts of earlier dialogue: Check claims such as "I already gave you the options" or "you have not confirmed" against the preceding exchanges. Distinguish a statement about an observable conversational action from an unverifiable claim about a hidden backend action.
-    3. Contradictions and repairs: Compare the agent's material statements about the same detail, service, requirement, or outcome across turns. An explicitly framed correction that is then consistently retained is allowed. Continuing a contradicted claim after a clear correction, or reverting to it after repair, is a failure; a later generic success announcement does not erase repeated contradictions. Legitimate changes supported by a customer update or new supplied evidence are not contradictions.
-    4. Context-grounded facts: When relevant factual context is supplied, check claims against that evidence. An instruction to use a tool is not the tool's result, and a topic being within the agent's scope does not establish a particular policy, entitlement, or capability. Without relevant evidence, external facts and claims about completed backend actions are outside what this evaluation can verify. Do not fail them solely for lacking independent support, or describe them as verified because the agent asserted them. An audible contradiction involving such a claim remains assessable.
+    1. Attribution: Claims about another participant's statements, requests, or agreement must match that participant's actual contributions.
+    2. Dialogue history: Claims about earlier exchanges must match the available history; the agent's own unsupported assertion is not independent evidence.
+    3. Consistency: Material claims must remain consistent unless new information or an explicit correction supports a change; repeated misrepresentation remains a failure.
+    4. Grounding: Assess factual claims against relevant supplied context, including unsupported additions falsely presented as grounded in that context.
 
     ## Anti-bias Rules
-    - Evaluate only the agent. Customer turns establish what the customer said, not whether every customer belief is true in the world.
-    - A single tentative read-back followed by explicit correction and consistent recovery is not fabrication. Repeatedly attributing the same corrected wrong value to the customer is different.
-    - Do not infer false statements from inaudible speech, incomplete capture, isolated transcription spellings, or clipped intent. For example, "I was asking" after an interruption need not claim an earlier question was fully delivered. State uncertainty rather than inventing missing dialogue.
-    - Reasonable inferences, generic filler, and explicit admissions of uncertainty are not hallucinations. Distinguish a clearly offered alternative from a fabricated claim about the customer's preference.
-    - No external lookup or tool trace is required. An announced completion is not a hallucination merely because the backend cannot be checked. Lack of context is not evidence of fabrication, and absence of a contradiction is not proof of external truth.
+    - Allow explicit corrections that are retained, reasonable supported inferences, labeled proposals or hypotheticals, and statements of uncertainty.
+    - Participant statements establish what was said, not necessarily its external truth; instructions describe expected behavior, not proof of events.
+    - Do not infer fabrication from unclear speech, transcription artifacts, incomplete capture, or missing context.
+    - If supplied inputs cannot verify an external claim, neither fail it solely for absent support nor describe it as verified.
 
     ## Scoring
-    Return 'Failed' when the assessable evidence establishes a fabricated customer attribution, a false account of earlier dialogue, an unrepaired or repeated material contradiction, or a factual claim contradicted by supplied context. Return 'Passed' when no such failure is established. A pass covers assessable conversation consistency and supplied grounding only; it does not certify external facts, policies, or backend execution that cannot be checked.
+    - Return 'Failed' for an established fabricated attribution, false account of prior dialogue, unresolved or repeated material contradiction, or misrepresentation of supplied factual context.
+    - Return 'Passed' when no such failure is established; this does not certify claims the supplied inputs cannot verify.
 
     ## Explanation
-    Quote the disputed claim and the customer turn, earlier agent statement, or supplied context that establishes the problem. Explain why any apparent repair does or does not resolve it. For a pass, describe the assessed scope and any uncheckable claims without calling them verified.
+    Identify the claim and decisive evidence, considering corrections or new information; distinguish a demonstrated error from an uncheckable claim.
 
     ## Inputs
     <conversation>{{conversation}}</conversation>

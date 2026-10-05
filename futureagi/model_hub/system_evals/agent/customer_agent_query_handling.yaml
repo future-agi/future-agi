@@ -1,34 +1,33 @@
 eval_id: 114
 name: customer_agent_query_handling
-description: "Evaluates whether every substantive question and request, including multipart, secondary, and deferred questions, is understood and addressed without overlooking repeated nonanswers or unresolved decision-essential issues."
+description: "Checks whether every substantive part of user questions and requests is understood and appropriately addressed."
 criteria: |-
-  You are evaluating whether the agent understands and addresses the customer's questions and requests throughout the conversation, including every part of a multipart query.
+  Evaluate whether the agent understands and addresses each substantive question and request in the conversation.
 
   ## Criteria
-  1. Identify every substantive issue: Split a customer turn into its distinct questions, clarification requests, corrections, and action requests. Include secondary and follow-up questions, even when they accompany approval of the main task. Track a repeated question as an unresolved issue with repeated attempts, rather than treating each repetition as new evidence of successful handling.
-  2. Match each issue to a response: Check whether the agent answers that specific question, asks a necessary clarification, or directly explains a relevant limitation and available next step. Answering one part does not answer the others. An acknowledgment, a repeated script, or related information that does not address what was asked is a nonanswer. For example, explaining where a code came from does not explain why it is needed.
-  3. Follow deferred questions through to resolution: A reasonable deferral while gathering necessary information can be appropriate, but remains pending until addressed. Repeatedly promising to answer, requesting already supplied information, or presenting options without answering a question about those options is not resolution. A successful primary task does not erase unanswered secondary questions.
-  4. Respect decision-essential questions and conditions: Questions about the requested service, corrected details, eligibility, capacity, or conditions on consent may determine whether the customer can proceed. Do not let many routine exchanges outweigh an unresolved issue essential to the customer's stated decision or outcome.
-  5. Handle unexpected questions appropriately: Judge scope from the conversation and any role information actually available. A clarification about the current task is not out of scope merely because the agent labels it that way. Genuinely unrelated questions may receive a polite, relevant boundary or redirection.
+  1. Separate multipart queries into distinct issues, including secondary questions, corrections, and follow-ups.
+  2. Match each issue to a direct answer, necessary clarification, or relevant limitation; answering one part does not satisfy the others.
+  3. Track deferred and repeated questions until addressed; a completed task or repeated acknowledgment does not erase unanswered issues.
+  4. Judge importance and scope from the interaction, not assumed domain rules or the agent's unsupported claim that a question is unrelated.
 
   ## Anti-bias Rules
-  - A clarification is good handling when information is genuinely ambiguous or missing; asking again for a clear answer already supplied is not.
-  - An honest "I don't know" or "I cannot provide that information" can be responsive when it directly addresses the question and explains the limitation or offers an available next step. Do not require an invented answer, tool access, or an unavailable capability.
-  - A short direct answer can address several questions; do not require one turn per question. Do not count greetings, filler, or statements needing no response as unanswered queries.
-  - Exclude inaudible or missing portions from judgments about comprehension or omission. Do not assume an answer occurred in a missing segment or infer that it was omitted solely because capture is incomplete; state the limitation.
-  - Evaluate the responses themselves, not hidden tool execution or backend success. Politeness and eventual task completion do not compensate for nonanswers or repeated misunderstanding.
+  - Allow genuine clarification and relevant admissions of uncertainty; do not require invented answers or unavailable capabilities.
+  - One concise response may address several issues; exclude greetings, filler, and statements needing no response.
+  - Exclude unclear or missing content from omission judgments rather than assuming an answer was given or withheld.
+  - Judge observable responses, not unseen execution; politeness does not compensate for material nonanswers.
 
   ## Scoring
-  - Select 'never' when no substantive issue is handled meaningfully, or the agent consistently responds with misunderstanding or nonanswers.
-  - Select 'occasionally' when some issues are handled but others are materially mishandled. An unresolved decision-essential issue or repeated nonanswers to the same substantive question caps the rating at 'occasionally', even when routine parts of the task are handled correctly.
-  - Select 'frequently' when most issues are handled, remaining omissions are minor, and no decision-essential issue or repeated nonanswer remains unresolved. Use this rather than 'always' when a material initial misunderstanding requires repair, even if the later answer is good.
-  - Select 'always' only when every assessable substantive part, including secondary and deferred questions, is appropriately addressed without material misunderstanding or unresolved omission.
+  - Select 'never' when no substantive issue is meaningfully handled or misunderstanding and nonanswers dominate.
+  - Select 'occasionally' for material gaps, persistent nonanswer loops, or an unresolved issue explicitly essential to the user's decision or outcome.
+  - Select 'frequently' when most issues are handled, with only minor omissions or brief repaired misunderstanding and no 'occasionally' condition.
+  - Select 'always' when every assessable substantive part is appropriately addressed without material misunderstanding or unresolved omission; genuine clarification is allowed.
 
   ## Explanation
-  Identify the question or subquestion that determines the rating and the response that addresses it, fails to address it, or never arrives. For repeated nonanswers, cite the repeated request and relevant replies. Do not assign the agent's misunderstanding to the customer or claim that answering the primary request answered every part.
+  Identify the decisive question or subquestion, the response or omission, and supporting evidence; do not equate answering the main request with answering every part.
 
   ## Inputs
   <conversation>{{conversation}}</conversation>
+
 eval_tags:
 - Agents
 - Conversation
@@ -62,33 +61,32 @@ config:
   config_params_desc:
     conversation: The conversation to be evaluated
   rule_prompt: |-
-    You are evaluating whether the agent understands and addresses the customer's questions and requests throughout the conversation, including every part of a multipart query.
+    Evaluate whether the agent understands and addresses each substantive question and request in the conversation.
 
     ## Criteria
-    1. Identify every substantive issue: Split a customer turn into its distinct questions, clarification requests, corrections, and action requests. Include secondary and follow-up questions, even when they accompany approval of the main task. Track a repeated question as an unresolved issue with repeated attempts, rather than treating each repetition as new evidence of successful handling.
-    2. Match each issue to a response: Check whether the agent answers that specific question, asks a necessary clarification, or directly explains a relevant limitation and available next step. Answering one part does not answer the others. An acknowledgment, a repeated script, or related information that does not address what was asked is a nonanswer. For example, explaining where a code came from does not explain why it is needed.
-    3. Follow deferred questions through to resolution: A reasonable deferral while gathering necessary information can be appropriate, but remains pending until addressed. Repeatedly promising to answer, requesting already supplied information, or presenting options without answering a question about those options is not resolution. A successful primary task does not erase unanswered secondary questions.
-    4. Respect decision-essential questions and conditions: Questions about the requested service, corrected details, eligibility, capacity, or conditions on consent may determine whether the customer can proceed. Do not let many routine exchanges outweigh an unresolved issue essential to the customer's stated decision or outcome.
-    5. Handle unexpected questions appropriately: Judge scope from the conversation and any role information actually available. A clarification about the current task is not out of scope merely because the agent labels it that way. Genuinely unrelated questions may receive a polite, relevant boundary or redirection.
+    1. Separate multipart queries into distinct issues, including secondary questions, corrections, and follow-ups.
+    2. Match each issue to a direct answer, necessary clarification, or relevant limitation; answering one part does not satisfy the others.
+    3. Track deferred and repeated questions until addressed; a completed task or repeated acknowledgment does not erase unanswered issues.
+    4. Judge importance and scope from the interaction, not assumed domain rules or the agent's unsupported claim that a question is unrelated.
 
     ## Anti-bias Rules
-    - A clarification is good handling when information is genuinely ambiguous or missing; asking again for a clear answer already supplied is not.
-    - An honest "I don't know" or "I cannot provide that information" can be responsive when it directly addresses the question and explains the limitation or offers an available next step. Do not require an invented answer, tool access, or an unavailable capability.
-    - A short direct answer can address several questions; do not require one turn per question. Do not count greetings, filler, or statements needing no response as unanswered queries.
-    - Exclude inaudible or missing portions from judgments about comprehension or omission. Do not assume an answer occurred in a missing segment or infer that it was omitted solely because capture is incomplete; state the limitation.
-    - Evaluate the responses themselves, not hidden tool execution or backend success. Politeness and eventual task completion do not compensate for nonanswers or repeated misunderstanding.
+    - Allow genuine clarification and relevant admissions of uncertainty; do not require invented answers or unavailable capabilities.
+    - One concise response may address several issues; exclude greetings, filler, and statements needing no response.
+    - Exclude unclear or missing content from omission judgments rather than assuming an answer was given or withheld.
+    - Judge observable responses, not unseen execution; politeness does not compensate for material nonanswers.
 
     ## Scoring
-    - Select 'never' when no substantive issue is handled meaningfully, or the agent consistently responds with misunderstanding or nonanswers.
-    - Select 'occasionally' when some issues are handled but others are materially mishandled. An unresolved decision-essential issue or repeated nonanswers to the same substantive question caps the rating at 'occasionally', even when routine parts of the task are handled correctly.
-    - Select 'frequently' when most issues are handled, remaining omissions are minor, and no decision-essential issue or repeated nonanswer remains unresolved. Use this rather than 'always' when a material initial misunderstanding requires repair, even if the later answer is good.
-    - Select 'always' only when every assessable substantive part, including secondary and deferred questions, is appropriately addressed without material misunderstanding or unresolved omission.
+    - Select 'never' when no substantive issue is meaningfully handled or misunderstanding and nonanswers dominate.
+    - Select 'occasionally' for material gaps, persistent nonanswer loops, or an unresolved issue explicitly essential to the user's decision or outcome.
+    - Select 'frequently' when most issues are handled, with only minor omissions or brief repaired misunderstanding and no 'occasionally' condition.
+    - Select 'always' when every assessable substantive part is appropriately addressed without material misunderstanding or unresolved omission; genuine clarification is allowed.
 
     ## Explanation
-    Identify the question or subquestion that determines the rating and the response that addresses it, fails to address it, or never arrives. For repeated nonanswers, cite the repeated request and relevant replies. Do not assign the agent's misunderstanding to the customer or claim that answering the primary request answered every part.
+    Identify the decisive question or subquestion, the response or omission, and supporting evidence; do not equate answering the main request with answering every part.
 
     ## Inputs
     <conversation>{{conversation}}</conversation>
+
 choice_scores:
   never: 0.0
   occasionally: 0.33

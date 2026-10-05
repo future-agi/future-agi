@@ -552,29 +552,29 @@ conversation_hallucination:
   eval_type: agent
   output: Pass/Fail
   required_keys: [conversation, context]
-  description: "Identifies fabricated customer attributions, false accounts of prior dialogue, repeated contradictions, and claims contradicted by supplied context; does not verify unseen tool execution or unsupported external facts."
+  description: "Detects fabricated attributions, false dialogue history, material contradictions, and misrepresentation of supplied factual context."
   tags: [Hallucination, Conversation, Agents]
   rule_prompt: |-
-    You are evaluating fabricated attributions and factual inconsistencies in the agent's conversation. Use the conversation and any relevant context actually supplied; do not infer hidden tool execution or backend truth.
+    Evaluate fabricated or misrepresented information in the agent's statements against the conversation and relevant supplied context.
 
     ## Criteria
-    1. Customer-attributed fabrication: Compare claims about what the customer said, requested, confirmed, or corrected with the customer's actual turns. Invented details, different numbers attributed to the customer, swapped roles, or denying a clearly given confirmation are failures when established by the conversation. Track who introduced a value; a false agent statement does not become grounded merely because it appears earlier in the history.
-    2. False accounts of earlier dialogue: Check claims such as "I already gave you the options" or "you have not confirmed" against the preceding exchanges. Distinguish a statement about an observable conversational action from an unverifiable claim about a hidden backend action.
-    3. Contradictions and repairs: Compare the agent's material statements about the same detail, service, requirement, or outcome across turns. An explicitly framed correction that is then consistently retained is allowed. Continuing a contradicted claim after a clear correction, or reverting to it after repair, is a failure; a later generic success announcement does not erase repeated contradictions. Legitimate changes supported by a customer update or new supplied evidence are not contradictions.
-    4. Context-grounded facts: When relevant factual context is supplied, check claims against that evidence. An instruction to use a tool is not the tool's result, and a topic being within the agent's scope does not establish a particular policy, entitlement, or capability. Without relevant evidence, external facts and claims about completed backend actions are outside what this evaluation can verify. Do not fail them solely for lacking independent support, or describe them as verified because the agent asserted them. An audible contradiction involving such a claim remains assessable.
+    1. Attribution: Claims about another participant's statements, requests, or agreement must match that participant's actual contributions.
+    2. Dialogue history: Claims about earlier exchanges must match the available history; the agent's own unsupported assertion is not independent evidence.
+    3. Consistency: Material claims must remain consistent unless new information or an explicit correction supports a change; repeated misrepresentation remains a failure.
+    4. Grounding: Assess factual claims against relevant supplied context, including unsupported additions falsely presented as grounded in that context.
 
     ## Anti-bias Rules
-    - Evaluate only the agent. Customer turns establish what the customer said, not whether every customer belief is true in the world.
-    - A single tentative read-back followed by explicit correction and consistent recovery is not fabrication. Repeatedly attributing the same corrected wrong value to the customer is different.
-    - Do not infer false statements from inaudible speech, incomplete capture, isolated transcription spellings, or clipped intent. For example, "I was asking" after an interruption need not claim an earlier question was fully delivered. State uncertainty rather than inventing missing dialogue.
-    - Reasonable inferences, generic filler, and explicit admissions of uncertainty are not hallucinations. Distinguish a clearly offered alternative from a fabricated claim about the customer's preference.
-    - No external lookup or tool trace is required. An announced completion is not a hallucination merely because the backend cannot be checked. Lack of context is not evidence of fabrication, and absence of a contradiction is not proof of external truth.
+    - Allow explicit corrections that are retained, reasonable supported inferences, labeled proposals or hypotheticals, and statements of uncertainty.
+    - Participant statements establish what was said, not necessarily its external truth; instructions describe expected behavior, not proof of events.
+    - Do not infer fabrication from unclear speech, transcription artifacts, incomplete capture, or missing context.
+    - If supplied inputs cannot verify an external claim, neither fail it solely for absent support nor describe it as verified.
 
     ## Scoring
-    Return 'Failed' when the assessable evidence establishes a fabricated customer attribution, a false account of earlier dialogue, an unrepaired or repeated material contradiction, or a factual claim contradicted by supplied context. Return 'Passed' when no such failure is established. A pass covers assessable conversation consistency and supplied grounding only; it does not certify external facts, policies, or backend execution that cannot be checked.
+    - Return 'Failed' for an established fabricated attribution, false account of prior dialogue, unresolved or repeated material contradiction, or misrepresentation of supplied factual context.
+    - Return 'Passed' when no such failure is established; this does not certify claims the supplied inputs cannot verify.
 
     ## Explanation
-    Quote the disputed claim and the customer turn, earlier agent statement, or supplied context that establishes the problem. Explain why any apparent repair does or does not resolve it. For a pass, describe the assessed scope and any uncheckable claims without calling them verified.
+    Identify the claim and decisive evidence, considering corrections or new information; distinguish a demonstrated error from an uncheckable claim.
 
     ## Inputs
     <conversation>{{conversation}}</conversation>
@@ -1813,33 +1813,31 @@ customer_agent_query_handling:
   eval_type: agent
   output: choices
   required_keys: [conversation]
-  description: "Evaluates whether every substantive question and request, including multipart, secondary, and deferred questions, is understood and addressed without overlooking repeated nonanswers or unresolved decision-essential issues."
+  description: "Checks whether every substantive part of user questions and requests is understood and appropriately addressed."
   tags: [Agents, Voice]
   rule_prompt: |-
-    You are evaluating whether the agent understands and addresses the customer's questions and requests throughout the conversation, including every part of a multipart query.
+    Evaluate whether the agent understands and addresses each substantive question and request in the conversation.
 
     ## Criteria
-    1. Identify every substantive issue: Split a customer turn into its distinct questions, clarification requests, corrections, and action requests. Include secondary and follow-up questions, even when they accompany approval of the main task. Track a repeated question as an unresolved issue with repeated attempts, rather than treating each repetition as new evidence of successful handling.
-    2. Match each issue to a response: Check whether the agent answers that specific question, asks a necessary clarification, or directly explains a relevant limitation and available next step. Answering one part does not answer the others. An acknowledgment, a repeated script, or related information that does not address what was asked is a nonanswer. For example, explaining where a code came from does not explain why it is needed.
-    3. Follow deferred questions through to resolution: A reasonable deferral while gathering necessary information can be appropriate, but remains pending until addressed. Repeatedly promising to answer, requesting already supplied information, or presenting options without answering a question about those options is not resolution. A successful primary task does not erase unanswered secondary questions.
-    4. Respect decision-essential questions and conditions: Questions about the requested service, corrected details, eligibility, capacity, or conditions on consent may determine whether the customer can proceed. Do not let many routine exchanges outweigh an unresolved issue essential to the customer's stated decision or outcome.
-    5. Handle unexpected questions appropriately: Judge scope from the conversation and any role information actually available. A clarification about the current task is not out of scope merely because the agent labels it that way. Genuinely unrelated questions may receive a polite, relevant boundary or redirection.
+    1. Separate multipart queries into distinct issues, including secondary questions, corrections, and follow-ups.
+    2. Match each issue to a direct answer, necessary clarification, or relevant limitation; answering one part does not satisfy the others.
+    3. Track deferred and repeated questions until addressed; a completed task or repeated acknowledgment does not erase unanswered issues.
+    4. Judge importance and scope from the interaction, not assumed domain rules or the agent's unsupported claim that a question is unrelated.
 
     ## Anti-bias Rules
-    - A clarification is good handling when information is genuinely ambiguous or missing; asking again for a clear answer already supplied is not.
-    - An honest "I don't know" or "I cannot provide that information" can be responsive when it directly addresses the question and explains the limitation or offers an available next step. Do not require an invented answer, tool access, or an unavailable capability.
-    - A short direct answer can address several questions; do not require one turn per question. Do not count greetings, filler, or statements needing no response as unanswered queries.
-    - Exclude inaudible or missing portions from judgments about comprehension or omission. Do not assume an answer occurred in a missing segment or infer that it was omitted solely because capture is incomplete; state the limitation.
-    - Evaluate the responses themselves, not hidden tool execution or backend success. Politeness and eventual task completion do not compensate for nonanswers or repeated misunderstanding.
+    - Allow genuine clarification and relevant admissions of uncertainty; do not require invented answers or unavailable capabilities.
+    - One concise response may address several issues; exclude greetings, filler, and statements needing no response.
+    - Exclude unclear or missing content from omission judgments rather than assuming an answer was given or withheld.
+    - Judge observable responses, not unseen execution; politeness does not compensate for material nonanswers.
 
     ## Scoring
-    - Select 'never' when no substantive issue is handled meaningfully, or the agent consistently responds with misunderstanding or nonanswers.
-    - Select 'occasionally' when some issues are handled but others are materially mishandled. An unresolved decision-essential issue or repeated nonanswers to the same substantive question caps the rating at 'occasionally', even when routine parts of the task are handled correctly.
-    - Select 'frequently' when most issues are handled, remaining omissions are minor, and no decision-essential issue or repeated nonanswer remains unresolved. Use this rather than 'always' when a material initial misunderstanding requires repair, even if the later answer is good.
-    - Select 'always' only when every assessable substantive part, including secondary and deferred questions, is appropriately addressed without material misunderstanding or unresolved omission.
+    - Select 'never' when no substantive issue is meaningfully handled or misunderstanding and nonanswers dominate.
+    - Select 'occasionally' for material gaps, persistent nonanswer loops, or an unresolved issue explicitly essential to the user's decision or outcome.
+    - Select 'frequently' when most issues are handled, with only minor omissions or brief repaired misunderstanding and no 'occasionally' condition.
+    - Select 'always' when every assessable substantive part is appropriately addressed without material misunderstanding or unresolved omission; genuine clarification is allowed.
 
     ## Explanation
-    Identify the question or subquestion that determines the rating and the response that addresses it, fails to address it, or never arrives. For repeated nonanswers, cite the repeated request and relevant replies. Do not assign the agent's misunderstanding to the customer or claim that answering the primary request answered every part.
+    Identify the decisive question or subquestion, the response or omission, and supporting evidence; do not equate answering the main request with answering every part.
 
     ## Inputs
     <conversation>{{conversation}}</conversation>
@@ -2630,32 +2628,30 @@ intake_field_accuracy:
   eval_type: agent
   output: score
   required_keys: [agent_prompt, conversation]
-  description: "Evaluates customer-provided fields against the agent's read-backs and final summary, including exact values, field roles, explicit corrections, and consequential confirmations, using only observable conversation evidence."
+  description: "Checks faithful capture of user information, retained corrections, and applicable collection or confirmation requirements."
   tags: [Agents, Conversation, Voice, Chatbot behaviors, Accuracy]
   rule_prompt: |-
-    You are evaluating how accurately the agent captures and confirms customer-provided details in the conversation. The customer's statements and explicit updates are the reference; there is no external gold record or access to hidden stored fields.
+    Evaluate how faithfully the agent captures user-provided information, using the conversation as the reference.
 
     ## Criteria
-    1. Compare fields individually: For each material field, follow the customer's original value, explicit corrections, and the agent's subsequent read-backs or final summary. Compare individual numbers, names, dates, times, units, and qualifiers rather than the gist. A missing digit, different street number, changed time, or omitted meaningful qualifier can change the value even when the rest matches.
-    2. Preserve field roles: Keep each value attached to what it describes. Do not swap origin and destination, sender and recipient, old and new values, or appointment and arrival times. Treat a value as updated when the customer explicitly supplies or accepts that update, not merely because the agent repeats a different value.
-    3. Absorb corrections: An initial tentative read-back that the customer corrects and the agent then accurately confirms and retains is successful verification. Repeating the same wrong value after an explicit correction, reverting to an earlier value, or carrying an unresolved mismatch into the final summary is a capture failure. A later generic success announcement does not repair it.
-    4. Confirm consequential details: Identify fields whose error would change the requested outcome or violate an explicit customer condition. Confirm those values and resolve ambiguities before announcing the dependent action as completed. An outstanding conditional approval is not confirmation of the condition. Obtain required fields identified by the supplied prompt or conversation, or explicitly flag those that cannot be obtained without claiming the dependent action is complete.
-    5. Do not invent customer data: A value never supplied by the customer must not be attributed to them. Clearly presenting a new candidate or alternative for the customer's selection is not fabrication; distinguish a proposal from a claim about what the customer already said.
+    1. Compare each value and meaningful component, preserving its association with the correct entity, attribute, or purpose.
+    2. Retain explicit corrections and accepted updates; an unresolved mismatch or repeated reversion to a corrected wrong value is a capture failure.
+    3. Do not attribute invented information to the user; distinguish user statements from clearly labeled proposals or inferences.
+    4. Check only collection and confirmation requirements established by the conversation or supplied instructions; do not assume mandatory read-backs or domain-specific fields.
 
     ## Anti-bias Rules
-    - Equivalent formats and unambiguous spoken-number forms represent the same value. Do not penalize harmless pronunciation, formatting, or transcription differences.
-    - Where speech is inaudible, clipped, or capture is incomplete, exclude the uncertain field from error judgments and explain the limitation. Do not reconstruct missing digits or assume a value was never spoken. Clear repeated customer corrections can establish a mismatch independently of uncertain spelling.
-    - Details may arrive across turns. Do not penalize a single successful verification-and-correction cycle or a customer-authorized change of preference. An agent asking for genuine clarification is not the same as ignoring an already clear correction.
-    - A detail the customer has not supplied is a coverage issue, not fabricated data unless the agent invents or falsely attributes it. Do not demand unrelated fields, repeated full recaps, or unstated domain-specific requirements.
-    - Evaluate only capture visible in the conversation. Do not infer hidden tool arguments, database values, or whether an action actually executed.
+    - Allow equivalent formats, faithful paraphrases, effective clarification, and a first restatement that is corrected and then retained.
+    - Exclude unclear or missing values from error judgments; do not reconstruct them or assume they were never supplied.
+    - Missing required information is a coverage gap, not fabrication, unless the agent invents it.
+    - Judge observable information capture separately from task completion or what may have been stored outside the conversation.
 
     ## Scoring
-    - Score 0.0 for an unresolved misstated or fabricated customer value, swapped field roles, an ignored explicit correction, repeated loss of a corrected value, or broadly failed intake. Also score 0.0 when the agent announces a dependent action as complete while a consequential field or explicit customer condition remains unconfirmed or unresolved. Correctly captured unrelated fields do not cancel these failures.
-    - Score 0.5 when capture is broadly accurate and none of the 0.0 conditions applies, but noncritical required details are missed without acknowledgment or consequential confirmations remain pending before any dependent completion is announced. A single successfully corrected read-back is not, by itself, a reason for 0.5.
-    - Score 1.0 when all assessable captured values match the customer's stated or explicitly updated values, consequential details are confirmed, corrections are retained, and required details are obtained or explicitly flagged without falsely implying completion. If no applicable details were supplied, state the limited scope rather than claiming a complete intake was verified.
+    - Score 0.0 for an unresolved incorrect or fabricated value, wrong field association, ignored correction, repeated loss of a corrected value, or broadly failed required intake.
+    - Score 0.5 when capture is broadly accurate, but an applicable collection or confirmation requirement is missed without acknowledgment and no 0.0 condition applies.
+    - Score 1.0 when assessable values and corrections are retained and applicable requirements are satisfied or unavailable information is explicitly flagged.
 
     ## Explanation
-    Identify the decisive field, its customer-stated or corrected value, the agent's value, and whether the correction or confirmation was resolved. Quote numbers exactly and distinguish unclear audio from an established mismatch. For a passing score, do not claim a confirmation that is absent from the assessable conversation.
+    Compare the user's value with the agent's representation; identify any unmet requirement or evidence limitation, including when no applicable information was supplied.
 
     ## Input
     <agent_prompt>{{agent_prompt}}</agent_prompt>
@@ -2665,30 +2661,29 @@ customer_agent_task_completion:
   eval_type: agent
   output: Pass/Fail
   required_keys: [agent_prompt, conversation]
-  description: "Evaluates whether the customer's primary objective and material conditions were fulfilled in the conversation, without treating an explanation, refusal, or unresolved blocker as completion or requiring backend verification."
+  description: "Checks whether the user's primary objective and stated conditions were fulfilled in the conversation."
   tags: [Agents, Conversation, Voice, Chatbot behaviors]
   rule_prompt: |-
-    You are evaluating whether the customer's primary objective was completed, as established by the conversation. Judge the communicated outcome, not unseen tool execution or backend state.
+    Evaluate whether the user's primary objective was completed, using the supplied conversation.
 
     ## Criteria
-    1. Identify the objective: State what the customer wanted to accomplish and any explicit conditions on success. Follow explicit changes or accepted alternatives; do not replace the objective with the easier task the agent happened to perform.
-    2. Check the final outcome against that objective: A clear final confirmation or delivered answer is evidence of completion in the conversation. A promise to act, an apology, a referral, or an explanation of a limitation is not completion of an unmet objective. A later announcement of success does not override an unresolved wrong detail, correction, or customer condition.
-    3. Preserve material conditions: Check that conditions affecting the requested outcome are resolved before the agent announces completion. For example, an action requested only for a particular date, recipient, amount, or service must not pass with that condition unanswered or contradicted. Respect confirmation requirements expressed in the conversation or supplied agent prompt; do not invent additional workflow requirements.
-    4. Handle blockers without redefining success: A system limit, error, or policy refusal that leaves the requested action undone means the objective was not completed, however reasonably the agent handled it. If the customer only asked about eligibility, availability, or policy, a direct answer can complete that informational objective. An alternative counts only when the customer explicitly adopts it and it is fulfilled; acknowledgment of a refusal alone is not a new objective.
+    1. Identify the primary objective and stated conditions, including explicit changes or accepted alternatives.
+    2. Compare the communicated outcome with that objective; a success statement does not override contradictory details or unresolved conditions.
+    3. An explanation or refusal may answer an informational question, but does not fulfill an unmet request for action.
+    4. Apply only requirements established by the conversation or supplied instructions; do not assume a particular workflow or approval procedure.
 
     ## Anti-bias Rules
-    - Completion and agent fault are different. A customer declining mandatory information or leaving before completion does not make the agent at fault, but it does not turn an unfinished objective into a completed one. Do not excuse repeated errors or nonanswers merely because the customer eventually hangs up.
-    - For work that finishes later, distinguish a request to initiate a process from a request for its final outcome. Confirmation that the requested initiation is complete, with clear next steps or timing, can satisfy the former. A future-tense promise to initiate it does not.
-    - Use the recording or conversation supplied. Do not require tool logs, infer whether a tool was called, or claim independent verification of a booking, payment, submission, or other backend action.
-    - Do not infer mistakes or missing steps from inaudible speech, clipping, or incomplete capture. Judge the assessable evidence and state any limitation; do not invent a successful or failed exchange in the missing portion.
-    - Politeness, conversation length, and a generic "done" are not substitutes for resolving the actual request. Minor unrelated query-handling issues do not independently fail an otherwise completed primary objective.
+    - Distinguish non-completion from agent fault; a limitation or user withdrawal explains an unfinished task but does not make it complete.
+    - Judge the requested stage of work: confirmed initiation can satisfy a request to begin a process, but a promise alone cannot.
+    - Accept clear conversational evidence without requiring external execution records or claiming unseen actions were verified.
+    - Exclude unclear or missing content from error judgments; do not invent exchanges or penalize unrelated minor issues.
 
     ## Scoring
-    - Return PASS when the conversation establishes a clear outcome that fulfills the customer's primary objective and its material conditions, including an explicitly accepted and fulfilled alternative.
-    - Return FAIL when the assessable conversation leaves the objective pending or unmet, ends with a refusal or blocker instead of the requested outcome, or announces completion while a material condition or correction remains unresolved. Explain whether the non-completion reflects an agent error, a stated limitation, or customer withdrawal; do not assume fault from non-completion alone.
+    - Return PASS when the conversation establishes fulfillment of the primary objective and its stated conditions, or an explicitly accepted and fulfilled alternative.
+    - Return FAIL when assessable evidence establishes an unmet objective, or claimed completion conflicts with an unresolved material condition.
 
     ## Explanation
-    Briefly identify the objective, the outcome actually communicated, and the decisive supporting exchange or unresolved condition. Quote material details accurately. Describe only what the conversation establishes, including evidence limitations.
+    State the objective, outcome, decisive evidence, and any evidence limitation; explain non-completion separately from fault.
 
     ## Input
     <agent_prompt>{{agent_prompt}}</agent_prompt>

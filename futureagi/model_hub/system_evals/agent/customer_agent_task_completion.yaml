@@ -1,32 +1,32 @@
 eval_id: 133
 name: customer_agent_task_completion
-description: "Evaluates whether the customer's primary objective and material conditions were fulfilled in the conversation, without treating an explanation, refusal, or unresolved blocker as completion or requiring backend verification."
+description: "Checks whether the user's primary objective and stated conditions were fulfilled in the conversation."
 criteria: |-
-  You are evaluating whether the customer's primary objective was completed, as established by the conversation. Judge the communicated outcome, not unseen tool execution or backend state.
+  Evaluate whether the user's primary objective was completed, using the supplied conversation.
 
   ## Criteria
-  1. Identify the objective: State what the customer wanted to accomplish and any explicit conditions on success. Follow explicit changes or accepted alternatives; do not replace the objective with the easier task the agent happened to perform.
-  2. Check the final outcome against that objective: A clear final confirmation or delivered answer is evidence of completion in the conversation. A promise to act, an apology, a referral, or an explanation of a limitation is not completion of an unmet objective. A later announcement of success does not override an unresolved wrong detail, correction, or customer condition.
-  3. Preserve material conditions: Check that conditions affecting the requested outcome are resolved before the agent announces completion. For example, an action requested only for a particular date, recipient, amount, or service must not pass with that condition unanswered or contradicted. Respect confirmation requirements expressed in the conversation or supplied agent prompt; do not invent additional workflow requirements.
-  4. Handle blockers without redefining success: A system limit, error, or policy refusal that leaves the requested action undone means the objective was not completed, however reasonably the agent handled it. If the customer only asked about eligibility, availability, or policy, a direct answer can complete that informational objective. An alternative counts only when the customer explicitly adopts it and it is fulfilled; acknowledgment of a refusal alone is not a new objective.
+  1. Identify the primary objective and stated conditions, including explicit changes or accepted alternatives.
+  2. Compare the communicated outcome with that objective; a success statement does not override contradictory details or unresolved conditions.
+  3. An explanation or refusal may answer an informational question, but does not fulfill an unmet request for action.
+  4. Apply only requirements established by the conversation or supplied instructions; do not assume a particular workflow or approval procedure.
 
   ## Anti-bias Rules
-  - Completion and agent fault are different. A customer declining mandatory information or leaving before completion does not make the agent at fault, but it does not turn an unfinished objective into a completed one. Do not excuse repeated errors or nonanswers merely because the customer eventually hangs up.
-  - For work that finishes later, distinguish a request to initiate a process from a request for its final outcome. Confirmation that the requested initiation is complete, with clear next steps or timing, can satisfy the former. A future-tense promise to initiate it does not.
-  - Use the recording or conversation supplied. Do not require tool logs, infer whether a tool was called, or claim independent verification of a booking, payment, submission, or other backend action.
-  - Do not infer mistakes or missing steps from inaudible speech, clipping, or incomplete capture. Judge the assessable evidence and state any limitation; do not invent a successful or failed exchange in the missing portion.
-  - Politeness, conversation length, and a generic "done" are not substitutes for resolving the actual request. Minor unrelated query-handling issues do not independently fail an otherwise completed primary objective.
+  - Distinguish non-completion from agent fault; a limitation or user withdrawal explains an unfinished task but does not make it complete.
+  - Judge the requested stage of work: confirmed initiation can satisfy a request to begin a process, but a promise alone cannot.
+  - Accept clear conversational evidence without requiring external execution records or claiming unseen actions were verified.
+  - Exclude unclear or missing content from error judgments; do not invent exchanges or penalize unrelated minor issues.
 
   ## Scoring
-  - Return PASS when the conversation establishes a clear outcome that fulfills the customer's primary objective and its material conditions, including an explicitly accepted and fulfilled alternative.
-  - Return FAIL when the assessable conversation leaves the objective pending or unmet, ends with a refusal or blocker instead of the requested outcome, or announces completion while a material condition or correction remains unresolved. Explain whether the non-completion reflects an agent error, a stated limitation, or customer withdrawal; do not assume fault from non-completion alone.
+  - Return PASS when the conversation establishes fulfillment of the primary objective and its stated conditions, or an explicitly accepted and fulfilled alternative.
+  - Return FAIL when assessable evidence establishes an unmet objective, or claimed completion conflicts with an unresolved material condition.
 
   ## Explanation
-  Briefly identify the objective, the outcome actually communicated, and the decisive supporting exchange or unresolved condition. Quote material details accurately. Describe only what the conversation establishes, including evidence limitations.
+  State the objective, outcome, decisive evidence, and any evidence limitation; explain non-completion separately from fault.
 
   ## Input
   <agent_prompt>{{agent_prompt}}</agent_prompt>
   <conversation>{{conversation}}</conversation>
+
 eval_tags:
 - Agents
 - Conversation
@@ -72,27 +72,26 @@ config:
     - ARRAY
     - DATETIME
   rule_prompt: |-
-    You are evaluating whether the customer's primary objective was completed, as established by the conversation. Judge the communicated outcome, not unseen tool execution or backend state.
+    Evaluate whether the user's primary objective was completed, using the supplied conversation.
 
     ## Criteria
-    1. Identify the objective: State what the customer wanted to accomplish and any explicit conditions on success. Follow explicit changes or accepted alternatives; do not replace the objective with the easier task the agent happened to perform.
-    2. Check the final outcome against that objective: A clear final confirmation or delivered answer is evidence of completion in the conversation. A promise to act, an apology, a referral, or an explanation of a limitation is not completion of an unmet objective. A later announcement of success does not override an unresolved wrong detail, correction, or customer condition.
-    3. Preserve material conditions: Check that conditions affecting the requested outcome are resolved before the agent announces completion. For example, an action requested only for a particular date, recipient, amount, or service must not pass with that condition unanswered or contradicted. Respect confirmation requirements expressed in the conversation or supplied agent prompt; do not invent additional workflow requirements.
-    4. Handle blockers without redefining success: A system limit, error, or policy refusal that leaves the requested action undone means the objective was not completed, however reasonably the agent handled it. If the customer only asked about eligibility, availability, or policy, a direct answer can complete that informational objective. An alternative counts only when the customer explicitly adopts it and it is fulfilled; acknowledgment of a refusal alone is not a new objective.
+    1. Identify the primary objective and stated conditions, including explicit changes or accepted alternatives.
+    2. Compare the communicated outcome with that objective; a success statement does not override contradictory details or unresolved conditions.
+    3. An explanation or refusal may answer an informational question, but does not fulfill an unmet request for action.
+    4. Apply only requirements established by the conversation or supplied instructions; do not assume a particular workflow or approval procedure.
 
     ## Anti-bias Rules
-    - Completion and agent fault are different. A customer declining mandatory information or leaving before completion does not make the agent at fault, but it does not turn an unfinished objective into a completed one. Do not excuse repeated errors or nonanswers merely because the customer eventually hangs up.
-    - For work that finishes later, distinguish a request to initiate a process from a request for its final outcome. Confirmation that the requested initiation is complete, with clear next steps or timing, can satisfy the former. A future-tense promise to initiate it does not.
-    - Use the recording or conversation supplied. Do not require tool logs, infer whether a tool was called, or claim independent verification of a booking, payment, submission, or other backend action.
-    - Do not infer mistakes or missing steps from inaudible speech, clipping, or incomplete capture. Judge the assessable evidence and state any limitation; do not invent a successful or failed exchange in the missing portion.
-    - Politeness, conversation length, and a generic "done" are not substitutes for resolving the actual request. Minor unrelated query-handling issues do not independently fail an otherwise completed primary objective.
+    - Distinguish non-completion from agent fault; a limitation or user withdrawal explains an unfinished task but does not make it complete.
+    - Judge the requested stage of work: confirmed initiation can satisfy a request to begin a process, but a promise alone cannot.
+    - Accept clear conversational evidence without requiring external execution records or claiming unseen actions were verified.
+    - Exclude unclear or missing content from error judgments; do not invent exchanges or penalize unrelated minor issues.
 
     ## Scoring
-    - Return PASS when the conversation establishes a clear outcome that fulfills the customer's primary objective and its material conditions, including an explicitly accepted and fulfilled alternative.
-    - Return FAIL when the assessable conversation leaves the objective pending or unmet, ends with a refusal or blocker instead of the requested outcome, or announces completion while a material condition or correction remains unresolved. Explain whether the non-completion reflects an agent error, a stated limitation, or customer withdrawal; do not assume fault from non-completion alone.
+    - Return PASS when the conversation establishes fulfillment of the primary objective and its stated conditions, or an explicitly accepted and fulfilled alternative.
+    - Return FAIL when assessable evidence establishes an unmet objective, or claimed completion conflicts with an unresolved material condition.
 
     ## Explanation
-    Briefly identify the objective, the outcome actually communicated, and the decisive supporting exchange or unresolved condition. Quote material details accurately. Describe only what the conversation establishes, including evidence limitations.
+    State the objective, outcome, decisive evidence, and any evidence limitation; explain non-completion separately from fault.
 
     ## Input
     <agent_prompt>{{agent_prompt}}</agent_prompt>
