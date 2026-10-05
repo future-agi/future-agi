@@ -1,0 +1,247 @@
+{
+  "id": "debt_collection",
+  "display_name": "Collections — Payment Reminder",
+  "channel": "voice",
+  "direction": "outbound",
+  "languages": ["en", "es"],
+  "description": "Outbound early-stage collections agent. Verifies the right party before any debt disclosure, delivers required disclosures, and secures a payment, plan, or a compliant next step. Modeled on Retell (Medical Data Systems) and Bland collections pathways. Compliance encodes US FDCPA/TCPA norms — review with counsel before live use.",
+  "runtime": {
+    "type": "pipeline",
+    "llm": { "provider": "openai", "model": "gpt-4o", "temperature": 0.2 },
+    "stt": { "provider": "deepgram", "model": "nova-2", "language": "multi" },
+    "tts": { "provider": "cartesia", "voice": "calm-professional" },
+    "vad": { "provider": "silero" },
+    "allow_interruptions": true
+  },
+  "session_state": {
+    "debtor_name": "str",
+    "account_id": "str",
+    "right_party_verified": "bool=false",
+    "verification_method": "str=none",
+    "disclosure_given": "bool=false",
+    "dispute_flag": "bool=false",
+    "hardship_flag": "bool=false",
+    "cease_comm_flag": "bool=false",
+    "attorney_flag": "bool=false",
+    "promise_to_pay": "dict=none",
+    "plan_selected": "dict=none",
+    "callback_at": "str=none",
+    "outcome": "str=none"
+  },
+  "workflow": {
+    "entry_agent": "right_party",
+    "agents": [
+      {
+        "id": "right_party",
+        "title": "Right-Party Verification",
+        "first_message": "Hi, this is the account services line calling for {debtor_name}. Am I speaking with them?",
+        "instructions": "You are an outbound account-services agent. Your ONLY job in this phase is to confirm you are speaking with the right party. CRITICAL: do not mention a debt, a balance, a creditor, or the reason for the call in any way that reveals a debt — not to the person, and not to anyone else who answers. Politely ask the person to confirm ONE identity factor (date of birth, ZIP code, or last 4 of SSN) and call verify_identity. If they say they are not {debtor_name} or the person is unavailable, do not disclose anything — call leave_compliant_message or offer a callback and end. If they refuse to verify, offer a callback and end. Only once verify_identity succeeds do you hand off. Never argue; keep this under about 30 seconds.",
+        "tools": ["verify_identity", "leave_compliant_message", "schedule_callback"],
+        "handoffs": [
+          { "to": "disclosure", "when": "verify_identity returns verified=true" }
+        ],
+        "terminal": true
+      },
+      {
+        "id": "disclosure",
+        "title": "Disclosure (mini-Miranda)",
+        "instructions": "The right party is verified. The mini-Miranda disclosure is spoken verbatim by the system on entry to this phase — never skip or paraphrase it. Then call get_account_summary and state the creditor and current balance plainly, without pressure or judgment. Ask an open question about how they would like to resolve it, then hand off to negotiation. Do not threaten, do not imply legal action, do not give legal or tax advice.",
+        "tools": ["get_account_summary"],
+        "handoffs": [
+          { "to": "negotiation", "when": "balance and creditor have been stated" }
+        ],
+        "terminal": false
+      },
+      {
+        "id": "negotiation",
+        "title": "Negotiation",
+        "instructions": "Help the verified debtor resolve the balance. Listen and branch: (1) willing to pay in full → hand to payment; (2) can pay partially or needs time → call get_plan_options, present 2-3 options simply, capture their choice into plan_selected, hand to payment; (3) genuine hardship / cannot pay → be empathetic, set hardship, offer a deferral or the smallest plan, call schedule_callback, end warmly; (4) they dispute the debt → call log_dispute, tell them collection is paused and a written validation notice will be sent, end; (5) they say they already paid → thank them, tell them you will note it for review, stop collecting, end. Never pressure, never threaten, never misrepresent consequences.",
+        "tools": ["get_plan_options", "record_promise_to_pay", "log_dispute", "schedule_callback"],
+        "handoffs": [
+          { "to": "payment", "when": "debtor agrees to pay in full or selects a plan" }
+        ],
+        "terminal": true
+      },
+      {
+        "id": "payment",
+        "title": "Payment Setup",
+        "instructions": "Set up the agreed payment. NEVER take a card number, bank account number, or CVV by voice. Either call send_payment_link to text a secure hosted payment page, or call transfer_to_payment_ivr to move them to the secure automated payment line. Confirm the amount and date back to them, call record_promise_to_pay, and end warmly with the confirmation.",
+        "tools": ["send_payment_link", "transfer_to_payment_ivr", "record_promise_to_pay"],
+        "handoffs": [],
+        "terminal": true
+      }
+    ],
+    "global_handlers": [
+      { "id": "cease", "tool": "log_cease_communication", "when": "caller asks to stop being contacted / 'stop calling me' / 'do not call'", "then": "end:CEASE_COMM" },
+      { "id": "attorney", "tool": "log_attorney_representation", "when": "caller says they have or want a lawyer / are represented", "then": "end:ATTORNEY" },
+      { "id": "human", "tool": "escalate_to_human", "when": "caller demands a human/supervisor, or is abusive/threatening", "then": "handoff:human" },
+      { "id": "disclosure_q", "tool": null, "when": "caller asks 'is this a debt collector?' or similar", "then": "answer truthfully per the mini-Miranda, then continue" }
+    ]
+  },
+  "tools": [
+    {
+      "name": "verify_identity",
+      "description": "Verify the right party by matching ONE factor against the account. Must succeed before any debt is disclosed.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "answer": { "type": "string", "description": "the value the caller provided" },
+          "factor": { "type": "string", "enum": ["dob", "zip", "last4"] }
+        },
+        "required": ["answer", "factor"]
+      },
+      "execution": { "type": "webhook", "method": "POST", "url": "{{FAI_TOOL_BASE}}/collections/verify_identity" },
+      "mock": { "verified": true, "method": "last4" },
+      "sets": { "right_party_verified": "$.verified", "verification_method": "$.method" },
+      "returns_agent": "disclosure",
+      "errors": ["no account in context", "unknown factor"]
+    },
+    {
+      "name": "get_account_summary",
+      "description": "Return the creditor and current balance. Only callable after the right party is verified.",
+      "parameters": { "type": "object", "properties": {}, "required": [] },
+      "execution": { "type": "webhook", "method": "GET", "url": "{{FAI_TOOL_BASE}}/collections/account_summary" },
+      "mock": { "creditor": "Northwind Card Services", "original_creditor": "Northwind Bank", "balance": 842.17, "days_past_due": 47, "min_payment": 35.0 },
+      "errors": ["right party not verified"]
+    },
+    {
+      "name": "get_plan_options",
+      "description": "Return allowable payment-plan options for the current balance, from collections policy.",
+      "parameters": {
+        "type": "object",
+        "properties": { "balance": { "type": "number", "description": "current balance" } },
+        "required": ["balance"]
+      },
+      "execution": { "type": "webhook", "method": "POST", "url": "{{FAI_TOOL_BASE}}/collections/plan_options" },
+      "mock": [
+        { "plan_id": "P3", "months": 3, "monthly": 280.72, "min_down": 0 },
+        { "plan_id": "P6", "months": 6, "monthly": 140.36, "min_down": 50 },
+        { "plan_id": "P12", "months": 12, "monthly": 70.18, "min_down": 100 }
+      ],
+      "errors": ["balance <= 0"]
+    },
+    {
+      "name": "record_promise_to_pay",
+      "description": "Record a promise-to-pay (amount, date, method) and return a confirmation id.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "amount": { "type": "number" },
+          "date": { "type": "string", "description": "ISO date the payment is promised" },
+          "method": { "type": "string", "enum": ["link", "ivr", "plan"] }
+        },
+        "required": ["amount", "date", "method"]
+      },
+      "execution": { "type": "webhook", "method": "POST", "url": "{{FAI_TOOL_BASE}}/collections/ptp" },
+      "mock": { "confirmation_id": "PTP-48213" },
+      "sets": { "promise_to_pay": "$" },
+      "errors": ["date in the past", "amount greater than balance"]
+    },
+    {
+      "name": "send_payment_link",
+      "description": "Text a secure hosted payment page to the debtor's number. Never captures card or bank details in-conversation.",
+      "parameters": {
+        "type": "object",
+        "properties": { "channel": { "type": "string", "enum": ["sms"], "default": "sms" } },
+        "required": []
+      },
+      "execution": { "type": "webhook", "method": "POST", "url": "{{FAI_TOOL_BASE}}/collections/payment_link" },
+      "mock": { "sent": true, "link_id": "PL-90233" },
+      "errors": ["right party not verified", "no contact channel on file"]
+    },
+    {
+      "name": "transfer_to_payment_ivr",
+      "description": "Warm-transfer the caller to the secure automated (DTMF) payment line.",
+      "parameters": { "type": "object", "properties": {}, "required": [] },
+      "execution": { "type": "transfer", "target": "{{PAYMENT_IVR_SIP}}" },
+      "mock": { "transferred": true },
+      "errors": ["right party not verified"]
+    },
+    {
+      "name": "log_dispute",
+      "description": "Log a debt dispute. Pauses collection on the item and triggers a written validation notice.",
+      "parameters": {
+        "type": "object",
+        "properties": { "reason": { "type": "string" } },
+        "required": ["reason"]
+      },
+      "execution": { "type": "webhook", "method": "POST", "url": "{{FAI_TOOL_BASE}}/collections/dispute" },
+      "mock": { "dispute_id": "DSP-1188" },
+      "sets": { "dispute_flag": "true" },
+      "errors": []
+    },
+    {
+      "name": "log_cease_communication",
+      "description": "Honor a cease-communication request: stop all contact on this account.",
+      "parameters": { "type": "object", "properties": {}, "required": [] },
+      "execution": { "type": "webhook", "method": "POST", "url": "{{FAI_TOOL_BASE}}/collections/cease" },
+      "mock": { "ok": true },
+      "sets": { "cease_comm_flag": "true" },
+      "errors": []
+    },
+    {
+      "name": "log_attorney_representation",
+      "description": "Record that the debtor is represented by an attorney; route future contact to the attorney.",
+      "parameters": {
+        "type": "object",
+        "properties": { "attorney_info": { "type": "string", "description": "name/firm/phone if given" } },
+        "required": []
+      },
+      "execution": { "type": "webhook", "method": "POST", "url": "{{FAI_TOOL_BASE}}/collections/attorney" },
+      "mock": { "ok": true },
+      "sets": { "attorney_flag": "true" },
+      "errors": []
+    },
+    {
+      "name": "schedule_callback",
+      "description": "Schedule a callback within allowed contact hours.",
+      "parameters": {
+        "type": "object",
+        "properties": { "when": { "type": "string", "description": "ISO datetime in the debtor's timezone" } },
+        "required": ["when"]
+      },
+      "execution": { "type": "webhook", "method": "POST", "url": "{{FAI_TOOL_BASE}}/collections/callback" },
+      "mock": { "ok": true },
+      "sets": { "callback_at": "$.when" },
+      "errors": ["time outside allowed contact hours"]
+    },
+    {
+      "name": "leave_compliant_message",
+      "description": "Leave a voicemail/message that does NOT disclose the debt (wrong-party / unavailable).",
+      "parameters": { "type": "object", "properties": {}, "required": [] },
+      "execution": { "type": "webhook", "method": "POST", "url": "{{FAI_TOOL_BASE}}/collections/message" },
+      "mock": { "left": true },
+      "errors": []
+    },
+    {
+      "name": "escalate_to_human",
+      "description": "Warm-transfer to a human agent/supervisor with a summary of the call so far.",
+      "parameters": {
+        "type": "object",
+        "properties": { "reason": { "type": "string" } },
+        "required": ["reason"]
+      },
+      "execution": { "type": "transfer", "target": "{{SUPERVISOR_SIP}}", "pass_summary": true },
+      "mock": { "transferred": true },
+      "errors": []
+    }
+  ],
+  "guardrails": {
+    "deterministic": [
+      "get_account_summary and any mention of debt/balance/creditor are blocked until right_party_verified == true (third-party disclosure = FDCPA 805 violation).",
+      "The mini-Miranda disclosure is spoken verbatim on entry to the disclosure phase — a fixed string, not model-generated.",
+      "cease-communication, dispute, and attorney requests are honored on the FIRST request from any phase and cannot be argued past.",
+      "Identity verification passes only on a deterministic factor match — never because the caller asserts who they are (social-engineering defense)."
+    ],
+    "content": [
+      "No threats, no false or exaggerated consequences, no implication of legal action not intended.",
+      "No legal or tax advice.",
+      "Respectful, non-judgmental tone; de-escalate hostility."
+    ],
+    "notes": "No card/bank/CVV capture by voice — payment is always via secure link or the payment IVR. Call-time-of-day and attempt-frequency caps are enforced by the upstream dialer, not this agent. mini_miranda='This is an attempt to collect a debt, and any information obtained will be used for that purpose. This communication is from a debt collector.' Framework: US FDCPA/TCPA — engineering scaffold only, not legal advice; localize per jurisdiction."
+  },
+  "dispositions": [
+    "PTP_SET", "PLAN_SET", "PAID_CLAIM", "DISPUTE", "CEASE_COMM", "ATTORNEY",
+    "HARDSHIP_CALLBACK", "WRONG_PARTY", "REFUSED_VERIFY", "VOICEMAIL", "ESCALATED", "ABUSIVE_TERMINATED"
+  ]
+}
