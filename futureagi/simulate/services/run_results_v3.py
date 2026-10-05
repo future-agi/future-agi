@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import json
 import math
+import re
 from collections import defaultdict
 from typing import Any
 
@@ -18,6 +19,11 @@ from simulate.models import (
     SimulateEvalConfig,
     TestExecution,
 )
+from simulate.services.run_results_v3_expressions import NUMERIC_JSON_PATTERN
+from simulate.services.run_results_v3_scoring import (
+    judge_stored_eval,
+    resolve_eval_scoring_spec,
+)
 from simulate.utils.eval_summary import iter_live_eval_outputs
 
 
@@ -29,39 +35,55 @@ def _number(value: Any) -> float | None:
     return None
 
 
+def _csat_score(metrics: Any) -> float | None:
+    value = metrics.get("csat_score") if isinstance(metrics, dict) else None
+    if isinstance(value, str) and re.fullmatch(NUMERIC_JSON_PATTERN, value):
+        value = float(value)
+    score = _number(value)
+    return score if score is not None and 0 <= score <= 10 else None
+
+
 def _truth_value(eval_data: Any) -> bool | None:
-    if not isinstance(eval_data, dict):
-        return None
-    if str(eval_data.get("status") or "").strip().lower() in {
-        "pending",
-        "skipped",
-        "error",
-    }:
-        return None
-    value = eval_data.get("output")
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in {"pass", "passed", "true", "success", "successful"}:
-            return True
-        if normalized in {"fail", "failed", "false", "failure", "unsuccessful"}:
-            return False
+    outcome = _eval_outcome(eval_data)
+    if outcome == "passed":
+        return True
+    if outcome == "failed":
+        return False
     return None
 
 
-def call_outcome(call: CallExecution, live_eval_ids: set[str]) -> str:
+def _eval_outcome(
+    eval_data: Any, config: SimulateEvalConfig | None = None
+) -> str | None:
+    if not isinstance(eval_data, dict):
+        return None
+    status = str(eval_data.get("status") or "").strip().lower()
+    if status in {"error", "failed"}:
+        return "error"
+    if status in {"pending", "skipped"}:
+        return None
+    value = eval_data.get("output")
+    if config is None:
+        if isinstance(value, bool):
+            return "passed" if value else "failed"
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"pass", "passed", "true", "success", "successful"}:
+                return "passed"
+            if normalized in {"fail", "failed", "false", "failure", "unsuccessful"}:
+                return "failed"
+        return None
+
+    return judge_stored_eval(eval_data, resolve_eval_scoring_spec(config)).outcome
+
+
+def call_outcome(
+    call: CallExecution, live_eval_configs: dict[str, SimulateEvalConfig]
+) -> str:
     metadata = call.call_metadata if isinstance(call.call_metadata, dict) else {}
     harness_outcome = str(metadata.get("harness_outcome_status") or "").lower()
-    if harness_outcome in {"passed", "pass", "success", "successful"}:
-        return "passed"
-    if harness_outcome in {"failed", "fail", "failure"}:
-        return "failed"
     if harness_outcome in {"error", "errored", "cancelled", "canceled"}:
         return "error"
-    if harness_outcome in {"inconclusive", "unknown", "skipped"}:
-        return "inconclusive"
-
     if call.status in {
         CallExecution.CallStatus.FAILED,
         CallExecution.CallStatus.CANCELLED,
@@ -72,12 +94,23 @@ def call_outcome(call: CallExecution, live_eval_ids: set[str]) -> str:
 
     verdicts = [
         verdict
-        for _, data in iter_live_eval_outputs(call.eval_outputs, live_eval_ids)
-        if (verdict := _truth_value(data)) is not None
+        for eval_id, data in iter_live_eval_outputs(
+            call.eval_outputs, set(live_eval_configs)
+        )
+        if (
+            verdict := _eval_outcome(data, live_eval_configs.get(str(eval_id)))
+        )
+        is not None
     ]
-    if any(verdict is False for verdict in verdicts):
+    if harness_outcome in {"failed", "fail", "failure"} or "failed" in verdicts:
         return "failed"
-    if verdicts:
+    if "error" in verdicts:
+        return "inconclusive"
+    if harness_outcome in {"inconclusive", "unknown", "skipped"}:
+        return "inconclusive"
+    if harness_outcome in {"passed", "pass", "success", "successful"}:
+        return "passed"
+    if "passed" in verdicts:
         return "passed"
     return "inconclusive"
 
@@ -202,9 +235,13 @@ def _row_dimensions(
     return dimensions
 
 
-def eval_rows(call: CallExecution, live_eval_ids: set[str]) -> list[dict[str, Any]]:
+def eval_rows(
+    call: CallExecution, live_eval_configs: dict[str, SimulateEvalConfig]
+) -> list[dict[str, Any]]:
     rows = []
-    for eval_id, data in iter_live_eval_outputs(call.eval_outputs, live_eval_ids):
+    for eval_id, data in iter_live_eval_outputs(
+        call.eval_outputs, set(live_eval_configs)
+    ):
         if not isinstance(data, dict):
             continue
         value = data.get("output")
@@ -213,15 +250,24 @@ def eval_rows(call: CallExecution, live_eval_ids: set[str]) -> list[dict[str, An
             "skipped",
             "error",
         }
-        # choice-scored evals store {"score": ...}; other evals store the number directly.
-        source = value.get("score") if isinstance(value, dict) else value
-        numeric = _number(source) if measured else None
-        verdict = _truth_value(data)
-        score = numeric
-        if verdict is not None:
-            score = 1.0 if verdict else 0.0
-        elif numeric is not None and numeric > 1:
-            score = numeric / 100
+        config = live_eval_configs.get(str(eval_id))
+        if config is not None:
+            judgement = judge_stored_eval(data, resolve_eval_scoring_spec(config))
+            score = judgement.score
+            verdict = (
+                judgement.outcome == "passed"
+                if judgement.outcome in {"passed", "failed"}
+                else None
+            )
+        else:
+            source = value.get("score") if isinstance(value, dict) else value
+            numeric = _number(source) if measured else None
+            verdict = _truth_value(data)
+            score = numeric
+            if verdict is not None:
+                score = 1.0 if verdict else 0.0
+            elif numeric is not None and numeric > 1:
+                score = numeric / 100
         rows.append(
             {
                 "id": str(eval_id),
@@ -317,6 +363,12 @@ def build_call_rows(
         catalog, catalog_live_ids = build_evaluation_catalog(execution)
         columns = catalog if columns is None else columns
         live_eval_ids = catalog_live_ids if live_eval_ids is None else live_eval_ids
+    live_eval_configs = {
+        str(config.id): config
+        for config in SimulateEvalConfig.objects.filter(
+            id__in=live_eval_ids, deleted=False
+        ).select_related("eval_template")
+    }
     harness_scenarios = _harness_scenarios(calls)
     dimensions = _row_dimensions(
         calls,
@@ -398,7 +450,7 @@ def build_call_rows(
         turn_count = _number(metrics.get("turn_count"))
         if turn_count is None:
             turn_count = _number(metrics.get("bot_message_count"))
-        evaluations = eval_rows(call, live_eval_ids)
+        evaluations = eval_rows(call, live_eval_configs)
         receipt_sub_goals = receipt_sub_goal_names(metadata)
         for evaluation in evaluations:
             harness_columns[evaluation["id"]] = {
@@ -423,7 +475,7 @@ def build_call_rows(
                 "persona": persona,
                 "persona_details": persona_details,
                 "sub_goals": sub_goals,
-                "outcome": call_outcome(call, live_eval_ids),
+                "outcome": call_outcome(call, live_eval_configs),
                 "execution_status": call.status,
                 "harness_outcome_status": metadata.get("harness_outcome_status"),
                 "source_scenario_key": metadata.get("harness_scenario_key"),
@@ -440,7 +492,7 @@ def build_call_rows(
                 "ai_interruption_count": call.ai_interruption_count,
                 "turn_count": int(turn_count) if turn_count is not None else None,
                 "tokens": int(tokens) if tokens is not None else None,
-                "cost_cents": call.cost_cents,
+                "cost_cents": call.customer_cost_cents,
                 "cost_breakdown_cents": {
                     "stt": call.stt_cost_cents,
                     "llm": call.llm_cost_cents,
@@ -448,7 +500,7 @@ def build_call_rows(
                     "storage": call.storage_cost_cents,
                     "customer": call.customer_cost_cents,
                 },
-                "csat": call.overall_score,
+                "csat": _csat_score(metrics),
                 "ended_reason": call.ended_reason,
                 "error_message": call.error_message,
                 "evaluations": evaluations,

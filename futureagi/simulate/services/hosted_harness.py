@@ -1089,14 +1089,21 @@ def provision_scenarios(
 
 
 def _target_agent_prompt(job: HostedHarnessJob, payload: dict[str, Any]) -> str:
-    """The target agent's full instructions when the job carries them, else the guest's prompt, else the contract excerpt."""
-    agent = job.payload.get("agent") or {}
-    if str(agent.get("connector") or "") == "phone":
-        full = str(
-            (agent.get("config") or {}).get("target_system_prompt") or ""
+    """Resolve target instructions without reducing an Others prompt."""
+    connector = str((job.payload.get("agent") or {}).get("connector") or "")
+    if connector == "phone":
+        # "Others" is configured from a user-supplied system prompt.  Keep that
+        # complete prompt as the agent definition's source of truth: the hosted
+        # guest's ``agent_prompt`` may only be the short contract excerpt used
+        # during authoring and must not replace it.
+        configured = str(
+            ((job.payload.get("agent") or {}).get("config") or {}).get(
+                "target_system_prompt"
+            )
+            or ""
         ).strip()
-        if full:
-            return full
+        if configured:
+            return configured
     supplied = str(payload.get("agent_prompt") or "").strip()
     if supplied:
         return supplied
