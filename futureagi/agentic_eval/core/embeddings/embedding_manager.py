@@ -603,13 +603,20 @@ class EmbeddingManager:
                     raise
                 try:
                     if insert and table_name==FEEDBACK_TABLE_NAME and eval_id!="":
+                        # Tombstone identity: a stable feedback_id supersedes
+                        # the per-embed item_id so a retune revokes the prior
+                        # correction for the same Feedback record.
+                        unique_key = (
+                            "feedback_id" if mod_dict.get("feedback_id") else "item_id"
+                        )
                         self.insert_embedding(
                             eval_id,
                             data=mod_dict,
                             table_name=f"{table_name}",
                             index_col_type=index_col_type[n],  # Accessing index_col_type[n]
                             column_name="index_column",
-                            unique_key_value=mod_dict["item_id"],
+                            unique_key_value=mod_dict[unique_key],
+                            unique_key=unique_key,
                         )
 
                 except Exception:

@@ -1,11 +1,12 @@
+import logging
 import re
 import uuid
 from typing import Any, Literal
 
 from django.contrib.postgres.fields import ArrayField
 from django.core.exceptions import ValidationError as DjangoValidationError
-from django.db import models, transaction
-from django.db.models import Max, Q
+from django.db import models
+from django.db.models import Q
 from pydantic import BaseModel, validator
 
 from accounts.models.organization import Organization
@@ -21,6 +22,8 @@ from model_hub.models.eval_groups import (  # Commented out to avoid circular im
     EvalGroup,
 )
 from tfc.utils.base_model import BaseModel as ModelBaseModel
+
+logger = logging.getLogger(__name__)
 
 
 def validate_eval_name(value):
@@ -467,6 +470,36 @@ class Feedback(ModelBaseModel):
     def save(self, *args, **kwargs):
         self.full_clean()
         super().save(*args, **kwargs)
+
+    def delete(self, using=None, keep_parents=False):
+        super().delete(using=using, keep_parents=keep_parents)
+        # Soft-delete path: collector deletes (queryset/cascade) are covered by
+        # the post_delete receiver in model_hub.signals.
+        tombstone_feedback_vectors(self.id, self.eval_template_id)
+
+
+def tombstone_feedback_vectors(feedback_id, eval_template_id):
+    """Revoke few-shot retrieval eligibility for a Feedback record's vectors.
+
+    Tombstones ClickHouse ``feedbacks`` rows carrying this record's identity.
+    Best-effort — a CH outage must not block the Postgres delete.
+    """
+    try:
+        from agentic_eval.core.database.ch_vector import ClickHouseVectorDB
+
+        db_client = ClickHouseVectorDB()
+        try:
+            db_client.mark_deleted_by_metadata(
+                "feedbacks",
+                {"feedback_id": str(feedback_id)},
+                eval_id=str(eval_template_id) if eval_template_id else None,
+            )
+        finally:
+            db_client.close()
+    except Exception:
+        logger.exception(
+            "feedback_vector_tombstone_failed", feedback_id=str(feedback_id)
+        )
 
 
 class EvalSettings(ModelBaseModel):
