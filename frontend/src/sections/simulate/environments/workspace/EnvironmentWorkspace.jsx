@@ -416,7 +416,7 @@ export default function EnvironmentWorkspace() {
 
       <Box sx={{ flex: 1, minHeight: 0 }}>
         <ChatSplitPane
-          busy={chat.running || chat.inFlight}
+          busy={chat.running || chat.inFlight || chat.waiting}
           chat={({ collapse, open, collapseRef }) => (
             <BuilderConsole
               turns={chat.turns}

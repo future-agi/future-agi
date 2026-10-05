@@ -28,7 +28,7 @@ export default function BuildingStage({ progress, chat, env, envState, patch, pr
   const console_ = chat || p;
   return (
     <ChatSplitPane
-      busy={!!(console_.running || console_.inFlight)}
+      busy={!!(console_.running || console_.inFlight || console_.waiting)}
       chat={({ collapse, open, collapseRef }) => (
         <BuilderConsole
           turns={console_.turns}
@@ -80,6 +80,7 @@ BuildingStage.propTypes = {
     send: PropTypes.func,
     stop: PropTypes.func,
     inFlight: PropTypes.bool,
+    waiting: PropTypes.bool,
     frozen: PropTypes.bool,
     frozenReason: PropTypes.string,
   }),

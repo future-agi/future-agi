@@ -102,6 +102,22 @@ describe("useWorkspaceChat (real)", () => {
     );
   });
 
+  it("reports waiting while the builder's question is unanswered, and not otherwise", async () => {
+    const asked = renderChat(
+      conversationWith({
+        state: "waiting_for_user",
+        blocking_input: { message_id: "q1", kind: "question_requested", prompt: "How strict?" },
+        messages: [{ message_id: "q1", role: "assistant", kind: "question", state: "completed", content: "How strict?", created_at: "2026-09-22T10:00:00Z", sequence: 1 }],
+      }),
+    );
+    expect(asked.result.current.waiting).toBe(true);
+    // Not "in flight": the rail dot needs `waiting` to stay on while the user is asked.
+    expect(asked.result.current.inFlight).toBe(false);
+
+    const idle = renderChat(conversationWith());
+    expect(idle.result.current.waiting).toBe(false);
+  });
+
   it("routes a reply to a blocking question as user_response with reply_to", async () => {
     sendHarnessConversationMessage.mockResolvedValue(conversationWith());
     const { result } = renderChat(

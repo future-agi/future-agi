@@ -26,6 +26,7 @@ import { harnessJobQuery } from "./environment";
 import {
   projectConversation,
   conversationInFlight,
+  conversationWaiting,
 } from "./conversationProjection";
 
 const NO_WORKSPACE =
@@ -269,5 +270,7 @@ export function useWorkspaceChat(env, { source } = {}) {
     frozen,
     frozenReason,
     inFlight: conversationInFlight(conversation),
+    // A question or confirmation is open for the user to answer.
+    waiting: conversationWaiting(conversation),
   };
 }
