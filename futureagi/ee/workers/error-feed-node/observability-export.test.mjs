@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {createControlClient} from './control-client.mjs';
 import {createServer} from 'node:http';
 import {startObservability, stopObservability, observe, modelAttributes, claimAttributes, executionResult} from './observability.mjs';
 
@@ -24,13 +25,22 @@ test('pinned traceAI exports nested spans to an OTLP receiver and flushes on shu
     await observe('failed-investigation', 'AGENT', claimAttributes({organization_id:'test-org',
       organization_name:'Test Org',attempt_id:'test-attempt'}), async () =>
       executionResult({execution_status:'failed',outcome:'unknown'}), {root:true});
+    const control = createControlClient({baseUrl:'http://control.invalid',token:'private-control-token',
+      fetchImpl:async () => new Response(JSON.stringify({code:'grouping_conflict',detail:'attempt scope changed'}), {status:409})});
+    await assert.rejects(observe('failed-control', 'CHAIN', claimAttributes({organization_id:'test-org',
+      organization_name:'Test Org',attempt_id:'test-attempt'}), () => control('/grouping/attempts/00000000-0000-0000-0000-000000000001/publish/', {}), {root:true}));
     await stopObservability();
     assert.ok(requests.length > 0, 'SDK must actually export spans');
     assert.equal(requests[0].headers['x-api-key'],'test-key');
     assert.equal(requests[0].headers['x-secret-key'],'test-secret');
     const spans = requests.flatMap(request => JSON.parse(request.body.toString()).resourceSpans
       .flatMap(resource => resource.scopeSpans.flatMap(scope => scope.spans)));
-    assert.equal(spans.length, 3);
+    assert.equal(spans.length, 4);
+    const failedControl = spans.find(span => span.name === 'failed-control');
+    assert.equal(failedControl.status.code, 2);
+    assert.equal(Number(failedControl.attributes.find(a => a.key === 'error_feed.control.http_status').value.intValue), 409);
+    assert.equal(failedControl.attributes.find(a => a.key === 'error_feed.control.backend_reason').value.stringValue, 'attempt scope changed');
+    assert.ok(!requests.some(request => request.body.includes('private-control-token')));
     const root = spans.find(span => span.name === 'error_feed.investigation');
     const model = spans.find(span => span.name === 'error_feed.model');
     assert.ok(root && model);

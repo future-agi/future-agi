@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {createControlClient} from './control-client.mjs';
 import {configureObservability, observe, claimAttributes, spanAttributes, executionResult,
   startObservability, stopObservability, modelAttributes, spanContent, claimInput} from './observability.mjs';
 
@@ -208,4 +209,36 @@ test('organization user identity reaches grandchildren and resets for independen
       assert.equal(claimAttributes({organization_id})['user.id'], undefined);
     }
   } finally {await stopObservability();}
+});
+
+
+test('control diagnostics reach failed child and root spans without private error bodies', async () => {
+  for (const [status, body, reason] of [
+    [409, {code: 'grouping_conflict', detail: 'attempt scope changed'}, 'attempt scope changed'],
+    [409, {code: 'grouping_conflict', detail: 'private customer evidence'}, undefined],
+    [500, {detail: 'private credentials'}, undefined],
+  ]) {
+    const spans = recorder();
+    const client = createControlClient({baseUrl: 'http://control.invalid', token: 'private-token',
+      fetchImpl: async () => new Response(JSON.stringify(body), {status})});
+    try {
+      await assert.rejects(observe('root', 'CHAIN', {}, () =>
+        observe('child', 'CHAIN', {}, () => client('/grouping/attempts/00000000-0000-0000-0000-000000000001/publish/', {attempt_id: 'attempt', lease_token: 'private-lease'}))),
+        error => error.status === status);
+      for (const span of spans) {
+        const attrs = span.attributes;
+        assert.equal(attrs['error_feed.control.http_status'], status);
+        assert.equal(attrs['error_feed.control.path'], '/grouping/attempts/00000000-0000-0000-0000-000000000001/publish/');
+        assert.equal(attrs['error_feed.control.http_method'], 'POST');
+        assert.equal(attrs['error_feed.control.failure_code'], 'control_http_error');
+        assert.equal(attrs['error_feed.control.backend_reason'], reason);
+        assert.ok(attrs['error_feed.control.duration_ms'] >= 0);
+        assert.ok(attrs['error_feed.control.request_bytes'] > 0);
+        assert.equal(span.status.code, 2);
+        assert.ok(span.ended);
+      }
+      assert.ok(!JSON.stringify(spans).includes('private-'));
+      assert.ok(!JSON.stringify(spans).includes('private customer evidence'));
+    } finally {await stopObservability();}
+  }
 });
