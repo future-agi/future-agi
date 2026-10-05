@@ -2732,7 +2732,10 @@ class TestRunResultsV3Views:
 
         row = self._call_row(auth_client, test_execution, call)
 
-        assert row["sub_goals"] == ["pin_verified", "exact_greeting"]
+        assert row["sub_goal_results"] == [
+            {"name": "pin_verified", "passed": None},
+            {"name": "exact_greeting", "passed": None},
+        ]
 
     def test_receipt_sub_goals_take_priority_over_the_authored_scenarios(
         self,
@@ -2758,7 +2761,9 @@ class TestRunResultsV3Views:
 
         row = self._call_row(auth_client, test_execution, call)
 
-        assert row["sub_goals"] == ["identity_verified"]
+        assert row["sub_goal_results"] == [
+            {"name": "identity_verified", "passed": True}
+        ]
 
     @pytest.mark.parametrize("layout", ["trial", "registration"])
     def test_authored_sub_goals_filter_and_facet_like_the_rows_show_them(
@@ -2823,7 +2828,7 @@ class TestRunResultsV3Views:
         assert response.status_code == status.HTTP_200_OK
         body = response.json()
         row = next(row for row in body["results"] if row["id"] == str(call.id))
-        assert row["sub_goals"] == ["pin_verified"]
+        assert row["sub_goal_results"] == [{"name": "pin_verified", "passed": None}]
         assert body["facets"]["sub_goal"] == [{"value": "pin_verified", "count": 1}]
 
     def test_receipt_sub_goals_keep_the_authored_ones_out_of_filters_and_facets(
