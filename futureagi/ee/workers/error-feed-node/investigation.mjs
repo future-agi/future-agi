@@ -58,7 +58,7 @@ function assessmentRules(simulation, audioInspection) {
   if (simulation) return simulationEvidenceRules;
   return audioInspection ? evidenceRules.replace(
     'no external payload resolver is available, you must not access them, and read_complete=false prevents a success conclusion.',
-    'inspect_audio can inspect a trusted recording for one focused question, but never open a URL. Its answer is a fallible model observation, not verified task state. Read the linked span and cite that span receipt; do not claim the span text itself contains the audio observation. Other unresolved payloads still prevent a success conclusion.') : evidenceRules;
+    'inspect_audio talks to an audio-native model that hears the trusted recording attached to a span; you write the questions and may follow up or challenge its answers, but never open a URL. Each answer is an audio receipt (evidence_id audio:...): a fallible model observation, yet the primary evidence of what was said and heard, including language, voicemail or call screener, silence, overlap, repetition and who spoke. The transcript is supporting context; where they disagree, cite the audio receipt and say so. If the recording is missing or the audio model cannot answer, say the finding relies on the transcript. Before accepting an audio claim you doubt, ask the audio model your own question. Other unresolved payloads still prevent a success conclusion.') : evidenceRules;
 }
 
 export function failureDiagnostic(error, phase, attemptId) {
@@ -177,6 +177,10 @@ async function investigateClaim(claim, {gatewayConfig, clickhouse, control, scra
   // Legacy input/output totals remain in the claim contract, but gateway receipts remain the usage source.
   const gateway = createGatewayProvider({...gatewayConfig, signal, maxCalls: claim.limits.max_model_calls});
   let store, reader, audioInspection, phase = 'controller', outputTokens = 0;
+  const evidenceReceipts = () => [...(reader?.receipts() ?? []), ...(audioInspection?.receipts() ?? [])];
+  // Each stage runs in a fresh session, so audio answers must travel as data, not as transcript memory.
+  const audioContext = () => audioInspection?.receipts().length
+    ? {audio_observations: audioInspection.receipts().map(({evidence_id, excerpt}) => ({evidence_id, excerpt}))} : {};
   let assessment = {outcome: 'unknown', findings: [], requirement_checks: []};
   let executionStatus = 'failed';
   let incompleteReason = null;
@@ -191,7 +195,8 @@ async function investigateClaim(claim, {gatewayConfig, clickhouse, control, scra
       ? createSimulationEvidenceReader(store, readerOptions)
       : createEvidenceReader(store, readerOptions);
     audioInspection = !simulation && resolveRecording ? createAudioInspectionTool({claim, store, gateway,
-      resolveRecording, callsRemaining: () => claim.limits.max_model_calls - gateway.accounting().model_calls
+      resolveRecording, phase: () => phase,
+      callsRemaining: () => claim.limits.max_model_calls - gateway.accounting().model_calls
         - (phase === 'verifier' ? 0 : phase === 'child' ? 2 : 1),
       onModelUsage: used => {outputTokens += used;},
       maxResultBytes: claim.limits.max_tool_result_bytes, signal}) : null;
@@ -286,7 +291,7 @@ async function investigateClaim(claim, {gatewayConfig, clickhouse, control, scra
       let output;
       try {
         output = (await runStructured('controller', JSON.stringify({...shared, coverage: currentCoverage(),
-          children, force_finish: forceFinish}), decision)).value;
+          children, force_finish: forceFinish, ...audioContext()}), decision)).value;
       } catch (error) {
         if (!(error instanceof EarlierStageOutputTruncated) && !isStructuredOutputError(error)
             && error?.message !== 'Final verifier call reserved') throw error;
@@ -307,8 +312,8 @@ async function investigateClaim(claim, {gatewayConfig, clickhouse, control, scra
       try {
         const child = applyCoverageBoundary(
           (await runStructured(childId, JSON.stringify({...shared, coverage: currentCoverage(),
-            question: output.question}), report)).value, currentCoverage());
-        validateAssessment(child, reader.receipts(), currentCoverage(), recordIdField);
+            question: output.question, ...audioContext()}), report)).value, currentCoverage());
+        validateAssessment(child, evidenceReceipts(), currentCoverage(), recordIdField);
         children.push({question: output.question, assessment: child});
       } catch (error) {
         process.stderr.write(JSON.stringify({event: 'omega_investigation_stage_interrupted',
@@ -320,13 +325,13 @@ async function investigateClaim(claim, {gatewayConfig, clickhouse, control, scra
     phase = 'verifier';
     let verifierPass = 0;
     for (;;) {
-      const receiptCount = reader.receipts().length;
+      const receiptCount = evidenceReceipts().length;
       let modelAssessment;
       try {
         modelAssessment = (await runStructured('verifier', JSON.stringify({...shared,
           coverage: currentCoverage(), proposed, children,
           [simulation ? 'unread_call_ids' : 'unread_span_ids']: unreadEvidenceIds(),
-          observed_evidence_ids: reader.receipts().map(receipt => receipt.evidence_id)}), report)).value;
+          observed_evidence_ids: evidenceReceipts().map(receipt => receipt.evidence_id), ...audioContext()}), report)).value;
         assessment = applyCoverageBoundary(modelAssessment, currentCoverage());
       } catch (error) {
         if (verifierPass === 0 || error?.message !== 'Model-call budget exhausted') throw error;
@@ -336,14 +341,14 @@ async function investigateClaim(claim, {gatewayConfig, clickhouse, control, scra
       }
       verifierPass++;
       if (modelAssessment.outcome !== 'success' || allEvidenceRead()) break;
-      if ((verifierPass > 1 && reader.receipts().length === receiptCount)
+      if ((verifierPass > 1 && evidenceReceipts().length === receiptCount)
           || gateway.accounting().model_calls >= claim.limits.max_model_calls - 1) {
         assessment = {...assessment, outcome: 'unknown'};
         break;
       }
       proposed = modelAssessment;
     }
-    validateAssessment(assessment, reader.receipts(), currentCoverage(), recordIdField);
+    validateAssessment(assessment, evidenceReceipts(), currentCoverage(), recordIdField);
     executionStatus = 'completed';
     if (incompleteReason) process.stderr.write(JSON.stringify({event: 'omega_investigation_incomplete',
       attempt_id: claim.attempt_id, phase, reason: incompleteReason,
@@ -381,7 +386,7 @@ async function investigateClaim(claim, {gatewayConfig, clickhouse, control, scra
     memory_snapshot_id: claim.memory.snapshot_id, memory_digest: claim.memory.digest,
     evidence_digest: store?.digest ?? canonicalDigest({evidence_unavailable: true}),
     execution_status: executionStatus, ...assessment,
-    evidence_receipts: (reader?.receipts() ?? []).filter(receipt => usedIds.has(receipt.evidence_id)),
+    evidence_receipts: evidenceReceipts().filter(receipt => usedIds.has(receipt.evidence_id)),
     verification_receipts: [],
     coverage: store?.coverage ? {...store.coverage,
       read_complete: store.coverage.read_complete && (reader
