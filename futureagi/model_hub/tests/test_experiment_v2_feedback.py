@@ -1679,8 +1679,9 @@ class TestFeedbackUniqueKeySelection:
             },
         )
         mgr.insert_embedding.assert_called_once()
-        assert mgr.insert_embedding.call_args.kwargs["unique_key"] == "feedback_id"
-        assert mgr.insert_embedding.call_args.kwargs["unique_key_value"] == "fb-123"
+        kwargs = mgr.insert_embedding.call_args.kwargs
+        assert kwargs["unique_key"] == ["feedback_id", "feedback_input"]
+        assert kwargs["unique_key_value"] == "fb-123"
 
     def test_falls_back_to_item_id_without_feedback_id(self):
         mgr = self._manager()
@@ -1689,6 +1690,54 @@ class TestFeedbackUniqueKeySelection:
         kwargs = mgr.insert_embedding.call_args.kwargs
         assert kwargs["unique_key"] == "item_id"
         assert kwargs["unique_key_value"]
+
+    def test_multi_input_keeps_one_vector_per_field(self):
+        """Two inputs of one submission must not tombstone each other.
+
+        Spies on the real insert_embedding → upsert_vector path: each input
+        upserts under (feedback_id, feedback_input), so a later input only
+        supersedes its own field's prior vector.
+        """
+        from agentic_eval.core.database.ch_vector import ClickHouseVectorDB
+
+        with patch.object(
+            ClickHouseVectorDB, "__init__", lambda self, *a, **k: None
+        ):
+            mgr = EmbeddingManager()
+        mgr.db_client = MagicMock()
+
+        with patch(
+            "agentic_eval.core.embeddings.embedding_manager.model_manager"
+        ) as mock_mm:
+            mock_mm._use_serving = False
+            mock_mm.text_model = MagicMock()
+            mock_mm.text_model.encode.return_value.tolist.return_value = [0.1]
+            mgr.data_formatter(
+                row_dict={
+                    "feedback_id": "fb-1",
+                    "prompt": "p",
+                    "response": "r",
+                    "feedback_comment": "x",
+                    "feedback_value": "Failed",
+                },
+                inputs_formater=["prompt", "response"],
+                table_name="feedbacks",
+                insert=True,
+                eval_id="eval-1",
+                organization_id="org-1",
+            )
+
+        calls = mgr.db_client.upsert_vector.call_args_list
+        assert len(calls) == 2
+        assert [c.args[4] for c in calls] == [
+            ["feedback_id", "feedback_input"],
+            ["feedback_id", "feedback_input"],
+        ]
+        assert [c.args[3]["feedback_input"] for c in calls] == [
+            "prompt",
+            "response",
+        ]
+        assert all(c.args[3]["feedback_id"] == "fb-1" for c in calls)
 
 
 class TestMarkDeletedByMetadata:
