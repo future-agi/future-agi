@@ -685,9 +685,7 @@ class TestRunResultsV3Views:
         assert response.status_code == 200
         body = response.json()
         assert len(body["scenario_risk"]) == 2
-        assert {item["scenario"] for item in body["scenario_risk"]} == {
-            scenario.name
-        }
+        assert {item["scenario"] for item in body["scenario_risk"]} == {scenario.name}
         assert len({item["scenario_key"] for item in body["scenario_risk"]}) == 2
         assert len({item["scenario_key"] for item in body["reliability"]["rows"]}) == 2
 
@@ -1553,7 +1551,11 @@ class TestRunResultsV3Views:
         )
         with django_assert_num_queries(2):
             groups = group_run_calls(
-                queryset, "sub_goal", [{"id": str(first.pk)}], [], execution=test_execution
+                queryset,
+                "sub_goal",
+                [{"id": str(first.pk)}],
+                [],
+                execution=test_execution,
             )
         by_key = {group["key"]: group for group in groups}
         assert {key: group["total"] for key, group in by_key.items()} == {
@@ -2968,3 +2970,85 @@ class TestRunTestEvalSummaryComparisonView:
             url, {"execution_ids": json.dumps([str(test_execution.id)])}
         )
         assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+@pytest.mark.integration
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "live_provider,snapshot,payload,expected",
+    [
+        ("vapi", None, {"livekit": {"tool_calls": [{"name": "lookup"}]}}, "vapi"),
+        ("retell", {"provider": "vapi"}, {"livekit": {"engine": "livekit"}}, "vapi"),
+        ("retell", {}, {"vapi": {"call_id": "legacy"}}, "vapi"),
+        (None, None, {"vapi": {"call_id": "sdk"}}, "vapi"),
+        ("", None, {"vapi": {}, "livekit": {"engine": "livekit"}}, "livekit"),
+        (None, None, {}, None),
+    ],
+)
+def test_call_provider_agrees_across_rows_csv_detail_and_analytics(
+    auth_client, test_execution, scenario, live_provider, snapshot, payload, expected
+):
+    from simulate.models.agent_version import AgentVersion
+
+    agent = test_execution.agent_definition
+    agent.provider = live_provider
+    agent.save(update_fields=["provider"])
+    if snapshot is not None:
+        version = AgentVersion.objects.create(
+            agent_definition=agent,
+            organization=agent.organization,
+            workspace=agent.workspace,
+            version_number=1,
+            version_name="Pinned",
+            configuration_snapshot={"description": "Pinned inputs", **snapshot},
+        )
+        test_execution.agent_version = version
+        test_execution.save(update_fields=["agent_version"])
+    call = CallExecution.objects.create(
+        test_execution=test_execution,
+        scenario=scenario,
+        status="completed",
+        provider_call_data=payload,
+    )
+    base = f"/simulate/v3/test-executions/{test_execution.id}"
+    rows = auth_client.get(f"{base}/calls/")
+    exported = auth_client.post(f"{base}/export/", {}, format="json")
+    detail = auth_client.get(f"/simulate/v3/call-executions/{call.id}/")
+    analytics = auth_client.get(f"{base}/analytics/")
+    assert [r.status_code for r in (rows, exported, detail, analytics)] == [200] * 4
+    assert rows.json()["results"][0]["provider"] == expected
+    csv_rows = list(
+        csv.DictReader(io.StringIO(b"".join(exported.streaming_content).decode()))
+    )
+    assert csv_rows[0]["provider"] == (expected or "")
+    assert detail.json()["provider"] == expected
+    breakdown = analytics.json()["provider_breakdown"]
+    assert [(r["provider"], r["total"]) for r in breakdown] == [
+        (expected or "Unknown", 1)
+    ]
+
+
+@pytest.mark.integration
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {
+            "vapi": {"call_id": "target"},
+            "livekit": {"tool_calls": [{"name": "lookup"}]},
+        },
+    ],
+)
+def test_hosted_transport_does_not_depend_on_tool_trace(
+    auth_client, test_execution, scenario, payload
+):
+    call = CallExecution.objects.create(
+        test_execution=test_execution,
+        scenario=scenario,
+        provider_call_data=payload,
+        call_metadata={"call_channel": "livekit", "external_runner": "alk"},
+    )
+    response = auth_client.get(f"/simulate/v3/call-executions/{call.id}/")
+    assert response.status_code == 200
+    assert response.json()["transport"] == "livekit"

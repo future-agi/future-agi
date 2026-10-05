@@ -16,6 +16,7 @@ from simulate.models import (
     TestExecution,
 )
 from simulate.serializers.chat_message import ChatMessageSerializer
+from simulate.utils.call_provider import call_provider
 from simulate.utils.eval_summary import iter_live_eval_outputs
 from simulate.utils.test_execution_utils import canonical_scenario_column_name
 from tracer.models.observability_provider import ProviderChoices
@@ -613,13 +614,18 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
         return recordings or {}
 
     def get_provider(self, obj):
-        agent = getattr(getattr(obj, "test_execution", None), "agent_definition", None)
-        return getattr(agent, "provider", None) if agent else None
+        return call_provider(obj)
 
     def get_transport(self, obj):
+        metadata = obj.call_metadata if isinstance(obj.call_metadata, dict) else {}
+        if channel := metadata.get("call_channel"):
+            return channel
         provider_data = getattr(obj, "provider_call_data", None)
         if not isinstance(provider_data, dict):
             return None
+        # LiveKit recordings have a fixed channel layout, even with target data.
+        if isinstance(provider_data.get("livekit"), dict) and provider_data["livekit"]:
+            return "livekit"
         for provider, payload in provider_data.items():
             if isinstance(payload, dict) and payload:
                 return provider

@@ -70,6 +70,7 @@ from simulate.services.run_results_v3_scoring import (
     resolve_eval_scoring_spec,
     warn_invalid_eval_threshold,
 )
+from simulate.utils.call_provider import call_provider_expression
 
 ALL_ROWS = sys.maxsize
 
@@ -718,9 +719,7 @@ def run_calls_queryset(
         ),
         result_tokens=_safe_json_float("conversation_metrics_data", "total_tokens"),
         result_cost_cents=Cast("customer_cost_cents", FloatField()),
-        result_provider=Coalesce(
-            F("test_execution__agent_definition__provider"), Value("Unknown")
-        ),
+        result_provider=call_provider_expression(),
         result_scenario_key=Coalesce(
             _json_text("call_metadata", "harness_scenario_key"),
             _json_text("call_metadata", "hosted_harness_receipt", "scenario_key"),
@@ -757,7 +756,7 @@ def run_calls_queryset(
         ),
     )
     return project_annotation(queryset, "result_outcome").select_related(
-        "scenario", "test_execution__agent_definition"
+        "scenario", "test_execution__agent_definition", "test_execution__agent_version"
     )
 
 
