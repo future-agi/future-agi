@@ -39,7 +39,6 @@ const WIDGETS = [
     id: "disconnection",
     title: "How calls ended",
     section: "Outcomes",
-    shown: true,
   },
   {
     id: "provider_success",
@@ -58,7 +57,6 @@ const WIDGETS = [
     title: "Evaluations",
     section: "Evaluations",
     wide: true,
-    shown: true,
   },
   {
     id: "voice_slos",
@@ -87,7 +85,6 @@ const WIDGETS = [
     title: "Agent response time per call",
     section: "Latency",
     wide: true,
-    shown: true,
   },
   {
     id: "distribution",
@@ -100,7 +97,6 @@ const WIDGETS = [
     title: "Weakest scenarios",
     section: "Failure analysis",
     wide: true,
-    shown: true,
   },
   { id: "tools_volume", title: "Tool call volume", section: "Tools" },
   { id: "tools_failure", title: "Tool failure rate", section: "Tools" },
@@ -267,8 +263,9 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
       !["provider_success", "sentiment"].includes(widget.id) ||
       breakdown(widget.id),
   );
+  // The details toggle only reveals the reliability section.
   const widgets = availableWidgets.filter(
-    (widget) => widget.shown || showDetails,
+    (widget) => widget.id !== "reliability" || showDetails,
   );
   const metricsByKey = Object.fromEntries(
     dashboard.metrics.map((metric) => [metric.key, metric]),

@@ -280,7 +280,7 @@ describe("RunAnalytics", () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  it("shows the six T1 decisions and hides diagnostics by default", () => {
+  it("shows the six T1 decisions and hides reliability by default", () => {
     render(<RunAnalytics executionId="execution-1" />);
 
     for (const label of [
@@ -302,8 +302,11 @@ describe("RunAnalytics", () => {
       screen.queryByRole("region", { name: "Reliability across trials" }),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("region", { name: "Tool failure rate" }),
+      screen.queryByRole("heading", { name: "Reliability" }),
     ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("region", { name: "Tool failure rate" }),
+    ).toBeInTheDocument();
     expect(useRunAnalytics).toHaveBeenCalledWith("execution-1");
   });
 
@@ -593,23 +596,38 @@ describe("RunAnalytics", () => {
     });
   });
 
-  it("reveals and hides detailed metrics in one click", () => {
+  it("hides only the reliability section behind the details toggle", () => {
     render(<RunAnalytics executionId="execution-1" />);
-    expect(
-      screen.queryByRole("region", { name: "Tool failure rate" }),
-    ).not.toBeInTheDocument();
+    const reliability = () =>
+      screen.queryByRole("region", { name: "Reliability across trials" });
+    const alwaysShown = [
+      "Goal outcome breakdown",
+      "CSAT distribution (0–10)",
+      "Agent latency",
+      "Distribution summary",
+      "Tool failure rate",
+      "Slowest calls",
+    ];
+    const expectAlwaysShown = () =>
+      alwaysShown.forEach((name) =>
+        expect(screen.getByRole("region", { name })).toBeInTheDocument(),
+      );
+
+    expect(reliability()).not.toBeInTheDocument();
+    expectAlwaysShown();
     fireEvent.click(
       screen.getByRole("button", { name: "Show detailed analytics" }),
     );
+    expect(reliability()).toBeInTheDocument();
     expect(
-      screen.getByRole("region", { name: "Tool failure rate" }),
+      screen.getByRole("heading", { name: "Reliability" }),
     ).toBeInTheDocument();
+    expectAlwaysShown();
     fireEvent.click(
       screen.getByRole("button", { name: "Hide detailed analytics" }),
     );
-    expect(
-      screen.queryByRole("region", { name: "Tool failure rate" }),
-    ).not.toBeInTheDocument();
+    expect(reliability()).not.toBeInTheDocument();
+    expectAlwaysShown();
   });
 
   const withDashboard = (overrides) => {
