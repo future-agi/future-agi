@@ -93,22 +93,40 @@ export async function createGroupingInvestigator({claim, control, config, signal
       const requestDigest = 'sha256:'+featureDigest({body, snapshot:claim.snapshot_digest ?? claim.snapshot?.snapshot_digest,
         policy_version:claim.policy_version,registry_revision:claim.registry_revision,
         candidate_digest:claim.candidate_digest,repair_intent:repairIntent});
-      const requestKey = purpose === 'severity' ? `severity:${claim.attempt_id}:${requestDigest}` : requestDigest;
-      const reservation = await control(base+'reserve/', {lease_token:claim.lease_token,
+      const sampledMerge = purpose === 'grouping' && claim.policy_version === 'f6-minilm-sampled/v2'
+        && prompt.candidate?.type === 'merge_review';
+      const requestKey = purpose === 'severity' ? `severity:${claim.attempt_id}:${requestDigest}`
+        : sampledMerge ? `merge-review:${requestDigest}` : requestDigest;
+      let reservation;
+      try { reservation = await control(base+'reserve/', {lease_token:claim.lease_token,
         request_key:requestKey,request_digest:requestDigest,max_cost_usd:maximumCost.toFixed(9),
-        ...(repairIntent ? {repair_intent:repairIntent} : {})}, {signal});
+        ...(repairIntent ? {repair_intent:repairIntent} : {})}, {signal}); }
+      catch (error) {
+        if (!sampledMerge || error.status !== 409) throw error;
+        const unavailable = new Error('Merge review reservation refused; no inference sent');
+        unavailable.name = 'MergeReviewUnavailable';
+        throw unavailable;
+      }
+      if (purpose === 'grouping' && claim.policy_version === 'f6-minilm-sampled/v2'
+          && reservation.status === 'budget_exhausted') {
+        const error = new Error(reservation.reason || 'Grouping spending limit reached');
+        error.name = sampledMerge ? 'MergeReviewBudgetExceeded' : 'GroupingBudgetExceeded';
+        throw error;
+      }
       if (!reservation.receipt_id || reservation.request_digest !== requestDigest) throw new Error('Invalid reservation receipt');
-      receiptIds.add(reservation.receipt_id);
       spanAttributes({'error_feed.receipt_id': reservation.receipt_id,
         'error_feed.receipt_reused': ['settled','unknown'].includes(reservation.status) && reservation.result != null,
         'error_feed.citation_repair': repairIntent !== null});
       if (['settled','unknown'].includes(reservation.status) && reservation.result != null) {
+        receiptIds.add(reservation.receipt_id);
         const cached = structuredClone(reservation.result);
         resultReceipts.set(cached,reservation.receipt_id);
         return cached;
       }
       if (reservation.created !== true || reservation.status !== 'reserved') {
-        throw new Error('Prior request has unresolved usage; refusing automatic resend');
+        const unavailable = new Error('Prior request has unresolved usage; refusing automatic resend');
+        if (sampledMerge) unavailable.name = 'MergeReviewUnavailable';
+        throw unavailable;
       }
       activeBody = body;
       let result = null, failure = null;
@@ -119,7 +137,11 @@ export async function createGroupingInvestigator({claim, control, config, signal
         result = JSON.parse(response.content);
         if (!result || typeof result !== 'object' || Array.isArray(result)
             || Buffer.byteLength(JSON.stringify(result)) > 256 * 1024) throw new Error('Invalid grouping output');
-      } catch { failure = new Error('Grouping provider failed or returned invalid output'); }
+      } catch {
+        result = null;
+        failure = Object.assign(new Error('Grouping provider failed or returned invalid output'),
+          {name:'GroupingProviderFailure'});
+      }
       finally { activeBody = null; }
       const call = gateway.accounting().calls[before];
       const cost = call?.cost_microusd;
@@ -147,6 +169,9 @@ export async function createGroupingInvestigator({claim, control, config, signal
       // cancellation. If it fails, the original durable reservation stays spent.
       await control(base+'settle/', settlement);
       if (failure) throw failure;
+      // Spending receipts remain durable even when inference fails. Only a
+      // successfully settled result is eligible as publication evidence.
+      receiptIds.add(reservation.receipt_id);
       resultReceipts.set(result,reservation.receipt_id);
       return result;
     } finally { busy = false; activeBody = null; }

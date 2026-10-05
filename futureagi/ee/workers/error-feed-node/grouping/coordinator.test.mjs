@@ -55,7 +55,7 @@ test('publication binds cohort digest, durable receipts and all F6 checkpoint fi
   const requests=[];
   const result=await processGroupingClaim(claim(),{
     control:async(path,body)=>{requests.push({path,body});return path.endsWith('checkpoint/')
-      ? {checkpoint_revision:body.expected_revision+1}:{published:true};},
+      ? {checkpoint_revision:body.expected_revision+1}:{status:'completed',registry_revision:4};},
     createInvestigator:async()=>({investigate:()=>{},receiptIds:()=>['new-receipt']}),
     engine:async({store})=>{
       for(const name of ['checkpoint.json','predictions.json','registry.json','prediction-receipt.json']){
@@ -64,10 +64,10 @@ test('publication binds cohort digest, durable receipts and all F6 checkpoint fi
       return {status:'complete',commands:[],dispositions:[{state:'deferred',occurrence_id:'a',reason:'unknown'}]};
     },
   });
-  assert.deepEqual(result,{published:true});
+  assert.deepEqual(result,{status:'completed',registry_revision:4});
   const publication=requests.at(-1).body;
   assert.equal(publication.snapshot_digest,'cohort-digest');
-  assert.deepEqual(publication.receipt_ids,['prior-receipt','new-receipt']);
+  assert.deepEqual(publication.receipt_ids,['new-receipt','prior-receipt']);
   assert.deepEqual(publication.commands,[{type:'defer',occurrence_ids:['a'],reason:'unknown'}]);
 });
 
@@ -84,7 +84,7 @@ test('paused algorithm cannot publish partial assignments',async()=>{
 test('model-backed commands without a known per-command receipt never publish',async()=>{
   let published=false;
   await assert.rejects(()=>processGroupingClaim(claim(),{
-    control:async()=>{published=true;return {published:true};},
+    control:async()=>{published=true;return {status:'completed',registry_revision:4};},
     createInvestigator:async()=>({investigate:()=>{},receiptIds:()=>[]}),
     engine:async()=>({status:'complete',commands:[{type:'create',temporary_id:'new-issue',
       occurrence_ids:['finding'],citations:[]}],dispositions:[]}),
@@ -122,7 +122,7 @@ test('after a failed checkpoint, a settled receipt resumes without another paid 
       return {status:'settled'};
     }
     if(path.endsWith('checkpoint/'))return {checkpoint_revision:payload.expected_revision+1};
-    if(path.endsWith('publish/')){published++;return {published:true};}
+    if(path.endsWith('publish/')){published++;return {status:'completed',registry_revision:4};}
     throw new Error('Unexpected grouping control path');
   };
   const createProvider=()=>{
@@ -148,7 +148,103 @@ test('after a failed checkpoint, a settled receipt resumes without another paid 
   assert.equal(paidCalls,1);
   assert.equal(published,0);
   failCheckpoint=false;
-  assert.deepEqual(await processGroupingClaim(work,options),{published:true});
+  assert.deepEqual(await processGroupingClaim(work,options),{status:'completed',registry_revision:4});
   assert.equal(paidCalls,1);
   assert.equal(published,1);
+});
+
+
+test('failed optional merge does not poison publication of a valid assignment',async()=>{
+  const work={...claim(),policy_version:'f6-minilm-sampled/v2',receipt_ids:[]};
+  const valid='22222222-2222-4222-8222-222222222222';
+  const failed='33333333-3333-4333-8333-333333333333';
+  const settlements=new Map();let paid=0,published;
+  const control=async(path,body)=>{
+    if(path.endsWith('reserve/'))return {created:true,status:'reserved',
+      receipt_id:body.request_key.startsWith('merge-review:')?failed:valid,
+      request_digest:body.request_digest};
+    if(path.endsWith('settle/')){
+      settlements.set(body.request_key.startsWith('merge-review:')?failed:valid,body);
+      return {status:body.status};
+    }
+    if(path.endsWith('checkpoint/'))return {checkpoint_revision:body.expected_revision+1};
+    if(path.endsWith('publish/')){
+      // Mirror the backend's receipt eligibility check, including null results.
+      assert.ok(body.receipt_ids.every(key=>settlements.get(key)?.result!=null));
+      published=body;return {status:'completed',registry_revision:4};
+    }
+    throw new Error('Unexpected control path');
+  };
+  const createProvider=()=>{
+    const calls=[];
+    return {accounting:()=>({calls}),provider:{generate:async()=>{
+      paid++;calls.push({cost_microusd:100,routed_model:'google/gemini-3.8-flash'});
+      return {content:paid===1?'{}':'invalid JSON',raw:{choices:[{finish_reason:'stop'}]}};
+    }}};
+  };
+  await processGroupingClaim(work,{control,model,reserveUsd:0.1,
+    gatewayConfig:{model:'google/gemini-3.8-flash'},
+    createInvestigator:args=>createGroupingInvestigator({...args,createProvider,
+      countRequest:async()=>({input_tokens:100,request_bytes:1000}),onDiagnostic:()=>{}}),
+    engine:async({investigate})=>{
+      const result=await investigate({task:'discovery'},{});
+      const receipt=investigate.receiptFor(result);
+      await assert.rejects(investigate({candidate:{type:'merge_review'}},{}),{name:'GroupingProviderFailure'});
+      return {status:'complete',commands:[{type:'attach',issue_id:'existing',
+        expected_issue_revision:1,occurrence_ids:work.pending_ids,citations:[],
+        admission:{primary_receipt_id:receipt,group_index:0,repair_receipt_id:null}}],dispositions:[]};
+    }});
+  assert.deepEqual(published.receipt_ids,[valid]);
+  assert.equal(published.commands[0].type,'attach');
+  assert.equal(settlements.get(failed).result,null);
+  assert.equal(settlements.get(failed).cost_usd,'0.000100000');
+});
+
+test('lost publish acknowledgement retries the identical frozen payload without inference', async () => {
+  const sends=[]; let engineCalls=0;
+  const result=await processGroupingClaim(claim(), {
+    control:async(path,body)=>{
+      if (path.endsWith('checkpoint/')) return {checkpoint_revision:body.expected_revision+1};
+      sends.push(structuredClone(body));
+      if (sends.length===1) throw new Error('connection closed after database commit');
+      return {status:'completed',registry_revision:4};
+    },
+    createInvestigator:async()=>({investigate:()=>{},receiptIds:()=>[]}),
+    engine:async()=>{
+      engineCalls++;
+      return {status:'complete',commands:[],dispositions:[{state:'deferred',occurrence_id:'a',reason:'uncertain'}]};
+    },
+  });
+  assert.equal(result.status,'completed');
+  assert.equal(engineCalls,1);
+  assert.deepEqual(sends[0],sends[1]);
+});
+
+test('recovered publication reuses original receipts and bypasses model work', async () => {
+  const base=claim();
+  const binding={snapshot_digest:base.snapshot_digest,candidate_digest:base.candidate_digest,
+    registry_revision:base.registry_revision,policy_version:base.policy_version};
+  const body={idempotency_key:'saved',snapshot_digest:base.snapshot_digest,registry_revision:3,
+    commands:[{type:'defer',occurrence_ids:['a'],reason:'uncertain'}],receipt_ids:[]};
+  base.checkpoint={files:{'publication.json':{binding,body}}};
+  let sent;
+  await processGroupingClaim(base,{
+    createInvestigator:async()=>{throw new Error('model work resumed');},
+    engine:async()=>{throw new Error('engine resumed');},
+    control:async(_path,payload)=>{sent=payload;return {status:'completed',registry_revision:4};},
+  });
+  assert.deepEqual(sent,{...body,lease_token:base.lease_token});
+});
+
+test('a publication validation conflict is not retried', async () => {
+  let sends=0;
+  await assert.rejects(()=>processGroupingClaim(claim(),{
+    createInvestigator:async()=>({investigate:()=>{},receiptIds:()=>[]}),
+    engine:async()=>({status:'complete',commands:[],dispositions:[{state:'deferred',occurrence_id:'a',reason:'uncertain'}]}),
+    control:async(path,body)=>{
+      if(path.endsWith('checkpoint/'))return {checkpoint_revision:body.expected_revision+1};
+      sends++;throw Object.assign(new Error('stale publication'),{status:409});
+    },
+  }),/stale publication/);
+  assert.equal(sends,1);
 });

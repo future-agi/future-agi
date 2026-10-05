@@ -4,7 +4,7 @@ import {adaptGroupingSnapshot} from './snapshot.mjs';
 import {makeGroupingSnapshotFixture} from './snapshot-fixture.mjs';
 import {digest} from './f6/common.mjs';
 import {runGrouping} from './engine.mjs';
-import {F6_MINILM_POLICY} from './policy.mjs';
+import {F6_MINILM_POLICY, SAMPLED_F6_MINILM_POLICY} from './policy.mjs';
 import {Paused} from './f6/provider.mjs';
 import {issueWording} from './f6/admission.mjs';
 
@@ -367,4 +367,86 @@ test('pre-owned pending occurrence fails before model use or publication', async
       issues: [offeredIssue([setup.row])]}, store: setup.store,
     investigate: async () => { throw new Error('provider called'); }}),
   /already belongs/);
+});
+
+
+function sampledSetup() {
+  const setup=fixture();
+  const second=addSecondFinding(setup), pending=addThirdFinding(setup);
+  const offered=(row,id,count)=>({...offeredIssue([row]),issue_id:id,
+    evidence_mode:'sampled',member_count:count,membership_complete:false,
+    membership_revision:1,membership_digest:'sha256:'+'a'.repeat(64)});
+  setup.input={rows:[setup.row,second,pending],pendingIds:[pending.id],features:setup.features,
+    candidateWindow:{...setup.candidateWindow,issues:[offered(setup.row,'issue-a',15),offered(second,'issue-b',10)]},
+    store:setup.store,policy:SAMPLED_F6_MINILM_POLICY};
+  return setup;
+}
+
+test('large source counts no longer block a sampled merge',async()=>{
+  const setup=sampledSetup();let merges=0;
+  const result=await runGrouping({...setup.input,investigate:withReceipts(async prompt=>{
+    if(!prompt.candidate)return {groups:[],deferred:prompt.findings.map(item=>({finding_id:item.id,reason:'uncertain'}))};
+    assert.equal(prompt.candidate.type,'merge_review','partial membership must not receive a split review');
+    assert.match(prompt.instructions,/4-12 words and at most 120 characters/);
+    merges++;
+    assert.deepEqual(prompt.issues.map(item=>item.member_count).sort((a,b)=>a-b),[10,15]);
+    return {action:'merge',groups:[groupFor(prompt,prompt.findings.map(item=>item.id))],removed_ids:[],reason:'Same corrective action'};
+  })});
+  assert.equal(merges,1);
+  assert.equal(result.commands.filter(item=>item.type==='merge').length,1);
+  const merge=result.commands.find(item=>item.type==='merge');
+  assert.equal(merge.reviewed_occurrence_ids.length,2);
+  const target=result.registry.issues.find(item=>item.id===merge.temporary_id);
+  assert.equal(target.member_count,25);
+  assert.equal(target.membership_complete,false);
+});
+
+test('uncertain sampled review leaves both large sources active',async()=>{
+  const setup=sampledSetup();
+  const result=await runGrouping({...setup.input,investigate:async prompt=>prompt.candidate
+    ? {action:'hold',groups:[],removed_ids:[],reason:'Distinct corrections remain possible'}
+    : {groups:[],deferred:prompt.findings.map(item=>({finding_id:item.id,reason:'uncertain'}))}});
+  assert.equal(result.commands.some(item=>item.type==='merge'),false);
+  assert.equal(result.registry.issues.filter(item=>item.active).length,2);
+});
+
+test('merge budget exhaustion holds topology and still allows publication',async()=>{
+  const setup=sampledSetup();
+  const result=await runGrouping({...setup.input,investigate:async prompt=>{
+    if(prompt.candidate)throw Object.assign(new Error('Merge spending ceiling reached'),{name:'MergeReviewBudgetExceeded'});
+    return {groups:[],deferred:prompt.findings.map(item=>({finding_id:item.id,reason:'uncertain'}))};
+  }});
+  assert.equal(result.status,'complete');
+  assert.ok(result.decision_receipts.some(item=>item.reason==='Merge spending ceiling reached'));
+  assert.equal(result.commands.some(item=>item.type==='merge'),false);
+});
+
+test('discovery budget exhaustion after a merge preserves publication and defers the pending finding',async()=>{
+  const setup=sampledSetup();let merged=false;
+  const result=await runGrouping({...setup.input,investigate:withReceipts(async prompt=>{
+    if(prompt.candidate){
+      merged=true;
+      return {action:'merge',groups:[groupFor(prompt,prompt.findings.map(item=>item.id))],
+        removed_ids:[],reason:'Same corrective action'};
+    }
+    if(merged)throw Object.assign(new Error('Work spending limit reached'),{name:'GroupingBudgetExceeded'});
+    return {groups:[],deferred:prompt.findings.map(item=>({finding_id:item.id,reason:'uncertain'}))};
+  })});
+  assert.equal(result.status,'complete');
+  assert.equal(result.commands.filter(item=>item.type==='merge').length,1);
+  assert.ok(result.decision_receipts.some(item=>item.reason==='Work spending limit reached'));
+  assert.ok(result.dispositions.some(item=>item.state==='deferred'&&item.reason==='Work spending limit reached'));
+  const resumed=await runGrouping({...setup.input,investigate:async()=>{throw new Error('Completed budget-limited work retried inference');}});
+  assert.deepEqual(resumed.commands,result.commands);
+});
+
+test('protected candidates are not offered for automatic attachment',async()=>{
+  const setup=fixture(), owned=addSecondFinding(setup);
+  const result=await runGrouping({rows:[setup.row,owned],pendingIds:[setup.row.id],features:setup.features,
+    candidateWindow:{...setup.candidateWindow,issues:[offeredIssue([owned],true)]},store:setup.store,
+    investigate:async prompt=>{
+      assert.deepEqual(prompt.existing_issues,[]);
+      return {groups:[],deferred:prompt.findings.map(item=>({finding_id:item.id,reason:'uncertain'}))};
+    }});
+  assert.equal(result.commands.some(item=>item.type==='attach'),false);
 });

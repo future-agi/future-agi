@@ -7,6 +7,29 @@ const claim={attempt_id:'11111111-1111-4111-8111-111111111111',lease_token:'leas
   snapshot:{snapshot_digest:'sha256:source'},policy_version:'f6-minilm/v1',registry_revision:0,
   candidate_digest:'sha256:'+'a'.repeat(64)};
 const config={model:'google/gemini-3.8-flash',baseUrl:'http://gateway/v1',apiKey:'fixture'};
+test('failed sampled merge stays accounted but is not publication evidence',async()=>{
+  const f=fixture({invalid:true});
+  const gateway=await createGroupingInvestigator({claim:{...claim,policy_version:'f6-minilm-sampled/v2'},
+    config,reserveUsd:0.1,...f});
+  await assert.rejects(gateway.investigate({candidate:{type:'merge_review'}},{}),
+    {name:'GroupingProviderFailure'});
+  const settlement=f.events.find(event=>event.path.endsWith('settle/')).payload;
+  assert.equal(settlement.status,'settled');
+  assert.equal(settlement.result,null);
+  assert.ok(Number(settlement.cost_usd)>0);
+  assert.deepEqual(gateway.receiptIds(),[]);
+});
+
+test('unresolved sampled merge reservation holds without resend or publication evidence',async()=>{
+  const f=fixture({prior:true});
+  const gateway=await createGroupingInvestigator({claim:{...claim,policy_version:'f6-minilm-sampled/v2'},
+    config,reserveUsd:0.1,...f});
+  await assert.rejects(gateway.investigate({candidate:{type:'merge_review'}},{}),
+    {name:'MergeReviewUnavailable'});
+  assert.equal(f.calls.length,0);
+  assert.deepEqual(gateway.receiptIds(),[]);
+});
+
 test('native preflight rejects before reservation or inference and emits only numeric diagnostics',async()=>{
   const f=fixture();const diagnostics=[];
   const gateway=await createGroupingInvestigator({claim,config,reserveUsd:0.1,...f,
@@ -201,4 +224,27 @@ test('a settled model result is reused after a later checkpoint write fails',asy
   assert.deepEqual(await resumed.investigate({same:'prompt'},{type:'object'}),{groups:[]});
   assert.equal(paidCalls,1);
   assert.deepEqual(resumed.receiptIds(),['durable-receipt']);
+});
+
+
+test('sampled merge budget denial occurs before paid inference',async()=>{
+  const f=fixture();let reserved;
+  const gateway=await createGroupingInvestigator({claim:{...claim,policy_version:'f6-minilm-sampled/v2'},
+    config,reserveUsd:0.01,...f,control:async(_path,body)=>{
+      reserved=body;return {status:'budget_exhausted',reason:'Merge spending limit reached',request_digest:body.request_digest};
+    }});
+  await assert.rejects(()=>gateway.investigate({candidate:{type:'merge_review'}},{}),
+    error=>error.name==='MergeReviewBudgetExceeded');
+  assert.match(reserved.request_key,/^merge-review:/);
+  assert.equal(f.calls.length,0);
+});
+
+test('sampled discovery budget denial is distinct from a lease conflict and sends no inference',async()=>{
+  const f=fixture();
+  const gateway=await createGroupingInvestigator({claim:{...claim,policy_version:'f6-minilm-sampled/v2'},
+    config,reserveUsd:0.01,...f,control:async(_path,body)=>({status:'budget_exhausted',
+      reason:'Work spending limit reached',request_digest:body.request_digest,created:false})});
+  await assert.rejects(()=>gateway.investigate({findings:[]},{}),{name:'GroupingBudgetExceeded'});
+  assert.equal(f.calls.length,0);
+  assert.deepEqual(gateway.receiptIds(),[]);
 });

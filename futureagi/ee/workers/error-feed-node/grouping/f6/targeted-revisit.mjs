@@ -10,7 +10,7 @@ export function targetSignature(issue, byId) {
     prototypes:issue.prototypes.map(id=>[id,byId.get(id).evidence_revision])});
 }
 export function eligibleTarget(id, issue, context) {
-  return issue.active && issue.scope===scopeKey(context.byId.get(id))
+  return issue.active && !issue.protected && issue.scope===scopeKey(context.byId.get(id))
     && !issue.members.some(other=>pairSafety(context.byId.get(id),context.byId.get(other),context.constraints));
 }
 export function snapshotTargets(id, registry, context) {
