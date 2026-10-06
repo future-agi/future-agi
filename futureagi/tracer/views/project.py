@@ -2,6 +2,7 @@ from datetime import timedelta
 from functools import wraps
 
 import structlog
+from django.conf import settings
 from django.db import models
 from django.db.models import Count
 from django.utils import timezone
@@ -11,10 +12,11 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
 from accounts.utils import get_request_organization
+from tfc.ee_loader import is_cloud_env
 from tfc.middleware.db_health_check import db_connection_required
 from tfc.middleware.query_timeout import monitor_query_performance
 from tfc.routers import uses_db
-from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_contracts import ExplicitQueryAutoSchema, validated_request
 from tfc.utils.api_serializers import ApiErrorResponseSerializer
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.error_codes import get_error_message
@@ -43,6 +45,7 @@ from tracer.serializers.project import (
     ProjectUserGraphDataResponseSerializer,
     ProjectUserMetricsRequestSerializer,
     ProjectUsersAggregateGraphDataRequestSerializer,
+    ProjectViewSetListQuerySerializer,
 )
 from tracer.services.clickhouse.graph_action_deadline import (
     GraphActionUnavailable,
@@ -57,6 +60,9 @@ from tracer.services.clickhouse.graph_dispatch import (
     fetch_eval_graph_ch,
     fetch_user_system_metric_graph_ch,
     graph_payload_is_publishable,
+)
+from tracer.services.clickhouse.graph_metric_statistic import (
+    chart_bundle_statistics,
 )
 from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     UnsupportedFilterShapeError,
@@ -81,6 +87,7 @@ from tracer.utils.constants import (
     INSTALLATION_GUIDE,
     INSTRUMENTORS,
     OBSERVE_CODEBLOCK,
+    ORG_BASE_URL,
     ORG_KEYS,
     PROTOTYPE_CODEBLOCK,
 )
@@ -96,6 +103,22 @@ from tracer.utils.helper import (
 from tracer.utils.property_registry import validate_property_graph_namespace
 
 logger = structlog.get_logger(__name__)
+
+
+def sdk_key_snippets():
+    """The keys block of the in-app SDK snippet, per language, with placeholder
+    keys. Off Future AGI Cloud it also sets FI_BASE_URL to this install's
+    collector: the SDKs default to Cloud, and without it the spans (prompts and
+    completions included) would leave for api.futureagi.com."""
+    snippets = {
+        lang: code.format("YOUR_FI_API_KEY", "YOUR_FI_SECRET_KEY")
+        for lang, code in ORG_KEYS.items()
+    }
+    if not is_cloud_env(settings.CLOUD_DEPLOYMENT):
+        for lang, line in ORG_BASE_URL.items():
+            snippets[lang] += line.format(settings.FI_COLLECTOR_PUBLIC_URL)
+    return snippets
+
 
 # The Observe landing page is a latency-critical navigation path. Never replay
 # raw span versions here: the dedicated rollup has one aggregate state per
@@ -252,6 +275,10 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
         except Exception:
             logger.warning("pii_cache_invalidation_failed", exc_info=True)
 
+    @validated_request(
+        query_serializer=ProjectViewSetListQuerySerializer,
+        auto_schema=ExplicitQueryAutoSchema,
+    )
     def list(self, request, *args, **kwargs):
         """
         Get a paginated list of all projects for the organization.
@@ -264,8 +291,8 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             total_count = queryset.count()
 
             # Apply pagination
-            page_number = int(self.request.query_params.get("page_number", 0))
-            page_size = int(self.request.query_params.get("page_size", 20))
+            page_number = request.validated_query_data["page_number"]
+            page_size = request.validated_query_data["page_size"]
             start = page_number * page_size
             end = start + page_size
 
@@ -884,6 +911,7 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 )
             graph_data = {
                 "system_metrics": response_data,
+                "system_metric_statistics": chart_bundle_statistics(),
                 "evaluations": {},
             }
             return self._gm.success_response(graph_data)
@@ -1408,10 +1436,7 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
         response = {
             "installation_guide": INSTALLATION_GUIDE,
             "project_add_code": sdk_code,
-            "keys": {
-                lang: code.format("YOUR_FI_API_KEY", "YOUR_FI_SECRET_KEY")
-                for lang, code in ORG_KEYS.items()
-            },
+            "keys": sdk_key_snippets(),
             "instruments": INSTRUMENTORS,
         }
         return self._gm.success_response(response)

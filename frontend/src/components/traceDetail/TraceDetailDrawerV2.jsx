@@ -506,7 +506,9 @@ const TraceDetailDrawerV2 = ({
   }, []);
 
   const queryClient = useQueryClient();
-  const { data, isLoading } = useGetTraceDetail(open ? traceId : null);
+  const { data, isLoading } = useGetTraceDetail(open ? traceId : null, {
+    projectId,
+  });
 
   const handleRefresh = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ["trace-detail", traceId] });
@@ -880,6 +882,8 @@ const TraceDetailDrawerV2 = ({
 
       {/* Header */}
       <DrawerHeader
+        open={open}
+        closeOnEscape={!initialFullscreen}
         traceId={traceId}
         projectId={projectId}
         onClose={onClose}
@@ -1438,6 +1442,7 @@ const TraceDetailDrawerV2 = ({
             traceId,
             spanId: annotateDrawerOpen?.spanId || rootSpanId,
             sessionId: data?.trace?.session,
+            projectId,
           })}
           onClose={() => setAnnotateDrawerOpen(null)}
           onAddLabel={() => setAddLabelDrawerOpen(true)}

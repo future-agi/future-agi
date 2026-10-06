@@ -312,6 +312,36 @@ def test_eval_log_rows_have_stable_ids_and_use_the_bounded_feedback_map(monkeypa
     assert row["column4"]["cell_value"] == "clear"
 
 
+def test_eval_log_rows_carry_ledger_uuids_as_json_strings():
+    """``APICallLog.log_id`` is a UUID. The strict table contract accepts only
+    JSON values, so a raw UUID turned every populated page into a 400."""
+
+    log_id = uuid.uuid4()
+    log = SimpleNamespace(
+        log_id=log_id,
+        config={"mappings": {"prompt": "hello"}, "output": {"output": "Failed"}},
+        status="error",
+        source="eval_playground",
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        updated_at=datetime(2026, 1, 2, tzinfo=UTC),
+        organization=SimpleNamespace(),
+    )
+    template = SimpleNamespace(name="quality", criteria="be correct", eval_tags=[])
+
+    [row] = separate_evals.populate_log_row_data(
+        template,
+        [log],
+        {"column1": "Evaluation ID", "column2": "prompt"},
+        feedback_by_log_id={},
+    )
+
+    assert row["log_id"] == str(log_id)
+    assert row["column1"]["cell_value"] == str(log_id)
+    envelope = {"status": True, "result": {"table": [row], "column_config": []}}
+    serializer = EvalApiLogTableResponseSerializer(data=envelope)
+    assert serializer.is_valid(), serializer.errors
+
+
 def test_eval_log_response_contract_marks_a_complete_exact_page():
     envelope = {
         "status": True,

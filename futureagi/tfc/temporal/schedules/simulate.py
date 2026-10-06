@@ -5,12 +5,10 @@ Schedules for test execution monitoring and call creation.
 Scenario workflows remain in Temporal (tfc/temporal/simulate/).
 """
 
-from typing import List
-
 from tfc.temporal.schedules.config import ScheduleConfig
 
 # Simulate schedules for test execution
-SIMULATE_SCHEDULES: List[ScheduleConfig] = [
+SIMULATE_SCHEDULES: list[ScheduleConfig] = [
     # ScheduleConfig(
     #     schedule_id="create-call-executions",
     #     activity_name="create_call_executions",
@@ -45,5 +43,12 @@ SIMULATE_SCHEDULES: List[ScheduleConfig] = [
         interval_seconds=30,  # Every 30 seconds
         queue="tasks_s",
         description="Process REGISTERED CallExecutions for prompt-based chat simulations",
+    ),
+    ScheduleConfig(
+        schedule_id="recover-hosted-harness-conversations",
+        activity_name="recover_hosted_harness_conversations",
+        interval_seconds=15,
+        queue="default",
+        description="Restart hosted environment chat runtimes that died with messages waiting",
     ),
 ]

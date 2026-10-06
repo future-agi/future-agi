@@ -21,6 +21,7 @@ import {
 import { useTheme } from "@mui/material/styles";
 import Chart from "react-apexcharts";
 import { useAnalyticsErrors } from "./hooks/useAnalyticsErrors";
+import { REQUEST_DIMENSION_OPTIONS } from "../constants/requestTags";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -28,8 +29,7 @@ import { useAnalyticsErrors } from "./hooks/useAnalyticsErrors";
 
 const GROUP_BY_OPTIONS = [
   { value: "status_code", label: "Status Code" },
-  { value: "model", label: "Model" },
-  { value: "provider", label: "Provider" },
+  ...REQUEST_DIMENSION_OPTIONS,
 ];
 
 const TOP_N = 10;

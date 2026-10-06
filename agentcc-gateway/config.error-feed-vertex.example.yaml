@@ -1,0 +1,30 @@
+# Opt-in local Error Feed gateway config. Replaces other provider routes.
+# Use with docker-compose.yml, which maps host 8090 to container 8080.
+# Credentials and the internal API key come from the local, untracked .env.
+server:
+  host: "0.0.0.0"
+  port: 8080
+  read_timeout: 5s
+  write_timeout: 300s
+  idle_timeout: 120s
+  default_request_timeout: 300s
+  max_request_body_size: 104857600
+
+providers:
+  vertex_ai_global:
+    base_url: "https://aiplatform.googleapis.com/v1/projects/${GOOGLE_CLOUD_PROJECT}/locations/global"
+    api_format: "gemini"
+    credentials_file: "${GOOGLE_APPLICATION_CREDENTIALS}"
+    models:
+      - vertex_ai/gemini-3.8-flash
+
+auth:
+  enabled: true
+  keys:
+    - name: internal-service
+      key: "${AGENTCC_INTERNAL_API_KEY}"
+      key_type: internal
+      metadata:
+        type: internal
+        owner: platform
+        access_groups: internal

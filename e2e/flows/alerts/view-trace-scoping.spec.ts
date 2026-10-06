@@ -7,6 +7,7 @@ import { flowAnnotation } from '../../lib/flow-meta';
 
 // Alert surfaces, pinned off frontend/src/utils/axios.js (endpoints.project.*).
 const MONITOR_PATH = '/tracer/user-alerts/';
+const MONITOR_LIST_PATH = `${MONITOR_PATH}list_monitors/`;
 const MONITOR_LOG_PATH = '/tracer/user-alert-logs/';
 const monitorDetailsPath = (id: string) => `/tracer/user-alerts/${id}/details/`;
 
@@ -257,7 +258,24 @@ test(
           await expect(page).toHaveURL(/\/dashboard\/alerts/, { timeout: UI_READY });
         }
       }
+      // The unfiltered list already shows the monitor (it may be the tenant's
+      // only one), so its name being visible says nothing about the search. The
+      // search fires 300 ms after typing and swaps the grid's rows for a
+      // loading state, and a click landing in that swap is lost. Wait for the
+      // searched list to arrive before looking for the row.
+      const searched = page.waitForResponse(
+        (r) => {
+          const url = new URL(r.url());
+          return (
+            url.pathname === MONITOR_LIST_PATH &&
+            url.searchParams.get('search_text') === monitorName &&
+            r.request().method() === 'GET'
+          );
+        },
+        { timeout: UI_READY },
+      );
       await page.getByPlaceholder('Search').first().fill(monitorName);
+      await (await searched).finished();
       await expect(page.getByText(monitorName).first()).toBeVisible({
         timeout: UI_READY,
       });

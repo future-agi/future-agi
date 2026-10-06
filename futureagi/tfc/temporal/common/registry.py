@@ -9,6 +9,8 @@ to avoid sandbox validation issues.
 from collections.abc import Callable
 from importlib import import_module
 
+from tfc.ee_loader import USAGE_TEMPORAL_MODULES
+
 # =============================================================================
 # Registry Storage
 # =============================================================================
@@ -53,6 +55,8 @@ TEMPORAL_ACTIVITY_MODULES = [
     # tracer tasks
     "tracer.tasks",
     "tracer.tasks.trace_scanner",
+    "tracer.tasks.eval_task_sweeper",
+    "tracer.tasks.outbox_cdc",
     "tracer.utils.span",
     "tracer.utils.eval",
     "tracer.utils.observability_provider",
@@ -79,8 +83,6 @@ TEMPORAL_ACTIVITY_MODULES = [
     "tfc.temporal.schedules.deployment_telemetry",
     # Deployment telemetry receiver-side integrations (PostHog, HubSpot, Slack)
     "ee.cloud.telemetry.deployment_telemetry_integrations",
-    # Default-off isolated DEV unified property catalog reconciliation
-    "tfc.temporal.schedules.property_catalog",
 ]
 
 
@@ -129,7 +131,7 @@ def register_for_queues(
 
 def _load_usage_temporal_registry(name: str) -> Callable[[], list] | None:
     """Load cloud usage Temporal hooks, with legacy EE compatibility."""
-    for module_name in ("ee.cloud.temporal", "ee.usage.temporal"):
+    for module_name in USAGE_TEMPORAL_MODULES:
         try:
             temporal_module = import_module(module_name)
         except ModuleNotFoundError as exc:
@@ -298,8 +300,8 @@ def _ensure_workflows_registered() -> None:
 
     # Register drop-in TaskRunnerWorkflow for all queues
     try:
+        from simulate.temporal.constants import QUEUE_RUNNER
         from tfc.temporal.drop_in import TaskRunnerWorkflow
-        from tfc.temporal.property_catalog_queue import PROPERTY_CATALOG_TASK_QUEUE
 
         register_for_queues(
             queues=[
@@ -308,9 +310,9 @@ def _ensure_workflows_registered() -> None:
                 "tasks_l",
                 "tasks_xl",
                 "exact_aggregation",
-                PROPERTY_CATALOG_TASK_QUEUE,
                 "trace_ingestion",
                 "agent_compass",
+                QUEUE_RUNNER,
             ],
             workflows=[TaskRunnerWorkflow],
         )
@@ -432,13 +434,19 @@ def _ensure_workflows_registered() -> None:
     # (plan §9); it runs on `simulation_runner`, not the native call queues.
     try:
         from simulate.temporal.constants import QUEUE_RUNNER
+        from simulate.temporal.workflows.hosted_harness_gateway_workflow import (
+            HostedHarnessGatewayWorkflow,
+        )
         from simulate.temporal.workflows.simulation_runner_workflow import (
             SimulationRunnerWorkflow,
         )
 
         register_for_queues(
             queues=[QUEUE_RUNNER],
-            workflows=[SimulationRunnerWorkflow],
+            workflows=[
+                SimulationRunnerWorkflow,
+                HostedHarnessGatewayWorkflow,
+            ],
         )
     except ImportError as e:
         from tfc.logging.temporal import get_logger
@@ -594,19 +602,17 @@ def _ensure_activities_registered() -> None:
         # the production single-slot admission boundary. Keep only tasks_xl as
         # the explicit compatibility route for deployments not yet running the
         # dedicated worker.
+        from simulate.temporal.constants import QUEUE_RUNNER
         from tfc.temporal.drop_in.decorator import get_temporal_activities
-        from tfc.temporal.property_catalog_queue import PROPERTY_CATALOG_TASK_QUEUE
 
         drop_in_activities = get_temporal_activities()
         exact_aggregation_activities = get_temporal_activities(
             queue="exact_aggregation"
         )
-        property_catalog_activities = get_temporal_activities(
-            queue=PROPERTY_CATALOG_TASK_QUEUE
-        )
+        runner_activities = get_temporal_activities(queue=QUEUE_RUNNER)
         dedicated_activities = {
             *exact_aggregation_activities,
-            *property_catalog_activities,
+            *runner_activities,
         }
         generic_drop_in_activities = [
             registered_activity
@@ -616,13 +622,11 @@ def _ensure_activities_registered() -> None:
         tasks_xl_drop_in_activities = [
             registered_activity
             for registered_activity in drop_in_activities
-            if registered_activity not in property_catalog_activities
+            if registered_activity not in runner_activities
         ]
         log.info("registering_dropin_activities", count=len(drop_in_activities))
 
-        # Generic queues historically register the complete decorator registry.
-        # The exact reader is the sole exception because concurrent execution is
-        # deliberately bounded at the worker queue.
+        # Keep exact reads and hosted-runner activities on their dedicated queues.
         register_for_queues(
             queues=[
                 "default",
@@ -646,8 +650,8 @@ def _ensure_activities_registered() -> None:
             activities=exact_aggregation_activities,
         )
         register_for_queues(
-            queues=[PROPERTY_CATALOG_TASK_QUEUE],
-            activities=property_catalog_activities,
+            queues=[QUEUE_RUNNER],
+            activities=runner_activities,
         )
     except Exception as e:
         log.exception("could_not_load_dropin_activities", error=str(e))
@@ -724,6 +728,13 @@ def _ensure_activities_registered() -> None:
     # runner spawns the released SDK as a child process; these do not run on the
     # native voice queues.
     try:
+        from simulate.temporal.activities.hosted_harness_gateway import (
+            author_hosted_harness_job,
+            cancel_hosted_harness_attempt,
+            launch_hosted_harness_job,
+            poll_hosted_harness_attempt,
+            record_hosted_harness_launch_failure,
+        )
         from simulate.temporal.activities.hosted_runner import (
             build_runner_job,
             finalize_hosted_execution,
@@ -737,9 +748,14 @@ def _ensure_activities_registered() -> None:
                 build_runner_job,
                 run_hosted_sdk_job,
                 finalize_hosted_execution,
+                author_hosted_harness_job,
+                launch_hosted_harness_job,
+                record_hosted_harness_launch_failure,
+                poll_hosted_harness_attempt,
+                cancel_hosted_harness_attempt,
             ],
         )
-        log.info("registered_hosted_runner_activities", count=3)
+        log.info("registered_hosted_runner_activities", count=8)
     except ImportError as e:
         log.warning("could_not_load_hosted_runner_activities", error=str(e))
 

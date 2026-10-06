@@ -292,6 +292,13 @@ const UsersGrid = React.memo(
 
       return {
         getRows: async (params) => {
+          let requestCompleted = false;
+          const finishRequest = (result) => {
+            if (requestCompleted) return;
+            requestCompleted = true;
+            if (result) params.success(result);
+            else params.fail();
+          };
           let pageNumber = 0;
           let requestGeneration = null;
           let loadingOwner = null;
@@ -457,11 +464,11 @@ const UsersGrid = React.memo(
               resumePendingListPage({
                 page: exactPage,
                 resume: () => {
+                  finishRequest();
                   if (
                     cursorPagination.current.isCurrent(requestGeneration) &&
                     isGridApiLive(params.api)
                   ) {
-                    params.fail();
                     if (params.api?.retryServerSideLoads) {
                       params.api.retryServerSideLoads();
                     } else {
@@ -549,7 +556,7 @@ const UsersGrid = React.memo(
               clearSelection();
             }
 
-            params.success({
+            finishRequest({
               rowData: userData,
               rowCount: gridRowCount,
             });
@@ -568,9 +575,14 @@ const UsersGrid = React.memo(
               // Keep existing rows and the exact signed checkpoint. The user
               // can explicitly retry without seeing a false empty or error
               // state, and the client never drains an unbounded cursor chain.
+              // A paused first page has not established whether this query
+              // has users, so a previous query's confirmed-empty result must
+              // not bring the empty screen back over the Continue search
+              // control.
+              if (pageNumber === 0) setHasData(null);
               setReadError(null);
               setContinuationNotice(true);
-              params.fail();
+              finishRequest();
               return;
             }
             if (
@@ -581,15 +593,19 @@ const UsersGrid = React.memo(
             ) {
               cursorPagination.current.disableCursor();
               setReadError(null);
-              params.fail();
+              finishRequest();
               params.api?.refreshServerSide?.({ purge: true });
               return;
             }
             setContinuationNotice(null);
             setReadError(QUERY_FAILED_RETRY_MESSAGE);
             setSearchState("error");
-            failServerSideGridRead(params);
+            failServerSideGridRead({ ...params, fail: finishRequest });
           } finally {
+            // AG Grid releases its shared loader slot only via a callback,
+            // even when the obsolete cache ignores the result. A scheduled
+            // continuation owns completion until its resume callback runs.
+            if (!continuationPending) finishRequest();
             if (loadingOwner) {
               activeListReadsRef.current.delete(loadingOwner);
               // Obsolete reads cannot release loading during a filter handoff,

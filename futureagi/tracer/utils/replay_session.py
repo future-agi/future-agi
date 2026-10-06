@@ -22,6 +22,7 @@ from tracer.models.trace import Trace
 from tracer.services.clickhouse.span_attribute_lookups import (
     trace_ids_with_simulator_call_execution_id,
 )
+from tracer.utils.attribute_accessor import span_raw_log, vapi_customer
 from tracer.utils.otel import ConversationAttributes
 from tracer.utils.sql_queries import SQL_query_handler
 
@@ -666,8 +667,7 @@ def _get_first_voice_span_raw_log(trace_query: QuerySet) -> dict | None:
         return None
 
     attrs = merge_span_attrs(_chspan_to_legacy_dict(conversation_span))
-    raw_log = attrs.get("raw_log")
-    return raw_log if isinstance(raw_log, dict) else None
+    return span_raw_log(attrs, span_id=str(conversation_span.id)) or None
 
 
 def _find_message_by_role(messages: list, role: str) -> str:
@@ -703,7 +703,7 @@ def _extract_phone_number_from_raw_log(raw_log: dict) -> str:
     phone = raw_log.get("phoneNumber") or {}
     number = phone.get("twilioPhoneNumber") or phone.get("number") or ""
     if not number:
-        number = (raw_log.get("customer") or {}).get("number", "")
+        number = vapi_customer(raw_log).get("number", "")
     return number
 
 

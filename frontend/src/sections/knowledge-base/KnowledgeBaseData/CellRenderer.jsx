@@ -59,8 +59,8 @@ export const ProcessingStatusCell = ({ value, data }) => {
         <Typography variant="s2" fontWeight={"fontWeightMedium"}>
           {status}
         </Typography>
-        {status === "Failed" && (
-          <CustomTooltip show={true} title={data?.error || ""} arrow>
+        {status === "Failed" && data?.error && (
+          <CustomTooltip show={true} title={data.error} arrow>
             <Iconify
               icon="solar:info-circle-outline"
               color="text.primary"

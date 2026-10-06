@@ -1,6 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 
+import { refreshGatewayConfig } from "../../providers/hooks/useGatewayConfig";
+
 export function useMCPStatus(gatewayId) {
   return useQuery({
     queryKey: ["agentcc-mcp-status", gatewayId],
@@ -38,11 +40,12 @@ export function useUpdateMCPServer() {
       );
       return data.result;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["agentcc-mcp-status"] });
-      queryClient.invalidateQueries({ queryKey: ["agentcc-mcp-tools"] });
-      queryClient.invalidateQueries({ queryKey: ["agentcc-gateway-config"] });
-    },
+    onSuccess: () =>
+      refreshGatewayConfig(
+        queryClient,
+        ["agentcc-mcp-status"],
+        ["agentcc-mcp-tools"],
+      ),
   });
 }
 
@@ -57,11 +60,12 @@ export function useRemoveMCPServer() {
       );
       return data.result;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["agentcc-mcp-status"] });
-      queryClient.invalidateQueries({ queryKey: ["agentcc-mcp-tools"] });
-      queryClient.invalidateQueries({ queryKey: ["agentcc-gateway-config"] });
-    },
+    onSuccess: () =>
+      refreshGatewayConfig(
+        queryClient,
+        ["agentcc-mcp-status"],
+        ["agentcc-mcp-tools"],
+      ),
   });
 }
 
@@ -76,10 +80,7 @@ export function useUpdateMCPGuardrails() {
       );
       return data.result;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["agentcc-mcp-status"] });
-      queryClient.invalidateQueries({ queryKey: ["agentcc-gateway-config"] });
-    },
+    onSuccess: () => refreshGatewayConfig(queryClient, ["agentcc-mcp-status"]),
   });
 }
 

@@ -1180,6 +1180,7 @@ def _voice_params(
     target_speaks_first: bool | None = None,
     leased_room: bool = False,
 ) -> dict[str, Any]:
+    is_telephony = transport_kind in {"sip_inbound", "sip_outbound"}
     # Who opens the conversation. The explicit ``target_speaks_first`` toggle on
     # the agent definition wins when set (True: wait for the target's greeting;
     # False: the simulator opens). When unset (None), fall back to the target's
