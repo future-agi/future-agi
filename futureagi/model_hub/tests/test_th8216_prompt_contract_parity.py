@@ -21,6 +21,10 @@ from accounts.models.organization import Organization
 from model_hub.models.prompt_folders import PromptFolder
 from model_hub.models.prompt_label import LabelTypeChoices, PromptLabel
 from model_hub.models.run_prompt import PromptTemplate, PromptVersion
+from model_hub.serializers.prompt_read_contracts import (
+    PromptTemplatePageSerializer,
+    PromptVersionHistoryPageSerializer,
+)
 from tfc.tests.openapi_parity import (
     assert_capture,
     assert_response_matches_contract,
@@ -29,6 +33,7 @@ from tfc.tests.openapi_parity import (
     to_json_schema,
     validation_errors,
 )
+from tfc.utils import api_contracts
 
 CAPTURED = Path(__file__).parent / "fixtures" / "contracts" / "th8216" / "captured"
 
@@ -371,6 +376,30 @@ def _normalise_op036(body):
     return {**body, "results": rows}
 
 
+def _row_shape(row):
+    # Catalogue values are open JSON in the contract: keep only their top-level
+    # type. Every other key keeps its full JSON shape.
+    return {
+        key: (None if value is None else f"<{type(value).__name__}>")
+        if key in CATALOGUE_VALUES
+        else _shape(value)
+        for key, value in row.items()
+    }
+
+
+def _normalise_op036_search_page(body):
+    # Which rows match, how many and in what order all follow the catalogue;
+    # keep the page envelope and the distinct row shapes.
+    shapes = {json.dumps(_row_shape(row), sort_keys=True) for row in body["results"]}
+    return {
+        **body,
+        "count": _shape(body["count"]),
+        "total_pages": _shape(body["total_pages"]),
+        "next": _shape(body["next"]),
+        "results": [json.loads(shape) for shape in sorted(shapes)],
+    }
+
+
 def _check_op035(swagger, auth_client):
     query = {"model": "gpt-4o-mini", "provider": "openai", "model_type": "llm"}
     response = auth_client.get(MODEL_PARAMETERS, query)
@@ -419,6 +448,28 @@ def _check_op036(swagger, auth_client):
         request=query,
         normalize=_normalise_op036,
         note="one exact model; catalogue values reduced to their JSON types",
+    )
+
+    # The search branch with a multi-row page and a non-null next link.
+    search = {"search": "gpt-4o-mini", "limit": 2}
+    paged = auth_client.get(MODELS_LIST, search)
+
+    assert paged.status_code == 200
+    page = paged.json()
+    assert len(page["results"]) == 2
+    assert page["next"] is not None
+    for row in page["results"]:
+        assert not {"key", "api_key", "secret", "config_json"} & set(row)
+    _check(
+        swagger,
+        "op036_models_list_search_page",
+        "OP-036",
+        "GET",
+        MODELS_LIST,
+        paged,
+        request=search,
+        normalize=_normalise_op036_search_page,
+        note="search branch, two-row page with a next link; values reduced to JSON types",
     )
 
 
@@ -580,8 +631,14 @@ def test_op099_foreign_template_reads_like_a_missing_one(swagger, auth_client, u
 RESPONSE_DRIFT = "API response does not match declared serializer."
 
 
-def _assert_debug_response_check_is_clean(settings, client, url, query):
-    """Run one read with DEBUG off and on: same queries, no drift warning."""
+def _assert_debug_response_check_is_clean(
+    settings, client, url, query, page_serializer
+):
+    """Run one read with DEBUG off and on: same queries, no drift warning.
+
+    The DEBUG run must actually execute the response check against the
+    declared page serializer, so the test cannot pass vacuously.
+    """
     assert client.get(url, query).status_code == 200  # warm per-process caches
     settings.DEBUG = False
     with CaptureQueriesContext(connection) as plain:
@@ -589,11 +646,19 @@ def _assert_debug_response_check_is_clean(settings, client, url, query):
     settings.DEBUG = True
     with (
         mock.patch("tfc.utils.api_contracts.logger") as contract_logger,
+        mock.patch.object(
+            api_contracts,
+            "_validate_response",
+            wraps=api_contracts._validate_response,
+        ) as response_check,
         CaptureQueriesContext(connection) as checked,
     ):
         response = client.get(url, query)
 
     assert response.status_code == 200
+    assert response_check.call_count == 1
+    assert response_check.call_args.args[1] is page_serializer
+    assert response_check.call_args.args[2].status_code == 200
     assert response.json()["results"] and response.json()["next"]
     drift = [
         call.kwargs.get("validation_errors")
@@ -615,6 +680,7 @@ def test_debug_response_check_on_op099_reports_no_drift_and_adds_no_queries(
         auth_client,
         f"/model-hub/prompt-templates/{history.id}/versions/",
         {"limit": 2},
+        PromptVersionHistoryPageSerializer,
     )
 
 
@@ -634,7 +700,7 @@ def test_debug_response_check_on_op068_reports_no_drift_and_adds_no_queries(
         template.save(update_fields=["prompt_folder"])
 
     _assert_debug_response_check_is_clean(
-        settings, auth_client, TEMPLATES, {"limit": 1}
+        settings, auth_client, TEMPLATES, {"limit": 1}, PromptTemplatePageSerializer
     )
 
 
