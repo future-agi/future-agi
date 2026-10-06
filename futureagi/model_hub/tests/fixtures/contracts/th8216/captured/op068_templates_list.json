@@ -1,0 +1,34 @@
+{
+  "body": {
+    "count": 1,
+    "current_page": 1,
+    "next": null,
+    "previous": null,
+    "results": [
+      {
+        "created_by": "00000000-0000-4000-8000-000000000003",
+        "description": null,
+        "id": "00000000-0000-4000-8000-000000000001",
+        "name": "TH8216 contract prompt",
+        "organization": "00000000-0000-4000-8000-000000000002",
+        "placeholders": {},
+        "prompt_folder": null,
+        "variable_names": {
+          "name": [
+            "Ada"
+          ]
+        }
+      }
+    ],
+    "total_pages": 1
+  },
+  "label": "captured",
+  "method": "GET",
+  "note": "",
+  "operation": "OP-068",
+  "path": "/model-hub/prompt-templates/",
+  "request": {
+    "limit": 1
+  },
+  "status": 200
+}

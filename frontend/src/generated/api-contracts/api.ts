@@ -727,6 +727,7 @@ import type {
   MessageFeedbackResponseApi,
   MetricTagOptionApi,
   MetricsByColumnResponseApi,
+  ModelCatalogPageApi,
   ModelHubAnnotationQueuesAutomationRulesList200,
   ModelHubAnnotationQueuesAutomationRulesListParams,
   ModelHubAnnotationQueuesExportAnnotationsParams,
@@ -744,6 +745,8 @@ import type {
   ModelHubAnnotationsList200,
   ModelHubAnnotationsListParams,
   ModelHubApiKeysListParams,
+  ModelHubApiModelParametersListParams,
+  ModelHubApiModelsListListParams,
   ModelHubDatasetOptimizationList200,
   ModelHubDatasetOptimizationListParams,
   ModelHubDevelopsGetDatasetTableListParams,
@@ -802,18 +805,14 @@ import type {
   ModelHubPromptHistoryExecutionsGetExecutionDetailsParams,
   ModelHubPromptHistoryExecutionsList200,
   ModelHubPromptHistoryExecutionsListParams,
-  ModelHubPromptLabelsGetByName200,
   ModelHubPromptLabelsGetByNameParams,
-  ModelHubPromptLabelsList200,
   ModelHubPromptLabelsListParams,
-  ModelHubPromptLabelsTemplateLabels200,
   ModelHubPromptLabelsTemplateLabelsParams,
   ModelHubPromptMetricsListParams,
   ModelHubPromptSpanMetricsListParams,
   ModelHubPromptTemplatesGetRunStatusParams,
   ModelHubPromptTemplatesGetTemplateByName200,
   ModelHubPromptTemplatesGetTemplateByNameParams,
-  ModelHubPromptTemplatesList200,
   ModelHubPromptTemplatesListParams,
   ModelHubPromptTemplatesVersionsParams,
   ModelHubResponseSchemaList200,
@@ -938,6 +937,8 @@ import type {
   PromptFolderApi,
   PromptHistoryExecutionApi,
   PromptLabelApi,
+  PromptLabelLookupResponseApi,
+  PromptLabelPageApi,
   PromptMetricsEmptyScreenResponseApi,
   PromptMetricsResponseApi,
   PromptRunRequestApi,
@@ -947,7 +948,11 @@ import type {
   PromptSimulationScenariosResponseApi,
   PromptSimulationUpdateRequestApi,
   PromptTemplateApi,
+  PromptTemplateDetailResponseApi,
+  PromptTemplateLabelsResponseApi,
+  PromptTemplatePageApi,
   PromptTemplatePatchApi,
+  PromptVersionHistoryPageApi,
   ProviderStatusResponseApi,
   PublicConfigResponseApi,
   PublishGroupingApi,
@@ -28268,15 +28273,34 @@ export type modelHubApiModelParametersListResponse =
   | modelHubApiModelParametersListResponseSuccess
   | modelHubApiModelParametersListResponseError;
 
-export const getModelHubApiModelParametersListUrl = () => {
-  return `/model-hub/api/model_parameters/`;
+export const getModelHubApiModelParametersListUrl = (
+  params: ModelHubApiModelParametersListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/model-hub/api/model_parameters/?${stringifiedParams}`
+    : `/model-hub/api/model_parameters/`;
 };
 
 export const modelHubApiModelParametersList = async (
+  params: ModelHubApiModelParametersListParams,
   options?: RequestInit,
 ): Promise<modelHubApiModelParametersListResponse> => {
   return apiMutator<modelHubApiModelParametersListResponse>(
-    getModelHubApiModelParametersListUrl(),
+    getModelHubApiModelParametersListUrl(params),
     {
       ...options,
       method: "GET",
@@ -28360,7 +28384,7 @@ export const modelHubApiModelVoicesList = async (
 };
 
 export type modelHubApiModelsListListResponse200 = {
-  data: ModelHubPaginatedResponseApi;
+  data: ModelCatalogPageApi;
   status: 200;
 };
 
@@ -28413,15 +28437,43 @@ export type modelHubApiModelsListListResponse =
   | modelHubApiModelsListListResponseSuccess
   | modelHubApiModelsListListResponseError;
 
-export const getModelHubApiModelsListListUrl = () => {
-  return `/model-hub/api/models_list/`;
+export const getModelHubApiModelsListListUrl = (
+  params?: ModelHubApiModelsListListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    const explodeParameters = ["exclude_providers"];
+
+    if (Array.isArray(value) && explodeParameters.includes(key)) {
+      value.forEach((v) => {
+        normalizedParams.append(key, v === null ? "null" : v.toString());
+      });
+      return;
+    }
+
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/model-hub/api/models_list/?${stringifiedParams}`
+    : `/model-hub/api/models_list/`;
 };
 
 export const modelHubApiModelsListList = async (
+  params?: ModelHubApiModelsListListParams,
   options?: RequestInit,
 ): Promise<modelHubApiModelsListListResponse> => {
   return apiMutator<modelHubApiModelsListListResponse>(
-    getModelHubApiModelsListListUrl(),
+    getModelHubApiModelsListListUrl(params),
     {
       ...options,
       method: "GET",
@@ -49108,7 +49160,7 @@ export const modelHubPromptHistoryExecutionsRead = async (
 };
 
 export type modelHubPromptLabelsListResponse200 = {
-  data: ModelHubPromptLabelsList200;
+  data: PromptLabelPageApi;
   status: 200;
 };
 
@@ -49419,7 +49471,7 @@ export const modelHubPromptLabelsCreateSystemLabels = async (
 };
 
 export type modelHubPromptLabelsGetByNameResponse200 = {
-  data: ModelHubPromptLabelsGetByName200;
+  data: PromptLabelLookupResponseApi;
   status: 200;
 };
 
@@ -49667,7 +49719,7 @@ export const modelHubPromptLabelsSetDefault = async (
 };
 
 export type modelHubPromptLabelsTemplateLabelsResponse200 = {
-  data: ModelHubPromptLabelsTemplateLabels200;
+  data: PromptTemplateLabelsResponseApi;
   status: 200;
 };
 
@@ -50130,23 +50182,54 @@ export const modelHubPromptLabelsAssignLabelById = async (
 };
 
 export type modelHubPromptTemplatesListResponse200 = {
-  data: ModelHubPromptTemplatesList200;
+  data: PromptTemplatePageApi;
   status: 200;
+};
+
+export type modelHubPromptTemplatesListResponse400 = {
+  data: ModelHubErrorResponseApi;
+  status: 400;
+};
+
+export type modelHubPromptTemplatesListResponse403 = {
+  data: ModelHubErrorResponseApi;
+  status: 403;
+};
+
+export type modelHubPromptTemplatesListResponse404 = {
+  data: ModelHubErrorResponseApi;
+  status: 404;
+};
+
+export type modelHubPromptTemplatesListResponse409 = {
+  data: ModelHubErrorResponseApi;
+  status: 409;
+};
+
+export type modelHubPromptTemplatesListResponse500 = {
+  data: ModelHubErrorResponseApi;
+  status: 500;
 };
 
 export type modelHubPromptTemplatesListResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
 };
 
 export type modelHubPromptTemplatesListResponseSuccess =
   modelHubPromptTemplatesListResponse200 & {
     headers: Headers;
   };
-export type modelHubPromptTemplatesListResponseError =
-  modelHubPromptTemplatesListResponseDefault & {
-    headers: Headers;
-  };
+export type modelHubPromptTemplatesListResponseError = (
+  | modelHubPromptTemplatesListResponse400
+  | modelHubPromptTemplatesListResponse403
+  | modelHubPromptTemplatesListResponse404
+  | modelHubPromptTemplatesListResponse409
+  | modelHubPromptTemplatesListResponse500
+  | modelHubPromptTemplatesListResponseDefault
+) & {
+  headers: Headers;
+};
 
 export type modelHubPromptTemplatesListResponse =
   | modelHubPromptTemplatesListResponseSuccess
@@ -50646,23 +50729,54 @@ export const modelHubPromptTemplatesImprovePrompt = async (
 };
 
 export type modelHubPromptTemplatesReadResponse200 = {
-  data: PromptTemplateApi;
+  data: PromptTemplateDetailResponseApi;
   status: 200;
+};
+
+export type modelHubPromptTemplatesReadResponse400 = {
+  data: ModelHubErrorResponseApi;
+  status: 400;
+};
+
+export type modelHubPromptTemplatesReadResponse403 = {
+  data: ModelHubErrorResponseApi;
+  status: 403;
+};
+
+export type modelHubPromptTemplatesReadResponse404 = {
+  data: ModelHubErrorResponseApi;
+  status: 404;
+};
+
+export type modelHubPromptTemplatesReadResponse409 = {
+  data: ModelHubErrorResponseApi;
+  status: 409;
+};
+
+export type modelHubPromptTemplatesReadResponse500 = {
+  data: ModelHubErrorResponseApi;
+  status: 500;
 };
 
 export type modelHubPromptTemplatesReadResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
 };
 
 export type modelHubPromptTemplatesReadResponseSuccess =
   modelHubPromptTemplatesReadResponse200 & {
     headers: Headers;
   };
-export type modelHubPromptTemplatesReadResponseError =
-  modelHubPromptTemplatesReadResponseDefault & {
-    headers: Headers;
-  };
+export type modelHubPromptTemplatesReadResponseError = (
+  | modelHubPromptTemplatesReadResponse400
+  | modelHubPromptTemplatesReadResponse403
+  | modelHubPromptTemplatesReadResponse404
+  | modelHubPromptTemplatesReadResponse409
+  | modelHubPromptTemplatesReadResponse500
+  | modelHubPromptTemplatesReadResponseDefault
+) & {
+  headers: Headers;
+};
 
 export type modelHubPromptTemplatesReadResponse =
   | modelHubPromptTemplatesReadResponseSuccess
@@ -51630,23 +51744,54 @@ export const modelHubPromptTemplatesUpdateEvaluationConfigs = async (
 };
 
 export type modelHubPromptTemplatesVersionsResponse200 = {
-  data: PromptTemplateApi;
+  data: PromptVersionHistoryPageApi;
   status: 200;
+};
+
+export type modelHubPromptTemplatesVersionsResponse400 = {
+  data: ModelHubErrorResponseApi;
+  status: 400;
+};
+
+export type modelHubPromptTemplatesVersionsResponse403 = {
+  data: ModelHubErrorResponseApi;
+  status: 403;
+};
+
+export type modelHubPromptTemplatesVersionsResponse404 = {
+  data: ModelHubErrorResponseApi;
+  status: 404;
+};
+
+export type modelHubPromptTemplatesVersionsResponse409 = {
+  data: ModelHubErrorResponseApi;
+  status: 409;
+};
+
+export type modelHubPromptTemplatesVersionsResponse500 = {
+  data: ModelHubErrorResponseApi;
+  status: 500;
 };
 
 export type modelHubPromptTemplatesVersionsResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
 };
 
 export type modelHubPromptTemplatesVersionsResponseSuccess =
   modelHubPromptTemplatesVersionsResponse200 & {
     headers: Headers;
   };
-export type modelHubPromptTemplatesVersionsResponseError =
-  modelHubPromptTemplatesVersionsResponseDefault & {
-    headers: Headers;
-  };
+export type modelHubPromptTemplatesVersionsResponseError = (
+  | modelHubPromptTemplatesVersionsResponse400
+  | modelHubPromptTemplatesVersionsResponse403
+  | modelHubPromptTemplatesVersionsResponse404
+  | modelHubPromptTemplatesVersionsResponse409
+  | modelHubPromptTemplatesVersionsResponse500
+  | modelHubPromptTemplatesVersionsResponseDefault
+) & {
+  headers: Headers;
+};
 
 export type modelHubPromptTemplatesVersionsResponse =
   | modelHubPromptTemplatesVersionsResponseSuccess

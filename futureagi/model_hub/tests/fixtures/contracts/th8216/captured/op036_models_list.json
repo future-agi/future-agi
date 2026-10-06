@@ -1,0 +1,70 @@
+{
+  "body": {
+    "count": 5,
+    "current_page": 1,
+    "next": "http://testserver/model-hub/api/models_list/?limit=2&page=2&search=gpt-4o-mini",
+    "previous": null,
+    "results": [
+      {
+        "best_for": [
+          "fast transcription",
+          "cost-effective speech-to-text"
+        ],
+        "cutoff": null,
+        "is_available": false,
+        "latency": 400,
+        "logo_url": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/openai-icon.png",
+        "model_name": "gpt-4o-mini-transcribe",
+        "pricing": {
+          "input_per_minute": 0.003
+        },
+        "providers": "openai",
+        "rate_limits": {
+          "requests_per_minute": 100
+        },
+        "type": "stt",
+        "use_case": [
+          "quick voice notes",
+          "basic transcription needs",
+          "real-time applications"
+        ]
+      },
+      {
+        "best_for": [
+          "cost-effective text-to-speech",
+          "lightweight voice generation",
+          "efficient audio content creation"
+        ],
+        "cutoff": null,
+        "is_available": false,
+        "latency": 80,
+        "logo_url": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/openai-icon.png",
+        "model_name": "gpt-4o-mini-tts",
+        "pricing": {
+          "input_per_1M_characters": 10.0
+        },
+        "providers": "openai",
+        "rate_limits": {
+          "requests_per_minute": 50
+        },
+        "type": "tts",
+        "use_case": [
+          "budget-friendly text to speech conversion",
+          "high-volume voice generation",
+          "efficient audio content production"
+        ]
+      }
+    ],
+    "total_pages": 3
+  },
+  "label": "captured",
+  "method": "GET",
+  "note": "",
+  "operation": "OP-036",
+  "path": "/model-hub/api/models_list/",
+  "request": {
+    "limit": 2,
+    "search": "gpt-4o-mini"
+  },
+  "status": 200
+}

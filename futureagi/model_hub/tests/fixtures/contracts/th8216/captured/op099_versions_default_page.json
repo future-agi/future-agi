@@ -1,0 +1,199 @@
+{
+  "body": {
+    "count": 3,
+    "current_page": 1,
+    "next": null,
+    "previous": null,
+    "results": [
+      {
+        "commit_message": "",
+        "created_at": "2026-01-01T00:00:00Z",
+        "evaluation_configs": [],
+        "evaluation_results": {},
+        "id": "00000000-0000-4000-8000-000000000001",
+        "is_default": false,
+        "is_draft": true,
+        "labels": [],
+        "metadata": {},
+        "original_template": "00000000-0000-4000-8000-000000000002",
+        "output": [],
+        "placeholders": {},
+        "prompt_base_template": null,
+        "prompt_config_snapshot": {
+          "configuration": {
+            "model": "gpt-4o-mini",
+            "model_detail": {
+              "is_available": true,
+              "logo_url": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/openai-icon.png",
+              "model_name": "gpt-4o-mini",
+              "providers": "openai",
+              "type": "chat"
+            },
+            "temperature": 0.2,
+            "template_format": "mustache"
+          },
+          "messages": [
+            {
+              "content": [
+                {
+                  "text": "Be brief.",
+                  "type": "text"
+                }
+              ],
+              "role": "system"
+            },
+            {
+              "content": [
+                {
+                  "text": "Version 3 {{name}}",
+                  "type": "text"
+                }
+              ],
+              "role": "user"
+            }
+          ]
+        },
+        "template_name": "TH8216 contract prompt",
+        "template_version": "v3",
+        "updated_at": "2026-01-01T00:00:00Z",
+        "variable_names": {
+          "name": [
+            "Ada"
+          ]
+        }
+      },
+      {
+        "commit_message": null,
+        "created_at": "2026-01-01T00:00:00Z",
+        "evaluation_configs": null,
+        "evaluation_results": {},
+        "id": "00000000-0000-4000-8000-000000000003",
+        "is_default": false,
+        "is_draft": false,
+        "labels": [],
+        "metadata": null,
+        "original_template": "00000000-0000-4000-8000-000000000002",
+        "output": null,
+        "placeholders": {},
+        "prompt_base_template": null,
+        "prompt_config_snapshot": [
+          {
+            "configuration": {
+              "model": "gpt-4o-mini",
+              "model_detail": {
+                "is_available": true,
+                "logo_url": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/openai-icon.png",
+                "model_name": "gpt-4o-mini",
+                "providers": "openai",
+                "type": "chat"
+              },
+              "temperature": 0.2,
+              "template_format": "mustache"
+            },
+            "messages": [
+              {
+                "content": [
+                  {
+                    "text": "Be brief.",
+                    "type": "text"
+                  }
+                ],
+                "role": "system"
+              },
+              {
+                "content": [
+                  {
+                    "text": "Legacy list snapshot",
+                    "type": "text"
+                  }
+                ],
+                "role": "user"
+              }
+            ]
+          }
+        ],
+        "template_name": "TH8216 contract prompt",
+        "template_version": "v2",
+        "updated_at": "2026-01-01T00:00:00Z",
+        "variable_names": {
+          "name": [
+            "Ada"
+          ]
+        }
+      },
+      {
+        "commit_message": "commit 1",
+        "created_at": "2026-01-01T00:00:00Z",
+        "evaluation_configs": [],
+        "evaluation_results": {},
+        "id": "00000000-0000-4000-8000-000000000004",
+        "is_default": true,
+        "is_draft": false,
+        "labels": [
+          {
+            "id": "00000000-0000-4000-8000-000000000005",
+            "name": "th8216-staging",
+            "type": "custom"
+          }
+        ],
+        "metadata": {},
+        "original_template": "00000000-0000-4000-8000-000000000002",
+        "output": [
+          "first answer"
+        ],
+        "placeholders": {},
+        "prompt_base_template": null,
+        "prompt_config_snapshot": {
+          "configuration": {
+            "model": "gpt-4o-mini",
+            "model_detail": {
+              "is_available": true,
+              "logo_url": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/openai-icon.png",
+              "model_name": "gpt-4o-mini",
+              "providers": "openai",
+              "type": "chat"
+            },
+            "temperature": 0.2,
+            "template_format": "mustache"
+          },
+          "messages": [
+            {
+              "content": [
+                {
+                  "text": "Be brief.",
+                  "type": "text"
+                }
+              ],
+              "role": "system"
+            },
+            {
+              "content": [
+                {
+                  "text": "Version 1 {{name}}",
+                  "type": "text"
+                }
+              ],
+              "role": "user"
+            }
+          ]
+        },
+        "template_name": "TH8216 contract prompt",
+        "template_version": "v1",
+        "updated_at": "2026-01-01T00:00:00Z",
+        "variable_names": {
+          "name": [
+            "Ada"
+          ]
+        }
+      }
+    ],
+    "total_pages": 1
+  },
+  "label": "captured",
+  "method": "GET",
+  "note": "",
+  "operation": "OP-099",
+  "path": "/model-hub/prompt-templates/{id}/versions/",
+  "request": {},
+  "status": 200
+}

@@ -1,0 +1,64 @@
+{
+  "body": {
+    "count": 4,
+    "current_page": 1,
+    "next": null,
+    "previous": null,
+    "results": [
+      {
+        "created_at": "2026-01-01T00:00:00Z",
+        "id": "00000000-0000-4000-8000-000000000001",
+        "metadata": {
+          "description": "Default development environment label"
+        },
+        "name": "Development",
+        "organization": null,
+        "type": "system",
+        "updated_at": "2026-01-01T00:00:00Z"
+      },
+      {
+        "created_at": "2026-01-01T00:00:00Z",
+        "id": "00000000-0000-4000-8000-000000000002",
+        "metadata": {
+          "description": "Default production environment label"
+        },
+        "name": "Production",
+        "organization": null,
+        "type": "system",
+        "updated_at": "2026-01-01T00:00:00Z"
+      },
+      {
+        "created_at": "2026-01-01T00:00:00Z",
+        "id": "00000000-0000-4000-8000-000000000003",
+        "metadata": {
+          "description": "Default staging environment label"
+        },
+        "name": "Staging",
+        "organization": null,
+        "type": "system",
+        "updated_at": "2026-01-01T00:00:00Z"
+      },
+      {
+        "created_at": "2026-01-01T00:00:00Z",
+        "id": "00000000-0000-4000-8000-000000000004",
+        "metadata": {
+          "color": "teal"
+        },
+        "name": "th8216-label",
+        "organization": "00000000-0000-4000-8000-000000000005",
+        "type": "custom",
+        "updated_at": "2026-01-01T00:00:00Z"
+      }
+    ],
+    "total_pages": 1
+  },
+  "label": "captured",
+  "method": "GET",
+  "note": "",
+  "operation": "OP-055",
+  "path": "/model-hub/prompt-labels/",
+  "request": {
+    "limit": 50
+  },
+  "status": 200
+}

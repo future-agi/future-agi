@@ -13098,7 +13098,26 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeRequestValidation: false,
         runtimeResponseValidation: false,
         requestBody: null,
-        queryParameters: {},
+        queryParameters: {
+          model: {
+            required: true,
+            schema: {
+              type: "string",
+            },
+          },
+          provider: {
+            required: true,
+            schema: {
+              type: "string",
+            },
+          },
+          model_type: {
+            required: true,
+            schema: {
+              type: "string",
+            },
+          },
+        },
         responses: {
           200: {
             $ref: "#/definitions/ModelParametersResponse",
@@ -13162,10 +13181,50 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeRequestValidation: false,
         runtimeResponseValidation: false,
         requestBody: null,
-        queryParameters: {},
+        queryParameters: {
+          name: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          search: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          model_type: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          exclude_providers: {
+            required: false,
+            schema: {
+              type: "array",
+              items: {
+                type: "string",
+              },
+            },
+          },
+          page: {
+            required: false,
+            schema: {
+              type: "integer",
+            },
+          },
+          limit: {
+            required: false,
+            schema: {
+              type: "integer",
+            },
+          },
+        },
         responses: {
           200: {
-            $ref: "#/definitions/ModelHubPaginatedResponse",
+            $ref: "#/definitions/ModelCatalogPage",
           },
           400: {
             $ref: "#/definitions/ModelHubErrorResponse",
@@ -23513,29 +23572,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         responses: {
           200: {
-            required: ["count", "results"],
-            type: "object",
-            properties: {
-              count: {
-                type: "integer",
-              },
-              next: {
-                type: "string",
-                format: "uri",
-                "x-nullable": true,
-              },
-              previous: {
-                type: "string",
-                format: "uri",
-                "x-nullable": true,
-              },
-              results: {
-                type: "array",
-                items: {
-                  $ref: "#/definitions/PromptLabel",
-                },
-              },
-            },
+            $ref: "#/definitions/PromptLabelPage",
           },
           400: {
             $ref: "#/definitions/ModelHubTextErrorResponse",
@@ -23665,44 +23702,28 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: false,
         requestBody: null,
         queryParameters: {
-          page: {
+          name: {
             required: false,
             schema: {
-              type: "integer",
+              type: "string",
             },
           },
-          limit: {
+          version: {
             required: false,
             schema: {
-              type: "integer",
+              type: "string",
+            },
+          },
+          label: {
+            required: false,
+            schema: {
+              type: "string",
             },
           },
         },
         responses: {
           200: {
-            required: ["count", "results"],
-            type: "object",
-            properties: {
-              count: {
-                type: "integer",
-              },
-              next: {
-                type: "string",
-                format: "uri",
-                "x-nullable": true,
-              },
-              previous: {
-                type: "string",
-                format: "uri",
-                "x-nullable": true,
-              },
-              results: {
-                type: "array",
-                items: {
-                  $ref: "#/definitions/PromptLabel",
-                },
-              },
-            },
+            $ref: "#/definitions/PromptLabelLookupResponse",
           },
           400: {
             $ref: "#/definitions/ModelHubTextErrorResponse",
@@ -23800,44 +23821,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: false,
         requestBody: null,
         queryParameters: {
-          page: {
+          template_id: {
             required: false,
             schema: {
-              type: "integer",
+              type: "string",
             },
           },
-          limit: {
+          template_name: {
             required: false,
             schema: {
-              type: "integer",
+              type: "string",
             },
           },
         },
         responses: {
           200: {
-            required: ["count", "results"],
-            type: "object",
-            properties: {
-              count: {
-                type: "integer",
-              },
-              next: {
-                type: "string",
-                format: "uri",
-                "x-nullable": true,
-              },
-              previous: {
-                type: "string",
-                format: "uri",
-                "x-nullable": true,
-              },
-              results: {
-                type: "array",
-                items: {
-                  $ref: "#/definitions/PromptLabel",
-                },
-              },
-            },
+            $ref: "#/definitions/PromptTemplateLabelsResponse",
           },
           400: {
             $ref: "#/definitions/ModelHubTextErrorResponse",
@@ -24021,7 +24020,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       get: {
         operationId: "model-hub_prompt-templates_list",
         runtimeRequestValidation: true,
-        runtimeResponseValidation: false,
+        runtimeResponseValidation: true,
         requestBody: null,
         queryParameters: {
           name: {
@@ -24079,29 +24078,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         responses: {
           200: {
-            required: ["count", "results"],
-            type: "object",
-            properties: {
-              count: {
-                type: "integer",
-              },
-              next: {
-                type: "string",
-                format: "uri",
-                "x-nullable": true,
-              },
-              previous: {
-                type: "string",
-                format: "uri",
-                "x-nullable": true,
-              },
-              results: {
-                type: "array",
-                items: {
-                  $ref: "#/definitions/PromptTemplate",
-                },
-              },
-            },
+            $ref: "#/definitions/PromptTemplatePage",
+          },
+          400: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          409: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ModelHubErrorResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -24366,7 +24358,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         queryParameters: {},
         responses: {
           200: {
-            $ref: "#/definitions/PromptTemplate",
+            $ref: "#/definitions/PromptTemplateDetailResponse",
+          },
+          400: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          409: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ModelHubErrorResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -24751,7 +24758,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       get: {
         operationId: "model-hub_prompt-templates_versions",
         runtimeRequestValidation: true,
-        runtimeResponseValidation: false,
+        runtimeResponseValidation: true,
         requestBody: null,
         queryParameters: {
           page: {
@@ -24771,7 +24778,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         responses: {
           200: {
-            $ref: "#/definitions/PromptTemplate",
+            $ref: "#/definitions/PromptVersionHistoryPage",
+          },
+          400: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          409: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ModelHubErrorResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -66226,6 +66248,51 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    ModelCatalogPage: {
+      required: [
+        "count",
+        "next",
+        "previous",
+        "total_pages",
+        "current_page",
+        "results",
+      ],
+      type: "object",
+      properties: {
+        count: {
+          title: "Count",
+          type: "integer",
+        },
+        next: {
+          title: "Next",
+          type: "string",
+          format: "uri",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        previous: {
+          title: "Previous",
+          type: "string",
+          format: "uri",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        total_pages: {
+          title: "Total pages",
+          type: "integer",
+        },
+        current_page: {
+          title: "Current page",
+          type: "integer",
+        },
+        results: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/ModelCatalogEntry",
+          },
+        },
+      },
+    },
     ModelHubEmptyRequest: {
       type: "object",
       properties: {},
@@ -70691,13 +70758,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           readOnly: true,
           "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
         },
         prompt_config_snapshot: {
           title: "Prompt config snapshot",
-          description:
-            "\nGet prompt_config_snapshot with backward compatibility for modelDetail.\nIf modelDetail is missing from configuration, generate it from the model name.\n",
+          description: "Any valid JSON value.",
           type: "object",
           readOnly: true,
+          "x-nullable": true,
+          "x-json-value": true,
         },
         template_name: {
           title: "Template name",
@@ -70732,6 +70802,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           readOnly: true,
           "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
         },
         created_at: {
           title: "Created at",
@@ -70759,8 +70831,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "boolean",
         },
         labels: {
-          title: "Labels",
-          type: "object",
+          type: "array",
+          items: {
+            $ref: "#/definitions/PromptVersionLabel",
+          },
           readOnly: true,
         },
         placeholders: {
@@ -70791,6 +70865,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "uuid",
           readOnly: true,
+          "x-nullable": true,
         },
         name: {
           title: "Name",
@@ -70819,6 +70894,64 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "date-time",
           readOnly: true,
+        },
+      },
+    },
+    PromptLabelLookupResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/PromptLabelledVersion",
+        },
+      },
+    },
+    PromptLabelPage: {
+      required: [
+        "count",
+        "next",
+        "previous",
+        "total_pages",
+        "current_page",
+        "results",
+      ],
+      type: "object",
+      properties: {
+        count: {
+          title: "Count",
+          type: "integer",
+        },
+        next: {
+          title: "Next",
+          type: "string",
+          format: "uri",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        previous: {
+          title: "Previous",
+          type: "string",
+          format: "uri",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        total_pages: {
+          title: "Total pages",
+          type: "integer",
+        },
+        current_page: {
+          title: "Current page",
+          type: "integer",
+        },
+        results: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/PromptLabel",
+          },
         },
       },
     },
@@ -71055,6 +71188,181 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    PromptTemplateDetailResponse: {
+      required: [
+        "variable_names",
+        "prompt_config",
+        "version",
+        "output",
+        "is_draft",
+        "metadata",
+        "last_saved",
+        "error_message",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        description: {
+          title: "Description",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        variable_names: {
+          title: "Variable names",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        organization: {
+          title: "Organization",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        prompt_folder: {
+          title: "Prompt folder",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        placeholders: {
+          title: "Placeholders",
+          type: "object",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        created_by: {
+          title: "Created by",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        prompt_config: {
+          title: "Prompt config",
+          description: "Any valid JSON value.",
+          type: "object",
+          "x-json-value": true,
+        },
+        version: {
+          title: "Version",
+          type: "string",
+          minLength: 1,
+        },
+        output: {
+          title: "Output",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        is_draft: {
+          title: "Is draft",
+          type: "boolean",
+        },
+        metadata: {
+          title: "Metadata",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        last_saved: {
+          title: "Last saved",
+          type: "string",
+          format: "date-time",
+        },
+        error_message: {
+          title: "Error message",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        last_chunk_pos: {
+          title: "Last chunk pos",
+          description: "Any valid JSON value.",
+          type: "object",
+          "x-json-value": true,
+        },
+      },
+    },
+    PromptTemplateLabelsResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/PromptTemplateVersionLabels",
+          },
+        },
+      },
+    },
+    PromptTemplatePage: {
+      required: [
+        "count",
+        "next",
+        "previous",
+        "total_pages",
+        "current_page",
+        "results",
+      ],
+      type: "object",
+      properties: {
+        count: {
+          title: "Count",
+          type: "integer",
+        },
+        next: {
+          title: "Next",
+          type: "string",
+          format: "uri",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        previous: {
+          title: "Previous",
+          type: "string",
+          format: "uri",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        total_pages: {
+          title: "Total pages",
+          type: "integer",
+        },
+        current_page: {
+          title: "Current page",
+          type: "integer",
+        },
+        results: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/PromptTemplate",
+          },
+        },
+      },
+    },
     PromptTemplatePatch: {
       type: "object",
       properties: {
@@ -71104,6 +71412,51 @@ export const OPENAPI_CONTRACT = Object.freeze({
           format: "uuid",
           readOnly: true,
           "x-nullable": true,
+        },
+      },
+    },
+    PromptVersionHistoryPage: {
+      required: [
+        "count",
+        "next",
+        "previous",
+        "total_pages",
+        "current_page",
+        "results",
+      ],
+      type: "object",
+      properties: {
+        count: {
+          title: "Count",
+          type: "integer",
+        },
+        next: {
+          title: "Next",
+          type: "string",
+          format: "uri",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        previous: {
+          title: "Previous",
+          type: "string",
+          format: "uri",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        total_pages: {
+          title: "Total pages",
+          type: "integer",
+        },
+        current_page: {
+          title: "Current page",
+          type: "integer",
+        },
+        results: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/PromptHistoryExecution",
+          },
         },
       },
     },
@@ -94472,6 +94825,93 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    ModelCatalogEntry: {
+      required: [
+        "model_name",
+        "providers",
+        "is_available",
+        "logo_url",
+        "best_for",
+        "use_case",
+        "cutoff",
+        "rate_limits",
+        "latency",
+        "pricing",
+        "type",
+      ],
+      type: "object",
+      properties: {
+        model_name: {
+          title: "Model name",
+          type: "string",
+          minLength: 1,
+        },
+        providers: {
+          title: "Providers",
+          type: "string",
+        },
+        is_available: {
+          title: "Is available",
+          description:
+            "Whether the organisation has a configured key for the provider.",
+          type: "boolean",
+        },
+        logo_url: {
+          title: "Logo url",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        best_for: {
+          title: "Best for",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        use_case: {
+          title: "Use case",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        cutoff: {
+          title: "Cutoff",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        rate_limits: {
+          title: "Rate limits",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        latency: {
+          title: "Latency",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        pricing: {
+          title: "Pricing",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        type: {
+          title: "Type",
+          description: "Model mode, 'text' when unknown.",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
     ModelHubEvalConfigResponseResult: {
       required: ["eval"],
       type: "object",
@@ -96505,6 +96945,129 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    PromptVersionLabel: {
+      required: ["id", "name", "type"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        type: {
+          title: "Type",
+          type: "string",
+          enum: ["system", "custom"],
+        },
+      },
+    },
+    PromptLabelledVersion: {
+      required: [
+        "variable_names",
+        "prompt_config",
+        "version",
+        "output",
+        "is_draft",
+        "metadata",
+        "labels",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        description: {
+          title: "Description",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        variable_names: {
+          title: "Variable names",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        organization: {
+          title: "Organization",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        prompt_folder: {
+          title: "Prompt folder",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        placeholders: {
+          title: "Placeholders",
+          type: "object",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        created_by: {
+          title: "Created by",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        prompt_config: {
+          title: "Prompt config",
+          description: "Any valid JSON value.",
+          type: "object",
+          "x-json-value": true,
+        },
+        version: {
+          title: "Version",
+          type: "string",
+          minLength: 1,
+        },
+        output: {
+          title: "Output",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        is_draft: {
+          title: "Is draft",
+          type: "boolean",
+        },
+        metadata: {
+          title: "Metadata",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        labels: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/PromptVersionLabel",
+          },
+        },
+      },
+    },
     PromptMetricsEmptyScreenResult: {
       required: ["python", "typescript"],
       type: "object",
@@ -96640,6 +97203,32 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/PromptSimulationScenarioItem",
           },
           readOnly: true,
+        },
+      },
+    },
+    PromptTemplateVersionLabels: {
+      required: ["version", "labels", "is_default", "is_draft"],
+      type: "object",
+      properties: {
+        version: {
+          title: "Version",
+          type: "string",
+          minLength: 1,
+        },
+        labels: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        is_default: {
+          title: "Is default",
+          type: "boolean",
+        },
+        is_draft: {
+          title: "Is draft",
+          type: "boolean",
         },
       },
     },

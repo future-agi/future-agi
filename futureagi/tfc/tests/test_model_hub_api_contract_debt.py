@@ -1268,7 +1268,7 @@ def test_model_hub_ai_writer_and_custom_model_endpoints_have_response_contracts(
         ("POST", "/model-hub/ai-eval-writer/"): "AIEvalWriterResponse",
         ("GET", "/model-hub/api/model_parameters/"): "ModelParametersResponse",
         ("GET", "/model-hub/api/model_voices/"): "LiteLLMModelVoicesResponse",
-        ("GET", "/model-hub/api/models_list/"): "ModelHubPaginatedResponse",
+        ("GET", "/model-hub/api/models_list/"): "ModelCatalogPage",
         ("GET", "/model-hub/columns/{column_id}/operation-config/"): (
             "OperationConfigResponse"
         ),

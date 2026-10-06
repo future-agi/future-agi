@@ -23345,7 +23345,29 @@
             "get": {
                 "operationId": "model-hub_api_model_parameters_list",
                 "description": "",
-                "parameters": [],
+                "parameters": [
+                    {
+                        "name": "model",
+                        "in": "query",
+                        "description": "Model name.",
+                        "required": true,
+                        "type": "string"
+                    },
+                    {
+                        "name": "provider",
+                        "in": "query",
+                        "description": "Provider name.",
+                        "required": true,
+                        "type": "string"
+                    },
+                    {
+                        "name": "model_type",
+                        "in": "query",
+                        "description": "One of llm, stt, tts, image.",
+                        "required": true,
+                        "type": "string"
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "",
@@ -23455,12 +23477,58 @@
             "get": {
                 "operationId": "model-hub_api_models_list_list",
                 "description": "",
-                "parameters": [],
+                "parameters": [
+                    {
+                        "name": "name",
+                        "in": "query",
+                        "description": "Return only the model with this exact (case-insensitive) name.",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "search",
+                        "in": "query",
+                        "description": "Case-insensitive substring filter on model_name.",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "model_type",
+                        "in": "query",
+                        "description": "One of llm, stt, tts, image; other values do not filter.",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "exclude_providers",
+                        "in": "query",
+                        "description": "Providers to leave out; repeat the parameter for several.",
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "collectionFormat": "multi"
+                    },
+                    {
+                        "name": "page",
+                        "in": "query",
+                        "description": "Page number.",
+                        "required": false,
+                        "type": "integer"
+                    },
+                    {
+                        "name": "limit",
+                        "in": "query",
+                        "description": "Page size (default 10).",
+                        "required": false,
+                        "type": "integer"
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubPaginatedResponse"
+                            "$ref": "#/definitions/ModelCatalogPage"
                         }
                     },
                     "400": {
@@ -42517,32 +42585,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "required": [
-                                "count",
-                                "results"
-                            ],
-                            "type": "object",
-                            "properties": {
-                                "count": {
-                                    "type": "integer"
-                                },
-                                "next": {
-                                    "type": "string",
-                                    "format": "uri",
-                                    "x-nullable": true
-                                },
-                                "previous": {
-                                    "type": "string",
-                                    "format": "uri",
-                                    "x-nullable": true
-                                },
-                                "results": {
-                                    "type": "array",
-                                    "items": {
-                                        "$ref": "#/definitions/PromptLabel"
-                                    }
-                                }
-                            }
+                            "$ref": "#/definitions/PromptLabelPage"
                         }
                     },
                     "400": {
@@ -42784,50 +42827,29 @@
                 "description": "Query params:\n  - name: template name (required)\n  - version: version name like v1 (optional)\n  - label: label name like Production/Staging/Development or custom (optional)",
                 "parameters": [
                     {
-                        "name": "page",
+                        "name": "name",
                         "in": "query",
-                        "description": "A page number within the paginated result set.",
-                        "required": false,
-                        "type": "integer"
+                        "description": "Template name (required).",
+                        "type": "string"
                     },
                     {
-                        "name": "limit",
+                        "name": "version",
                         "in": "query",
-                        "description": "Number of results to return per page.",
-                        "required": false,
-                        "type": "integer"
+                        "description": "Version name such as v1; wins over label.",
+                        "type": "string"
+                    },
+                    {
+                        "name": "label",
+                        "in": "query",
+                        "description": "Label name, matched case-insensitively.",
+                        "type": "string"
                     }
                 ],
                 "responses": {
                     "200": {
                         "description": "",
                         "schema": {
-                            "required": [
-                                "count",
-                                "results"
-                            ],
-                            "type": "object",
-                            "properties": {
-                                "count": {
-                                    "type": "integer"
-                                },
-                                "next": {
-                                    "type": "string",
-                                    "format": "uri",
-                                    "x-nullable": true
-                                },
-                                "previous": {
-                                    "type": "string",
-                                    "format": "uri",
-                                    "x-nullable": true
-                                },
-                                "results": {
-                                    "type": "array",
-                                    "items": {
-                                        "$ref": "#/definitions/PromptLabel"
-                                    }
-                                }
-                            }
+                            "$ref": "#/definitions/PromptLabelLookupResponse"
                         }
                     },
                     "400": {
@@ -43007,50 +43029,23 @@
                 "description": "List versions with labels for a template by name or id.",
                 "parameters": [
                     {
-                        "name": "page",
+                        "name": "template_id",
                         "in": "query",
-                        "description": "A page number within the paginated result set.",
-                        "required": false,
-                        "type": "integer"
+                        "description": "Template UUID; one of template_id/template_name.",
+                        "type": "string"
                     },
                     {
-                        "name": "limit",
+                        "name": "template_name",
                         "in": "query",
-                        "description": "Number of results to return per page.",
-                        "required": false,
-                        "type": "integer"
+                        "description": "Template name; one of template_id/template_name.",
+                        "type": "string"
                     }
                 ],
                 "responses": {
                     "200": {
                         "description": "",
                         "schema": {
-                            "required": [
-                                "count",
-                                "results"
-                            ],
-                            "type": "object",
-                            "properties": {
-                                "count": {
-                                    "type": "integer"
-                                },
-                                "next": {
-                                    "type": "string",
-                                    "format": "uri",
-                                    "x-nullable": true
-                                },
-                                "previous": {
-                                    "type": "string",
-                                    "format": "uri",
-                                    "x-nullable": true
-                                },
-                                "results": {
-                                    "type": "array",
-                                    "items": {
-                                        "$ref": "#/definitions/PromptLabel"
-                                    }
-                                }
-                            }
+                            "$ref": "#/definitions/PromptTemplateLabelsResponse"
                         }
                     },
                     "400": {
@@ -43475,32 +43470,37 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "required": [
-                                "count",
-                                "results"
-                            ],
-                            "type": "object",
-                            "properties": {
-                                "count": {
-                                    "type": "integer"
-                                },
-                                "next": {
-                                    "type": "string",
-                                    "format": "uri",
-                                    "x-nullable": true
-                                },
-                                "previous": {
-                                    "type": "string",
-                                    "format": "uri",
-                                    "x-nullable": true
-                                },
-                                "results": {
-                                    "type": "array",
-                                    "items": {
-                                        "$ref": "#/definitions/PromptTemplate"
-                                    }
-                                }
-                            }
+                            "$ref": "#/definitions/PromptTemplatePage"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
                         }
                     },
                     "default": {
@@ -43513,7 +43513,8 @@
                 "tags": [
                     "model-hub"
                 ],
-                "x-runtime-request-validation": true
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
             },
             "post": {
                 "operationId": "model-hub_prompt-templates_create",
@@ -43929,7 +43930,37 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/PromptTemplate"
+                            "$ref": "#/definitions/PromptTemplateDetailResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
                         }
                     },
                     "default": {
@@ -44763,7 +44794,37 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/PromptTemplate"
+                            "$ref": "#/definitions/PromptVersionHistoryPage"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
                         }
                     },
                     "default": {
@@ -44776,7 +44837,8 @@
                 "tags": [
                     "model-hub"
                 ],
-                "x-runtime-request-validation": true
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
             },
             "parameters": [
                 {
@@ -99019,9 +99081,99 @@
                 }
             }
         },
-        "ModelHubPaginatedResponse": {
+        "ModelCatalogEntry": {
+            "required": [
+                "model_name",
+                "providers",
+                "is_available",
+                "logo_url",
+                "best_for",
+                "use_case",
+                "cutoff",
+                "rate_limits",
+                "latency",
+                "pricing",
+                "type"
+            ],
+            "type": "object",
+            "properties": {
+                "model_name": {
+                    "title": "Model name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "providers": {
+                    "title": "Providers",
+                    "type": "string"
+                },
+                "is_available": {
+                    "title": "Is available",
+                    "description": "Whether the organisation has a configured key for the provider.",
+                    "type": "boolean"
+                },
+                "logo_url": {
+                    "title": "Logo url",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "best_for": {
+                    "title": "Best for",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "use_case": {
+                    "title": "Use case",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "cutoff": {
+                    "title": "Cutoff",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "rate_limits": {
+                    "title": "Rate limits",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "latency": {
+                    "title": "Latency",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "pricing": {
+                    "title": "Pricing",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "type": {
+                    "title": "Type",
+                    "description": "Model mode, 'text' when unknown.",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "ModelCatalogPage": {
             "required": [
                 "count",
+                "next",
+                "previous",
+                "total_pages",
+                "current_page",
                 "results"
             ],
             "type": "object",
@@ -99033,17 +99185,29 @@
                 "next": {
                     "title": "Next",
                     "type": "string",
+                    "format": "uri",
+                    "minLength": 1,
                     "x-nullable": true
                 },
                 "previous": {
                     "title": "Previous",
                     "type": "string",
+                    "format": "uri",
+                    "minLength": 1,
                     "x-nullable": true
+                },
+                "total_pages": {
+                    "title": "Total pages",
+                    "type": "integer"
+                },
+                "current_page": {
+                    "title": "Current page",
+                    "type": "integer"
                 },
                 "results": {
                     "type": "array",
                     "items": {
-                        "type": "object"
+                        "$ref": "#/definitions/ModelCatalogEntry"
                     }
                 }
             }
@@ -99618,6 +99782,35 @@
                 "prompts": {
                     "title": "Prompts",
                     "type": "object"
+                }
+            }
+        },
+        "ModelHubPaginatedResponse": {
+            "required": [
+                "count",
+                "results"
+            ],
+            "type": "object",
+            "properties": {
+                "count": {
+                    "title": "Count",
+                    "type": "integer"
+                },
+                "next": {
+                    "title": "Next",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "previous": {
+                    "title": "Previous",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
                 }
             }
         },
@@ -115229,6 +115422,34 @@
                 }
             }
         },
+        "PromptVersionLabel": {
+            "required": [
+                "id",
+                "name",
+                "type"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "type": {
+                    "title": "Type",
+                    "type": "string",
+                    "enum": [
+                        "system",
+                        "custom"
+                    ]
+                }
+            }
+        },
         "PromptHistoryExecution": {
             "required": [
                 "template_version"
@@ -115251,13 +115472,17 @@
                     "title": "Output",
                     "type": "object",
                     "readOnly": true,
-                    "x-nullable": true
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
                 },
                 "prompt_config_snapshot": {
                     "title": "Prompt config snapshot",
-                    "description": "\nGet prompt_config_snapshot with backward compatibility for modelDetail.\nIf modelDetail is missing from configuration, generate it from the model name.\n",
+                    "description": "Any valid JSON value.",
                     "type": "object",
-                    "readOnly": true
+                    "readOnly": true,
+                    "x-nullable": true,
+                    "x-json-value": true
                 },
                 "template_name": {
                     "title": "Template name",
@@ -115291,7 +115516,9 @@
                     "title": "Evaluation configs",
                     "type": "object",
                     "readOnly": true,
-                    "x-nullable": true
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
                 },
                 "created_at": {
                     "title": "Created at",
@@ -115319,8 +115546,10 @@
                     "type": "boolean"
                 },
                 "labels": {
-                    "title": "Labels",
-                    "type": "object",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/PromptVersionLabel"
+                    },
                     "readOnly": true
                 },
                 "placeholders": {
@@ -115353,7 +115582,8 @@
                     "title": "Organization",
                     "type": "string",
                     "format": "uuid",
-                    "readOnly": true
+                    "readOnly": true,
+                    "x-nullable": true
                 },
                 "name": {
                     "title": "Name",
@@ -115385,6 +115615,51 @@
                     "type": "string",
                     "format": "date-time",
                     "readOnly": true
+                }
+            }
+        },
+        "PromptLabelPage": {
+            "required": [
+                "count",
+                "next",
+                "previous",
+                "total_pages",
+                "current_page",
+                "results"
+            ],
+            "type": "object",
+            "properties": {
+                "count": {
+                    "title": "Count",
+                    "type": "integer"
+                },
+                "next": {
+                    "title": "Next",
+                    "type": "string",
+                    "format": "uri",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "previous": {
+                    "title": "Previous",
+                    "type": "string",
+                    "format": "uri",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "total_pages": {
+                    "title": "Total pages",
+                    "type": "integer"
+                },
+                "current_page": {
+                    "title": "Current page",
+                    "type": "integer"
+                },
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/PromptLabel"
+                    }
                 }
             }
         },
@@ -115459,6 +115734,174 @@
                 }
             }
         },
+        "PromptLabelledVersion": {
+            "required": [
+                "variable_names",
+                "prompt_config",
+                "version",
+                "output",
+                "is_draft",
+                "metadata",
+                "labels"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "variable_names": {
+                    "title": "Variable names",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "organization": {
+                    "title": "Organization",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "prompt_folder": {
+                    "title": "Prompt folder",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "placeholders": {
+                    "title": "Placeholders",
+                    "type": "object",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "created_by": {
+                    "title": "Created by",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "prompt_config": {
+                    "title": "Prompt config",
+                    "description": "Any valid JSON value.",
+                    "type": "object",
+                    "x-json-value": true
+                },
+                "version": {
+                    "title": "Version",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "output": {
+                    "title": "Output",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "is_draft": {
+                    "title": "Is draft",
+                    "type": "boolean"
+                },
+                "metadata": {
+                    "title": "Metadata",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "labels": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/PromptVersionLabel"
+                    }
+                }
+            }
+        },
+        "PromptLabelLookupResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/PromptLabelledVersion"
+                }
+            }
+        },
+        "PromptTemplateVersionLabels": {
+            "required": [
+                "version",
+                "labels",
+                "is_default",
+                "is_draft"
+            ],
+            "type": "object",
+            "properties": {
+                "version": {
+                    "title": "Version",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "labels": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "is_default": {
+                    "title": "Is default",
+                    "type": "boolean"
+                },
+                "is_draft": {
+                    "title": "Is draft",
+                    "type": "boolean"
+                }
+            }
+        },
+        "PromptTemplateLabelsResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/PromptTemplateVersionLabels"
+                    }
+                }
+            }
+        },
         "PromptTemplate": {
             "required": [
                 "name"
@@ -115514,6 +115957,51 @@
                 }
             }
         },
+        "PromptTemplatePage": {
+            "required": [
+                "count",
+                "next",
+                "previous",
+                "total_pages",
+                "current_page",
+                "results"
+            ],
+            "type": "object",
+            "properties": {
+                "count": {
+                    "title": "Count",
+                    "type": "integer"
+                },
+                "next": {
+                    "title": "Next",
+                    "type": "string",
+                    "format": "uri",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "previous": {
+                    "title": "Previous",
+                    "type": "string",
+                    "format": "uri",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "total_pages": {
+                    "title": "Total pages",
+                    "type": "integer"
+                },
+                "current_page": {
+                    "title": "Current page",
+                    "type": "integer"
+                },
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/PromptTemplate"
+                    }
+                }
+            }
+        },
         "DerivedVariablePreviewRequest": {
             "required": [
                 "content"
@@ -115545,6 +116033,120 @@
                 },
                 "result": {
                     "$ref": "#/definitions/DerivedVariableDetail"
+                }
+            }
+        },
+        "PromptTemplateDetailResponse": {
+            "required": [
+                "variable_names",
+                "prompt_config",
+                "version",
+                "output",
+                "is_draft",
+                "metadata",
+                "last_saved",
+                "error_message"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "variable_names": {
+                    "title": "Variable names",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "organization": {
+                    "title": "Organization",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "prompt_folder": {
+                    "title": "Prompt folder",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "placeholders": {
+                    "title": "Placeholders",
+                    "type": "object",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "created_by": {
+                    "title": "Created by",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "prompt_config": {
+                    "title": "Prompt config",
+                    "description": "Any valid JSON value.",
+                    "type": "object",
+                    "x-json-value": true
+                },
+                "version": {
+                    "title": "Version",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "output": {
+                    "title": "Output",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "is_draft": {
+                    "title": "Is draft",
+                    "type": "boolean"
+                },
+                "metadata": {
+                    "title": "Metadata",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "last_saved": {
+                    "title": "Last saved",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "error_message": {
+                    "title": "Error message",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "last_chunk_pos": {
+                    "title": "Last chunk pos",
+                    "description": "Any valid JSON value.",
+                    "type": "object",
+                    "x-json-value": true
                 }
             }
         },
@@ -115803,6 +116405,51 @@
                     "type": "integer",
                     "minimum": 0,
                     "x-nullable": true
+                }
+            }
+        },
+        "PromptVersionHistoryPage": {
+            "required": [
+                "count",
+                "next",
+                "previous",
+                "total_pages",
+                "current_page",
+                "results"
+            ],
+            "type": "object",
+            "properties": {
+                "count": {
+                    "title": "Count",
+                    "type": "integer"
+                },
+                "next": {
+                    "title": "Next",
+                    "type": "string",
+                    "format": "uri",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "previous": {
+                    "title": "Previous",
+                    "type": "string",
+                    "format": "uri",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "total_pages": {
+                    "title": "Total pages",
+                    "type": "integer"
+                },
+                "current_page": {
+                    "title": "Current page",
+                    "type": "integer"
+                },
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/PromptHistoryExecution"
+                    }
                 }
             }
         },

@@ -7618,15 +7618,72 @@ export interface LiteLLMModelVoicesResponseApi {
   result: LiteLLMModelVoicesResultApi;
 }
 
-export type ModelHubPaginatedResponseApiResultsItem = {
-  [key: string]: unknown;
-};
+/**
+ * Any valid JSON value.
+ */
+export type ModelCatalogEntryApiBestFor = { [key: string]: unknown };
 
-export interface ModelHubPaginatedResponseApi {
+/**
+ * Any valid JSON value.
+ */
+export type ModelCatalogEntryApiUseCase = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type ModelCatalogEntryApiCutoff = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type ModelCatalogEntryApiRateLimits = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type ModelCatalogEntryApiLatency = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type ModelCatalogEntryApiPricing = { [key: string]: unknown };
+
+export interface ModelCatalogEntryApi {
+  /** @minLength 1 */
+  model_name: string;
+  providers: string;
+  /** Whether the organisation has a configured key for the provider. */
+  is_available: boolean;
+  /** @minLength 1 */
+  logo_url: string;
+  /** Any valid JSON value. */
+  best_for: ModelCatalogEntryApiBestFor;
+  /** Any valid JSON value. */
+  use_case: ModelCatalogEntryApiUseCase;
+  /** Any valid JSON value. */
+  cutoff: ModelCatalogEntryApiCutoff;
+  /** Any valid JSON value. */
+  rate_limits: ModelCatalogEntryApiRateLimits;
+  /** Any valid JSON value. */
+  latency: ModelCatalogEntryApiLatency;
+  /** Any valid JSON value. */
+  pricing: ModelCatalogEntryApiPricing;
+  /**
+   * Model mode, 'text' when unknown.
+   * @minLength 1
+   */
+  type: string;
+}
+
+export interface ModelCatalogPageApi {
   count: number;
-  next?: string;
-  previous?: string;
-  results: ModelHubPaginatedResponseApiResultsItem[];
+  /** @minLength 1 */
+  next: string;
+  /** @minLength 1 */
+  previous: string;
+  total_pages: number;
+  current_page: number;
+  results: ModelCatalogEntryApi[];
 }
 
 export type CellErrorLocalizerResultApiErrorAnalysis = {
@@ -7856,6 +7913,17 @@ export interface CustomMetricTestResponseApi {
   /** @minLength 1 */
   status: string;
   prompts?: CustomMetricTestResponseApiPrompts;
+}
+
+export type ModelHubPaginatedResponseApiResultsItem = {
+  [key: string]: unknown;
+};
+
+export interface ModelHubPaginatedResponseApi {
+  count: number;
+  next?: string;
+  previous?: string;
+  results: ModelHubPaginatedResponseApiResultsItem[];
 }
 
 export interface CustomAIModelApi {
@@ -13864,13 +13932,13 @@ export interface PromptFolderApi {
   readonly created_by?: string;
 }
 
+/**
+ * Any valid JSON value.
+ */
 export type PromptHistoryExecutionApiOutput = { [key: string]: unknown };
 
 /**
- *
-Get prompt_config_snapshot with backward compatibility for modelDetail.
-If modelDetail is missing from configuration, generate it from the model name.
-
+ * Any valid JSON value.
  */
 export type PromptHistoryExecutionApiPromptConfigSnapshot = {
   [key: string]: unknown;
@@ -13884,13 +13952,29 @@ export type PromptHistoryExecutionApiEvaluationResults = {
   [key: string]: unknown;
 };
 
+/**
+ * Any valid JSON value.
+ */
 export type PromptHistoryExecutionApiEvaluationConfigs = {
   [key: string]: unknown;
 };
 
-export type PromptHistoryExecutionApiLabels = { [key: string]: unknown };
-
 export type PromptHistoryExecutionApiPlaceholders = { [key: string]: unknown };
+
+export type PromptVersionLabelApiType =
+  (typeof PromptVersionLabelApiType)[keyof typeof PromptVersionLabelApiType];
+
+export const PromptVersionLabelApiType = {
+  system: "system",
+  custom: "custom",
+} as const;
+
+export interface PromptVersionLabelApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  type: PromptVersionLabelApiType;
+}
 
 export interface PromptHistoryExecutionApi {
   readonly id?: string;
@@ -13899,11 +13983,9 @@ export interface PromptHistoryExecutionApi {
    * @maxLength 50
    */
   template_version: string;
+  /** Any valid JSON value. */
   readonly output?: PromptHistoryExecutionApiOutput;
-  /**
-  Get prompt_config_snapshot with backward compatibility for modelDetail.
-  If modelDetail is missing from configuration, generate it from the model name.
-   */
+  /** Any valid JSON value. */
   readonly prompt_config_snapshot?: PromptHistoryExecutionApiPromptConfigSnapshot;
   /** @minLength 1 */
   readonly template_name?: string;
@@ -13911,13 +13993,14 @@ export interface PromptHistoryExecutionApi {
   readonly metadata?: PromptHistoryExecutionApiMetadata;
   readonly variable_names?: PromptHistoryExecutionApiVariableNames;
   evaluation_results?: PromptHistoryExecutionApiEvaluationResults;
+  /** Any valid JSON value. */
   readonly evaluation_configs?: PromptHistoryExecutionApiEvaluationConfigs;
   readonly created_at?: string;
   is_default?: boolean;
   commit_message?: string;
   readonly updated_at?: string;
   is_draft?: boolean;
-  readonly labels?: PromptHistoryExecutionApiLabels;
+  readonly labels?: readonly PromptVersionLabelApi[];
   placeholders?: PromptHistoryExecutionApiPlaceholders;
   prompt_base_template?: string;
 }
@@ -13944,6 +14027,17 @@ export interface PromptLabelApi {
   metadata?: PromptLabelApiMetadata;
   readonly created_at?: string;
   readonly updated_at?: string;
+}
+
+export interface PromptLabelPageApi {
+  count: number;
+  /** @minLength 1 */
+  next: string;
+  /** @minLength 1 */
+  previous: string;
+  total_pages: number;
+  current_page: number;
+  results: PromptLabelApi[];
 }
 
 export type ModelHubTextErrorResponseApiType =
@@ -13979,6 +14073,70 @@ export interface ModelHubTextErrorResponseApi {
   details?: ModelHubTextErrorResponseApiDetails;
 }
 
+/**
+ * Any valid JSON value.
+ */
+export type PromptLabelledVersionApiVariableNames = { [key: string]: unknown };
+
+export type PromptLabelledVersionApiPlaceholders = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type PromptLabelledVersionApiPromptConfig = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type PromptLabelledVersionApiOutput = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type PromptLabelledVersionApiMetadata = { [key: string]: unknown };
+
+export interface PromptLabelledVersionApi {
+  readonly id?: string;
+  /** @minLength 1 */
+  readonly name?: string;
+  /** @minLength 1 */
+  readonly description?: string;
+  /** Any valid JSON value. */
+  variable_names: PromptLabelledVersionApiVariableNames;
+  readonly organization?: string;
+  readonly prompt_folder?: string;
+  readonly placeholders?: PromptLabelledVersionApiPlaceholders;
+  readonly created_by?: string;
+  /** Any valid JSON value. */
+  prompt_config: PromptLabelledVersionApiPromptConfig;
+  /** @minLength 1 */
+  version: string;
+  /** Any valid JSON value. */
+  output: PromptLabelledVersionApiOutput;
+  is_draft: boolean;
+  /** Any valid JSON value. */
+  metadata: PromptLabelledVersionApiMetadata;
+  labels: PromptVersionLabelApi[];
+}
+
+export interface PromptLabelLookupResponseApi {
+  status: boolean;
+  result: PromptLabelledVersionApi;
+}
+
+export interface PromptTemplateVersionLabelsApi {
+  /** @minLength 1 */
+  version: string;
+  labels: string[];
+  is_default: boolean;
+  is_draft: boolean;
+}
+
+export interface PromptTemplateLabelsResponseApi {
+  status: boolean;
+  result: PromptTemplateVersionLabelsApi[];
+}
+
 export type PromptTemplateApiVariableNames = { [key: string]: unknown };
 
 export type PromptTemplateApiPlaceholders = { [key: string]: unknown };
@@ -13998,6 +14156,17 @@ export interface PromptTemplateApi {
   readonly created_by?: string;
 }
 
+export interface PromptTemplatePageApi {
+  count: number;
+  /** @minLength 1 */
+  next: string;
+  /** @minLength 1 */
+  previous: string;
+  total_pages: number;
+  current_page: number;
+  results: PromptTemplateApi[];
+}
+
 export type DerivedVariablePreviewRequestApiContent = {
   [key: string]: unknown;
 };
@@ -14011,6 +14180,71 @@ export interface DerivedVariablePreviewRequestApi {
 export interface DerivedVariableDetailResponseApi {
   status: boolean;
   result: DerivedVariableDetailApi;
+}
+
+/**
+ * Any valid JSON value.
+ */
+export type PromptTemplateDetailResponseApiVariableNames = {
+  [key: string]: unknown;
+};
+
+export type PromptTemplateDetailResponseApiPlaceholders = {
+  [key: string]: unknown;
+};
+
+/**
+ * Any valid JSON value.
+ */
+export type PromptTemplateDetailResponseApiPromptConfig = {
+  [key: string]: unknown;
+};
+
+/**
+ * Any valid JSON value.
+ */
+export type PromptTemplateDetailResponseApiOutput = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type PromptTemplateDetailResponseApiMetadata = {
+  [key: string]: unknown;
+};
+
+/**
+ * Any valid JSON value.
+ */
+export type PromptTemplateDetailResponseApiLastChunkPos = {
+  [key: string]: unknown;
+};
+
+export interface PromptTemplateDetailResponseApi {
+  readonly id?: string;
+  /** @minLength 1 */
+  readonly name?: string;
+  /** @minLength 1 */
+  readonly description?: string;
+  /** Any valid JSON value. */
+  variable_names: PromptTemplateDetailResponseApiVariableNames;
+  readonly organization?: string;
+  readonly prompt_folder?: string;
+  readonly placeholders?: PromptTemplateDetailResponseApiPlaceholders;
+  readonly created_by?: string;
+  /** Any valid JSON value. */
+  prompt_config: PromptTemplateDetailResponseApiPromptConfig;
+  /** @minLength 1 */
+  version: string;
+  /** Any valid JSON value. */
+  output: PromptTemplateDetailResponseApiOutput;
+  is_draft: boolean;
+  /** Any valid JSON value. */
+  metadata: PromptTemplateDetailResponseApiMetadata;
+  last_saved: string;
+  /** @minLength 1 */
+  error_message: string;
+  /** Any valid JSON value. */
+  last_chunk_pos?: PromptTemplateDetailResponseApiLastChunkPos;
 }
 
 export type PromptTemplatePatchApiVariableNames = { [key: string]: unknown };
@@ -14136,6 +14370,17 @@ export interface PromptRunRequestApi {
   is_sdk?: boolean;
   /** @minimum 0 */
   run_index?: number;
+}
+
+export interface PromptVersionHistoryPageApi {
+  count: number;
+  /** @minLength 1 */
+  next: string;
+  /** @minLength 1 */
+  previous: string;
+  total_pages: number;
+  current_page: number;
+  results: PromptHistoryExecutionApi[];
 }
 
 export type PromptDerivedVariablesResultApiDerivedVariables = {
@@ -32798,6 +33043,48 @@ export type ModelHubApiKeysListParams = {
   limit?: number;
 };
 
+export type ModelHubApiModelParametersListParams = {
+  /**
+   * Model name.
+   */
+  model: string;
+  /**
+   * Provider name.
+   */
+  provider: string;
+  /**
+   * One of llm, stt, tts, image.
+   */
+  model_type: string;
+};
+
+export type ModelHubApiModelsListListParams = {
+  /**
+   * Return only the model with this exact (case-insensitive) name.
+   */
+  name?: string;
+  /**
+   * Case-insensitive substring filter on model_name.
+   */
+  search?: string;
+  /**
+   * One of llm, stt, tts, image; other values do not filter.
+   */
+  model_type?: string;
+  /**
+   * Providers to leave out; repeat the parameter for several.
+   */
+  exclude_providers?: string[];
+  /**
+   * Page number.
+   */
+  page?: number;
+  /**
+   * Page size (default 10).
+   */
+  limit?: number;
+};
+
 export type ModelHubDatasetOptimizationListParams = {
   dataset_id?: string;
   column_id?: string;
@@ -33549,47 +33836,30 @@ export type ModelHubPromptLabelsListParams = {
   limit?: number;
 };
 
-export type ModelHubPromptLabelsList200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: PromptLabelApi[];
-};
-
 export type ModelHubPromptLabelsGetByNameParams = {
   /**
-   * A page number within the paginated result set.
+   * Template name (required).
    */
-  page?: number;
+  name?: string;
   /**
-   * Number of results to return per page.
+   * Version name such as v1; wins over label.
    */
-  limit?: number;
-};
-
-export type ModelHubPromptLabelsGetByName200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: PromptLabelApi[];
+  version?: string;
+  /**
+   * Label name, matched case-insensitively.
+   */
+  label?: string;
 };
 
 export type ModelHubPromptLabelsTemplateLabelsParams = {
   /**
-   * A page number within the paginated result set.
+   * Template UUID; one of template_id/template_name.
    */
-  page?: number;
+  template_id?: string;
   /**
-   * Number of results to return per page.
+   * Template name; one of template_id/template_name.
    */
-  limit?: number;
-};
-
-export type ModelHubPromptLabelsTemplateLabels200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: PromptLabelApi[];
+  template_name?: string;
 };
 
 export type ModelHubPromptTemplatesListParams = {
@@ -33613,13 +33883,6 @@ export type ModelHubPromptTemplatesListParams = {
    */
   limit?: number;
   modality?: string[];
-};
-
-export type ModelHubPromptTemplatesList200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: PromptTemplateApi[];
 };
 
 export type ModelHubPromptTemplatesGetTemplateByNameParams = {

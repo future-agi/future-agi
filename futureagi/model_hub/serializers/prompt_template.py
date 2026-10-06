@@ -11,6 +11,7 @@ from rest_framework import serializers
 from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManager
 from model_hub.models.choices import ProviderLogoUrls
 from model_hub.models.prompt_folders import PromptFolder
+from model_hub.models.prompt_label import LabelTypeChoices
 from model_hub.models.run_prompt import (
     PromptTemplate,
     PromptVersion,
@@ -22,6 +23,7 @@ from model_hub.utils.workspace_scope import (
     request_organization,
     request_workspace_filter,
 )
+from tfc.utils.serializer_fields import JsonValueField
 
 logger = structlog.get_logger(__name__)
 
@@ -442,15 +444,25 @@ class PromptHistoryTemplateAddonSerializer(serializers.ModelSerializer):
         return obj.version
 
 
+class PromptVersionLabelSerializer(serializers.Serializer):
+    """One label attached to a prompt version, as history rows emit it."""
+
+    id = serializers.UUIDField()
+    name = serializers.CharField()
+    type = serializers.ChoiceField(choices=LabelTypeChoices.get_choices())
+
+
 class PromptHistoryExecutionSerializer(serializers.ModelSerializer):
     template_name = serializers.SerializerMethodField()
     variable_names = serializers.SerializerMethodField()
     prompt_config_snapshot = serializers.SerializerMethodField()
     labels = serializers.SerializerMethodField()
 
-    output = serializers.JSONField(read_only=True, allow_null=True)
+    # Stored JSON is returned as-is: lists by default, legacy rows may hold
+    # other JSON shapes or null.
+    output = JsonValueField(read_only=True, allow_null=True)
     metadata = serializers.JSONField(read_only=True, allow_null=True)
-    evaluation_configs = serializers.JSONField(read_only=True, allow_null=True)
+    evaluation_configs = JsonValueField(read_only=True, allow_null=True)
 
     class Meta:
         model = PromptVersion
@@ -484,7 +496,7 @@ class PromptHistoryExecutionSerializer(serializers.ModelSerializer):
     def get_template_name(self, obj):
         return obj.original_template.name
 
-    @swagger_serializer_method(serializer_or_field=serializers.JSONField())
+    @swagger_serializer_method(serializer_or_field=JsonValueField(allow_null=True))
     def get_prompt_config_snapshot(self, obj):
         """
         Get prompt_config_snapshot with backward compatibility for modelDetail.
@@ -503,7 +515,9 @@ class PromptHistoryExecutionSerializer(serializers.ModelSerializer):
 
         return config_snapshot
 
-    @swagger_serializer_method(serializer_or_field=serializers.JSONField())
+    @swagger_serializer_method(
+        serializer_or_field=PromptVersionLabelSerializer(many=True)
+    )
     def get_labels(self, obj):
         # Single optimized query: join through table with PromptLabel
         # Uses values() to avoid ORM object instantiation overhead
