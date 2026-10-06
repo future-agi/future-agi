@@ -930,6 +930,27 @@ describe("RunTraceTable", () => {
       await user.click(screen.getByRole("menuitem", { name: "Tone" }));
       expect(shownCount()).toBe(before - 1);
     });
+
+    it("keeps the evaluation entries and total while the next page loads", async () => {
+      const user = userEvent.setup();
+      withEvals();
+      const impl = useRunCalls.getMockImplementation();
+      useRunCalls.mockImplementation((id, opts = {}) =>
+        opts.filters?.status
+          ? { ...impl(id, opts), columns: [], isLoading: true }
+          : impl(id, opts),
+      );
+      renderTable();
+      const button = screen.getByRole("button", { name: /Columns/ });
+      const before = button.textContent;
+      await user.click(screen.getByRole("button", { name: /Failed/ }));
+
+      expect(button.textContent).toBe(before);
+      await openPicker(user);
+      expect(
+        screen.getByRole("menuitem", { name: "Fact checker" }),
+      ).toBeInTheDocument();
+    });
   });
 
   describe("voice-only metrics on a chat run", () => {

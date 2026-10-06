@@ -212,6 +212,14 @@ export default function RunTraceTable({
     () => evals.filter((e) => !hiddenEvals.has(e.id)),
     [evals, hiddenEvals],
   );
+  // A query that's loading or failed has no columns; the picker keeps the last
+  // evals it had, so its entries and count don't flicker on every filter.
+  const lastEvalsRef = useRef(evals);
+  useEffect(() => {
+    if (evals.length) lastEvalsRef.current = evals;
+  }, [evals]);
+  const pickerEvals =
+    (isLoading || error) && !evals.length ? lastEvalsRef.current : evals;
   const subGoalEvals = useMemo(
     () =>
       columns
@@ -447,7 +455,7 @@ export default function RunTraceTable({
         value={visibleColumns}
         onChange={setVisibleColumns}
         hidden={chatRun ? VOICE_ONLY_COLUMNS : undefined}
-        evals={evals}
+        evals={pickerEvals}
         hiddenEvals={hiddenEvals}
         onHiddenEvalsChange={setHiddenEvals}
       />
