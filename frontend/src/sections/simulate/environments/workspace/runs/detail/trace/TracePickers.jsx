@@ -88,25 +88,54 @@ TraceGroupByPicker.propTypes = {
   onChange: PropTypes.func.isRequired,
 };
 
-// Column-visibility picker. Bucketed into sections in declaration order.
-export function TraceColumnsPicker({ value, onChange, hidden }) {
+const toggled = (set, key) => {
+  const next = new Set(set);
+  if (next.has(key)) next.delete(key);
+  else next.add(key);
+  return next;
+};
+
+// Column-visibility picker, bucketed into sections in declaration order: the
+// fixed columns, then one entry per evaluation the run has. Those come from the
+// calls API, and an eval is shown unless the user turned it off.
+export function TraceColumnsPicker({
+  value,
+  onChange,
+  hidden,
+  evals = [],
+  hiddenEvals = new Set(),
+  onHiddenEvalsChange,
+}) {
   const offered = hidden
     ? TRACE_COLUMNS.filter((c) => !hidden.has(c.key))
     : TRACE_COLUMNS;
   const [anchor, setAnchor] = useState(null);
-  const shownCount = offered.filter((c) => value.has(c.key)).length;
-  const toggle = (key) => {
-    const next = new Set(value);
-    if (next.has(key)) next.delete(key);
-    else next.add(key);
-    onChange(next);
-  };
-  const sections = offered.reduce((acc, c) => {
-    const last = acc[acc.length - 1];
-    if (last && last.name === c.group) last.items.push(c);
-    else acc.push({ name: c.group, items: [c] });
-    return acc;
-  }, []);
+  const shownCount =
+    offered.filter((c) => value.has(c.key)).length +
+    evals.filter((e) => !hiddenEvals.has(e.id)).length;
+  const sections = offered
+    .map((c) => ({
+      key: c.key,
+      label: c.label,
+      group: c.group,
+      checked: value.has(c.key),
+      onToggle: () => onChange(toggled(value, c.key)),
+    }))
+    .concat(
+      evals.map((e) => ({
+        key: `eval:${e.id}`,
+        label: e.name,
+        group: "Evaluations",
+        checked: !hiddenEvals.has(e.id),
+        onToggle: () => onHiddenEvalsChange?.(toggled(hiddenEvals, e.id)),
+      })),
+    )
+    .reduce((acc, c) => {
+      const last = acc[acc.length - 1];
+      if (last && last.name === c.group) last.items.push(c);
+      else acc.push({ name: c.group, items: [c] });
+      return acc;
+    }, []);
   return (
     <>
       <Button
@@ -141,7 +170,7 @@ export function TraceColumnsPicker({ value, onChange, hidden }) {
           ·
         </Box>
         <Box component="span" sx={{ color: "text.subtitle" }}>
-          {shownCount}/{offered.length}
+          {shownCount}/{offered.length + evals.length}
         </Box>
       </Button>
       <Menu
@@ -168,15 +197,11 @@ export function TraceColumnsPicker({ value, onChange, hidden }) {
             {section.name}
           </Typography>,
           ...section.items.map((c) => (
-            <MenuItem
-              key={c.key}
-              onClick={() => toggle(c.key)}
-              sx={{ py: 0.5 }}
-            >
+            <MenuItem key={c.key} onClick={c.onToggle} sx={{ py: 0.5 }}>
               <ListItemIcon sx={{ minWidth: 32 }}>
                 <Checkbox
                   size="small"
-                  checked={value.has(c.key)}
+                  checked={c.checked}
                   sx={{ p: 0, ...neutralCheckboxSx }}
                 />
               </ListItemIcon>
@@ -189,7 +214,10 @@ export function TraceColumnsPicker({ value, onChange, hidden }) {
         ])}
         <Divider sx={{ my: 0.5 }} />
         <MenuItem
-          onClick={() => onChange(defaultTraceColumns())}
+          onClick={() => {
+            onChange(defaultTraceColumns());
+            onHiddenEvalsChange?.(new Set());
+          }}
           sx={{ py: 0.5 }}
         >
           <ListItemIcon sx={{ minWidth: 32 }}>
@@ -208,4 +236,9 @@ TraceColumnsPicker.propTypes = {
   value: PropTypes.instanceOf(Set).isRequired,
   onChange: PropTypes.func.isRequired,
   hidden: PropTypes.instanceOf(Set),
+  evals: PropTypes.arrayOf(
+    PropTypes.shape({ id: PropTypes.string, name: PropTypes.string }),
+  ),
+  hiddenEvals: PropTypes.instanceOf(Set),
+  onHiddenEvalsChange: PropTypes.func,
 };

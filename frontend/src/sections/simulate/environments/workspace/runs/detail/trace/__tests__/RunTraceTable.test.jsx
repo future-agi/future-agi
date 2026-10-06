@@ -826,6 +826,85 @@ describe("RunTraceTable", () => {
     expect(screen.queryByRole("columnheader", { name: "Latency" })).toBeNull();
   });
 
+  describe("evaluation columns in the picker", () => {
+    const withEvals = () => {
+      const impl = useRunCalls.getMockImplementation();
+      useRunCalls.mockImplementation((...args) => ({
+        ...impl(...args),
+        columns: [
+          { key: "eval-1", label: "Tone", group: "Evaluations" },
+          { key: "eval-2", label: "Fact checker", group: "Evaluations" },
+        ],
+      }));
+    };
+    const openPicker = (user) =>
+      user.click(screen.getByRole("button", { name: /Columns/ }));
+
+    it("offers each of the run's evaluations, not one Evaluations toggle", async () => {
+      const user = userEvent.setup();
+      withEvals();
+      renderTable();
+      await openPicker(user);
+
+      expect(screen.getByRole("menuitem", { name: "Tone" })).toBeInTheDocument();
+      expect(
+        screen.getByRole("menuitem", { name: "Fact checker" }),
+      ).toBeInTheDocument();
+      expect(screen.queryByRole("menuitem", { name: "Evaluations" })).toBeNull();
+    });
+
+    it("hides only the unticked evaluation's column, and Reset brings it back", async () => {
+      const user = userEvent.setup();
+      withEvals();
+      renderTable();
+      await openPicker(user);
+      await user.click(screen.getByRole("menuitem", { name: "Tone" }));
+      // The open menu hides the table from the accessibility tree.
+      await user.keyboard("{Escape}");
+
+      expect(screen.queryByRole("columnheader", { name: "Tone" })).toBeNull();
+      expect(
+        screen.getByRole("columnheader", { name: "Fact checker" }),
+      ).toBeInTheDocument();
+
+      await openPicker(user);
+      await user.click(
+        screen.getByRole("menuitem", { name: "Reset to defaults" }),
+      );
+      await user.keyboard("{Escape}");
+      expect(
+        screen.getByRole("columnheader", { name: "Tone" }),
+      ).toBeInTheDocument();
+    });
+
+    it("has no Evaluations section when the run has no evaluations", async () => {
+      const user = userEvent.setup();
+      const impl = useRunCalls.getMockImplementation();
+      useRunCalls.mockImplementation((...args) => ({
+        ...impl(...args),
+        columns: [],
+      }));
+      renderTable();
+      await openPicker(user);
+
+      expect(screen.queryByText("Evaluations")).toBeNull();
+    });
+
+    it("counts the evaluations in the Columns total", async () => {
+      const user = userEvent.setup();
+      withEvals();
+      renderTable();
+      const button = screen.getByRole("button", { name: /Columns/ });
+      const shownCount = () => Number(button.textContent.match(/(\d+)\//)[1]);
+      const before = shownCount();
+      expect(button).toHaveTextContent(`/${TRACE_COLUMNS.length + 2}`);
+
+      await openPicker(user);
+      await user.click(screen.getByRole("menuitem", { name: "Tone" }));
+      expect(shownCount()).toBe(before - 1);
+    });
+  });
+
   describe("voice-only metrics on a chat run", () => {
     const withRun = (agentType, simulationCallType) => {
       const impl = useRunCalls.getMockImplementation();
@@ -866,7 +945,7 @@ describe("RunTraceTable", () => {
       renderTable();
       headers().forEach((h) => expect(h).toBeNull());
       expect(screen.getByRole("button", { name: /Columns/ })).toHaveTextContent(
-        `/${TRACE_COLUMNS.length - VOICE_ONLY_COLUMNS.size}`,
+        `/${TRACE_COLUMNS.length - VOICE_ONLY_COLUMNS.size + COLUMNS.length}`,
       );
       (await pickerItems(user)).forEach((item) => expect(item).toBeNull());
     });

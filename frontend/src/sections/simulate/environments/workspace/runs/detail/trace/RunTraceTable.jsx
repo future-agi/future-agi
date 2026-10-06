@@ -74,6 +74,8 @@ export default function RunTraceTable({
   const [visibleColumns, setVisibleColumns] = useState(() =>
     defaultTraceColumns(),
   );
+  // The evaluations the user turned off, so one the run adds later shows.
+  const [hiddenEvals, setHiddenEvals] = useState(() => new Set());
   const [filterAnchor, setFilterAnchor] = useState(null);
   // Which groups are open lives here, not in the table: a filter's loading
   // and empty states unmount the table, and its own state would go with it,
@@ -205,6 +207,10 @@ export default function RunTraceTable({
         .filter((c) => c.group === "Evaluations")
         .map((c) => ({ id: c.key, name: c.label })),
     [columns],
+  );
+  const shownEvals = useMemo(
+    () => evals.filter((e) => !hiddenEvals.has(e.id)),
+    [evals, hiddenEvals],
   );
   const subGoalEvals = useMemo(
     () =>
@@ -441,6 +447,9 @@ export default function RunTraceTable({
         value={visibleColumns}
         onChange={setVisibleColumns}
         hidden={chatRun ? VOICE_ONLY_COLUMNS : undefined}
+        evals={evals}
+        hiddenEvals={hiddenEvals}
+        onHiddenEvalsChange={setHiddenEvals}
       />
     </Stack>
   );
@@ -489,7 +498,7 @@ export default function RunTraceTable({
               columns={shownColumns}
               groups={groups}
               rows={groupBy ? null : tasks}
-              evals={evals}
+              evals={shownEvals}
               subGoalEvals={subGoalEvals}
               groupView={groupView}
               onGroupViewChange={setGroupView}
