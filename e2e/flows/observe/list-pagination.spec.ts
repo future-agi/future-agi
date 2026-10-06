@@ -925,9 +925,11 @@ test('OBS-E2E-034: the agent call-log pager (a plain DRF-paginated, non-cursor s
     userGoal: "A developer browsing an agent version's call logs gets a working pager even though this screen has no cursor `has_more` contract",
     steps: ["seed 12 completed CallExecution rows for one fresh AgentDefinition/AgentVersion directly through the backend (no simulate/voice infra runs in this harness — see e2e/lib/simulate-seed.ts)",
             "open the agent's Call Logs tab for that version",
-            'confirm more than one page is offered',
+            'see all 12 calls on one page at the default 25 per page',
+            'switch to 10 per page and confirm more than one page is offered',
             'walk forward to the last page'],
-    backendChecks: ['the seeded CallExecution rows are scoped to the seeded AgentVersion, status=completed, non-empty eval_outputs — exactly what AgentVersionCallExecutionView filters for'],
+    backendChecks: ['the seeded CallExecution rows are scoped to the seeded AgentVersion, status=completed, non-empty eval_outputs — exactly what AgentVersionCallExecutionView filters for',
+                    'AgentVersionCallExecutionView honours the page_size the grid sends'],
   }),
 }, async ({ page, actor }, testInfo) => {
   test.setTimeout(120_000);
@@ -943,18 +945,13 @@ test('OBS-E2E-034: the agent call-log pager (a plain DRF-paginated, non-cursor s
   );
 
   const callRows = page.locator('.clean-data-table:visible .ag-row');
-  await expect(callRows).toHaveCount(10, { timeout: UI_READY });
+  // The grid sends page_size, as it does to the trace lists. The view used to
+  // read only `limit` and served 10 rows whatever was asked, while the grid
+  // counted pages at 25 and ran out of pages early. At the default 25 all 12
+  // calls must fit on one page.
+  await expect(callRows).toHaveCount(CALL_EXECUTION_COUNT, { timeout: UI_READY });
+  expect((await readPager(page)).nextDisabled).toBe(true);
 
-  // This screen's `page_size` query param is a no-op server-side — DRF's
-  // `ExtendedPageNumberPagination` (futureagi/tfc/utils/pagination.py) reads
-  // `limit`, not `page_size`, and defaults to a fixed 10 regardless of what
-  // the UI sends. The default results-per-page here is 25, so without this
-  // the frontend's own block-size bookkeeping (still believing 25/page)
-  // disagrees with the real 10-per-page server response and over-fetches
-  // into a 404 page 3 that does not exist. Selecting "10" coincidentally
-  // re-aligns them — not a fix for that mismatch (out of scope here; noted
-  // in the report), just what makes this pager screen's own page count and
-  // Next/Back state internally consistent for the assertions below.
   await selectPageSize(page, '10');
   await expect(callRows).toHaveCount(10, { timeout: UI_READY });
   await waitForCurrentPage(page, 1);
@@ -967,12 +964,10 @@ test('OBS-E2E-034: the agent call-log pager (a plain DRF-paginated, non-cursor s
   expect(pager.numbers.length).toBeGreaterThan(1);
   expect(pager.nextDisabled).toBe(false);
 
-  // AG Grid's infinite row model prefetches the next block ahead of the
-  // visible one (visible in the trace as page 2 already fetched during
-  // initial load, plus a 404 probe for a page 3 that does not exist), so
-  // this click is served from that cache rather than guaranteed to hit the
-  // wire — wait on the pager's own DOM state, not a response (same reasoning
-  // as the cached-page legs in OBS-E2E-028/OBS-E2E-032).
+  // The grid prefetches the next page ahead of the visible one, so this click
+  // is served from that cache rather than guaranteed to hit the wire — wait
+  // on the pager's own DOM state, not a response (same reasoning as the
+  // cached-page legs in OBS-E2E-028/OBS-E2E-032).
   await pagerButton(page, 'Next page').click();
   await waitForCurrentPage(page, 2);
 

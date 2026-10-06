@@ -1030,17 +1030,19 @@
 
 1. seed 12 completed CallExecution rows for one fresh AgentDefinition/AgentVersion directly through the backend (no simulate/voice infra runs in this harness — see e2e/lib/simulate-seed.ts)
 2. open the agent's Call Logs tab for that version
-3. confirm more than one page is offered
-4. walk forward to the last page
+3. see all 12 calls on one page at the default 25 per page
+4. switch to 10 per page and confirm more than one page is offered
+5. walk forward to the last page
 
 **Backend state verified:**
 
 - the seeded CallExecution rows are scoped to the seeded AgentVersion, status=completed, non-empty eval_outputs — exactly what AgentVersionCallExecutionView filters for
+- AgentVersionCallExecutionView honours the page_size the grid sends
 
 ### OBS-E2E-035 — changing the date filter resets pagination to page 1 and drops the old cursor
 
 **Goal:** A developer who narrows the date range never sees stale rows or a stale page position from the filter they just replaced  
-**Spec:** `flows/observe/list-pagination.spec.ts:984`  
+**Spec:** `flows/observe/list-pagination.spec.ts:979`  
 **Tags:** —
 
 **User steps:**
@@ -1058,7 +1060,7 @@
 ### OBS-E2E-036 — the furthest-visited page reappears as a boundary after walking back to page 1
 
 **Goal:** A developer who has already paged deep into a trace list and jumps back to page 1 can still return straight to the page they left off on  
-**Spec:** `flows/observe/list-pagination.spec.ts:1071`  
+**Spec:** `flows/observe/list-pagination.spec.ts:1066`  
 **Tags:** —
 
 **User steps:**
