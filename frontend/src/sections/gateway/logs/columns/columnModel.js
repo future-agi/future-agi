@@ -113,7 +113,8 @@ export function validateConfig(raw) {
   for (const id of raw.hidden) {
     if (typeof id !== "string" || !seen.has(id)) return null;
     if (id === LOCKED_COLUMN_ID) return null;
-    if (!hidden.includes(id)) hidden.push(id);
+    if (hidden.includes(id)) return null;
+    hidden.push(id);
   }
 
   // Forward compatibility: a built-in added later appears visible at the end,
@@ -121,6 +122,7 @@ export function validateConfig(raw) {
   for (const col of BUILTIN_COLUMNS) {
     if (!seen.has(col.id)) columns.push({ id: col.id });
   }
+  if (columns.length > MAX_COLUMN_ENTRIES) return null;
 
   return { v: CONFIG_VERSION, columns, hidden };
 }
@@ -243,6 +245,11 @@ export function resolveColumns({ config, declarations, status }) {
     columns,
     entries,
     stale,
+    // Ids the picker lists with move buttons, hidden ones included; stale ids
+    // and custom ids awaiting declarations are absent (see moveColumn).
+    movableIds: new Set(
+      all.filter((e) => e.inConfig && !e.locked).map((e) => e.id),
+    ),
     visibleCount: all.filter((e) => e.checked).length,
     totalCount: all.length,
   };
@@ -266,9 +273,16 @@ export function toggleColumn(config, id) {
   return { ...config, hidden };
 }
 
-/** Move a column one step among entries of the same kind; the locked column never moves. */
-export function moveColumn(config, id, delta) {
+/**
+ * Move a column one step among entries of the same kind; the locked column
+ * never moves. With `movableIds` (resolveColumns().movableIds) only listed ids
+ * move or are swapped with, so a stale id stays in its slot instead of
+ * absorbing a click (J5); hidden listed ids keep their slot semantics (J2).
+ */
+export function moveColumn(config, id, delta, movableIds) {
   if (id === LOCKED_COLUMN_ID || (delta !== -1 && delta !== 1)) return config;
+  const isMovable = (candidate) => !movableIds || movableIds.has(candidate);
+  if (!isMovable(id)) return config;
   const index = config.columns.findIndex((c) => c.id === id);
   if (index < 0) return config;
 
@@ -276,7 +290,7 @@ export function moveColumn(config, id, delta) {
   while (target >= 0 && target < config.columns.length) {
     const candidate = config.columns[target].id;
     if (candidate === LOCKED_COLUMN_ID) return config;
-    if (sameKind(candidate, id)) break;
+    if (sameKind(candidate, id) && isMovable(candidate)) break;
     target += delta;
   }
   if (target < 0 || target >= config.columns.length) return config;

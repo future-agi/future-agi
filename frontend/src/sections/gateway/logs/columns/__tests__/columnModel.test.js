@@ -136,6 +136,27 @@ describe("validateConfig (R14/R15/AC12)", () => {
       },
     ],
     [
+      "duplicate hidden ids",
+      {
+        v: 1,
+        columns: [{ id: "builtin:startedAt" }, { id: "builtin:model" }],
+        hidden: ["builtin:model", "builtin:model"],
+      },
+    ],
+    [
+      "a record at the cap that the missing built-ins push past it",
+      {
+        v: 1,
+        columns: [
+          ...DEFAULT_CONFIG.columns.slice(0, -1),
+          ...Array.from({ length: MAX_COLUMN_ENTRIES - 9 }, (_, i) => ({
+            id: `metadata:p${i}`,
+          })),
+        ],
+        hidden: [],
+      },
+    ],
+    [
       "hidden not an array",
       { v: 1, columns: [{ id: "builtin:startedAt" }], hidden: "builtin:model" },
     ],
@@ -162,6 +183,26 @@ describe("validateConfig (R14/R15/AC12)", () => {
     ],
   ])("rejects %s and returns null", (_label, raw) => {
     expect(validateConfig(raw)).toBeNull();
+  });
+
+  it("still appends a missing built-in when the result lands exactly on the cap", () => {
+    const raw = {
+      v: 1,
+      columns: [
+        ...DEFAULT_CONFIG.columns.slice(0, -1),
+        ...Array.from({ length: MAX_COLUMN_ENTRIES - 10 }, (_, i) => ({
+          id: `metadata:p${i}`,
+        })),
+      ],
+      hidden: [],
+    };
+    expect(raw.columns).toHaveLength(MAX_COLUMN_ENTRIES - 1);
+    const result = validateConfig(raw);
+    expect(result.columns).toHaveLength(MAX_COLUMN_ENTRIES);
+    expect(result.columns.slice(0, -1)).toEqual(raw.columns);
+    expect(result.columns[MAX_COLUMN_ENTRIES - 1]).toEqual({
+      id: "builtin:sessionId",
+    });
   });
 
   it("never persists anything but ids (R13)", () => {
@@ -371,6 +412,131 @@ describe("config mutations", () => {
     ]);
     expect(moveColumn(withCustom, "metadata:a", -1)).toEqual(withCustom);
     expect(moveColumn(withCustom, "metadata:missing", 1)).toEqual(withCustom);
+  });
+
+  describe("move skips ids the picker does not list (J5)", () => {
+    const ids = (config) => config.columns.map((c) => c.id);
+    const declarations = [decl("a"), decl("b")];
+    const withStale = {
+      v: 1,
+      columns: [
+        ...DEFAULT_CONFIG.columns,
+        { id: "metadata:a" },
+        { id: "metadata:deleted" },
+        { id: "metadata:b" },
+      ],
+      hidden: [],
+    };
+    const movableIds = (config, status = "success") =>
+      resolveColumns({ config, declarations, status }).movableIds;
+
+    it("swaps past an undeclared id in one step in both directions and keeps it stored", () => {
+      const movable = movableIds(withStale);
+      const down = moveColumn(withStale, "metadata:a", 1, movable);
+      const up = moveColumn(withStale, "metadata:b", -1, movable);
+      for (const moved of [down, up]) {
+        expect(ids(moved)).toEqual([
+          ...ids(DEFAULT_CONFIG),
+          "metadata:b",
+          "metadata:deleted",
+          "metadata:a",
+        ]);
+        expect(moved.hidden).toEqual([]);
+        const resolved = resolveColumns({
+          config: moved,
+          declarations,
+          status: "success",
+        });
+        expect(resolved.entries.custom.map((e) => e.id)).toEqual([
+          "metadata:b",
+          "metadata:a",
+        ]);
+        expect(resolved.stale).toEqual(["metadata:deleted"]);
+      }
+    });
+
+    it("treats a hidden declared column as a swap candidate, keeping its hidden state", () => {
+      const config = { ...withStale, hidden: ["metadata:b"] };
+      const moved = moveColumn(config, "metadata:a", 1, movableIds(config));
+      expect(ids(moved).slice(-3)).toEqual([
+        "metadata:b",
+        "metadata:deleted",
+        "metadata:a",
+      ]);
+      expect(moved.hidden).toEqual(["metadata:b"]);
+    });
+
+    it("keeps Timestamp first and the built-in/custom slots where they are", () => {
+      const config = {
+        v: 1,
+        columns: [
+          { id: "builtin:startedAt" },
+          { id: "metadata:a" },
+          { id: "builtin:model" },
+          { id: "metadata:deleted" },
+          { id: "builtin:provider" },
+          { id: "metadata:b" },
+          ...DEFAULT_CONFIG.columns.slice(3),
+        ],
+        hidden: ["builtin:model"],
+      };
+      const movable = movableIds(config);
+      const moved = moveColumn(config, "metadata:a", 1, movable);
+      expect(ids(moved)).toEqual([
+        "builtin:startedAt",
+        "metadata:b",
+        "builtin:model",
+        "metadata:deleted",
+        "builtin:provider",
+        "metadata:a",
+        ...ids(DEFAULT_CONFIG).slice(3),
+      ]);
+      expect(moveColumn(config, "builtin:provider", -1, movable)).toEqual({
+        ...config,
+        columns: [
+          { id: "builtin:startedAt" },
+          { id: "metadata:a" },
+          { id: "builtin:provider" },
+          { id: "metadata:deleted" },
+          { id: "builtin:model" },
+          { id: "metadata:b" },
+          ...DEFAULT_CONFIG.columns.slice(3),
+        ],
+      });
+    });
+
+    it("never moves an undeclared id and never lets one absorb a move at the end", () => {
+      const movable = movableIds(withStale);
+      expect(moveColumn(withStale, "metadata:deleted", 1, movable)).toBe(
+        withStale,
+      );
+      const staleLast = {
+        ...withStale,
+        columns: [
+          ...DEFAULT_CONFIG.columns,
+          { id: "metadata:a" },
+          { id: "metadata:b" },
+          { id: "metadata:deleted" },
+        ],
+      };
+      expect(
+        moveColumn(staleLast, "metadata:b", 1, movableIds(staleLast)),
+      ).toBe(staleLast);
+    });
+
+    it("moves no custom column while declarations are pending or failed", () => {
+      for (const status of ["pending", "error"]) {
+        const movable = movableIds(withStale, status);
+        expect(moveColumn(withStale, "metadata:a", 1, movable)).toBe(withStale);
+        expect(moveColumn(withStale, "metadata:b", -1, movable)).toBe(
+          withStale,
+        );
+        // Built-ins stay movable (J6 keeps built-ins usable).
+        expect(
+          ids(moveColumn(withStale, "builtin:model", 1, movable)).slice(0, 3),
+        ).toEqual(["builtin:startedAt", "builtin:provider", "builtin:model"]);
+      }
+    });
   });
 
   it("removeColumn drops a stale id from columns and hidden but never the locked column", () => {

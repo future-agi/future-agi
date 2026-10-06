@@ -116,8 +116,8 @@ export default function useRequestColumns({ viewId = COLUMN_VIEW_ID } = {}) {
   );
 
   const move = useCallback(
-    (id, delta) => commit(moveColumn(config, id, delta)),
-    [commit, config],
+    (id, delta) => commit(moveColumn(config, id, delta, resolved.movableIds)),
+    [commit, config, resolved.movableIds],
   );
 
   const remove = useCallback(

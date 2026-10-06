@@ -1,5 +1,5 @@
 import { request } from '@playwright/test';
-import type { Page } from '@playwright/test';
+import type { Page, Route } from '@playwright/test';
 import { test, expect } from '../../lib/fixtures';
 import { POLL } from '../../lib/state-probe';
 import { E2E } from '../../lib/env';
@@ -72,7 +72,9 @@ test(
         'check `tenant`, hide `Provider` and move `Model` down',
         'reload the page',
         'reset to default',
-        'open Request Logs as a second organization in the same browser',
+        'hide `Provider`, then reload while every declaration list request fails, React Query’s automatic retry included',
+        'let the declaration list through again and press Retry',
+        'open Request Logs as a second identity in an isolated context containing the first preference record',
         'delete the declaration and reopen the picker',
       ],
       backendChecks: [
@@ -81,6 +83,8 @@ test(
         'selecting and reordering columns issues no per-row request-log detail call and at most one declaration list call',
         'the selection and order survive a reload for the same user, org and browser',
         'reset restores the ten default headers and removes only this preference record',
+        'while the declaration list fails on every attempt the saved built-in columns render and stay usable, no saved custom column name reaches the page and the saved record is unchanged',
+        'Retry is answered by the real API and restores the tenant column and its row values, leaving the saved record byte-identical',
         'the second org never sees the first org\u2019s tenant column, declaration or saved record',
         'after the declaration is deleted the saved column is listed as no longer declared and is not rendered',
       ],
@@ -245,7 +249,118 @@ test(
       await expect(tenantCells(page)).toHaveCount(3);
     });
 
-    await test.step('UI: a second organization in the same browser never sees the first org\u2019s column', async () => {
+    await test.step('UI: a failing declaration list keeps the saved built-ins usable and Retry recovers the column', async () => {
+      const columnsButton = page.getByRole('button', { name: 'Columns' });
+      const dialog = page.getByRole('dialog', { name: 'Choose columns' });
+      const headers = page.locator('table thead th');
+      const readRecord = () => page.evaluate((key) => localStorage.getItem(key), storageKey);
+      const customNameOnPage = async () => ({
+        text: await page.getByText('tenant', { exact: true }).count(),
+        column: await page.locator('[data-column="metadata:tenant"]').count(),
+      });
+
+      // A saved built-in change beside the custom column, so the failure path
+      // has a non-default built-in layout to keep.
+      await columnsButton.click();
+      await dialog.getByRole('checkbox', { name: 'Provider' }).uncheck();
+      await page.keyboard.press('Escape');
+      const savedBuiltins = DEFAULT_HEADERS.filter((h) => h !== 'Provider');
+      await expect(headers).toHaveText([...savedBuiltins, 'tenant'], { useInnerText: true });
+      const savedRecord = await readRecord();
+      expect(JSON.parse(savedRecord || 'null')).toMatchObject({ v: 1, hidden: ['builtin:provider'] });
+      expect(savedRecord).toContain('metadata:tenant');
+
+      // Fail only the declaration list GET, on every attempt the app makes
+      // (React Query's automatic retry included); every other request reaches
+      // the real backend. The first attempt is held so loading is observable.
+      const failedCalls: string[] = [];
+      let releaseFirst = () => {};
+      const firstHeld = new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      const isDeclarationList = (url: URL) => url.pathname.endsWith(CUSTOM_PROPERTIES_PATH);
+      const failDeclarationList = async (route: Route) => {
+        const intercepted = route.request();
+        if (intercepted.method() !== 'GET') return route.fallback();
+        failedCalls.push(intercepted.url());
+        if (failedCalls.length === 1) await firstHeld;
+        await route.fulfill({
+          status: 500,
+          contentType: 'application/json',
+          headers: {
+            'access-control-allow-origin':
+              (await intercepted.headerValue('origin')) ?? new URL(E2E.appUrl).origin,
+            'access-control-allow-credentials': 'true',
+          },
+          body: JSON.stringify({ status: false, result: 'e2e: declaration list unavailable' }),
+        });
+      };
+      await page.route(isDeclarationList, failDeclarationList);
+
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await expect(page.locator('table tbody tr')).toHaveCount(3, { timeout: UI_READY });
+      await expect.poll(() => failedCalls.length, { timeout: UI_READY }).toBe(1);
+      await expect(headers).toHaveText(savedBuiltins, { useInnerText: true });
+      await columnsButton.click();
+      await expect(
+        dialog.getByText('Loading custom properties\u2026 1 saved custom column unavailable.'),
+      ).toBeVisible();
+      expect(await customNameOnPage()).toEqual({ text: 0, column: 0 });
+      expect(await readRecord()).toBe(savedRecord);
+
+      releaseFirst();
+      const retry = dialog.getByRole('button', { name: 'Retry loading custom properties' });
+      await expect(retry).toBeVisible({ timeout: UI_READY });
+      await expect(
+        dialog.getByText("Couldn't load custom properties. 1 saved custom column unavailable."),
+      ).toBeVisible();
+      await testInfo.attach('declaration-list-failures', {
+        contentType: 'application/json',
+        body: JSON.stringify({ failedCalls }, null, 2),
+      });
+      // The error is what the app reached after its own retry, not one 500.
+      expect(failedCalls.length).toBeGreaterThanOrEqual(2);
+      await expect(headers).toHaveText(savedBuiltins, { useInnerText: true });
+      expect(await customNameOnPage()).toEqual({ text: 0, column: 0 });
+      expect(await readRecord()).toBe(savedRecord);
+
+      // Built-in columns stay usable while declarations fail.
+      await dialog.getByRole('checkbox', { name: 'Model' }).uncheck();
+      await expect(headers).toHaveText(
+        savedBuiltins.filter((h) => h !== 'Model'),
+        { useInnerText: true },
+      );
+      await dialog.getByRole('checkbox', { name: 'Model' }).check();
+      await expect(headers).toHaveText(savedBuiltins, { useInnerText: true });
+      expect(await customNameOnPage()).toEqual({ text: 0, column: 0 });
+      expect(await readRecord()).toBe(savedRecord);
+
+      // Let the list through again, then use the product's own Retry.
+      await page.unroute(isDeclarationList, failDeclarationList);
+      const failedBeforeRetry = failedCalls.length;
+      const recovered = page.waitForResponse(
+        (r) => isDeclarationList(new URL(r.url())) && r.request().method() === 'GET',
+        { timeout: UI_READY },
+      );
+      await retry.click();
+      expect((await recovered).status()).toBe(200);
+      await expect(dialog.getByRole('checkbox', { name: 'tenant' })).toBeChecked({
+        timeout: UI_READY,
+      });
+      await page.keyboard.press('Escape');
+      await expect(headers).toHaveText([...savedBuiltins, 'tenant'], { useInnerText: true });
+      await expect(tenantCells(page)).toHaveText(['globex', '-', 'acme']);
+      expect(failedCalls.length).toBe(failedBeforeRetry);
+      expect(await readRecord()).toBe(savedRecord);
+
+      // Show Provider again for the steps that follow.
+      await columnsButton.click();
+      await dialog.getByRole('checkbox', { name: 'Provider' }).check();
+      await page.keyboard.press('Escape');
+      await expect(headers).toHaveText([...DEFAULT_HEADERS, 'tenant'], { useInnerText: true });
+    });
+
+    await test.step('UI: a separate authenticated identity cannot reuse a copied first-identity record', async () => {
       const other = await provisionActor(req, `cols-b-${testInfo.workerIndex}`);
       const otherMe = await other.api.get<UserInfo>('/accounts/user-info/');
       const otherKey = `${STORAGE_PREFIX}:${otherMe.id}:${other.organizationId}:requests`;

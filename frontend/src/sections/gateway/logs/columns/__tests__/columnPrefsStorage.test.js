@@ -5,7 +5,7 @@ import {
   removeConfig,
   writeConfig,
 } from "../columnPrefsStorage";
-import { DEFAULT_CONFIG } from "../columnModel";
+import { DEFAULT_CONFIG, MAX_COLUMN_ENTRIES } from "../columnModel";
 
 const KEY_A = "agentcc.requestLogs.columns.v1:user-a:org-1:requests";
 
@@ -76,6 +76,44 @@ describe("storage adapter", () => {
     expect(readConfig(KEY_A).config).toBeNull();
     expect(storage.getItem(KEY_A)).toBe(JSON.stringify({ v: 2, columns: [] }));
   });
+
+  it.each([
+    [
+      "duplicate hidden ids",
+      {
+        v: 1,
+        columns: DEFAULT_CONFIG.columns,
+        hidden: ["builtin:provider", "builtin:provider"],
+      },
+    ],
+    [
+      "a 64-entry record lacking a built-in",
+      {
+        v: 1,
+        columns: [
+          ...DEFAULT_CONFIG.columns.slice(0, -1),
+          ...Array.from({ length: MAX_COLUMN_ENTRIES - 9 }, (_, i) => ({
+            id: `metadata:p${i}`,
+          })),
+        ],
+        hidden: [],
+      },
+    ],
+  ])(
+    "rejects %s as invalid and leaves the stored bytes alone (AC12)",
+    (_label, record) => {
+      const bytes = JSON.stringify(record);
+      storage.setItem(KEY_A, bytes);
+      expect(readConfig(KEY_A)).toEqual({
+        ok: false,
+        config: null,
+        reason: "invalid",
+      });
+      expect(storage.getItem(KEY_A)).toBe(bytes);
+      expect(storage.setItem).toHaveBeenCalledTimes(1);
+      expect(storage.removeItem).not.toHaveBeenCalled();
+    },
+  );
 
   it("returns defaults for an absent key and reports a null key as no-op", () => {
     expect(readConfig(KEY_A)).toEqual({ ok: true, config: null });

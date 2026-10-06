@@ -1,7 +1,7 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import useRequestColumns from "../useRequestColumns";
-import { DEFAULT_CONFIG } from "../columnModel";
+import { DEFAULT_CONFIG, MAX_COLUMN_ENTRIES } from "../columnModel";
 
 const authState = { user: { id: "user-a" } };
 const orgState = { currentOrganizationId: "org-1", isReady: true };
@@ -47,6 +47,19 @@ function createMemoryStorage() {
 }
 
 const labels = (result) => result.current.columns.map((c) => c.label);
+
+const DEFAULT_LABELS = [
+  "Timestamp",
+  "Model",
+  "Provider",
+  "Application",
+  "Service",
+  "Status",
+  "Latency",
+  "Cost",
+  "Tokens",
+  "Session ID",
+];
 
 describe("useRequestColumns", () => {
   let storage;
@@ -214,6 +227,45 @@ describe("useRequestColumns", () => {
     expect(storage.getItem(KEY_A)).toBe("{corrupt");
   });
 
+  it.each([
+    [
+      "duplicate hidden ids",
+      {
+        v: 1,
+        columns: [...DEFAULT_CONFIG.columns, { id: "metadata:tenant" }],
+        hidden: ["builtin:provider", "builtin:provider"],
+      },
+    ],
+    [
+      "a 64-entry record lacking a built-in",
+      {
+        v: 1,
+        columns: [
+          ...DEFAULT_CONFIG.columns.slice(0, -1),
+          { id: "metadata:tenant" },
+          ...Array.from({ length: MAX_COLUMN_ENTRIES - 10 }, (_, i) => ({
+            id: `metadata:p${i}`,
+          })),
+        ],
+        hidden: ["builtin:provider"],
+      },
+    ],
+  ])(
+    "reads %s back as the defaults without rewriting it (AC12)",
+    (_label, record) => {
+      const bytes = JSON.stringify(record);
+      storage.setItem(KEY_A, bytes);
+      storage.setItem.mockClear();
+      const { result } = renderHook(() => useRequestColumns());
+      expect(result.current.config).toEqual(DEFAULT_CONFIG);
+      expect(labels(result)).toEqual(DEFAULT_LABELS);
+      expect(result.current.storageNotice).toBeNull();
+      expect(storage.getItem(KEY_A)).toBe(bytes);
+      expect(storage.setItem).not.toHaveBeenCalled();
+      expect(storage.removeItem).not.toHaveBeenCalled();
+    },
+  );
+
   it("keeps working in memory and shows a notice when the write fails (R16/AC12)", () => {
     storage.setItem.mockImplementation(() => {
       throw new DOMException("quota", "QuotaExceededError");
@@ -260,6 +312,83 @@ describe("useRequestColumns", () => {
     expect(labels(result)).toContain("tenant");
     expect(JSON.parse(storage.getItem(KEY_A)).columns).toContainEqual({
       id: "metadata:tenant",
+    });
+  });
+
+  describe("moving past an undeclared saved id (J5)", () => {
+    const customIds = (result) =>
+      result.current.pickerEntries.custom.map((e) => e.id);
+    const record = JSON.stringify({
+      v: 1,
+      columns: [
+        ...DEFAULT_CONFIG.columns,
+        { id: "metadata:a" },
+        { id: "metadata:deleted" },
+        { id: "metadata:b" },
+      ],
+      hidden: [],
+    });
+
+    beforeEach(() => {
+      storage.setItem(KEY_A, record);
+      declarationsState.data = [
+        { name: "a", organization: "org-1" },
+        { name: "b", organization: "org-1" },
+      ];
+    });
+
+    it("reorders the two declared columns in one click each way and keeps the stale id until Remove", () => {
+      const { result } = renderHook(() => useRequestColumns());
+      expect(customIds(result)).toEqual(["metadata:a", "metadata:b"]);
+      expect(result.current.stale).toEqual(["metadata:deleted"]);
+
+      act(() => result.current.move("metadata:a", 1));
+      expect(customIds(result)).toEqual(["metadata:b", "metadata:a"]);
+      expect(labels(result).slice(-2)).toEqual(["b", "a"]);
+      expect(result.current.stale).toEqual(["metadata:deleted"]);
+      expect(
+        JSON.parse(storage.getItem(KEY_A))
+          .columns.slice(-3)
+          .map((c) => c.id),
+      ).toEqual(["metadata:b", "metadata:deleted", "metadata:a"]);
+
+      act(() => result.current.move("metadata:a", -1));
+      expect(customIds(result)).toEqual(["metadata:a", "metadata:b"]);
+      expect(storage.getItem(KEY_A)).toBe(record);
+
+      act(() => result.current.remove("metadata:deleted"));
+      expect(result.current.stale).toEqual([]);
+      expect(storage.getItem(KEY_A)).not.toContain("metadata:deleted");
+    });
+
+    it("moves no custom column while declarations are pending or failed", () => {
+      declarationsState.status = "pending";
+      declarationsState.isPending = true;
+      declarationsState.data = undefined;
+      const { result, rerender } = renderHook(() => useRequestColumns());
+      act(() => result.current.move("metadata:a", 1));
+      expect(storage.getItem(KEY_A)).toBe(record);
+
+      declarationsState.status = "error";
+      declarationsState.isPending = false;
+      declarationsState.isError = true;
+      rerender();
+      act(() => result.current.move("metadata:b", -1));
+      expect(storage.getItem(KEY_A)).toBe(record);
+      expect(result.current.config.columns.slice(-3).map((c) => c.id)).toEqual([
+        "metadata:a",
+        "metadata:deleted",
+        "metadata:b",
+      ]);
+
+      declarationsState.status = "success";
+      declarationsState.isError = false;
+      declarationsState.data = [
+        { name: "a", organization: "org-1" },
+        { name: "b", organization: "org-1" },
+      ];
+      rerender();
+      expect(customIds(result)).toEqual(["metadata:a", "metadata:b"]);
     });
   });
 

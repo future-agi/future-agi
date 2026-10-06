@@ -661,8 +661,10 @@
 4. check `tenant`, hide `Provider` and move `Model` down
 5. reload the page
 6. reset to default
-7. open Request Logs as a second organization in the same browser
-8. delete the declaration and reopen the picker
+7. hide `Provider`, then reload while every declaration list request fails, React Query’s automatic retry included
+8. let the declaration list through again and press Retry
+9. open Request Logs as a second identity in an isolated context containing the first preference record
+10. delete the declaration and reopen the picker
 
 **Backend state verified:**
 
@@ -671,6 +673,8 @@
 - selecting and reordering columns issues no per-row request-log detail call and at most one declaration list call
 - the selection and order survive a reload for the same user, org and browser
 - reset restores the ten default headers and removes only this preference record
+- while the declaration list fails on every attempt the saved built-in columns render and stay usable, no saved custom column name reaches the page and the saved record is unchanged
+- Retry is answered by the real API and restores the tenant column and its row values, leaving the saved record byte-identical
 - the second org never sees the first org’s tenant column, declaration or saved record
 - after the declaration is deleted the saved column is listed as no longer declared and is not rendered
 
