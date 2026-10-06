@@ -149,6 +149,42 @@ describe("StereoMultiTrackPlayer track selection", () => {
     expect(captured.singleUrl).toBe(COMBINED);
     expect(captured.trackUrls).toBeNull();
   });
+
+  it("reports the recording unavailable when the stereo split fails and nothing else can play", () => {
+    // The split is the only source: with it gone both track URLs are empty,
+    // and the multi-track player would wait on them forever.
+    Object.assign(stereo, { error: "Failed to fetch stereo audio: 403" });
+    render(
+      <StereoMultiTrackPlayer
+        recordings={{ stereo: "https://example.test/stereo.wav" }}
+        id="call-1"
+      />,
+    );
+
+    expect(screen.getByText("Recording unavailable")).toBeInTheDocument();
+    expect(captured.trackUrls).toBeNull();
+  });
+
+  it("falls back to the mono tracks when the stereo split fails", () => {
+    Object.assign(stereo, { error: "Failed to fetch stereo audio: 403" });
+    render(
+      <StereoMultiTrackPlayer
+        recordings={{
+          stereo: "https://example.test/stereo.wav",
+          assistant: "https://example.test/assistant.wav",
+        }}
+        id="call-1"
+      />,
+    );
+
+    expect(
+      screen.queryByText("Recording unavailable"),
+    ).not.toBeInTheDocument();
+    expect(captured.trackUrls.map(({ url }) => url)).toEqual([
+      undefined,
+      "https://example.test/assistant.wav",
+    ]);
+  });
 });
 
 describe("AudioPlayerCustom picks the renderer from the recording shape", () => {

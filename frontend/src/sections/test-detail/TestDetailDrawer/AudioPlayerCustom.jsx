@@ -144,6 +144,17 @@ export const StereoMultiTrackPlayer = ({
     return <SingleTrackPlayer url={recordings.combined} />;
   }
 
+  // The stereo split was the only source and it failed (403, CORS, decode),
+  // or produced nothing: no track has a URL, so the multi-track player would
+  // wait on them forever.
+  if (!useStereo && !assistantUrl && !customerUrl) {
+    return (
+      <Box sx={{ position: "relative", height: height * 2 + 20 }}>
+        <RecordingFailure variant={UNAVAILABLE} />
+      </Box>
+    );
+  }
+
   if (useStereo && stereoLoading) {
     return (
       <Box
