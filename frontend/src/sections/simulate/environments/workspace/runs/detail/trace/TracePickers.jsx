@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useLayoutEffect, useRef, useState } from "react";
+import { useState } from "react";
 import {
   Box,
   Typography,
@@ -14,6 +14,7 @@ import {
 
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
+import useIsTruncated from "src/hooks/useIsTruncated";
 import {
   TRACE_COLUMNS,
   defaultTraceColumns,
@@ -99,12 +100,7 @@ const columnItemSx = {
 // A column name on one line, cut off with an ellipsis; the full name shows on
 // hover, only when it was cut.
 function ColumnLabel({ label }) {
-  const ref = useRef(null);
-  const [cut, setCut] = useState(false);
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (el) setCut(el.scrollWidth > el.clientWidth);
-  }, [label]);
+  const [ref, cut] = useIsTruncated(label);
   return (
     <CustomTooltip show={cut} title={label} placement="left" arrow>
       <ListItemText
