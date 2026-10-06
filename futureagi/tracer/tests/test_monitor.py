@@ -924,6 +924,75 @@ class TestUserAlertMonitorUpdateAPI:
         assert monitor.threshold_metric_value is None
         assert monitor.critical_threshold_value == 5000
 
+    @staticmethod
+    def _stale_score_monitor(organization, workspace, observe_project):
+        """A score-typed eval alert saved before scoring evals stopped taking a
+        choice, so it still carries a stored threshold_metric_value."""
+        template = EvalTemplate.objects.create(
+            name=f"Score Eval {uuid.uuid4().hex[:8]}",
+            description="A test evaluation template",
+            organization=organization,
+            workspace=workspace,
+            config={"output": "score"},
+            choices=["Complete", "Partial", "Incomplete"],
+        )
+        eval_config = CustomEvalConfig.objects.create(
+            name=f"Score Eval Config {uuid.uuid4().hex[:8]}",
+            project=observe_project,
+            eval_template=template,
+            config={"threshold": 0.8},
+            mapping={"input": "input", "output": "output"},
+            filters={},
+        )
+        return UserAlertMonitor.objects.create(
+            organization=organization,
+            workspace=workspace,
+            project=observe_project,
+            name="Stale Score Alert",
+            metric_type="evaluation_metrics",
+            metric=str(eval_config.id),
+            threshold_metric_value="Incomplete",
+            threshold_operator="greater_than",
+            threshold_type="static",
+            critical_threshold_value=0.15,
+            alert_frequency=60,
+        )
+
+    def test_patch_score_eval_with_stale_choice_clears_it(
+        self, auth_client, organization, workspace, observe_project
+    ):
+        """An unrelated edit to such an alert must not fail on the stored
+        choice the client never sent; the stale value is dropped instead."""
+        monitor = self._stale_score_monitor(organization, workspace, observe_project)
+
+        response = auth_client.patch(
+            f"/tracer/user-alerts/{monitor.id}/",
+            {"warning_threshold_value": 0.1},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        monitor.refresh_from_db()
+        assert monitor.warning_threshold_value == 0.1
+        assert monitor.threshold_metric_value is None
+
+    def test_patch_score_eval_with_explicit_choice_still_rejected(
+        self, auth_client, organization, workspace, observe_project
+    ):
+        """Only the stored value is forgiven; sending a choice for a scoring
+        eval is still an error."""
+        monitor = self._stale_score_monitor(organization, workspace, observe_project)
+
+        response = auth_client.patch(
+            f"/tracer/user-alerts/{monitor.id}/",
+            {"threshold_metric_value": "Complete"},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        monitor.refresh_from_db()
+        assert monitor.threshold_metric_value == "Incomplete"
+
 
 @pytest.mark.integration
 @pytest.mark.api
