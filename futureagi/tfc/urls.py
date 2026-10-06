@@ -25,7 +25,7 @@ from django.views.static import serve
 from drf_yasg import openapi
 from drf_yasg.views import get_schema_view
 
-from tfc.capabilities.views import CapabilitiesView
+from tfc.capabilities.views import CapabilitiesView, EditionView
 from tfc.ee_loader import has_ee
 from tfc.views.deployment import DeploymentInfoView
 from tfc.views.health import (
@@ -148,6 +148,11 @@ urlpatterns = [
         "api/capabilities/",
         CapabilitiesView.as_view(),
         name="capabilities",
+    ),
+    path(
+        "api/edition/",
+        EditionView.as_view(),
+        name="edition",
     ),
     path(
         "api/setup-checks/",

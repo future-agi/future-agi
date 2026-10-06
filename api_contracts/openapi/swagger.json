@@ -15397,6 +15397,31 @@
             },
             "parameters": []
         },
+        "/api/edition/": {
+            "get": {
+                "operationId": "api_edition_list",
+                "description": "GET /api/edition/: the self-hosted edition, Community limits with current\nusage, and (admins only) the licence status, for Settings > Plan & License.\n\nCloud answers ``{\"edition\": \"cloud\"}``. The raw licence key is never\nreturned or logged: the licence id is masked and the key appears only as\nthe first 8 hex digits of its SHA-256.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/EditionEnvelope"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "api"
+                ]
+            },
+            "parameters": []
+        },
         "/api/health/clickhouse/": {
             "get": {
                 "operationId": "api_health_clickhouse_list",
@@ -89909,6 +89934,7 @@
                         "NETWORK_REQUIRED",
                         "USAGE_LIMIT_REACHED",
                         "PLAN_FEATURE_MISSING",
+                        "ENTERPRISE_FEATURE_REQUIRED",
                         "LICENSE_VERSION_UNSUPPORTED"
                     ],
                     "x-nullable": true
@@ -90079,6 +90105,192 @@
                 },
                 "result": {
                     "$ref": "#/definitions/DeploymentInfoResult"
+                }
+            }
+        },
+        "EditionLimit": {
+            "required": [
+                "limit",
+                "current"
+            ],
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "title": "Limit",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "current": {
+                    "title": "Current",
+                    "type": "integer",
+                    "minimum": 0
+                }
+            }
+        },
+        "EditionLimits": {
+            "required": [
+                "organizations",
+                "workspaces",
+                "members"
+            ],
+            "type": "object",
+            "properties": {
+                "organizations": {
+                    "$ref": "#/definitions/EditionLimit"
+                },
+                "workspaces": {
+                    "$ref": "#/definitions/EditionLimit"
+                },
+                "members": {
+                    "$ref": "#/definitions/EditionLimit"
+                }
+            }
+        },
+        "EditionActivation": {
+            "required": [
+                "method"
+            ],
+            "type": "object",
+            "properties": {
+                "method": {
+                    "title": "Method",
+                    "type": "string",
+                    "enum": [
+                        "env_restart"
+                    ]
+                }
+            }
+        },
+        "EditionLicense": {
+            "required": [
+                "state",
+                "license_type",
+                "issued_to",
+                "expires_at",
+                "grace_ends_at",
+                "license_id_masked",
+                "key_fingerprint"
+            ],
+            "type": "object",
+            "properties": {
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "enum": [
+                        "not_applicable",
+                        "missing",
+                        "invalid",
+                        "active",
+                        "grace",
+                        "expired",
+                        "trial_active",
+                        "trial_expired"
+                    ]
+                },
+                "license_type": {
+                    "title": "License type",
+                    "type": "string",
+                    "enum": [
+                        "production",
+                        "trial"
+                    ],
+                    "x-nullable": true
+                },
+                "issued_to": {
+                    "title": "Issued to",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "expires_at": {
+                    "title": "Expires at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "grace_ends_at": {
+                    "title": "Grace ends at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "license_id_masked": {
+                    "title": "License id masked",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "key_fingerprint": {
+                    "title": "Key fingerprint",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            }
+        },
+        "EditionResponse": {
+            "required": [
+                "edition"
+            ],
+            "type": "object",
+            "properties": {
+                "edition": {
+                    "title": "Edition",
+                    "type": "string",
+                    "enum": [
+                        "community",
+                        "enterprise",
+                        "cloud"
+                    ]
+                },
+                "deployment": {
+                    "title": "Deployment",
+                    "type": "string",
+                    "enum": [
+                        "self_hosted",
+                        "cloud"
+                    ]
+                },
+                "limits": {
+                    "$ref": "#/definitions/EditionLimits"
+                },
+                "over_limit": {
+                    "title": "Over limit",
+                    "type": "boolean"
+                },
+                "enterprise_features": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "contact": {
+                    "title": "Contact",
+                    "type": "string",
+                    "format": "email",
+                    "minLength": 1
+                },
+                "activation": {
+                    "$ref": "#/definitions/EditionActivation"
+                },
+                "license": {
+                    "$ref": "#/definitions/EditionLicense"
+                }
+            }
+        },
+        "EditionEnvelope": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/EditionResponse"
                 }
             }
         },
