@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
+import process from "node:process";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 
 const h = vi.hoisted(() => ({ push: vi.fn(), authenticated: true }));
@@ -16,8 +17,9 @@ vi.mock("src/auth/hooks", () => ({
 }));
 vi.mock("src/components/iconify", () => ({ default: () => null }));
 
-const { default: EnterpriseGateDialog } =
-  await import("../EnterpriseGateDialog");
+const { default: EnterpriseGateDialog } = await import(
+  "../EnterpriseGateDialog"
+);
 const { default: EnterpriseGateHost } = await import("../EnterpriseGateHost");
 const gateModule = await import("../enterprise-gate");
 
@@ -152,8 +154,9 @@ describe("copy names only sales@futureagi.com (AC-20)", () => {
   });
 
   it("the Enterprise gate contact is the sales mailto (review C5)", async () => {
-    const { CONTACT_URL } =
-      await import("src/components/oss-upgrade-gate/constants");
+    const { CONTACT_URL } = await import(
+      "src/components/oss-upgrade-gate/constants"
+    );
     expect(CONTACT_URL).toBe("mailto:sales@futureagi.com");
   });
 });
