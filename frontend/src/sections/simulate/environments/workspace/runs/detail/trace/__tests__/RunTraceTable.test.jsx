@@ -726,7 +726,7 @@ describe("RunTraceTable", () => {
       expect(expandAll()).toBeChecked();
     });
 
-    it("keeps only the handed-over calls' groups open once the chip is dismissed", async () => {
+    it("keeps the handed-over groups the user saw open once the chip is dismissed", async () => {
       const user = userEvent.setup();
       const { container } = renderTable({
         initialFilters: { callExecutionId: ["t2"] },
@@ -739,6 +739,38 @@ describe("RunTraceTable", () => {
       expect(persona.refund()).toBeNull();
       expect(persona.timeout()).toBeNull();
       expect(expandAll()).not.toBeChecked();
+    });
+
+    // The calls API only returns the groups on the page it sends, so a group
+    // the user never paged to was never seen, and comes back closed.
+    it("closes a handed-over group on a page the user never opened once the chip is dismissed", async () => {
+      const user = userEvent.setup();
+      useRunCalls.mockImplementation((_executionId, opts = {}) => {
+        const handedOver = !!opts.filters?.call_execution_id;
+        const tasks = !handedOver
+          ? TASKS
+          : opts.page === 2
+            ? [TASKS[2]]
+            : [TASKS[0], TASKS[1]];
+        return {
+          tasks,
+          columns: COLUMNS,
+          groups: groupsFor(tasks, opts.groupBy),
+          facets: FACETS,
+          count: handedOver ? 51 : TASKS.length,
+          totalPages: handedOver ? 2 : 1,
+          isLoading: false,
+        };
+      });
+      const { container } = renderTable({
+        initialFilters: { callExecutionId: ["t1", "t2", "t3"] },
+      });
+
+      await user.click(container.querySelector(".MuiChip-deleteIcon"));
+
+      expect(persona.refund()).toBeInTheDocument();
+      expect(persona.escalate()).toBeInTheDocument();
+      expect(persona.timeout()).toBeNull();
     });
 
     it("leaves an Expand all the user switched on themselves on when the chip is dismissed", async () => {
