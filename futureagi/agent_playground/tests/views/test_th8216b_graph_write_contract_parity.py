@@ -8,6 +8,7 @@ R-A01 transition/deletion bodies it declares.
 Regenerate captures with ``TH8216_REGENERATE_CAPTURES=1``.
 """
 
+import json
 import uuid
 from pathlib import Path
 
@@ -167,6 +168,65 @@ def test_rs03_nc_create_with_foreign_node_is_a_declared_404(
         response,
         request={"body": ["id", "source_node_id", "target_node_id(foreign)"]},
         note="A node outside the caller's scope reads like a missing node (was 400).",
+    )
+
+
+def test_rs03_version_create_with_foreign_ref_is_a_declared_400(
+    swagger, authenticated_client, graph, graph_version
+):
+    from accounts.models.organization import Organization
+    from accounts.models.organization_membership import OrganizationMembership
+    from accounts.models.user import User
+    from agent_playground.models.graph import Graph
+
+    foreign_org = Organization.objects.create(name="Foreign Organization")
+    foreign_user = User.objects.create_user(
+        email="foreign@futureagi.com",
+        password="testpassword123",
+        name="Foreign User",
+        organization=foreign_org,
+    )
+    OrganizationMembership.no_workspace_objects.get_or_create(
+        user=foreign_user, organization=foreign_org, defaults={"is_active": True}
+    )
+    foreign_graph = Graph.no_workspace_objects.create(
+        organization=foreign_org,
+        workspace=None,
+        name="Foreign Graph",
+        created_by=foreign_user,
+    )
+    foreign_ref = GraphVersion.no_workspace_objects.create(
+        graph=foreign_graph, version_number=1, status=GraphVersionStatus.ACTIVE
+    )
+
+    response = authenticated_client.post(
+        _url(VERSIONS, id=graph.id),
+        {
+            "nodes": [
+                {
+                    "id": str(uuid.uuid4()),
+                    "type": NodeType.SUBGRAPH,
+                    "name": "Subgraph",
+                    "ref_graph_version_id": str(foreign_ref.id),
+                }
+            ]
+        },
+        format="json",
+    )
+
+    assert response.status_code == 400
+    _check(
+        swagger,
+        "rs03_version_create_foreign_ref_400",
+        "agent-playground_graphs_versions_create",
+        "post",
+        VERSIONS,
+        response,
+        request={"body": ["nodes[subgraph, ref_graph_version_id(foreign)]"]},
+        normalize=lambda body: json.loads(
+            json.dumps(body).replace(str(foreign_ref.id), "<ref_graph_version_id>")
+        ),
+        note="A foreign body reference reads like a missing one (was 201, linked).",
     )
 
 

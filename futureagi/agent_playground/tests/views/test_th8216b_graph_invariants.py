@@ -12,6 +12,7 @@ import copy
 import uuid
 
 import pytest
+from django.core.exceptions import ValidationError
 from django.db.models.signals import post_save
 from django.urls import reverse
 from rest_framework import status
@@ -26,6 +27,7 @@ from agent_playground.models.graph_version import GraphVersion
 from agent_playground.models.node import Node
 from agent_playground.models.node_connection import NodeConnection
 from agent_playground.models.port import Port
+from agent_playground.utils.version_content import create_node
 
 TEMPLATE_QUERY = "?is_template=true"
 
@@ -648,6 +650,182 @@ def test_rs03_orgless_caller_cannot_reach_template_content(
     assert response.status_code == status.HTTP_404_NOT_FOUND
     _assert_same_answer(response, missing_response)
     assert _foreign_state(template_content) == before
+
+
+# =============================================================================
+# R-S03: version-create body references are tenant-scoped
+# =============================================================================
+
+
+def _subgraph_version_body(ref_graph_version_id, ref_port_id=None):
+    port = {
+        "id": str(uuid.uuid4()),
+        "key": "custom",
+        "display_name": "summary",
+        "direction": PortDirection.OUTPUT,
+        "data_schema": {"type": "string"},
+    }
+    if ref_port_id is not None:
+        port["ref_port_id"] = str(ref_port_id)
+    return {
+        "nodes": [
+            {
+                "id": str(uuid.uuid4()),
+                "type": NodeType.SUBGRAPH,
+                "name": "Subgraph",
+                "ref_graph_version_id": str(ref_graph_version_id),
+                "ports": [port],
+            }
+        ]
+    }
+
+
+def _own_versions(graph):
+    return sorted(
+        GraphVersion.all_objects.filter(graph=graph).values_list("id", flat=True)
+    )
+
+
+@pytest.fixture
+def ref_output_port(node_template):
+    """An output port on a node of ``version``, usable as a ref_port target."""
+
+    def _make(version):
+        node = Node.no_workspace_objects.create(
+            graph_version=version,
+            node_template=node_template,
+            type=NodeType.ATOMIC,
+            name="Ref Node",
+            config={},
+        )
+        return Port.no_workspace_objects.create(
+            node=node,
+            key="output1",
+            display_name="summary",
+            direction=PortDirection.OUTPUT,
+            data_schema={"type": "string"},
+        )
+
+    return _make
+
+
+def test_rs03_version_create_foreign_ref_graph_version_reads_like_missing(
+    authenticated_client, graph, graph_version, foreign
+):
+    """B01: another tenant's ref_graph_version_id in the body == a random id."""
+    foreign_ref = GraphVersion.no_workspace_objects.get(
+        graph=foreign["graph"], status=GraphVersionStatus.INACTIVE
+    )
+    missing_ref = uuid.uuid4()
+    before = (_own_versions(graph), _foreign_state(foreign))
+
+    response = authenticated_client.post(
+        VERSIONS.format(g=graph.id),
+        _subgraph_version_body(foreign_ref.id),
+        format="json",
+    )
+    missing_response = authenticated_client.post(
+        VERSIONS.format(g=graph.id),
+        _subgraph_version_body(missing_ref),
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    _assert_same_answer(
+        response, missing_response, swap=(str(foreign_ref.id), str(missing_ref))
+    )
+    assert not Node.all_objects.filter(ref_graph_version=foreign_ref).exists()
+    assert (_own_versions(graph), _foreign_state(foreign)) == before
+
+
+def test_rs03_version_create_foreign_ref_port_reads_like_missing(
+    authenticated_client,
+    graph,
+    graph_version,
+    active_referenced_graph_version,
+    foreign,
+):
+    """B01: another tenant's ref_port_id in the body == a random id."""
+    missing_port = uuid.uuid4()
+    before = (_own_versions(graph), _foreign_state(foreign))
+
+    response = authenticated_client.post(
+        VERSIONS.format(g=graph.id),
+        _subgraph_version_body(
+            active_referenced_graph_version.id, ref_port_id=foreign["port"].id
+        ),
+        format="json",
+    )
+    missing_response = authenticated_client.post(
+        VERSIONS.format(g=graph.id),
+        _subgraph_version_body(
+            active_referenced_graph_version.id, ref_port_id=missing_port
+        ),
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    _assert_same_answer(
+        response, missing_response, swap=(str(foreign["port"].id), str(missing_port))
+    )
+    assert not Port.all_objects.filter(ref_port=foreign["port"]).exists()
+    assert (_own_versions(graph), _foreign_state(foreign)) == before
+
+
+@pytest.mark.parametrize("referenced", ["own", "template"])
+def test_rs03_version_create_own_and_template_references_still_resolve(
+    authenticated_client,
+    graph,
+    graph_version,
+    active_referenced_graph_version,
+    template_versions,
+    ref_output_port,
+    referenced,
+):
+    """Same-tenant and system-template versions and ports stay referenceable."""
+    ref_version = {
+        "own": active_referenced_graph_version,
+        "template": template_versions["active"],
+    }[referenced]
+    ref_port = ref_output_port(ref_version)
+
+    response = authenticated_client.post(
+        VERSIONS.format(g=graph.id),
+        _subgraph_version_body(ref_version.id, ref_port_id=ref_port.id),
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_201_CREATED
+    created = response.json()["result"]
+    node = Node.no_workspace_objects.get(graph_version_id=created["id"])
+    assert node.ref_graph_version_id == ref_version.id
+    assert Port.no_workspace_objects.get(node=node).ref_port_id == ref_port.id
+
+
+def test_rs03_version_content_without_scope_resolves_templates_only(
+    graph_version, active_referenced_graph_version, template_versions
+):
+    """A caller that passes no organization/workspace fails closed: only
+    system-template versions resolve, never a tenant's graph version."""
+
+    def _subgraph(ref_version):
+        return {
+            "id": str(uuid.uuid4()),
+            "type": NodeType.SUBGRAPH,
+            "name": "Subgraph",
+            "ref_graph_version_id": str(ref_version.id),
+        }
+
+    with pytest.raises(ValidationError, match="not found"):
+        create_node(
+            graph_version,
+            _subgraph(active_referenced_graph_version),
+            skip_validation=True,
+        )
+    node = create_node(
+        graph_version, _subgraph(template_versions["active"]), skip_validation=True
+    )
+    assert node.ref_graph_version_id == template_versions["active"].id
 
 
 # =============================================================================

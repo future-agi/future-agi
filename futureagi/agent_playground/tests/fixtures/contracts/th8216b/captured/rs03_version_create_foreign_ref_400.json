@@ -1,0 +1,20 @@
+{
+  "body": {
+    "code": "invalid",
+    "detail": "[\"Referenced graph version '<ref_graph_version_id>' not found\"]",
+    "error": "[\"Referenced graph version '<ref_graph_version_id>' not found\"]",
+    "message": "[\"Referenced graph version '<ref_graph_version_id>' not found\"]",
+    "result": "[\"Referenced graph version '<ref_graph_version_id>' not found\"]",
+    "status": false,
+    "type": "validation_error"
+  },
+  "label": "captured",
+  "method": "POST",
+  "note": "A foreign body reference reads like a missing one (was 201, linked).",
+  "operation": "agent-playground_graphs_versions_create",
+  "path": "/agent-playground/graphs/{id}/versions/",
+  "request": {
+    "body": ["nodes[subgraph, ref_graph_version_id(foreign)]"]
+  },
+  "status": 400
+}

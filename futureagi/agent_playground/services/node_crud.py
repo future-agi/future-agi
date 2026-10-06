@@ -413,28 +413,37 @@ def _resolve_node_template(node_template_id: UUID) -> NodeTemplate:
     return NodeTemplate.no_workspace_objects.get(id=node_template_id)
 
 
+def referenceable_graph_q(
+    organization: Any, workspace: Any, graph_path: str = "graph"
+) -> Q:
+    """Graphs a caller may reference as a subgraph: system templates, or graphs
+    in the caller's organization and workspace. ``graph_path`` is the lookup
+    path from the filtered model to its Graph."""
+    organization_id = getattr(organization, "id", None)
+    workspace_id = getattr(workspace, "id", None)
+
+    is_template = Q(**{f"{graph_path}__is_template": True})
+    accessible_graphs = is_template
+    if organization_id:
+        accessible_graphs |= Q(**{f"{graph_path}__organization_id": organization_id})
+    if workspace_id:
+        accessible_graphs &= is_template | Q(
+            **{f"{graph_path}__workspace_id": workspace_id}
+        )
+    return accessible_graphs
+
+
 def _resolve_ref_graph_version(
     ref_graph_version_id: UUID,
     owner_version: GraphVersion,
     organization: Any,
     workspace: Any,
 ) -> GraphVersion:
-    organization_id = getattr(organization, "id", None)
-    workspace_id = getattr(workspace, "id", None)
-
-    queryset = GraphVersion.no_workspace_objects.select_related("graph").filter(
-        id=ref_graph_version_id
+    ref_version = (
+        GraphVersion.no_workspace_objects.select_related("graph")
+        .filter(referenceable_graph_q(organization, workspace))
+        .get(id=ref_graph_version_id)
     )
-    accessible_graphs = Q(graph__is_template=True)
-    if organization_id:
-        accessible_graphs |= Q(graph__organization_id=organization_id)
-    queryset = queryset.filter(accessible_graphs)
-    if workspace_id:
-        queryset = queryset.filter(
-            Q(graph__is_template=True) | Q(graph__workspace_id=workspace_id)
-        )
-
-    ref_version = queryset.get()
     ref_graph = ref_version.graph
 
     if ref_version.status not in (
