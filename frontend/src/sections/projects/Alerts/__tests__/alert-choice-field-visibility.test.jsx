@@ -7,6 +7,7 @@ import {
   renderWithRouter,
   screen,
   waitFor,
+  within,
 } from "src/utils/test-utils";
 
 import { SnackbarProvider } from "notistack";
@@ -283,7 +284,12 @@ describe("Choice-thresholded evals gate the preview graph on a chosen label", ()
     choices: null,
   };
 
-  const renderDirtiedAlert = async (evaluation, thresholdMetricValue) => {
+  const renderDirtiedAlert = async (
+    evaluation,
+    thresholdMetricValue,
+    evaluations = [evaluation],
+    { dirty = true } = {},
+  ) => {
     // savedAlert carries valid thresholds (less_than, 5 < 12), so the only
     // variable under test is whether a choice is present.
     const detail = {
@@ -297,7 +303,7 @@ describe("Choice-thresholded evals gate the preview graph on a chosen label", ()
     vi.spyOn(axios, "get").mockImplementation((url) =>
       Promise.resolve({
         data: {
-          result: url === endpoints.project.getTraceEvals() ? [evaluation] : [],
+          result: url === endpoints.project.getTraceEvals() ? evaluations : [],
         },
       }),
     );
@@ -347,10 +353,12 @@ describe("Choice-thresholded evals gate the preview graph on a chosen label", ()
 
     // isQueryEnabled requires the edited form to be dirty; a name edit dirties
     // it without touching the choice under test.
-    const nameInput = document.querySelector('[data-alert-field="name"]');
-    act(() => {
-      fireEvent.change(nameInput, { target: { value: "Edited alert name" } });
-    });
+    if (dirty) {
+      const nameInput = document.querySelector('[data-alert-field="name"]');
+      act(() => {
+        fireEvent.change(nameInput, { target: { value: "Edited alert name" } });
+      });
+    }
 
     return payloadCalls;
   };
@@ -375,6 +383,64 @@ describe("Choice-thresholded evals gate the preview graph on a chosen label", ()
   it("enables the preview for a score eval without a choice (no regression)", async () => {
     const calls = await renderDirtiedAlert(SCORE_EVAL, "");
     await waitFor(() => expect(lastEnabled(calls)).toBe(true));
+  });
+
+  // The preview payload carries the debounced metric, so for 300ms after a
+  // switch it still names the old eval. Gating on the live eval in that window
+  // previewed the old choices eval with no label, and the backend 400'd.
+  it.each([
+    ["no label chosen", ""],
+    ["a label chosen", "frequently"],
+  ])("never previews the previous choices eval with no label while switching to a score eval (%s)", async (_case, label) => {
+    const calls = await renderDirtiedAlert(CHOICES_EVAL, label, [
+      CHOICES_EVAL,
+      SCORE_EVAL,
+    ]);
+    await new Promise((resolve) => setTimeout(resolve, 400));
+
+    fireEvent.click(screen.getByDisplayValue(CHOICES_EVAL.name));
+    const option = await screen.findByRole("menuitem", {
+      name: SCORE_EVAL.name,
+    });
+    fireEvent.click(within(option).getByText(SCORE_EVAL.name));
+
+    await waitFor(() => {
+      const last = calls[calls.length - 1];
+      expect(last.enabled).toBe(true);
+      expect(last.payload.metric).toBe(SCORE_EVAL.id);
+    });
+    const unlabelledChoicesPreview = calls.some(
+      ({ payload, enabled }) =>
+        enabled &&
+        payload.metric === CHOICES_EVAL.id &&
+        !payload.threshold_metric_value,
+    );
+    expect(unlabelledChoicesPreview).toBe(false);
+  });
+
+  // Picking the eval is what dirties the form here, so the preview switches on
+  // during the same 300ms window in which the payload still names the old eval.
+  it("does not preview the score eval it just left once a choices eval is picked", async () => {
+    const calls = await renderDirtiedAlert(
+      SCORE_EVAL,
+      "",
+      [SCORE_EVAL, CHOICES_EVAL],
+      { dirty: false },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    const switchedAt = calls.length;
+
+    fireEvent.click(screen.getByDisplayValue(SCORE_EVAL.name));
+    const option = await screen.findByRole("menuitem", {
+      name: CHOICES_EVAL.name,
+    });
+    fireEvent.click(within(option).getByText(CHOICES_EVAL.name));
+    await new Promise((resolve) => setTimeout(resolve, 900));
+
+    const staleScorePreview = calls
+      .slice(switchedAt)
+      .some(({ payload, enabled }) => enabled && payload.metric === SCORE_EVAL.id);
+    expect(staleScorePreview).toBe(false);
   });
 });
 

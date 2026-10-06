@@ -162,6 +162,17 @@ export default function AlertSettingsForm({
     [expandedEvaluations, metric],
   );
   const selectedEvalOutputType = selectedEval?.output_type ?? null;
+  // The eval the preview payload actually names. The payload carries the
+  // debounced metric, so for 300ms after a switch it still points at the old
+  // eval; gating on the live one in that window previews a choice eval with no
+  // label, and the backend rejects it.
+  const debouncedSelectedEval = useMemo(
+    () =>
+      expandedEvaluations?.find(
+        (evaluation) => evaluation?.id === debouncedMetric,
+      ),
+    [expandedEvaluations, debouncedMetric],
+  );
   // Choice and Pass/Fail evals aggregate to a rate between 0 and 1; score
   // evals are avg(output_float) with no upper bound, so only the bounded
   // kinds get the fraction label. percentage_change divides this same field
@@ -208,7 +219,10 @@ export default function AlertSettingsForm({
 
     if (debouncedMetricType === "evaluation_metrics") {
       payload.metric = debouncedMetric;
-      if (debouncedThresHoldMetricValue && selectedMetricOptions?.length > 0) {
+      if (
+        debouncedThresHoldMetricValue &&
+        evalUsesChoiceThreshold(debouncedSelectedEval)
+      ) {
         payload.threshold_metric_value = debouncedThresHoldMetricValue;
       }
     }
@@ -225,6 +239,7 @@ export default function AlertSettingsForm({
     debouncedFrequency,
     debouncedMetric,
     debouncedThresHoldMetricValue,
+    debouncedSelectedEval,
     // eslint-disable-next-line react-hooks/exhaustive-deps
     JSON.stringify(debounceWatchedFilters),
   ]);
@@ -254,9 +269,12 @@ export default function AlertSettingsForm({
       !hasErrors &&
       (debouncedMetricType === "evaluation_metrics"
         ? debouncedMetric &&
+          // Wait for the debounced metric to catch up with the picker, so the
+          // preview never runs for the eval the user just left.
+          debouncedMetric === metric &&
           // A choice-thresholded eval's graph requires the chosen label; firing
           // the preview before it is set 400s. Score evals need no choice.
-          (!evalUsesChoiceThreshold(selectedEval) ||
+          (!evalUsesChoiceThreshold(debouncedSelectedEval) ||
             debouncedThresHoldMetricValue)
         : true);
 
@@ -282,8 +300,9 @@ export default function AlertSettingsForm({
     debouncedWarning,
     debouncedFrequency,
     debouncedMetric,
+    metric,
     debouncedThresHoldMetricValue,
-    selectedEval,
+    debouncedSelectedEval,
     errors,
     openSheetView,
     isDirty,
