@@ -8,6 +8,16 @@ vi.mock("src/api/simulate-environments/runDetail", () => ({
   useRunCalls: (...args) => useRunCalls(...args),
 }));
 
+// The eval column menu owns its own data; here it only has to receive the
+// right column and run.
+vi.mock("../../EvalColumnActions", () => ({
+  default: ({ menuFor, executionId, runTestId }) => (
+    <div data-testid="eval-actions">
+      {`eval-actions:${menuFor?.evalId ?? "-"}:${executionId}:${runTestId}`}
+    </div>
+  ),
+}));
+
 const { default: RunTraceTable } = await import("../RunTraceTable");
 const { default: TraceGroupHeaderRow } = await import("../TraceGroupHeaderRow");
 
@@ -530,5 +540,31 @@ describe("RunTraceTable", () => {
     renderTable();
     expect(screen.getByText(/Couldn't load calls/i)).toBeInTheDocument();
     expect(screen.queryByText(/No calls match that filter/)).toBeNull();
+  });
+
+  it("adds no column menu without eval actions", () => {
+    renderTable();
+    expect(
+      screen.queryByRole("button", { name: "Actions for Tone" }),
+    ).toBeNull();
+    expect(screen.queryByTestId("eval-actions")).toBeNull();
+  });
+
+  it("opens the eval column's menu for that column and this run", async () => {
+    const user = userEvent.setup();
+    renderTable({
+      evalActions: {
+        env: { id: "env-1" },
+        runTestId: "rt1",
+        canRun: true,
+        grading: false,
+      },
+    });
+    expect(screen.getByText("eval-actions:-:ex1:rt1")).toBeInTheDocument();
+
+    const button = screen.getByRole("button", { name: "Actions for Tone" });
+    expect(button.closest("th")).toHaveTextContent("Tone");
+    await user.click(button);
+    expect(screen.getByText("eval-actions:eval-1:ex1:rt1")).toBeInTheDocument();
   });
 });

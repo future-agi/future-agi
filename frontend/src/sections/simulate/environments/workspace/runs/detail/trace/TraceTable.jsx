@@ -84,6 +84,7 @@ export default function TraceTable({
   columns,
   activeCallId = null,
   scrollRef,
+  renderEvalHeaderAction = null,
 }) {
   const [collapsed, setCollapsed] = useState(null);
   const activeRowRef = useRef(null);
@@ -430,20 +431,39 @@ export default function TraceTable({
                 <TableCell sx={{ ...headCellSx, width: 120 }}>Tokens</TableCell>
               )}
               {showEvals &&
-                evals.map((e) => (
-                  <TableCell key={e.id} sx={{ ...headCellSx, width: 150 }}>
+                evals.map((e) => {
+                  const name = (
                     <Typography
                       noWrap
                       sx={{
                         typography: "s2",
                         fontWeight: "fontWeightMedium",
                         color: "text.secondary",
+                        ...(renderEvalHeaderAction && { flex: 1, minWidth: 0 }),
                       }}
                     >
                       {e.name}
                     </Typography>
-                  </TableCell>
-                ))}
+                  );
+                  return (
+                    <TableCell key={e.id} sx={{ ...headCellSx, width: 150 }}>
+                      {renderEvalHeaderAction ? (
+                        <Stack
+                          direction="row"
+                          alignItems="center"
+                          spacing={0.5}
+                        >
+                          {name}
+                          <Box sx={{ flexShrink: 0 }}>
+                            {renderEvalHeaderAction(e)}
+                          </Box>
+                        </Stack>
+                      ) : (
+                        name
+                      )}
+                    </TableCell>
+                  );
+                })}
             </TableRow>
           </TableHead>
           <TableBody>
@@ -476,4 +496,6 @@ TraceTable.propTypes = {
   columns: PropTypes.instanceOf(Set),
   activeCallId: PropTypes.string,
   scrollRef: PropTypes.oneOfType([PropTypes.func, PropTypes.object]),
+  // Optional per-eval node shown after the eval's name in its header cell.
+  renderEvalHeaderAction: PropTypes.func,
 };

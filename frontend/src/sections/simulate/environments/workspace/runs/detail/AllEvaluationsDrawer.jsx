@@ -20,15 +20,13 @@ import {
   useEnvironmentRunTest,
   useRemoveAppliedEvaluation,
 } from "src/api/simulate-environments/environments";
-import {
-  runResultsKey,
-  useRunNewEvals,
-} from "src/api/simulate-environments/runEvals";
+import { runResultsKey } from "src/api/simulate-environments/runEvals";
 import SideDrawer from "../../../components/SideDrawer";
 import EmptyState from "../../../components/EmptyState";
 import AddEvaluationDrawer from "../../evals/AddEvaluationDrawer";
 import { EVALS_COPY } from "../../evals/evals.constants";
 import { refusalText } from "../../evals/refusalText";
+import { useRegradeEvals } from "./useRegradeEvals";
 
 // Only a harness call rerun can refresh a non-regradable row's score, so both
 // its checkbox and its run action are locked with the same explanation.
@@ -39,11 +37,9 @@ export const NOT_EDITABLE_TOOLTIP = EVALS_COPY.notEditable;
 export const HARNESS_NOTE =
   "Scores the harness gave will be replaced by the platform's.";
 
-// A failed or unanswered request may still have started grading.
-const RUN_FALLBACK = "Grading may not have started. Try again.";
 const REMOVE_FALLBACK = "Couldn’t remove the evaluation. Try again.";
-const NOT_FINISHED_TOOLTIP = "Available once this run finishes.";
-const GRADING_TOOLTIP = "Available once grading finishes.";
+export const NOT_FINISHED_TOOLTIP = "Available once this run finishes.";
+export const GRADING_TOOLTIP = "Available once grading finishes.";
 // A stable empty-array constant: `= []` as a hook default is a fresh
 // reference on every render, which would re-run the memos below even when
 // the run test's configs have not changed.
@@ -98,7 +94,7 @@ export default function AllEvaluationsDrawer({
   } = useEnvironmentRunTest(runTestId, { enabled: open && Boolean(runTestId) });
   const configs = configsData ?? NO_CONFIGS;
 
-  const runEvals = useRunNewEvals();
+  const runEvals = useRegradeEvals({ runTestId, executionId });
   const removeEval = useRemoveAppliedEvaluation();
 
   const runnableIds = useMemo(
@@ -133,34 +129,14 @@ export default function AllEvaluationsDrawer({
     });
   };
 
-  const handleConfirm = (list) => {
-    const evalConfigIds = list.map((c) => c.id);
-    runEvals.mutate(
-      { runTestId, executionId, evalConfigIds },
-      {
-        onSuccess: (result) => {
-          setConfirming(null);
-          setTicked(new Set());
-          // The endpoint answers 200 even when the async dispatch itself
-          // failed (nothing was graded and it can be retried), so that case
-          // is told apart by its own sentence, not the status code.
-          if (/dispatch failed/i.test(result?.message || "")) {
-            enqueueSnackbar(RUN_FALLBACK, { variant: "warning" });
-            return;
-          }
-          const k = evalConfigIds.length;
-          enqueueSnackbar(
-            `Grading ${k} evaluation${k === 1 ? "" : "s"}. This run updates when grading finishes.`,
-            { variant: "success" },
-          );
-          onClose();
-        },
-        onError: (e) => {
-          enqueueSnackbar(refusalText(e, RUN_FALLBACK), { variant: "error" });
-        },
+  const handleConfirm = (list) =>
+    runEvals.regrade(list, {
+      onSuccess: (dispatched) => {
+        setConfirming(null);
+        setTicked(new Set());
+        if (dispatched) onClose();
       },
-    );
-  };
+    });
 
   const handleRemove = (config) => {
     removeEval.mutate(

@@ -1,0 +1,51 @@
+import { enqueueSnackbar } from "notistack";
+import { useRunNewEvals } from "src/api/simulate-environments/runEvals";
+import { refusalText } from "../../evals/refusalText";
+
+// A failed or unanswered request may still have started grading.
+export const RUN_FALLBACK = "Grading may not have started. Try again.";
+
+/**
+ * Grade chosen evals again on one finished run, without rerunning its calls.
+ *
+ * Every place that re-runs an eval on a run page goes through here, so the
+ * request, its messages and its refusals live in one place.
+ *
+ * `regrade(configs, { onSuccess })` calls `onSuccess(dispatched)` once the
+ * server answers: `dispatched` is false when it accepted the request but
+ * couldn't start the grading job. A refusal shows the server's sentence and
+ * calls nothing, so a confirm dialog stays open for a retry.
+ */
+export function useRegradeEvals({ runTestId, executionId }) {
+  const runEvals = useRunNewEvals();
+
+  const regrade = (configs, { onSuccess } = {}) => {
+    const evalConfigIds = configs.map((c) => c.id);
+    runEvals.mutate(
+      { runTestId, executionId, evalConfigIds },
+      {
+        onSuccess: (result) => {
+          // The endpoint answers 200 even when the async dispatch itself
+          // failed (nothing was graded and it can be retried), so that case
+          // is told apart by its own sentence, not the status code.
+          if (/dispatch failed/i.test(result?.message || "")) {
+            enqueueSnackbar(RUN_FALLBACK, { variant: "warning" });
+            onSuccess?.(false);
+            return;
+          }
+          const k = evalConfigIds.length;
+          enqueueSnackbar(
+            `Grading ${k} evaluation${k === 1 ? "" : "s"}. This run updates when grading finishes.`,
+            { variant: "success" },
+          );
+          onSuccess?.(true);
+        },
+        onError: (e) => {
+          enqueueSnackbar(refusalText(e, RUN_FALLBACK), { variant: "error" });
+        },
+      },
+    );
+  };
+
+  return { regrade, isPending: runEvals.isPending };
+}

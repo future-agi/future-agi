@@ -155,6 +155,7 @@ function RunTraceTableStub({
   activeCallId,
   activePage,
   initialFilters,
+  evalActions,
 }) {
   useEffect(() => {
     onQueryChange?.(TABLE_QUERY);
@@ -164,6 +165,11 @@ function RunTraceTableStub({
     <div>
       run-trace-table:{JSON.stringify(initialFilters || {})}
       <span>{`active:${activeCallId ?? "-"}:${activePage ?? "-"}`}</span>
+      <span>
+        {evalActions
+          ? `eval-actions:${evalActions.env?.id}:${evalActions.runTestId}:${evalActions.canRun}:${evalActions.grading}`
+          : "eval-actions:-"}
+      </span>
       <button
         type="button"
         onClick={() => onOpenCall({ id: "c1", simulationCallType: "voice" })}
@@ -179,6 +185,7 @@ RunTraceTableStub.propTypes = {
   onQueryChange: PropTypes.func,
   activeCallId: PropTypes.string,
   activePage: PropTypes.number,
+  evalActions: PropTypes.object,
 };
 vi.mock("../trace/RunTraceTable", () => ({ default: RunTraceTableStub }));
 vi.mock("../CallDrawer", () => ({
@@ -488,7 +495,7 @@ describe("RunDetail", () => {
       });
       renderDetail();
 
-      for (const name of [/Add evals/, /Export/, /Run again/, /Debug failures/]) {
+      for (const name of [/Run evals/, /Export/, /Run again/, /Debug failures/]) {
         expect(screen.getByRole("button", { name })).toBeDisabled();
       }
       // Stop stays available — it is the one action a live run needs.
@@ -508,7 +515,7 @@ describe("RunDetail", () => {
     });
     renderDetail();
 
-    for (const name of [/Add evals/, /Export/, /Run again/, /Debug failures/]) {
+    for (const name of [/Run evals/, /Export/, /Run again/, /Debug failures/]) {
       expect(screen.getByRole("button", { name })).toBeEnabled();
     }
   });
@@ -542,6 +549,30 @@ describe("RunDetail", () => {
     expect(screen.queryByText(/^add-evals-drawer:/)).toBeNull();
     await user.click(screen.getByRole("button", { name: "open add flow" }));
     expect(screen.getByText("add-evals-drawer:ex1")).toBeInTheDocument();
+  });
+
+  it("gives the table's eval column menus this run's gating", () => {
+    useRunDetail.mockReturnValue({
+      identity: { ...IDENTITY, executionStatus: "completed" },
+      stats: STATS,
+      isLoading: false,
+    });
+    renderDetail();
+    expect(
+      screen.getByText(/^eval-actions:[^:]+:rt1:true:false$/),
+    ).toBeInTheDocument();
+  });
+
+  it("holds the column menus' re-runs while the run is being graded", () => {
+    useRunDetail.mockReturnValue({
+      identity: { ...IDENTITY, executionStatus: "evaluating" },
+      stats: STATS,
+      isLoading: false,
+    });
+    renderDetail();
+    expect(
+      screen.getByText(/^eval-actions:[^:]+:rt1:false:true$/),
+    ).toBeInTheDocument();
   });
 
   it("lets the drawer grade only once the run has finished", async () => {
@@ -622,6 +653,7 @@ describe("RunDetail", () => {
     });
     const user = userEvent.setup();
     renderDetail({ backed: false, envState: { evals: ["preset-eval"] } });
+    expect(screen.getByText("eval-actions:-")).toBeInTheDocument();
 
     expect(screen.queryByText(/^add-evals-drawer:/)).toBeNull();
     await user.click(screen.getByRole("button", { name: "Add evals" }));

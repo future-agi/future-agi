@@ -5,6 +5,7 @@ import {
   Stack,
   Button,
   Chip,
+  IconButton,
   Pagination,
   Typography,
 } from "@mui/material";
@@ -15,6 +16,7 @@ import { useRunCalls } from "src/api/simulate-environments/runDetail";
 
 import SectionCard from "../../../../components/SectionCard";
 import EmptyState from "../../../../components/EmptyState";
+import EvalColumnActions from "../EvalColumnActions";
 import TraceTable from "./TraceTable";
 import { TraceGroupByPicker, TraceColumnsPicker } from "./TracePickers";
 import StatusFilterChips from "./StatusFilterChips";
@@ -58,8 +60,11 @@ export default function RunTraceTable({
   initialFilters = {},
   activeCallId = null,
   activePage = null,
+  evalActions = null,
 }) {
   const [groupBy, setGroupBy] = useState("goal");
+  // The eval column whose ⋮ menu is open: { evalId, name, anchorEl } or null.
+  const [evalMenuFor, setEvalMenuFor] = useState(null);
   const [statusChip, setStatusChip] = useState("all");
   const [page, setPage] = useState(1);
   const [visibleColumns, setVisibleColumns] = useState(() =>
@@ -352,6 +357,29 @@ export default function RunTraceTable({
               onOpen={onOpenCall}
               activeCallId={activeCallId}
               scrollRef={tableScrollRef}
+              renderEvalHeaderAction={
+                evalActions
+                  ? (e) => (
+                      <IconButton
+                        size="small"
+                        aria-label={`Actions for ${e.name}`}
+                        onClick={(event) =>
+                          setEvalMenuFor({
+                            evalId: e.id,
+                            name: e.name,
+                            anchorEl: event.currentTarget,
+                          })
+                        }
+                      >
+                        <Iconify
+                          icon="mdi:dots-vertical"
+                          width={16}
+                          sx={{ color: "text.subtitle" }}
+                        />
+                      </IconButton>
+                    )
+                  : null
+              }
             />
           )}
         </Box>
@@ -409,6 +437,15 @@ export default function RunTraceTable({
         showAiFilter={false}
         placement="bottom-start"
       />
+
+      {evalActions && (
+        <EvalColumnActions
+          {...evalActions}
+          executionId={executionId}
+          menuFor={evalMenuFor}
+          onClose={() => setEvalMenuFor(null)}
+        />
+      )}
     </>
   );
 }
@@ -419,4 +456,11 @@ RunTraceTable.propTypes = {
   initialFilters: PropTypes.object,
   activeCallId: PropTypes.string,
   activePage: PropTypes.number,
+  // Given, each eval column header gets a ⋮ menu to re-run or edit that eval.
+  evalActions: PropTypes.shape({
+    env: PropTypes.shape({ id: PropTypes.string }),
+    runTestId: PropTypes.string,
+    canRun: PropTypes.bool,
+    grading: PropTypes.bool,
+  }),
 };

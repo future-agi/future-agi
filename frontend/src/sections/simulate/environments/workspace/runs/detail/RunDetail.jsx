@@ -368,6 +368,18 @@ export default function RunDetail({
               onQueryChange={setTableQuery}
               activeCallId={openCall?.task.id ?? null}
               activePage={openCall?.page ?? null}
+              // Same gating as the All Evaluations drawer below; a client-only
+              // env has no server evals to act on.
+              evalActions={
+                backed
+                  ? {
+                      env,
+                      runTestId: testId,
+                      canRun: executionStatus === "completed",
+                      grading: executionStatus === "evaluating",
+                    }
+                  : null
+              }
               initialFilters={tableHandoff.filters}
             />
           )}
