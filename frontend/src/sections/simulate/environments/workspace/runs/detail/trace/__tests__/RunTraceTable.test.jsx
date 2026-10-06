@@ -890,6 +890,16 @@ describe("RunTraceTable", () => {
       expect(screen.queryByText("Evaluations")).toBeNull();
     });
 
+    it("caps the menu's height so a long evaluation list scrolls", async () => {
+      const user = userEvent.setup();
+      withEvals();
+      renderTable();
+      await openPicker(user);
+
+      const paper = screen.getByRole("menu").closest(".MuiPaper-root");
+      expect(window.getComputedStyle(paper).maxHeight).toBe("420px");
+    });
+
     it("counts the evaluations in the Columns total", async () => {
       const user = userEvent.setup();
       withEvals();

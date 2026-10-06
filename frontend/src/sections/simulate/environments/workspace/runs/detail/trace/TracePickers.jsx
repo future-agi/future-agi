@@ -177,7 +177,9 @@ export function TraceColumnsPicker({
         anchorEl={anchor}
         open={!!anchor}
         onClose={() => setAnchor(null)}
-        slotProps={{ paper: { sx: { minWidth: 240 } } }}
+        // A run can carry many evaluations: the list scrolls rather than
+        // running the height of the window.
+        slotProps={{ paper: { sx: { minWidth: 240, maxHeight: 420 } } }}
       >
         {sections.map((section, i) => [
           i > 0 && <Divider key={`div-${section.name}`} sx={{ my: 0.5 }} />,
