@@ -30,14 +30,12 @@ def authenticators():
     enumerated by drf-yasg exactly as ``generate_swagger`` does."""
     generator = OpenAPISchemaGenerator(openapi.Info(title="", default_version=""))
     result = {}
-    for path, (view_cls, methods) in generator.get_endpoints(None).items():
-        for method, callback in methods:
-            initkwargs = getattr(callback, "initkwargs", {})
-            result[(path, method.lower())] = tuple(
-                initkwargs.get(
-                    "authentication_classes", view_cls.authentication_classes
-                )
-            )
+    for path, (_view_cls, methods) in generator.get_endpoints(None).items():
+        # drf-yasg yields one view instance per method, built with the route's
+        # initkwargs (as_view(...) / @action overrides already applied), so the
+        # instance attribute is what DRF will actually authenticate with.
+        for method, view in methods:
+            result[(path, method.lower())] = tuple(view.authentication_classes)
     return result
 
 
