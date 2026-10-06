@@ -1,0 +1,22 @@
+{
+  "body": {
+    "result": {
+      "commit_message": null,
+      "created_at": "2026-01-01T00:00:00Z",
+      "id": "00000000-0000-4000-8000-000000000001",
+      "node_connections": [],
+      "nodes": [],
+      "status": "active",
+      "tags": [],
+      "version_number": 3
+    },
+    "status": true
+  },
+  "label": "captured",
+  "method": "POST",
+  "note": "",
+  "operation": "agent-playground_graphs_versions_activate_version",
+  "path": "/agent-playground/graphs/{id}/versions/{version_id}/activate/",
+  "request": {},
+  "status": 200
+}

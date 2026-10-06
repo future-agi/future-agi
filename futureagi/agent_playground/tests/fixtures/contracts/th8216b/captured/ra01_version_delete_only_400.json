@@ -1,0 +1,18 @@
+{
+  "body": {
+    "code": "invalid",
+    "detail": "Cannot delete the only version.",
+    "error": "Cannot delete the only version.",
+    "message": "Cannot delete the only version.",
+    "result": "Cannot delete the only version.",
+    "status": false,
+    "type": "validation_error"
+  },
+  "label": "captured",
+  "method": "DELETE",
+  "note": "",
+  "operation": "agent-playground_graphs_versions_delete",
+  "path": "/agent-playground/graphs/{id}/versions/{version_id}/",
+  "request": {},
+  "status": 400
+}

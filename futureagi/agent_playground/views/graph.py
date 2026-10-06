@@ -39,6 +39,8 @@ from agent_playground.serializers.graph_version import (
 from agent_playground.serializers.response_contracts import (
     GRAPH_VERSION_LIST_QUERY_PARAMETERS,
     IS_TEMPLATE_QUERY_PARAMETER,
+    AgentPlaygroundMessageResponseSerializer,
+    GraphBulkDeleteNotFoundResponseSerializer,
     GraphVersionDetailResponseSerializer,
     GraphVersionListResponseSerializer,
 )
@@ -58,6 +60,7 @@ from common.utils.pagination import paginate_queryset
 from model_hub.models.choices import DatasetSourceChoices
 from model_hub.models.develop_dataset import Dataset
 from tfc.utils.api_contracts import ExplicitQueryAutoSchema
+from tfc.utils.api_serializers import EmptyRequestSerializer
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 
@@ -83,21 +86,61 @@ retrieve_version_schema = swagger_auto_schema(
         **AGENT_PLAYGROUND_ERROR_RESPONSES,
     },
 )
+retrieve_graph_schema = swagger_auto_schema(
+    auto_schema=ExplicitQueryAutoSchema,
+    manual_parameters=[IS_TEMPLATE_QUERY_PARAMETER],
+    responses=AGENT_PLAYGROUND_ERROR_RESPONSES,
+)
+delete_schema = swagger_auto_schema(
+    responses={
+        200: AgentPlaygroundMessageResponseSerializer,
+        **AGENT_PLAYGROUND_ERROR_RESPONSES,
+    },
+)
+bulk_delete_schema = swagger_auto_schema(
+    request_body=BulkDeleteSerializer,
+    responses={
+        200: AgentPlaygroundMessageResponseSerializer,
+        **AGENT_PLAYGROUND_ERROR_RESPONSES,
+        404: GraphBulkDeleteNotFoundResponseSerializer,
+    },
+)
+create_version_schema = swagger_auto_schema(
+    request_body=VersionCreateSerializer,
+    responses={
+        201: GraphVersionDetailResponseSerializer,
+        **AGENT_PLAYGROUND_ERROR_RESPONSES,
+    },
+)
+update_version_schema = swagger_auto_schema(
+    request_body=VersionMetadataUpdateSerializer,
+    responses={
+        200: GraphVersionDetailResponseSerializer,
+        **AGENT_PLAYGROUND_ERROR_RESPONSES,
+    },
+)
+activate_version_schema = swagger_auto_schema(
+    request_body=EmptyRequestSerializer,
+    responses={
+        200: GraphVersionDetailResponseSerializer,
+        **AGENT_PLAYGROUND_ERROR_RESPONSES,
+    },
+)
 
 
 @method_decorator(name="list", decorator=agent_playground_errors)
 @method_decorator(name="create", decorator=agent_playground_errors)
-@method_decorator(name="retrieve", decorator=agent_playground_errors)
+@method_decorator(name="retrieve", decorator=retrieve_graph_schema)
 @method_decorator(name="update", decorator=agent_playground_errors)
 @method_decorator(name="partial_update", decorator=agent_playground_errors)
-@method_decorator(name="destroy", decorator=agent_playground_errors)
-@method_decorator(name="bulk_delete", decorator=agent_playground_errors)
+@method_decorator(name="destroy", decorator=delete_schema)
+@method_decorator(name="bulk_delete", decorator=bulk_delete_schema)
 @method_decorator(name="list_versions", decorator=list_versions_schema)
-@method_decorator(name="create_version", decorator=agent_playground_errors)
+@method_decorator(name="create_version", decorator=create_version_schema)
 @method_decorator(name="retrieve_version", decorator=retrieve_version_schema)
-@method_decorator(name="update_version", decorator=agent_playground_errors)
-@method_decorator(name="delete_version", decorator=agent_playground_errors)
-@method_decorator(name="activate_version", decorator=agent_playground_errors)
+@method_decorator(name="update_version", decorator=update_version_schema)
+@method_decorator(name="delete_version", decorator=delete_schema)
+@method_decorator(name="activate_version", decorator=activate_version_schema)
 @method_decorator(name="referenceable_graphs", decorator=agent_playground_errors)
 class GraphViewSet(ModelViewSet):
     """
@@ -549,7 +592,8 @@ class GraphViewSet(ModelViewSet):
         Metadata-only update endpoint (PUT/PATCH).
 
         Updates commit_message and/or promotes draft → active.
-        Content changes (nodes, ports, edges) are done via granular CRUD or create_version.
+        Content changes (nodes, ports, edges) are done via granular CRUD or create_version;
+        content keys in this body are ignored. Only draft versions can be updated.
         """
         try:
             graph = self.get_object()
@@ -598,7 +642,9 @@ class GraphViewSet(ModelViewSet):
         Soft-delete a specific version and its content (nodes, ports, edges).
 
         Cannot delete if this is the only version for the graph.
-        Can delete active version - graph will then have no active version.
+        Can delete active version - graph will then have no active version;
+        no other version is promoted. Graph reads' active_version then shows
+        the latest remaining version with its own status.
         """
         try:
             graph = self.get_object()

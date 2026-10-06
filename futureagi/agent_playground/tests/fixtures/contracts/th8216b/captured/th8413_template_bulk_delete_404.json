@@ -1,0 +1,31 @@
+{
+  "body": {
+    "attr": "missing_ids",
+    "code": "not_found",
+    "detail": "Some graphs were not found.",
+    "details": {
+      "message": ["Some graphs were not found."],
+      "missing_ids": ["00000000-0000-4000-8000-000000000001"]
+    },
+    "error": "Some graphs were not found.",
+    "message": "Some graphs were not found.",
+    "result": {
+      "message": "Some graphs were not found.",
+      "missing_ids": ["00000000-0000-4000-8000-000000000001"]
+    },
+    "status": false,
+    "type": "not_found"
+  },
+  "label": "captured",
+  "method": "POST",
+  "note": "Template ids are reported as missing (was 200, template deleted).",
+  "operation": "agent-playground_graphs_bulk_delete",
+  "path": "/agent-playground/graphs/delete/",
+  "request": {
+    "body": ["ids[template]"],
+    "query": {
+      "is_template": "true"
+    }
+  },
+  "status": 404
+}

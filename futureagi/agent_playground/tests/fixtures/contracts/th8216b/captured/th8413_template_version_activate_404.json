@@ -1,0 +1,22 @@
+{
+  "body": {
+    "code": "not_found",
+    "detail": "Graph not found.",
+    "error": "Graph not found.",
+    "message": "Graph not found.",
+    "result": "Graph not found.",
+    "status": false,
+    "type": "not_found"
+  },
+  "label": "captured",
+  "method": "POST",
+  "note": "Template writes answer like a missing graph (was 200, template activated).",
+  "operation": "agent-playground_graphs_versions_activate_version",
+  "path": "/agent-playground/graphs/{id}/versions/{version_id}/activate/",
+  "request": {
+    "query": {
+      "is_template": "true"
+    }
+  },
+  "status": 404
+}

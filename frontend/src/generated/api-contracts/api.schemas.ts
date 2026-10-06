@@ -1877,6 +1877,65 @@ export interface GraphCreateApi {
   description?: string;
 }
 
+export interface BulkDeleteApi {
+  /** List of graph UUIDs to delete */
+  ids?: string[];
+  select_all?: boolean;
+  /** Graph UUIDs to exclude when using select_all */
+  exclude_ids?: string[];
+}
+
+export interface AgentPlaygroundMessageApi {
+  /** @minLength 1 */
+  message: string;
+}
+
+export interface AgentPlaygroundMessageResponseApi {
+  status: boolean;
+  result: AgentPlaygroundMessageApi;
+}
+
+export type GraphBulkDeleteNotFoundResponseApiType =
+  (typeof GraphBulkDeleteNotFoundResponseApiType)[keyof typeof GraphBulkDeleteNotFoundResponseApiType];
+
+export const GraphBulkDeleteNotFoundResponseApiType = {
+  validation_error: "validation_error",
+  authentication_error: "authentication_error",
+  payment_required: "payment_required",
+  entitlement_error: "entitlement_error",
+  permission_error: "permission_error",
+  not_found: "not_found",
+  conflict: "conflict",
+  client_error: "client_error",
+  rate_limit: "rate_limit",
+  server_error: "server_error",
+  service_unavailable: "service_unavailable",
+  timeout: "timeout",
+  api_error: "api_error",
+} as const;
+
+export type GraphBulkDeleteNotFoundResponseApiDetails = {
+  [key: string]: string[];
+};
+
+export interface GraphBulkDeleteMissingApi {
+  /** @minLength 1 */
+  message: string;
+  missing_ids: string[];
+}
+
+export interface GraphBulkDeleteNotFoundResponseApi {
+  status?: boolean;
+  type?: GraphBulkDeleteNotFoundResponseApiType;
+  code?: string;
+  detail?: string;
+  result: GraphBulkDeleteMissingApi;
+  message?: string;
+  error?: string;
+  attr?: string;
+  details?: GraphBulkDeleteNotFoundResponseApiDetails;
+}
+
 export interface TraceToGraphRequestApi {
   trace_id: string;
 }
@@ -2054,6 +2113,215 @@ export interface GraphVersionListResultApi {
 export interface GraphVersionListResponseApi {
   status: boolean;
   result: GraphVersionListResultApi;
+}
+
+export type VersionCreateApiStatus =
+  (typeof VersionCreateApiStatus)[keyof typeof VersionCreateApiStatus];
+
+export const VersionCreateApiStatus = {
+  draft: "draft",
+  active: "active",
+} as const;
+
+export type NodeWriteApiType =
+  (typeof NodeWriteApiType)[keyof typeof NodeWriteApiType];
+
+export const NodeWriteApiType = {
+  subgraph: "subgraph",
+  atomic: "atomic",
+} as const;
+
+export type PortWriteApiDirection =
+  (typeof PortWriteApiDirection)[keyof typeof PortWriteApiDirection];
+
+export const PortWriteApiDirection = {
+  input: "input",
+  output: "output",
+} as const;
+
+export type PortWriteApiDataSchema = { [key: string]: unknown };
+
+export type PortWriteApiDefaultValue = { [key: string]: unknown };
+
+export type PortWriteApiMetadata = { [key: string]: unknown };
+
+export interface PortWriteApi {
+  /** Frontend-generated UUID for the port */
+  id: string;
+  /**
+   * @minLength 1
+   * @maxLength 100
+   */
+  key: string;
+  /**
+   * @minLength 1
+   * @maxLength 100
+   */
+  display_name: string;
+  direction: PortWriteApiDirection;
+  data_schema?: PortWriteApiDataSchema;
+  required?: boolean;
+  default_value?: PortWriteApiDefaultValue;
+  metadata?: PortWriteApiMetadata;
+  ref_port_id?: string;
+}
+
+/**
+ * Type of content item
+ */
+export type MessageContentItemApiType =
+  (typeof MessageContentItemApiType)[keyof typeof MessageContentItemApiType];
+
+export const MessageContentItemApiType = {
+  text: "text",
+  image_url: "image_url",
+  audio_url: "audio_url",
+  pdf_url: "pdf_url",
+} as const;
+
+/**
+ * Array of content items
+ */
+export interface MessageContentItemApi {
+  /** Type of content item */
+  type: MessageContentItemApiType;
+  /** Text content (required when type=text) */
+  text?: string;
+  /**
+   * Image URL (required when type=image_url)
+   * @minLength 1
+   */
+  image_url?: string;
+  /**
+   * Audio URL (required when type=audio_url)
+   * @minLength 1
+   */
+  audio_url?: string;
+  /**
+   * PDF URL (required when type=pdf_url)
+   * @minLength 1
+   */
+  pdf_url?: string;
+}
+
+/**
+ * Array of message objects with id, role, and content array
+ */
+export interface MessageApi {
+  /**
+   * Unique identifier for the message (frontend-provided)
+   * @minLength 1
+   */
+  id: string;
+  /**
+   * Message role (e.g., 'system', 'user', 'assistant')
+   * @minLength 1
+   */
+  role: string;
+  /** Array of content items */
+  content: MessageContentItemApi[];
+}
+
+/**
+ * String or JSON object.
+ */
+export type PromptTemplateDataApiResponseFormat =
+  | string
+  | { [key: string]: unknown };
+
+/**
+ * JSON Schema (Draft 7) for structured outputs. Required when response_format='json_schema'. Example: {'type': 'object', 'properties': {...}, 'required': [...]}
+ */
+export type PromptTemplateDataApiResponseSchema = { [key: string]: unknown };
+
+export type PromptTemplateDataApiToolsItem = { [key: string]: string };
+
+export type PromptTemplateDataApiToolChoice = { [key: string]: unknown };
+
+export type PromptTemplateDataApiModelDetail = { [key: string]: string };
+
+export type PromptTemplateDataApiVariableNames = { [key: string]: string };
+
+export type PromptTemplateDataApiMetadata = { [key: string]: string };
+
+export interface PromptTemplateDataApi {
+  prompt_template_id?: string;
+  prompt_version_id?: string;
+  /** Array of message objects with id, role, and content array */
+  messages: MessageApi[];
+  /** String or JSON object. */
+  response_format?: PromptTemplateDataApiResponseFormat;
+  /** JSON Schema (Draft 7) for structured outputs. Required when response_format='json_schema'. Example: {'type': 'object', 'properties': {...}, 'required': [...]} */
+  response_schema?: PromptTemplateDataApiResponseSchema;
+  model?: string;
+  temperature?: number;
+  max_tokens?: number;
+  top_p?: number;
+  frequency_penalty?: number;
+  presence_penalty?: number;
+  output_format?: string;
+  tools?: PromptTemplateDataApiToolsItem[];
+  tool_choice?: PromptTemplateDataApiToolChoice;
+  model_detail?: PromptTemplateDataApiModelDetail;
+  variable_names?: PromptTemplateDataApiVariableNames;
+  metadata?: PromptTemplateDataApiMetadata;
+  commit_message?: string;
+  /** Template format: 'mustache' or 'jinja' */
+  template_format?: string;
+  save_prompt_version?: boolean;
+}
+
+/**
+ * List of input mappings from port display_name to source reference
+ */
+export interface InputMappingApi {
+  /**
+   * Input port display_name
+   * @minLength 1
+   */
+  key: string;
+  /**
+   * Source reference in format "NodeName.port_display_name" or null
+   * @minLength 1
+   */
+  value?: string;
+}
+
+export type NodeWriteApiConfig = { [key: string]: unknown };
+
+export type NodeWriteApiPosition = { [key: string]: unknown };
+
+export interface NodeWriteApi {
+  /** Frontend-generated UUID for the node */
+  id: string;
+  type: NodeWriteApiType;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  name: string;
+  node_template_id?: string;
+  ref_graph_version_id?: string;
+  config?: NodeWriteApiConfig;
+  position?: NodeWriteApiPosition;
+  ports?: PortWriteApi[];
+  prompt_template?: PromptTemplateDataApi;
+  /** List of input mappings from port display_name to source reference */
+  input_mappings?: InputMappingApi[];
+}
+
+export interface NodeConnectionWriteApi {
+  /** UUID of the source node */
+  source_node_id: string;
+  /** UUID of the target node */
+  target_node_id: string;
+}
+
+export interface VersionCreateApi {
+  status?: VersionCreateApiStatus;
+  commit_message?: string;
+  nodes?: NodeWriteApi[];
+  node_connections?: NodeConnectionWriteApi[];
 }
 
 /**
@@ -2346,6 +2614,23 @@ export interface GraphVersionDetailResponseApi {
   result: GraphVersionDetailApi;
 }
 
+export type VersionMetadataUpdateApiStatus =
+  (typeof VersionMetadataUpdateApiStatus)[keyof typeof VersionMetadataUpdateApiStatus];
+
+export const VersionMetadataUpdateApiStatus = {
+  draft: "draft",
+  active: "active",
+} as const;
+
+export interface VersionMetadataUpdateApi {
+  status?: VersionMetadataUpdateApiStatus;
+  commit_message?: string;
+}
+
+export interface EmptyRequestApi {
+  [key: string]: unknown;
+}
+
 export interface CreateNodeConnectionApi {
   /** FE-generated UUID */
   id: string;
@@ -2362,111 +2647,6 @@ export const CreateNodeApiType = {
 } as const;
 
 export type CreateNodeApiPosition = { [key: string]: unknown };
-
-/**
- * Type of content item
- */
-export type MessageContentItemApiType =
-  (typeof MessageContentItemApiType)[keyof typeof MessageContentItemApiType];
-
-export const MessageContentItemApiType = {
-  text: "text",
-  image_url: "image_url",
-  audio_url: "audio_url",
-  pdf_url: "pdf_url",
-} as const;
-
-/**
- * Array of content items
- */
-export interface MessageContentItemApi {
-  /** Type of content item */
-  type: MessageContentItemApiType;
-  /** Text content (required when type=text) */
-  text?: string;
-  /**
-   * Image URL (required when type=image_url)
-   * @minLength 1
-   */
-  image_url?: string;
-  /**
-   * Audio URL (required when type=audio_url)
-   * @minLength 1
-   */
-  audio_url?: string;
-  /**
-   * PDF URL (required when type=pdf_url)
-   * @minLength 1
-   */
-  pdf_url?: string;
-}
-
-/**
- * Array of message objects with id, role, and content array
- */
-export interface MessageApi {
-  /**
-   * Unique identifier for the message (frontend-provided)
-   * @minLength 1
-   */
-  id: string;
-  /**
-   * Message role (e.g., 'system', 'user', 'assistant')
-   * @minLength 1
-   */
-  role: string;
-  /** Array of content items */
-  content: MessageContentItemApi[];
-}
-
-/**
- * String or JSON object.
- */
-export type PromptTemplateDataApiResponseFormat =
-  | string
-  | { [key: string]: unknown };
-
-/**
- * JSON Schema (Draft 7) for structured outputs. Required when response_format='json_schema'. Example: {'type': 'object', 'properties': {...}, 'required': [...]}
- */
-export type PromptTemplateDataApiResponseSchema = { [key: string]: unknown };
-
-export type PromptTemplateDataApiToolsItem = { [key: string]: string };
-
-export type PromptTemplateDataApiToolChoice = { [key: string]: unknown };
-
-export type PromptTemplateDataApiModelDetail = { [key: string]: string };
-
-export type PromptTemplateDataApiVariableNames = { [key: string]: string };
-
-export type PromptTemplateDataApiMetadata = { [key: string]: string };
-
-export interface PromptTemplateDataApi {
-  prompt_template_id?: string;
-  prompt_version_id?: string;
-  /** Array of message objects with id, role, and content array */
-  messages: MessageApi[];
-  /** String or JSON object. */
-  response_format?: PromptTemplateDataApiResponseFormat;
-  /** JSON Schema (Draft 7) for structured outputs. Required when response_format='json_schema'. Example: {'type': 'object', 'properties': {...}, 'required': [...]} */
-  response_schema?: PromptTemplateDataApiResponseSchema;
-  model?: string;
-  temperature?: number;
-  max_tokens?: number;
-  top_p?: number;
-  frequency_penalty?: number;
-  presence_penalty?: number;
-  output_format?: string;
-  tools?: PromptTemplateDataApiToolsItem[];
-  tool_choice?: PromptTemplateDataApiToolChoice;
-  model_detail?: PromptTemplateDataApiModelDetail;
-  variable_names?: PromptTemplateDataApiVariableNames;
-  metadata?: PromptTemplateDataApiMetadata;
-  commit_message?: string;
-  /** Template format: 'mustache' or 'jinja' */
-  template_format?: string;
-  save_prompt_version?: boolean;
-}
 
 export type PortCreateApiDirection =
   (typeof PortCreateApiDirection)[keyof typeof PortCreateApiDirection];
@@ -2494,22 +2674,6 @@ export interface PortCreateApi {
   direction: PortCreateApiDirection;
   data_schema?: PortCreateApiDataSchema;
   ref_port_id?: string;
-}
-
-/**
- * List of input mappings from port display_name to source reference
- */
-export interface InputMappingApi {
-  /**
-   * Input port display_name
-   * @minLength 1
-   */
-  key: string;
-  /**
-   * Source reference in format "NodeName.port_display_name" or null
-   * @minLength 1
-   */
-  value?: string;
 }
 
 export interface CreateNodeApi {
@@ -6688,10 +6852,6 @@ export interface QueueRemoveLabelResultApi {
 export interface QueueRemoveLabelResponseApi {
   status?: boolean;
   result: QueueRemoveLabelResultApi;
-}
-
-export interface EmptyRequestApi {
-  [key: string]: unknown;
 }
 
 export interface QueueStatusResponseApi {
@@ -32307,6 +32467,13 @@ export type AgentPlaygroundGraphsExecutionsListParams = {
   limit?: number;
 };
 
+export type AgentPlaygroundGraphsReadParams = {
+  /**
+   * 'true' (any case) resolves the graph among system graph templates instead of the caller's own graphs; other values are ignored. Templates are read-only: write operations do not accept this flag.
+   */
+  is_template?: string;
+};
+
 export type AgentPlaygroundGraphsVersionsListParams = {
   /**
    * 1-based page number (default 1).
@@ -32321,14 +32488,14 @@ export type AgentPlaygroundGraphsVersionsListParams = {
    */
   search?: string;
   /**
-   * 'true' (any case) resolves the graph among system graph templates instead of the caller's own graphs; other values are ignored.
+   * 'true' (any case) resolves the graph among system graph templates instead of the caller's own graphs; other values are ignored. Templates are read-only: write operations do not accept this flag.
    */
   is_template?: string;
 };
 
 export type AgentPlaygroundGraphsVersionsReadParams = {
   /**
-   * 'true' (any case) resolves the graph among system graph templates instead of the caller's own graphs; other values are ignored.
+   * 'true' (any case) resolves the graph among system graph templates instead of the caller's own graphs; other values are ignored. Templates are read-only: write operations do not accept this flag.
    */
   is_template?: string;
 };

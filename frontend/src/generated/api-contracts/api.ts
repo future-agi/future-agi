@@ -87,10 +87,12 @@ import type {
   AgentPlaygroundGraphsExecutionsListParams,
   AgentPlaygroundGraphsList200,
   AgentPlaygroundGraphsListParams,
+  AgentPlaygroundGraphsReadParams,
   AgentPlaygroundGraphsVersionsListParams,
   AgentPlaygroundGraphsVersionsNodesPossibleEdgeMappings200,
   AgentPlaygroundGraphsVersionsNodesPossibleEdgeMappingsParams,
   AgentPlaygroundGraphsVersionsReadParams,
+  AgentPlaygroundMessageResponseApi,
   AgentPlaygroundNodeTemplatesList200,
   AgentPlaygroundNodeTemplatesListParams,
   AgentPromptOptimiserGraphResponseApi,
@@ -227,6 +229,7 @@ import type {
   BulkAnnotationResponseApi,
   BulkCreateScoresApi,
   BulkCreateScoresResponseApi,
+  BulkDeleteApi,
   BulkDestroyAnnotationsRequestApi,
   BulkDestroyAnnotationsResponseApi,
   BulkRemoveItemsApi,
@@ -548,6 +551,7 @@ import type {
   GenerateScenarioApi,
   GetAnnotationLabelsResponseApi,
   GetTraceAnnotationValuesResponseApi,
+  GraphBulkDeleteNotFoundResponseApi,
   GraphCreateApi,
   GraphDetailApi,
   GraphExecutionDetailResponseApi,
@@ -1469,6 +1473,8 @@ import type {
   VerifyApiKeyRequestApi,
   VerifyAssistantIdRequestApi,
   VerifyResponseApi,
+  VersionCreateApi,
+  VersionMetadataUpdateApi,
   WalletBalanceResponseApi,
   WebAuthnCredentialApi,
   WebhookIngestResponseApi,
@@ -9208,9 +9214,9 @@ export const agentPlaygroundGraphsCreate = async (
   );
 };
 
-export type agentPlaygroundGraphsBulkDeleteResponse201 = {
-  data: GraphListApi;
-  status: 201;
+export type agentPlaygroundGraphsBulkDeleteResponse200 = {
+  data: AgentPlaygroundMessageResponseApi;
+  status: 200;
 };
 
 export type agentPlaygroundGraphsBulkDeleteResponse400 = {
@@ -9219,7 +9225,7 @@ export type agentPlaygroundGraphsBulkDeleteResponse400 = {
 };
 
 export type agentPlaygroundGraphsBulkDeleteResponse404 = {
-  data: AgentPlaygroundErrorResponseApi;
+  data: GraphBulkDeleteNotFoundResponseApi;
   status: 404;
 };
 
@@ -9230,11 +9236,11 @@ export type agentPlaygroundGraphsBulkDeleteResponse500 = {
 
 export type agentPlaygroundGraphsBulkDeleteResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201 | 400 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 500>;
 };
 
 export type agentPlaygroundGraphsBulkDeleteResponseSuccess =
-  agentPlaygroundGraphsBulkDeleteResponse201 & {
+  agentPlaygroundGraphsBulkDeleteResponse200 & {
     headers: Headers;
   };
 export type agentPlaygroundGraphsBulkDeleteResponseError = (
@@ -9261,7 +9267,7 @@ If all referencing graphs are also being deleted, it's allowed; otherwise blocke
  * @summary Bulk soft-delete graphs with reference validation.
  */
 export const agentPlaygroundGraphsBulkDelete = async (
-  graphListApi: NonReadonly<GraphListApi>,
+  bulkDeleteApi: BulkDeleteApi,
   options?: RequestInit,
 ): Promise<agentPlaygroundGraphsBulkDeleteResponse> => {
   return apiMutator<agentPlaygroundGraphsBulkDeleteResponse>(
@@ -9270,7 +9276,7 @@ export const agentPlaygroundGraphsBulkDelete = async (
       ...options,
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(graphListApi),
+      body: JSON.stringify(bulkDeleteApi),
     },
   );
 };
@@ -9847,8 +9853,27 @@ export type agentPlaygroundGraphsReadResponse =
   | agentPlaygroundGraphsReadResponseSuccess
   | agentPlaygroundGraphsReadResponseError;
 
-export const getAgentPlaygroundGraphsReadUrl = (id: string) => {
-  return `/agent-playground/graphs/${id}/`;
+export const getAgentPlaygroundGraphsReadUrl = (
+  id: string,
+  params?: AgentPlaygroundGraphsReadParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/agent-playground/graphs/${id}/?${stringifiedParams}`
+    : `/agent-playground/graphs/${id}/`;
 };
 
 /**
@@ -9857,10 +9882,11 @@ export const getAgentPlaygroundGraphsReadUrl = (id: string) => {
  */
 export const agentPlaygroundGraphsRead = async (
   id: string,
+  params?: AgentPlaygroundGraphsReadParams,
   options?: RequestInit,
 ): Promise<agentPlaygroundGraphsReadResponse> => {
   return apiMutator<agentPlaygroundGraphsReadResponse>(
-    getAgentPlaygroundGraphsReadUrl(id),
+    getAgentPlaygroundGraphsReadUrl(id, params),
     {
       ...options,
       method: "GET",
@@ -9998,9 +10024,9 @@ export const agentPlaygroundGraphsPartialUpdate = async (
   );
 };
 
-export type agentPlaygroundGraphsDeleteResponse204 = {
-  data: void;
-  status: 204;
+export type agentPlaygroundGraphsDeleteResponse200 = {
+  data: AgentPlaygroundMessageResponseApi;
+  status: 200;
 };
 
 export type agentPlaygroundGraphsDeleteResponse400 = {
@@ -10020,11 +10046,11 @@ export type agentPlaygroundGraphsDeleteResponse500 = {
 
 export type agentPlaygroundGraphsDeleteResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 204 | 400 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 500>;
 };
 
 export type agentPlaygroundGraphsDeleteResponseSuccess =
-  agentPlaygroundGraphsDeleteResponse204 & {
+  agentPlaygroundGraphsDeleteResponse200 & {
     headers: Headers;
   };
 export type agentPlaygroundGraphsDeleteResponseError = (
@@ -10207,7 +10233,7 @@ export const agentPlaygroundGraphsVersionsList = async (
 };
 
 export type agentPlaygroundGraphsVersionsCreateResponse201 = {
-  data: GraphListApi;
+  data: GraphVersionDetailResponseApi;
   status: 201;
 };
 
@@ -10257,7 +10283,7 @@ export const getAgentPlaygroundGraphsVersionsCreateUrl = (id: string) => {
  */
 export const agentPlaygroundGraphsVersionsCreate = async (
   id: string,
-  graphListApi: NonReadonly<GraphListApi>,
+  versionCreateApi: VersionCreateApi,
   options?: RequestInit,
 ): Promise<agentPlaygroundGraphsVersionsCreateResponse> => {
   return apiMutator<agentPlaygroundGraphsVersionsCreateResponse>(
@@ -10266,7 +10292,7 @@ export const agentPlaygroundGraphsVersionsCreate = async (
       ...options,
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(graphListApi),
+      body: JSON.stringify(versionCreateApi),
     },
   );
 };
@@ -10356,7 +10382,7 @@ export const agentPlaygroundGraphsVersionsRead = async (
 };
 
 export type agentPlaygroundGraphsVersionsUpdateResponse200 = {
-  data: GraphListApi;
+  data: GraphVersionDetailResponseApi;
   status: 200;
 };
 
@@ -10406,13 +10432,14 @@ export const getAgentPlaygroundGraphsVersionsUpdateUrl = (
 
 /**
  * Updates commit_message and/or promotes draft → active.
-Content changes (nodes, ports, edges) are done via granular CRUD or create_version.
+Content changes (nodes, ports, edges) are done via granular CRUD or create_version;
+content keys in this body are ignored. Only draft versions can be updated.
  * @summary Metadata-only update endpoint (PUT/PATCH).
  */
 export const agentPlaygroundGraphsVersionsUpdate = async (
   id: string,
   versionId: string,
-  graphListApi: NonReadonly<GraphListApi>,
+  versionMetadataUpdateApi: VersionMetadataUpdateApi,
   options?: RequestInit,
 ): Promise<agentPlaygroundGraphsVersionsUpdateResponse> => {
   return apiMutator<agentPlaygroundGraphsVersionsUpdateResponse>(
@@ -10421,13 +10448,13 @@ export const agentPlaygroundGraphsVersionsUpdate = async (
       ...options,
       method: "PUT",
       headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(graphListApi),
+      body: JSON.stringify(versionMetadataUpdateApi),
     },
   );
 };
 
 export type agentPlaygroundGraphsVersionsPartialUpdateResponse200 = {
-  data: GraphListApi;
+  data: GraphVersionDetailResponseApi;
   status: 200;
 };
 
@@ -10477,13 +10504,14 @@ export const getAgentPlaygroundGraphsVersionsPartialUpdateUrl = (
 
 /**
  * Updates commit_message and/or promotes draft → active.
-Content changes (nodes, ports, edges) are done via granular CRUD or create_version.
+Content changes (nodes, ports, edges) are done via granular CRUD or create_version;
+content keys in this body are ignored. Only draft versions can be updated.
  * @summary Metadata-only update endpoint (PUT/PATCH).
  */
 export const agentPlaygroundGraphsVersionsPartialUpdate = async (
   id: string,
   versionId: string,
-  graphListApi: NonReadonly<GraphListApi>,
+  versionMetadataUpdateApi: VersionMetadataUpdateApi,
   options?: RequestInit,
 ): Promise<agentPlaygroundGraphsVersionsPartialUpdateResponse> => {
   return apiMutator<agentPlaygroundGraphsVersionsPartialUpdateResponse>(
@@ -10492,14 +10520,14 @@ export const agentPlaygroundGraphsVersionsPartialUpdate = async (
       ...options,
       method: "PATCH",
       headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(graphListApi),
+      body: JSON.stringify(versionMetadataUpdateApi),
     },
   );
 };
 
-export type agentPlaygroundGraphsVersionsDeleteResponse204 = {
-  data: void;
-  status: 204;
+export type agentPlaygroundGraphsVersionsDeleteResponse200 = {
+  data: AgentPlaygroundMessageResponseApi;
+  status: 200;
 };
 
 export type agentPlaygroundGraphsVersionsDeleteResponse400 = {
@@ -10519,11 +10547,11 @@ export type agentPlaygroundGraphsVersionsDeleteResponse500 = {
 
 export type agentPlaygroundGraphsVersionsDeleteResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 204 | 400 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 500>;
 };
 
 export type agentPlaygroundGraphsVersionsDeleteResponseSuccess =
-  agentPlaygroundGraphsVersionsDeleteResponse204 & {
+  agentPlaygroundGraphsVersionsDeleteResponse200 & {
     headers: Headers;
   };
 export type agentPlaygroundGraphsVersionsDeleteResponseError = (
@@ -10548,7 +10576,9 @@ export const getAgentPlaygroundGraphsVersionsDeleteUrl = (
 
 /**
  * Cannot delete if this is the only version for the graph.
-Can delete active version - graph will then have no active version.
+Can delete active version - graph will then have no active version;
+no other version is promoted. Graph reads' active_version then shows
+the latest remaining version with its own status.
  * @summary Soft-delete a specific version and its content (nodes, ports, edges).
  */
 export const agentPlaygroundGraphsVersionsDelete = async (
@@ -10565,9 +10595,9 @@ export const agentPlaygroundGraphsVersionsDelete = async (
   );
 };
 
-export type agentPlaygroundGraphsVersionsActivateVersionResponse201 = {
-  data: GraphListApi;
-  status: 201;
+export type agentPlaygroundGraphsVersionsActivateVersionResponse200 = {
+  data: GraphVersionDetailResponseApi;
+  status: 200;
 };
 
 export type agentPlaygroundGraphsVersionsActivateVersionResponse400 = {
@@ -10587,11 +10617,11 @@ export type agentPlaygroundGraphsVersionsActivateVersionResponse500 = {
 
 export type agentPlaygroundGraphsVersionsActivateVersionResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201 | 400 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 500>;
 };
 
 export type agentPlaygroundGraphsVersionsActivateVersionResponseSuccess =
-  agentPlaygroundGraphsVersionsActivateVersionResponse201 & {
+  agentPlaygroundGraphsVersionsActivateVersionResponse200 & {
     headers: Headers;
   };
 export type agentPlaygroundGraphsVersionsActivateVersionResponseError = (
@@ -10622,7 +10652,7 @@ The currently active version (if any) is set to inactive.
 export const agentPlaygroundGraphsVersionsActivateVersion = async (
   id: string,
   versionId: string,
-  graphListApi: NonReadonly<GraphListApi>,
+  emptyRequestApi: EmptyRequestApi,
   options?: RequestInit,
 ): Promise<agentPlaygroundGraphsVersionsActivateVersionResponse> => {
   return apiMutator<agentPlaygroundGraphsVersionsActivateVersionResponse>(
@@ -10631,7 +10661,7 @@ export const agentPlaygroundGraphsVersionsActivateVersion = async (
       ...options,
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(graphListApi),
+      body: JSON.stringify(emptyRequestApi),
     },
   );
 };

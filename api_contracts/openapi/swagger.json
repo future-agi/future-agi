@@ -7154,15 +7154,15 @@
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/GraphList"
+                            "$ref": "#/definitions/BulkDelete"
                         }
                     }
                 ],
                 "responses": {
-                    "201": {
+                    "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/GraphList"
+                            "$ref": "#/definitions/AgentPlaygroundMessageResponse"
                         }
                     },
                     "400": {
@@ -7174,7 +7174,7 @@
                     "404": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/AgentPlaygroundErrorResponse"
+                            "$ref": "#/definitions/GraphBulkDeleteNotFoundResponse"
                         }
                     },
                     "500": {
@@ -7641,7 +7641,14 @@
                 "operationId": "agent-playground_graphs_read",
                 "summary": "Get graph detail with the active version expanded (or latest draft if no active).",
                 "description": "Returns full nested structure: nodes→ports, edges.",
-                "parameters": [],
+                "parameters": [
+                    {
+                        "name": "is_template",
+                        "in": "query",
+                        "description": "'true' (any case) resolves the graph among system graph templates instead of the caller's own graphs; other values are ignored. Templates are read-only: write operations do not accept this flag.",
+                        "type": "string"
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "",
@@ -7781,8 +7788,11 @@
                 "description": "Soft-delete a graph through the router detail route with cascade validation.",
                 "parameters": [],
                 "responses": {
-                    "204": {
-                        "description": ""
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AgentPlaygroundMessageResponse"
+                        }
                     },
                     "400": {
                         "description": "",
@@ -7899,7 +7909,7 @@
                     {
                         "name": "is_template",
                         "in": "query",
-                        "description": "'true' (any case) resolves the graph among system graph templates instead of the caller's own graphs; other values are ignored.",
+                        "description": "'true' (any case) resolves the graph among system graph templates instead of the caller's own graphs; other values are ignored. Templates are read-only: write operations do not accept this flag.",
                         "type": "string"
                     }
                 ],
@@ -7948,7 +7958,7 @@
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/GraphList"
+                            "$ref": "#/definitions/VersionCreate"
                         }
                     }
                 ],
@@ -7956,7 +7966,7 @@
                     "201": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/GraphList"
+                            "$ref": "#/definitions/GraphVersionDetailResponse"
                         }
                     },
                     "400": {
@@ -8005,7 +8015,7 @@
                     {
                         "name": "is_template",
                         "in": "query",
-                        "description": "'true' (any case) resolves the graph among system graph templates instead of the caller's own graphs; other values are ignored.",
+                        "description": "'true' (any case) resolves the graph among system graph templates instead of the caller's own graphs; other values are ignored. Templates are read-only: write operations do not accept this flag.",
                         "type": "string"
                     }
                 ],
@@ -8048,14 +8058,14 @@
             "put": {
                 "operationId": "agent-playground_graphs_versions_update",
                 "summary": "Metadata-only update endpoint (PUT/PATCH).",
-                "description": "Updates commit_message and/or promotes draft → active.\nContent changes (nodes, ports, edges) are done via granular CRUD or create_version.",
+                "description": "Updates commit_message and/or promotes draft → active.\nContent changes (nodes, ports, edges) are done via granular CRUD or create_version;\ncontent keys in this body are ignored. Only draft versions can be updated.",
                 "parameters": [
                     {
                         "name": "data",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/GraphList"
+                            "$ref": "#/definitions/VersionMetadataUpdate"
                         }
                     }
                 ],
@@ -8063,7 +8073,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/GraphList"
+                            "$ref": "#/definitions/GraphVersionDetailResponse"
                         }
                     },
                     "400": {
@@ -8098,14 +8108,14 @@
             "patch": {
                 "operationId": "agent-playground_graphs_versions_partial_update",
                 "summary": "Metadata-only update endpoint (PUT/PATCH).",
-                "description": "Updates commit_message and/or promotes draft → active.\nContent changes (nodes, ports, edges) are done via granular CRUD or create_version.",
+                "description": "Updates commit_message and/or promotes draft → active.\nContent changes (nodes, ports, edges) are done via granular CRUD or create_version;\ncontent keys in this body are ignored. Only draft versions can be updated.",
                 "parameters": [
                     {
                         "name": "data",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/GraphList"
+                            "$ref": "#/definitions/VersionMetadataUpdate"
                         }
                     }
                 ],
@@ -8113,7 +8123,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/GraphList"
+                            "$ref": "#/definitions/GraphVersionDetailResponse"
                         }
                     },
                     "400": {
@@ -8148,11 +8158,14 @@
             "delete": {
                 "operationId": "agent-playground_graphs_versions_delete",
                 "summary": "Soft-delete a specific version and its content (nodes, ports, edges).",
-                "description": "Cannot delete if this is the only version for the graph.\nCan delete active version - graph will then have no active version.",
+                "description": "Cannot delete if this is the only version for the graph.\nCan delete active version - graph will then have no active version;\nno other version is promoted. Graph reads' active_version then shows\nthe latest remaining version with its own status.",
                 "parameters": [],
                 "responses": {
-                    "204": {
-                        "description": ""
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AgentPlaygroundMessageResponse"
+                        }
                     },
                     "400": {
                         "description": "",
@@ -8209,15 +8222,15 @@
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/GraphList"
+                            "$ref": "#/definitions/EmptyRequest"
                         }
                     }
                 ],
                 "responses": {
-                    "201": {
+                    "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/GraphList"
+                            "$ref": "#/definitions/GraphVersionDetailResponse"
                         }
                     },
                     "400": {
@@ -85259,6 +85272,156 @@
                 }
             }
         },
+        "BulkDelete": {
+            "type": "object",
+            "properties": {
+                "ids": {
+                    "description": "List of graph UUIDs to delete",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    "default": []
+                },
+                "select_all": {
+                    "title": "Select all",
+                    "type": "boolean",
+                    "default": false
+                },
+                "exclude_ids": {
+                    "description": "Graph UUIDs to exclude when using select_all",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    "default": []
+                }
+            }
+        },
+        "AgentPlaygroundMessage": {
+            "required": [
+                "message"
+            ],
+            "type": "object",
+            "properties": {
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "AgentPlaygroundMessageResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/AgentPlaygroundMessage"
+                }
+            }
+        },
+        "GraphBulkDeleteMissing": {
+            "required": [
+                "message",
+                "missing_ids"
+            ],
+            "type": "object",
+            "properties": {
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "missing_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                }
+            }
+        },
+        "GraphBulkDeleteNotFoundResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": false
+                },
+                "type": {
+                    "title": "Type",
+                    "type": "string",
+                    "enum": [
+                        "validation_error",
+                        "authentication_error",
+                        "payment_required",
+                        "entitlement_error",
+                        "permission_error",
+                        "not_found",
+                        "conflict",
+                        "client_error",
+                        "rate_limit",
+                        "server_error",
+                        "service_unavailable",
+                        "timeout",
+                        "api_error"
+                    ],
+                    "x-nullable": true
+                },
+                "code": {
+                    "title": "Code",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "detail": {
+                    "title": "Detail",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "result": {
+                    "$ref": "#/definitions/GraphBulkDeleteMissing"
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "attr": {
+                    "title": "Attr",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "details": {
+                    "title": "Details",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "minLength": 1
+                        }
+                    }
+                }
+            }
+        },
         "TraceToGraphRequest": {
             "required": [
                 "trace_id"
@@ -85732,6 +85895,426 @@
                 },
                 "result": {
                     "$ref": "#/definitions/GraphVersionListResult"
+                }
+            }
+        },
+        "PortWrite": {
+            "required": [
+                "id",
+                "key",
+                "display_name",
+                "direction"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "description": "Frontend-generated UUID for the port",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "key": {
+                    "title": "Key",
+                    "type": "string",
+                    "maxLength": 100,
+                    "minLength": 1
+                },
+                "display_name": {
+                    "title": "Display name",
+                    "type": "string",
+                    "maxLength": 100,
+                    "minLength": 1
+                },
+                "direction": {
+                    "title": "Direction",
+                    "type": "string",
+                    "enum": [
+                        "input",
+                        "output"
+                    ]
+                },
+                "data_schema": {
+                    "title": "Data schema",
+                    "type": "object",
+                    "default": {}
+                },
+                "required": {
+                    "title": "Required",
+                    "type": "boolean",
+                    "default": true
+                },
+                "default_value": {
+                    "title": "Default value",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "metadata": {
+                    "title": "Metadata",
+                    "type": "object",
+                    "default": {}
+                },
+                "ref_port_id": {
+                    "title": "Ref port id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                }
+            }
+        },
+        "MessageContentItem": {
+            "description": "Array of content items",
+            "required": [
+                "type"
+            ],
+            "type": "object",
+            "properties": {
+                "type": {
+                    "title": "Type",
+                    "description": "Type of content item",
+                    "type": "string",
+                    "enum": [
+                        "text",
+                        "image_url",
+                        "audio_url",
+                        "pdf_url"
+                    ]
+                },
+                "text": {
+                    "title": "Text",
+                    "description": "Text content (required when type=text)",
+                    "type": "string"
+                },
+                "image_url": {
+                    "title": "Image url",
+                    "description": "Image URL (required when type=image_url)",
+                    "type": "string",
+                    "format": "uri",
+                    "minLength": 1
+                },
+                "audio_url": {
+                    "title": "Audio url",
+                    "description": "Audio URL (required when type=audio_url)",
+                    "type": "string",
+                    "format": "uri",
+                    "minLength": 1
+                },
+                "pdf_url": {
+                    "title": "Pdf url",
+                    "description": "PDF URL (required when type=pdf_url)",
+                    "type": "string",
+                    "format": "uri",
+                    "minLength": 1
+                }
+            }
+        },
+        "Message": {
+            "description": "Array of message objects with id, role, and content array",
+            "required": [
+                "id",
+                "role",
+                "content"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "description": "Unique identifier for the message (frontend-provided)",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "role": {
+                    "title": "Role",
+                    "description": "Message role (e.g., 'system', 'user', 'assistant')",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "content": {
+                    "description": "Array of content items",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/MessageContentItem"
+                    }
+                }
+            }
+        },
+        "PromptTemplateData": {
+            "required": [
+                "messages"
+            ],
+            "type": "object",
+            "properties": {
+                "prompt_template_id": {
+                    "title": "Prompt template id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "prompt_version_id": {
+                    "title": "Prompt version id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "messages": {
+                    "description": "Array of message objects with id, role, and content array",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/Message"
+                    }
+                },
+                "response_format": {
+                    "title": "Response format",
+                    "description": "String or JSON object.",
+                    "type": "object",
+                    "default": "text",
+                    "x-string-or-object": true
+                },
+                "response_schema": {
+                    "title": "Response schema",
+                    "description": "JSON Schema (Draft 7) for structured outputs. Required when response_format='json_schema'. Example: {'type': 'object', 'properties': {...}, 'required': [...]}",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "model": {
+                    "title": "Model",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "temperature": {
+                    "title": "Temperature",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "max_tokens": {
+                    "title": "Max tokens",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "top_p": {
+                    "title": "Top p",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "frequency_penalty": {
+                    "title": "Frequency penalty",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "presence_penalty": {
+                    "title": "Presence penalty",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "output_format": {
+                    "title": "Output format",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "tools": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string",
+                            "x-nullable": true
+                        }
+                    },
+                    "x-nullable": true
+                },
+                "tool_choice": {
+                    "title": "Tool choice",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "model_detail": {
+                    "title": "Model detail",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    },
+                    "x-nullable": true
+                },
+                "variable_names": {
+                    "title": "Variable names",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    },
+                    "x-nullable": true
+                },
+                "metadata": {
+                    "title": "Metadata",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    },
+                    "x-nullable": true
+                },
+                "commit_message": {
+                    "title": "Commit message",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "template_format": {
+                    "title": "Template format",
+                    "description": "Template format: 'mustache' or 'jinja'",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "save_prompt_version": {
+                    "title": "Save prompt version",
+                    "type": "boolean",
+                    "default": false
+                }
+            },
+            "x-nullable": true
+        },
+        "InputMapping": {
+            "description": "List of input mappings from port display_name to source reference",
+            "required": [
+                "key"
+            ],
+            "type": "object",
+            "properties": {
+                "key": {
+                    "title": "Key",
+                    "description": "Input port display_name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "value": {
+                    "title": "Value",
+                    "description": "Source reference in format \"NodeName.port_display_name\" or null",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            }
+        },
+        "NodeWrite": {
+            "required": [
+                "id",
+                "type",
+                "name"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "description": "Frontend-generated UUID for the node",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "type": {
+                    "title": "Type",
+                    "type": "string",
+                    "enum": [
+                        "subgraph",
+                        "atomic"
+                    ]
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "node_template_id": {
+                    "title": "Node template id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "ref_graph_version_id": {
+                    "title": "Ref graph version id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "config": {
+                    "title": "Config",
+                    "type": "object",
+                    "default": {}
+                },
+                "position": {
+                    "title": "Position",
+                    "type": "object",
+                    "default": {}
+                },
+                "ports": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/PortWrite"
+                    },
+                    "default": []
+                },
+                "prompt_template": {
+                    "$ref": "#/definitions/PromptTemplateData"
+                },
+                "input_mappings": {
+                    "description": "List of input mappings from port display_name to source reference",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/InputMapping"
+                    },
+                    "default": []
+                }
+            }
+        },
+        "NodeConnectionWrite": {
+            "required": [
+                "source_node_id",
+                "target_node_id"
+            ],
+            "type": "object",
+            "properties": {
+                "source_node_id": {
+                    "title": "Source node id",
+                    "description": "UUID of the source node",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "target_node_id": {
+                    "title": "Target node id",
+                    "description": "UUID of the target node",
+                    "type": "string",
+                    "format": "uuid"
+                }
+            }
+        },
+        "VersionCreate": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "draft",
+                        "active"
+                    ],
+                    "default": "draft"
+                },
+                "commit_message": {
+                    "title": "Commit message",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "nodes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/NodeWrite"
+                    },
+                    "default": []
+                },
+                "node_connections": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/NodeConnectionWrite"
+                    },
+                    "default": []
                 }
             }
         },
@@ -86236,6 +86819,30 @@
                 }
             }
         },
+        "VersionMetadataUpdate": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "draft",
+                        "active"
+                    ],
+                    "default": "draft"
+                },
+                "commit_message": {
+                    "title": "Commit message",
+                    "type": "string",
+                    "x-nullable": true
+                }
+            }
+        },
+        "EmptyRequest": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false
+        },
         "CreateNodeConnection": {
             "required": [
                 "id",
@@ -86261,217 +86868,6 @@
                     "format": "uuid"
                 }
             }
-        },
-        "MessageContentItem": {
-            "description": "Array of content items",
-            "required": [
-                "type"
-            ],
-            "type": "object",
-            "properties": {
-                "type": {
-                    "title": "Type",
-                    "description": "Type of content item",
-                    "type": "string",
-                    "enum": [
-                        "text",
-                        "image_url",
-                        "audio_url",
-                        "pdf_url"
-                    ]
-                },
-                "text": {
-                    "title": "Text",
-                    "description": "Text content (required when type=text)",
-                    "type": "string"
-                },
-                "image_url": {
-                    "title": "Image url",
-                    "description": "Image URL (required when type=image_url)",
-                    "type": "string",
-                    "format": "uri",
-                    "minLength": 1
-                },
-                "audio_url": {
-                    "title": "Audio url",
-                    "description": "Audio URL (required when type=audio_url)",
-                    "type": "string",
-                    "format": "uri",
-                    "minLength": 1
-                },
-                "pdf_url": {
-                    "title": "Pdf url",
-                    "description": "PDF URL (required when type=pdf_url)",
-                    "type": "string",
-                    "format": "uri",
-                    "minLength": 1
-                }
-            }
-        },
-        "Message": {
-            "description": "Array of message objects with id, role, and content array",
-            "required": [
-                "id",
-                "role",
-                "content"
-            ],
-            "type": "object",
-            "properties": {
-                "id": {
-                    "title": "Id",
-                    "description": "Unique identifier for the message (frontend-provided)",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "role": {
-                    "title": "Role",
-                    "description": "Message role (e.g., 'system', 'user', 'assistant')",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "content": {
-                    "description": "Array of content items",
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/MessageContentItem"
-                    }
-                }
-            }
-        },
-        "PromptTemplateData": {
-            "required": [
-                "messages"
-            ],
-            "type": "object",
-            "properties": {
-                "prompt_template_id": {
-                    "title": "Prompt template id",
-                    "type": "string",
-                    "format": "uuid",
-                    "x-nullable": true
-                },
-                "prompt_version_id": {
-                    "title": "Prompt version id",
-                    "type": "string",
-                    "format": "uuid",
-                    "x-nullable": true
-                },
-                "messages": {
-                    "description": "Array of message objects with id, role, and content array",
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/Message"
-                    }
-                },
-                "response_format": {
-                    "title": "Response format",
-                    "description": "String or JSON object.",
-                    "type": "object",
-                    "default": "text",
-                    "x-string-or-object": true
-                },
-                "response_schema": {
-                    "title": "Response schema",
-                    "description": "JSON Schema (Draft 7) for structured outputs. Required when response_format='json_schema'. Example: {'type': 'object', 'properties': {...}, 'required': [...]}",
-                    "type": "object",
-                    "x-nullable": true
-                },
-                "model": {
-                    "title": "Model",
-                    "type": "string",
-                    "x-nullable": true
-                },
-                "temperature": {
-                    "title": "Temperature",
-                    "type": "number",
-                    "x-nullable": true
-                },
-                "max_tokens": {
-                    "title": "Max tokens",
-                    "type": "integer",
-                    "x-nullable": true
-                },
-                "top_p": {
-                    "title": "Top p",
-                    "type": "number",
-                    "x-nullable": true
-                },
-                "frequency_penalty": {
-                    "title": "Frequency penalty",
-                    "type": "number",
-                    "x-nullable": true
-                },
-                "presence_penalty": {
-                    "title": "Presence penalty",
-                    "type": "number",
-                    "x-nullable": true
-                },
-                "output_format": {
-                    "title": "Output format",
-                    "type": "string",
-                    "x-nullable": true
-                },
-                "tools": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "additionalProperties": {
-                            "type": "string",
-                            "x-nullable": true
-                        }
-                    },
-                    "x-nullable": true
-                },
-                "tool_choice": {
-                    "title": "Tool choice",
-                    "type": "object",
-                    "x-nullable": true
-                },
-                "model_detail": {
-                    "title": "Model detail",
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "string",
-                        "x-nullable": true
-                    },
-                    "x-nullable": true
-                },
-                "variable_names": {
-                    "title": "Variable names",
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "string",
-                        "x-nullable": true
-                    },
-                    "x-nullable": true
-                },
-                "metadata": {
-                    "title": "Metadata",
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "string",
-                        "x-nullable": true
-                    },
-                    "x-nullable": true
-                },
-                "commit_message": {
-                    "title": "Commit message",
-                    "type": "string",
-                    "x-nullable": true
-                },
-                "template_format": {
-                    "title": "Template format",
-                    "description": "Template format: 'mustache' or 'jinja'",
-                    "type": "string",
-                    "x-nullable": true
-                },
-                "save_prompt_version": {
-                    "title": "Save prompt version",
-                    "type": "boolean",
-                    "default": false
-                }
-            },
-            "x-nullable": true
         },
         "PortCreate": {
             "required": [
@@ -86517,28 +86913,6 @@
                     "title": "Ref port id",
                     "type": "string",
                     "format": "uuid",
-                    "x-nullable": true
-                }
-            }
-        },
-        "InputMapping": {
-            "description": "List of input mappings from port display_name to source reference",
-            "required": [
-                "key"
-            ],
-            "type": "object",
-            "properties": {
-                "key": {
-                    "title": "Key",
-                    "description": "Input port display_name",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "value": {
-                    "title": "Value",
-                    "description": "Source reference in format \"NodeName.port_display_name\" or null",
-                    "type": "string",
-                    "minLength": 1,
                     "x-nullable": true
                 }
             }
@@ -96572,11 +96946,6 @@
                     "$ref": "#/definitions/QueueRemoveLabelResult"
                 }
             }
-        },
-        "EmptyRequest": {
-            "type": "object",
-            "properties": {},
-            "additionalProperties": false
         },
         "QueueStatusResponse": {
             "required": [

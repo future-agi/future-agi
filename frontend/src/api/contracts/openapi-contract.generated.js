@@ -3832,18 +3832,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeRequestValidation: false,
         runtimeResponseValidation: false,
         requestBody: {
-          $ref: "#/definitions/GraphList",
+          $ref: "#/definitions/BulkDelete",
         },
         queryParameters: {},
         responses: {
-          201: {
-            $ref: "#/definitions/GraphList",
+          200: {
+            $ref: "#/definitions/AgentPlaygroundMessageResponse",
           },
           400: {
             $ref: "#/definitions/AgentPlaygroundErrorResponse",
           },
           404: {
-            $ref: "#/definitions/AgentPlaygroundErrorResponse",
+            $ref: "#/definitions/GraphBulkDeleteNotFoundResponse",
           },
           500: {
             $ref: "#/definitions/AgentPlaygroundErrorResponse",
@@ -4077,7 +4077,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeRequestValidation: false,
         runtimeResponseValidation: false,
         requestBody: null,
-        queryParameters: {},
+        queryParameters: {
+          is_template: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+        },
         responses: {
           200: {
             $ref: "#/definitions/GraphDetail",
@@ -4155,6 +4162,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         requestBody: null,
         queryParameters: {},
         responses: {
+          200: {
+            $ref: "#/definitions/AgentPlaygroundMessageResponse",
+          },
           400: {
             $ref: "#/definitions/AgentPlaygroundErrorResponse",
           },
@@ -4251,12 +4261,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeRequestValidation: false,
         runtimeResponseValidation: false,
         requestBody: {
-          $ref: "#/definitions/GraphList",
+          $ref: "#/definitions/VersionCreate",
         },
         queryParameters: {},
         responses: {
           201: {
-            $ref: "#/definitions/GraphList",
+            $ref: "#/definitions/GraphVersionDetailResponse",
           },
           400: {
             $ref: "#/definitions/AgentPlaygroundErrorResponse",
@@ -4310,12 +4320,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeRequestValidation: false,
         runtimeResponseValidation: false,
         requestBody: {
-          $ref: "#/definitions/GraphList",
+          $ref: "#/definitions/VersionMetadataUpdate",
         },
         queryParameters: {},
         responses: {
           200: {
-            $ref: "#/definitions/GraphList",
+            $ref: "#/definitions/GraphVersionDetailResponse",
           },
           400: {
             $ref: "#/definitions/AgentPlaygroundErrorResponse",
@@ -4336,12 +4346,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeRequestValidation: false,
         runtimeResponseValidation: false,
         requestBody: {
-          $ref: "#/definitions/GraphList",
+          $ref: "#/definitions/VersionMetadataUpdate",
         },
         queryParameters: {},
         responses: {
           200: {
-            $ref: "#/definitions/GraphList",
+            $ref: "#/definitions/GraphVersionDetailResponse",
           },
           400: {
             $ref: "#/definitions/AgentPlaygroundErrorResponse",
@@ -4364,6 +4374,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         requestBody: null,
         queryParameters: {},
         responses: {
+          200: {
+            $ref: "#/definitions/AgentPlaygroundMessageResponse",
+          },
           400: {
             $ref: "#/definitions/AgentPlaygroundErrorResponse",
           },
@@ -4385,12 +4398,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeRequestValidation: false,
         runtimeResponseValidation: false,
         requestBody: {
-          $ref: "#/definitions/GraphList",
+          $ref: "#/definitions/EmptyRequest",
         },
         queryParameters: {},
         responses: {
-          201: {
-            $ref: "#/definitions/GraphList",
+          200: {
+            $ref: "#/definitions/GraphVersionDetailResponse",
           },
           400: {
             $ref: "#/definitions/AgentPlaygroundErrorResponse",
@@ -47603,6 +47616,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    AgentPlaygroundMessageResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/AgentPlaygroundMessage",
+        },
+      },
+    },
     AgentPromptOptimiserGraphResponse: {
       required: ["result"],
       type: "object",
@@ -51133,6 +51159,34 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         result: {
           $ref: "#/definitions/BulkCreateScoresResult",
+        },
+      },
+    },
+    BulkDelete: {
+      type: "object",
+      properties: {
+        ids: {
+          description: "List of graph UUIDs to delete",
+          type: "array",
+          items: {
+            type: "string",
+            format: "uuid",
+          },
+          default: [],
+        },
+        select_all: {
+          title: "Select all",
+          type: "boolean",
+          default: false,
+        },
+        exclude_ids: {
+          description: "Graph UUIDs to exclude when using select_all",
+          type: "array",
+          items: {
+            type: "string",
+            format: "uuid",
+          },
+          default: [],
         },
       },
     },
@@ -61533,6 +61587,76 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         result: {
           $ref: "#/definitions/GetTraceAnnotationValuesResult",
+        },
+      },
+    },
+    GraphBulkDeleteNotFoundResponse: {
+      required: ["result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: false,
+        },
+        type: {
+          title: "Type",
+          type: "string",
+          enum: [
+            "validation_error",
+            "authentication_error",
+            "payment_required",
+            "entitlement_error",
+            "permission_error",
+            "not_found",
+            "conflict",
+            "client_error",
+            "rate_limit",
+            "server_error",
+            "service_unavailable",
+            "timeout",
+            "api_error",
+          ],
+          "x-nullable": true,
+        },
+        code: {
+          title: "Code",
+          type: "string",
+          "x-nullable": true,
+        },
+        detail: {
+          title: "Detail",
+          type: "string",
+          "x-nullable": true,
+        },
+        result: {
+          $ref: "#/definitions/GraphBulkDeleteMissing",
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          "x-nullable": true,
+        },
+        error: {
+          title: "Error",
+          type: "string",
+          "x-nullable": true,
+        },
+        attr: {
+          title: "Attr",
+          type: "string",
+          "x-nullable": true,
+        },
+        details: {
+          title: "Details",
+          type: "object",
+          additionalProperties: {
+            type: "array",
+            items: {
+              type: "string",
+              minLength: 1,
+            },
+          },
         },
       },
     },
@@ -82329,6 +82453,52 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    VersionCreate: {
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["draft", "active"],
+          default: "draft",
+        },
+        commit_message: {
+          title: "Commit message",
+          type: "string",
+          "x-nullable": true,
+        },
+        nodes: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/NodeWrite",
+          },
+          default: [],
+        },
+        node_connections: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/NodeConnectionWrite",
+          },
+          default: [],
+        },
+      },
+    },
+    VersionMetadataUpdate: {
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["draft", "active"],
+          default: "draft",
+        },
+        commit_message: {
+          title: "Commit message",
+          type: "string",
+          "x-nullable": true,
+        },
+      },
+    },
     WalletBalanceResponse: {
       required: ["wallet_balance"],
       type: "object",
@@ -84066,6 +84236,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
         created: {
           title: "Created",
           type: "boolean",
+        },
+      },
+    },
+    AgentPlaygroundMessage: {
+      required: ["message"],
+      type: "object",
+      properties: {
+        message: {
+          title: "Message",
+          type: "string",
+          minLength: 1,
         },
       },
     },
@@ -91025,6 +91206,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "array",
           items: {
             $ref: "#/definitions/TraceAnnotationNoteResponse",
+          },
+        },
+      },
+    },
+    GraphBulkDeleteMissing: {
+      required: ["message", "missing_ids"],
+      type: "object",
+      properties: {
+        message: {
+          title: "Message",
+          type: "string",
+          minLength: 1,
+        },
+        missing_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            format: "uuid",
           },
         },
       },
@@ -104666,6 +104865,88 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    NodeConnectionWrite: {
+      required: ["source_node_id", "target_node_id"],
+      type: "object",
+      properties: {
+        source_node_id: {
+          title: "Source node id",
+          description: "UUID of the source node",
+          type: "string",
+          format: "uuid",
+        },
+        target_node_id: {
+          title: "Target node id",
+          description: "UUID of the target node",
+          type: "string",
+          format: "uuid",
+        },
+      },
+    },
+    NodeWrite: {
+      required: ["id", "type", "name"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          description: "Frontend-generated UUID for the node",
+          type: "string",
+          format: "uuid",
+        },
+        type: {
+          title: "Type",
+          type: "string",
+          enum: ["subgraph", "atomic"],
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        node_template_id: {
+          title: "Node template id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        ref_graph_version_id: {
+          title: "Ref graph version id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        config: {
+          title: "Config",
+          type: "object",
+          default: {},
+        },
+        position: {
+          title: "Position",
+          type: "object",
+          default: {},
+        },
+        ports: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/PortWrite",
+          },
+          default: [],
+        },
+        prompt_template: {
+          $ref: "#/definitions/PromptTemplateData",
+        },
+        input_mappings: {
+          description:
+            "List of input mappings from port display_name to source reference",
+          type: "array",
+          items: {
+            $ref: "#/definitions/InputMapping",
+          },
+          default: [],
+        },
+      },
+    },
     WebhookIngestResult: {
       required: ["ingested"],
       type: "object",
@@ -115889,6 +116170,61 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         end_user_id: {
           title: "End user id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+      },
+    },
+    PortWrite: {
+      required: ["id", "key", "display_name", "direction"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          description: "Frontend-generated UUID for the port",
+          type: "string",
+          format: "uuid",
+        },
+        key: {
+          title: "Key",
+          type: "string",
+          maxLength: 100,
+          minLength: 1,
+        },
+        display_name: {
+          title: "Display name",
+          type: "string",
+          maxLength: 100,
+          minLength: 1,
+        },
+        direction: {
+          title: "Direction",
+          type: "string",
+          enum: ["input", "output"],
+        },
+        data_schema: {
+          title: "Data schema",
+          type: "object",
+          default: {},
+        },
+        required: {
+          title: "Required",
+          type: "boolean",
+          default: true,
+        },
+        default_value: {
+          title: "Default value",
+          type: "object",
+          "x-nullable": true,
+        },
+        metadata: {
+          title: "Metadata",
+          type: "object",
+          default: {},
+        },
+        ref_port_id: {
+          title: "Ref port id",
           type: "string",
           format: "uuid",
           "x-nullable": true,
