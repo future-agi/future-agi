@@ -23665,7 +23665,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         requestBody: null,
         queryParameters: {
           name: {
-            required: false,
+            required: true,
             schema: {
               type: "string",
             },
@@ -66300,16 +66300,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
         next: {
           title: "Next",
           type: "string",
-          format: "uri",
           minLength: 1,
           "x-nullable": true,
+          format: "uri",
         },
         previous: {
           title: "Previous",
           type: "string",
-          format: "uri",
           minLength: 1,
           "x-nullable": true,
+          format: "uri",
         },
         total_pages: {
           title: "Total pages",
@@ -70801,7 +70801,26 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     PromptHistoryExecution: {
-      required: ["template_version"],
+      required: [
+        "id",
+        "template_version",
+        "output",
+        "prompt_config_snapshot",
+        "template_name",
+        "original_template",
+        "metadata",
+        "variable_names",
+        "evaluation_results",
+        "evaluation_configs",
+        "created_at",
+        "is_default",
+        "commit_message",
+        "updated_at",
+        "is_draft",
+        "labels",
+        "placeholders",
+        "prompt_base_template",
+      ],
       type: "object",
       properties: {
         id: {
@@ -70991,16 +71010,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
         next: {
           title: "Next",
           type: "string",
-          format: "uri",
           minLength: 1,
           "x-nullable": true,
+          format: "uri",
         },
         previous: {
           title: "Previous",
           type: "string",
-          format: "uri",
           minLength: 1,
           "x-nullable": true,
+          format: "uri",
         },
         total_pages: {
           title: "Total pages",
@@ -71253,7 +71272,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
     },
     PromptTemplateDetailResponse: {
       required: [
+        "id",
+        "name",
+        "description",
         "variable_names",
+        "organization",
+        "prompt_folder",
+        "placeholders",
+        "created_by",
         "prompt_config",
         "version",
         "output",
@@ -71280,7 +71306,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Description",
           type: "string",
           readOnly: true,
-          minLength: 1,
           "x-nullable": true,
         },
         variable_names: {
@@ -71399,16 +71424,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
         next: {
           title: "Next",
           type: "string",
-          format: "uri",
           minLength: 1,
           "x-nullable": true,
+          format: "uri",
         },
         previous: {
           title: "Previous",
           type: "string",
-          format: "uri",
           minLength: 1,
           "x-nullable": true,
+          format: "uri",
         },
         total_pages: {
           title: "Total pages",
@@ -71423,6 +71448,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/PromptTemplate",
           },
+          readOnly: true,
         },
       },
     },
@@ -71496,16 +71522,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
         next: {
           title: "Next",
           type: "string",
-          format: "uri",
           minLength: 1,
           "x-nullable": true,
+          format: "uri",
         },
         previous: {
           title: "Previous",
           type: "string",
-          format: "uri",
           minLength: 1,
           "x-nullable": true,
+          format: "uri",
         },
         total_pages: {
           title: "Total pages",
@@ -71520,6 +71546,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/PromptHistoryExecution",
           },
+          readOnly: true,
         },
       },
     },
@@ -97327,7 +97354,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
     },
     PromptLabelledVersion: {
       required: [
+        "id",
+        "name",
+        "description",
         "variable_names",
+        "organization",
+        "prompt_folder",
+        "placeholders",
+        "created_by",
         "prompt_config",
         "version",
         "output",
@@ -97353,7 +97387,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Description",
           type: "string",
           readOnly: true,
-          minLength: 1,
           "x-nullable": true,
         },
         variable_names: {

@@ -49610,7 +49610,7 @@ export type modelHubPromptLabelsGetByNameResponse =
   | modelHubPromptLabelsGetByNameResponseError;
 
 export const getModelHubPromptLabelsGetByNameUrl = (
-  params?: ModelHubPromptLabelsGetByNameParams,
+  params: ModelHubPromptLabelsGetByNameParams,
 ) => {
   const normalizedParams = new URLSearchParams();
 
@@ -49639,7 +49639,7 @@ export const getModelHubPromptLabelsGetByNameUrl = (
  * @summary Fetch a prompt version by template name and either explicit version or label.
  */
 export const modelHubPromptLabelsGetByName = async (
-  params?: ModelHubPromptLabelsGetByNameParams,
+  params: ModelHubPromptLabelsGetByNameParams,
   options?: RequestInit,
 ): Promise<modelHubPromptLabelsGetByNameResponse> => {
   return apiMutator<modelHubPromptLabelsGetByNameResponse>(

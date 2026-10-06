@@ -38,9 +38,13 @@ from tfc.utils.general_methods import GeneralMethods
 prompt_label_errors = swagger_auto_schema(responses=MODEL_HUB_TEXT_ERROR_RESPONSES)
 
 
-def _query(name, description):
+def _query(name, description, *, required=None):
     return openapi.Parameter(
-        name, openapi.IN_QUERY, description=description, type=openapi.TYPE_STRING
+        name,
+        openapi.IN_QUERY,
+        description=description,
+        required=required,
+        type=openapi.TYPE_STRING,
     )
 
 
@@ -50,7 +54,7 @@ prompt_label_list_schema = swagger_auto_schema(
 prompt_label_get_by_name_schema = swagger_auto_schema(
     auto_schema=ExplicitQueryAutoSchema,
     manual_parameters=[
-        _query("name", "Template name (required)."),
+        _query("name", "Template name.", required=True),
         _query("version", "Version name such as v1; wins over label."),
         _query("label", "Label name, matched case-insensitively."),
     ],

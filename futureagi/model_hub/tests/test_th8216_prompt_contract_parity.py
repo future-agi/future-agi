@@ -11,9 +11,14 @@ live separately under ``fixtures/contracts/th8216/synthetic/``. Regenerate captu
 import copy
 import json
 from pathlib import Path
+from unittest import mock
 
 import pytest
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 
+from accounts.models.organization import Organization
+from model_hub.models.prompt_folders import PromptFolder
 from model_hub.models.prompt_label import LabelTypeChoices, PromptLabel
 from model_hub.models.run_prompt import PromptTemplate, PromptVersion
 from tfc.tests.openapi_parity import (
@@ -21,6 +26,7 @@ from tfc.tests.openapi_parity import (
     assert_response_matches_contract,
     capture_record,
     load_swagger,
+    to_json_schema,
     validation_errors,
 )
 
@@ -324,8 +330,48 @@ def test_op062_op059_label_lookups_match_contract(swagger, auth_client, history)
     )
 
 
-@pytest.mark.django_db
-def test_op035_model_parameters_match_contract(swagger, auth_client, user):
+def _shape(value):
+    """Keep keys and JSON types; drop catalogue values that change with edits."""
+    if isinstance(value, dict):
+        return {key: _shape(item) for key, item in value.items()}
+    if isinstance(value, list):
+        shapes = {json.dumps(_shape(item), sort_keys=True) for item in value}
+        return [json.loads(shape) for shape in sorted(shapes)]
+    if value is None:
+        return None
+    return f"<{type(value).__name__}>"
+
+
+CATALOGUE_VALUES = (
+    "best_for",
+    "use_case",
+    "cutoff",
+    "rate_limits",
+    "latency",
+    "pricing",
+)
+
+
+def _normalise_op035(body):
+    return {**body, "result": _shape(body["result"])}
+
+
+def _normalise_op036(body):
+    # These keys are open JSON in the contract; keep only the top-level type.
+    rows = [
+        {
+            **row,
+            **{
+                key: None if row[key] is None else f"<{type(row[key]).__name__}>"
+                for key in CATALOGUE_VALUES
+            },
+        }
+        for row in body["results"]
+    ]
+    return {**body, "results": rows}
+
+
+def _check_op035(swagger, auth_client):
     query = {"model": "gpt-4o-mini", "provider": "openai", "model_type": "llm"}
     response = auth_client.get(MODEL_PARAMETERS, query)
     missing = auth_client.get(MODEL_PARAMETERS, {"model": "gpt-4o-mini"})
@@ -340,6 +386,8 @@ def test_op035_model_parameters_match_contract(swagger, auth_client, user):
         MODEL_PARAMETERS,
         response,
         request=query,
+        normalize=_normalise_op035,
+        note="catalogue values reduced to their JSON types",
     )
     _check(
         swagger,
@@ -352,14 +400,13 @@ def test_op035_model_parameters_match_contract(swagger, auth_client, user):
     )
 
 
-@pytest.mark.django_db
-def test_op036_models_list_matches_contract(swagger, auth_client, user):
-    query = {"search": "gpt-4o-mini", "limit": 2}
+def _check_op036(swagger, auth_client):
+    query = {"name": "gpt-4o-mini"}
     response = auth_client.get(MODELS_LIST, query)
 
     assert response.status_code == 200
     body = response.json()
-    assert body["results"], "the model catalogue should contain gpt-4o-mini"
+    assert [row["model_name"] for row in body["results"]] == ["gpt-4o-mini"]
     for row in body["results"]:
         assert not {"key", "api_key", "secret", "config_json"} & set(row)
     _check(
@@ -370,7 +417,61 @@ def test_op036_models_list_matches_contract(swagger, auth_client, user):
         MODELS_LIST,
         response,
         request=query,
+        normalize=_normalise_op036,
+        note="one exact model; catalogue values reduced to their JSON types",
     )
+
+
+@pytest.mark.django_db
+def test_op035_model_parameters_match_contract(swagger, auth_client, user):
+    _check_op035(swagger, auth_client)
+
+
+@pytest.mark.django_db
+def test_op036_models_list_matches_contract(swagger, auth_client, user):
+    _check_op036(swagger, auth_client)
+
+
+def _edited_catalogue():
+    """The repo catalogue after an unrelated edit: new prices, a new sibling."""
+    from agentic_eval.core_evals.run_prompt import litellm_models
+
+    catalogue = copy.deepcopy(litellm_models.AVAILABLE_MODELS)
+    for model in catalogue:
+        if model["model_name"].startswith("gpt-4o-mini"):
+            model["pricing"] = {"input_per_1M_tokens": 0.123}
+            model["latency"] = 4321
+            model["use_case"] = ["edited use case"]
+    sibling = next(m for m in catalogue if m["model_name"] == "gpt-4o-mini")
+    catalogue.append({**sibling, "model_name": "gpt-4o-mini-th8216-sibling"})
+    return catalogue
+
+
+@pytest.mark.django_db
+def test_op035_op036_captures_survive_catalogue_edits(swagger, auth_client, user):
+    """C09: a catalogue edit must not read as contract drift."""
+    from model_hub.views import run_prompt as run_prompt_views
+
+    real_parameters = run_prompt_views.get_model_parameters
+
+    def edited_parameters(*args):
+        parameters = copy.deepcopy(real_parameters(*args))
+        for slider in parameters.get("sliders", []):
+            if slider.get("label") == "max_tokens":
+                slider["max"] = 4096
+        return parameters
+
+    with (
+        mock.patch(
+            "agentic_eval.core_evals.run_prompt.litellm_models.AVAILABLE_MODELS",
+            _edited_catalogue(),
+        ),
+        mock.patch.object(
+            run_prompt_views, "get_model_parameters", side_effect=edited_parameters
+        ),
+    ):
+        _check_op035(swagger, auth_client)
+        _check_op036(swagger, auth_client)
 
 
 def _query_parameters(swagger, path):
@@ -399,7 +500,7 @@ def test_op035_op036_declare_their_real_query_parameters(swagger):
 
 def test_label_lookups_declare_their_real_query_parameters(swagger):
     assert _query_parameters(swagger, LABEL_BY_NAME) == {
-        "name": False,
+        "name": True,
         "version": False,
         "label": False,
     }
@@ -407,6 +508,187 @@ def test_label_lookups_declare_their_real_query_parameters(swagger):
         "template_id": False,
         "template_name": False,
     }
+
+
+@pytest.mark.django_db
+def test_op078_op059_blank_description_matches_contract(
+    swagger, auth_client, organization, workspace, user
+):
+    """C02: PromptTemplate.description is blank=True, so "" is a stored value."""
+    template = PromptTemplate.no_workspace_objects.create(
+        name="TH8216 blank description",
+        description="",
+        organization=organization,
+        workspace=workspace,
+        created_by=user,
+        variable_names={},
+    )
+    _version(template, 1, is_default=True)
+
+    detail = auth_client.get(f"/model-hub/prompt-templates/{template.id}/")
+    by_name = auth_client.get(LABEL_BY_NAME, {"name": template.name, "version": "v1"})
+
+    assert detail.status_code == 200 and by_name.status_code == 200
+    assert detail.json()["description"] == ""
+    assert by_name.json()["result"]["description"] == ""
+    _check(
+        swagger,
+        "op078_template_detail_blank_description",
+        "OP-078",
+        "GET",
+        TEMPLATE,
+        detail,
+    )
+    _check(
+        swagger,
+        "op059_label_get_by_name_blank_description",
+        "OP-059",
+        "GET",
+        LABEL_BY_NAME,
+        by_name,
+        request={"name": "<template>", "version": "v1"},
+    )
+
+
+@pytest.mark.django_db
+def test_op099_foreign_template_reads_like_a_missing_one(swagger, auth_client, user):
+    """D1: another organisation's template is indistinguishable from none."""
+    foreign_org = Organization.objects.create(name="TH8216 foreign organisation")
+    foreign = PromptTemplate.no_workspace_objects.create(
+        name="TH8216 foreign prompt", organization=foreign_org, variable_names={}
+    )
+    _version(foreign, 1)
+
+    response = auth_client.get(f"/model-hub/prompt-templates/{foreign.id}/versions/")
+    missing = auth_client.get(
+        "/model-hub/prompt-templates/00000000-0000-4000-8000-00000000dead/versions/"
+    )
+
+    assert response.status_code == missing.status_code == 500
+    assert response.json() == missing.json()
+    _check(
+        swagger,
+        "op099_versions_foreign_template",
+        "OP-099",
+        "GET",
+        VERSIONS,
+        response,
+        note="legacy: a foreign template is the same 500 as a missing one",
+    )
+
+
+RESPONSE_DRIFT = "API response does not match declared serializer."
+
+
+def _assert_debug_response_check_is_clean(settings, client, url, query):
+    """Run one read with DEBUG off and on: same queries, no drift warning."""
+    assert client.get(url, query).status_code == 200  # warm per-process caches
+    settings.DEBUG = False
+    with CaptureQueriesContext(connection) as plain:
+        assert client.get(url, query).status_code == 200
+    settings.DEBUG = True
+    with (
+        mock.patch("tfc.utils.api_contracts.logger") as contract_logger,
+        CaptureQueriesContext(connection) as checked,
+    ):
+        response = client.get(url, query)
+
+    assert response.status_code == 200
+    assert response.json()["results"] and response.json()["next"]
+    drift = [
+        call.kwargs.get("validation_errors")
+        for call in contract_logger.warning.call_args_list
+        if call.args and call.args[0] == RESPONSE_DRIFT
+    ]
+    assert drift == []
+    assert [q["sql"] for q in checked.captured_queries] == [
+        q["sql"] for q in plain.captured_queries
+    ]
+
+
+@pytest.mark.django_db
+def test_debug_response_check_on_op099_reports_no_drift_and_adds_no_queries(
+    settings, auth_client, history
+):
+    _assert_debug_response_check_is_clean(
+        settings,
+        auth_client,
+        f"/model-hub/prompt-templates/{history.id}/versions/",
+        {"limit": 2},
+    )
+
+
+@pytest.mark.django_db
+def test_debug_response_check_on_op068_reports_no_drift_and_adds_no_queries(
+    settings, auth_client, organization, workspace, user
+):
+    folder = PromptFolder.no_workspace_objects.create(
+        name="TH8216 folder",
+        organization=organization,
+        workspace=workspace,
+        created_by=user,
+    )
+    for name in ("TH8216 foldered prompt", "TH8216 second prompt"):
+        template = _template(organization, workspace, user, name)
+        template.prompt_folder = folder
+        template.save(update_fields=["prompt_folder"])
+
+    _assert_debug_response_check_is_clean(
+        settings, auth_client, TEMPLATES, {"limit": 1}
+    )
+
+
+# M2: read definitions require every key the handler always emits. Keys that
+# can legitimately be absent are listed here (and in REPORT.md).
+OPTIONAL_READ_KEYS = {
+    "PromptHistoryExecution": set(),
+    "PromptTemplateDetailResponse": {"last_chunk_pos"},
+    "PromptLabelledVersion": set(),
+}
+
+
+@pytest.mark.parametrize("definition", sorted(OPTIONAL_READ_KEYS))
+def test_read_definitions_require_every_always_emitted_key(swagger, definition):
+    schema = swagger["definitions"][definition]
+
+    assert set(schema.get("required", [])) == (
+        set(schema["properties"]) - OPTIONAL_READ_KEYS[definition]
+    )
+
+
+@pytest.mark.parametrize(
+    "capture, row, definition, key",
+    [
+        (
+            "op099_versions_default_page",
+            ("results", 0),
+            "PromptHistoryExecution",
+            "labels",
+        ),
+        ("op078_template_detail", (), "PromptTemplateDetailResponse", "description"),
+        ("op059_label_get_by_name", ("result",), "PromptLabelledVersion", "name"),
+    ],
+)
+def test_dropping_an_always_emitted_key_fails_parity(
+    swagger, capture, row, definition, key
+):
+    body = json.loads((CAPTURED / f"{capture}.json").read_text())["body"]
+    for step in row:
+        body = body[step]
+    schema = {"$ref": f"#/definitions/{definition}"}
+    assert validation_errors(swagger, schema, body) == []
+
+    del body[key]
+
+    assert validation_errors(swagger, schema, body) == [
+        f"<root>: '{key}' is a required property"
+    ]
+
+
+def test_parity_harness_refuses_allof(swagger):
+    """allOf plus the closed-object rule would mis-validate; fail loudly."""
+    with pytest.raises(NotImplementedError, match="allOf"):
+        to_json_schema(swagger, {"allOf": [{"type": "object", "properties": {}}]})
 
 
 SYNTHETIC = CAPTURED.parent / "synthetic"

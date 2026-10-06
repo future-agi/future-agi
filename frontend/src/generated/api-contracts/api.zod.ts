@@ -28369,49 +28369,41 @@ export const ModelHubPromptHistoryExecutionsListResponse = zod.object({
   previous: zod.string().url().optional(),
   results: zod.array(
     zod.object({
-      id: zod.string().uuid().optional(),
+      id: zod.string().uuid(),
       template_version: zod
         .string()
         .min(1)
         .max(
           modelHubPromptHistoryExecutionsListResponseResultsItemTemplateVersionMax,
         ),
-      output: zod
-        .object({})
-        .passthrough()
-        .optional()
-        .describe("Any valid JSON value."),
+      output: zod.object({}).passthrough().describe("Any valid JSON value."),
       prompt_config_snapshot: zod
         .object({})
         .passthrough()
-        .optional()
         .describe("Any valid JSON value."),
-      template_name: zod.string().min(1).optional(),
-      original_template: zod.string().uuid().optional(),
-      metadata: zod.object({}).passthrough().optional(),
-      variable_names: zod.object({}).passthrough().optional(),
-      evaluation_results: zod.object({}).passthrough().optional(),
+      template_name: zod.string().min(1),
+      original_template: zod.string().uuid(),
+      metadata: zod.object({}).passthrough(),
+      variable_names: zod.object({}).passthrough(),
+      evaluation_results: zod.object({}).passthrough(),
       evaluation_configs: zod
         .object({})
         .passthrough()
-        .optional()
         .describe("Any valid JSON value."),
-      created_at: zod.string().datetime({ offset: true }).optional(),
-      is_default: zod.boolean().optional(),
-      commit_message: zod.string().optional(),
-      updated_at: zod.string().datetime({ offset: true }).optional(),
-      is_draft: zod.boolean().optional(),
-      labels: zod
-        .array(
-          zod.object({
-            id: zod.string().uuid(),
-            name: zod.string().min(1),
-            type: zod.enum(["system", "custom"]),
-          }),
-        )
-        .optional(),
-      placeholders: zod.object({}).passthrough().optional(),
-      prompt_base_template: zod.string().uuid().optional(),
+      created_at: zod.string().datetime({ offset: true }),
+      is_default: zod.boolean(),
+      commit_message: zod.string(),
+      updated_at: zod.string().datetime({ offset: true }),
+      is_draft: zod.boolean(),
+      labels: zod.array(
+        zod.object({
+          id: zod.string().uuid(),
+          name: zod.string().min(1),
+          type: zod.enum(["system", "custom"]),
+        }),
+      ),
+      placeholders: zod.object({}).passthrough(),
+      prompt_base_template: zod.string().uuid(),
     }),
   ),
 });
@@ -28453,49 +28445,41 @@ export const ModelHubPromptHistoryExecutionsGetExecutionDetailsResponse =
     previous: zod.string().url().optional(),
     results: zod.array(
       zod.object({
-        id: zod.string().uuid().optional(),
+        id: zod.string().uuid(),
         template_version: zod
           .string()
           .min(1)
           .max(
             modelHubPromptHistoryExecutionsGetExecutionDetailsResponseResultsItemTemplateVersionMax,
           ),
-        output: zod
-          .object({})
-          .passthrough()
-          .optional()
-          .describe("Any valid JSON value."),
+        output: zod.object({}).passthrough().describe("Any valid JSON value."),
         prompt_config_snapshot: zod
           .object({})
           .passthrough()
-          .optional()
           .describe("Any valid JSON value."),
-        template_name: zod.string().min(1).optional(),
-        original_template: zod.string().uuid().optional(),
-        metadata: zod.object({}).passthrough().optional(),
-        variable_names: zod.object({}).passthrough().optional(),
-        evaluation_results: zod.object({}).passthrough().optional(),
+        template_name: zod.string().min(1),
+        original_template: zod.string().uuid(),
+        metadata: zod.object({}).passthrough(),
+        variable_names: zod.object({}).passthrough(),
+        evaluation_results: zod.object({}).passthrough(),
         evaluation_configs: zod
           .object({})
           .passthrough()
-          .optional()
           .describe("Any valid JSON value."),
-        created_at: zod.string().datetime({ offset: true }).optional(),
-        is_default: zod.boolean().optional(),
-        commit_message: zod.string().optional(),
-        updated_at: zod.string().datetime({ offset: true }).optional(),
-        is_draft: zod.boolean().optional(),
-        labels: zod
-          .array(
-            zod.object({
-              id: zod.string().uuid(),
-              name: zod.string().min(1),
-              type: zod.enum(["system", "custom"]),
-            }),
-          )
-          .optional(),
-        placeholders: zod.object({}).passthrough().optional(),
-        prompt_base_template: zod.string().uuid().optional(),
+        created_at: zod.string().datetime({ offset: true }),
+        is_default: zod.boolean(),
+        commit_message: zod.string(),
+        updated_at: zod.string().datetime({ offset: true }),
+        is_draft: zod.boolean(),
+        labels: zod.array(
+          zod.object({
+            id: zod.string().uuid(),
+            name: zod.string().min(1),
+            type: zod.enum(["system", "custom"]),
+          }),
+        ),
+        placeholders: zod.object({}).passthrough(),
+        prompt_base_template: zod.string().uuid(),
       }),
     ),
   });
@@ -28510,47 +28494,39 @@ export const ModelHubPromptHistoryExecutionsReadParams = zod.object({
 export const modelHubPromptHistoryExecutionsReadResponseTemplateVersionMax = 50;
 
 export const ModelHubPromptHistoryExecutionsReadResponse = zod.object({
-  id: zod.string().uuid().optional(),
+  id: zod.string().uuid(),
   template_version: zod
     .string()
     .min(1)
     .max(modelHubPromptHistoryExecutionsReadResponseTemplateVersionMax),
-  output: zod
-    .object({})
-    .passthrough()
-    .optional()
-    .describe("Any valid JSON value."),
+  output: zod.object({}).passthrough().describe("Any valid JSON value."),
   prompt_config_snapshot: zod
     .object({})
     .passthrough()
-    .optional()
     .describe("Any valid JSON value."),
-  template_name: zod.string().min(1).optional(),
-  original_template: zod.string().uuid().optional(),
-  metadata: zod.object({}).passthrough().optional(),
-  variable_names: zod.object({}).passthrough().optional(),
-  evaluation_results: zod.object({}).passthrough().optional(),
+  template_name: zod.string().min(1),
+  original_template: zod.string().uuid(),
+  metadata: zod.object({}).passthrough(),
+  variable_names: zod.object({}).passthrough(),
+  evaluation_results: zod.object({}).passthrough(),
   evaluation_configs: zod
     .object({})
     .passthrough()
-    .optional()
     .describe("Any valid JSON value."),
-  created_at: zod.string().datetime({ offset: true }).optional(),
-  is_default: zod.boolean().optional(),
-  commit_message: zod.string().optional(),
-  updated_at: zod.string().datetime({ offset: true }).optional(),
-  is_draft: zod.boolean().optional(),
-  labels: zod
-    .array(
-      zod.object({
-        id: zod.string().uuid(),
-        name: zod.string().min(1),
-        type: zod.enum(["system", "custom"]),
-      }),
-    )
-    .optional(),
-  placeholders: zod.object({}).passthrough().optional(),
-  prompt_base_template: zod.string().uuid().optional(),
+  created_at: zod.string().datetime({ offset: true }),
+  is_default: zod.boolean(),
+  commit_message: zod.string(),
+  updated_at: zod.string().datetime({ offset: true }),
+  is_draft: zod.boolean(),
+  labels: zod.array(
+    zod.object({
+      id: zod.string().uuid(),
+      name: zod.string().min(1),
+      type: zod.enum(["system", "custom"]),
+    }),
+  ),
+  placeholders: zod.object({}).passthrough(),
+  prompt_base_template: zod.string().uuid(),
 });
 
 export const ModelHubPromptLabelsListQueryParams = zod.object({
@@ -28629,7 +28605,7 @@ export const ModelHubPromptLabelsCreateSystemLabelsBody = zod.object({
  * @summary Fetch a prompt version by template name and either explicit version or label.
  */
 export const ModelHubPromptLabelsGetByNameQueryParams = zod.object({
-  name: zod.string().optional().describe("Template name (required)."),
+  name: zod.string().describe("Template name."),
   version: zod
     .string()
     .optional()
@@ -28643,17 +28619,17 @@ export const ModelHubPromptLabelsGetByNameQueryParams = zod.object({
 export const ModelHubPromptLabelsGetByNameResponse = zod.object({
   status: zod.boolean(),
   result: zod.object({
-    id: zod.string().uuid().optional(),
-    name: zod.string().min(1).optional(),
-    description: zod.string().min(1).optional(),
+    id: zod.string().uuid(),
+    name: zod.string().min(1),
+    description: zod.string(),
     variable_names: zod
       .object({})
       .passthrough()
       .describe("Any valid JSON value."),
-    organization: zod.string().uuid().optional(),
-    prompt_folder: zod.string().uuid().optional(),
-    placeholders: zod.object({}).passthrough().optional(),
-    created_by: zod.string().uuid().optional(),
+    organization: zod.string().uuid(),
+    prompt_folder: zod.string().uuid(),
+    placeholders: zod.object({}).passthrough(),
+    created_by: zod.string().uuid(),
     prompt_config: zod
       .object({})
       .passthrough()
@@ -29048,17 +29024,17 @@ export const ModelHubPromptTemplatesReadParams = zod.object({
 });
 
 export const ModelHubPromptTemplatesReadResponse = zod.object({
-  id: zod.string().uuid().optional(),
-  name: zod.string().min(1).optional(),
-  description: zod.string().min(1).optional(),
+  id: zod.string().uuid(),
+  name: zod.string().min(1),
+  description: zod.string(),
   variable_names: zod
     .object({})
     .passthrough()
     .describe("Any valid JSON value."),
-  organization: zod.string().uuid().optional(),
-  prompt_folder: zod.string().uuid().optional(),
-  placeholders: zod.object({}).passthrough().optional(),
-  created_by: zod.string().uuid().optional(),
+  organization: zod.string().uuid(),
+  prompt_folder: zod.string().uuid(),
+  placeholders: zod.object({}).passthrough(),
+  created_by: zod.string().uuid(),
   prompt_config: zod.object({}).passthrough().describe("Any valid JSON value."),
   version: zod.string().min(1),
   output: zod.object({}).passthrough().describe("Any valid JSON value."),
@@ -29343,49 +29319,41 @@ export const ModelHubPromptTemplatesGetRunStatusResponse = zod.object({
     status: zod.string().min(1),
     error_message: zod.string(),
     executions_result: zod.object({
-      id: zod.string().uuid().optional(),
+      id: zod.string().uuid(),
       template_version: zod
         .string()
         .min(1)
         .max(
           modelHubPromptTemplatesGetRunStatusResponseResultExecutionsResultTemplateVersionMax,
         ),
-      output: zod
-        .object({})
-        .passthrough()
-        .optional()
-        .describe("Any valid JSON value."),
+      output: zod.object({}).passthrough().describe("Any valid JSON value."),
       prompt_config_snapshot: zod
         .object({})
         .passthrough()
-        .optional()
         .describe("Any valid JSON value."),
-      template_name: zod.string().min(1).optional(),
-      original_template: zod.string().uuid().optional(),
-      metadata: zod.object({}).passthrough().optional(),
-      variable_names: zod.object({}).passthrough().optional(),
-      evaluation_results: zod.object({}).passthrough().optional(),
+      template_name: zod.string().min(1),
+      original_template: zod.string().uuid(),
+      metadata: zod.object({}).passthrough(),
+      variable_names: zod.object({}).passthrough(),
+      evaluation_results: zod.object({}).passthrough(),
       evaluation_configs: zod
         .object({})
         .passthrough()
-        .optional()
         .describe("Any valid JSON value."),
-      created_at: zod.string().datetime({ offset: true }).optional(),
-      is_default: zod.boolean().optional(),
-      commit_message: zod.string().optional(),
-      updated_at: zod.string().datetime({ offset: true }).optional(),
-      is_draft: zod.boolean().optional(),
-      labels: zod
-        .array(
-          zod.object({
-            id: zod.string().uuid(),
-            name: zod.string().min(1),
-            type: zod.enum(["system", "custom"]),
-          }),
-        )
-        .optional(),
-      placeholders: zod.object({}).passthrough().optional(),
-      prompt_base_template: zod.string().uuid().optional(),
+      created_at: zod.string().datetime({ offset: true }),
+      is_default: zod.boolean(),
+      commit_message: zod.string(),
+      updated_at: zod.string().datetime({ offset: true }),
+      is_draft: zod.boolean(),
+      labels: zod.array(
+        zod.object({
+          id: zod.string().uuid(),
+          name: zod.string().min(1),
+          type: zod.enum(["system", "custom"]),
+        }),
+      ),
+      placeholders: zod.object({}).passthrough(),
+      prompt_base_template: zod.string().uuid(),
     }),
   }),
 });
@@ -29674,49 +29642,41 @@ export const ModelHubPromptTemplatesVersionsResponse = zod.object({
   current_page: zod.number(),
   results: zod.array(
     zod.object({
-      id: zod.string().uuid().optional(),
+      id: zod.string().uuid(),
       template_version: zod
         .string()
         .min(1)
         .max(
           modelHubPromptTemplatesVersionsResponseResultsItemTemplateVersionMax,
         ),
-      output: zod
-        .object({})
-        .passthrough()
-        .optional()
-        .describe("Any valid JSON value."),
+      output: zod.object({}).passthrough().describe("Any valid JSON value."),
       prompt_config_snapshot: zod
         .object({})
         .passthrough()
-        .optional()
         .describe("Any valid JSON value."),
-      template_name: zod.string().min(1).optional(),
-      original_template: zod.string().uuid().optional(),
-      metadata: zod.object({}).passthrough().optional(),
-      variable_names: zod.object({}).passthrough().optional(),
-      evaluation_results: zod.object({}).passthrough().optional(),
+      template_name: zod.string().min(1),
+      original_template: zod.string().uuid(),
+      metadata: zod.object({}).passthrough(),
+      variable_names: zod.object({}).passthrough(),
+      evaluation_results: zod.object({}).passthrough(),
       evaluation_configs: zod
         .object({})
         .passthrough()
-        .optional()
         .describe("Any valid JSON value."),
-      created_at: zod.string().datetime({ offset: true }).optional(),
-      is_default: zod.boolean().optional(),
-      commit_message: zod.string().optional(),
-      updated_at: zod.string().datetime({ offset: true }).optional(),
-      is_draft: zod.boolean().optional(),
-      labels: zod
-        .array(
-          zod.object({
-            id: zod.string().uuid(),
-            name: zod.string().min(1),
-            type: zod.enum(["system", "custom"]),
-          }),
-        )
-        .optional(),
-      placeholders: zod.object({}).passthrough().optional(),
-      prompt_base_template: zod.string().uuid().optional(),
+      created_at: zod.string().datetime({ offset: true }),
+      is_default: zod.boolean(),
+      commit_message: zod.string(),
+      updated_at: zod.string().datetime({ offset: true }),
+      is_draft: zod.boolean(),
+      labels: zod.array(
+        zod.object({
+          id: zod.string().uuid(),
+          name: zod.string().min(1),
+          type: zod.enum(["system", "custom"]),
+        }),
+      ),
+      placeholders: zod.object({}).passthrough(),
+      prompt_base_template: zod.string().uuid(),
     }),
   ),
 });

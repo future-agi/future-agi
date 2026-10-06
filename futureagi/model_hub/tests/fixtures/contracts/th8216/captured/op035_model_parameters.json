@@ -3,47 +3,23 @@
     "result": {
       "responseFormat": [
         {
-          "value": "json"
-        },
-        {
-          "value": "text"
+          "value": "<str>"
         }
       ],
       "sliders": [
         {
           "default": null,
-          "label": "temperature",
-          "max": 2.0,
-          "min": 0.0,
-          "step": 0.1
+          "label": "<str>",
+          "max": "<float>",
+          "min": "<float>",
+          "step": "<float>"
         },
         {
           "default": null,
-          "label": "max_tokens",
-          "max": 65536,
-          "min": 1,
-          "step": 1
-        },
-        {
-          "default": null,
-          "label": "top_p",
-          "max": 1.0,
-          "min": 0.0,
-          "step": 0.1
-        },
-        {
-          "default": null,
-          "label": "presence_penalty",
-          "max": 2.0,
-          "min": -2.0,
-          "step": 0.1
-        },
-        {
-          "default": null,
-          "label": "frequency_penalty",
-          "max": 2.0,
-          "min": -2.0,
-          "step": 0.1
+          "label": "<str>",
+          "max": "<int>",
+          "min": "<int>",
+          "step": "<int>"
         }
       ]
     },
@@ -51,7 +27,7 @@
   },
   "label": "captured",
   "method": "GET",
-  "note": "",
+  "note": "catalogue values reduced to their JSON types",
   "operation": "OP-035",
   "path": "/model-hub/api/model_parameters/",
   "request": {

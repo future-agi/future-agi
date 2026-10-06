@@ -14266,32 +14266,32 @@ export interface PromptVersionLabelApi {
 }
 
 export interface PromptHistoryExecutionApi {
-  readonly id?: string;
+  readonly id: string;
   /**
    * @minLength 1
    * @maxLength 50
    */
   template_version: string;
   /** Any valid JSON value. */
-  readonly output?: PromptHistoryExecutionApiOutput;
+  readonly output: PromptHistoryExecutionApiOutput;
   /** Any valid JSON value. */
-  readonly prompt_config_snapshot?: PromptHistoryExecutionApiPromptConfigSnapshot;
+  readonly prompt_config_snapshot: PromptHistoryExecutionApiPromptConfigSnapshot;
   /** @minLength 1 */
-  readonly template_name?: string;
-  original_template?: string;
-  readonly metadata?: PromptHistoryExecutionApiMetadata;
-  readonly variable_names?: PromptHistoryExecutionApiVariableNames;
-  evaluation_results?: PromptHistoryExecutionApiEvaluationResults;
+  readonly template_name: string;
+  original_template: string;
+  readonly metadata: PromptHistoryExecutionApiMetadata;
+  readonly variable_names: PromptHistoryExecutionApiVariableNames;
+  evaluation_results: PromptHistoryExecutionApiEvaluationResults;
   /** Any valid JSON value. */
-  readonly evaluation_configs?: PromptHistoryExecutionApiEvaluationConfigs;
-  readonly created_at?: string;
-  is_default?: boolean;
-  commit_message?: string;
-  readonly updated_at?: string;
-  is_draft?: boolean;
-  readonly labels?: readonly PromptVersionLabelApi[];
-  placeholders?: PromptHistoryExecutionApiPlaceholders;
-  prompt_base_template?: string;
+  readonly evaluation_configs: PromptHistoryExecutionApiEvaluationConfigs;
+  readonly created_at: string;
+  is_default: boolean;
+  commit_message: string;
+  readonly updated_at: string;
+  is_draft: boolean;
+  readonly labels: readonly PromptVersionLabelApi[];
+  placeholders: PromptHistoryExecutionApiPlaceholders;
+  prompt_base_template: string;
 }
 
 export type PromptLabelApiType =
@@ -14385,17 +14385,16 @@ export type PromptLabelledVersionApiOutput = { [key: string]: unknown };
 export type PromptLabelledVersionApiMetadata = { [key: string]: unknown };
 
 export interface PromptLabelledVersionApi {
-  readonly id?: string;
+  readonly id: string;
   /** @minLength 1 */
-  readonly name?: string;
-  /** @minLength 1 */
-  readonly description?: string;
+  readonly name: string;
+  readonly description: string;
   /** Any valid JSON value. */
   variable_names: PromptLabelledVersionApiVariableNames;
-  readonly organization?: string;
-  readonly prompt_folder?: string;
-  readonly placeholders?: PromptLabelledVersionApiPlaceholders;
-  readonly created_by?: string;
+  readonly organization: string;
+  readonly prompt_folder: string;
+  readonly placeholders: PromptLabelledVersionApiPlaceholders;
+  readonly created_by: string;
   /** Any valid JSON value. */
   prompt_config: PromptLabelledVersionApiPromptConfig;
   /** @minLength 1 */
@@ -14453,7 +14452,7 @@ export interface PromptTemplatePageApi {
   previous: string;
   total_pages: number;
   current_page: number;
-  results: PromptTemplateApi[];
+  readonly results: readonly PromptTemplateApi[];
 }
 
 export type DerivedVariablePreviewRequestApiContent = {
@@ -14509,17 +14508,16 @@ export type PromptTemplateDetailResponseApiLastChunkPos = {
 };
 
 export interface PromptTemplateDetailResponseApi {
-  readonly id?: string;
+  readonly id: string;
   /** @minLength 1 */
-  readonly name?: string;
-  /** @minLength 1 */
-  readonly description?: string;
+  readonly name: string;
+  readonly description: string;
   /** Any valid JSON value. */
   variable_names: PromptTemplateDetailResponseApiVariableNames;
-  readonly organization?: string;
-  readonly prompt_folder?: string;
-  readonly placeholders?: PromptTemplateDetailResponseApiPlaceholders;
-  readonly created_by?: string;
+  readonly organization: string;
+  readonly prompt_folder: string;
+  readonly placeholders: PromptTemplateDetailResponseApiPlaceholders;
+  readonly created_by: string;
   /** Any valid JSON value. */
   prompt_config: PromptTemplateDetailResponseApiPromptConfig;
   /** @minLength 1 */
@@ -14669,7 +14667,7 @@ export interface PromptVersionHistoryPageApi {
   previous: string;
   total_pages: number;
   current_page: number;
-  results: PromptHistoryExecutionApi[];
+  readonly results: readonly PromptHistoryExecutionApi[];
 }
 
 export type PromptDerivedVariablesResultApiDerivedVariables = {
@@ -34117,9 +34115,9 @@ export type ModelHubPromptLabelsListParams = {
 
 export type ModelHubPromptLabelsGetByNameParams = {
   /**
-   * Template name (required).
+   * Template name.
    */
-  name?: string;
+  name: string;
   /**
    * Version name such as v1; wins over label.
    */

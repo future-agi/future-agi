@@ -42781,7 +42781,8 @@
                     {
                         "name": "name",
                         "in": "query",
-                        "description": "Template name (required).",
+                        "description": "Template name.",
+                        "required": true,
                         "type": "string"
                     },
                     {
@@ -99685,16 +99686,16 @@
                 "next": {
                     "title": "Next",
                     "type": "string",
-                    "format": "uri",
                     "minLength": 1,
-                    "x-nullable": true
+                    "x-nullable": true,
+                    "format": "uri"
                 },
                 "previous": {
                     "title": "Previous",
                     "type": "string",
-                    "format": "uri",
                     "minLength": 1,
-                    "x-nullable": true
+                    "x-nullable": true,
+                    "format": "uri"
                 },
                 "total_pages": {
                     "title": "Total pages",
@@ -115952,7 +115953,24 @@
         },
         "PromptHistoryExecution": {
             "required": [
-                "template_version"
+                "id",
+                "template_version",
+                "output",
+                "prompt_config_snapshot",
+                "template_name",
+                "original_template",
+                "metadata",
+                "variable_names",
+                "evaluation_results",
+                "evaluation_configs",
+                "created_at",
+                "is_default",
+                "commit_message",
+                "updated_at",
+                "is_draft",
+                "labels",
+                "placeholders",
+                "prompt_base_template"
             ],
             "type": "object",
             "properties": {
@@ -116136,16 +116154,16 @@
                 "next": {
                     "title": "Next",
                     "type": "string",
-                    "format": "uri",
                     "minLength": 1,
-                    "x-nullable": true
+                    "x-nullable": true,
+                    "format": "uri"
                 },
                 "previous": {
                     "title": "Previous",
                     "type": "string",
-                    "format": "uri",
                     "minLength": 1,
-                    "x-nullable": true
+                    "x-nullable": true,
+                    "format": "uri"
                 },
                 "total_pages": {
                     "title": "Total pages",
@@ -116236,7 +116254,14 @@
         },
         "PromptLabelledVersion": {
             "required": [
+                "id",
+                "name",
+                "description",
                 "variable_names",
+                "organization",
+                "prompt_folder",
+                "placeholders",
+                "created_by",
                 "prompt_config",
                 "version",
                 "output",
@@ -116262,7 +116287,6 @@
                     "title": "Description",
                     "type": "string",
                     "readOnly": true,
-                    "minLength": 1,
                     "x-nullable": true
                 },
                 "variable_names": {
@@ -116475,16 +116499,16 @@
                 "next": {
                     "title": "Next",
                     "type": "string",
-                    "format": "uri",
                     "minLength": 1,
-                    "x-nullable": true
+                    "x-nullable": true,
+                    "format": "uri"
                 },
                 "previous": {
                     "title": "Previous",
                     "type": "string",
-                    "format": "uri",
                     "minLength": 1,
-                    "x-nullable": true
+                    "x-nullable": true,
+                    "format": "uri"
                 },
                 "total_pages": {
                     "title": "Total pages",
@@ -116498,7 +116522,8 @@
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/PromptTemplate"
-                    }
+                    },
+                    "readOnly": true
                 }
             }
         },
@@ -116538,7 +116563,14 @@
         },
         "PromptTemplateDetailResponse": {
             "required": [
+                "id",
+                "name",
+                "description",
                 "variable_names",
+                "organization",
+                "prompt_folder",
+                "placeholders",
+                "created_by",
                 "prompt_config",
                 "version",
                 "output",
@@ -116565,7 +116597,6 @@
                     "title": "Description",
                     "type": "string",
                     "readOnly": true,
-                    "minLength": 1,
                     "x-nullable": true
                 },
                 "variable_names": {
@@ -116926,16 +116957,16 @@
                 "next": {
                     "title": "Next",
                     "type": "string",
-                    "format": "uri",
                     "minLength": 1,
-                    "x-nullable": true
+                    "x-nullable": true,
+                    "format": "uri"
                 },
                 "previous": {
                     "title": "Previous",
                     "type": "string",
-                    "format": "uri",
                     "minLength": 1,
-                    "x-nullable": true
+                    "x-nullable": true,
+                    "format": "uri"
                 },
                 "total_pages": {
                     "title": "Total pages",
@@ -116949,7 +116980,8 @@
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/PromptHistoryExecution"
-                    }
+                    },
+                    "readOnly": true
                 }
             }
         },

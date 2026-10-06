@@ -18,22 +18,47 @@ from model_hub.serializers.prompt_template import (
 from tfc.utils.serializer_fields import JsonValueField
 
 
+class PageLinkField(serializers.CharField):
+    """Absolute page URL built from the request host.
+
+    Declared as a URI, but validated as plain text: internal hosts such as
+    ``testserver`` or a service name have no TLD and fail ``URLField``.
+    """
+
+    class Meta:
+        swagger_schema_fields = {"format": openapi.FORMAT_URI}
+
+
 class ExtendedPageResponseSerializer(serializers.Serializer):
     """Body of ``ExtendedPageNumberPagination.get_paginated_response``."""
 
     count = serializers.IntegerField()
-    next = serializers.URLField(allow_null=True)
-    previous = serializers.URLField(allow_null=True)
+    next = PageLinkField(allow_null=True)
+    previous = PageLinkField(allow_null=True)
     total_pages = serializers.IntegerField()
     current_page = serializers.IntegerField()
 
 
+PAGE_FIELDS = ["count", "next", "previous", "total_pages", "current_page", "results"]
+
+
+# OP-068 and OP-099 also pass these to ``validated_request(responses=...)``,
+# which validates the emitted page when DEBUG is on. Rows are read-only so
+# that check stays side-effect free: validating them as input would run
+# ModelSerializer primary-key lookups and unique-together queries against
+# rows that already exist. Row shapes are pinned by the parity tests instead.
 class PromptVersionHistoryPageSerializer(ExtendedPageResponseSerializer):
-    results = PromptHistoryExecutionSerializer(many=True)
+    results = PromptHistoryExecutionSerializer(many=True, read_only=True)
+
+    class Meta:
+        swagger_schema_fields = {"required": PAGE_FIELDS}
 
 
 class PromptTemplatePageSerializer(ExtendedPageResponseSerializer):
-    results = PromptTemplateSerializer(many=True)
+    results = PromptTemplateSerializer(many=True, read_only=True)
+
+    class Meta:
+        swagger_schema_fields = {"required": PAGE_FIELDS}
 
 
 class PromptLabelPageSerializer(ExtendedPageResponseSerializer):
@@ -46,6 +71,11 @@ class PromptTemplateSelectedVersionSerializer(PromptTemplateSerializer):
     ``variable_names`` here is the version's stored value, not the template's.
     """
 
+    # PromptTemplate.description is blank=True, null=True; read_only_fields
+    # below would otherwise drop allow_blank and declare minLength 1.
+    description = serializers.CharField(
+        read_only=True, allow_null=True, allow_blank=True
+    )
     prompt_config = JsonValueField(
         help_text="List of prompt configs (a dict snapshot is wrapped in a list)."
     )
@@ -87,6 +117,9 @@ class PromptTemplateDetailResponseSerializer(PromptTemplateSelectedVersionSerial
             "last_chunk_pos",
         ]
         read_only_fields = fields
+        swagger_schema_fields = {
+            "required": [name for name in fields if name != "last_chunk_pos"]
+        }
 
 
 class PromptLabelledVersionSerializer(PromptTemplateSelectedVersionSerializer):
@@ -96,6 +129,7 @@ class PromptLabelledVersionSerializer(PromptTemplateSelectedVersionSerializer):
         ref_name = "PromptLabelledVersion"
         fields = [*PromptTemplateSelectedVersionSerializer.Meta.fields, "labels"]
         read_only_fields = fields
+        swagger_schema_fields = {"required": fields}
 
 
 class PromptLabelLookupResponseSerializer(serializers.Serializer):

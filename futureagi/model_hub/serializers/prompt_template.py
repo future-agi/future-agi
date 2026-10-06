@@ -487,6 +487,8 @@ class PromptHistoryExecutionSerializer(serializers.ModelSerializer):
             "prompt_base_template",
         ]
         read_only_fields = ["id", "output", "created_at", "updated_at"]
+        # Every field is always emitted (contract truth, TH-8216).
+        swagger_schema_fields = {"required": fields}
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
