@@ -1,10 +1,10 @@
+from drf_yasg.utils import swagger_serializer_method
 from rest_framework import serializers
 
 from agent_playground.models.graph import Graph
 from agent_playground.models.graph_version import GraphVersion
 from agent_playground.serializers.graph_version import (
     GraphVersionDetailSerializer,
-    GraphVersionListSerializer,
     prefetch_version_detail,
 )
 
@@ -94,6 +94,15 @@ class GraphCreateResponseSerializer(serializers.ModelSerializer):
         return None
 
 
+class GraphActiveVersionSerializer(GraphVersionDetailSerializer):
+    """Declaration-only: ``GraphDetail.active_version``, the latest version of
+    any status, or null when the graph has none. A separate swagger definition
+    keeps the shared ``GraphVersionDetail`` non-nullable."""
+
+    class Meta(GraphVersionDetailSerializer.Meta):
+        ref_name = "GraphActiveVersion"
+
+
 class GraphDetailSerializer(serializers.ModelSerializer):
     """Full detail serializer for graphs with current version expanded."""
 
@@ -113,6 +122,9 @@ class GraphDetailSerializer(serializers.ModelSerializer):
 
         read_only_fields = fields
 
+    @swagger_serializer_method(
+        serializer_or_field=GraphActiveVersionSerializer(allow_null=True)
+    )
     def get_active_version(self, obj):
         """Get the latest version (highest version_number) with full nested structure."""
         version = _get_latest_version(obj)

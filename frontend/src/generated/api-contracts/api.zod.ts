@@ -2684,13 +2684,180 @@ export const AgentPlaygroundGraphsReadQueryParams = zod.object({
 });
 
 export const AgentPlaygroundGraphsReadResponse = zod.object({
-  id: zod.string().uuid().optional(),
-  name: zod.string().min(1).optional().describe("Display name"),
-  description: zod.string().min(1).optional(),
-  is_template: zod.boolean().optional(),
-  created_at: zod.string().datetime({ offset: true }).optional(),
-  updated_at: zod.string().datetime({ offset: true }).optional(),
-  active_version: zod.string().optional(),
+  status: zod.boolean(),
+  result: zod.object({
+    id: zod.string().uuid().optional(),
+    name: zod.string().min(1).optional().describe("Display name"),
+    description: zod.string().min(1).optional(),
+    is_template: zod.boolean().optional(),
+    created_at: zod.string().datetime({ offset: true }).optional(),
+    updated_at: zod.string().datetime({ offset: true }).optional(),
+    active_version: zod
+      .object({
+        id: zod.string().uuid(),
+        version_number: zod.number(),
+        status: zod
+          .enum(["draft", "active", "inactive"])
+          .describe("Version status (inactive for historical versions)"),
+        tags: zod.object({}).passthrough().describe("Any valid JSON value."),
+        commit_message: zod.string(),
+        created_at: zod.string().datetime({ offset: true }),
+        nodes: zod.array(
+          zod.object({
+            id: zod.string().uuid(),
+            type: zod
+              .enum(["subgraph", "atomic"])
+              .describe(
+                "'subgraph' for subgraph nodes, 'atomic' for nodes using a NodeTemplate",
+              ),
+            name: zod.string().min(1).describe("Display name"),
+            config: zod
+              .object({})
+              .passthrough()
+              .describe(
+                "Node-specific configuration (validated against node_template.config_schema for atomic nodes)",
+              ),
+            position: zod
+              .object({})
+              .passthrough()
+              .describe('UI coordinates {"x": 0, "y": 0}'),
+            node_template_id: zod.string().uuid(),
+            ref_graph_version_id: zod.string().uuid(),
+            ref_graph_name: zod.string().min(1),
+            ref_graph_id: zod.string().uuid(),
+            prompt_template: zod
+              .object({
+                prompt_template_id: zod.string().uuid(),
+                prompt_version_id: zod.string().uuid(),
+                messages: zod
+                  .object({})
+                  .passthrough()
+                  .describe("Any valid JSON value."),
+                response_format: zod
+                  .object({})
+                  .passthrough()
+                  .describe("Any valid JSON value."),
+                response_schema: zod
+                  .object({})
+                  .passthrough()
+                  .describe("Any valid JSON value."),
+                model: zod
+                  .object({})
+                  .passthrough()
+                  .describe("Any valid JSON value."),
+                temperature: zod
+                  .object({})
+                  .passthrough()
+                  .describe("Any valid JSON value."),
+                max_tokens: zod
+                  .object({})
+                  .passthrough()
+                  .describe("Any valid JSON value."),
+                top_p: zod
+                  .object({})
+                  .passthrough()
+                  .describe("Any valid JSON value."),
+                frequency_penalty: zod
+                  .object({})
+                  .passthrough()
+                  .describe("Any valid JSON value."),
+                presence_penalty: zod
+                  .object({})
+                  .passthrough()
+                  .describe("Any valid JSON value."),
+                output_format: zod
+                  .object({})
+                  .passthrough()
+                  .describe("Any valid JSON value."),
+                tools: zod
+                  .object({})
+                  .passthrough()
+                  .describe("Any valid JSON value."),
+                tool_choice: zod
+                  .object({})
+                  .passthrough()
+                  .describe("Any valid JSON value."),
+                model_detail: zod
+                  .object({})
+                  .passthrough()
+                  .describe("Any valid JSON value."),
+                template_format: zod
+                  .object({})
+                  .passthrough()
+                  .describe("Any valid JSON value."),
+                variable_names: zod
+                  .object({})
+                  .passthrough()
+                  .describe("Any valid JSON value."),
+                metadata: zod
+                  .object({})
+                  .passthrough()
+                  .describe("Any valid JSON value."),
+                is_draft: zod.boolean(),
+                template_version: zod.string(),
+              })
+              .describe(
+                "Read from obj.prompt_template_node → PTV.prompt_config_snapshot.",
+              ),
+            node_connection: zod
+              .object({
+                id: zod.string().uuid(),
+                source_node_id: zod.string().uuid(),
+                target_node_id: zod.string().uuid(),
+              })
+              .describe(
+                "Return NodeConnection context set by the view (create response only).",
+              ),
+            input_mappings: zod
+              .array(
+                zod.object({
+                  key: zod.string().min(1),
+                  value: zod.string().min(1),
+                }),
+              )
+              .describe(
+                'Reconstruct input_mappings as list of key-value objects.\n\n        Returns a list like [\n            {"key": "context", "value": "DataLoader.output"},\n            {"key": "question", "value": None}\n        ] for subgraph nodes, or None for atomic nodes.\n\n        Uses prefetched ``ports`` and ``incoming_edges`` when available\n        (see ``prefetch_version_detail``) to avoid N+1 queries.\n',
+              ),
+            ports: zod.array(
+              zod.object({
+                id: zod.string().uuid(),
+                key: zod
+                  .string()
+                  .min(1)
+                  .describe("Identifier (e.g., 'prompt', 'result')"),
+                display_name: zod
+                  .string()
+                  .min(1)
+                  .describe("User-facing name for the port"),
+                direction: zod.enum(["input", "output"]),
+                data_schema: zod
+                  .object({})
+                  .passthrough()
+                  .describe("JSON Schema for validation"),
+                required: zod.boolean(),
+                default_value: zod
+                  .object({})
+                  .passthrough()
+                  .describe("Any valid JSON value."),
+                metadata: zod.object({}).passthrough(),
+                ref_port_id: zod.string().uuid(),
+              }),
+            ),
+          }),
+        ),
+        node_connections: zod.array(
+          zod.object({
+            id: zod.string().uuid(),
+            source_node_id: zod.string().uuid(),
+            target_node_id: zod.string().uuid(),
+          }),
+        ),
+      })
+      .optional()
+      .describe(
+        "Get the latest version (highest version_number) with full nested structure.",
+      ),
+  }),
 });
 
 /**

@@ -7653,7 +7653,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/GraphDetail"
+                            "$ref": "#/definitions/GraphDetailResponse"
                         }
                     },
                     "400": {
@@ -85698,6 +85698,493 @@
                 }
             }
         },
+        "LinkedPromptTemplateRead": {
+            "description": "Read from obj.prompt_template_node → PTV.prompt_config_snapshot.",
+            "required": [
+                "prompt_template_id",
+                "prompt_version_id",
+                "messages",
+                "response_format",
+                "response_schema",
+                "model",
+                "temperature",
+                "max_tokens",
+                "top_p",
+                "frequency_penalty",
+                "presence_penalty",
+                "output_format",
+                "tools",
+                "tool_choice",
+                "model_detail",
+                "template_format",
+                "variable_names",
+                "metadata",
+                "is_draft",
+                "template_version"
+            ],
+            "type": "object",
+            "properties": {
+                "prompt_template_id": {
+                    "title": "Prompt template id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "prompt_version_id": {
+                    "title": "Prompt version id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "messages": {
+                    "title": "Messages",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "response_format": {
+                    "title": "Response format",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "response_schema": {
+                    "title": "Response schema",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "model": {
+                    "title": "Model",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "temperature": {
+                    "title": "Temperature",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "max_tokens": {
+                    "title": "Max tokens",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "top_p": {
+                    "title": "Top p",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "frequency_penalty": {
+                    "title": "Frequency penalty",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "presence_penalty": {
+                    "title": "Presence penalty",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "output_format": {
+                    "title": "Output format",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "tools": {
+                    "title": "Tools",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "tool_choice": {
+                    "title": "Tool choice",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "model_detail": {
+                    "title": "Model detail",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "template_format": {
+                    "title": "Template format",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "variable_names": {
+                    "title": "Variable names",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "metadata": {
+                    "title": "Metadata",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "is_draft": {
+                    "title": "Is draft",
+                    "type": "boolean"
+                },
+                "template_version": {
+                    "title": "Template version",
+                    "type": "string"
+                }
+            },
+            "x-nullable": true
+        },
+        "NodeConnectionSummary": {
+            "description": "Return NodeConnection context set by the view (create response only).",
+            "required": [
+                "id",
+                "source_node_id",
+                "target_node_id"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "source_node_id": {
+                    "title": "Source node id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "target_node_id": {
+                    "title": "Target node id",
+                    "type": "string",
+                    "format": "uuid"
+                }
+            },
+            "x-nullable": true
+        },
+        "InputMappingRead": {
+            "required": [
+                "key",
+                "value"
+            ],
+            "type": "object",
+            "properties": {
+                "key": {
+                    "title": "Key",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "value": {
+                    "title": "Value",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            }
+        },
+        "PortRead": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true
+                },
+                "key": {
+                    "title": "Key",
+                    "description": "Identifier (e.g., 'prompt', 'result')",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "display_name": {
+                    "title": "Display name",
+                    "description": "User-facing name for the port",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "direction": {
+                    "title": "Direction",
+                    "type": "string",
+                    "enum": [
+                        "input",
+                        "output"
+                    ],
+                    "readOnly": true
+                },
+                "data_schema": {
+                    "title": "Data schema",
+                    "description": "JSON Schema for validation",
+                    "type": "object",
+                    "readOnly": true
+                },
+                "required": {
+                    "title": "Required",
+                    "type": "boolean",
+                    "readOnly": true
+                },
+                "default_value": {
+                    "title": "Default value",
+                    "type": "object",
+                    "readOnly": true,
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "metadata": {
+                    "title": "Metadata",
+                    "type": "object",
+                    "readOnly": true
+                },
+                "ref_port_id": {
+                    "title": "Ref port id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true,
+                    "x-nullable": true
+                }
+            },
+            "required": [
+                "id",
+                "key",
+                "display_name",
+                "direction",
+                "data_schema",
+                "required",
+                "default_value",
+                "metadata",
+                "ref_port_id"
+            ]
+        },
+        "NodeRead": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true
+                },
+                "type": {
+                    "title": "Type",
+                    "description": "'subgraph' for subgraph nodes, 'atomic' for nodes using a NodeTemplate",
+                    "type": "string",
+                    "enum": [
+                        "subgraph",
+                        "atomic"
+                    ],
+                    "readOnly": true
+                },
+                "name": {
+                    "title": "Name",
+                    "description": "Display name",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "config": {
+                    "title": "Config",
+                    "description": "Node-specific configuration (validated against node_template.config_schema for atomic nodes)",
+                    "type": "object",
+                    "readOnly": true
+                },
+                "position": {
+                    "title": "Position",
+                    "description": "UI coordinates {\"x\": 0, \"y\": 0}",
+                    "type": "object",
+                    "readOnly": true
+                },
+                "node_template_id": {
+                    "title": "Node template id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "ref_graph_version_id": {
+                    "title": "Ref graph version id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "ref_graph_name": {
+                    "title": "Ref graph name",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "ref_graph_id": {
+                    "title": "Ref graph id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "prompt_template": {
+                    "$ref": "#/definitions/LinkedPromptTemplateRead"
+                },
+                "node_connection": {
+                    "$ref": "#/definitions/NodeConnectionSummary"
+                },
+                "input_mappings": {
+                    "description": "Reconstruct input_mappings as list of key-value objects.\n\n        Returns a list like [\n            {\"key\": \"context\", \"value\": \"DataLoader.output\"},\n            {\"key\": \"question\", \"value\": None}\n        ] for subgraph nodes, or None for atomic nodes.\n\n        Uses prefetched ``ports`` and ``incoming_edges`` when available\n        (see ``prefetch_version_detail``) to avoid N+1 queries.\n",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/InputMappingRead"
+                    },
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "ports": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/PortRead"
+                    },
+                    "readOnly": true
+                }
+            },
+            "required": [
+                "id",
+                "type",
+                "name",
+                "config",
+                "position",
+                "node_template_id",
+                "ref_graph_version_id",
+                "ref_graph_name",
+                "ref_graph_id",
+                "prompt_template",
+                "node_connection",
+                "input_mappings",
+                "ports"
+            ]
+        },
+        "NodeConnectionRead": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true
+                },
+                "source_node_id": {
+                    "title": "Source node id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true
+                },
+                "target_node_id": {
+                    "title": "Target node id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true
+                }
+            },
+            "required": [
+                "id",
+                "source_node_id",
+                "target_node_id"
+            ]
+        },
+        "GraphActiveVersion": {
+            "description": "Get the latest version (highest version_number) with full nested structure.",
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true
+                },
+                "version_number": {
+                    "title": "Version number",
+                    "type": "integer",
+                    "readOnly": true
+                },
+                "status": {
+                    "title": "Status",
+                    "description": "Version status (inactive for historical versions)",
+                    "type": "string",
+                    "enum": [
+                        "draft",
+                        "active",
+                        "inactive"
+                    ],
+                    "readOnly": true
+                },
+                "tags": {
+                    "title": "Tags",
+                    "type": "object",
+                    "readOnly": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "commit_message": {
+                    "title": "Commit message",
+                    "type": "string",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time",
+                    "readOnly": true
+                },
+                "nodes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/NodeRead"
+                    },
+                    "readOnly": true
+                },
+                "node_connections": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/NodeConnectionRead"
+                    },
+                    "readOnly": true
+                }
+            },
+            "x-nullable": true,
+            "required": [
+                "id",
+                "version_number",
+                "status",
+                "tags",
+                "commit_message",
+                "created_at",
+                "nodes",
+                "node_connections"
+            ]
+        },
         "GraphDetail": {
             "type": "object",
             "properties": {
@@ -85739,9 +86226,23 @@
                     "readOnly": true
                 },
                 "active_version": {
-                    "title": "Active version",
-                    "type": "string",
-                    "readOnly": true
+                    "$ref": "#/definitions/GraphActiveVersion"
+                }
+            }
+        },
+        "GraphDetailResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/GraphDetail"
                 }
             }
         },
@@ -86317,421 +86818,6 @@
                     "default": []
                 }
             }
-        },
-        "LinkedPromptTemplateRead": {
-            "description": "Read from obj.prompt_template_node → PTV.prompt_config_snapshot.",
-            "required": [
-                "prompt_template_id",
-                "prompt_version_id",
-                "messages",
-                "response_format",
-                "response_schema",
-                "model",
-                "temperature",
-                "max_tokens",
-                "top_p",
-                "frequency_penalty",
-                "presence_penalty",
-                "output_format",
-                "tools",
-                "tool_choice",
-                "model_detail",
-                "template_format",
-                "variable_names",
-                "metadata",
-                "is_draft",
-                "template_version"
-            ],
-            "type": "object",
-            "properties": {
-                "prompt_template_id": {
-                    "title": "Prompt template id",
-                    "type": "string",
-                    "format": "uuid"
-                },
-                "prompt_version_id": {
-                    "title": "Prompt version id",
-                    "type": "string",
-                    "format": "uuid"
-                },
-                "messages": {
-                    "title": "Messages",
-                    "type": "object",
-                    "x-nullable": true,
-                    "x-json-value": true,
-                    "description": "Any valid JSON value."
-                },
-                "response_format": {
-                    "title": "Response format",
-                    "type": "object",
-                    "x-nullable": true,
-                    "x-json-value": true,
-                    "description": "Any valid JSON value."
-                },
-                "response_schema": {
-                    "title": "Response schema",
-                    "type": "object",
-                    "x-nullable": true,
-                    "x-json-value": true,
-                    "description": "Any valid JSON value."
-                },
-                "model": {
-                    "title": "Model",
-                    "type": "object",
-                    "x-nullable": true,
-                    "x-json-value": true,
-                    "description": "Any valid JSON value."
-                },
-                "temperature": {
-                    "title": "Temperature",
-                    "type": "object",
-                    "x-nullable": true,
-                    "x-json-value": true,
-                    "description": "Any valid JSON value."
-                },
-                "max_tokens": {
-                    "title": "Max tokens",
-                    "type": "object",
-                    "x-nullable": true,
-                    "x-json-value": true,
-                    "description": "Any valid JSON value."
-                },
-                "top_p": {
-                    "title": "Top p",
-                    "type": "object",
-                    "x-nullable": true,
-                    "x-json-value": true,
-                    "description": "Any valid JSON value."
-                },
-                "frequency_penalty": {
-                    "title": "Frequency penalty",
-                    "type": "object",
-                    "x-nullable": true,
-                    "x-json-value": true,
-                    "description": "Any valid JSON value."
-                },
-                "presence_penalty": {
-                    "title": "Presence penalty",
-                    "type": "object",
-                    "x-nullable": true,
-                    "x-json-value": true,
-                    "description": "Any valid JSON value."
-                },
-                "output_format": {
-                    "title": "Output format",
-                    "type": "object",
-                    "x-nullable": true,
-                    "x-json-value": true,
-                    "description": "Any valid JSON value."
-                },
-                "tools": {
-                    "title": "Tools",
-                    "type": "object",
-                    "x-nullable": true,
-                    "x-json-value": true,
-                    "description": "Any valid JSON value."
-                },
-                "tool_choice": {
-                    "title": "Tool choice",
-                    "type": "object",
-                    "x-nullable": true,
-                    "x-json-value": true,
-                    "description": "Any valid JSON value."
-                },
-                "model_detail": {
-                    "title": "Model detail",
-                    "type": "object",
-                    "x-nullable": true,
-                    "x-json-value": true,
-                    "description": "Any valid JSON value."
-                },
-                "template_format": {
-                    "title": "Template format",
-                    "type": "object",
-                    "x-nullable": true,
-                    "x-json-value": true,
-                    "description": "Any valid JSON value."
-                },
-                "variable_names": {
-                    "title": "Variable names",
-                    "type": "object",
-                    "x-nullable": true,
-                    "x-json-value": true,
-                    "description": "Any valid JSON value."
-                },
-                "metadata": {
-                    "title": "Metadata",
-                    "type": "object",
-                    "x-nullable": true,
-                    "x-json-value": true,
-                    "description": "Any valid JSON value."
-                },
-                "is_draft": {
-                    "title": "Is draft",
-                    "type": "boolean"
-                },
-                "template_version": {
-                    "title": "Template version",
-                    "type": "string"
-                }
-            },
-            "x-nullable": true
-        },
-        "NodeConnectionSummary": {
-            "description": "Return NodeConnection context set by the view (create response only).",
-            "required": [
-                "id",
-                "source_node_id",
-                "target_node_id"
-            ],
-            "type": "object",
-            "properties": {
-                "id": {
-                    "title": "Id",
-                    "type": "string",
-                    "format": "uuid"
-                },
-                "source_node_id": {
-                    "title": "Source node id",
-                    "type": "string",
-                    "format": "uuid"
-                },
-                "target_node_id": {
-                    "title": "Target node id",
-                    "type": "string",
-                    "format": "uuid"
-                }
-            },
-            "x-nullable": true
-        },
-        "InputMappingRead": {
-            "required": [
-                "key",
-                "value"
-            ],
-            "type": "object",
-            "properties": {
-                "key": {
-                    "title": "Key",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "value": {
-                    "title": "Value",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
-                }
-            }
-        },
-        "PortRead": {
-            "type": "object",
-            "properties": {
-                "id": {
-                    "title": "Id",
-                    "type": "string",
-                    "format": "uuid",
-                    "readOnly": true
-                },
-                "key": {
-                    "title": "Key",
-                    "description": "Identifier (e.g., 'prompt', 'result')",
-                    "type": "string",
-                    "readOnly": true,
-                    "minLength": 1
-                },
-                "display_name": {
-                    "title": "Display name",
-                    "description": "User-facing name for the port",
-                    "type": "string",
-                    "readOnly": true,
-                    "minLength": 1
-                },
-                "direction": {
-                    "title": "Direction",
-                    "type": "string",
-                    "enum": [
-                        "input",
-                        "output"
-                    ],
-                    "readOnly": true
-                },
-                "data_schema": {
-                    "title": "Data schema",
-                    "description": "JSON Schema for validation",
-                    "type": "object",
-                    "readOnly": true
-                },
-                "required": {
-                    "title": "Required",
-                    "type": "boolean",
-                    "readOnly": true
-                },
-                "default_value": {
-                    "title": "Default value",
-                    "type": "object",
-                    "readOnly": true,
-                    "x-nullable": true,
-                    "x-json-value": true,
-                    "description": "Any valid JSON value."
-                },
-                "metadata": {
-                    "title": "Metadata",
-                    "type": "object",
-                    "readOnly": true
-                },
-                "ref_port_id": {
-                    "title": "Ref port id",
-                    "type": "string",
-                    "format": "uuid",
-                    "readOnly": true,
-                    "x-nullable": true
-                }
-            },
-            "required": [
-                "id",
-                "key",
-                "display_name",
-                "direction",
-                "data_schema",
-                "required",
-                "default_value",
-                "metadata",
-                "ref_port_id"
-            ]
-        },
-        "NodeRead": {
-            "type": "object",
-            "properties": {
-                "id": {
-                    "title": "Id",
-                    "type": "string",
-                    "format": "uuid",
-                    "readOnly": true
-                },
-                "type": {
-                    "title": "Type",
-                    "description": "'subgraph' for subgraph nodes, 'atomic' for nodes using a NodeTemplate",
-                    "type": "string",
-                    "enum": [
-                        "subgraph",
-                        "atomic"
-                    ],
-                    "readOnly": true
-                },
-                "name": {
-                    "title": "Name",
-                    "description": "Display name",
-                    "type": "string",
-                    "readOnly": true,
-                    "minLength": 1
-                },
-                "config": {
-                    "title": "Config",
-                    "description": "Node-specific configuration (validated against node_template.config_schema for atomic nodes)",
-                    "type": "object",
-                    "readOnly": true
-                },
-                "position": {
-                    "title": "Position",
-                    "description": "UI coordinates {\"x\": 0, \"y\": 0}",
-                    "type": "object",
-                    "readOnly": true
-                },
-                "node_template_id": {
-                    "title": "Node template id",
-                    "type": "string",
-                    "format": "uuid",
-                    "readOnly": true,
-                    "x-nullable": true
-                },
-                "ref_graph_version_id": {
-                    "title": "Ref graph version id",
-                    "type": "string",
-                    "format": "uuid",
-                    "readOnly": true,
-                    "x-nullable": true
-                },
-                "ref_graph_name": {
-                    "title": "Ref graph name",
-                    "type": "string",
-                    "readOnly": true,
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "ref_graph_id": {
-                    "title": "Ref graph id",
-                    "type": "string",
-                    "format": "uuid",
-                    "readOnly": true,
-                    "x-nullable": true
-                },
-                "prompt_template": {
-                    "$ref": "#/definitions/LinkedPromptTemplateRead"
-                },
-                "node_connection": {
-                    "$ref": "#/definitions/NodeConnectionSummary"
-                },
-                "input_mappings": {
-                    "description": "Reconstruct input_mappings as list of key-value objects.\n\n        Returns a list like [\n            {\"key\": \"context\", \"value\": \"DataLoader.output\"},\n            {\"key\": \"question\", \"value\": None}\n        ] for subgraph nodes, or None for atomic nodes.\n\n        Uses prefetched ``ports`` and ``incoming_edges`` when available\n        (see ``prefetch_version_detail``) to avoid N+1 queries.\n",
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/InputMappingRead"
-                    },
-                    "readOnly": true,
-                    "x-nullable": true
-                },
-                "ports": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/PortRead"
-                    },
-                    "readOnly": true
-                }
-            },
-            "required": [
-                "id",
-                "type",
-                "name",
-                "config",
-                "position",
-                "node_template_id",
-                "ref_graph_version_id",
-                "ref_graph_name",
-                "ref_graph_id",
-                "prompt_template",
-                "node_connection",
-                "input_mappings",
-                "ports"
-            ]
-        },
-        "NodeConnectionRead": {
-            "type": "object",
-            "properties": {
-                "id": {
-                    "title": "Id",
-                    "type": "string",
-                    "format": "uuid",
-                    "readOnly": true
-                },
-                "source_node_id": {
-                    "title": "Source node id",
-                    "type": "string",
-                    "format": "uuid",
-                    "readOnly": true
-                },
-                "target_node_id": {
-                    "title": "Target node id",
-                    "type": "string",
-                    "format": "uuid",
-                    "readOnly": true
-                }
-            },
-            "required": [
-                "id",
-                "source_node_id",
-                "target_node_id"
-            ]
         },
         "GraphVersionDetail": {
             "type": "object",

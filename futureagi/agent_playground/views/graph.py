@@ -41,6 +41,7 @@ from agent_playground.serializers.response_contracts import (
     IS_TEMPLATE_QUERY_PARAMETER,
     AgentPlaygroundMessageResponseSerializer,
     GraphBulkDeleteNotFoundResponseSerializer,
+    GraphDetailResponseSerializer,
     GraphVersionDetailResponseSerializer,
     GraphVersionListResponseSerializer,
 )
@@ -89,7 +90,10 @@ retrieve_version_schema = swagger_auto_schema(
 retrieve_graph_schema = swagger_auto_schema(
     auto_schema=ExplicitQueryAutoSchema,
     manual_parameters=[IS_TEMPLATE_QUERY_PARAMETER],
-    responses=AGENT_PLAYGROUND_ERROR_RESPONSES,
+    responses={
+        200: GraphDetailResponseSerializer,
+        **AGENT_PLAYGROUND_ERROR_RESPONSES,
+    },
 )
 delete_schema = swagger_auto_schema(
     responses={

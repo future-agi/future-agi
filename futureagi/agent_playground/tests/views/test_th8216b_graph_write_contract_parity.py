@@ -411,6 +411,45 @@ def test_ra01_delete_active_version_matches_contract(
     )
 
 
+# ── Graph retrieve envelope (review B03) ─────────────────────────────────────
+
+
+@pytest.mark.parametrize("subject", ["own", "own_without_versions", "template"])
+def test_graph_retrieve_matches_contract(
+    swagger, authenticated_client, graph, template_graph, node_template, subject
+):
+    from agent_playground.models.node import Node
+
+    target = template_graph if subject == "template" else graph
+    if subject != "own_without_versions":
+        version = GraphVersion.no_workspace_objects.create(
+            graph=target, version_number=1, status=GraphVersionStatus.ACTIVE
+        )
+        Node.no_workspace_objects.create(
+            graph_version=version,
+            node_template=node_template,
+            type=NodeType.ATOMIC,
+            name="Node",
+            config={},
+        )
+    query = "?is_template=true" if subject == "template" else ""
+
+    response = authenticated_client.get(_url(GRAPH, id=target.id) + query)
+
+    assert response.status_code == 200
+    _check(
+        swagger,
+        f"graph_retrieve_{subject}_200",
+        "agent-playground_graphs_read",
+        "get",
+        GRAPH,
+        response,
+        request={"query": {"is_template": "true"}} if query else {},
+        note="Graph detail is wrapped in {status, result}; active_version is the "
+        "latest version of any status, or null (O2).",
+    )
+
+
 # ── Graph deletes (TH-8413 targets) ──────────────────────────────────────────
 
 

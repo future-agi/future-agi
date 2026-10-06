@@ -4087,7 +4087,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         responses: {
           200: {
-            $ref: "#/definitions/GraphDetail",
+            $ref: "#/definitions/GraphDetailResponse",
           },
           400: {
             $ref: "#/definitions/AgentPlaygroundErrorResponse",
@@ -61677,50 +61677,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    GraphDetail: {
+    GraphDetailResponse: {
+      required: ["status", "result"],
       type: "object",
       properties: {
-        id: {
-          title: "Id",
-          type: "string",
-          format: "uuid",
-          readOnly: true,
-        },
-        name: {
-          title: "Name",
-          description: "Display name",
-          type: "string",
-          readOnly: true,
-          minLength: 1,
-        },
-        description: {
-          title: "Description",
-          type: "string",
-          readOnly: true,
-          minLength: 1,
-          "x-nullable": true,
-        },
-        is_template: {
-          title: "Is template",
+        status: {
+          title: "Status",
           type: "boolean",
-          readOnly: true,
         },
-        created_at: {
-          title: "Created at",
-          type: "string",
-          format: "date-time",
-          readOnly: true,
-        },
-        updated_at: {
-          title: "Updated at",
-          type: "string",
-          format: "date-time",
-          readOnly: true,
-        },
-        active_version: {
-          title: "Active version",
-          type: "string",
-          readOnly: true,
+        result: {
+          $ref: "#/definitions/GraphDetail",
         },
       },
     },
@@ -91228,6 +91194,51 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    GraphDetail: {
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        name: {
+          title: "Name",
+          description: "Display name",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        description: {
+          title: "Description",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        is_template: {
+          title: "Is template",
+          type: "boolean",
+          readOnly: true,
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+        updated_at: {
+          title: "Updated at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+        active_version: {
+          $ref: "#/definitions/GraphActiveVersion",
+        },
+      },
+    },
     GraphExecutionDetailResult: {
       type: "object",
       properties: {
@@ -109663,6 +109674,75 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
         },
       },
+    },
+    GraphActiveVersion: {
+      description:
+        "Get the latest version (highest version_number) with full nested structure.",
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        version_number: {
+          title: "Version number",
+          type: "integer",
+          readOnly: true,
+        },
+        status: {
+          title: "Status",
+          description: "Version status (inactive for historical versions)",
+          type: "string",
+          enum: ["draft", "active", "inactive"],
+          readOnly: true,
+        },
+        tags: {
+          title: "Tags",
+          type: "object",
+          readOnly: true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        commit_message: {
+          title: "Commit message",
+          type: "string",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+        nodes: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/NodeRead",
+          },
+          readOnly: true,
+        },
+        node_connections: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/NodeConnectionRead",
+          },
+          readOnly: true,
+        },
+      },
+      "x-nullable": true,
+      required: [
+        "id",
+        "version_number",
+        "status",
+        "tags",
+        "commit_message",
+        "created_at",
+        "nodes",
+        "node_connections",
+      ],
     },
     GraphExecutionList: {
       type: "object",

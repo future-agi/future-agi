@@ -1,0 +1,50 @@
+{
+  "body": {
+    "result": {
+      "active_version": {
+        "commit_message": null,
+        "created_at": "2026-01-01T00:00:00Z",
+        "id": "00000000-0000-4000-8000-000000000002",
+        "node_connections": [],
+        "nodes": [
+          {
+            "config": {},
+            "id": "00000000-0000-4000-8000-000000000003",
+            "input_mappings": null,
+            "name": "Node",
+            "node_connection": null,
+            "node_template_id": "00000000-0000-4000-8000-000000000004",
+            "ports": [],
+            "position": {},
+            "prompt_template": null,
+            "ref_graph_id": null,
+            "ref_graph_name": null,
+            "ref_graph_version_id": null,
+            "type": "atomic"
+          }
+        ],
+        "status": "active",
+        "tags": [],
+        "version_number": 1
+      },
+      "created_at": "2026-01-01T00:00:00Z",
+      "description": "A system template graph",
+      "id": "00000000-0000-4000-8000-000000000001",
+      "is_template": true,
+      "name": "Test Template Graph",
+      "updated_at": "2026-01-01T00:00:00Z"
+    },
+    "status": true
+  },
+  "label": "captured",
+  "method": "GET",
+  "note": "Graph detail is wrapped in {status, result}; active_version is the latest version of any status, or null (O2).",
+  "operation": "agent-playground_graphs_read",
+  "path": "/agent-playground/graphs/{id}/",
+  "request": {
+    "query": {
+      "is_template": "true"
+    }
+  },
+  "status": 200
+}

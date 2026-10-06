@@ -13,6 +13,7 @@ from rest_framework import serializers
 from agent_playground.serializers.contracts import (
     AgentPlaygroundErrorResponseSerializer,
 )
+from agent_playground.serializers.graph import GraphDetailSerializer
 from agent_playground.serializers.graph_version import (
     GraphVersionDetailSerializer,
     GraphVersionListSerializer,
@@ -44,6 +45,11 @@ class GraphVersionListResponseSerializer(serializers.Serializer):
 class GraphVersionDetailResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField()
     result = GraphVersionDetailSerializer()
+
+
+class GraphDetailResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = GraphDetailSerializer()
 
 
 class NodeReadResponseSerializer(serializers.Serializer):

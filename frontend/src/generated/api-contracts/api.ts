@@ -553,7 +553,7 @@ import type {
   GetTraceAnnotationValuesResponseApi,
   GraphBulkDeleteNotFoundResponseApi,
   GraphCreateApi,
-  GraphDetailApi,
+  GraphDetailResponseApi,
   GraphExecutionDetailResponseApi,
   GraphExecutionListResponseApi,
   GraphListApi,
@@ -9812,7 +9812,7 @@ export const agentPlaygroundGraphsExecutionsRead = async (
 };
 
 export type agentPlaygroundGraphsReadResponse200 = {
-  data: GraphDetailApi;
+  data: GraphDetailResponseApi;
   status: 200;
 };
 
