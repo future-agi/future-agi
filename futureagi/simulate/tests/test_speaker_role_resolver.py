@@ -34,6 +34,10 @@ class TestDetectProvider:
         data = {"retell": {"call_id": "x"}}
         assert SpeakerRoleResolver.detect_provider(data) == ProviderChoices.RETELL
 
+    def test_twilio_key_is_detected(self):
+        data = {"twilio": {"call_sid": "CA123"}}
+        assert SpeakerRoleResolver.detect_provider(data) == ProviderChoices.TWILIO
+
 
 # -------------------------------------------------------------------
 # is_tested_agent
@@ -106,6 +110,27 @@ class TestIsTestedAgent:
         assert (
             SpeakerRoleResolver.is_tested_agent(
                 "user", provider=ProviderChoices.LIVEKIT, is_outbound=is_outbound
+            )
+            is False
+        )
+
+    # Twilio: platform-convention rows, identity map in both directions.
+    # Without a Twilio branch _get_map fell back to the VAPI inbound map,
+    # which flips these classifications for outbound reads.
+    @pytest.mark.parametrize("is_outbound", [False, True])
+    def test_twilio_assistant_is_tested_agent(self, is_outbound):
+        assert (
+            SpeakerRoleResolver.is_tested_agent(
+                "assistant", provider=ProviderChoices.TWILIO, is_outbound=is_outbound
+            )
+            is True
+        )
+
+    @pytest.mark.parametrize("is_outbound", [False, True])
+    def test_twilio_user_is_not_tested_agent(self, is_outbound):
+        assert (
+            SpeakerRoleResolver.is_tested_agent(
+                "user", provider=ProviderChoices.TWILIO, is_outbound=is_outbound
             )
             is False
         )

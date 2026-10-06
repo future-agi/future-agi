@@ -1353,6 +1353,49 @@ class TestResultIngest:
             "assistant",
         ]
 
+    def test_twilio_result_is_stored_and_resolves_twilio_roles(
+        self, auth_client, run_test
+    ):
+        """GH-2662: a Twilio-keyed payload used to fail provider validation, and
+        ingestion filed it under the wrong provider key. It must store under
+        'twilio', detect Twilio, and resolve roles through the Twilio identity
+        map with no unknown-provider error. Direction defaults to outbound."""
+        from simulate.serializers.test_execution import (
+            CallExecutionDetailSerializer,
+        )
+        from simulate.utils.speaker_roles import SpeakerRoleResolver
+        from tracer.models.observability_provider import ProviderChoices
+
+        _, call_ids = _start_and_batch(auth_client, run_test)
+        call_id = call_ids[0]
+        resp = auth_client.patch(
+            f"{ALK_BASE}/call-executions/{call_id}/result/",
+            {
+                "status": "completed",
+                "transcript": _transcript_payload(),
+                "recording_url": "https://example.com/twilio-recording.wav",
+                "provider_call_data": {"twilio": {"call_sid": "CA123456789"}},
+            },
+            format="json",
+        )
+        assert resp.status_code == 200, resp.content
+        call = CallExecution.objects.get(id=call_id)
+        assert call.provider_call_data == {"twilio": {"call_sid": "CA123456789"}}
+        assert call.recording_url == "https://example.com/twilio-recording.wav"
+        assert call.recording_available is True
+        assert (
+            SpeakerRoleResolver.detect_provider(call.provider_call_data)
+            == ProviderChoices.TWILIO
+        )
+        with patch("simulate.utils.speaker_roles.logger") as resolver_log:
+            rows = CallExecutionDetailSerializer(
+                context={"detail_mode": True}
+            ).get_transcript(call)
+        resolver_log.error.assert_not_called()
+        # Twilio keeps the identity map in both directions (default outbound):
+        # the tested agent speaks as "assistant", the simulator as "user".
+        assert [row["speaker_role"] for row in rows] == ["user", "assistant", "user"]
+
     def test_reingest_preserves_csat(self, auth_client, run_test):
         _, call_ids = _start_and_batch(auth_client, run_test)
         call_id = call_ids[0]
