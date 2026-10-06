@@ -846,11 +846,15 @@ describe("RunTraceTable", () => {
       renderTable();
       await openPicker(user);
 
-      expect(screen.getByRole("menuitem", { name: "Tone" })).toBeInTheDocument();
+      expect(
+        screen.getByRole("menuitem", { name: "Tone" }),
+      ).toBeInTheDocument();
       expect(
         screen.getByRole("menuitem", { name: "Fact checker" }),
       ).toBeInTheDocument();
-      expect(screen.queryByRole("menuitem", { name: "Evaluations" })).toBeNull();
+      expect(
+        screen.queryByRole("menuitem", { name: "Evaluations" }),
+      ).toBeNull();
     });
 
     it("hides only the unticked evaluation's column, and Reset brings it back", async () => {
@@ -898,6 +902,19 @@ describe("RunTraceTable", () => {
 
       const paper = screen.getByRole("menu").closest(".MuiPaper-root");
       expect(window.getComputedStyle(paper).maxHeight).toBe("420px");
+    });
+
+    it("keeps a long evaluation name on one line inside a capped width", async () => {
+      const user = userEvent.setup();
+      withEvals();
+      renderTable();
+      await openPicker(user);
+
+      const paper = screen.getByRole("menu").closest(".MuiPaper-root");
+      expect(window.getComputedStyle(paper).maxWidth).toBe("320px");
+      const label = within(screen.getByRole("menu")).getByText("Fact checker");
+      expect(window.getComputedStyle(label).whiteSpace).toBe("nowrap");
+      expect(window.getComputedStyle(label).textOverflow).toBe("ellipsis");
     });
 
     it("counts the evaluations in the Columns total", async () => {

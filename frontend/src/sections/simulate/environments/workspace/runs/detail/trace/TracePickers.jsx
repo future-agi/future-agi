@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import {
   Box,
   Typography,
@@ -13,6 +13,7 @@ import {
 } from "@mui/material";
 
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
 import {
   TRACE_COLUMNS,
   defaultTraceColumns,
@@ -93,6 +94,28 @@ TraceGroupByPicker.propTypes = {
 const columnItemSx = {
   py: 0.5,
   "& .MuiListItemIcon-root": { minWidth: 28, mr: 1 },
+};
+
+// A column name on one line, cut off with an ellipsis; the full name shows on
+// hover, only when it was cut.
+function ColumnLabel({ label }) {
+  const ref = useRef(null);
+  const [cut, setCut] = useState(false);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (el) setCut(el.scrollWidth > el.clientWidth);
+  }, [label]);
+  return (
+    <CustomTooltip show={cut} title={label} placement="left" arrow>
+      <ListItemText
+        primary={label}
+        primaryTypographyProps={{ typography: "s2", noWrap: true, ref }}
+      />
+    </CustomTooltip>
+  );
+}
+ColumnLabel.propTypes = {
+  label: PropTypes.string.isRequired,
 };
 
 const toggled = (set, key) => {
@@ -184,9 +207,12 @@ export function TraceColumnsPicker({
         anchorEl={anchor}
         open={!!anchor}
         onClose={() => setAnchor(null)}
-        // A run can carry many evaluations: the list scrolls rather than
-        // running the height of the window.
-        slotProps={{ paper: { sx: { minWidth: 240, maxHeight: 420 } } }}
+        // A run can carry many evaluations, some with long names: the list
+        // scrolls rather than running the height of the window, and a long
+        // name is cut off rather than stretching the menu across the table.
+        slotProps={{
+          paper: { sx: { minWidth: 240, maxWidth: 320, maxHeight: 420 } },
+        }}
       >
         {sections.map((section, i) => [
           i > 0 && <Divider key={`div-${section.name}`} sx={{ my: 0.5 }} />,
@@ -214,10 +240,7 @@ export function TraceColumnsPicker({
                   sx={{ p: 0, ...neutralCheckboxSx }}
                 />
               </ListItemIcon>
-              <ListItemText
-                primary={c.label}
-                primaryTypographyProps={{ typography: "s2" }}
-              />
+              <ColumnLabel label={c.label} />
             </MenuItem>
           )),
         ])}
