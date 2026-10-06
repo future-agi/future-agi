@@ -321,7 +321,7 @@ describe("TraceTable — column group band", () => {
   it("heads sub-goal checks with Sub-goal Results, ahead of the evaluations", () => {
     render(
       table({
-        columns: new Set(["callDetails", "subGoalEvals", "evals"]),
+        columns: new Set(["callDetails", "subGoalEvals"]),
         subGoalEvals: [{ id: "sg-1", name: "pin_verified" }],
         evals: [{ id: "e1", name: "Tone" }],
       }),
