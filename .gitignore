@@ -245,6 +245,8 @@ frontend/scripts/.artifacts/
 # bin/install timestamped logs
 install-*.log
 uninstall-*.log
+# ./bin/dev remembers the chosen mode (standalone or distributed)
+.dev-mode
 *.core
 # Local compose override (developer testing, not shipped)
 docker-compose.override.yml
@@ -252,3 +254,6 @@ docker-compose.override.yml
 
 # (The private repo's own .gitignore now lives inside futureagi/ee/cloud/,
 # which is already ignored above — no separate rule needed.)
+
+# Local ALK wheel, copied to the build context for the dev simulation-runner image
+agent_learning_kit-*.whl

@@ -23,7 +23,7 @@ import { AuthProvider } from "src/auth/context/jwt";
 import { WorkspaceProvider } from "src/contexts/WorkspaceContext";
 import { OrganizationProvider } from "src/contexts/OrganizationContext";
 import { LocalizationProvider } from "./locales";
-import { enqueueSnackbar, SnackbarProvider } from "./components/snackbar";
+import { SnackbarProvider } from "./components/snackbar";
 import {
   MutationCache,
   QueryCache,
@@ -32,7 +32,7 @@ import {
 } from "@tanstack/react-query";
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 import { BrowserAgent } from "@newrelic/browser-agent/loaders/browser-agent";
-import { devTracing, prodTracing } from "./newrelic";
+import { newRelicTracing } from "./newrelic";
 import {
   CURRENT_ENVIRONMENT,
   REACT_QUERY_DEVTOOLS_ENABLED,
@@ -41,57 +41,16 @@ import { ErrorBoundary } from "react-error-boundary";
 import ErrorFallback from "./pages/ErrorFallback";
 import UploadLimitNotification from "./components/rate-limit-modal/RateLimitModal";
 import { WebSocketProvider } from "./components/websocket/use-socket";
-import { RESPONSE_CODES } from "./utils/constants";
 import { registerGlobalCleanup } from "./utils/memory-management";
 import * as Sentry from "@sentry/react";
 import logger from "./utils/logger";
 import { useGoogleReCaptcha } from "react-google-recaptcha-v3";
 import { setRecaptchaExecutor } from "./utils/recaptchaService";
 import { AudioPlaybackProvider } from "./components/custom-audio/context-provider/AudioPlaybackContext";
-import { getSafeActionErrorMessage } from "./utils/errorUtils";
+import { handleError } from "./utils/queryErrorHandler";
 import { syncMixpanelSessionReplay } from "./utils/Mixpanel";
 
 // ----------------------------------------------------------------------
-const _extractParts = (result) => {
-  if (result == null || result === "") return "";
-  if (typeof result === "string") return result;
-  if (Array.isArray(result)) {
-    return [...new Set(result.map(_extractParts).filter(Boolean))].join(", ");
-  }
-  if (typeof result === "object") {
-    if (result.details && typeof result.details === "object") {
-      return _extractParts(result.details);
-    }
-    return [
-      ...new Set(Object.values(result).map(_extractParts).filter(Boolean)),
-    ].join(", ");
-  }
-  return String(result);
-};
-
-const extractErrorMessage = (result) =>
-  _extractParts(result) || "Something went wrong";
-
-const handleError = (error, variable, context, mutation) => {
-  if (error?.statusCode == RESPONSE_CODES.LIMIT_REACHED) return;
-  if (
-    mutation?.options?.meta?.errorHandled ||
-    variable?.options?.meta?.errorHandled
-  )
-    return;
-  if (error?.result) {
-    const message = getSafeActionErrorMessage(
-      {
-        statusCode: error?.statusCode,
-        result: extractErrorMessage(error.result),
-      },
-      "Something went wrong",
-    );
-    enqueueSnackbar(message, {
-      variant: "error",
-    });
-  }
-};
 const queryClient = new QueryClient({
   queryCache: new QueryCache({
     onError: handleError,
@@ -116,9 +75,9 @@ const queryClient = new QueryClient({
   },
 });
 
-// Initialize the BrowserAgent
-if (CURRENT_ENVIRONMENT === "production") new BrowserAgent(prodTracing);
-if (CURRENT_ENVIRONMENT === "dev") new BrowserAgent(devTracing);
+// Initialize the BrowserAgent, only in a build with New Relic keys.
+const newRelic = newRelicTracing(CURRENT_ENVIRONMENT);
+if (newRelic) new BrowserAgent(newRelic);
 
 export default function App() {
   useScrollToTop();

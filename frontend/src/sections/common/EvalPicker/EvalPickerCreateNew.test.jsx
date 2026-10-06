@@ -1,12 +1,14 @@
 import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render } from "src/utils/test-utils";
+import { screen, fireEvent, act } from "@testing-library/react";
 
 import EvalPickerProvider from "./context/EvalPickerProvider";
 import EvalPickerCreateNew from "./EvalPickerCreateNew";
 
-const { capturedProps } = vi.hoisted(() => ({
+const { capturedProps, enqueueSnackbarSpy } = vi.hoisted(() => ({
   capturedProps: { simulation: null, tracing: null, dataset: null },
+  enqueueSnackbarSpy: vi.fn(),
 }));
 
 vi.mock("src/sections/evals/components/SimulationTestMode", () => {
@@ -129,11 +131,14 @@ vi.mock("notistack", async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,
-    useSnackbar: () => ({ enqueueSnackbar: vi.fn() }),
+    useSnackbar: () => ({ enqueueSnackbar: enqueueSnackbarSpy }),
   };
 });
 
-const renderWithSource = (source, providerProps = {}) =>
+const renderWithSource = (
+  source,
+  { onSave = () => {}, ...providerProps } = {},
+) =>
   render(
     <EvalPickerProvider
       source={source}
@@ -144,7 +149,7 @@ const renderWithSource = (source, providerProps = {}) =>
       onClose={() => {}}
       {...providerProps}
     >
-      <EvalPickerCreateNew onBack={() => {}} onSave={() => {}} />
+      <EvalPickerCreateNew onBack={() => {}} onSave={onSave} />
     </EvalPickerProvider>,
   );
 
@@ -210,5 +215,81 @@ describe("EvalPickerCreateNew — task preview time window", () => {
     );
     expect(capturedProps.tracing.initialRowType).toBe("spans");
     expect(capturedProps.tracing.allowCustomFieldPath).toBe(true);
+  });
+});
+
+// The mapping step normally reports at least one mapped input, but an eval
+// stored with an empty mapping reads back as a result column and is never
+// graded, so with requireInputs the save must refuse one outright.
+describe("EvalPickerCreateNew — requireInputs", () => {
+  beforeEach(() => {
+    capturedProps.simulation = null;
+    enqueueSnackbarSpy.mockClear();
+  });
+
+  const NO_INPUTS_MESSAGE =
+    "This evaluation has no inputs to map, so it can't run in an environment.";
+
+  it("blocks saving a new single eval with no inputs when requireInputs is set", async () => {
+    const onSave = vi.fn();
+    renderWithSource("simulation", { onSave, requireInputs: true });
+
+    // Switch to the Code tab: its default template code is non-empty, so
+    // `validate()` needs nothing else to pass for this eval type.
+    fireEvent.click(screen.getByRole("tab", { name: "Code" }));
+    fireEvent.change(
+      screen.getByPlaceholderText("e.g. hallucination_detector"),
+      { target: { value: "my_code_eval" } },
+    );
+
+    // Simulate the (mocked) SimulationTestMode reporting "ready" with an
+    // empty mapping — a state the mapping step should never report; the
+    // save must still refuse it.
+    await act(async () => {
+      capturedProps.simulation.onReadyChange(true, {});
+    });
+
+    const saveBtn = screen.getByRole("button", {
+      name: "Save & Add Evaluation",
+    });
+    await act(async () => {
+      fireEvent.click(saveBtn);
+    });
+
+    expect(onSave).not.toHaveBeenCalled();
+    expect(enqueueSnackbarSpy).toHaveBeenCalledWith(
+      NO_INPUTS_MESSAGE,
+      expect.objectContaining({ variant: "error" }),
+    );
+  });
+
+  it("saves normally when requireInputs is absent, even with an empty mapping", async () => {
+    const onSave = vi.fn();
+    renderWithSource("simulation", { onSave });
+
+    fireEvent.click(screen.getByRole("tab", { name: "Code" }));
+    fireEvent.change(
+      screen.getByPlaceholderText("e.g. hallucination_detector"),
+      { target: { value: "my_code_eval" } },
+    );
+
+    await act(async () => {
+      capturedProps.simulation.onReadyChange(true, {});
+    });
+
+    const saveBtn = screen.getByRole("button", {
+      name: "Save & Add Evaluation",
+    });
+    await act(async () => {
+      fireEvent.click(saveBtn);
+    });
+
+    expect(enqueueSnackbarSpy).not.toHaveBeenCalledWith(
+      NO_INPUTS_MESSAGE,
+      expect.anything(),
+    );
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ mapping: {} }),
+    );
   });
 });

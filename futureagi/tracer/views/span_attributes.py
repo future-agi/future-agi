@@ -44,8 +44,6 @@ from tracer.services.clickhouse.attribute_reads import (
     AttributeKeyCursorPageRead,
     AttributeReadMetadata,
     AttributeReadSelector,
-    attribute_key_cursor_digest,
-    attribute_key_type_cursor_digest,
 )
 from tracer.services.clickhouse.list_cursor import (
     ListCursorError,
@@ -56,23 +54,8 @@ from tracer.services.clickhouse.read_budget import (
     ReadDeadline,
     is_clickhouse_api_read_unavailable_error,
 )
-from tracer.services.clickhouse.v2.attribute_catalog_cutover import (
-    CATALOG_KEY_CURSOR_MARKER,
-    catalog_key_rows,
-    key_checkpoint_from_state,
-    key_checkpoint_state,
-    mark_catalog_response,
-    try_catalog_key_page,
-)
-from tracer.services.clickhouse.v2.attribute_catalog_shadow import (
-    run_catalog_key_shadow,
-)
-from tracer.services.clickhouse.v2.attribute_catalog_snapshot import (
-    CATALOG_SNAPSHOT_MODE,
-    catalog_dev_snapshot_window,
-    catalog_snapshot_metadata,
-    decode_catalog_snapshot_list_cursor,
-    mark_catalog_snapshot_response,
+from tracer.services.clickhouse.v2.property_catalog.cursor import (
+    decode_native_list_cursor,
 )
 from tracer.services.exact_aggregation_cache import read_or_schedule_exact_snapshot
 from tracer.services.postgres_read_policy import application_postgres_reads
@@ -229,21 +212,6 @@ def _attribute_key_payload(row) -> dict:
     return payload
 
 
-def _run_catalog_key_shadow_fail_open(**kwargs) -> None:
-    """Keep every catalog shadow defect outside the public API boundary."""
-
-    try:
-        run_catalog_key_shadow(**kwargs)
-    except Exception as exc:
-        # The shadow helper is already fail-open. This second boundary protects
-        # the response even if instrumentation or a test replacement regresses.
-        logger.warning(
-            "span_attribute_catalog_shadow_boundary_error",
-            surface="span_attribute_keys",
-            error_type=type(exc).__name__,
-        )
-
-
 class SpanAttributeKeysView(APIView):
     """
     Discover span attribute keys for a project.
@@ -274,11 +242,6 @@ class SpanAttributeKeysView(APIView):
             workspace_scope = bool(query_params.get("workspace_scope", False))
             project_id = str(query_params.get("project_id") or "")
             discovery_mode = query_params["discovery_mode"]
-            catalog_key_attribute_types = (
-                ("string", "number", "boolean", "array", "map")
-                if discovery_mode == "filter"
-                else ("string", "number", "boolean", "array", "map", "json")
-            )
             exact_key = query_params.get("q")
             page_size = query_params.get("page_size")
             cursor_token = query_params.get("cursor")
@@ -292,8 +255,6 @@ class SpanAttributeKeysView(APIView):
                 project_ids: tuple[str, ...] | list[str]
                 batch_end_project_id = ""
                 has_later_projects = False
-                catalog_after = None
-                catalog_cursor = False
                 project_ids = () if workspace_scope else [project_id]
                 cursor_scope = cursor_scope_for_request(
                     request,
@@ -313,7 +274,6 @@ class SpanAttributeKeysView(APIView):
                         "mode": "recent_attribute_keys",
                     }
                 )
-                cursor_window_mode = None
                 # Keep the default cursor query byte-for-byte compatible with
                 # cursors emitted by older pods. Eval mapping is a distinct
                 # key contract and is explicitly signed so its cursor cannot
@@ -326,17 +286,14 @@ class SpanAttributeKeysView(APIView):
                     # can therefore never be replayed under another key.
                     cursor_query["q"] = exact_key
                 if cursor_token:
-                    cursor_state, cursor_window_mode = (
-                        decode_catalog_snapshot_list_cursor(
-                            cursor_token,
-                            resource="span_attribute_keys",
-                            scope=cursor_scope,
-                            query=cursor_query,
-                            page_size=page_size,
-                        )
+                    cursor_state, cursor_window_mode = decode_native_list_cursor(
+                        cursor_token,
+                        resource="span_attribute_keys",
+                        scope=cursor_scope,
+                        query=cursor_query,
+                        page_size=page_size,
                     )
-                    if cursor_window_mode is not None:
-                        cursor_query["query_window_mode"] = cursor_window_mode
+
                     expected_order_lengths = {6, 8, 9} if workspace_scope else {3, 5, 6}
                     if len(cursor_state.order) not in expected_order_lengths:
                         raise ListCursorError(
@@ -400,31 +357,11 @@ class SpanAttributeKeysView(APIView):
                                 batch_end_project_id = project_ids[-1]
                     if (
                         len(physical_order) == 3
-                        and physical_order[0] == CATALOG_KEY_CURSOR_MARKER
+                        and physical_order[0] == "span-attribute-catalog-key-v1"
                     ):
-                        _, raw_catalog_after, seen_reference = physical_order
-                        try:
-                            catalog_after = key_checkpoint_from_state(raw_catalog_after)
-                        except (TypeError, ValueError) as exc:
-                            raise ListCursorError(
-                                "invalid_cursor",
-                                "The continuation cursor is invalid.",
-                            ) from exc
-                        if not isinstance(seen_reference, tuple):
-                            raise ListCursorError(
-                                "invalid_cursor",
-                                "The continuation cursor is invalid.",
-                            )
-                        catalog_cursor = True
-                        window_start = cursor_state.window_start
-                        window_end = cursor_state.window_end
-                        # Exact fallback restarts the frozen physical window and
-                        # uses the persisted seen set to suppress catalog rows.
-                        segment_end = window_end
-                        segment_start = None
-                        before_identity = None
-                        resume_identity = None
-                        resume_key_offset = 0
+                        raise ListCursorError(
+                            "cursor_expired", "Restart from the first page."
+                        )
                     else:
                         (
                             segment_end,
@@ -488,24 +425,15 @@ class SpanAttributeKeysView(APIView):
                         )
                         if project_ids:
                             batch_end_project_id = project_ids[-1]
-                    snapshot_window = catalog_dev_snapshot_window()
-                    if snapshot_window is not None:
-                        # DEV-only snapshot mode is deliberately incomplete:
-                        # the signed public cursor and all fallback reads see
-                        # exactly the catalog's immutable half-open interval.
-                        window_start, window_end = snapshot_window
-                        cursor_window_mode = CATALOG_SNAPSHOT_MODE
-                        cursor_query["query_window_mode"] = cursor_window_mode
-                    else:
-                        window_end = datetime.now(UTC)
-                        # The system.parts lower-bound read was only a pagination
-                        # accelerator, but it added a third ClickHouse round trip
-                        # to the latency-sensitive first property page. Epoch is
-                        # the selector's already-established conservative bound:
-                        # it cannot skip retained spans, and geometric empty-slice
-                        # growth still proves exhaustion in a bounded number of
-                        # reads. Existing signed cursors keep their frozen window.
-                        window_start = SPAN_ATTRIBUTE_RETAINED_DATA_START
+                    window_end = datetime.now(UTC)
+                    # The system.parts lower-bound read was only a pagination
+                    # accelerator, but it added a third ClickHouse round trip
+                    # to the latency-sensitive first property page. Epoch is
+                    # the selector's already-established conservative bound:
+                    # it cannot skip retained spans, and geometric empty-slice
+                    # growth still proves exhaustion in a bounded number of
+                    # reads. Existing signed cursors keep their frozen window.
+                    window_start = SPAN_ATTRIBUTE_RETAINED_DATA_START
                     segment_end = window_end
                     segment_start = None
                     before_identity = None
@@ -534,169 +462,6 @@ class SpanAttributeKeysView(APIView):
                         "invalid_cursor",
                         "The continuation cursor is invalid.",
                     )
-
-                catalog_attempt = None
-                if project_ids:
-                    catalog_attempt = try_catalog_key_page(
-                        project_ids=project_ids,
-                        window_start=window_start,
-                        window_end=window_end,
-                        page_size=page_size,
-                        search=exact_key,
-                        after=catalog_after if catalog_cursor else None,
-                        request_deadline=request_deadline,
-                        attribute_types=catalog_key_attribute_types,
-                    )
-                    if catalog_attempt.page is not None:
-                        catalog_page = catalog_attempt.page
-                        catalog_rows = catalog_key_rows(
-                            catalog_page,
-                            exact_key=exact_key,
-                        )
-                        visible_rows = []
-                        appended_digests = []
-                        for row in catalog_rows:
-                            row_types = row.types or (row.type,)
-                            if workspace_scope:
-                                unseen_types = tuple(
-                                    attribute_type
-                                    for attribute_type in row_types
-                                    if not seen_state.contains(
-                                        attribute_key_type_cursor_digest(
-                                            row.key, attribute_type
-                                        )
-                                    )
-                                )
-                                if not unseen_types:
-                                    continue
-                                visible_rows.append(
-                                    replace(
-                                        row,
-                                        type=unseen_types[0],
-                                        types=unseen_types,
-                                    )
-                                )
-                                appended_digests.extend(
-                                    attribute_key_type_cursor_digest(
-                                        row.key, attribute_type
-                                    )
-                                    for attribute_type in unseen_types
-                                )
-                            else:
-                                digest = attribute_key_cursor_digest(row.key)
-                                if seen_state.contains(digest):
-                                    continue
-                                visible_rows.append(row)
-                                appended_digests.append(digest)
-
-                        exact_match = exact_key is not None and (
-                            seen_state.seen_count > 0
-                            or any(row.key == exact_key for row in visible_rows)
-                        )
-                        catalog_physical_has_more = catalog_page.has_more
-                        if exact_key is not None and exact_match:
-                            catalog_physical_has_more = False
-                        advance_project_batch = (
-                            workspace_scope
-                            and not catalog_physical_has_more
-                            and has_later_projects
-                        )
-                        published_has_more = (
-                            catalog_physical_has_more or advance_project_batch
-                        )
-                        next_cursor = None
-                        if published_has_more:
-                            seen_reference = persist_attribute_cursor_seen_state(
-                                seen_state,
-                                tuple(appended_digests),
-                                resource="span_attribute_keys",
-                                binding=state_binding,
-                                validate_digest=lambda value: (
-                                    len(value) == 32
-                                    and all(
-                                        char in "0123456789abcdef" for char in value
-                                    )
-                                ),
-                            )
-                            next_order = (
-                                CATALOG_KEY_CURSOR_MARKER,
-                                (
-                                    ()
-                                    if advance_project_batch
-                                    else key_checkpoint_state(
-                                        catalog_page.next_checkpoint
-                                    )
-                                ),
-                                seen_reference,
-                            )
-                            if workspace_scope:
-                                next_order = (
-                                    batch_end_project_id,
-                                    () if advance_project_batch else tuple(project_ids),
-                                    has_later_projects,
-                                    *next_order,
-                                )
-                            next_cursor = encode_list_cursor(
-                                resource="span_attribute_keys",
-                                scope=cursor_scope,
-                                query=cursor_query,
-                                page_size=page_size,
-                                window_start=window_start,
-                                window_end=window_end,
-                                order=next_order,
-                                seen_rows=(
-                                    seen_state.seen_count + len(appended_digests)
-                                ),
-                            )
-                        metadata = AttributeReadMetadata(
-                            query_complete=True,
-                            query_status="complete",
-                            query_error_code=None,
-                            query_window_start=window_start,
-                            query_window_end=window_end,
-                            query_count=catalog_page.query_count,
-                        )
-                        payload = {
-                            "result": [
-                                _attribute_key_payload(row) for row in visible_rows
-                            ],
-                            **metadata.public_payload(),
-                            "query_count": catalog_page.query_count,
-                            **(
-                                {"total_count": catalog_page.total_count}
-                                if catalog_page.total_count is not None
-                                and not workspace_scope
-                                else {}
-                            ),
-                            **catalog_snapshot_metadata(
-                                window_start=window_start,
-                                window_end=window_end,
-                                cursor_window_mode=cursor_window_mode,
-                            ),
-                            "has_more": published_has_more,
-                            "next_cursor": next_cursor,
-                            "browse_mode": "recent_suggestions",
-                            "browse_status": (
-                                "continuation" if published_has_more else "exhausted"
-                            ),
-                            **(
-                                {
-                                    "lookup_mode": "exact",
-                                    "exact_match": exact_match,
-                                }
-                                if exact_key is not None
-                                else {}
-                            ),
-                        }
-                        return mark_catalog_snapshot_response(
-                            mark_catalog_response(
-                                Response(payload, status=200),
-                                catalog_attempt,
-                            ),
-                            window_start=window_start,
-                            window_end=window_end,
-                            cursor_window_mode=cursor_window_mode,
-                        )
 
                 if project_ids:
                     selector = AttributeReadSelector(
@@ -780,9 +545,8 @@ class SpanAttributeKeysView(APIView):
                     "continuation" if advance_project_batch else page_read.browse_status
                 )
                 if published_has_more:
-                    appended_digests = (
-                        page_read.appended_key_digests
-                        or (page_read.seen_key_digests[len(seen_state.digests) :])
+                    appended_digests = page_read.appended_key_digests or (
+                        page_read.seen_key_digests[len(seen_state.digests) :]
                     )
                     seen_reference = persist_attribute_cursor_seen_state(
                         seen_state,
@@ -833,11 +597,6 @@ class SpanAttributeKeysView(APIView):
                     # span totals.
                     "result": [_attribute_key_payload(row) for row in page_read.rows],
                     **page_read.metadata.public_payload(),
-                    **catalog_snapshot_metadata(
-                        window_start=window_start,
-                        window_end=window_end,
-                        cursor_window_mode=cursor_window_mode,
-                    ),
                     "has_more": published_has_more,
                     "next_cursor": next_cursor,
                     # Preserve the rolling-deploy response enum. Despite
@@ -854,25 +613,8 @@ class SpanAttributeKeysView(APIView):
                         else {}
                     ),
                 }
-                _run_catalog_key_shadow_fail_open(
-                    project_ids=project_ids,
-                    authoritative_rows=page_read.rows,
-                    window_start=window_start,
-                    window_end=window_end,
-                    page_size=page_size,
-                    search=exact_key,
-                    continuation=bool(cursor_token),
-                    request_deadline=request_deadline,
-                )
                 response = Response(payload, status=200)
-                if catalog_attempt is not None:
-                    response = mark_catalog_response(response, catalog_attempt)
-                return mark_catalog_snapshot_response(
-                    response,
-                    window_start=window_start,
-                    window_end=window_end,
-                    cursor_window_mode=cursor_window_mode,
-                )
+                return response
 
             # The retained-data cursor above is the exhaustive path. Keep this
             # compatibility exact-q endpoint on its production-qualified
@@ -880,63 +622,12 @@ class SpanAttributeKeysView(APIView):
             # hundreds of millions of rows on the incident tenant and could
             # recreate the original 503. UI consumers paginate the retained
             # catalog and filter those verified typed names locally.
-            compatibility_window_end = datetime.now(UTC)
-            compatibility_window_start = compatibility_window_end - timedelta(days=365)
-            catalog_attempt = try_catalog_key_page(
-                project_ids=(project_id,),
-                window_start=compatibility_window_start,
-                window_end=compatibility_window_end,
-                page_size=50,
-                search=exact_key,
-                after=None,
-                request_deadline=request_deadline,
-                attribute_types=catalog_key_attribute_types,
-            )
-            if catalog_attempt.page is not None:
-                catalog_rows = catalog_key_rows(
-                    catalog_attempt.page,
-                    exact_key=exact_key,
-                )
-                exact_match = exact_key is not None and any(
-                    row.key == exact_key for row in catalog_rows
-                )
-                if not catalog_attempt.page.has_more or exact_match:
-                    metadata = AttributeReadMetadata(
-                        query_complete=True,
-                        query_status="complete",
-                        query_error_code=None,
-                        query_window_start=compatibility_window_start,
-                        query_window_end=compatibility_window_end,
-                        query_count=catalog_attempt.page.query_count,
-                    )
-                    payload = {
-                        "result": [_attribute_key_payload(row) for row in catalog_rows],
-                        **metadata.public_payload(),
-                        "query_count": catalog_attempt.page.query_count,
-                        **(
-                            {
-                                "lookup_mode": "exact",
-                                "exact_match": exact_match,
-                            }
-                            if exact_key is not None
-                            else {}
-                        ),
-                    }
-                    return mark_catalog_response(
-                        Response(payload, status=200),
-                        catalog_attempt,
-                    )
-                catalog_attempt = replace(
-                    catalog_attempt,
-                    page=None,
-                    fallback_reason="compatibility_result_truncated",
-                )
             selector = AttributeReadSelector(
                 typed_only=True,
                 json_attribute_mode=(
                     "all" if discovery_mode == "eval_mapping" else "structured"
                 ),
-                now=compatibility_window_end,
+                now=datetime.now(UTC),
                 wall_timeout_ms=request_deadline.remaining_ms(
                     ATTRIBUTE_PROPERTY_PICKER_WALL_TIMEOUT_MS
                 ),
@@ -965,18 +656,7 @@ class SpanAttributeKeysView(APIView):
                     else {}
                 ),
             }
-            _run_catalog_key_shadow_fail_open(
-                project_ids=(project_id,),
-                authoritative_rows=read.rows,
-                window_start=read.metadata.query_window_start,
-                window_end=read.metadata.query_window_end,
-                search=exact_key,
-                request_deadline=request_deadline,
-            )
-            return mark_catalog_response(
-                Response(payload, status=200),
-                catalog_attempt,
-            )
+            return Response(payload, status=200)
         except AttributeCursorStateError as exc:
             if exc.code == "cursor_state_unavailable":
                 return self._gm.custom_error_response(

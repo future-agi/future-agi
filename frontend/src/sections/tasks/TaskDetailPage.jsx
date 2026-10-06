@@ -21,6 +21,7 @@ import Iconify from "src/components/iconify";
 import ResizablePanels from "src/components/resizablePanels/ResizablePanels";
 import TaskLogsView from "src/sections/common/EvalsTasks/TaskLogsView";
 import { useGetTaskData } from "src/sections/common/EvalsTasks/common";
+import { isResumableTaskStatus } from "src/sections/common/EvalsTasks/task_status";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import CustomPopover, { usePopover } from "src/components/custom-popover";
@@ -419,7 +420,7 @@ const TaskDetailPage = () => {
 
   const status = (taskDetails.status || "").toLowerCase();
   const canPause = status === "running";
-  const canResume = status === "paused";
+  const canResume = isResumableTaskStatus(status);
   const linkedTraceSource = getLinkedTraceSource(taskDetails);
 
   // A re-run mid-flight would race the live run.

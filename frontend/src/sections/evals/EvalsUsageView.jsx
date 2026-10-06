@@ -142,7 +142,7 @@ const EvalsUsageView = () => {
           const payload = {
             search_text: debouncedSearchQuery?.length
               ? debouncedSearchQuery
-              : null,
+              : "",
             current_page_index: pageNumber,
             page_size: pageSize,
             sort: request?.sortModel?.map(({ colId, sort }) => ({
@@ -218,7 +218,10 @@ const EvalsUsageView = () => {
       },
       {
         headerName: "30 Days run",
-        field: "last_30_run",
+        // The API names the count `last30_run`; the sort key the backend maps
+        // (SQL_queries.get_all_templates) stays `last_30_run`.
+        colId: "last_30_run",
+        field: "last30_run",
         flex: 1,
       },
       {

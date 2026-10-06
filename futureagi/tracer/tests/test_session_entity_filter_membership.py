@@ -115,7 +115,7 @@ def test_explicit_raw_reserved_keys_do_not_become_native_session_filters(key, or
     assert "HAVING countIf(" in _cte(sql, "matching_scalar_sessions")
     # Page attribute hydration must not reinterpret a raw timestamp key as
     # another request-window constraint in the V2 subclass either.
-    builder.build_span_attributes_query([SESSION])
+    builder.build_page_hydration_query([SESSION])
 
 
 @pytest.mark.parametrize(
@@ -242,6 +242,31 @@ def test_relational_leaves_have_independent_session_membership_and_keep_all_root
     assert "trace_id IN" not in sessions
     assert "%(session_relational_trace_ids)s" not in sql
     assert "candidate_relational_trace_ids AS" in sql
+
+
+@pytest.mark.parametrize("org", [False, True])
+@pytest.mark.parametrize(
+    ("operation", "matches"), [("is_null", False), ("is_not_null", True)]
+)
+def test_relational_presence_operator_needs_no_candidate_scan(org, operation, matches):
+    # has_annotation is derived per row and never NULL, so a presence operator
+    # compiles to a constant. The session classifier must admit it: it reads no
+    # table, so it needs no finite candidate guard.
+    builder = _builder(
+        _filter(
+            "has_annotation",
+            None,
+            kind="boolean",
+            operation=operation,
+            source="SYSTEM_METRIC",
+        ),
+        org=org,
+    )
+    sql, _ = builder.build_filter_match_query([SESSION])
+    membership = _cte(sql, "matching_relational_sessions")
+    assert ("1 = 1" if matches else "0 = 1") in membership
+    assert "model_hub_score" not in membership
+    assert "candidate_relational_trace_ids" not in sql
 
 
 @pytest.mark.parametrize("has_second_leaf", [True, False])

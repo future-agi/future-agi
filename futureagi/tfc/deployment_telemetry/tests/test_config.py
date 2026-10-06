@@ -61,6 +61,27 @@ def test_version_fallback_chain(monkeypatch):
     assert get_version() == "release-version"
 
 
+@pytest.mark.parametrize("placeholder", ["unknown", "latest", "", "  "])
+def test_version_placeholders_do_not_hide_a_baked_version(monkeypatch, placeholder):
+    """Compose passes FUTURE_AGI_VERSION=unknown (and the image tag defaults
+    to latest) when .env leaves it blank; a version baked into the image must
+    still be reported."""
+    monkeypatch.setenv("FUTURE_AGI_VERSION", placeholder)
+    monkeypatch.setenv("SERVICE_VERSION", "1.8.0")
+    monkeypatch.delenv("GIT_SHA", raising=False)
+    assert get_version() == "1.8.0"
+
+
+def test_version_keeps_a_placeholder_when_nothing_better_exists(monkeypatch):
+    monkeypatch.setenv("FUTURE_AGI_VERSION", "latest")
+    monkeypatch.delenv("SERVICE_VERSION", raising=False)
+    monkeypatch.delenv("GIT_SHA", raising=False)
+    assert get_version() == "latest"
+
+    monkeypatch.delenv("FUTURE_AGI_VERSION")
+    assert get_version() == "unknown"
+
+
 def test_deployment_detection(monkeypatch):
     monkeypatch.setenv("FUTURE_AGI_DEPLOYMENT_TYPE", "custom")
     assert detect_deployment_type() == "custom"

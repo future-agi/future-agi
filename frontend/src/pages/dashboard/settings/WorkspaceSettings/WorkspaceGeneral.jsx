@@ -2,7 +2,10 @@ import React, { useEffect, useState } from "react";
 import { Helmet } from "react-helmet-async";
 import { useParams } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useWorkspaceFromList } from "src/api/workspaces/list";
+import {
+  useWorkspaceFromList,
+  workspacesListKey,
+} from "src/api/workspaces/list";
 import { Box, Typography, TextField, Button } from "@mui/material";
 import { useSnackbar } from "notistack";
 import { LoadingScreen } from "src/components/loading-screen";
@@ -51,9 +54,7 @@ export default function WorkspaceGeneral() {
         queryKey: ["user-workspaces-for-settings"],
       });
       // Refresh the workspace switcher dropdown
-      queryClient.invalidateQueries({
-        queryKey: ["workspaces-list"],
-      });
+      queryClient.invalidateQueries({ queryKey: workspacesListKey });
     },
     onError: (err) => {
       enqueueSnackbar(

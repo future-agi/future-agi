@@ -43,8 +43,8 @@ class CreateAlertMonitorInput(PydanticBaseModel):
         ge=5,
         description="How often to check the monitor, in minutes (minimum 5)",
     )
-    project_id: Optional[UUID] = Field(
-        default=None, description="Optional project ID to scope the monitor to"
+    project_id: UUID = Field(
+        description="Project ID the monitor belongs to (monitors are evaluated per project)"
     )
     notification_emails: Optional[list[str]] = Field(
         default=None, description="List of email addresses for alert notifications"
@@ -129,32 +129,27 @@ class CreateAlertMonitorTool(BaseTool):
                 error_code="VALIDATION_ERROR",
             )
 
-        # Validate project if provided
-        project = None
-        if params.project_id:
-            from tracer.models.project import Project
+        # Validate project
+        from tracer.models.project import Project
 
-            try:
-                project = Project.objects.get(id=params.project_id)
-            except Project.DoesNotExist:
-                return ToolResult.not_found("Project", str(params.project_id))
+        try:
+            project = Project.objects.get(id=params.project_id)
+        except Project.DoesNotExist:
+            return ToolResult.not_found("Project", str(params.project_id))
 
-            # Validate project belongs to user's organization
-            if project.organization_id != context.organization.id:
-                return ToolResult.error(
-                    "This project does not belong to your organization.",
-                    error_code="VALIDATION_ERROR",
-                )
+        # Validate project belongs to user's organization
+        if project.organization_id != context.organization.id:
+            return ToolResult.error(
+                "This project does not belong to your organization.",
+                error_code="VALIDATION_ERROR",
+            )
 
         # Validate unique name per project
-        if project:
-            if UserAlertMonitor.objects.filter(
-                project=project, name=params.name
-            ).exists():
-                return ToolResult.error(
-                    f"An alert with the name '{params.name}' already exists in this project.",
-                    error_code="VALIDATION_ERROR",
-                )
+        if UserAlertMonitor.objects.filter(project=project, name=params.name).exists():
+            return ToolResult.error(
+                f"An alert with the name '{params.name}' already exists in this project.",
+                error_code="VALIDATION_ERROR",
+            )
 
         # Validate threshold relationships
         if params.threshold_type in [
@@ -313,7 +308,7 @@ class CreateAlertMonitorTool(BaseTool):
                     ),
                 ),
                 ("Alert Frequency", f"{monitor.alert_frequency} min"),
-                ("Project", project.name if project else "All projects"),
+                ("Project", project.name),
                 (
                     "Emails",
                     (

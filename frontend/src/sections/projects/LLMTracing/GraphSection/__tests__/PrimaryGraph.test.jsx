@@ -20,6 +20,7 @@ vi.mock("react-apexcharts", () => ({
   default: ({ series, options }) => (
     <div
       data-testid="apex-chart"
+      data-primary-series-name={series?.[0]?.name}
       data-traffic-series-name={series?.[1]?.name}
       data-traffic-axis-series-name={options?.yaxis?.[1]?.seriesName}
       data-primary-first-y={series?.[0]?.data?.[0]?.y}
@@ -296,6 +297,55 @@ describe("PrimaryGraph", () => {
     );
   });
 
+  it("asks the trace graph for the voice-call population on the Voice screen", async () => {
+    renderWithQueryClient(
+      <PrimaryGraph observeIdOverride="project-override" observeType="voice" />,
+    );
+
+    await waitFor(() => expect(axios.post).toHaveBeenCalled());
+    const [endpoint, body] = axios.post.mock.calls.at(-1);
+    expect(endpoint).toBe("/tracer/trace/get_graph_methods/");
+    expect(body.observe_type).toBe("voice");
+  });
+
+  it("excludes simulation calls from the Voice chart when the list does", async () => {
+    renderWithQueryClient(
+      <PrimaryGraph
+        observeIdOverride="project-override"
+        observeType="voice"
+        removeSimulationCalls
+      />,
+    );
+
+    await waitFor(() => expect(axios.post).toHaveBeenCalled());
+    const [, body] = axios.post.mock.calls.at(-1);
+    expect(body.observe_type).toBe("voice");
+    expect(body.remove_simulation_calls).toBe(true);
+  });
+
+  it("sends the simulation-call toggle only with the voice population", async () => {
+    renderWithQueryClient(
+      <PrimaryGraph
+        observeIdOverride="project-override"
+        removeSimulationCalls
+      />,
+    );
+
+    await waitFor(() => expect(axios.post).toHaveBeenCalled());
+    expect(axios.post.mock.calls.at(-1)[1]).not.toHaveProperty(
+      "remove_simulation_calls",
+    );
+  });
+
+  it("sends no population scope for an ordinary trace graph", async () => {
+    renderWithQueryClient(
+      <PrimaryGraph observeIdOverride="project-override" />,
+    );
+
+    await waitFor(() => expect(axios.post).toHaveBeenCalled());
+    expect(axios.post.mock.calls.at(-1)[1]).not.toHaveProperty("observe_type");
+  });
+
   it("offers project eval configs and excludes simulation-only system metrics", async () => {
     axios.get.mockResolvedValue({
       data: {
@@ -487,7 +537,10 @@ describe("PrimaryGraph", () => {
       ),
     );
     const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
     });
     const graph = (projectId) => (
       <QueryClientProvider client={queryClient}>
@@ -904,6 +957,71 @@ describe("PrimaryGraph", () => {
     window.removeEventListener(
       "observe-aggregation-completed",
       exactCompletion,
+    );
+  });
+
+  it("publishes a revalidating snapshot's age while its refresh runs", async () => {
+    // A revisit is served the cached exact snapshot marked refreshing while
+    // the same window is re-read. The header must show how old that snapshot
+    // is, not only a spinner, and move on once the new one lands.
+    vi.useFakeTimers();
+    const exactCompletion = vi.fn();
+    const refreshState = vi.fn();
+    window.addEventListener("observe-aggregation-completed", exactCompletion);
+    window.addEventListener("observe-aggregation-refresh-state", refreshState);
+    const snapshot = (completedAt, refreshing) => ({
+      data: {
+        result: {
+          metric_name: "latency",
+          data: [
+            {
+              timestamp: "2026-08-03T00:00:00Z",
+              value: 12,
+              primary_traffic: 1,
+            },
+          ],
+          query_complete: true,
+          query_status: "complete",
+          query_sampled: false,
+          query_cached: true,
+          query_refreshing: refreshing,
+          query_refresh_failed: false,
+          query_completed_at: completedAt,
+        },
+      },
+    });
+    axios.post
+      .mockResolvedValueOnce(snapshot("2026-08-03T02:00:00Z", true))
+      .mockResolvedValueOnce(snapshot("2026-08-03T03:30:00Z", false));
+
+    renderWithQueryClient(
+      <PrimaryGraph observeIdOverride="project-override" />,
+    );
+    await act(async () => vi.advanceTimersByTimeAsync(10));
+
+    expect(screen.getByTestId("apex-chart")).toBeInTheDocument();
+    expect(exactCompletion).toHaveBeenCalled();
+    expect(exactCompletion.mock.calls.at(-1)[0].detail).toEqual({
+      observeId: "project-override",
+      queryCompletedAt: "2026-08-03T02:00:00.000Z",
+    });
+    expect(refreshState.mock.calls.at(-1)[0].detail.refreshing).toBe(true);
+
+    await act(async () => vi.advanceTimersByTimeAsync(1000));
+    await act(async () => vi.advanceTimersByTimeAsync(10));
+
+    expect(axios.post).toHaveBeenCalledTimes(2);
+    expect(exactCompletion.mock.calls.at(-1)[0].detail.queryCompletedAt).toBe(
+      "2026-08-03T03:30:00.000Z",
+    );
+    expect(refreshState.mock.calls.at(-1)[0].detail.refreshing).toBe(false);
+    window.removeEventListener(
+      "observe-aggregation-completed",
+      exactCompletion,
+    );
+    window.removeEventListener(
+      "observe-aggregation-refresh-state",
+      refreshState,
     );
   });
 
@@ -1494,6 +1612,149 @@ describe("PrimaryGraph", () => {
       expect(axios.post.mock.calls.at(-1)[1].req_data_config).toMatchObject({
         id: "eval-uuid-1",
       }),
+    );
+  });
+
+  describe("latency statistic label", () => {
+    const graphResponse = (extra) => ({
+      data: {
+        status: true,
+        result: {
+          metric_name: "latency",
+          data: [
+            {
+              timestamp: "2026-08-03T01:00:00Z",
+              value: 120,
+              primary_traffic: 4,
+            },
+          ],
+          query_complete: true,
+          query_status: "complete",
+          query_sampled: false,
+          query_completed_at: "2026-08-03T02:00:00Z",
+          ...extra,
+        },
+      },
+    });
+
+    it.each([
+      ["traces", undefined],
+      ["sessions", "/tracer/trace-session/get_session_graph_data/"],
+      ["users", "/tracer/project/get_users_aggregate_graph_data/"],
+    ])(
+      "labels the %s latency series as the mean the server declares",
+      async (trafficLabel, graphEndpoint) => {
+        axios.post.mockResolvedValue(
+          graphResponse({ metric_statistic: "mean" }),
+        );
+        renderWithQueryClient(
+          <PrimaryGraph
+            observeIdOverride="project-override"
+            graphEndpoint={graphEndpoint}
+            trafficLabel={trafficLabel}
+          />,
+        );
+
+        await waitFor(() =>
+          expect(screen.getByTestId("apex-chart")).toHaveAttribute(
+            "data-primary-series-name",
+            "Latency (avg, ms)",
+          ),
+        );
+        expect(screen.getByTestId("graph-metric-statistic")).toHaveTextContent(
+          "(avg)",
+        );
+        // The picker trigger keeps the catalog name of the metric.
+        expect(screen.getByText("Latency")).toBeInTheDocument();
+      },
+    );
+
+    it("draws a retired median statistic under the plain latency label", async () => {
+      // No server publishes "median" any more; a payload that still says so
+      // (a stale tab) is never labelled as an average.
+      axios.post.mockResolvedValue(
+        graphResponse({ metric_statistic: "median" }),
+      );
+      renderWithQueryClient(
+        <PrimaryGraph observeIdOverride="project-override" />,
+      );
+
+      await waitFor(() =>
+        expect(screen.getByTestId("apex-chart")).toHaveAttribute(
+          "data-primary-series-name",
+          "Latency (ms)",
+        ),
+      );
+      expect(screen.queryByTestId("graph-metric-statistic")).toBeNull();
+    });
+
+    it("does not guess a statistic the response does not declare", async () => {
+      axios.post.mockResolvedValue(graphResponse({}));
+      renderWithQueryClient(
+        <PrimaryGraph observeIdOverride="project-override" />,
+      );
+
+      await waitFor(() =>
+        expect(screen.getByTestId("apex-chart")).toHaveAttribute(
+          "data-primary-series-name",
+          "Latency (ms)",
+        ),
+      );
+      expect(screen.queryByTestId("graph-metric-statistic")).toBeNull();
+    });
+
+    it("draws a statistic it does not know under the plain latency label", async () => {
+      // A newer server may name a statistic this tab predates. The graph
+      // still renders; the label falls back to the plain name.
+      axios.post.mockResolvedValue(graphResponse({ metric_statistic: "p95" }));
+      renderWithQueryClient(
+        <PrimaryGraph observeIdOverride="project-override" />,
+      );
+
+      await waitFor(() =>
+        expect(screen.getByTestId("apex-chart")).toHaveAttribute(
+          "data-primary-series-name",
+          "Latency (ms)",
+        ),
+      );
+      expect(screen.queryByTestId("graph-metric-statistic")).toBeNull();
+    });
+
+    it.each([
+      ["tokens", "Tokens", "sum"],
+      // Cost is a mean too; only latency is captioned.
+      ["cost", "Cost", "mean"],
+    ])(
+      "adds no caption to the %s series",
+      async (metricId, label, statistic) => {
+        axios.post.mockResolvedValue(
+          graphResponse({ metric_name: metricId, metric_statistic: statistic }),
+        );
+        renderWithQueryClient(
+          <PrimaryGraph
+            observeIdOverride="project-override"
+            defaultMetric={metricId}
+            staticMetrics={{
+              system: [
+                {
+                  id: metricId,
+                  label,
+                  unit: "",
+                  apiType: "SYSTEM_METRIC",
+                },
+              ],
+            }}
+          />,
+        );
+
+        await waitFor(() =>
+          expect(screen.getByTestId("apex-chart")).toHaveAttribute(
+            "data-primary-series-name",
+            label,
+          ),
+        );
+        expect(screen.queryByTestId("graph-metric-statistic")).toBeNull();
+      },
     );
   });
 });

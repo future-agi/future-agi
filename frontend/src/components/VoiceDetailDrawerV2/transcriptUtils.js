@@ -79,7 +79,10 @@ export const readTime = (obj, keys) => {
  *   silenceBefore → seconds (null if < 0.3s or indeterminate)
  *   overlapsPrev  → true when this turn started before the previous ended
  */
-export const enrichTurns = (transcript) => {
+export const enrichTurns = (
+  transcript,
+  { enableTemporalFeatures = true } = {},
+) => {
   if (!Array.isArray(transcript) || transcript.length === 0) return [];
 
   // Step 1: raw extract
@@ -112,12 +115,27 @@ export const enrichTurns = (transcript) => {
       role,
       rawRole: item.speaker_role || item.role,
       content: getContent(item),
+      toolCalls: Array.isArray(item.tool_calls) ? item.tool_calls : [],
       start,
       end,
       duration: directDuration,
       _originalIndex: i,
     };
   });
+
+  // Text-chat transcripts can reuse the transcript presentation without
+  // pretending that message weights are audio durations. Preserve source
+  // order and the duration-like weight used by the speaker legend, but make
+  // all voice-only timing semantics explicitly unavailable.
+  if (!enableTemporalFeatures) {
+    return raw.map((turn) => ({
+      ...turn,
+      start: null,
+      end: null,
+      silenceBefore: null,
+      overlapsPrev: false,
+    }));
+  }
 
   // Step 2: absolute-epoch → offset-seconds normalization. Transcripts
   // arrive with times in one of three units depending on the backend:
@@ -189,23 +207,24 @@ export const enrichTurns = (transcript) => {
     return a.start - b.start;
   });
 
-  // Step 7: silence + overlap on adjacent pairs.
-  for (let i = 0; i < sorted.length; i++) {
-    const cur = sorted[i];
-    const prev = sorted[i - 1];
-    if (!prev || prev.end == null || cur.start == null) {
-      cur.silenceBefore = null;
-      cur.overlapsPrev = false;
-      continue;
+  // Step 7: silence + overlap between consecutive spoken turns. A tool call
+  // sits inline at the moment it ran, often mid-turn; it is not speech, so it
+  // neither interrupts nor splits the gap between the turns around it.
+  let prev = null;
+  for (const cur of sorted) {
+    cur.silenceBefore = null;
+    cur.overlapsPrev = false;
+    if (cur.role === "tool") continue;
+    if (prev && prev.end != null && cur.start != null) {
+      const gap = cur.start - prev.end;
+      if (gap < -0.1) {
+        cur.silenceBefore = 0;
+        cur.overlapsPrev = true;
+      } else if (gap > 0.3) {
+        cur.silenceBefore = gap;
+      }
     }
-    const gap = cur.start - prev.end;
-    if (gap < -0.1) {
-      cur.silenceBefore = 0;
-      cur.overlapsPrev = true;
-    } else {
-      cur.silenceBefore = gap > 0.3 ? gap : null;
-      cur.overlapsPrev = false;
-    }
+    prev = cur;
   }
   return sorted;
 };

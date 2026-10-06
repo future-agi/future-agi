@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from clickhouse_connect.driver.binding import finalize_query
 from django.db import DatabaseError
 
 from tracer.serializers.project import (
@@ -123,12 +124,58 @@ def public(filters, *, users=False):
 
 class RecordingAnalytics:
     supports_per_query_read_settings = True
+    # An affordable scan, so the routing gate hands these reads to the
+    # interactive lane and every assertion below is about the SQL that lane
+    # issues. A cost probe that answers nothing means "not costed", and an
+    # uncosted read is deliberately not issued inline any more - so a fake that
+    # cannot answer it would move every case here onto the background lane and
+    # stop testing the statements at all.
+    cost_estimate_rows = 1_000_000
 
     def __init__(self):
         self.calls = []
 
+    def cost_estimate(self):
+        return SimpleNamespace(
+            data=[
+                {
+                    "database": "default",
+                    "table": "spans",
+                    "parts": 4,
+                    "rows": self.cost_estimate_rows,
+                    "marks": 128,
+                }
+            ],
+            columns=["database", "table", "parts", "rows", "marks"],
+            query_time_ms=1,
+        )
+
     def execute_ch_query(self, query, params, **kwargs):
         self.calls.append((query, dict(params), kwargs))
+        if "graph_cost_project_id" in query:
+            return self.cost_estimate()
+        return SimpleNamespace(data=[], columns=COLUMNS, query_time_ms=1)
+
+
+class SeedAdmittingAnalytics(RecordingAnalytics):
+    """Answer the seed probe with a selective estimate instead of nothing.
+
+    ``RecordingAnalytics`` returns ``data=[]`` for every statement, so its
+    candidate is always rejected and every ``direct()`` case below exercises
+    the UNSEEDED graph statement. This variant admits the candidate so the
+    seeded SQL is covered on the same public route.
+    """
+
+    def execute_ch_query(self, query, params, **kwargs):
+        self.calls.append((query, dict(params), kwargs))
+        if "graph_cost_project_id" in query:
+            return self.cost_estimate()
+        if "EXPLAIN ESTIMATE" in query:
+            return SimpleNamespace(
+                data=[{"rows": 1_600_000, "marks": 259}],
+                columns=["parts", "rows", "marks"],
+                query_time_ms=1,
+            )
         return SimpleNamespace(data=[], columns=COLUMNS, query_time_ms=1)
 
 
@@ -143,8 +190,129 @@ def direct(filters, observe_type):
         observe_type=observe_type,
     )
     assert result["query_complete"] is True
-    assert len(analytics.calls) == 1
-    return analytics.calls[0]
+    # Every filtered graph first costs its own scan from the part index, and a
+    # trace graph may then spend bounded EXPLAIN ESTIMATE probes choosing a
+    # candidate seed. The graph statement is always the last one. A span graph
+    # compiles no trace witness, so its one probe is the cost probe alone.
+    if observe_type == "span":
+        assert len(analytics.calls) == 2
+        assert "graph_cost_project_id" in analytics.calls[0][0]
+    assert all("EXPLAIN ESTIMATE" in call[0] for call in analytics.calls[:-1])
+    assert "EXPLAIN ESTIMATE" not in analytics.calls[-1][0]
+    return analytics.calls[-1]
+
+
+@pytest.mark.parametrize("key", RAW_NAMES)
+def test_public_dispatch_admitted_seed_prunes_with_a_plain_trace_set(key):
+    """An ADMITTED candidate keeps the raw map routing inside the seed too."""
+    analytics = SeedAdmittingAnalytics()
+    result = dispatch.fetch_system_metric_graph_ch(
+        analytics=analytics,
+        project_id=PROJECT,
+        filters=public([window(), leaf(key, "raw-value")]),
+        interval="day",
+        metric_id="traffic",
+        observe_type="trace",
+    )
+    assert result["query_complete"] is True
+    # query_count reports the statements the READ issued: one seed probe and
+    # the graph statement. The cost probe in front of them is a routing
+    # decision, not a read, and is deliberately not counted as one.
+    assert result["query_count"] == 2
+    assert len(analytics.calls) == 3
+    cost_query, _, _ = analytics.calls[0]
+    probe_query, _, _ = analytics.calls[1]
+    query, params, _ = analytics.calls[2]
+    assert "graph_cost_project_id" in cost_query
+    assert "EXPLAIN ESTIMATE" in probe_query
+    assert "trace_id IN (" in query
+    assert "FROM spans AS graph_seed_spans" in query
+    assert "GLOBAL IN" not in query
+    assert "cluster(" not in query
+    assert "attrs_string[%(graph_filter_1_attr_key_1)s]" in query
+    assert params["graph_filter_1_attr_key_1"] == key
+    assert params["graph_seed_1_latest_filter_key_0"] == key
+    assert "spans_hourly_rollup" not in query
+    assert "tracer_eval_logger" not in query
+    assert "model_hub_score" not in query
+    # The seed only prunes: the outer read still classifies every candidate.
+    assert "graph_match_0 = 1" in query
+    assert "FINAL" not in query.upper()
+    assert any(value == "raw-value" for value in params.values())
+
+
+CLUSTER_ROUTING_SHAPES = [
+    *[
+        ({"key": key, "value": value, "kind": kind}, 1)
+        for key in RAW_NAMES
+        for kind, value in (("text", "raw-value"), ("number", 0.01), ("boolean", True))
+    ],
+    *[
+        ({"key": key, "value": value, "op": op}, probes)
+        for key in ("created_at", "start_time")
+        for op, value, probes in (
+            ("equals", "clock", 1),
+            # Negative/exclusion witnesses are not candidates, so these shapes
+            # issue no probe at all - on this release and on the previous one.
+            ("not_equals", "clock", 0),
+            ("is_null", None, 0),
+        )
+    ],
+]
+
+
+@pytest.mark.parametrize(
+    "shape,expected_probes",
+    CLUSTER_ROUTING_SHAPES,
+    ids=[
+        f"{shape['key']}-{shape.get('kind', 'text')}-{shape.get('op', 'equals')}"
+        for shape, _ in CLUSTER_ROUTING_SHAPES
+    ],
+)
+def test_cluster_env_routing_shapes_keep_the_prior_release_schedule(
+    monkeypatch,
+    shape,
+    expected_probes,
+):
+    """Un-gating the seed moves nothing on a deployment that already seeds.
+
+    These are the 27 trace-mode shapes the ``direct()`` cases below cover,
+    replayed with ``DASHBOARD_TRACE_REPLICA_SHARD_CLUSTER`` set - the path this
+    PR does not un-gate. The probe count, the per-probe grant and the rendered
+    statement must equal what the previous release produced for each shape:
+    one probe at ``min(1500, 2500)`` ms for a positive scalar witness, none
+    for an exclusion witness, and the ``cluster(...)`` + ``GLOBAL IN``
+    rendering whenever a candidate is admitted.
+    """
+    monkeypatch.setattr(
+        dispatch.settings,
+        "DASHBOARD_TRACE_REPLICA_SHARD_CLUSTER",
+        "all-sharded",
+    )
+    analytics = SeedAdmittingAnalytics()
+    result = dispatch.fetch_system_metric_graph_ch(
+        analytics=analytics,
+        project_id=PROJECT,
+        filters=public([window(), leaf(**shape)]),
+        interval="day",
+        metric_id="traffic",
+        observe_type="trace",
+    )
+
+    estimates = [call for call in analytics.calls if "EXPLAIN ESTIMATE" in call[0]]
+    # One of them is the routing cost probe every filtered graph now runs
+    # before it picks a lane. It is not a seed probe: it carries no witness,
+    # takes the request's remaining wall rather than the seed grant, and its
+    # count is fixed at one for every shape here.
+    cost_probes = [call for call in estimates if "graph_cost_project_id" in call[0]]
+    probes = [call for call in estimates if "graph_cost_project_id" not in call[0]]
+    assert len(cost_probes) == 1
+    assert len(probes) == expected_probes
+    assert all(call[2]["timeout_ms"] == 1_500 for call in probes)
+    query = analytics.calls[-1][0]
+    assert ("trace_id GLOBAL IN (" in query) is bool(expected_probes)
+    assert "cluster('all-sharded'" in query
+    assert result["query_count"] == expected_probes + 1
 
 
 @pytest.mark.parametrize("key", RAW_NAMES)
@@ -165,7 +333,9 @@ def test_public_dispatch_raw_alias_compiles_map_not_native_relation(
     observe_type,
 ):
     query, params, _ = direct([window(), leaf(key, value, kind=kind)], observe_type)
-    assert f"{column}['{key}']" in query
+    assert key in params.values()
+    assert f"{column}['{key}']" not in query
+    assert f"{column}['{key}']" in finalize_query(query, params)
     assert "FROM spans" in query
     assert "tracer_eval_logger" not in query
     assert "model_hub_score" not in query
@@ -184,9 +354,12 @@ def test_public_dispatch_raw_date_is_not_date_only_rollup(
 ):
     query, params, _ = direct([window(days), leaf(key, value, op=op)], observe_type)
     assert "spans_hourly_rollup" not in query
-    assert f"mapContains(attrs_string, '{key}')" in query
+    assert key in params.values()
+    assert f"mapContains(attrs_string, '{key}')" not in query
+    rendered = finalize_query(query, params)
+    assert f"mapContains(attrs_string, '{key}')" in rendered
     if op != "is_null":
-        assert f"attrs_string['{key}']" in query
+        assert f"attrs_string['{key}']" in rendered
     assert params["start_date"] == END - timedelta(days=days)
     assert params["end_date"] == END
 
@@ -264,7 +437,9 @@ def test_agent_graph_uses_raw_alias_map(monkeypatch, key):
     )
     assert result["query_complete"] is True
     query, params, _ = analytics.calls[0]
-    assert f"attrs_string['{key}']" in query
+    assert key in params.values()
+    assert f"attrs_string['{key}']" not in query
+    assert f"attrs_string['{key}']" in finalize_query(query, params)
     assert "model_hub_score" not in query and "tracer_eval_logger" not in query
     assert "FROM end_users" not in query
 
@@ -427,5 +602,7 @@ def test_raw_eval_score_does_not_resolve_native_eval_ownership():
     )
     query, params, _ = analytics.calls[0]
     assert "attrs_number" in query
-    assert "'eval_score'" in query or "eval_score" in params.values()
+    assert "eval_score" in params.values()
+    assert "attrs_number['eval_score']" not in query
+    assert "attrs_number['eval_score']" in finalize_query(query, params)
     assert "user_eval_metrics AS" not in query

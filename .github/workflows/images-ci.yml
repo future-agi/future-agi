@@ -1,0 +1,92 @@
+# Image conventions CI, no image built: standard library tests plus PyYAML,
+# about a minute.
+#   deploy/tests/test_image_standards.py  labels, users, probes and base pins
+#       of every Dockerfile, the backend variants (the default tags stay
+#       feature-complete; -slim is the standalone image's base), the UI's
+#       nginx security headers and caching, the scripts the release and CI
+#       workflows share (verify-binaries, code-executor-base-pin.sh) and those
+#       workflows
+#   deploy/tests/test_image_size_budget.py  scripts/image_size_budget.py
+#       against a fake registry, and the budget file against the compose
+#       files, release-images.yml and deploy/images.toml (the images page
+#       of the docs site is rendered from it by scripts/docs_site.py)
+name: Images CI
+
+on:
+  pull_request:
+    branches: [dev, main]
+    paths:
+      - "**/Dockerfile*"
+      - "futureagi/docker/**"
+      - "futureagi/pyproject.toml"
+      - "futureagi/requirements.txt"
+      - "deploy/standalone/**"
+      - "deploy/helm/futureagi/templates/_env.tpl"
+      - "deploy/helm/futureagi/templates/frontend/configmap.yaml"
+      - "deploy/tests/test_image_*.py"
+      - "frontend/nginx.conf"
+      - "frontend/security-headers.conf"
+      - "docker-compose*.yml"
+      - "scripts/verify-image-contents.sh"
+      - "scripts/image_size_budget.*"
+      - "scripts/code-executor-base-pin.sh"
+      - "deploy/images.toml"
+      - "scripts/docs_site.py"
+      - ".hadolint.yaml"
+      - ".github/workflows/build-image*.yml"
+      - ".github/workflows/base-image-publish.yml"
+      - ".github/workflows/release-images.yml"
+      - ".github/workflows/standalone-ci.yml"
+      - ".github/workflows/backend-ci.yml"
+      - ".github/workflows/images-ci.yml"
+  push:
+    branches: [dev, main]
+    paths:
+      - "**/Dockerfile*"
+      - "futureagi/docker/**"
+      - "futureagi/pyproject.toml"
+      - "futureagi/requirements.txt"
+      - "deploy/standalone/**"
+      - "deploy/helm/futureagi/templates/_env.tpl"
+      - "deploy/helm/futureagi/templates/frontend/configmap.yaml"
+      - "deploy/tests/test_image_*.py"
+      - "frontend/nginx.conf"
+      - "frontend/security-headers.conf"
+      - "docker-compose*.yml"
+      - "scripts/verify-image-contents.sh"
+      - "scripts/image_size_budget.*"
+      - "scripts/code-executor-base-pin.sh"
+      - "deploy/images.toml"
+      - "scripts/docs_site.py"
+      - ".hadolint.yaml"
+      - ".github/workflows/build-image*.yml"
+      - ".github/workflows/base-image-publish.yml"
+      - ".github/workflows/release-images.yml"
+      - ".github/workflows/standalone-ci.yml"
+      - ".github/workflows/backend-ci.yml"
+      - ".github/workflows/images-ci.yml"
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: images-ci-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  conventions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Image size budget script and budgets
+        run: python -m unittest discover -s deploy/tests -p 'test_image_size_budget.py' -v
+      - name: Image conventions
+        run: |
+          python -m pip install --quiet PyYAML==6.0.3
+          python -m unittest discover -s deploy/tests -p 'test_image_standards.py' -v

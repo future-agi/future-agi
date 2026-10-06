@@ -710,6 +710,9 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
     queryFn: async ({ signal }) => {
       if (!currentRow) return null;
       const traceId = currentRow.trace_id;
+      // Rows come from this project's list; the same trace id can exist in
+      // other projects, so pin every trace-keyed detail read to this one.
+      const pin = { project_id: projectId };
 
       let detailData = null;
 
@@ -719,7 +722,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
         try {
           const { data } = await axios.get(
             endpoints.project.getVoiceCallDetail,
-            { params: { trace_id: traceId }, signal },
+            { params: { trace_id: traceId, ...pin }, signal },
           );
           const voiceResult = parseVoiceCallDetailResponse(data);
           detailData = { ...currentRow, ...voiceResult };
@@ -741,6 +744,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
         );
       } else if (rowType === "traces" && traceId) {
         const { data } = await axios.get(endpoints.project.getTrace(traceId), {
+          params: pin,
           signal,
         });
         const traceResult = data?.result;
@@ -786,7 +790,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
             try {
               const tResp = await axios.get(
                 endpoints.project.getTrace(firstTraceId),
-                { signal },
+                { params: pin, signal },
               );
               const tResult = tResp.data?.result || {};
               firstTraceSpans = sortSpansForMapping(

@@ -306,10 +306,16 @@ class CreateAgentDefinitionTool(BaseTool):
                     )
 
             elif params.provider == ProviderChoices.RETELL:
+                # Import OUTSIDE the try below: the except blames the user's
+                # API key, and a missing `voice` extra must not be reported
+                # as a credentials problem. load_extra raises an ImportError
+                # naming the extra instead.
+                from tfc.utils.lazy_extras import load_extra
+
+                Retell = load_extra("retell", "voice").Retell
+
                 try:
                     import json as _json
-
-                    from retell import Retell
 
                     client = Retell(api_key=params.api_key)
                     assistant_raw = client.agent.retrieve(

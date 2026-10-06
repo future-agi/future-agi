@@ -10,6 +10,9 @@ from tfc.utils.api_serializers import (
     StrictInputSerializer,
 )
 from tfc.utils.serializer_fields import JSON_VALUE_SCHEMA, JsonValueField  # noqa: F401
+from tracer.services.clickhouse.graph_metric_statistic import (
+    METRIC_STATISTIC_CHOICES as OBSERVE_GRAPH_METRIC_STATISTIC_CHOICES,
+)
 from tracer.utils.attribute_suggestion_contract import (
     TYPED_STRING_SUGGESTION_MAX_UTF8_BYTES,
 )
@@ -27,6 +30,7 @@ from tracer.utils.filter_operators import (
     load_filter_contract,
     normalize_filter_type,
     normalize_span_attribute_filter_type,
+    split_comma_joined_uuid_members,
     validate_json_map_filter_value,
 )
 from tracer.utils.property_registry import (
@@ -578,6 +582,7 @@ class FilterItemField(serializers.JSONField):
         value = super().to_internal_value(data)
         if not isinstance(value, dict):
             raise serializers.ValidationError("Filter item must be an object.")
+        value = split_comma_joined_uuid_members(value)
 
         missing_keys = sorted(FILTER_ITEM_REQUIRED_KEYS - set(value))
         if missing_keys:
@@ -668,6 +673,11 @@ class FilterItemField(serializers.JSONField):
             if not isinstance(filter_value, list) or not filter_value:
                 raise serializers.ValidationError(
                     f"{filter_op!r} requires a non-empty filter_value list."
+                )
+            # Split UUID members can outgrow the bound checked before parsing.
+            if len(filter_value) > FILTER_LIST_MAX_VALUES:
+                raise serializers.ValidationError(
+                    f"{filter_op!r} supports at most {FILTER_LIST_MAX_VALUES} values."
                 )
         elif filter_op not in NO_VALUE_FILTER_OPS and "filter_value" not in config:
             raise serializers.ValidationError(f"{filter_op!r} requires filter_value.")
@@ -1150,7 +1160,14 @@ class ObserveGraphDataRequestSerializer(StrictInputSerializer):
         default="day",
     )
     property = serializers.CharField(
-        required=False, allow_blank=True, default="average"
+        required=False,
+        allow_blank=True,
+        default="average",
+        help_text=(
+            "Accepted for older clients and ignored for SYSTEM_METRIC graphs: "
+            "each system metric has one statistic, named by the response's "
+            "metric_statistic. Latency is always the mean (avg) span latency."
+        ),
     )
     req_data_config = ObserveGraphMetricConfigField()
 
@@ -1182,6 +1199,16 @@ class ObserveGraphDataPointSerializer(serializers.Serializer):
 class ObserveGraphDataResultSerializer(serializers.Serializer):
     metric_name = serializers.CharField(allow_blank=True)
     name = serializers.CharField(required=False, allow_blank=True)
+    metric_statistic = serializers.ChoiceField(
+        choices=OBSERVE_GRAPH_METRIC_STATISTIC_CHOICES,
+        required=False,
+        help_text=(
+            "Statistic of the published system-metric series per bucket. "
+            "Latency is always the mean (avg) of span latency, filtered or "
+            "not. "
+            "Absent for eval and annotation series."
+        ),
+    )
     data = ObserveGraphDataPointSerializer(
         many=True,
         help_text=(

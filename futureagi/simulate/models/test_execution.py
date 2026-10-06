@@ -68,6 +68,10 @@ class TestExecution(BaseModel):
         blank=True,
         help_text="List of scenario IDs that were executed in this run",
     )
+    trials = models.PositiveSmallIntegerField(
+        default=1,
+        help_text="Requested executions of each selected authored scenario",
+    )
 
     total_calls = models.IntegerField(
         default=0, help_text="Total number of calls to be made"

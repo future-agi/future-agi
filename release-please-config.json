@@ -48,7 +48,13 @@
   ],
   "packages": {
     ".": {
-      "release-type": "simple"
+      "release-type": "simple",
+      "extra-files": [
+        {
+          "type": "generic",
+          "path": "deploy/helm/futureagi/Chart.yaml"
+        }
+      ]
     }
   }
 }
