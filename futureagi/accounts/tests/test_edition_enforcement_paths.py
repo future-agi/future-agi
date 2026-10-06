@@ -691,6 +691,117 @@ class TestCloudUnchanged:
         response = auth_client.post(ORG_NEW_URL, {"name": "Cloud Org"}, format="json")
         assert response.status_code in (200, 201), response.content
 
+    def test_cloud_signup_and_operator_paths_create_orgs(
+        self, edition_cloud, oss_signup, api_client, organization, monkeypatch
+    ):
+        """AC-13 / O1, O8, O5, O6: organization creation paths are unchanged on Cloud."""
+        from accounts.aws_marketplace_utils import create_organization_for_aws_customer
+        from accounts.utils import first_signup
+        from saml2_auth.views import resolve_sso_user
+
+        response = api_client.post(
+            SIGNUP_URL, _signup_payload("cloud-second@futureagi.com"), format="json"
+        )
+        assert response.status_code == 200, response.content
+        call_command(
+            "create_user",
+            "--email",
+            "cloud-admin@example.com",
+            "--name",
+            "Cloud Admin",
+            "--password",
+            "Edition-Passw0rd!9",
+        )
+        import accounts.utils as account_utils
+        import saml2_auth.views as sso_views
+
+        # SSO signups mail generated credentials through Temporal; not here.
+        monkeypatch.setattr(
+            account_utils, "process_post_registration", lambda *a, **k: None
+        )
+        monkeypatch.setattr(sso_views, "track_mixpanel_event", lambda *a, **k: None)
+        resolve_sso_user("cloud-jit@example.com", "JIT", None, "google")
+        first_signup(
+            {"full_name": "MS", "email": "cloud-ms@example.com"}, mode="microsoft"
+        )
+        monkeypatch.setenv("API_KEY", "operator-key")
+        response = api_client.post(
+            APPSMITH_URL,
+            {
+                "email": "cloud-appsmith@example.com",
+                "password": "Edition-Passw0rd!9",
+                "organization_name": "Appsmith Org",
+                "send_credential": False,
+            },
+            format="json",
+            HTTP_X_API_KEY="operator-key",
+        )
+        assert response.status_code == 201, response.content
+        create_organization_for_aws_customer(MagicMock(), "123456789012")
+        assert Organization.objects.count() == 7
+
+    def test_cloud_member_and_workspace_paths_are_unchanged(
+        self, edition_cloud, auth_client, user, organization, workspace
+    ):
+        """AC-13 / M2, M4, M5, M6, W2, W3, M8: no edition gate on Cloud."""
+        from ai_tools.base import ToolContext
+        from ai_tools.tools.users.create_workspace import (
+            CreateWorkspaceInput,
+            CreateWorkspaceTool,
+        )
+        from ai_tools.tools.users.invite_users import InviteUsersInput, InviteUsersTool
+
+        fill_seats(organization)
+        gone = make_member(organization, active=False)
+        stale = make_invite(organization, "cloud-stale@example.com", expired=True)
+        responses = [
+            auth_client.post(
+                INVITE_RESEND_URL, {"invite_id": str(stale.id)}, format="json"
+            ),
+            auth_client.post(REACTIVATE_URL, {"user_id": str(gone.id)}, format="json"),
+            auth_client.post(
+                WS_INVITE_URL,
+                {
+                    "emails": ["cloud-ws-invite@example.com"],
+                    "role": OrganizationRoles.WORKSPACE_MEMBER,
+                    "workspace_ids": [str(workspace.id)],
+                },
+                format="json",
+            ),
+            auth_client.post(
+                f"{WORKSPACES_URL}{workspace.id}/members/",
+                {
+                    "users": [
+                        {
+                            "email": "cloud-member-add@example.com",
+                            "role": OrganizationRoles.WORKSPACE_MEMBER,
+                        }
+                    ]
+                },
+                format="json",
+            ),
+            auth_client.post(
+                TEAM_URL, {"workspace": {"name": "Cloud Team Space"}}, format="json"
+            ),
+        ]
+        for response in responses:
+            assert response.status_code != 402, response.content
+            assert response.status_code < 300, response.content
+
+        context = ToolContext(user=user, organization=organization, workspace=workspace)
+        assert (
+            not CreateWorkspaceTool()
+            .execute(CreateWorkspaceInput(name="Cloud Tool Space"), context)
+            .is_error
+        )
+        assert (
+            not InviteUsersTool()
+            .execute(
+                InviteUsersInput(emails=["cloud-tool-invite@example.com"]), context
+            )
+            .is_error
+        )
+
     @pytest.mark.requires_ee
     def test_cloud_team_view_keeps_the_a3_path(
         self, edition_cloud, auth_client, organization, monkeypatch
