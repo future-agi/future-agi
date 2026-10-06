@@ -18,6 +18,9 @@ import {
   describeTableBuckets,
   TABLE_BUCKET_LIMIT,
   isDenseChartSeries,
+  CHART_MARKER_SERIES_LIMIT,
+  getChartMarkerSizes,
+  isAbsentChartPoint,
   getSeriesExtent,
   getSeriesScalar,
   groupPieSeries,
@@ -1657,8 +1660,8 @@ describe("getPlottedChartSeries — stacked alignment (TH-7757 review D1)", () =
   it("pads a series that did not report a kept bucket, rather than shifting it", () => {
     const out = getPlottedChartSeries(padded(), { stacked: true });
     expect(out[1].data).toEqual([
-      { x: 0, y: 0 },
-      { x: 1, y: 0 },
+      { x: 0, y: 0, absent: true },
+      { x: 1, y: 0, absent: true },
       { x: 5, y: 100 },
     ]);
   });
@@ -1676,7 +1679,7 @@ describe("getPlottedChartSeries — stacked alignment (TH-7757 review D1)", () =
     });
     expect(out[0].data).toEqual([
       { x: 0, y: 10 },
-      { x: 1, y: 0 },
+      { x: 1, y: 0, absent: true },
       { x: 2, y: 10 },
     ]);
   });
@@ -1707,6 +1710,54 @@ describe("getPlottedChartSeries — stacked alignment (TH-7757 review D1)", () =
     expect(
       getPlottedChartSeries(sparse, { stacked: true })[0].data,
     ).toHaveLength(37);
+  });
+});
+
+describe("getChartMarkerSizes (TH-7757)", () => {
+  const seriesOf = (...lengths) =>
+    lengths.map((length, index) => ({
+      name: `s${index}`,
+      data: Array.from({ length }, (_, x) => ({ x, y: 1 })),
+    }));
+
+  it("keeps one size for every series while the chart is within the budget", () => {
+    expect(getChartMarkerSizes(seriesOf(300, 50), 5)).toBe(5);
+  });
+
+  it("drops the markers of a dense series and keeps them on a sparse one", () => {
+    const dense = CHART_DENSE_POINT_BUDGET + 1;
+    expect(
+      getChartMarkerSizes(seriesOf(dense, CHART_MARKER_SERIES_LIMIT), 5),
+    ).toEqual([0, 5]);
+  });
+
+  it("drops every marker when every series is dense", () => {
+    expect(getChartMarkerSizes(seriesOf(500, 500), 4)).toEqual([0, 0]);
+  });
+
+  it("leaves a chart type without markers at zero", () => {
+    expect(getChartMarkerSizes(seriesOf(1000), 0)).toBe(0);
+  });
+});
+
+describe("isAbsentChartPoint (TH-7757)", () => {
+  const w = {
+    config: {
+      series: [{ data: [{ x: 0, y: 0, absent: true }, { x: 1, y: 0 }] }],
+    },
+  };
+
+  it("reports a bucket the stack padded for a series that did not report it", () => {
+    expect(isAbsentChartPoint(w, 0, 0)).toBe(true);
+  });
+
+  it("does not report a real zero", () => {
+    expect(isAbsentChartPoint(w, 0, 1)).toBe(false);
+  });
+
+  it("does not report a point it cannot find", () => {
+    expect(isAbsentChartPoint(w, 3, 0)).toBe(false);
+    expect(isAbsentChartPoint(undefined, 0, 0)).toBe(false);
   });
 });
 

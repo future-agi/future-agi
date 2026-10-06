@@ -1695,9 +1695,8 @@ describe("WidgetChart — dense-series budget (TH-7757)", () => {
       enabled: true,
       speed: 400,
     });
-    // Sparse series get one resting marker per point, not the thinned array.
+    // Sparse series get one resting marker per point.
     expect(lastChart().options.markers.size).toBeGreaterThan(0);
-    expect(lastChart().options.markers.discrete).toHaveLength(0);
   });
 
   it("draws a dense chart in one static pass", () => {
@@ -1707,20 +1706,45 @@ describe("WidgetChart — dense-series budget (TH-7757)", () => {
     expect(lastChart().options.chart.animations.enabled).toBe(false);
   });
 
-  it("thins resting markers to a bounded set on a dense series", () => {
-    // A marker per point over thousands of points costs real render time for
-    // a signal a coarse, evenly spaced sampling already conveys. The uniform
-    // size is dropped in favour of `discrete` entries so only the sampled
-    // points get a dot.
+  it("draws no resting markers on a dense series", () => {
+    // Apex draws a node per point for any series with a marker size, and any
+    // `discrete` entry makes it do so for every series, so only a zero size
+    // keeps those nodes out of the DOM.
     h.query.data = queryResult(pointsAt(1200));
     render(<WidgetChart widget={baseWidget} globalDateRange={null} />);
 
     const { markers } = lastChart().options;
-    expect(markers.size).toBe(0);
-    expect(Array.isArray(markers.discrete)).toBe(true);
-    expect(markers.discrete.length).toBeGreaterThan(0);
-    expect(markers.discrete.length).toBeLessThanOrEqual(60);
-    expect(markers.discrete.length).toBeLessThan(1200);
+    expect(markers.size).toEqual([0]);
+    expect(markers.discrete ?? []).toHaveLength(0);
+  });
+
+  it("keeps the markers of a sparse series that shares a chart with a dense one", () => {
+    const sparse = pointsAt(1200).map((point, i) => ({
+      ...point,
+      value: i % 100 === 0 ? 2 : null,
+    }));
+    h.query.data = queryResult(pointsAt(1200));
+    h.query.data.data.result.metrics[0].series.push({
+      name: "sparse",
+      data: sparse,
+    });
+    render(<WidgetChart widget={baseWidget} globalDateRange={null} />);
+
+    expect(lastChart().options.markers.size).toEqual([0, 5]);
+  });
+
+  it("finds the hovered point by position once dense series lose their markers", () => {
+    // An intersecting line tooltip only opens over a marker node, so a series
+    // without markers would have no tooltip at all.
+    h.query.data = queryResult(pointsAt(1200));
+    render(<WidgetChart widget={baseWidget} globalDateRange={null} />);
+    expect(lastChart().options.tooltip.intersect).toBe(false);
+  });
+
+  it("keeps the intersecting tooltip while every point has a marker", () => {
+    h.query.data = queryResult(pointsAt(120));
+    render(<WidgetChart widget={baseWidget} globalDateRange={null} />);
+    expect(lastChart().options.tooltip.intersect).toBe(true);
   });
 
   it("still marks the hovered point on a dense chart", () => {
@@ -1746,6 +1770,44 @@ describe("WidgetChart — dense-series budget (TH-7757)", () => {
     expect(lastChart().series[0].data).toHaveLength(20);
     expect(lastChart().options.chart.animations.enabled).toBe(true);
     expect(lastChart().options.markers.size).toBeGreaterThan(0);
+  });
+});
+
+describe("WidgetChart — stacked tooltip (TH-7757)", () => {
+  const lastChart = () => h.apex.mock.calls.at(-1)[0];
+
+  it("prints a dash, not zero, for a series that did not report the bucket", () => {
+    h.query.data = queryResult([
+      { timestamp: "2026-07-09T00:00:00Z", value: 10 },
+      { timestamp: "2026-07-09T01:00:00Z", value: null },
+    ]);
+    h.query.data.data.result.metrics[0].series.push({
+      name: "other",
+      data: [
+        { timestamp: "2026-07-09T00:00:00Z", value: 0 },
+        { timestamp: "2026-07-09T01:00:00Z", value: 4 },
+      ],
+    });
+    render(
+      <WidgetChart
+        widget={{
+          ...baseWidget,
+          chart_config: { chart_type: "stacked_column" },
+        }}
+        globalDateRange={null}
+      />,
+    );
+
+    const { series, options } = lastChart();
+    const format = (seriesIndex, dataPointIndex) =>
+      options.tooltip.y.formatter(series[seriesIndex].data[dataPointIndex].y, {
+        seriesIndex,
+        dataPointIndex,
+        w: { config: { series } },
+      });
+    expect(format(0, 1)).toBe("-");
+    expect(format(1, 0)).not.toBe("-");
+    expect(format(0, 0)).not.toBe("-");
   });
 });
 

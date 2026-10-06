@@ -79,7 +79,10 @@ export const getDashboardMetricSeriesState = (metrics = []) => {
  *   baseline and cover its neighbour instead of resting on it, and the stacked
  *   totals Apex derives would be wrong. So only buckets that no series reported
  *   are dropped, which keeps every series the same length and still collapses
- *   the sparse case.
+ *   the sparse case. A series that did not report a kept bucket is padded with
+ *   a zero, because a null in the stack baseline makes the next series render
+ *   above the grid, and the pad is marked `absent` so the tooltip can still
+ *   say the bucket had no data (`isAbsentChartPoint`).
  *
  * Either way the exact response is untouched for the table, the CSV export and
  * the metric card, which all distinguish "no data" from zero.
@@ -116,13 +119,19 @@ export const getPlottedChartSeries = (
     data: kept.map(({ index, x }) => {
       const point = item?.data?.[index];
       const y = point?.y;
-      // Stacked rendering is a smooth apex area chart: a null pushed into the
-      // stack baseline makes the next series' point render above the grid
-      // top. Absent is 0 contribution to the stack, not a gap.
-      return { x: point ? point.x : x, y: Number.isFinite(y) ? y : 0 };
+      const at = point ? point.x : x;
+      return Number.isFinite(y) ? { x: at, y } : { x: at, y: 0, absent: true };
     }),
   }));
 };
+
+/**
+ * Whether the stacked point Apex is asking about is a pad added by
+ * `getPlottedChartSeries` rather than a value the backend reported. `w` is the
+ * chart context Apex passes to its formatters.
+ */
+export const isAbsentChartPoint = (w, seriesIndex, dataPointIndex) =>
+  w?.config?.series?.[seriesIndex]?.data?.[dataPointIndex]?.absent === true;
 
 /**
  * Past this many plotted points, ApexCharts' draw-in animation stops paying for
@@ -130,15 +139,20 @@ export const getPlottedChartSeries = (
  * scales with the point count rather than with the amount of real data. A
  * minute-granularity widget spanning days carries thousands of buckets and
  * blocks the main thread for seconds per frame (TH-7757). Past the budget the
- * chart is drawn in a single static pass.
- *
- * Only the animation is gated. Resting markers were briefly gated here too and
- * that was wrong: they cost ~72 nodes against the animation's tens of
- * thousands, and on a sparse series spread over a long range they are the only
- * thing showing where observations actually sit — without them the line reads
- * as continuous data when it is really a few points joined across weeks.
+ * chart is drawn in a single static pass, and its dense series lose their
+ * resting markers (`getChartMarkerSizes`).
  */
 export const CHART_DENSE_POINT_BUDGET = 400;
+
+/**
+ * On a chart past the budget, a series with more points than this draws no
+ * resting markers. Apex emits a node per point for any series with a marker
+ * size, and past a few dozen dots across a widget they overlap into the line
+ * anyway. A sparser series keeps them: on a few points spread over a long
+ * range they are the only thing showing where observations sit, and without
+ * them the line reads as continuous data.
+ */
+export const CHART_MARKER_SERIES_LIMIT = 60;
 
 export const countPlottedPoints = (series = []) =>
   (Array.isArray(series) ? series : []).reduce(
@@ -148,6 +162,19 @@ export const countPlottedPoints = (series = []) =>
 
 export const isDenseChartSeries = (series = []) =>
   countPlottedPoints(series) > CHART_DENSE_POINT_BUDGET;
+
+/**
+ * Apex `markers.size` for the plotted series: `size` for all of them within
+ * the budget, otherwise one size per series with 0 for each dense one. A
+ * per-series 0 is what actually keeps the nodes out: any `markers.discrete`
+ * entry makes Apex draw a node for every point of every series.
+ */
+export const getChartMarkerSizes = (series = [], size = 0) => {
+  if (!size || !isDenseChartSeries(series)) return size;
+  return series.map((item) =>
+    (item?.data?.length || 0) > CHART_MARKER_SERIES_LIMIT ? 0 : size,
+  );
+};
 
 /**
  * Empty buckets are dropped before plotting, so the points alone describe only

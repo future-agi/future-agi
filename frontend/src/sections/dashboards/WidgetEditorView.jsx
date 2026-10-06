@@ -107,6 +107,8 @@ import {
   getTableBucketPlan,
   describeTableBuckets,
   isDenseChartSeries,
+  getChartMarkerSizes,
+  isAbsentChartPoint,
   getSeriesScalar,
   groupPieSeries,
   getSuggestedUnitConfig,
@@ -3892,32 +3894,14 @@ export default function WidgetEditorView() {
 
   const isDark = theme.palette.mode === "dark";
 
-  // Past the animation budget, a marker per point costs real render time for
-  // a signal a coarse, evenly spaced sampling already conveys. Thinned to
-  // ~60 dots per series via `discrete` rather than dropped outright — see
-  // CHART_DENSE_POINT_BUDGET for why resting markers stay on a sparse series.
-  const discreteMarkers = useMemo(() => {
-    const isDenseSeries = isDenseChartSeries(plottedChartSeries);
-    const normalMarkerSize = isLineChart ? 5 : apexType === "area" ? 4 : 0;
-    if (!isDenseSeries || normalMarkerSize === 0) return [];
-    const points = [];
-    plottedChartSeries.forEach((s, si) => {
-      const data = s?.data || [];
-      const stride = Math.max(1, Math.ceil(data.length / 60));
-      const color = chartColors[si];
-      for (let j = 0; j < data.length; j += stride) {
-        if (!Number.isFinite(data[j]?.y)) continue;
-        points.push({
-          seriesIndex: si,
-          dataPointIndex: j,
-          size: normalMarkerSize,
-          fillColor: color,
-          strokeColor: color,
-        });
-      }
-    });
-    return points;
-  }, [plottedChartSeries, chartColors, apexType, isLineChart]);
+  const markerSizes = useMemo(
+    () =>
+      getChartMarkerSizes(
+        plottedChartSeries,
+        isLineChart ? 5 : apexType === "area" ? 4 : 0,
+      ),
+    [plottedChartSeries, isLineChart, apexType],
+  );
 
   const formatValFn = useCallback(
     (val) =>
@@ -3934,7 +3918,6 @@ export default function WidgetEditorView() {
         formatValueWithConfig(val, cfg, { fallbackDecimals, includeUnit });
     const formatVal = makeFormatter(leftAxisFormatConfig);
     const isDenseSeries = isDenseChartSeries(plottedChartSeries);
-    const normalMarkerSize = isLineChart ? 5 : apexType === "area" ? 4 : 0;
     return {
       chart: {
         type: apexType,
@@ -4210,8 +4193,7 @@ export default function WidgetEditorView() {
         };
       })(),
       markers: {
-        size: isDenseSeries ? 0 : normalMarkerSize,
-        discrete: discreteMarkers,
+        size: markerSizes,
         strokeWidth: 2,
         strokeColors: isDark ? theme.palette.background.paper : "#fff",
         hover: isLineChart
@@ -4246,13 +4228,18 @@ export default function WidgetEditorView() {
               format: "MMM dd, yyyy",
             },
             y: {
-              formatter: formatVal,
+              formatter: (val, { seriesIndex, dataPointIndex, w } = {}) =>
+                isAbsentChartPoint(w, seriesIndex, dataPointIndex)
+                  ? "-"
+                  : formatVal(val),
             },
           }
         : {
             enabled: true,
             shared: false,
-            intersect: isLineChart,
+            // A series without markers has nothing to intersect, so a dense chart
+            // finds the hovered point by position instead.
+            intersect: isLineChart && !isDenseSeries,
             custom: ({ series, seriesIndex, dataPointIndex, w }) => {
               const sName = w.globals.seriesNames[seriesIndex] || "";
               const color = w.globals.colors[seriesIndex] || "#6366F1";
@@ -4304,7 +4291,7 @@ export default function WidgetEditorView() {
     chartTimeWindow,
     chartSeriesIndices,
     chartColors,
-    discreteMarkers,
+    markerSizes,
     theme,
     axisConfig,
     autoDecimals,
