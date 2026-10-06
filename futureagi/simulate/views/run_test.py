@@ -5565,6 +5565,23 @@ class UpdateEvalConfigView(APIView):
             )
 
 
+def _covered_scenario_count(run_test) -> int:
+    """How many distinct scenarios the run test's executions have covered, over every execution.
+
+    A harness run keeps its scenarios as ``selected_scenario_keys``: its
+    ``scenario_ids`` all point at the one dataset row the environment maps to,
+    so they would count as a single scenario. Runs without keys are native
+    runs, where each entry in ``scenario_ids`` is a scenario of its own.
+    """
+    covered: set[str] = set()
+    rows = TestExecution.objects.filter(run_test=run_test, deleted=False).values_list(
+        "scenario_ids", "execution_metadata__selected_scenario_keys"
+    )
+    for scenario_ids, keys in rows:
+        covered.update(str(item) for item in (keys or scenario_ids or []))
+    return len(covered)
+
+
 class RunTestExecutionsView(APIView):
     """
     API View to get test execution data for a specific run test with search and pagination
@@ -5975,7 +5992,11 @@ class RunTestExecutionsView(APIView):
             execution_serializer = TestExecutionItemResponseSerializer(
                 execution_data, many=True
             )
-            return paginator.get_paginated_response(execution_serializer.data)
+            response = paginator.get_paginated_response(execution_serializer.data)
+            # Over every execution, not the page, so the runs summary header can
+            # say how many scenarios all runs together have covered.
+            response.data["covered_scenario_count"] = _covered_scenario_count(run_test)
+            return response
 
         except Http404:
             return _gm.not_found("Run test not found.")

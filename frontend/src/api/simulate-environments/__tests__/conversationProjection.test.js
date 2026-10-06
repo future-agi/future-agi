@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   projectConversation,
   conversationInFlight,
+  conversationWaiting,
 } from "../conversationProjection";
 
 const msg = (over = {}) => ({
@@ -232,6 +233,29 @@ describe("projectConversation", () => {
       expect(t.id).toBeTruthy();
       (t.steps || []).forEach((s) => expect(s.id).toBeTruthy());
     });
+  });
+});
+
+describe("conversationWaiting", () => {
+  const question = { message_id: "q1", kind: "question_requested" };
+
+  it("is true while a question is open and unanswered", () => {
+    expect(conversationWaiting({ state: "waiting_for_user", blocking_input: question, messages: [] })).toBe(true);
+    expect(conversationWaiting({ state: "waiting_for_user", messages: [] })).toBe(true);
+    // The question can be open before the state catches up.
+    expect(conversationWaiting({ state: "warm_idle", blocking_input: question, messages: [] })).toBe(true);
+  });
+
+  it("is false once the question is answered, or when nothing is asked", () => {
+    expect(
+      conversationWaiting({
+        state: "waiting_for_user",
+        blocking_input: question,
+        messages: [{ role: "user", reply_to: "q1", state: "queued" }],
+      }),
+    ).toBe(false);
+    expect(conversationWaiting({ state: "responding", messages: [] })).toBe(false);
+    expect(conversationWaiting(null)).toBe(false);
   });
 });
 
