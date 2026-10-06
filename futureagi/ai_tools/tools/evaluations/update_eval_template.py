@@ -34,7 +34,7 @@ class UpdateEvalTemplateInput(PydanticBaseModel):
             "Model for evaluation. Prefer turing models (no extra setup): "
             "'turing_large' (recommended), 'turing_small', 'turing_flash'. "
             "External models require configured API key: "
-            "'gpt-4o', 'claude-sonnet-4-6', 'gemini-2.5-pro', etc."
+            "'gpt-4o', 'claude-sonnet-4-6', 'gemini-3.7-flash', etc."
         ),
     )
     output_type: Optional[Literal["pass_fail", "percentage", "deterministic"]] = Field(

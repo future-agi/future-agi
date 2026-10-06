@@ -19,8 +19,15 @@ from tracer.services.clickhouse.query_builders.voice_call_list import (
     VAPI_PHONE_NUMBERS,
     VoiceCallListQueryBuilder,
 )
+from tracer.tests.test_trace_root_physical_replay import complete_root_row
 
 PROJECT_ID = "proj-123"
+
+
+def _voice_root_row(row: dict) -> dict:
+    return complete_root_row(
+        {"_root_observation_type": "conversation", **row}, project_id=PROJECT_ID
+    )
 
 
 def _squash(sql: str) -> str:
@@ -193,31 +200,40 @@ def test_build_does_not_embed_phone_numbers_in_sql():
 
 @pytest.mark.unit
 def test_is_simulator_call_vapi_match():
-    attrs = {"raw_log": {"customer": {"number": VAPI_PHONE_NUMBERS[0]}}}
-    assert VoiceCallListQueryBuilder.is_simulator_call(attrs, "vapi") is True
+    raw_log = {"customer": {"number": VAPI_PHONE_NUMBERS[0]}}
+    assert VoiceCallListQueryBuilder.is_simulator_call(raw_log, "vapi") is True
 
 
 @pytest.mark.unit
 def test_is_simulator_call_vapi_non_match():
-    attrs = {"raw_log": {"customer": {"number": "+10000000000"}}}
-    assert VoiceCallListQueryBuilder.is_simulator_call(attrs, "vapi") is False
+    raw_log = {"customer": {"number": "+10000000000"}}
+    assert VoiceCallListQueryBuilder.is_simulator_call(raw_log, "vapi") is False
 
 
 @pytest.mark.unit
 def test_is_simulator_call_retell_match():
-    attrs = {"raw_log": {"from_number": VAPI_PHONE_NUMBERS[1]}}
-    assert VoiceCallListQueryBuilder.is_simulator_call(attrs, "retell") is True
+    raw_log = {"from_number": VAPI_PHONE_NUMBERS[1]}
+    assert VoiceCallListQueryBuilder.is_simulator_call(raw_log, "retell") is True
 
 
 @pytest.mark.unit
 def test_is_simulator_call_unknown_provider():
-    attrs = {"raw_log": {"customer": {"number": VAPI_PHONE_NUMBERS[0]}}}
-    assert VoiceCallListQueryBuilder.is_simulator_call(attrs, "twilio") is False
+    raw_log = {"customer": {"number": VAPI_PHONE_NUMBERS[0]}}
+    assert VoiceCallListQueryBuilder.is_simulator_call(raw_log, "twilio") is False
 
 
 @pytest.mark.unit
 def test_is_simulator_call_missing_raw_log():
     assert VoiceCallListQueryBuilder.is_simulator_call({}, "vapi") is False
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("customer", ["+18568806998", ["+18568806998"], 7])
+def test_is_simulator_call_non_object_customer_is_not_a_simulator(customer):
+    # SQL's JSONExtractString(raw_log, 'customer', 'number') reads '' for these
+    # and keeps the row, so the Python check sees them and must not raise.
+    raw_log = {"customer": customer}
+    assert VoiceCallListQueryBuilder.is_simulator_call(raw_log, "vapi") is False
 
 
 # ---------------------------------------------------------------------------
@@ -278,12 +294,14 @@ def test_interactive_voice_multi_filter_classifies_identity_then_hydrates_page()
         filters=_voice_multi_filters(end),
     )
     seed_rows = [
-        {
-            "project_id": PROJECT_ID,
-            "trace_id": "trace-1",
-            "root_span_id": "root-1",
-            "start_time": end - timedelta(minutes=1),
-        }
+        _voice_root_row(
+            {
+                "project_id": PROJECT_ID,
+                "trace_id": "trace-1",
+                "root_span_id": "root-1",
+                "start_time": end - timedelta(minutes=1),
+            }
+        )
     ]
 
     identity_sql, identity_params = (
@@ -306,11 +324,22 @@ def test_interactive_voice_multi_filter_classifies_identity_then_hydrates_page()
         == "conversation.transcript.16.message.role"
     )
     assert identity_params["latest_filter_param_1"] == ("assistant",)
-    assert "latest_trace_name AS trace_name" in hydration_sql
+    assert "_root_snapshot.6 AS trace_name" in hydration_sql
     expected_start_us = int(seed_rows[0]["start_time"].timestamp() * 1_000_000)
+    expected_hour_us = int(seed_rows[0]["_root_start_hour"].timestamp() * 1_000_000)
     assert hydration_params["page_hydration_root_identities"] == (
-        (PROJECT_ID, "trace-1", "root-1", expected_start_us),
+        (
+            PROJECT_ID,
+            "trace-1",
+            "root-1",
+            expected_start_us,
+            "conversation",
+            "svc",
+            expected_hour_us,
+            1,
+        ),
     )
+    assert "page_hydration_physical_keys" in hydration_params
     assert identity_sql.count("SETTINGS ") == 1
     assert hydration_sql.count("SETTINGS ") == 1
 
@@ -364,7 +393,7 @@ def test_v2_voice_long_exact_text_candidate_witness_uses_v2_schema():
 
     end = datetime(2026, 8, 8, tzinfo=UTC)
     recording_url = (
-        "https://storage.vapi.ai/019db06c-d54a-7003-9810-cf01cc4aa9d1-1776781471202"
+        "https://recordings.example.test/synthetic-recording-0000000000000000000000"
     )
     filters = [
         {
@@ -413,7 +442,7 @@ def test_voice_long_exact_text_filter_prefilters_one_finite_seed_then_hydrates()
 
     end = datetime(2026, 8, 8)
     recording_url = (
-        "https://storage.vapi.ai/019db06c-d54a-7003-9810-cf01cc4aa9d1-1776781471202"
+        "https://recordings.example.test/synthetic-recording-0000000000000000000000"
     )
     filters = [
         {
@@ -435,12 +464,14 @@ def test_voice_long_exact_text_filter_prefilters_one_finite_seed_then_hydrates()
         },
     ]
     candidates = [
-        {
-            "project_id": PROJECT_ID,
-            "trace_id": f"trace-{index:02d}",
-            "root_span_id": f"root-{index:02d}",
-            "start_time": end - timedelta(seconds=index + 1),
-        }
+        _voice_root_row(
+            {
+                "project_id": PROJECT_ID,
+                "trace_id": f"trace-{index:02d}",
+                "root_span_id": f"root-{index:02d}",
+                "start_time": end - timedelta(seconds=index + 1),
+            }
+        )
         for index in range(26)
     ]
     exact_matches = candidates
@@ -504,15 +535,16 @@ def test_voice_long_exact_text_filter_prefilters_one_finite_seed_then_hydrates()
         row["trace_id"] for row in exact_matches[:25]
     ]
     assert [attempt.kind for attempt in page.attempts] == [
-        "anchor",
+        "seed",
         "prefilter",
         "classify",
         "classify",
         "classify",
         "hydrate",
     ]
-    assert executor.calls[0][1]["filter_anchor_limit"] == 64
-    assert "filter_seed_limit" not in executor.calls[0][1]
+    assert "matching_scalar_trace_identities" in executor.calls[0][0]
+    assert executor.calls[0][1]["filter_seed_limit"] == 512
+    assert "filter_anchor_limit" not in executor.calls[0][1]
     assert executor.results == []
 
 
@@ -688,12 +720,14 @@ def test_voice_bounded_reader_uses_identity_classification_before_page_hydration
         end,
     ]
     candidates = [
-        {
-            "project_id": PROJECT_ID,
-            "trace_id": f"trace-{index:02d}",
-            "root_span_id": f"root-{index:02d}",
-            "start_time": end - timedelta(seconds=index + 1),
-        }
+        _voice_root_row(
+            {
+                "project_id": PROJECT_ID,
+                "trace_id": f"trace-{index:02d}",
+                "root_span_id": f"root-{index:02d}",
+                "start_time": end - timedelta(seconds=index + 1),
+            }
+        )
         for index in range(26)
     ]
     hydrated = [
@@ -765,7 +799,7 @@ def test_voice_bounded_reader_uses_identity_classification_before_page_hydration
         == "conversation.transcript.16.message.role"
     )
     assert executor.calls[1][1]["latest_filter_param_1"] == ("assistant",)
-    assert "latest_trace_name AS trace_name" in executor.calls[4][0]
+    assert "_root_snapshot.6 AS trace_name" in executor.calls[4][0]
 
 
 @pytest.mark.unit
@@ -839,12 +873,14 @@ def test_voice_root_in_window_is_not_pruned_by_remote_child_witnesses():
         end - timedelta(minutes=5),
         end,
     ]
-    root = {
-        "project_id": PROJECT_ID,
-        "trace_id": "remote-child-trace",
-        "root_span_id": "conversation-root",
-        "start_time": end - timedelta(minutes=1),
-    }
+    root = _voice_root_row(
+        {
+            "project_id": PROJECT_ID,
+            "trace_id": "remote-child-trace",
+            "root_span_id": "conversation-root",
+            "start_time": end - timedelta(minutes=1),
+        }
+    )
     hydrated = {**root, "trace_name": "remote-child-call"}
 
     class Executor:
@@ -907,12 +943,14 @@ def test_voice_request_window_zero_probe_is_skipped_before_global_exact_scan():
     end = datetime(2026, 8, 8)
     filters = _voice_multi_filters(end)
     candidates = [
-        {
-            "project_id": PROJECT_ID,
-            "trace_id": f"trace-{index:02d}",
-            "root_span_id": f"root-{index:02d}",
-            "start_time": end - timedelta(seconds=index + 1),
-        }
+        _voice_root_row(
+            {
+                "project_id": PROJECT_ID,
+                "trace_id": f"trace-{index:02d}",
+                "root_span_id": f"root-{index:02d}",
+                "start_time": end - timedelta(seconds=index + 1),
+            }
+        )
         for index in range(26)
     ]
     hydrated = [{**row, "trace_name": "call"} for row in candidates[:25]]
@@ -1114,11 +1152,28 @@ def test_v2_content_query_uses_valid_latest_json_aggregate():
         VoiceCallListQueryBuilderV2,
     )
 
-    sql, _ = VoiceCallListQueryBuilderV2(project_id=PROJECT_ID).build_content_query(
-        ["s1"]
+    builder = VoiceCallListQueryBuilderV2(project_id=PROJECT_ID)
+    row = _voice_root_row(
+        {
+            "trace_id": "trace-1",
+            "root_span_id": "s1",
+            "start_time": datetime(2026, 8, 8, 12, 0, 0, 1, tzinfo=UTC),
+        }
     )
+    identities = builder.content_root_identities_for_rows([row])
+    sql, params = builder.build_content_query(["s1"], root_identities=identities)
 
-    assert "argMax(tuple(attributes_extra), _version).1" in sql
+    assert "argMax(tuple(" in sql
+    assert "AS _root" in sql
+    assert "JSONExtractKeysAndValuesRaw(toString(attributes_extra))" in sql
+    assert "toJSONString(attributes_extra)" not in sql
+    assert "kv.1 != 'call_logs'" in sql
+    assert "mapFilter((k, v) -> k != 'call_logs', attrs_string)" in sql
+    assert (
+        "GROUP BY project_id, observation_type, service_name, "
+        "toStartOfHour(start_time), trace_id, id"
+    ) in sql
+    assert params["content_root_identities"] == tuple(identities)
     assert "attributes_extra AS span_attributes_raw" not in sql
     assert "tuple(attributes_extra AS" not in sql
 

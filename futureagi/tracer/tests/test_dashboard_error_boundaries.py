@@ -73,6 +73,14 @@ def _trace_query(project_id):
     }
 
 
+def _cold_dashboard_cache_miss(_namespace, _identity, **kwargs):
+    """Model the cache-only probe state returned before any refresh is queued."""
+
+    payload = dict(kwargs["pending_payload"])
+    payload.update(query_refreshing=False, query_refresh_failed=False)
+    return payload
+
+
 def _legacy_filtered_trace_query(project_id):
     """Exact shape persisted by dashboard d0d98a25 before canonical filters."""
 
@@ -529,10 +537,17 @@ def test_dashboard_query_uses_direct_write_backend_independent_of_routing(
 ):
     settings.CLICKHOUSE_V2 = routing_config
     v2_client = MagicMock()
-    v2_client.execute_read.return_value = (
+    # The direct-write read is taken through the measured transport, which
+    # reports native rows/bytes progress alongside the rows. This double leaves
+    # both unmeasured: the assertion below is about which backend ran the
+    # statement, not about what the statement cost.
+    # The legacy ``execute_read`` must stay untouched.
+    v2_client.execute_read_with_progress.return_value = (
         [(datetime(2026, 8, 1, tzinfo=UTC), 123.0)],
         [("time_bucket", "DateTime('UTC')"), ("metric_0", "Float64")],
         1.0,
+        None,
+        None,
     )
     v2_client.server_enforced_readonly = False
     v2_client.server_profile_locked = False
@@ -556,9 +571,7 @@ def test_dashboard_query_uses_direct_write_backend_independent_of_routing(
         ) as v2_builder,
         patch(
             "tracer.views.dashboard.read_or_schedule_exact_snapshot",
-            side_effect=lambda _namespace, _identity, **kwargs: kwargs[
-                "pending_payload"
-            ],
+            side_effect=_cold_dashboard_cache_miss,
         ) as exact_snapshot,
     ):
         response = auth_client.post(
@@ -569,10 +582,14 @@ def test_dashboard_query_uses_direct_write_backend_independent_of_routing(
 
     assert response.status_code == 200
     assert response.json()["result"]["query_status"] == "complete"
-    assert response.json()["result"]["query_provenance"] == "materialized_rollup"
-    assert v2_client.execute_read.call_count == 1
-    v2_builder.assert_called_once()
-    exact_snapshot.assert_not_called()
+    assert response.json()["result"]["query_provenance"] == "exact_snapshot"
+    assert v2_client.execute_read_with_progress.call_count == 1
+    v2_client.execute_read.assert_not_called()
+    # Cache planning and execution build separate configs; only execution reads CH.
+    assert v2_builder.call_count == 2
+    assert v2_builder.call_args_list[0].args[0]["require_versioned_snapshot"] is True
+    exact_snapshot.assert_called_once()
+    assert exact_snapshot.call_args.kwargs["schedule_on_miss"] is False
     dispatch.assert_not_called()
     legacy_analytics.assert_not_called()
 
@@ -595,10 +612,17 @@ def test_widget_trace_queries_use_direct_write_backend_independent_of_routing(
     dashboard_widget.save(update_fields=["query_config"])
 
     v2_client = MagicMock()
-    v2_client.execute_read.return_value = (
+    # The direct-write read is taken through the measured transport, which
+    # reports native rows/bytes progress alongside the rows. This double leaves
+    # both unmeasured: the assertion below is about which backend ran the
+    # statement, not about what the statement cost.
+    # The legacy ``execute_read`` must stay untouched.
+    v2_client.execute_read_with_progress.return_value = (
         [(datetime(2026, 8, 1, tzinfo=UTC), 123.0)],
         [("time_bucket", "DateTime('UTC')"), ("metric_0", "Float64")],
         1.0,
+        None,
+        None,
     )
     v2_client.server_enforced_readonly = False
     v2_client.server_profile_locked = False
@@ -627,9 +651,7 @@ def test_widget_trace_queries_use_direct_write_backend_independent_of_routing(
         ) as v2_builder,
         patch(
             "tracer.views.dashboard.read_or_schedule_exact_snapshot",
-            side_effect=lambda _namespace, _identity, **kwargs: kwargs[
-                "pending_payload"
-            ],
+            side_effect=_cold_dashboard_cache_miss,
         ) as exact_snapshot,
     ):
         if action == "execute":
@@ -645,13 +667,103 @@ def test_widget_trace_queries_use_direct_write_backend_independent_of_routing(
 
     assert response.status_code == 200
     assert response.json()["result"]["query_status"] == "complete"
-    assert response.json()["result"]["query_provenance"] == "materialized_rollup"
-    assert v2_client.execute_read.call_count == 1
-    v2_builder.assert_called_once()
-    exact_snapshot.assert_not_called()
+    assert response.json()["result"]["query_provenance"] == "exact_snapshot"
+    assert v2_client.execute_read_with_progress.call_count == 1
+    v2_client.execute_read.assert_not_called()
+    # Cache planning and execution build separate configs; only execution reads CH.
+    assert v2_builder.call_count == 2
+    assert v2_builder.call_args_list[0].args[0]["require_versioned_snapshot"] is True
+    exact_snapshot.assert_called_once()
+    assert exact_snapshot.call_args.kwargs["schedule_on_miss"] is False
     dispatch.assert_not_called()
     legacy_analytics.assert_not_called()
     legacy_client.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_dashboard_running_refresh_suppresses_duplicate_direct_read(
+    auth_client,
+    observe_project,
+):
+    pending = {
+        "metrics": [],
+        "query_complete": False,
+        "query_status": "pending",
+        "query_sampled": False,
+        "query_refreshing": True,
+    }
+    with (
+        patch(
+            "tracer.views.dashboard.read_or_schedule_exact_snapshot",
+            return_value=pending,
+        ) as cache_probe,
+        patch(
+            "tracer.views.dashboard._read_dashboard_rollup_fast_path",
+            side_effect=AssertionError("an in-flight worker must suppress direct reads"),
+        ),
+        patch(
+            "tracer.views.dashboard.V2AnalyticsQueryService",
+            side_effect=AssertionError("an in-flight worker must suppress direct reads"),
+        ),
+    ):
+        response = auth_client.post(
+            "/tracer/dashboard/query/",
+            _trace_query(observe_project.id),
+            format="json",
+        )
+
+    assert response.status_code == 200
+    assert response.json()["result"] == pending
+    cache_probe.assert_called_once()
+    assert cache_probe.call_args.kwargs["schedule_on_miss"] is False
+
+
+@pytest.mark.django_db
+def test_dashboard_completed_heavy_cache_hit_skips_clickhouse(
+    auth_client,
+    observe_project,
+):
+    completed = {
+        "metrics": [
+            {
+                "id": "latency",
+                "series": [{"time": "2026-08-01T00:00:00+00:00", "value": 123.0}],
+                "query_complete": True,
+                "query_status": "complete",
+                "query_sampled": False,
+            }
+        ],
+        "query_complete": True,
+        "query_status": "complete",
+        "query_sampled": False,
+        "query_exact": False,
+        "query_provenance": "bounded_candidates",
+        "query_cached": True,
+    }
+    with (
+        patch(
+            "tracer.views.dashboard.read_or_schedule_exact_snapshot",
+            return_value=completed,
+        ) as cache_probe,
+        patch(
+            "tracer.views.dashboard._read_dashboard_rollup_fast_path",
+            side_effect=AssertionError("a complete cache hit must skip ClickHouse"),
+        ),
+        patch(
+            "tracer.views.dashboard.V2AnalyticsQueryService",
+            side_effect=AssertionError("a complete cache hit must skip ClickHouse"),
+        ),
+    ):
+        response = auth_client.post(
+            "/tracer/dashboard/query/",
+            _trace_query(observe_project.id),
+            format="json",
+        )
+
+    assert response.status_code == 200
+    assert response.json()["result"] == completed
+    cache_probe.assert_called_once()
+    assert cache_probe.call_args.kwargs["schedule_on_miss"] is False
 
 
 @pytest.mark.django_db
@@ -714,18 +826,20 @@ def test_system_filter_values_read_budget_is_sanitized_503(
 
 @pytest.mark.django_db
 @pytest.mark.parametrize(
-    ("failure", "expected_status", "expected_code"),
+    ("failure", "expected_status", "expected_code", "expected_query_status"),
     [
         (
             ServerException("private missing-column query", code=47),
             400,
             None,
+            None,
         ),
-        (RuntimeError("private dashboard compiler invariant"), 400, None),
+        (RuntimeError("private dashboard compiler invariant"), 400, None, None),
         (
             ServerException("private timeout query", code=159),
-            503,
-            "service_unavailable",
+            200,
+            None,
+            "pending",
         ),
     ],
 )
@@ -735,20 +849,36 @@ def test_dashboard_query_sanitizes_direct_clickhouse_failures(
     failure,
     expected_status,
     expected_code,
+    expected_query_status,
     auth_client,
     observe_project,
 ):
     mock_analytics_cls.return_value.execute_ch_query.side_effect = failure
 
-    response = auth_client.post(
-        "/tracer/dashboard/query/",
-        _trace_query(observe_project.id),
-        format="json",
-    )
+    with patch(
+        "tracer.views.dashboard._read_public_dashboard_query",
+        return_value={
+            "metrics": [],
+            "query_complete": False,
+            "query_status": "pending",
+            "query_sampled": False,
+            "query_refreshing": True,
+        },
+    ) as schedule_refresh:
+        response = auth_client.post(
+            "/tracer/dashboard/query/",
+            _trace_query(observe_project.id),
+            format="json",
+        )
 
     assert response.status_code == expected_status
     if expected_code is not None:
         assert response.json()["code"] == expected_code
+    if expected_query_status is not None:
+        assert response.json()["result"]["query_status"] == expected_query_status
+        schedule_refresh.assert_called_once()
+    else:
+        schedule_refresh.assert_not_called()
     assert mock_analytics_cls.return_value.execute_ch_query.call_count >= 1
     payload = json.dumps(response.json())
     assert "private" not in payload

@@ -16,7 +16,7 @@ import {
   buildUsersRequestFilters,
 } from "./common";
 import { mergeCellStyle } from "../LLMTracing/common";
-import axios, { endpoints } from "src/utils/axios";
+import { readQuery, endpoints } from "src/utils/axios";
 import { useNavigate, useParams } from "react-router";
 import { useDebounce } from "src/hooks/use-debounce";
 import PropTypes from "prop-types";
@@ -25,6 +25,7 @@ import { APP_CONSTANTS } from "src/utils/constants";
 import {
   createListCursorPagination,
   isListCursorContinuationLimitError,
+  LIST_CURSOR_CONTINUATION_NOTICE,
   LIST_CURSOR_MODES,
   loadExactListPage,
   retryServerSideCursorLoad,
@@ -88,22 +89,47 @@ const UsersGrid = React.memo(
     );
     const agTheme = useAgThemeWith(gridThemeParams);
     const gridApiRef = useRef(null);
-    const activeListReadsRef = useRef(0);
+    const activeListReadsRef = useRef(new Set());
     const cursorPagination = useRef(
       createListCursorPagination({
         pageParam: "current_page_index",
         pageOffset: 0,
       }),
     );
+    const hasActiveListReads = useCallback(
+      () =>
+        Array.from(activeListReadsRef.current).some(({ generation }) =>
+          cursorPagination.current.isCurrent(generation),
+        ),
+      [],
+    );
     const cursorQueryKeyRef = useRef(null);
     const [readError, setReadError] = useState(null);
-    const [continuationNotice, setContinuationNotice] = useState(null);
+    const [continuationNotice, setContinuationNoticeState] = useState(null);
+    const continuationGenerationRef = useRef(null);
+    const setContinuationNotice = useCallback((pending) => {
+      // AG Grid creates its failed-load renderer synchronously in params.fail(),
+      // before React commits the banner. Keep its copy in sync with that pause.
+      continuationGenerationRef.current = pending
+        ? cursorPagination.current.generation()
+        : null;
+      setContinuationNoticeState(pending);
+    }, []);
+    const getGridLocaleText = useCallback(({ key, defaultValue }) => {
+      if (
+        cursorPagination.current.isCurrent(continuationGenerationRef.current) &&
+        (key === "loadingError" || key === "ariaSkeletonCellLoadingFailed")
+      ) {
+        return LIST_CURSOR_CONTINUATION_NOTICE;
+      }
+      return defaultValue;
+    }, []);
     const continueCursorSearch = useCallback(() => {
       if (!continuationNotice) return;
       if (retryServerSideCursorLoad(gridApiRef.current?.api)) {
         setContinuationNotice(null);
       }
-    }, [continuationNotice]);
+    }, [continuationNotice, setContinuationNotice]);
     const {
       setGridApi,
       searchQuery,
@@ -139,7 +165,7 @@ const UsersGrid = React.memo(
           dispatchObservePageChanged(currentPage);
           return;
         }
-        if (activeListReadsRef.current > 0) return;
+        if (hasActiveListReads()) return;
         withLiveGridApi(gridApiRef.current?.api, (api) =>
           api.refreshServerSide?.({ purge: false }),
         );
@@ -147,7 +173,7 @@ const UsersGrid = React.memo(
       window.addEventListener(OBSERVE_LIST_REFRESH_EVENT, refreshRows);
       return () =>
         window.removeEventListener(OBSERVE_LIST_REFRESH_EVENT, refreshRows);
-    }, []);
+    }, [hasActiveListReads]);
 
     useEffect(() => {
       const initial = getUsersColumnConfig();
@@ -266,12 +292,23 @@ const UsersGrid = React.memo(
 
       return {
         getRows: async (params) => {
+          let requestCompleted = false;
+          const finishRequest = (result) => {
+            if (requestCompleted) return;
+            requestCompleted = true;
+            if (result) params.success(result);
+            else params.fail();
+          };
           let pageNumber = 0;
           let requestGeneration = null;
+          let loadingOwner = null;
           let continuationPending = false;
           try {
             if (!isGridApiLive(params.api)) return;
-            activeListReadsRef.current += 1;
+            loadingOwner = {
+              generation: cursorPagination.current.generation(),
+            };
+            activeListReadsRef.current.add(loadingOwner);
             setIsLoading(true);
             params.api.hideOverlay();
             const { request } = params;
@@ -358,6 +395,7 @@ const UsersGrid = React.memo(
               cursorQueryKeyRef.current = queryKey;
             }
             requestGeneration = cursorPagination.current.generation();
+            loadingOwner.generation = requestGeneration;
 
             const buildBaseParams = () => ({
               // Omit project_id when there's no project context — the
@@ -386,7 +424,7 @@ const UsersGrid = React.memo(
                 pageNumber,
                 targetRowCount: pageSize,
                 loadResponse: (signal) =>
-                  axios.get(endpoints.project.getUsersList(), {
+                  readQuery(endpoints.project.getUsersList(), {
                     params: buildParams(pageNumber),
                     signal,
                   }),
@@ -403,14 +441,14 @@ const UsersGrid = React.memo(
                 isCurrent: () =>
                   cursorPagination.current.isCurrent(requestGeneration),
                 nextResponse: (_cursor, signal) =>
-                  axios.get(endpoints.project.getUsersList(), {
+                  readQuery(endpoints.project.getUsersList(), {
                     params: buildParams(pageNumber),
                     signal,
                   }),
               });
               results = exactPage.response;
             } else {
-              results = await axios.get(endpoints.project.getUsersList(), {
+              results = await readQuery(endpoints.project.getUsersList(), {
                 params: buildParams(pageNumber),
               });
             }
@@ -426,11 +464,11 @@ const UsersGrid = React.memo(
               resumePendingListPage({
                 page: exactPage,
                 resume: () => {
+                  finishRequest();
                   if (
                     cursorPagination.current.isCurrent(requestGeneration) &&
                     isGridApiLive(params.api)
                   ) {
-                    params.fail();
                     if (params.api?.retryServerSideLoads) {
                       params.api.retryServerSideLoads();
                     } else {
@@ -518,7 +556,7 @@ const UsersGrid = React.memo(
               clearSelection();
             }
 
-            params.success({
+            finishRequest({
               rowData: userData,
               rowCount: gridRowCount,
             });
@@ -537,9 +575,14 @@ const UsersGrid = React.memo(
               // Keep existing rows and the exact signed checkpoint. The user
               // can explicitly retry without seeing a false empty or error
               // state, and the client never drains an unbounded cursor chain.
+              // A paused first page has not established whether this query
+              // has users, so a previous query's confirmed-empty result must
+              // not bring the empty screen back over the Continue search
+              // control.
+              if (pageNumber === 0) setHasData(null);
               setReadError(null);
               setContinuationNotice(true);
-              params.fail();
+              finishRequest();
               return;
             }
             if (
@@ -550,20 +593,31 @@ const UsersGrid = React.memo(
             ) {
               cursorPagination.current.disableCursor();
               setReadError(null);
-              params.fail();
+              finishRequest();
               params.api?.refreshServerSide?.({ purge: true });
               return;
             }
             setContinuationNotice(null);
             setReadError(QUERY_FAILED_RETRY_MESSAGE);
             setSearchState("error");
-            failServerSideGridRead(params);
+            failServerSideGridRead({ ...params, fail: finishRequest });
           } finally {
-            activeListReadsRef.current = Math.max(
-              0,
-              activeListReadsRef.current - 1,
-            );
-            if (!continuationPending) setIsLoading(false);
+            // AG Grid releases its shared loader slot only via a callback,
+            // even when the obsolete cache ignores the result. A scheduled
+            // continuation owns completion until its resume callback runs.
+            if (!continuationPending) finishRequest();
+            if (loadingOwner) {
+              activeListReadsRef.current.delete(loadingOwner);
+              // Obsolete reads cannot release loading during a filter handoff,
+              // and callbacks that never acquired ownership cannot release it.
+              if (
+                cursorPagination.current.isCurrent(loadingOwner.generation) &&
+                !continuationPending &&
+                !hasActiveListReads()
+              ) {
+                setIsLoading(false);
+              }
+            }
           }
         },
       };
@@ -575,6 +629,8 @@ const UsersGrid = React.memo(
       setHasData,
       setIsLoading,
       setSearchState,
+      setContinuationNotice,
+      hasActiveListReads,
       hasActiveFilter,
       sortStorageKey,
       requestedProjection,
@@ -783,6 +839,7 @@ const UsersGrid = React.memo(
               onColumnMoved={onColumnMoved}
               columnDefs={userColumnDefs}
               serverSideDatasource={dataSource}
+              getLocaleText={getGridLocaleText}
               getRowId={({ data }) => userRowIdentity(data)}
               headerHeight={40}
               rowHeight={userTraceRowHeightMapping[cellHeight]?.height ?? 40}

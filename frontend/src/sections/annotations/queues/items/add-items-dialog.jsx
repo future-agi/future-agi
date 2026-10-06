@@ -41,7 +41,7 @@ import { getRandomId } from "src/utils/utils";
 import { isEqual } from "lodash";
 import "src/sections/develop-detail/DataTab/developDataGrid.css";
 import SvgColor from "src/components/svg-color";
-import axios, { endpoints } from "src/utils/axios";
+import axios, { readQuery, endpoints } from "src/utils/axios";
 import { stripUiFilterKeys } from "src/components/ComplexFilter/common";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
@@ -2119,7 +2119,7 @@ function TraceSelector({
   );
   const requestTracePage = useCallback(
     (requestParams, signal) =>
-      axios.get(endpoints.project.getTracesForObserveProject(), {
+      readQuery(endpoints.project.getTracesForObserveProject(), {
         params: requestParams,
         signal,
       }),
@@ -2837,7 +2837,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
   );
   const requestSpanPage = useCallback(
     (requestParams, signal) =>
-      axios.get(endpoints.project.getSpansForObserveProject(), {
+      readQuery(endpoints.project.getSpansForObserveProject(), {
         params: requestParams,
         signal,
       }),
@@ -3448,7 +3448,7 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
   );
   const requestSessionPage = useCallback(
     (requestParams, signal) =>
-      axios.get(endpoints.project.projectSessionList(), {
+      readQuery(endpoints.project.projectSessionList(), {
         params: requestParams,
         signal,
       }),

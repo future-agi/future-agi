@@ -793,6 +793,86 @@ func TestEmitter_Dropped(t *testing.T) {
 	<-e.ch
 }
 
+// Shutdown does not wait for every request, so a record can be emitted while
+// Close runs, or after: it is dropped and counted, not sent on the closed channel.
+func TestEmitter_EmitDuringAndAfterClose(t *testing.T) {
+	e := NewTraceEmitter(config.RequestLoggingConfig{Enabled: true, BufferSize: 8, Workers: 1})
+
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 200; j++ {
+				e.Emit(TraceRecord{RequestID: "r"})
+			}
+		}()
+	}
+	e.Close()
+	wg.Wait()
+	before := e.Dropped()
+	e.Emit(TraceRecord{RequestID: "late"})
+
+	if got := e.Dropped() - before; got != 1 {
+		t.Errorf("Emit after Close dropped %d records, want 1", got)
+	}
+}
+
+// Records dropped after Close, which has already logged the drops so far, are
+// logged once, not silently counted, and not once per record.
+func TestEmitter_WarnsOnceOfRecordsDroppedAfterClose(t *testing.T) {
+	logs, restore := installCapturingLogger()
+	defer restore()
+	e := NewTraceEmitter(config.RequestLoggingConfig{Enabled: true, BufferSize: 8, Workers: 1})
+	e.Close()
+	before := logs.count()
+
+	for i := 0; i < 3; i++ {
+		e.Emit(TraceRecord{RequestID: "late"})
+	}
+
+	if got := e.Dropped(); got != 3 {
+		t.Errorf("dropped %d records emitted after Close, want 3", got)
+	}
+	var warnings int
+	logs.mu.Lock()
+	for _, rec := range logs.records[before:] {
+		if rec.Level == slog.LevelWarn {
+			warnings++
+		}
+	}
+	logs.mu.Unlock()
+	if warnings != 1 {
+		t.Errorf("logged %d warnings for 3 records dropped after Close, want 1", warnings)
+	}
+}
+
+// Emit warns of a dropped record after it lets go of the emitter, so a slow
+// log write does not hold up Close.
+func TestEmitter_CloseDoesNotWaitOnADropWarning(t *testing.T) {
+	warning := make(chan struct{}, 1)
+	release := make(chan struct{})
+	defer close(release)
+	prev := slog.Default()
+	slog.SetDefault(slog.New(blockingLogHandler{msg: "request.trace.dropped", started: warning, release: release}))
+	defer slog.SetDefault(prev)
+	// No workers read the channel, so the record is dropped.
+	e := &TraceEmitter{ch: make(chan TraceRecord)}
+	go e.Emit(TraceRecord{RequestID: "r1"})
+	<-warning
+
+	closed := make(chan struct{})
+	go func() {
+		defer close(closed)
+		e.Close()
+	}()
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("Close waited for the log write of a dropped record")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Integration
 // ---------------------------------------------------------------------------
@@ -812,6 +892,21 @@ func TestPlugin_Close(t *testing.T) {
 
 	if p.emitter.Dropped() != 0 {
 		t.Errorf("Dropped() = %d, want 0", p.emitter.Dropped())
+	}
+}
+
+// A request that finishes after the plugin is closed is not logged, and does
+// not crash the gateway.
+func TestProcessResponse_AfterClose(t *testing.T) {
+	p := New(enabledCfg(), nil)
+	p.Close()
+
+	rc := newRC()
+	rc.Response = &models.ChatCompletionResponse{}
+	p.ProcessResponse(context.Background(), rc)
+
+	if got := p.emitter.Dropped(); got != 1 {
+		t.Errorf("Dropped() = %d, want 1", got)
 	}
 }
 

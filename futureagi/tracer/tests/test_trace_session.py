@@ -12,6 +12,7 @@ from unittest import mock
 import pytest
 from clickhouse_driver.errors import NetworkError, ServerException
 from django.conf import settings as django_settings
+from django.test import override_settings
 from django.utils import timezone
 from rest_framework import status
 
@@ -646,6 +647,48 @@ class TestTraceSessionGraphAPI:
         assert filters[-1]["filter_config"]["filter_value"] == [session_id]
         pg_trace_manager.assert_not_called()
 
+    def test_session_latency_response_names_the_mean(
+        self, auth_client, observe_project
+    ):
+        # Unmarked, so only the stamp can name the statistic.
+        snapshot = {
+            "metric_name": "latency",
+            "data": [{"timestamp": "2026-06-18T00:00:00", "value": 120.0}],
+            "query_complete": True,
+            "query_status": "complete",
+            "query_sampled": False,
+        }
+        with (
+            mock.patch(
+                "tracer.views.trace_session.V2AnalyticsQueryService",
+                return_value=mock.Mock(supports_per_query_read_settings=True),
+            ),
+            # Below the stamped public entry point, so the real stamp runs.
+            # An unfiltered latency graph is an exact snapshot (here, a
+            # cached one), never the rollup.
+            mock.patch(
+                "tracer.services.clickhouse.session_graph."
+                "read_or_schedule_exact_snapshot",
+                return_value=snapshot,
+            ),
+        ):
+            response = auth_client.post(
+                "/tracer/trace-session/get_session_graph_data/",
+                {
+                    "project_id": str(observe_project.id),
+                    "interval": "day",
+                    "property": "average",
+                    "req_data_config": {"id": "latency", "type": "SYSTEM_METRIC"},
+                    "filters": [],
+                },
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        payload = get_result(response)
+        assert payload["metric_statistic"] == "mean"
+        assert payload["data"][0]["value"] == 120.0
+
     def test_session_system_graph_dispatches_exact_snapshot(self):
         project_id = str(uuid.uuid4())
         analytics = mock.Mock()
@@ -680,7 +723,7 @@ class TestTraceSessionGraphAPI:
                 req_data_config={"id": "cost", "type": "SYSTEM_METRIC"},
             )
 
-        assert graph == exact_graph
+        assert graph == {**exact_graph, "metric_statistic": "mean"}
         namespace, identity = exact_read.call_args.args
         assert namespace == "observe-session-system-graph"
         assert identity == {
@@ -688,6 +731,8 @@ class TestTraceSessionGraphAPI:
             "filters": filters,
             "interval": "day",
             "metric_id": "cost",
+            # Retires every snapshot cached before latency was the mean.
+            "payload_version": 2,
         }
         assert exact_read.call_args.kwargs["refresh"] is False
         pending = exact_read.call_args.kwargs["pending_payload"]
@@ -704,7 +749,8 @@ class TestTraceSessionGraphAPI:
     @pytest.mark.parametrize(
         "metric_id",
         [
-            "latency",
+            # Not latency: an unfiltered latency graph is an exact snapshot
+            # (test_session_date_only_latency_is_an_exact_snapshot).
             "cost",
             "tokens",
             "error_rate",
@@ -749,6 +795,45 @@ class TestTraceSessionGraphAPI:
         )
         assert query_call.kwargs["settings"]["max_threads"] == 4
         assert "max_rows_to_read" not in query_call.kwargs["settings"]
+
+    def test_session_date_only_latency_is_an_exact_snapshot(self):
+        """The rollup holds per-session t-digest states and no latency sum, so
+        an unfiltered session latency graph takes the exact snapshot with its
+        empty filter set and publishes the same mean as a filtered one."""
+
+        analytics = mock.Mock()
+        pending = {
+            "metric_name": "latency",
+            "data": [],
+            "query_complete": False,
+            "query_status": "pending",
+            "query_sampled": False,
+            "query_refreshing": True,
+        }
+        # Inline off: an affordable scope is otherwise computed inline from the
+        # same exact statement (test_session_graph_inline); this pins the
+        # background snapshot's identity.
+        with (
+            override_settings(SESSION_GRAPH_INLINE_MAX_ESTIMATED_ROWS=0),
+            mock.patch(
+                "tracer.services.clickhouse.session_graph.read_or_schedule_exact_snapshot",
+                return_value=pending,
+            ) as exact_read,
+        ):
+            graph = fetch_session_graph_ch(
+                analytics=analytics,
+                project_id=str(uuid.uuid4()),
+                filters=[],
+                interval="day",
+                req_data_config={"id": "latency", "type": "SYSTEM_METRIC"},
+            )
+
+        analytics.execute_ch_query.assert_not_called()
+        namespace, identity = exact_read.call_args.args
+        assert namespace == "observe-session-system-graph"
+        assert identity["filters"] == []
+        assert identity["metric_id"] == "latency"
+        assert graph == {**pending, "metric_statistic": "mean"}
 
     def test_session_avg_traces_uses_bounded_candidates_without_pending(self):
         project_id = str(uuid.uuid4())
@@ -891,8 +976,10 @@ class TestTraceSessionGraphAPI:
 
         query, _ = builder.build_filter_match_query(["trace-1"])
 
-        assert "argMax(is_deleted, _version) AS latest_is_deleted" in query
-        assert "argMax(tuple(trace_session_id), _version).1" in query
+        assert "argMax(" in query
+        assert "_physical_winner.3 AS latest_is_deleted" in query
+        assert "tuple(trace_session_id)" in query
+        assert "_physical_winner" in query
         assert "WHERE latest_is_deleted = 0" in query
         assert "HAVING countIf" in query
 
@@ -1055,7 +1142,7 @@ class TestTraceSessionGraphAPI:
                 refresh=True,
             )
 
-        assert graph == pending
+        assert graph == {**pending, "metric_statistic": "count"}
         assert exact_read.call_args.kwargs["refresh"] is True
         analytics.execute_ch_query.assert_not_called()
 
@@ -1113,6 +1200,8 @@ class TestTraceSessionGraphAPI:
         assert payload["query_complete"] is False
         assert payload["query_status"] == "degraded"
         assert payload["query_error_code"] == error_code
+        # The view builds this envelope itself; it still names its statistic.
+        assert payload["metric_statistic"] == "count"
         rendered = str(response.data)
         assert "secret" not in rendered
         assert "secret SQL" not in rendered
@@ -3081,20 +3170,14 @@ class TestSessionListLatency:
         if session_ids:
             from concurrent.futures import ThreadPoolExecutor
 
-            def _content():
-                cq, cp = builder.build_content_query(session_ids)
-                if cq:
-                    analytics.execute_ch_query(cq, cp, timeout_ms=10000)
-
-            def _attrs():
-                aq, ap = builder.build_span_attributes_query(session_ids)
-                if aq:
-                    analytics.execute_ch_query(aq, ap, timeout_ms=5000)
+            def _hydrate():
+                hq, hp = builder.build_page_hydration_query(session_ids)
+                if hq:
+                    analytics.execute_ch_query(hq, hp, timeout_ms=10000)
 
             t1 = time.time()
             with ThreadPoolExecutor(max_workers=3) as pool:
-                pool.submit(_content)
-                pool.submit(_attrs)
+                pool.submit(_hydrate)
             enrichment_ms = (time.time() - t1) * 1000
 
         return main_ms, enrichment_ms, len(session_ids)

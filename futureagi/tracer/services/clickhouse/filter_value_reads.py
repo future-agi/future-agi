@@ -78,6 +78,7 @@ _SYSTEM_VALUE_SOURCE_COLUMNS = {
     "span_kind": "observation_type",
     "service_name": "service_name",
     "name": "name",
+    "trace_name": "name",
     "span_name": "name",
     "session": "trace_session_id",
     "user": "end_user_id",
@@ -325,7 +326,7 @@ def read_span_system_filter_values(
             "AND (latest_parent_span_id IS NULL OR latest_parent_span_id = '') "
             "AND latest_observation_type = 'conversation'"
         )
-    elif metric_name == "name":
+    elif metric_name in {"name", "trace_name"}:
         root_clause = (
             "AND (latest_parent_span_id IS NULL OR latest_parent_span_id = '')"
         )
@@ -393,7 +394,7 @@ def read_end_user_filter_value_cursor_page(
     analytics: QueryExecutor,
     *,
     project_ids: list[str] | tuple[str, ...],
-    source_column: Literal["user_id", "user_id_type"],
+    source_column: Literal["user_id", "user_id_type", "user_id_hash"],
     page_size: int,
     search: str = "",
     value_after: str | None = None,
@@ -408,7 +409,7 @@ def read_end_user_filter_value_cursor_page(
     finite chain without an offset scan or a cardinality sample.
     """
 
-    if source_column not in {"user_id", "user_id_type"}:
+    if source_column not in {"user_id", "user_id_type", "user_id_hash"}:
         raise ValueError("unsupported end-user filter-value column")
     if not 1 <= int(page_size) <= FILTER_VALUE_MAX_PAGE_SIZE:
         raise ValueError(
@@ -698,7 +699,7 @@ def read_span_system_filter_value_cursor_page(
             "AND (latest_parent_span_id IS NULL OR latest_parent_span_id = '') "
             "AND latest_observation_type = 'conversation'"
         )
-    elif metric_name == "name":
+    elif metric_name in {"name", "trace_name"}:
         root_clause = (
             "AND (latest_parent_span_id IS NULL OR latest_parent_span_id = '')"
         )

@@ -34,7 +34,7 @@ COMMON_TOOLS = [
     "delete_memory",
 ]
 
-# All categories for auto/general mode
+# Categories for auto/general mode; "visualization" draws on the Imagine canvas only
 ALL_CATEGORIES = [
     "context",
     "datasets",
@@ -49,7 +49,6 @@ ALL_CATEGORIES = [
     "users",
     "usage",
     "docs",
-    "visualization",
 ]
 
 MODES = {
@@ -108,6 +107,9 @@ PAGE_TO_MODE = {
     "imagine": "imagine",
 }
 
+# Dashboard asks often name a domain; route them where create_dashboard is offered
+DASHBOARD_KEYWORDS = ["dashboard"]
+
 KEYWORDS = {
     "datasets": ["dataset", "rows", "columns", "data", "synthetic"],
     "evaluations": [
@@ -136,8 +138,11 @@ def detect_mode(page_context, user_message):
     if page_context == "imagine":
         return "imagine"
 
-    # Check if message mentions multiple domains → use general (cross-domain)
     message_lower = user_message.lower()
+    if any(kw in message_lower for kw in DASHBOARD_KEYWORDS):
+        return "general"
+
+    # Check if message mentions multiple domains → use general (cross-domain)
     matched_modes = set()
     for mode, keywords in KEYWORDS.items():
         if any(kw in message_lower for kw in keywords):

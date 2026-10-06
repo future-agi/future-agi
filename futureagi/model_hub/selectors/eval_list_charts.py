@@ -12,7 +12,12 @@ import structlog
 from django.conf import settings
 from django.core.cache import cache
 from django.utils import timezone
+
 from tfc.constants.api_calls import APICallStatusChoices
+from tracer.services.clickhouse.application_read_policy import (
+    application_read_context,
+    application_read_settings,
+)
 from tracer.services.clickhouse.client import get_clickhouse_client
 from tracer.services.clickhouse.read_budget import (
     is_clickhouse_query_error,
@@ -26,7 +31,6 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 MAX_TEMPLATE_IDS = 100
-READ_TIMEOUT_MS = 2_000
 FRESH_CACHE_SECONDS = 30
 STALE_CACHE_SECONDS = 6 * 60 * 60
 
@@ -256,21 +260,18 @@ def read_eval_list_charts(
     """
 
     try:
-        rows, _column_types, _query_time_ms = get_clickhouse_client().execute_read(
-            query,
-            params,
-            timeout_ms=READ_TIMEOUT_MS,
-            settings={
-                "max_threads": 2,
-                "read_overflow_mode": "throw",
-                "max_bytes_to_read": 36 * 1024 * 1024 * 1024,
-                "max_memory_usage": 36 * 1024 * 1024 * 1024,
-                "max_result_rows": MAX_TEMPLATE_IDS * 31,
-                "max_result_bytes": 2 * 1024 * 1024,
-                "result_overflow_mode": "throw",
-                "timeout_overflow_mode": "throw",
-            },
-        )
+        with application_read_context():
+            rows, _column_types, _query_time_ms = get_clickhouse_client().execute_read(
+                query,
+                params,
+                timeout_ms=None,
+                settings=application_read_settings(
+                    {
+                        "max_threads": 2,
+                        "max_memory_usage": 36 * 1024 * 1024 * 1024,
+                    }
+                ),
+            )
     except Exception as exc:
         budget_error = is_read_budget_error(exc)
         if not budget_error and not is_clickhouse_query_error(exc):

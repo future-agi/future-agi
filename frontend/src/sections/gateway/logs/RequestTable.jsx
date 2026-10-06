@@ -21,6 +21,7 @@ import {
 import Iconify from "src/components/iconify";
 import useRequestLogs from "./hooks/useRequestLogs";
 import { formatCost } from "../utils/formatters";
+import { REQUEST_TAG } from "../constants/requestTags";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -30,6 +31,8 @@ const COLUMNS = [
   { id: "startedAt", label: "Timestamp", width: 180, sortable: true },
   { id: "model", label: "Model", width: 140, sortable: false },
   { id: "provider", label: "Provider", width: 120, sortable: false },
+  { id: "application", label: "Application", width: 130, sortable: false },
+  { id: "service", label: "Service", width: 130, sortable: false },
   { id: "statusCode", label: "Status", width: 80, sortable: true },
   { id: "latencyMs", label: "Latency", width: 100, sortable: true },
   { id: "cost", label: "Cost", width: 100, sortable: true },
@@ -136,6 +139,20 @@ const RequestRow = React.memo(function RequestRow({ log, onClick }) {
       <TableCell>
         <Typography variant="body2" noWrap>
           {log.provider || "-"}
+        </Typography>
+      </TableCell>
+
+      {/* Application */}
+      <TableCell>
+        <Typography variant="body2" noWrap>
+          {log.metadata?.[REQUEST_TAG.APPLICATION] || "-"}
+        </Typography>
+      </TableCell>
+
+      {/* Service */}
+      <TableCell>
+        <Typography variant="body2" noWrap>
+          {log.metadata?.[REQUEST_TAG.SERVICE] || "-"}
         </Typography>
       </TableCell>
 

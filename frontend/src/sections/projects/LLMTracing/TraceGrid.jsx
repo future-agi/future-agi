@@ -11,7 +11,7 @@ import React, {
   useState,
 } from "react";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
-import axios, { endpoints } from "src/utils/axios";
+import { readQuery, endpoints } from "src/utils/axios";
 import NumberQuickFilterPopover from "src/components/ComplexFilter/QuickFilterComponents/NumberQuickFilterPopover/NumberQuickFilterPopover";
 import NoRowsOverlay from "src/sections/project-detail/CompareDrawer/NoRowsOverlay";
 import {
@@ -71,6 +71,7 @@ import { isExpectedRequestCancellation } from "src/utils/cacheUtils";
 import { isGridApiLive, withLiveGridApi } from "src/utils/gridApi";
 import CursorGridPagination from "./CursorGridPagination";
 import useCursorGridPagination from "./useCursorGridPagination";
+import { getTraceGridRowId } from "./traceGridRowId";
 import useImmediateGridQueryTransition from "./useImmediateGridQueryTransition";
 import {
   dispatchObservePageChanged,
@@ -83,11 +84,12 @@ const traceRowIdentity = (row) => {
 };
 const EMPTY_EXTRA_FILTERS = [];
 const loadTraceObservePage = (params, signal) =>
-  axios
-    .get(endpoints.project.getTracesForObserveProject(), { params, signal })
-    .then((response) =>
-      parseAxiosResult(response, parseTraceObserveListResponse),
-    );
+  readQuery(endpoints.project.getTracesForObserveProject(), {
+    params,
+    signal,
+  }).then((response) =>
+    parseAxiosResult(response, parseTraceObserveListResponse),
+  );
 
 const TraceGrid = React.forwardRef(
   (
@@ -127,7 +129,7 @@ const TraceGrid = React.forwardRef(
         headerTextColor: theme.palette.text.primary,
         rowHoverColor: "rgba(120,87,252,0.04)",
       }),
-      [theme],
+      [theme.palette.text.primary],
     );
     const agTheme = useAgThemeWith(gridThemeParams);
     const [dateInterval] = useUrlState("dateInterval", "day");
@@ -141,13 +143,14 @@ const TraceGrid = React.forwardRef(
     const {
       traceDetailDrawerOpen,
       setTraceDetailDrawerOpen,
-      setVisibleTraceIds,
+      setVisibleTraces,
     } = useLLMTracingStoreShallow((state) => ({
       traceDetailDrawerOpen: state.traceDetailDrawerOpen,
       setTraceDetailDrawerOpen: state.setTraceDetailDrawerOpen,
-      setVisibleTraceIds: state.setVisibleTraceIds,
+      setVisibleTraces: state.setVisibleTraces,
     }));
     const activeTraceId = traceDetailDrawerOpen?.traceId || null;
+    const activeTraceProjectId = traceDetailDrawerOpen?.projectId || null;
     const [openQuickFilter, setOpenQuickFilter] = useState(null);
     const [selectedAll, setSelectedAll] = useState(false);
     const [readMessage, setReadMessage] = useState(null);
@@ -155,6 +158,7 @@ const TraceGrid = React.forwardRef(
     const [continuationNotice, setContinuationNotice] = useState(null);
     const [gridLoading, setGridLoading] = useState(enabled);
     const firstPageRequestRef = useRef(0);
+    const loadingRequestRef = useRef(0);
     const preserveRowsDuringNextRefreshRef = useRef(false);
     const gridElementRef = useRef(null);
     const {
@@ -358,7 +362,15 @@ const TraceGrid = React.forwardRef(
               withLiveGridApi(params.api, () => params.fail?.());
               return;
             }
+            let requestCompleted = false;
+            const finishRequest = (result) => {
+              if (requestCompleted) return;
+              requestCompleted = true;
+              if (result) params.success(result);
+              else params.fail();
+            };
             let pageNumber = 0;
+            let loadingRequestId = null;
             let firstPageRequestId = null;
             let pageLoadRequestId = null;
             let pageLoadSucceeded = false;
@@ -366,6 +378,8 @@ const TraceGrid = React.forwardRef(
             let requestGeneration = null;
             let continuationPending = false;
             try {
+              if (!isGridApiLive(params.api)) return;
+              loadingRequestId = ++loadingRequestRef.current;
               setLoading(true);
               const { request } = params;
               requestGeneration = cursorPagination.current.generation();
@@ -433,7 +447,7 @@ const TraceGrid = React.forwardRef(
               if (!cursorPagination.current.isCurrent(requestGeneration)) {
                 // A newer filter/range owns the grid now. Do not let this stale
                 // response replace its loading state with an empty overlay.
-                params.fail();
+                finishRequest();
                 return;
               }
 
@@ -445,11 +459,11 @@ const TraceGrid = React.forwardRef(
                 resumePendingListPage({
                   page: exactPage,
                   resume: () => {
+                    finishRequest();
                     if (
                       cursorPagination.current.isCurrent(requestGeneration) &&
                       isGridApiLive(params.api)
                     ) {
-                      params.fail();
                       if (params.api?.retryServerSideLoads) {
                         params.api.retryServerSideLoads();
                       } else {
@@ -535,7 +549,7 @@ const TraceGrid = React.forwardRef(
                 isLastPage,
               });
 
-              params.success({
+              finishRequest({
                 rowData: rows,
                 rowCount: discoveredRowCount,
               });
@@ -543,26 +557,37 @@ const TraceGrid = React.forwardRef(
               pageLoadRowCount = rows.length;
               setContinuationNotice(null);
 
-              // Collect all loaded trace IDs for prev/next navigation
+              // Collect all loaded trace rows for prev/next navigation
               setTimeout(() => {
                 if (!isGridApiLive(params.api)) return;
-                const ids = [];
+                const traces = [];
                 params.api.forEachNode((node) => {
-                  if (node.data?.trace_id) ids.push(node.data.trace_id);
+                  if (node.data?.trace_id) {
+                    traces.push({
+                      traceId: node.data.trace_id,
+                      projectId: node.data.project_id || null,
+                    });
+                  }
                 });
-                if (ids.length > 0) setVisibleTraceIds(ids);
+                if (traces.length > 0) setVisibleTraces(traces);
               }, 0);
             } catch (error) {
               if (isExpectedRequestCancellation(error)) {
                 return;
               }
               if (!isGridApiLive(params.api)) return;
+              if (
+                requestGeneration !== null &&
+                !cursorPagination.current.isCurrent(requestGeneration)
+              ) {
+                return;
+              }
               if (isListCursorContinuationLimitError(error)) {
                 // Keep the signed checkpoint and any existing rows. This is a
                 // bounded exact read awaiting an explicit retry, not an empty
                 // result or a user-visible query failure.
                 setContinuationNotice(true);
-                params.fail();
+                finishRequest();
                 return;
               }
               if (
@@ -573,14 +598,29 @@ const TraceGrid = React.forwardRef(
               ) {
                 inFlightPageLoads.current.clear();
                 cursorPagination.current.disableCursor();
-                params.fail();
+                finishRequest();
                 params.api?.refreshServerSide?.({ purge: true });
                 return;
               }
               readMessageRef.current = QUERY_FAILED_RETRY_MESSAGE;
               setReadMessage(QUERY_FAILED_RETRY_MESSAGE);
-              failServerSideGridRead(params);
+              failServerSideGridRead({ ...params, fail: finishRequest });
             } finally {
+              // Completion releases AG Grid's slot even for an obsolete cache.
+              // A scheduled continuation owns its callback until resume runs.
+              if (!continuationPending) {
+                finishRequest();
+                if (
+                  !pageLoadSucceeded &&
+                  requestGeneration !== null &&
+                  !cursorPagination.current.isCurrent(requestGeneration)
+                ) {
+                  // A same-cache refresh (purge: false) cannot re-mark a block
+                  // that is still loading, so this obsolete read's fail() just
+                  // left it failed. Queue it again for the current generation.
+                  retryServerSideCursorLoad(params.api);
+                }
+              }
               finishPageLoad(pageLoadRequestId, {
                 succeeded: pageLoadSucceeded,
                 rowCount: pageLoadRowCount,
@@ -599,7 +639,13 @@ const TraceGrid = React.forwardRef(
                 // in-flight page.
                 setGridLoading(false);
               }
-              if (!continuationPending) setLoading(false);
+              if (
+                !continuationPending &&
+                loadingRequestId !== null &&
+                loadingRequestId === loadingRequestRef.current
+              ) {
+                setLoading(false);
+              }
             }
           },
         };
@@ -771,7 +817,15 @@ const TraceGrid = React.forwardRef(
         if (!traceId) {
           return;
         }
-        setTraceDetailDrawerOpen({ traceId: traceId, filters: filters });
+        // Pin detail to the row's project: without a route project (the
+        // cross-project user page) an unpinned read serves the newest copy
+        // of this trace id in any project.
+        const rowProjectId = event.data.project_id;
+        setTraceDetailDrawerOpen({
+          traceId: traceId,
+          ...(rowProjectId ? { projectId: rowProjectId } : {}),
+          filters: filters,
+        });
 
         // trackEvent(Events.observeTraceidClicked);
       },
@@ -883,13 +937,17 @@ const TraceGrid = React.forwardRef(
           }}
           statusBar={statusBar}
           blockLoadDebounceMillis={300}
-          getRowId={(d) => {
-            return d?.data?.trace_id;
-          }}
+          // Without a route project (the user page) rows span projects and
+          // one trace id can be listed once per project.
+          getRowId={(d) =>
+            getTraceGridRowId(d?.data, { crossProject: !projectId })
+          }
           getRowStyle={(params) => {
             if (
               params.data?.trace_id &&
-              params.data.trace_id === activeTraceId
+              params.data.trace_id === activeTraceId &&
+              (!activeTraceProjectId ||
+                params.data.project_id === activeTraceProjectId)
             ) {
               return { backgroundColor: "rgba(120, 87, 252, 0.08)" };
             }

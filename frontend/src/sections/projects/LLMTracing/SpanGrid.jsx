@@ -12,7 +12,7 @@ import React, {
 } from "react";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { getRandomId, safeParse } from "src/utils/utils";
-import axios, { endpoints } from "src/utils/axios";
+import { readQuery, endpoints } from "src/utils/axios";
 import { useParams } from "src/routes/hooks";
 import NumberQuickFilterPopover from "src/components/ComplexFilter/QuickFilterComponents/NumberQuickFilterPopover/NumberQuickFilterPopover";
 
@@ -86,11 +86,12 @@ import {
 } from "../observeEvents";
 
 const loadSpanObservePage = (params, signal) =>
-  axios
-    .get(endpoints.project.getSpansForObserveProject(), { params, signal })
-    .then((response) =>
-      parseAxiosResult(response, parseSpanObserveListResponse),
-    );
+  readQuery(endpoints.project.getSpansForObserveProject(), {
+    params,
+    signal,
+  }).then((response) =>
+    parseAxiosResult(response, parseSpanObserveListResponse),
+  );
 
 const getSpanListColumnDefs = (col) => {
   const colId = col?.id;
@@ -261,7 +262,7 @@ const SpanGrid = React.forwardRef(
         headerTextColor: theme.palette.text.primary,
         rowHoverColor: "rgba(120,87,252,0.04)",
       }),
-      [theme],
+      [theme.palette.text.primary, theme.typography.fontWeightMedium],
     );
     const agTheme = useAgThemeWith(gridThemeParams);
     const { observeId } = useParams();
@@ -276,6 +277,7 @@ const SpanGrid = React.forwardRef(
     const [continuationNotice, setContinuationNotice] = useState(null);
     const [gridLoading, setGridLoading] = useState(enabled);
     const firstPageRequestRef = useRef(0);
+    const loadingRequestRef = useRef(0);
     const preserveRowsDuringNextRefreshRef = useRef(false);
     const gridElementRef = useRef(null);
     const {
@@ -542,7 +544,15 @@ const SpanGrid = React.forwardRef(
               withLiveGridApi(params.api, () => params.fail?.());
               return;
             }
+            let requestCompleted = false;
+            const finishRequest = (result) => {
+              if (requestCompleted) return;
+              requestCompleted = true;
+              if (result) params.success(result);
+              else params.fail();
+            };
             let pageNumber = 0;
+            let loadingRequestId = null;
             let firstPageRequestId = null;
             let pageLoadRequestId = null;
             let pageLoadSucceeded = false;
@@ -550,6 +560,8 @@ const SpanGrid = React.forwardRef(
             let requestGeneration = null;
             let continuationPending = false;
             try {
+              if (!isGridApiLive(params.api)) return;
+              loadingRequestId = ++loadingRequestRef.current;
               setLoading(true);
               const { request } = params;
               requestGeneration = cursorPagination.current.generation();
@@ -610,7 +622,7 @@ const SpanGrid = React.forwardRef(
               if (!cursorPagination.current.isCurrent(requestGeneration)) {
                 // A newer filter/range owns the grid now. Do not let this stale
                 // response replace its loading state with an empty overlay.
-                params.fail();
+                finishRequest();
                 return;
               }
 
@@ -622,11 +634,11 @@ const SpanGrid = React.forwardRef(
                 resumePendingListPage({
                   page: exactPage,
                   resume: () => {
+                    finishRequest();
                     if (
                       cursorPagination.current.isCurrent(requestGeneration) &&
                       isGridApiLive(params.api)
                     ) {
-                      params.fail();
                       if (params.api?.retryServerSideLoads) {
                         params.api.retryServerSideLoads();
                       } else {
@@ -712,7 +724,7 @@ const SpanGrid = React.forwardRef(
                 isLastPage,
               });
 
-              params.success({
+              finishRequest({
                 rowData: rows,
                 rowCount: discoveredRowCount,
               });
@@ -724,12 +736,18 @@ const SpanGrid = React.forwardRef(
                 return;
               }
               if (!isGridApiLive(params.api)) return;
+              if (
+                requestGeneration !== null &&
+                !cursorPagination.current.isCurrent(requestGeneration)
+              ) {
+                return;
+              }
               if (isListCursorContinuationLimitError(error)) {
                 // Preserve the exact checkpoint and current rows. A deliberate
                 // refresh may continue; do not publish a false empty page or
                 // surface this bounded pause as a query error.
                 setContinuationNotice(true);
-                params.fail();
+                finishRequest();
                 return;
               }
               if (
@@ -740,14 +758,29 @@ const SpanGrid = React.forwardRef(
               ) {
                 inFlightPageLoads.current.clear();
                 cursorPagination.current.disableCursor();
-                params.fail();
+                finishRequest();
                 params.api?.refreshServerSide?.({ purge: true });
                 return;
               }
               readStateRef.current = "error";
               setReadState("error");
-              failServerSideGridRead(params);
+              failServerSideGridRead({ ...params, fail: finishRequest });
             } finally {
+              // Completion releases AG Grid's slot even for an obsolete cache.
+              // A scheduled continuation owns its callback until resume runs.
+              if (!continuationPending) {
+                finishRequest();
+                if (
+                  !pageLoadSucceeded &&
+                  requestGeneration !== null &&
+                  !cursorPagination.current.isCurrent(requestGeneration)
+                ) {
+                  // A same-cache refresh (purge: false) cannot re-mark a block
+                  // that is still loading, so this obsolete read's fail() just
+                  // left it failed. Queue it again for the current generation.
+                  retryServerSideCursorLoad(params.api);
+                }
+              }
               finishPageLoad(pageLoadRequestId, {
                 succeeded: pageLoadSucceeded,
                 rowCount: pageLoadRowCount,
@@ -764,7 +797,13 @@ const SpanGrid = React.forwardRef(
                 // getRows call increments the id and re-enters loading.
                 setGridLoading(false);
               }
-              if (!continuationPending) setLoading(false);
+              if (
+                !continuationPending &&
+                loadingRequestId !== null &&
+                loadingRequestId === loadingRequestRef.current
+              ) {
+                setLoading(false);
+              }
             }
           },
         };
@@ -874,9 +913,12 @@ const SpanGrid = React.forwardRef(
         if (!traceId || !spanId) {
           return;
         }
+        // Pin detail to the span's project (see TraceGrid's row click).
+        const rowProjectId = event.data.project_id;
         setSpanDetailDrawerOpen({
           trace_id: traceId,
           span_id: spanId,
+          ...(rowProjectId ? { project_id: rowProjectId } : {}),
           filters: filters,
           fromSpansView: true,
         });

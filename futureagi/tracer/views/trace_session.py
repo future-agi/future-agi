@@ -2,8 +2,8 @@ import json
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
-from contextlib import ExitStack, contextmanager
-from dataclasses import asdict
+from contextlib import contextmanager
+from dataclasses import asdict, dataclass
 from functools import wraps
 
 try:
@@ -15,7 +15,7 @@ except ImportError:
 
 import structlog
 from django.conf import settings
-from django.db import OperationalError, connection, models, transaction
+from django.db import DatabaseError, OperationalError, connection, models, transaction
 from django.db.models import (
     Count,
     DurationField,
@@ -60,9 +60,12 @@ from tracer.models.observation_span import (
 from tracer.models.project import Project, ProjectSourceChoices
 from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession
+from tracer.selectors.session_candidate_slice import read_candidate_slice_page
 from tracer.selectors.trace_filter_reads import (
     PAGE_DEPTH_EXCEEDED_CODE,
     PAGE_DEPTH_EXCEEDED_MESSAGE,
+    BoundedFilterPage,
+    bounded_filter_floor_order,
     bounded_numbered_page_depth_exceeded,
     numbered_page_depth_exceeded,
     read_bounded_filter_page,
@@ -76,6 +79,7 @@ from tracer.serializers.filters import (
 )
 from tracer.serializers.trace import TraceSessionListResponseSerializer
 from tracer.serializers.trace_session import (
+    TraceSessionDetailResponseSerializer,
     TraceSessionExportQuerySerializer,
     TraceSessionFilterValuesQuerySerializer,
     TraceSessionGraphDataRequestSerializer,
@@ -99,7 +103,11 @@ from tracer.services.clickhouse.graph_dispatch import (
     enforce_exact_graph_data_contract,
     graph_payload_is_publishable,
 )
+from tracer.services.clickhouse.graph_metric_statistic import (
+    with_metric_statistic,
+)
 from tracer.services.clickhouse.list_cursor import (
+    ListCursor,
     ListCursorError,
     cursor_page_metadata,
     cursor_scope_for_request,
@@ -108,7 +116,10 @@ from tracer.services.clickhouse.list_cursor import (
     exact_total_explicitly_required,
     frozen_window_filter,
     list_cursor_boundary_fingerprint,
+    pin_filter_seed_witness_slack,
+    read_filter_seed_witness_slack,
 )
+from tracer.services.clickhouse.list_page_contract import list_page_exactness
 from tracer.services.clickhouse.query_builders.base import NIL_UUID, BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.eval_status import (
     non_terminal_eval_marker,
@@ -127,6 +138,10 @@ from tracer.services.clickhouse.session_graph import (
     SESSION_SYSTEM_METRICS,
     fetch_session_graph_ch,
 )
+from tracer.services.clickhouse.v2.query_builders.session_detail import (
+    build_session_detail_aggregate_query,
+    build_session_detail_traces_query,
+)
 from tracer.services.clickhouse.v2.query_builders.session_list import (
     SessionListQueryBuilderV2,
 )
@@ -140,6 +155,8 @@ from tracer.services.filter_principal_context import (
     FilterPrincipalContextError,
     bind_request_my_annotations_principal,
 )
+from tracer.services.postgres_read_policy import application_postgres_reads
+from tracer.services.user_filter_capabilities import is_native_user_id_filter
 from tracer.utils.bounded_csv import (
     BOUNDED_SESSION_EXPORT_PAGE_SIZE,
     bounded_page_csv_response,
@@ -170,6 +187,10 @@ SESSION_LIST_WALL_DEADLINE_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
 SESSION_LIST_QUERY_TIMEOUT_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
 SESSION_LIST_ENRICHMENT_TIMEOUT_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
 SESSION_FILTER_VALUE_WALL_DEADLINE_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
+# A cursor page stops acquiring rows here and publishes the rows found so far
+# plus a resumable checkpoint. Numbered pages cannot resume, so they keep the
+# query timeout above; hydration and the value picker stay under the request wall.
+SESSION_LIST_PAGE_WALL_MS = settings.SESSION_LIST_PAGE_WALL_MS
 SESSION_LIST_FILTER_MAX_CANDIDATES = settings.SESSION_LIST_FILTER_MAX_CANDIDATES
 SESSION_LIST_FILTER_MAX_SEED_ATTEMPTS = settings.SESSION_LIST_FILTER_MAX_SEED_ATTEMPTS
 SESSION_LIST_FILTER_MAX_QUERIES = settings.SESSION_LIST_FILTER_MAX_QUERIES
@@ -182,7 +203,6 @@ SESSION_LIST_READ_SETTINGS = {
     "timeout_overflow_mode": "throw",
 }
 SESSION_LIST_RESULT_BYTES = settings.SESSION_LIST_MAX_RESULT_BYTES
-SESSION_LIST_ATTRIBUTE_RESULT_ROWS = settings.SESSION_LIST_ATTRIBUTE_MAX_RESULT_ROWS
 SESSION_GRAPH_RETRYABLE_ERROR_CODES = {
     "deadline_exceeded",
     "read_budget_exceeded",
@@ -203,90 +223,189 @@ def _session_read_settings(*, max_result_rows: int) -> dict[str, int | str]:
     }
 
 
-def _read_session_filter_project_in_scope(*, request, project_id, deadline) -> bool:
-    """Authorize one picker project inside the shared request deadline.
-
-    PostgreSQL's timeout is per statement, so derive it from the same
-    monotonic deadline later passed to ClickHouse and session-label hydration.
-    The post-read check also enforces the wall on non-PostgreSQL test lanes.
-    """
-
-    try:
-        if connection.vendor == "postgresql":
-            with transaction.atomic():
-                timeout_ms = deadline.remaining_ms(floor_ms=1)
-                with connection.cursor() as cursor:
-                    cursor.execute(
-                        "SELECT set_config('statement_timeout', %s, true)",
-                        [str(timeout_ms)],
-                    )
-                in_scope = (
-                    _project_queryset_for_request(request)
-                    .filter(id=project_id)
-                    .exists()
-                )
-        else:
-            in_scope = (
-                _project_queryset_for_request(request).filter(id=project_id).exists()
-            )
-        deadline.remaining_ms(floor_ms=1)
-        return in_scope
-    except ReadDeadlineExceeded:
-        raise
-    except OperationalError as exc:
-        raise ReadDeadlineExceeded(
-            "Session filter project authorization exceeded its request deadline"
-        ) from exc
-
-
-def _execute_session_list_query_with_deadline(
-    deadline, execute, sql, params, many, context
-):
-    """Execute one PostgreSQL statement inside the session request wall."""
-
-    remaining_ms = deadline.remaining_ms(floor_ms=1)
-    try:
-        context["cursor"].cursor.execute(
-            "SELECT set_config('statement_timeout', %s, true)",
-            (str(remaining_ms),),
+def _session_page_depth_exceeded(validated_data):
+    """The existing public-list admission contract, shared without new limits."""
+    filters = list(validated_data.get("filters", []) or [])
+    page_number = validated_data.get("page_number", 0)
+    page_size = validated_data.get("page_size", 30)
+    filtered = (
+        any(
+            isinstance(item, dict)
+            and (item.get("column_id") or item.get("columnId"))
+            not in {"created_at", "start_time"}
+            for item in filters
         )
-        result = execute(sql, params, many, context)
-    except OperationalError as exc:
-        raise ReadDeadlineExceeded(
-            "Session list PostgreSQL read exceeded its request deadline"
-        ) from exc
-    deadline.remaining_ms(floor_ms=1)
-    return result
+        or bool(validated_data.get("user_id"))
+        or validated_data.get("bookmarked") is not None
+    )
+    return numbered_page_depth_exceeded(
+        page_number=page_number, page_size=page_size
+    ) or (
+        filtered
+        and bounded_numbered_page_depth_exceeded(
+            page_number=page_number,
+            page_size=page_size,
+            max_candidates=SESSION_LIST_FILTER_MAX_CANDIDATES,
+            classify_batch_size=SessionListQueryBuilderV2.recommended_filter_classify_batch_size(),
+            seed_batch_size=SessionListQueryBuilderV2.recommended_filter_seed_batch_size(),
+            max_seed_attempts=SESSION_LIST_FILTER_MAX_SEED_ATTEMPTS,
+            max_query_count=SESSION_LIST_FILTER_MAX_QUERIES,
+        )
+    )
+
+
+def _read_session_filter_page(
+    builder: SessionListQueryBuilderV2,
+    analytics: V2AnalyticsQueryService,
+    deadline: ReadDeadline,
+    *,
+    cursor_state: ListCursor | None = None,
+    cursor_enabled: bool = False,
+    page_wall: bool = True,
+) -> BoundedFilterPage:
+    return read_bounded_filter_page(
+        builder=builder,
+        analytics=analytics,
+        filters=builder.filters,
+        key_field="session_id",
+        page_number=builder.page_number,
+        page_size=builder.page_size,
+        # Only a cursor page can stop early and still resume exactly, so only
+        # a cursor page runs its acquisition at the page wall. An export is
+        # cursor-capable but it is not a page: it keeps filling its bounded
+        # page under the request budget rather than stopping at the wall a
+        # reader would resume from.
+        deadline_ms=deadline.remaining_ms(
+            SESSION_LIST_PAGE_WALL_MS
+            if (cursor_enabled and page_wall)
+            else SESSION_LIST_QUERY_TIMEOUT_MS
+        ),
+        max_candidates=SESSION_LIST_FILTER_MAX_CANDIDATES,
+        max_seed_attempts=SESSION_LIST_FILTER_MAX_SEED_ATTEMPTS,
+        max_query_count=SESSION_LIST_FILTER_MAX_QUERIES,
+        classify_batch_size=builder.recommended_filter_classify_batch_size(),
+        read_settings=_session_read_settings(
+            max_result_rows=SESSION_LIST_FILTER_MAX_CANDIDATES
+        ),
+        cursor_start_time=cursor_state.order[0] if cursor_state is not None else None,
+        cursor_order_token=cursor_state.order[1] if cursor_state is not None else None,
+        include_incomplete_rows=cursor_enabled,
+        continuation_slice_start=cursor_state.scan_slice_start
+        if cursor_state is not None
+        else None,
+        continuation_slice_end=cursor_state.scan_slice_end
+        if cursor_state is not None
+        else None,
+        continuation_before_start_time=cursor_state.scan_before_start_time
+        if cursor_state is not None
+        else None,
+        continuation_before_id=cursor_state.scan_before_id
+        if cursor_state is not None
+        else None,
+        bounded_continuation=cursor_enabled,
+        # A resumed cursor otherwise restarts the widening schedule at the
+        # shared five-minute default and re-climbs it on every request, which
+        # is what makes the depth of a filtered walk move between runs.
+        carry_continuation_slice_width=cursor_enabled,
+        retry_wide_read_budget=builder.should_retry_filter_wide_read_budget(),
+    )
+
+
+@dataclass(frozen=True)
+class SessionPageSelection:
+    """One existing list acquisition; hydration remains in its public caller."""
+
+    builder: SessionListQueryBuilderV2
+    filters: list[dict]
+    attested_filters: list[dict]
+    page_candidates: list[dict]
+    candidate_total_count: int | None
+    bounded_page: BoundedFilterPage | None
+    candidate_cursor: bool
+    candidate_cursor_has_more: bool
+    # A candidate page read from a narrowed scan cannot see sessions whose
+    # every root lies below its floor, so its count is a proven prefix - the
+    # same contract the bounded filter route publishes - not a window total.
+    candidate_total_is_lower_bound: bool
+    cursor_enabled: bool
+    cursor_state: ListCursor | None
+    cursor_scope: dict
+    cursor_query: dict
+    end_user_display: dict | None
+
+    def cursor(self, total_count: int | None) -> tuple[int, str | None, bool]:
+        seen = (self.cursor_state.seen_rows if self.cursor_state else 0) + len(
+            self.page_candidates
+        )
+        if self.candidate_cursor and self.candidate_cursor_has_more:
+            last = self.page_candidates[-1]
+            boundary = {
+                "order": (last["session_start"], str(last["session_id"])),
+                "total_rows": total_count,
+            }
+        elif (
+            self.cursor_enabled
+            and self.bounded_page is not None
+            and (
+                self.bounded_page.has_more
+                or (
+                    not self.bounded_page.complete
+                    and self.bounded_page.continuation_slice_end is not None
+                )
+            )
+        ):
+            page = self.bounded_page
+            boundary = {
+                "order": _session_list_cursor_order_for_partial_page(
+                    rows=self.page_candidates,
+                    bounded_page=page,
+                    cursor_state=self.cursor_state,
+                ),
+                "scan_slice_start": page.continuation_slice_start
+                if not page.has_more
+                else None,
+                "scan_slice_end": page.continuation_slice_end
+                if not page.has_more
+                else None,
+                "scan_before_start_time": page.continuation_before_start_time
+                if not page.has_more
+                else None,
+                "scan_before_id": page.continuation_before_id
+                if not page.has_more
+                else None,
+            }
+        else:
+            return seen, None, False
+        start, end = self.builder.parse_time_range(self.filters)
+        token = encode_list_cursor(
+            resource="observe_sessions",
+            scope=self.cursor_scope,
+            query=self.cursor_query,
+            page_size=self.builder.page_size,
+            window_start=start,
+            window_end=end,
+            seen_rows=seen,
+            witness_slack_hours=read_filter_seed_witness_slack(self.builder),
+            **boundary,
+        )
+        return seen, token, True
+
+
+def _read_session_filter_project_in_scope(*, request, project_id, deadline) -> bool:
+    """Authorize the exact picker project without a statement timeout."""
+    with _bounded_session_list_postgres_reads(deadline):
+        return _project_queryset_for_request(request).filter(id=project_id).exists()
 
 
 @contextmanager
 def _bounded_session_list_postgres_reads(deadline):
-    """Give every session-list PostgreSQL statement the shrinking wall."""
-
-    transaction_started = False
-
-    def execute_with_remaining_timeout(execute, sql, params, many, context):
-        nonlocal transaction_started
-        if not connection.in_atomic_block and not transaction_started:
-            stack.enter_context(transaction.atomic())
-            transaction_started = True
-        return _execute_session_list_query_with_deadline(
-            deadline, execute, sql, params, many, context
-        )
-
-    if connection.vendor != "postgresql":
+    """Keep request checks separate from uncapped PostgreSQL statements."""
+    with application_postgres_reads(
+        connection=connection,
+        atomic=transaction.atomic,
+        check_request=lambda: deadline.remaining_ms(floor_ms=1),
+    ):
         yield
-        deadline.remaining_ms(floor_ms=1)
-        return
-
-    # Installing an execute wrapper is connection-lazy. Start the transaction
-    # only when the first real ORM statement arrives, so pure/mocked early exits
-    # do not open a database socket while production statements still receive
-    # transaction-local shrinking timeouts.
-    with ExitStack() as stack:
-        stack.enter_context(connection.execute_wrapper(execute_with_remaining_timeout))
-        yield
-        deadline.remaining_ms(floor_ms=1)
 
 
 def _bounded_session_list_request(view_method):
@@ -304,9 +423,8 @@ def _bounded_session_list_request(view_method):
                     _session_list_read_deadline=deadline,
                     **kwargs,
                 )
-                deadline.remaining_ms(floor_ms=1)
                 return response
-        except (ReadDeadlineExceeded, OperationalError) as exc:
+        except (ReadDeadlineExceeded, DatabaseError) as exc:
             session_logger.warning(
                 "session_list_request_deadline_exceeded",
                 error_type=type(exc).__name__,
@@ -361,16 +479,47 @@ def _bounded_session_graph_request(view_method):
 
 
 def _session_list_cursor_order_for_partial_page(*, rows, bounded_page, cursor_state):
-    """Return a stable public order tuple, including checkpoint-only pages."""
+    """Return a stable public order tuple, including checkpoint-only pages.
 
+    The next hop reads this tuple as an exclusive upper bound: everything at or
+    above it is already published. A page that FILLED its prefix and left
+    matches over says so with its last row and drops its scan checkpoint, so
+    the walk re-descends from that rank. A page that stopped at its wall says
+    so with the floor the selector proves - not with its last row, whose rank
+    can sit far below the scan position on a route that ranks a session by its
+    oldest root, and not with the scan checkpoint, which is in seed order.
+    """
+
+    # Guarded for a missing page as the other two are, though this route's only
+    # call site passes one: the trap is the order of the tests, not the caller.
+    if bounded_page is not None and bounded_page.has_more and rows:
+        last = rows[-1]
+        return (
+            last.get("start_time"),
+            str(last.get("session_id") or ""),
+        )
+    floor = (
+        bounded_page.continuation_published_order_floor
+        if bounded_page is not None
+        else None
+    )
+    if floor is not None:
+        return bounded_filter_floor_order(floor, lowest_components=1)
     if rows:
         last = rows[-1]
         return (
-            last.get("_seed_order_start") or last.get("start_time"),
-            str(last.get("_seed_order_id") or last.get("session_id") or ""),
+            last.get("start_time"),
+            str(last.get("session_id") or ""),
         )
     if cursor_state is not None:
         return tuple(cursor_state.order)
+    if bounded_page is None:
+        raise RuntimeError("session continuation has no stable order boundary")
+    # A checkpoint the reader could not name in result order, on a first page:
+    # fall back to the scan position, which is what this route published before
+    # the floor existed. It is in seed order, so it is an approximation, and it
+    # is reached only when a page has no rows, no incoming cursor and a keyset
+    # whose token is not the one the list publishes.
     if bounded_page.continuation_before_start_time is not None:
         return (
             bounded_page.continuation_before_start_time,
@@ -406,6 +555,27 @@ def _merge_session_attribute_sources(attr_row: dict) -> dict:
                 value = bool(value)
             attrs.setdefault(key, value)
     return attrs
+
+
+def _aggregate_session_attribute_rows(rows):
+    """Preserve complete, distinct typed values from page-scoped latest roots."""
+    aggregated: dict[str, dict] = {}
+    for row in rows:
+        attrs = aggregated.setdefault(str(row.get("session_id", "")), {})
+        for key, value in _merge_session_attribute_sources(row).items():
+            # JSON identity distinguishes false/0 and retains objects/arrays.
+            identity = json.dumps(value, sort_keys=True, ensure_ascii=False)
+            attrs.setdefault(key, {}).setdefault(identity, value)
+    for attrs in aggregated.values():
+        for key, values in attrs.items():
+            ordered = [
+                value
+                for _, value in sorted(
+                    values.items(), key=lambda item: (str(item[1]), item[0])
+                )
+            ]
+            attrs[key] = ordered[0] if len(ordered) == 1 else ordered
+    return aggregated
 
 
 def _resolve_session_ids_to_canonical(
@@ -897,14 +1067,31 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
     def perform_destroy(self, instance):
         _soft_delete_trace_session_tree([instance])
 
+    @validated_request(
+        read_post=True,
+        query_serializer=TraceSessionRetrieveQuerySerializer,
+        responses={
+            200: TraceSessionDetailResponseSerializer,
+            400: ApiErrorResponseSerializer,
+        },
+    )
+    @action(
+        detail=True, methods=["get", "post"], url_path="query", pagination_class=None
+    )
+    def retrieve_query(self, request, *args, **kwargs):
+        """Read the same authorized detail without putting filters in the URL."""
+        return self.retrieve(request, *args, **kwargs)
+
     def retrieve(self, request, *args, **kwargs):
         try:
-            query_serializer = TraceSessionRetrieveQuerySerializer(
-                data=request.query_params
-            )
-            if not query_serializer.is_valid():
-                return self._gm.bad_request(query_serializer.errors)
-            query_data = query_serializer.validated_data
+            query_data = getattr(request, "validated_query_data", None)
+            if query_data is None:
+                query_serializer = TraceSessionRetrieveQuerySerializer(
+                    data=request.query_params
+                )
+                if not query_serializer.is_valid():
+                    return self._gm.bad_request(query_serializer.errors)
+                query_data = query_serializer.validated_data
 
             trace_session_id = self.kwargs.get("pk")
 
@@ -979,23 +1166,13 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             deadline=read_deadline,
         )
 
-        # Get session-level aggregates from CH
-        agg_query = """
-            SELECT
-                min(start_time) AS session_start,
-                max(end_time) AS session_end,
-                round(sum(cost), 6) AS total_cost,
-                sum(total_tokens) AS total_tokens,
-                count(DISTINCT trace_id) AS total_traces,
-                toString(argMaxIf(end_user_id, start_time, isNotNull(end_user_id) AND end_user_id != toUUID('00000000-0000-0000-0000-000000000000'))) AS end_user_id
-            FROM spans
-            WHERE project_id = %(project_id)s
-              AND trace_session_id IN %(session_group_ids)s
-              AND is_deleted = 0
-        """
+        # Whole-session metrics use latest physical members, not raw versions.
+        agg_query, agg_params = build_session_detail_aggregate_query(
+            project_id, session_group_ids
+        )
         agg_result = analytics.execute_ch_query(
             agg_query,
-            {"project_id": str(project_id), "session_group_ids": session_group_ids},
+            agg_params,
             timeout_ms=read_deadline.remaining_ms(5_000),
         )
 
@@ -1042,34 +1219,12 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         }
 
         # Get paginated trace data from CH
-        trace_query = """
-            SELECT
-                toString(trace_id) AS trace_id,
-                any(input) AS input,
-                any(output) AS output,
-                min(CASE WHEN parent_span_id IS NULL OR parent_span_id = '' THEN latency_ms ELSE NULL END) AS root_latency_ms,
-                round(sum(cost), 6) AS total_cost,
-                min(start_time) AS trace_min_start_time,
-                sum(total_tokens) AS total_tokens,
-                sum(prompt_tokens) AS input_tokens,
-                sum(completion_tokens) AS output_tokens
-            FROM spans
-            WHERE project_id = %(project_id)s
-              AND trace_session_id IN %(session_group_ids)s
-              AND is_deleted = 0
-            GROUP BY trace_id
-            ORDER BY trace_min_start_time ASC
-            LIMIT %(limit)s
-            OFFSET %(offset)s
-        """
+        trace_query, trace_params = build_session_detail_traces_query(
+            project_id, session_group_ids, limit=page_size + 1, offset=page_start
+        )
         trace_result = analytics.execute_ch_query(
             trace_query,
-            {
-                "project_id": str(project_id),
-                "session_group_ids": session_group_ids,
-                "limit": page_size + 1,
-                "offset": page_start,
-            },
+            trace_params,
             timeout_ms=read_deadline.remaining_ms(SESSION_LIST_QUERY_TIMEOUT_MS),
         )
 
@@ -1338,7 +1493,6 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                         **_session_read_settings(max_result_rows=page_size + 1),
                     },
                 )
-                read_deadline.remaining_ms(floor_ms=1)
                 has_more = len(result.data) > page_size
                 page_rows = result.data[:page_size]
                 session_ids = [str(row["val"]) for row in page_rows]
@@ -1346,6 +1500,8 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                     resolve_session_fields,
                 )
 
+                if session_ids:
+                    read_deadline.remaining_ms(floor_ms=1)
                 session_fields = resolve_session_fields(
                     session_ids,
                     project_id=project_id,
@@ -1362,7 +1518,6 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                         or value
                     )
                     values.append({"value": value, "label": str(label)})
-                read_deadline.remaining_ms(floor_ms=1)
                 return self._gm.success_response({"values": values, "next": has_more})
 
             if ch_column in ("first_message", "last_message"):
@@ -1443,7 +1598,6 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                     **_session_read_settings(max_result_rows=page_size + 1),
                 },
             )
-            read_deadline.remaining_ms(floor_ms=1)
             has_more = len(result.data) > page_size
             page_rows = result.data[:page_size]
             values = [
@@ -1451,7 +1605,6 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 for row in page_rows
                 if (row.get("val") if isinstance(row, dict) else row[0])
             ]
-            read_deadline.remaining_ms(floor_ms=1)
             return self._gm.success_response({"values": values, "next": has_more})
 
         except Exception as exc:
@@ -1611,6 +1764,10 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                     error_type=type(exc).__name__,
                 )
                 graph = degraded_graph_response(metric_id, exc)
+                if metric_type == "SYSTEM_METRIC":
+                    # The dispatcher stamps every envelope it returns; this one
+                    # is built here, so it names its statistic here.
+                    graph = with_metric_statistic(graph, "session", metric_id)
 
             graph.update(
                 graph_query_evidence(
@@ -1692,6 +1849,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
 
     @_bounded_session_list_request
     @validated_request(
+        read_post=True,
         query_serializer=TraceSessionListQuerySerializer,
         responses={
             200: TraceSessionListResponseSerializer,
@@ -1701,7 +1859,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             503: ApiErrorResponseSerializer,
         },
     )
-    @action(detail=False, methods=["get"])
+    @action(detail=False, methods=["get", "post"], pagination_class=None)
     def list_sessions(self, request, *args, **kwargs):
         """
         List traces filtered by project ID and project version ID with optimized queries.
@@ -1721,42 +1879,18 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                     page_number=0,
                     page_size=BOUNDED_SESSION_EXPORT_PAGE_SIZE,
                     cursor_mode=True,
+                    # Rule B's wall bounds an interactive page, not a
+                    # download. The users export already opts out this way.
+                    page_wall=False,
                 )
             validated_data["filters"] = bind_request_my_annotations_principal(
                 request,
                 validated_data.get("filters", []),
             )
             filters = list(validated_data.get("filters", []) or [])
-            has_non_time_filter = any(
-                isinstance(item, dict)
-                and (item.get("column_id") or item.get("columnId"))
-                not in {"created_at", "start_time"}
-                for item in filters
-            )
-            has_filtered_membership = bool(validated_data.get("user_id")) or (
-                validated_data.get("bookmarked") is not None
-            )
             page_number = validated_data.get("page_number", 0)
             page_size = validated_data.get("page_size", 30)
-            if numbered_page_depth_exceeded(
-                page_number=page_number,
-                page_size=page_size,
-            ) or (
-                (has_non_time_filter or has_filtered_membership)
-                and bounded_numbered_page_depth_exceeded(
-                    page_number=page_number,
-                    page_size=page_size,
-                    max_candidates=SESSION_LIST_FILTER_MAX_CANDIDATES,
-                    classify_batch_size=(
-                        SessionListQueryBuilderV2.recommended_filter_classify_batch_size()
-                    ),
-                    seed_batch_size=(
-                        SessionListQueryBuilderV2.recommended_filter_seed_batch_size()
-                    ),
-                    max_seed_attempts=SESSION_LIST_FILTER_MAX_SEED_ATTEMPTS,
-                    max_query_count=SESSION_LIST_FILTER_MAX_QUERIES,
-                )
-            ):
+            if _session_page_depth_exceeded(validated_data):
                 session_logger.info(
                     "session_list_page_depth_exceeded",
                     page_number=page_number,
@@ -2704,7 +2838,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             },
         }
 
-    def _list_sessions_clickhouse(
+    def _select_session_page(
         self,
         request,
         project_id,
@@ -2731,6 +2865,12 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         therefore rejected instead of being serialized as a silently truncated
         CSV file.
         """
+        if _session_page_depth_exceeded(validated_data):
+            return self._gm.custom_error_response(
+                drf_status.HTTP_422_UNPROCESSABLE_ENTITY,
+                PAGE_DEPTH_EXCEEDED_MESSAGE,
+                code=PAGE_DEPTH_EXCEEDED_CODE,
+            )
         if read_deadline is None:
             read_deadline = ReadDeadline.start(SESSION_LIST_WALL_DEADLINE_MS)
 
@@ -2748,122 +2888,80 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             request, "query_params", {}
         ).get("user_id")
 
-        # Support user_id supplied as a structural filter (the cross-project
-        # user-detail page prepends one) or as a query param. The CH `spans`
-        # table keys users by the UUID `end_user_id`, not the string `user_id`,
-        # so we strip every user_id filter out, reverse-resolve the string
-        # value(s) to end_user UUIDs and re-inject a synthetic `end_user_id`
-        # filter. The original OPERATOR and the FULL value list are preserved:
-        # `user_id in [alice, bob]` must match BOTH, and not_equals / is_null
-        # must not be silently rewritten to `in`.
-        user_id_op: str | None = None
-        user_id_values: list[str] = []
+        # Resolve each native user leaf independently: leaves are ANDed, while
+        # values within one leaf form a set. Keep custom user_id properties intact.
+        user_filters = []
         _remaining = []
         for _f in filters:
-            _col, _cfg = FilterEngine._normalize_filter_params(_f)
-            if _col == "user_id":
-                if user_id_op is None:
-                    user_id_op = _cfg.get("filter_op") or "in"
-                _val = _cfg.get("filter_value")
-                if isinstance(_val, list):
-                    user_id_values.extend(str(v) for v in _val if v not in (None, ""))
-                elif _val not in (None, ""):
-                    user_id_values.append(str(_val))
-                continue
-            _remaining.append(_f)
+            if is_native_user_id_filter(_f):
+                _, _cfg = FilterEngine._normalize_filter_params(_f)
+                user_filters.append(_cfg)
+            else:
+                _remaining.append(_f)
         filters = _remaining
 
-        # The query-param user_id (cross-project user-detail page) is an
-        # implicit single-user match and also drives per-row user-display.
+        # Query-param scope is another AND leaf, never part of an extra filter's set.
         if user_id_qp:
-            user_id_values.insert(0, str(user_id_qp))
-            if user_id_op is None:
-                user_id_op = "in"
+            user_filters.insert(0, {"filter_op": "in", "filter_value": str(user_id_qp)})
 
-        # Resolve the raw user_id(s) to end_user UUIDs and inject a synthetic
-        # end_user_id filter (scoped by org, and project when in project mode).
-        #
-        # P3b step2 precondition — the reverse-resolve prefers the curated CH
-        # `end_users` dimension over PG `EndUser.objects` (PG_ORM_READ_MIGRATION,
-        # Slice B). PG FREEZES post-step2: a NET-NEW user (first seen after the
-        # ingest get_or_create is dropped) has NO `tracer_enduser` row, so PG
-        # returns [] → empty list. The curated CH dimension instead yields the
-        # state-robust id-SET (historical OLD-id row + net-new DETERMINISTIC-id
-        # row + a straddler's BOTH) — see `_resolve_end_user_ids_for_user_id`.
-        #
-        # P3b step1.5 (DESIGN §3 / id_remap_sql) — the resolved ids are CURATED
-        # keys (OLD pre-sweep). SessionListQueryBuilder extracts this synthetic
-        # `end_user_id` filter (`_ENDUSER_ID_FILTER_COLS`) and binds it to the
-        # id-remap-RESOLVED `end_user_id` column (`_build_resolved_user_clause`),
-        # so a STRADDLER's NEW (deterministic-id) spans resolve new→old and
-        # select under the same OLD id. A net-new id has no remap entry (resolves
-        # to itself), so no double-count.
+        # The existing tenant-scoped resolver yields curated IDs; the builder
+        # binds each synthetic leaf to its id-remap-resolved end_user_id column.
         _NULL_USER_OPS = {"is_null", "is_not_null"}
         _NEGATED_USER_OPS = {"not_in", "not_equals"}
         _SUPPORTED_USER_OPS = _NULL_USER_OPS | _NEGATED_USER_OPS | {"in", "equals"}
-
-        if user_id_op and user_id_op not in _SUPPORTED_USER_OPS:
-            return self._gm.bad_request(
-                f"Unsupported operator '{user_id_op}' for user_id filter. "
-                f"Supported: {sorted(_SUPPORTED_USER_OPS)}"
-            )
-
+        resolved_users = {}
         end_user_display = None
-        if user_id_op in _NULL_USER_OPS:
-            # Presence/absence of any user — no value resolution needed; the
-            # builder maps this to session membership over end_user_id.
-            filters.append(
-                {
-                    "column_id": "end_user_id",
-                    "filter_config": {
-                        "col_type": "SYSTEM_METRIC",
-                        "filter_type": "text",
-                        "filter_op": user_id_op,
-                    },
-                }
-            )
-        elif user_id_values:
-            _ids: list[str] = []
-            for _uv in dict.fromkeys(user_id_values):  # dedup, keep order
-                _resolved, _display = _resolve_end_user_ids_for_user_id(
-                    _uv,
-                    org=org,
-                    org_scope=org_scope,
-                    project_id=project_id,
-                    deadline=read_deadline,
+        for _cfg in user_filters:
+            user_id_op = _cfg.get("filter_op") or "in"
+            if user_id_op not in _SUPPORTED_USER_OPS:
+                return self._gm.bad_request(
+                    f"Unsupported operator '{user_id_op}' for user_id filter. "
+                    f"Supported: {sorted(_SUPPORTED_USER_OPS)}"
                 )
-                _ids.extend(_resolved)
-                # Only the single query-param user labels the displayed rows.
-                if (
-                    _display is not None
-                    and end_user_display is None
-                    and user_id_qp is not None
-                    and _uv == str(user_id_qp)
-                ):
-                    end_user_display = _display
-            _ids = list(dict.fromkeys(_ids))
-            _out_op = "not_in" if user_id_op in _NEGATED_USER_OPS else "in"
-            # An unresolved value-set means "no such user". For inclusive ops
-            # that is an empty result (NIL sentinel matches nothing); for
-            # negated ops it is a no-op (everything matches), so skip injection.
-            inject = True
-            if not _ids:
-                if _out_op == "in":
+            resolved_config = {
+                "col_type": "SYSTEM_METRIC",
+                "filter_type": "text",
+                "filter_op": user_id_op,
+            }
+            if user_id_op not in _NULL_USER_OPS:
+                _values = _cfg.get("filter_value")
+                if not isinstance(_values, list):
+                    _values = [_values]
+                _values = [str(v) for v in _values if v not in (None, "")]
+                if not _values:
+                    continue
+                _ids: list[str] = []
+                for _uv in dict.fromkeys(_values):
+                    if _uv not in resolved_users:
+                        resolved_users[_uv] = _resolve_end_user_ids_for_user_id(
+                            _uv,
+                            org=org,
+                            org_scope=org_scope,
+                            project_id=project_id,
+                            deadline=read_deadline,
+                        )
+                    _resolved, _display = resolved_users[_uv]
+                    _ids.extend(_resolved)
+                    # Only the query-param user labels the displayed rows.
+                    if (
+                        _display is not None
+                        and end_user_display is None
+                        and user_id_qp is not None
+                        and _uv == str(user_id_qp)
+                    ):
+                        end_user_display = _display
+                _out_op = "not_in" if user_id_op in _NEGATED_USER_OPS else "in"
+                # Unknown positive sets match nothing; unknown negative sets
+                # add no restriction, without discarding any other AND leaf.
+                if not _ids:
+                    if _out_op == "not_in":
+                        continue
                     _ids = [NIL_UUID]
-                else:
-                    inject = False
-            if inject:
-                filters.append(
-                    {
-                        "column_id": "end_user_id",
-                        "filter_config": {
-                            "col_type": "SYSTEM_METRIC",
-                            "filter_type": "text",
-                            "filter_op": _out_op,
-                            "filter_value": _ids,
-                        },
-                    }
-                )
+                resolved_config["filter_op"] = _out_op
+                resolved_config["filter_value"] = list(dict.fromkeys(_ids))
+            filters.append(
+                {"column_id": "end_user_id", "filter_config": resolved_config}
+            )
 
         # Three-state bookmark filter (DESIGN §5.2): a synthetic
         # ``trace_session_id`` IN/NOT-IN over the PG overlay's bookmarked ids,
@@ -2890,7 +2988,14 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         # Bind the token to resolved end-user/bookmark membership as well as
         # the public request. If either independently mutable lookup changes,
         # the continuation fails closed instead of changing membership mid-page.
-        cursor_query = {**validated_data, "filters": list(filters)}
+        cursor_query = {
+            **validated_data,
+            "filters": list(filters),
+            # Old tokens contain insert-only rollup time/raw-ID boundaries.
+            # Bind the new contract before both decode and encode so they fail
+            # closed instead of being interpreted as canonical latest state.
+            "session_order_contract": "latest-root-physical-key-v2-string-page-first",
+        }
         cursor_state = None
         if cursor_token:
             cursor_state = decode_list_cursor(
@@ -2936,8 +3041,14 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             annotation_label_ids_by_project=annotation_label_ids_by_project,
             bounded_internal_scan=cursor_enabled,
         )
+        # Pin before any route or seed decision reads the slack, so every
+        # statement of this hop uses the value the pagination started with.
+        pin_filter_seed_witness_slack(builder, cursor_state)
+        prefer_bounded = builder.prefers_bounded_filter_page() is True
         candidate_cursor = bool(
-            cursor_enabled and builder.supports_candidate_cursor_page()
+            cursor_enabled
+            and not prefer_bounded
+            and builder.supports_candidate_cursor_page()
         )
         if (
             cursor_enabled
@@ -2964,8 +3075,10 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         # latest-state classification. The latter avoids the historical
         # full-window GROUP BY that timed out on high-volume tenants while
         # preserving the same newest-session page membership.
-        candidate_first = builder.supports_candidate_first_page() and (
-            not cursor_enabled or candidate_cursor
+        candidate_first = (
+            not prefer_bounded
+            and builder.supports_candidate_first_page()
+            and (not cursor_enabled or candidate_cursor)
         )
         bounded_page = None
         candidate_cursor_has_more = False
@@ -2988,80 +3101,65 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             )
 
         candidate_total_count: int | None = None
+        candidate_total_is_lower_bound = False
         if candidate_first:
             if candidate_cursor:
-                before_start_time = (
-                    cursor_state.order[0] if cursor_state is not None else None
+                # The candidate statement replays latest state across whatever
+                # window it is given, and on a high-volume tenant a month-long
+                # window does not return inside the request wall. The reader
+                # below issues the SAME statement over the newest slice whose
+                # rows fit a budget, then proves the page exact against full
+                # state before publishing it, widening to the whole window when
+                # it cannot. See ``selectors.session_candidate_slice``.
+                slice_page = read_candidate_slice_page(
+                    builder=builder,
+                    analytics=analytics,
+                    deadline=read_deadline,
+                    read_settings=_page_read_settings,
+                    query_timeout_ms=SESSION_LIST_QUERY_TIMEOUT_MS,
+                    before_start_time=(
+                        cursor_state.order[0] if cursor_state is not None else None
+                    ),
+                    before_session_id=(
+                        str(cursor_state.order[1]) if cursor_state is not None else None
+                    ),
                 )
-                before_session_id = (
-                    str(cursor_state.order[1]) if cursor_state is not None else None
-                )
-                page_query, page_params = builder.build_candidate_cursor_page_query(
-                    before_start_time=before_start_time,
-                    before_session_id=before_session_id,
-                )
-            else:
-                page_query, page_params = builder.build_candidate_page_query()
-            page_result = analytics.execute_ch_query(
-                page_query,
-                page_params,
-                timeout_ms=read_deadline.remaining_ms(SESSION_LIST_QUERY_TIMEOUT_MS),
-                settings=_page_read_settings(page_size + 1),
-            )
-            candidate_rows = list(page_result.data or [])
-            page_candidates = candidate_rows[:page_size]
-            if candidate_cursor:
-                candidate_cursor_has_more = len(candidate_rows) > page_size
+                page_candidates = slice_page.rows
+                candidate_cursor_has_more = slice_page.has_more
                 prior_seen_rows = (
                     cursor_state.seen_rows if cursor_state is not None else 0
                 )
-                candidate_total_count = prior_seen_rows + (
-                    int(candidate_rows[0].get("remaining_count", 0) or 0)
-                    if candidate_rows
-                    else 0
+                # A narrowed scan cannot see sessions whose every root is below
+                # its floor, so this total is the proven prefix, exactly as on
+                # the bounded filter route: rows already published plus the
+                # candidates the reader verified against the whole window, not
+                # the slice's own count. Re-running the legacy full-window
+                # count would reintroduce the timeout this path removes.
+                candidate_total_count = prior_seen_rows + slice_page.remaining_count
+                candidate_total_is_lower_bound = slice_page.slice_start is not None
+            else:
+                page_query, page_params = builder.build_candidate_page_query()
+                page_result = analytics.execute_ch_query(
+                    page_query,
+                    page_params,
+                    timeout_ms=read_deadline.remaining_ms(
+                        SESSION_LIST_QUERY_TIMEOUT_MS
+                    ),
+                    settings=_page_read_settings(page_size + 1),
                 )
-            elif page_candidates:
+                page_candidates = list(page_result.data or [])[:page_size]
+            if not candidate_cursor and page_candidates:
                 candidate_total_count = int(
                     page_candidates[0].get("total_count", 0) or 0
                 )
         else:
-            bounded_page = read_bounded_filter_page(
-                builder=builder,
-                analytics=analytics,
-                filters=filters,
-                key_field="session_id",
-                page_number=page_number,
-                page_size=page_size,
-                deadline_ms=read_deadline.remaining_ms(SESSION_LIST_QUERY_TIMEOUT_MS),
-                # Seed acquisition stays broad; exact attribute replay uses the
-                # builder's smaller production-safe classifier recommendation.
-                max_candidates=SESSION_LIST_FILTER_MAX_CANDIDATES,
-                max_seed_attempts=SESSION_LIST_FILTER_MAX_SEED_ATTEMPTS,
-                max_query_count=SESSION_LIST_FILTER_MAX_QUERIES,
-                classify_batch_size=builder.recommended_filter_classify_batch_size(),
-                read_settings=_page_read_settings(SESSION_LIST_FILTER_MAX_CANDIDATES),
-                cursor_start_time=(
-                    cursor_state.order[0] if cursor_state is not None else None
-                ),
-                cursor_order_token=(
-                    cursor_state.order[1] if cursor_state is not None else None
-                ),
-                include_incomplete_rows=cursor_enabled,
-                continuation_slice_start=(
-                    cursor_state.scan_slice_start if cursor_state is not None else None
-                ),
-                continuation_slice_end=(
-                    cursor_state.scan_slice_end if cursor_state is not None else None
-                ),
-                continuation_before_start_time=(
-                    cursor_state.scan_before_start_time
-                    if cursor_state is not None
-                    else None
-                ),
-                continuation_before_id=(
-                    cursor_state.scan_before_id if cursor_state is not None else None
-                ),
-                bounded_continuation=cursor_enabled,
+            bounded_page = _read_session_filter_page(
+                builder,
+                analytics,
+                read_deadline,
+                cursor_state=cursor_state,
+                cursor_enabled=cursor_enabled,
+                page_wall=bool(validated_data.get("page_wall", True)),
             )
             if not bounded_page.complete:
                 if bounded_page.error_code == PAGE_DEPTH_EXCEEDED_CODE:
@@ -3128,6 +3226,63 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 code="service_unavailable",
             )
 
+        return SessionPageSelection(
+            builder=builder,
+            filters=filters,
+            attested_filters=attested_filters,
+            page_candidates=page_candidates,
+            candidate_total_count=candidate_total_count,
+            bounded_page=bounded_page,
+            candidate_cursor=candidate_cursor,
+            candidate_cursor_has_more=candidate_cursor_has_more,
+            candidate_total_is_lower_bound=candidate_total_is_lower_bound,
+            cursor_enabled=cursor_enabled,
+            cursor_state=cursor_state,
+            cursor_scope=cursor_scope,
+            cursor_query=cursor_query,
+            end_user_display=end_user_display,
+        )
+
+    def _list_sessions_clickhouse(
+        self,
+        request,
+        project_id,
+        project,
+        analytics,
+        validated_data,
+        org_project_ids=None,
+        bookmark_filter=None,
+        read_deadline: ReadDeadline | None = None,
+        export: bool = False,
+    ):
+        """Hydrate the identities proved by the shared Session page reader."""
+        read_deadline = read_deadline or ReadDeadline.start(
+            SESSION_LIST_WALL_DEADLINE_MS
+        )
+        selection = self._select_session_page(
+            request,
+            project_id,
+            project,
+            analytics,
+            validated_data,
+            org_project_ids,
+            bookmark_filter,
+            read_deadline,
+            export,
+        )
+        if not isinstance(selection, SessionPageSelection):
+            return selection
+        builder = selection.builder
+        attested_filters = selection.attested_filters
+        page_candidates = selection.page_candidates
+        candidate_total_count = selection.candidate_total_count
+        bounded_page = selection.bounded_page
+        candidate_cursor = selection.candidate_cursor
+        cursor_enabled = selection.cursor_enabled
+        end_user_display = selection.end_user_display
+        org_scope = bool(org_project_ids)
+        page_number = builder.page_number
+
         candidate_ids = [
             str(row.get("session_id", ""))
             for row in page_candidates
@@ -3138,18 +3293,10 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         # independent and candidate-scoped. Run those reads concurrently under
         # the one request wall deadline: endpoint time is selector + slowest
         # enrichment, never selector plus independent per-query allowances.
-        metrics_query = ""
-        metrics_params: dict = {}
-        content_query = ""
-        content_params: dict = {}
-        attrs_query = ""
-        attrs_params: dict = {}
+        hydration_query = ""
+        hydration_params: dict = {}
         if candidate_ids:
-            metrics_query, metrics_params = builder.build_page_metrics_query(
-                candidate_ids
-            )
-            content_query, content_params = builder.build_content_query(candidate_ids)
-            attrs_query, attrs_params = builder.build_span_attributes_query(
+            hydration_query, hydration_params = builder.build_page_hydration_query(
                 candidate_ids
             )
 
@@ -3171,28 +3318,14 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 timeout_ms=read_deadline.remaining_ms(
                     SESSION_LIST_ENRICHMENT_TIMEOUT_MS
                 ),
-                settings=_page_read_settings(max_result_rows),
+                settings=_session_read_settings(max_result_rows=max_result_rows),
             )
 
         tasks: dict[str, tuple] = {}
-        if metrics_query:
-            tasks["metrics"] = (
+        if hydration_query:
+            tasks["hydration"] = (
                 _execute_page_query,
-                (metrics_query, metrics_params, max(1, len(candidate_ids))),
-            )
-        if content_query:
-            tasks["content"] = (
-                _execute_page_query,
-                (content_query, content_params, max(1, len(candidate_ids))),
-            )
-        if attrs_query:
-            tasks["attributes"] = (
-                _execute_page_query,
-                (
-                    attrs_query,
-                    attrs_params,
-                    SESSION_LIST_ATTRIBUTE_RESULT_ROWS,
-                ),
+                (hydration_query, hydration_params, max(1, len(candidate_ids))),
             )
         if count_query:
             tasks["count"] = (
@@ -3281,11 +3414,11 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             finally:
                 pool.shutdown(wait=False, cancel_futures=True)
 
-        metrics_result = completed.get("metrics")
-        metrics_by_id = {
-            str(row.get("session_id", "")): row
-            for row in (metrics_result.data if metrics_result is not None else [])
-        }
+        hydration_result = completed.get("hydration")
+        hydration_rows = list(
+            hydration_result.data if hydration_result is not None else []
+        )
+        metrics_by_id = {str(row.get("session_id", "")): row for row in hydration_rows}
         # Preserve the candidate selector's deterministic order rather than
         # depending on GROUP BY output order from the hydration query.
         actual_data = [
@@ -3303,16 +3436,6 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 code="service_unavailable",
             )
         session_ids_page = [str(row.get("session_id", "")) for row in actual_data]
-        content_result = completed.get("content")
-        content_map = {
-            str(row.get("session_id", "")): row
-            for row in (content_result.data if content_result is not None else [])
-        }
-        for row in actual_data:
-            session_id = str(row.get("session_id", ""))
-            content = content_map.get(session_id, {})
-            row["first_message"] = content.get("first_message", "")
-            row["last_message"] = content.get("last_message", "")
 
         if candidate_total_count is not None:
             total_count = candidate_total_count
@@ -3360,8 +3483,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         }
         name_map = completed.get("names") or {}
         end_user_map = completed.get("end_users") or {}
-        attr_result = completed.get("attributes")
-        attr_result_data = attr_result.data if attr_result is not None else []
+        attr_result_data = builder.expand_page_attribute_rows(hydration_rows)
         for entry in formatted:
             session_id = str(entry.get("session_id", ""))
             entry_project_id = project_id_by_session.get(session_id, "")
@@ -3395,52 +3517,16 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 entry["user_id_type"] = end_user_display["user_id_type"]
                 entry["user_id_hash"] = end_user_display["user_id_hash"]
 
-        # Phase 3: Aggregated span attributes for custom columns
-        _SKIP_ATTR_PREFIXES = (
-            "raw.",
-            "llm.input_messages",
-            "llm.output_messages",
-            "input.value",
-            "output.value",
-        )
-        _MAX_ATTR_KEYS_PER_SESSION = 50
+        # Phase 3: retain complete typed values for the already selected page.
+        # Display truncation belongs in the UI, not in query/result semantics.
         if session_ids_page and attr_result_data:
-            aggregated_attrs: dict[str, dict] = {}
-            for attr_row in attr_result_data:
-                sid = str(attr_row.get("session_id", ""))
-                if (
-                    sid in aggregated_attrs
-                    and len(aggregated_attrs[sid]) >= _MAX_ATTR_KEYS_PER_SESSION
-                ):
-                    continue
-                attrs = _merge_session_attribute_sources(attr_row)
-                if sid not in aggregated_attrs:
-                    aggregated_attrs[sid] = {}
-                for key, value in attrs.items():
-                    if len(aggregated_attrs[sid]) >= _MAX_ATTR_KEYS_PER_SESSION:
-                        break
-                    if key.startswith(_SKIP_ATTR_PREFIXES):
-                        continue
-                    if isinstance(value, str) and len(value) > 500:
-                        continue
-                    if key not in aggregated_attrs[sid]:
-                        aggregated_attrs[sid][key] = (
-                            set() if isinstance(value, (str, int, float, bool)) else []
-                        )
-                    if isinstance(value, (str, int, float, bool)):
-                        aggregated_attrs[sid][key].add(
-                            value if not isinstance(value, bool) else str(value).lower()
-                        )
+            aggregated_attrs = _aggregate_session_attribute_rows(attr_result_data)
             for entry in formatted:
                 sid = entry.get("session_id", "")
                 session_attrs = aggregated_attrs.get(sid, {})
                 for key, values in session_attrs.items():
                     if key not in entry:
-                        if isinstance(values, set):
-                            vals = sorted(values, key=str)
-                            entry[key] = vals[0] if len(vals) == 1 else vals
-                        else:
-                            entry[key] = values
+                        entry[key] = values
 
         # Build config with annotation metric columns (mirrors the PG path)
         config = ensure_project_session_property_identities(
@@ -3473,86 +3559,27 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                         lid = str(label.id)
                         entry[lid] = session_scores.get(lid)
 
-        cursor_seen_rows = (
-            cursor_state.seen_rows if cursor_state is not None else 0
-        ) + len(page_candidates)
-        next_cursor = None
-        cursor_has_more = False
-        if candidate_cursor and candidate_cursor_has_more:
-            window_start, window_end = builder.parse_time_range(filters)
-            last_candidate = page_candidates[-1]
-            next_cursor = encode_list_cursor(
-                resource="observe_sessions",
-                scope=cursor_scope,
-                query=cursor_query,
-                page_size=page_size,
-                window_start=window_start,
-                window_end=window_end,
-                order=(
-                    last_candidate["session_start"],
-                    str(last_candidate["session_id"]),
-                ),
-                seen_rows=cursor_seen_rows,
-                total_rows=total_count,
-            )
-            cursor_has_more = True
-        elif (
-            cursor_enabled
-            and bounded_page is not None
-            and (
-                (bounded_page.complete and bounded_page.has_more)
-                or (
-                    not bounded_page.complete
-                    and (
-                        bounded_page.has_more
-                        or bounded_page.continuation_slice_end is not None
-                    )
-                )
-            )
-        ):
-            window_start, window_end = builder.parse_time_range(filters)
-            next_cursor = encode_list_cursor(
-                resource="observe_sessions",
-                scope=cursor_scope,
-                query=cursor_query,
-                page_size=page_size,
-                window_start=window_start,
-                window_end=window_end,
-                order=_session_list_cursor_order_for_partial_page(
-                    rows=page_candidates,
-                    bounded_page=bounded_page,
-                    cursor_state=cursor_state,
-                ),
-                seen_rows=cursor_seen_rows,
-                scan_slice_start=(
-                    bounded_page.continuation_slice_start
-                    if not bounded_page.has_more
-                    else None
-                ),
-                scan_slice_end=(
-                    bounded_page.continuation_slice_end
-                    if not bounded_page.has_more
-                    else None
-                ),
-                scan_before_start_time=(
-                    bounded_page.continuation_before_start_time
-                    if not bounded_page.has_more
-                    else None
-                ),
-                scan_before_id=(
-                    bounded_page.continuation_before_id
-                    if not bounded_page.has_more
-                    else None
-                ),
-            )
-            cursor_has_more = True
+        cursor_seen_rows, next_cursor, cursor_has_more = selection.cursor(total_count)
+
+        # Candidate order can come from the insert-only session rollup; every
+        # returned row is still replayed through finite latest state, but that
+        # ordering source cannot retract historical versions, so a page built
+        # on it is inexact however complete the read was.  This qualifies the
+        # page, not the pagination mode, so it applies to both branches below.
+        candidate_seed_is_sampled = getattr(
+            builder, "filter_candidate_seed_is_sampled", None
+        )
+        ordering_source_exact = not (
+            callable(candidate_seed_is_sampled) and candidate_seed_is_sampled()
+        )
 
         metadata = {"total_rows": total_count}
         if candidate_cursor:
+            narrowed = selection.candidate_total_is_lower_bound
             metadata.update(
                 {
-                    "total_rows_exact": total_count,
-                    "total_rows_is_lower_bound": False,
+                    **({} if narrowed else {"total_rows_exact": total_count}),
+                    "total_rows_is_lower_bound": narrowed,
                     "has_more": cursor_has_more,
                     "next_cursor": next_cursor,
                     "next_cursor_fingerprint": (
@@ -3561,13 +3588,23 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                     "query_complete": True,
                     "query_status": "complete",
                     "query_error_code": None,
+                    **list_page_exactness(
+                        complete=True,
+                        ordering_source_exact=ordering_source_exact,
+                    ),
                 }
             )
         elif bounded_page is not None:
             # The selector proves page membership and whether another page
             # exists, but it may stop once that ordered prefix is proved.  Its
             # count is therefore a lower bound, not an exact full-window count.
-            public_chunk_complete = bounded_page.complete or cursor_has_more
+            # A page the reader did not finish is not made complete by the
+            # fact that it can be resumed. Carrying a cursor is what lets the
+            # caller continue; it is not evidence that this chunk is whole.
+            # Rule B makes a wall-stopped page the normal case on this route,
+            # so publishing it as complete would tell every caller that a
+            # short page is the whole answer.
+            public_chunk_complete = bounded_page.complete
             metadata.update(
                 {
                     "total_rows_is_lower_bound": True,
@@ -3581,28 +3618,16 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                     "query_error_code": (
                         None if public_chunk_complete else bounded_page.error_code
                     ),
+                    **list_page_exactness(
+                        complete=public_chunk_complete,
+                        ordering_source_exact=ordering_source_exact,
+                    ),
                 }
             )
-            candidate_seed_is_sampled = getattr(
-                builder, "filter_candidate_seed_is_sampled", None
-            )
-            if callable(candidate_seed_is_sampled) and candidate_seed_is_sampled():
-                # Candidate order came from the insert-only session rollup;
-                # every returned row was still replayed through finite latest
-                # state, but the full ordering source cannot retract historical
-                # versions. Expose that distinction instead of labelling the
-                # fast page exact.
-                metadata.update(
-                    {
-                        "query_complete": public_chunk_complete,
-                        "query_status": (
-                            "complete" if public_chunk_complete else bounded_page.status
-                        ),
-                        "query_exact": False,
-                        "query_provenance": "spans_per_session_candidate",
-                        "ordering_exact": False,
-                    }
-                )
+        # Provenance names the source of an inexact page, so it belongs only
+        # where a page contract was published at all.
+        if not ordering_source_exact and (candidate_cursor or bounded_page is not None):
+            metadata["query_provenance"] = "spans_per_session_candidate"
         if not candidate_cursor:
             metadata.update(
                 cursor_page_metadata(

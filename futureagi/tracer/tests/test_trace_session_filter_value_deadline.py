@@ -170,10 +170,12 @@ def test_session_label_ch_read_consumes_the_picker_deadline(monkeypatch):
     assert kwargs["settings"]["max_result_rows"] == 1
 
 
-def test_session_label_overlay_inside_outer_transaction_only_sets_local(
+def test_session_label_overlay_inside_outer_transaction_restores_unlimited_scope(
     monkeypatch,
 ):
-    statements = []
+    from tracer.tests.test_postgres_application_read_policy import FakePostgres
+
+    pg = FakePostgres(outer=True)
 
     class Deadline:
         def remaining_ms(self):
@@ -193,23 +195,17 @@ def test_session_label_overlay_inside_outer_transaction_only_sets_local(
                 ]
             )
 
-    class Cursor:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return None
-
-        def execute(self, statement, params=None):
-            statements.append((statement, params))
-
     class OverlayQueryset:
         def filter(self, **kwargs):
             assert kwargs == {"project_id__in": {PROJECT_ID}}
             return self
 
         def values_list(self, *_args):
-            return [(SESSION_ID, True, "renamed session")]
+            def rows():
+                pg.execute("SELECT overlay")
+                yield (SESSION_ID, True, "renamed session")
+
+            return rows()
 
     class OverlayManager:
         def filter(self, **_kwargs):
@@ -217,24 +213,8 @@ def test_session_label_overlay_inside_outer_transaction_only_sets_local(
 
     monkeypatch.setattr(query_service_module, "V2AnalyticsQueryService", Analytics)
     monkeypatch.setattr(TraceSessionOverlay, "objects", OverlayManager())
-    monkeypatch.setattr(
-        django_db,
-        "connection",
-        SimpleNamespace(
-            vendor="postgresql",
-            in_atomic_block=True,
-            cursor=Cursor,
-        ),
-    )
-    monkeypatch.setattr(
-        django_db,
-        "transaction",
-        SimpleNamespace(
-            atomic=lambda: pytest.fail(
-                "an existing transaction must not open a nested savepoint"
-            )
-        ),
-    )
+    monkeypatch.setattr(django_db, "connection", pg)
+    monkeypatch.setattr(django_db.transaction, "atomic", pg.atomic)
 
     resolved = trace_session_dict_reader.resolve_session_fields(
         [SESSION_ID],
@@ -244,12 +224,15 @@ def test_session_label_overlay_inside_outer_transaction_only_sets_local(
 
     assert resolved[SESSION_ID]["bookmarked"] is True
     assert resolved[SESSION_ID]["display_name"] == "renamed session"
-    assert statements == [
-        ("SELECT set_config('statement_timeout', %s, true)", ["3125"])
-    ]
+    assert pg.query_timeouts == ["0"]
+    assert pg.timeout == "750ms" and pg.in_atomic_block and not pg.wrappers
+    assert pg.events[-1][0] == "release"
 
 
 def test_session_label_multi_project_scope_reaches_ch_and_overlay(monkeypatch):
+    from tracer.tests.test_postgres_application_read_policy import FakePostgres
+
+    pg = FakePostgres(outer=True)
     second_project_id = "00000000-0000-4000-8000-000000000003"
     captured = {}
 
@@ -282,23 +265,10 @@ def test_session_label_multi_project_scope_reaches_ch_and_overlay(monkeypatch):
             captured.setdefault("overlay_filters", []).append(kwargs)
             return OverlayQueryset()
 
-    class Cursor:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return None
-
-        def execute(self, *_args, **_kwargs):
-            return None
-
     monkeypatch.setattr(query_service_module, "V2AnalyticsQueryService", Analytics)
     monkeypatch.setattr(TraceSessionOverlay, "objects", OverlayManager())
-    monkeypatch.setattr(
-        django_db,
-        "connection",
-        SimpleNamespace(vendor="postgresql", in_atomic_block=True, cursor=Cursor),
-    )
+    monkeypatch.setattr(django_db, "connection", pg)
+    monkeypatch.setattr(django_db.transaction, "atomic", pg.atomic)
 
     assert (
         trace_session_dict_reader.resolve_session_fields(

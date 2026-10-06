@@ -64,8 +64,8 @@ class EvalTextLLM:
                 provider=provider,
             )
         # Add audio model
-        self.audio_provider = ModelConfigs.VERTEX_GEMINI_2_5_PRO.provider
-        self.audio_model = ModelConfigs.VERTEX_GEMINI_2_5_PRO.model_name
+        self.audio_provider = ModelConfigs.VERTEX_GEMINI_3_7_FLASH.provider
+        self.audio_model = ModelConfigs.VERTEX_GEMINI_3_7_FLASH.model_name
         self.fewshots = fewshots
         self.check_internet = False
         self.is_audio = is_audio

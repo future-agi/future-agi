@@ -17,14 +17,16 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from threading import Lock
 from time import monotonic
-from typing import Any
+from typing import Any, Literal
+from uuid import UUID
 
 import structlog
 from django.conf import settings
@@ -40,7 +42,10 @@ from tracer.services.clickhouse.query_builders.agent_graph import (
     AGENT_GRAPH_MAX_RESULT_BYTES,
     AGENT_GRAPH_RESULT_ROW_SENTINEL,
 )
-from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
+from tracer.services.clickhouse.query_builders.base import (
+    BaseQueryBuilder,
+    _unix_microseconds,
+)
 from tracer.services.clickhouse.query_builders.exact_graph_predicates import (
     compile_exact_graph_row_predicates,
 )
@@ -50,14 +55,19 @@ from tracer.services.clickhouse.query_builders.filters import (
 from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     compile_exact_graph_filter_predicates,
     compile_span_attribute_row_predicate,
+    latest_span_membership_source_sql,
     partition_span_filter_plans,
 )
 from tracer.services.clickhouse.query_builders.session_filters import (
     SESSION_ID_FILTER_COLS,
     build_session_id_filter_clause,
 )
-from tracer.services.clickhouse.query_builders.user_list import UserListQueryBuilder
+from tracer.services.clickhouse.query_builders.user_list import (
+    MembershipTerm,
+    UserListQueryBuilder,
+)
 from tracer.services.clickhouse.read_budget import (
+    ReadDeadlineExceeded,
     is_clickhouse_query_size_error,
     is_read_budget_error,
 )
@@ -74,12 +84,17 @@ from tracer.services.clickhouse.v2.query_builders.filters import (
     ClickHouseFilterBuilderV2,
     rewrite_v1_sql_to_v2,
 )
+from tracer.services.clickhouse.v2.query_builders.session_list import (
+    SessionListQueryBuilderV2,
+)
 from tracer.services.clickhouse.v2.query_builders.trace_list import (
     TraceListQueryBuilderV2,
 )
 from tracer.services.clickhouse.v2.query_builders.user_time_series import (
     UserTimeSeriesQueryBuilderV2,
+    latest_physical_span_rows_sql,
 )
+from tracer.services.postgres_read_policy import application_postgres_reads
 from tracer.utils.helper import get_annotation_labels_for_project
 
 logger = structlog.get_logger(__name__)
@@ -97,6 +112,13 @@ EXACT_GRAPH_WALL_DEADLINE_MS = settings.GRAPH_BACKGROUND_WALL_MS
 # Keep one canonical alias for refresh-budget arithmetic and qualification
 # overrides.
 EXACT_GRAPH_QUERY_TIMEOUT_MS = EXACT_GRAPH_WALL_DEADLINE_MS
+# One optional session-scalar statement may try a physical witness before the
+# original full replay. These are ceilings, not additional refresh budget or
+# candidate truncation: a failed attempt is discarded before the exact fallback.
+_SESSION_SCALAR_WITNESS_TIMEOUT_MS = 9_500
+_SESSION_SCALAR_WITNESS_MAX_BYTES = 4 * 1024**3
+_SESSION_SCALAR_WITNESS_MAX_SET_ROWS = 50_000
+_SESSION_SCALAR_WITNESS_MAX_SET_BYTES = 16 * 1024**2
 # This partition size belongs to the PostgreSQL-backed annotation membership
 # reader below. Most system graphs deliberately remain one ClickHouse statement
 # so CH25.3 cannot stitch independently changing ReplacingMergeTree snapshots.
@@ -147,7 +169,7 @@ EXACT_GRAPH_TRACE_ANCHOR_MIN_RETENTION_FRACTION = (
 # The bounded-bulk classifier enforces the same 5k-identity ceiling. Using
 # that complete finite page avoids rescanning retained child history once per
 # much smaller root page while adaptive bisection still handles a hot batch.
-# Production A/B on Coletia measured the 5k classifier at 3.05--3.22 seconds
+# Production A/B on the reference project measured the 5k classifier at 3.05--3.22 seconds
 # versus 1.63--1.79 seconds for 1k; reducing roughly 70 repeated scans to 14 is
 # the material wall-clock win. This changes query chunking only.
 EXACT_GRAPH_TRACE_CLASSIFY_BATCH_SIZE = settings.EXACT_GRAPH_TRACE_CLASSIFY_BATCH_SIZE
@@ -164,7 +186,7 @@ EXACT_GRAPH_TRACE_ROOT_VERIFY_BATCH_SIZE = (
 EXACT_GRAPH_TRACE_CONTRIBUTION_BATCH_SIZE = (
     settings.EXACT_GRAPH_TRACE_CONTRIBUTION_BATCH_SIZE
 )
-# Production A/B on a fixed 5k Coletia population measured the one-statement
+# Production A/B on a fixed 5k the reference project population measured the one-statement
 # contribution at 0.95 seconds and 1.79 GB. A hotter tenant-specific batch is
 # bisected, and every retry receives only the action's remaining wall time.
 EXACT_GRAPH_TRACE_CONTRIBUTION_QUERY_TIMEOUT_MS = EXACT_GRAPH_WALL_DEADLINE_MS
@@ -268,7 +290,7 @@ EXACT_GRAPH_READ_SETTINGS = {
     "timeout_overflow_mode": "throw",
 }
 # The all-time latest-state classifier is the one measured exception to the
-# default single-thread policy. On a frozen Coletia population, four threads
+# default single-thread policy. On a frozen the reference project population, four threads
 # reduced an exact 1,012-ID classification from 12.15s to 3.34s, but the full
 # 5,000-ID classifier still took 10.62s and therefore cannot satisfy the 9.5s
 # action wall. Give this one serial, identity-bounded statement up to eight
@@ -278,6 +300,16 @@ EXACT_GRAPH_READ_SETTINGS = {
 EXACT_GRAPH_TRACE_CLASSIFIER_READ_SETTINGS = {
     **EXACT_GRAPH_READ_SETTINGS,
     "max_threads": settings.EXACT_GRAPH_TRACE_CLASSIFIER_MAX_THREADS,
+}
+# The aggregate user graph is one ordered latest-state pass over a whole
+# window, not a filter-selector probe. It inherited the selector's single
+# thread from the shared dict, which a FINAL merge could not have used anyway;
+# an in-order argMax reduction can. Give it the same budget the dashboard
+# trace reader already runs at — an existing runtime setting, changed nowhere
+# — and leave every byte, memory, result and deadline ceiling untouched.
+EXACT_GRAPH_USER_READ_SETTINGS = {
+    **EXACT_GRAPH_READ_SETTINGS,
+    "max_threads": settings.DASHBOARD_TRACE_READ_MAX_THREADS,
 }
 EXACT_GRAPH_SPAN_PARTITION_READ_SETTINGS = {
     **EXACT_GRAPH_READ_SETTINGS,
@@ -336,6 +368,20 @@ def _snapshot_window(
     return analyzed.start, analyzed.end, analyzed.empty
 
 
+def _effective_graph_interval(
+    interval: str,
+    start_date: datetime,
+    end_date: datetime,
+) -> str:
+    """Use bounded weekly output for windows longer than three months."""
+
+    if end_date - start_date > timedelta(
+        days=settings.DASHBOARD_WEEKLY_AGGREGATION_AFTER_DAYS
+    ):
+        return "week"
+    return interval
+
+
 def _annotation_label_ids_for_filters(
     project_id: str,
     filters: list[dict[str, Any]],
@@ -350,6 +396,7 @@ def _annotation_label_ids_for_filters(
 
     needs_completeness = any(
         isinstance(item, dict)
+        and not _is_raw_attribute_filter(item)
         and (item.get("column_id") or item.get("columnId")) == "has_annotation"
         for item in filters or []
     )
@@ -374,9 +421,10 @@ def _metadata(
     started: float,
     query_count: int,
     rows_returned: int,
+    wall_ms: int | None = None,
 ) -> dict[str, Any]:
     elapsed_ms = max(monotonic() - started, 0.0) * 1000
-    if elapsed_ms >= EXACT_GRAPH_QUERY_TIMEOUT_MS:
+    if elapsed_ms >= (EXACT_GRAPH_QUERY_TIMEOUT_MS if wall_ms is None else wall_ms):
         raise ExactGraphReadError("exact graph refresh deadline exceeded")
     metadata = {
         "query_complete": True,
@@ -392,19 +440,23 @@ def _metadata(
 def _remaining_exact_graph_timeout_ms(
     started: float,
     statement_ceiling_ms: int | None = None,
+    *,
+    wall_ms: int | None = None,
 ) -> int:
     """Return the time left on one authoritative exact-refresh wall.
 
     Background readers do builder, relation, database, formatting, and
     publication work under one reviewed graph budget. A later statement may
     consume only the remaining portion; it never receives a fresh
-    per-statement grant.
+    per-statement grant. ``wall_ms`` replaces the background wall for a
+    reader run inline on an interactive wall (the Sessions graph).
     """
 
     elapsed_ms = max(monotonic() - started, 0.0) * 1000
+    wall = EXACT_GRAPH_QUERY_TIMEOUT_MS if wall_ms is None else int(wall_ms)
     # Floor the remaining duration, rather than subtracting a floored elapsed
     # duration, so rounding can never grant a statement time beyond the wall.
-    remaining_ms = int(EXACT_GRAPH_QUERY_TIMEOUT_MS - elapsed_ms)
+    remaining_ms = int(wall - elapsed_ms)
     if remaining_ms < settings.EXACT_GRAPH_MIN_REMAINING_MS:
         raise ExactGraphReadError("exact graph refresh bounded deadline exceeded")
     if statement_ceiling_ms is None:
@@ -421,21 +473,24 @@ def _execute_direct_exact_graph_query(
     params: dict[str, Any],
     started: float,
     settings: dict[str, Any],
+    wall_ms: int | None = None,
 ) -> Any:
     """Execute a direct publication read inside its refresh's remaining wall."""
 
     return analytics.execute_ch_query(
         query,
         params,
-        timeout_ms=_remaining_exact_graph_timeout_ms(started),
+        timeout_ms=_remaining_exact_graph_timeout_ms(started, wall_ms=wall_ms),
         settings=settings,
     )
 
 
-def _finalize_exact_graph_payload(payload: Any, *, started: float) -> Any:
+def _finalize_exact_graph_payload(
+    payload: Any, *, started: float, wall_ms: int | None = None
+) -> Any:
     """Fence publication after all formatting and result construction."""
 
-    _remaining_exact_graph_timeout_ms(started)
+    _remaining_exact_graph_timeout_ms(started, wall_ms=wall_ms)
     return payload
 
 
@@ -492,8 +547,7 @@ def _frozen_trace_membership_filters(
     frozen = [
         deepcopy(item)
         for item in filters or []
-        if (item.get("column_id") or item.get("columnId"))
-        not in {"created_at", "start_time"}
+        if not BaseQueryBuilder.is_datetime_filter(item)
         or BaseQueryBuilder.is_datetime_complement_filter(item)
     ]
     frozen.append(
@@ -836,7 +890,15 @@ def _enumerate_authoritative_anchor_trace_ids(
         "build_exact_graph_latest_root_partition",
         None,
     )
-    if callable(root_partition_builder):
+    # A finite candidate set is cheaper to verify through the existing
+    # trace-id bloom than by enumerating every root in the request window.
+    # One verifier batch has a separately enforced 512-ID ceiling; larger
+    # populations retain the partitioned root cursor that avoids replaying
+    # retained history once per candidate batch.
+    if (
+        callable(root_partition_builder)
+        and len(candidate_trace_ids) > EXACT_GRAPH_TRACE_ROOT_VERIFY_BATCH_SIZE
+    ):
 
         def scan_root_partition(
             partition_start: datetime,
@@ -1256,6 +1318,49 @@ def _enumerate_exact_trace_ids(
         "build_exact_graph_candidate_witness_probe",
         None,
     )
+    candidate_replays_global_membership = getattr(
+        builder,
+        "exact_graph_candidate_witness_replays_global_membership",
+        None,
+    )
+    candidate_has_deployed_value_index = getattr(
+        builder,
+        "exact_graph_candidate_witness_has_deployed_value_index",
+        None,
+    )
+    candidate_has_numeric_value_proof = getattr(
+        builder,
+        "exact_graph_candidate_witness_has_numeric_value_proof",
+        None,
+    )
+    if (
+        request_end - request_start < EXACT_GRAPH_TRACE_ANCHOR_MIN_REQUEST_WIDTH
+        and callable(candidate_replays_global_membership)
+        and bool(candidate_replays_global_membership())
+        and not (
+            (
+                callable(candidate_has_deployed_value_index)
+                and bool(candidate_has_deployed_value_index())
+            )
+            or (
+                callable(candidate_has_numeric_value_proof)
+                and bool(candidate_has_numeric_value_proof())
+            )
+        )
+    ):
+        # The typed-Map candidate probe scans all retained child history. For a
+        # short root window that can consume the entire request wall before its
+        # resource-bounded first page falls back to the cheaper request-window
+        # root cursor. A compiler-proven deployed value index is the measured
+        # exception: its complete retained-history candidate pass is cheaper
+        # even for dense one-day and seven-day root windows. Compiler-proven
+        # numeric value witnesses also qualify: acquire retained-history IDs
+        # directly, then let the classifier enforce the canonical root window.
+        # Precomputing every in-window raw root can cost more than finding a
+        # sparse numeric witness. Neither path treats raw candidates as matches.
+        # Relational candidates are already request-window scoped. Long
+        # windows retain their existing authoritative-anchor-first order.
+        candidate_probe = None
     if callable(candidate_probe):
         candidate_after_trace_id: str | None = None
         candidate_before_start_time: datetime | None = None
@@ -1291,7 +1396,15 @@ def _enumerate_exact_trace_ids(
                         EXACT_GRAPH_TRACE_WITNESS_QUERY_TIMEOUT_MS
                     ),
                     settings={
-                        **EXACT_GRAPH_READ_SETTINGS,
+                        # Numeric witness acquisition returns ordered IDs,
+                        # not floating aggregates. Share the existing bounded
+                        # classifier parallelism for this serial scan only.
+                        **(
+                            EXACT_GRAPH_TRACE_CLASSIFIER_READ_SETTINGS
+                            if callable(candidate_has_numeric_value_proof)
+                            and candidate_has_numeric_value_proof()
+                            else EXACT_GRAPH_READ_SETTINGS
+                        ),
                         "max_result_rows": candidate_page_limit,
                     },
                 )
@@ -1690,9 +1803,9 @@ def _read_exact_filtered_span_graph(
     graph over the prior complete snapshot. Physical scans start/end on whole
     hours, matching the RMT sorting identity. The first/last query still scans
     its complete hour, then applies the frozen request bounds to winning rows.
-    Cheap successful scans may double by whole hours up to one day; a resource
-    failure halves and retries the exact same cursor, and the failed width
-    becomes a ceiling for the remainder of this refresh. Separate statements
+    Cheap successful scans may double by whole hours up to one day. A failed
+    whole-window attempt restores that normal lane; later partition failures
+    halve/cap its width and retry the same cursor. Separate statements
     cannot be MVCC on CH25.3; any relational membership embedded in the filter
     plan was resolved once by the caller and is reused unchanged here.
     """
@@ -1707,6 +1820,11 @@ def _read_exact_filtered_span_graph(
     scan_width = partition_limit - partition_start
     partition_width = min(EXACT_GRAPH_SPAN_PARTITION_WIDTH, scan_width)
     max_partition_width = min(EXACT_GRAPH_SPAN_MAX_PARTITION_WIDTH, scan_width)
+    candidate_plan = getattr(builder, "_exact_span_candidate_plan", lambda: None)()
+    if candidate_plan is not None:
+        # One exhaustive compiler witness before latest replay; no daily empty
+        # scan loop. Resource failures return to the finite adaptive lane below.
+        partition_width = scan_width
     while partition_start < partition_limit:
         partition_end = min(partition_start + partition_width, partition_limit)
         query, params = builder.build_exact_span_partition(
@@ -1730,11 +1848,14 @@ def _read_exact_filtered_span_graph(
                 is_read_budget_error(exc)
                 and partition_width > EXACT_GRAPH_SPAN_MIN_PARTITION_WIDTH
             ):
-                partition_width = max(
-                    EXACT_GRAPH_SPAN_MIN_PARTITION_WIDTH,
-                    partition_width / 2,
-                )
-                max_partition_width = min(max_partition_width, partition_width)
+                if candidate_plan is not None:
+                    candidate_plan = None
+                    partition_width = min(EXACT_GRAPH_SPAN_PARTITION_WIDTH, scan_width)
+                else:
+                    partition_width = EXACT_GRAPH_SPAN_MIN_PARTITION_WIDTH * max(
+                        1, partition_width // (2 * EXACT_GRAPH_SPAN_MIN_PARTITION_WIDTH)
+                    )
+                    max_partition_width = min(max_partition_width, partition_width)
                 # Retry without advancing. No failed statement contributes a
                 # row, so the successful windows remain gap-free and disjoint.
                 continue
@@ -1775,6 +1896,7 @@ def read_exact_system_graph(
 ) -> dict[str, Any]:
     started = monotonic()
     start_date, end_date, empty = _snapshot_window(filters)
+    interval = _effective_graph_interval(interval, start_date, end_date)
     if empty:
         builder = TimeSeriesQueryBuilder(
             project_id=str(project_id),
@@ -1957,6 +2079,7 @@ def read_exact_all_system_metrics(
 ) -> dict[str, Any]:
     started = monotonic()
     start_date, end_date, empty = _snapshot_window(filters)
+    interval = _effective_graph_interval(interval, start_date, end_date)
     if empty:
         builder = TimeSeriesQueryBuilder(
             project_id=str(project_id),
@@ -2021,17 +2144,39 @@ def _row_value(row: Any, columns: list[str], key: str, default: Any = 0) -> Any:
     return row[index] if index < len(row) else default
 
 
+def _bucket_key(value: Any) -> datetime | None:
+    """Reduce an output bucket to the zero-fill range's naive-UTC ``datetime``.
+
+    The native driver returns ``DateTime('UTC')`` buckets tz-aware, untyped
+    ``DateTime`` buckets naive and ``toMonday``/``toStartOfMonth``/
+    ``toStartOfYear`` buckets as ``date``, while
+    ``BaseQueryBuilder._generate_timestamp_range`` yields naive UTC values.
+    Both sides of a bucket lookup go through this one key. An aware value is
+    converted to UTC before its tzinfo is dropped.
+    """
+
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+    if isinstance(value, datetime):
+        if value.tzinfo is not None:
+            return value.astimezone(UTC).replace(tzinfo=None)
+        return value
+    if isinstance(value, date):
+        return datetime(value.year, value.month, value.day)
+    return None
+
+
 def _add_primary_traffic(
     series: dict[str, Any], rows: list[Any], columns: list[str]
 ) -> dict[str, Any]:
-    traffic: dict[str, int] = {}
+    traffic: dict[datetime, int] = {}
     for row in rows:
-        timestamp = _row_value(row, columns, "time_bucket", None)
-        if timestamp is None:
+        key = _bucket_key(_row_value(row, columns, "time_bucket", None))
+        if key is None:
             continue
-        key = (
-            timestamp.isoformat() if hasattr(timestamp, "isoformat") else str(timestamp)
-        )
         traffic[key] = int(
             _row_value(
                 row,
@@ -2043,7 +2188,10 @@ def _add_primary_traffic(
         )
     copied = {**series}
     copied["data"] = [
-        {**point, "primary_traffic": traffic.get(point.get("timestamp"), 0)}
+        {
+            **point,
+            "primary_traffic": traffic.get(_bucket_key(point.get("timestamp")), 0),
+        }
         for point in series.get("data", [])
     ]
     return copied
@@ -2144,12 +2292,19 @@ def read_exact_eval_graph(
     if aggregation_context in {"session", "user"} and observe_type != "trace":
         raise ValueError("aggregate eval graphs require trace observation mode")
     config_id = str(req_data_config.get("id") or "")
-    config = CustomEvalConfig.objects.select_related("eval_template").get(
-        id=config_id,
-        project_id=project_id,
-        deleted=False,
-    )
+    with application_postgres_reads(
+        connection=connection,
+        atomic=transaction.atomic,
+        check_request=lambda: _remaining_exact_graph_timeout_ms(started),
+        read_only=True,
+    ):
+        config = CustomEvalConfig.objects.select_related("eval_template").get(
+            id=config_id,
+            project_id=project_id,
+            deleted=False,
+        )
     start_date, end_date, empty = _snapshot_window(filters)
+    interval = _effective_graph_interval(interval, start_date, end_date)
     output_type = req_data_config.get("eval_output_type") or req_data_config.get(
         "output_type"
     )
@@ -2184,6 +2339,8 @@ def read_exact_eval_graph(
                 start_date=start_date,
                 end_date=end_date,
                 candidate_trace_ids_sql=candidate_eval_trace_ids_sql,
+                started=started,
+                remaining_read_ms=getattr(analytics, "remaining_read_ms", None),
             )
         )
     builder = EvalMetricsQueryBuilderV2(
@@ -2303,14 +2460,12 @@ def _compile_membership_filter(
 def _span_batch_trace_ids_sql() -> str:
     """Resolve the owning trace candidates for one annotation span batch."""
 
-    return """
+    source = latest_span_membership_source_sql(
+        identity_scope="AND id IN %(candidate_span_ids)s"
+    )
+    return f"""
         SELECT DISTINCT toString(annotation_candidate.trace_id)
-        FROM spans AS annotation_candidate FINAL
-        PREWHERE annotation_candidate.project_id = toUUID(%(project_id)s)
-          AND annotation_candidate.start_time >= %(snapshot_start_date)s
-          AND annotation_candidate.start_time < %(snapshot_end_date)s
-          AND annotation_candidate.id IN %(candidate_span_ids)s
-        WHERE annotation_candidate.is_deleted = 0
+        FROM ({source}) AS annotation_candidate
     """
 
 
@@ -2328,21 +2483,21 @@ def _matching_trace_ids(
 ) -> set[str]:
     if not trace_ids:
         return set()
-    clause = f"AND {predicate}" if predicate else ""
+    source = latest_span_membership_source_sql(
+        predicate=predicate or "1",
+        identity_scope="AND trace_id IN %(candidate_trace_ids)s",
+    )
     result = analytics.execute_ch_query(
         f"""
         SELECT DISTINCT trace_id
-        FROM spans FINAL
-        PREWHERE project_id = toUUID(%(project_id)s)
-          AND start_time >= %(snapshot_start_date)s
-          AND start_time < %(snapshot_end_date)s
-        WHERE is_deleted = 0
-          AND trace_id IN %(candidate_trace_ids)s
-          {clause}
+        FROM ({source})
+        WHERE matched
         """,
         {
             **predicate_params,
             "project_id": project_id,
+            "start_date": start_date,
+            "end_date": end_date,
             "snapshot_start_date": start_date,
             "snapshot_end_date": end_date,
             "candidate_trace_ids": trace_ids,
@@ -2370,23 +2525,24 @@ def _matching_span_ids(
 ) -> set[str]:
     if not span_ids:
         return set()
+    source = latest_span_membership_source_sql(
+        predicate=predicate or "1",
+        identity_scope="AND id IN %(candidate_span_ids)s",
+    )
     result = analytics.execute_ch_query(
         f"""
         SELECT
             id,
             uniqExact(trace_id) AS identity_count,
-            max(toUInt8({predicate if predicate else "1"})) AS matched
-        FROM spans FINAL
-        PREWHERE project_id = toUUID(%(project_id)s)
-          AND start_time >= %(snapshot_start_date)s
-          AND start_time < %(snapshot_end_date)s
-          AND id IN %(candidate_span_ids)s
-        WHERE is_deleted = 0
+            max(membership.matched) AS matched
+        FROM ({source}) AS membership
         GROUP BY id
         """,
         {
             **predicate_params,
             "project_id": project_id,
+            "start_date": start_date,
+            "end_date": end_date,
             "snapshot_start_date": start_date,
             "snapshot_end_date": end_date,
             "candidate_span_ids": span_ids,
@@ -2431,21 +2587,13 @@ def read_exact_annotation_graph(
     if aggregation_context in {"session", "user"} and observe_type != "trace":
         raise ValueError("aggregate annotation graphs require trace observation mode")
     label_id = str(req_data_config.get("id") or "")
-    if connection.vendor == "postgresql":
-        # Label discovery consults both authoritative Score membership and
-        # label metadata. It is part of the same refresh, so give both ORM
-        # statements only the time still left on that refresh wall.
-        with transaction.atomic():
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"
-                )
-                cursor.execute(
-                    "SET LOCAL statement_timeout = "
-                    f"'{remaining_statement_timeout_ms()}ms'"
-                )
-            label = get_annotation_labels_for_project(project_id).get(id=label_id)
-    else:
+    with application_postgres_reads(
+        connection=connection,
+        atomic=transaction.atomic,
+        check_request=remaining_statement_timeout_ms,
+        read_only=True,
+        repeatable_read=True,
+    ):
         label = get_annotation_labels_for_project(project_id).get(id=label_id)
     # A slow successful metadata read must not start Score partition work after
     # the refresh wall has already expired.
@@ -2463,6 +2611,7 @@ def read_exact_annotation_graph(
     output_type = str(output_type).lower()
     selected = req_data_config.get("value")
     start_date, end_date, empty = _snapshot_window(filters)
+    interval = _effective_graph_interval(interval, start_date, end_date)
     if empty:
         return _finalize_exact_graph_payload(
             {
@@ -2508,6 +2657,8 @@ def read_exact_annotation_graph(
             start_date=start_date,
             end_date=end_date,
             candidate_trace_ids_param="candidate_trace_ids",
+            started=started,
+            remaining_read_ms=getattr(analytics, "remaining_read_ms", None),
         )
         trace_predicate = f"trace_id IN ({user_trace_sql})"
         trace_params = user_trace_params
@@ -2518,6 +2669,8 @@ def read_exact_annotation_graph(
             start_date=start_date,
             end_date=end_date,
             candidate_trace_ids_sql=_span_batch_trace_ids_sql(),
+            started=started,
+            remaining_read_ms=getattr(analytics, "remaining_read_ms", None),
         )
         if span_needs_eval != needs_eval:
             raise ExactGraphReadError("user annotation membership plan is inconsistent")
@@ -2543,26 +2696,20 @@ def read_exact_annotation_graph(
 
     # PostgreSQL is authoritative for Score. Hold one repeatable-read snapshot
     # while CH checks only those finite annotated identities. Any membership
-    # batch failure aborts the refresh before publication. Each partition's PG
-    # statement receives only the refresh's remaining wall time; a later
-    # partition can never reset the timeout back to a fresh action deadline.
+    # batch failure aborts the refresh before publication. Request checks remain
+    # at read boundaries; PostgreSQL statements do not receive execution caps.
     remaining_statement_timeout_ms()
-    with transaction.atomic():
-        if connection.vendor == "postgresql":
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"
-                )
+    with application_postgres_reads(
+        connection=connection,
+        atomic=transaction.atomic,
+        check_request=remaining_statement_timeout_ms,
+        read_only=True,
+        repeatable_read=True,
+    ):
         for partition_start, partition_end in output_bucket_partitions(
             start_date, end_date, interval
         ):
-            partition_timeout_ms = remaining_statement_timeout_ms()
-            if connection.vendor == "postgresql":
-                with connection.cursor() as cursor:
-                    # Internal bounded integer, never request-derived SQL.
-                    cursor.execute(
-                        f"SET LOCAL statement_timeout = '{partition_timeout_ms}ms'"
-                    )
+            remaining_statement_timeout_ms()
             queryset = (
                 Score.no_workspace_objects.filter(
                     tracer_project_id=project_id,
@@ -2724,6 +2871,26 @@ _SESSION_AGGREGATE_FILTER_COLUMNS = {
 }
 
 
+def _is_raw_attribute_filter(item: dict[str, Any]) -> bool:
+    config = item.get("filter_config") or item.get("filterConfig") or {}
+    return (
+        str(config.get("col_type") or config.get("colType") or "").upper()
+        == "SPAN_ATTRIBUTE"
+    )
+
+
+def _session_filters_need_message_aggregates(filters: list[dict[str, Any]]) -> bool:
+    """Whether a first/last-message filter selects on ``argMin``/``argMax``
+    of the session's root inputs."""
+
+    return any(
+        not _is_raw_attribute_filter(item)
+        and (item.get("column_id") or item.get("columnId"))
+        in _SESSION_MESSAGE_FILTER_COLUMNS
+        for item in filters
+    )
+
+
 def _session_having_clause(
     filters: list[dict[str, Any]], params: dict[str, Any]
 ) -> str:
@@ -2732,6 +2899,8 @@ def _session_having_clause(
     clauses: list[str] = []
     counter = 0
     for item in filters:
+        if _is_raw_attribute_filter(item):
+            continue
         column_id = item.get("column_id") or item.get("columnId")
         column_id = str(column_id or "")
         column = _SESSION_AGGREGATE_FILTER_COLUMNS.get(column_id)
@@ -2798,6 +2967,9 @@ class _SessionMembershipPlan:
     scalar_predicates: tuple[str, ...]
     relational_predicates: tuple[str, ...]
     params: dict[str, Any]
+    scalar_group_predicates: tuple[str, ...] = ()
+    scalar_witness_predicate: str | None = None
+    relational_ctes: str = ""
 
 
 def _finite_survivor_map_ctes(
@@ -2807,6 +2979,7 @@ def _finite_survivor_map_ctes(
     candidate_column: str,
     prefix: str,
     map_name: str,
+    candidate_array: bool = False,
 ) -> str:
     """Materialize only remap groups touched by one finite candidate relation.
 
@@ -2817,6 +2990,13 @@ def _finite_survivor_map_ctes(
     resulting tiny map once as a scalar tuple array.  Candidate IDs themselves
     stay relational: ClickHouse does not accept a scalar array alias as the
     right-hand side of ``IN`` in ``PREWHERE``.
+
+    ``candidate_array`` reads the candidate relation ONCE, into a scalar
+    array, and exposes it relationally through ``arrayJoin``. Without it every
+    reference (the remap probe, the union, and any caller's own use of
+    ``<prefix>_candidate_ids``) re-executes the candidate source, which for a
+    Session source is a complete ``spans FINAL`` pass. The ids, and therefore
+    every lookup in the map, are the same either way.
     """
 
     identifiers = (
@@ -2831,13 +3011,26 @@ def _finite_survivor_map_ctes(
     candidate_ids_name = f"{prefix}_candidate_ids"
     target_relation = f"{prefix}_target_new_ids"
     pair_name = f"{prefix}_pairs"
-    return f"""
+    if candidate_array:
+        array_name = f"{prefix}_candidate_array"
+        candidate_ids_cte = f"""
+    (
+        SELECT groupUniqArray(assumeNotNull({candidate_column}))
+        FROM {candidate_relation}
+        WHERE isNotNull({candidate_column})
+    ) AS {array_name},
+    {candidate_ids_name} AS (
+        SELECT arrayJoin({array_name}) AS {candidate_column}
+    ),"""
+    else:
+        candidate_ids_cte = f"""
     {candidate_ids_name} AS (
         SELECT DISTINCT
             assumeNotNull({candidate_column}) AS {candidate_column}
         FROM {candidate_relation}
         WHERE isNotNull({candidate_column})
-    ),
+    ),"""
+    return f"""{candidate_ids_cte}
     {target_relation} AS (
         SELECT DISTINCT new_id
         FROM {remap_table} FINAL
@@ -2878,6 +3071,32 @@ def _finite_survivor_map_ctes(
     """
 
 
+def _session_span_filters(filters: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The filters a Sessions statement compiles as span-level membership leaves.
+
+    Window, session-id, message and post-aggregate filters are applied by the
+    statement itself, not by membership.
+    """
+
+    return [
+        item
+        for item in filters
+        if _is_raw_attribute_filter(item)
+        or (item.get("column_id") or item.get("columnId"))
+        not in {
+            *_SESSION_POST_AGGREGATE_FILTERS,
+            *_SESSION_MESSAGE_FILTER_COLUMNS,
+            *SESSION_ID_FILTER_COLS,
+        }
+    ]
+
+
+def _membership_plan_is_lean(plan: _SessionMembershipPlan) -> bool:
+    """Whether a membership plan has no span-level leaf (the lean source)."""
+
+    return not (plan.scalar_predicates or plan.relational_predicates)
+
+
 def _session_membership_plan(
     *,
     project_id: str,
@@ -2902,19 +3121,68 @@ def _session_membership_plan(
         item
         for item in filters
         if (item.get("column_id") or item.get("columnId")) == "end_time"
+        and not _is_raw_attribute_filter(item)
     ]
     scalar_filters = [
         item
         for item in filters
         if (item.get("column_id") or item.get("columnId")) != "end_time"
+        or _is_raw_attribute_filter(item)
     ]
-    scalar_plans, relational_filters = partition_span_filter_plans(scalar_filters)
+    scalar_plans, relational_filters = partition_span_filter_plans(
+        scalar_filters, group_attribute_nulls=True
+    )
     scalar_aggregates = [
         rewrite_v1_sql_to_v2(aggregate)
         for plan in scalar_plans
         for aggregate in plan.aggregates
     ]
     scalar_predicates = [rewrite_v1_sql_to_v2(plan.predicate) for plan in scalar_plans]
+    scalar_group_predicates = [
+        rewrite_v1_sql_to_v2(plan.grouped_match_predicate()) for plan in scalar_plans
+    ]
+    # Pruning by one leaf is unsafe when another leaf may match a different
+    # span. Keep this first optimization to one compiler-proven positive leaf;
+    # in particular, do not invent value witnesses for null/negative/JSON leaves.
+    witness_leaves = [
+        item
+        for item in scalar_filters
+        if (item.get("column_id") or item.get("columnId"))
+        not in {"created_at", "start_time"}
+    ]
+    witness_config = (
+        witness_leaves[0].get("filter_config")
+        or witness_leaves[0].get("filterConfig")
+        or {}
+        if len(witness_leaves) == 1
+        else {}
+    )
+    witness_op = witness_config.get("filter_op") or witness_config.get("filterOp")
+    witness_type = witness_config.get("filter_type") or witness_config.get("filterType")
+    positive_typed_leaf = (
+        witness_op in {"equals", "in"} and witness_type in {"text", "number", "boolean"}
+    ) or (
+        witness_type == "number"
+        and witness_op
+        in {
+            "between",
+            "greater_than",
+            "greater_than_or_equal",
+            "less_than",
+            "less_than_or_equal",
+        }
+    )
+    scalar_witness = (
+        scalar_plans[0].raw_graph_value_witness_predicate
+        if len(scalar_plans) == 1
+        and positive_typed_leaf
+        and not scalar_plans[0].exclude_group_matches
+        and not relational_filters
+        and not root_filters
+        else None
+    )
+    if scalar_witness:
+        scalar_witness = rewrite_v1_sql_to_v2(scalar_witness)
     params: dict[str, Any] = {}
     scalar_params = {
         param_name: value
@@ -2926,6 +3194,9 @@ def _session_membership_plan(
         namespaced_name = f"session_scalar_{param_name}"
         namespaced_placeholder = f"%({namespaced_name})s"
         used = False
+        if scalar_witness and placeholder in scalar_witness:
+            scalar_witness = scalar_witness.replace(placeholder, namespaced_placeholder)
+            used = True
         for index, aggregate in enumerate(scalar_aggregates):
             if placeholder in aggregate:
                 scalar_aggregates[index] = aggregate.replace(
@@ -2938,6 +3209,12 @@ def _session_membership_plan(
                 scalar_predicates[index] = predicate.replace(
                     placeholder,
                     namespaced_placeholder,
+                )
+                used = True
+        for index, predicate in enumerate(scalar_group_predicates):
+            if placeholder in predicate:
+                scalar_group_predicates[index] = predicate.replace(
+                    placeholder, namespaced_placeholder
                 )
                 used = True
         if used:
@@ -2968,7 +3245,17 @@ def _session_membership_plan(
         project_id,
         relational_filters,
     )
+    annotation_filters = []
     for leaf_index, item in enumerate(relational_filters):
+        config = item.get("filter_config") or item.get("filterConfig") or {}
+        column_type = str(config.get("col_type") or config.get("colType") or "").upper()
+        column_id = item.get("column_id") or item.get("columnId")
+        if column_type == "ANNOTATION" or (
+            column_type != "EVAL_METRIC"
+            and column_id in {"annotator", "has_annotation", "my_annotations"}
+        ):
+            annotation_filters.append(item)
+            continue
         predicate, leaf_params = compile_exact_graph_filter_predicates(
             [item],
             project_id=project_id,
@@ -2991,12 +3278,74 @@ def _session_membership_plan(
             )
             params[namespaced_name] = value
         relational_predicates.append(predicate)
+
+    # Reuse the list's finite, project-correlated Session/trace/span Score
+    # mapping. A Session Score has no trace/span FK; treating it as a trace
+    # annotation silently excludes it, even when the catalog and list agree.
+    relational_ctes, annotation_predicates, annotation_params = (
+        SessionListQueryBuilderV2(
+            project_id=project_id,
+            annotation_label_ids=annotation_label_ids,
+            bounded_internal_scan=True,
+        )._bounded_relational_membership_plan(
+            annotation_filters,
+            scope_to_request_window=True,
+            available_params={
+                "project_id": project_id,
+                "start_date": None,
+                "end_date": None,
+            },
+        )
+    )
+    for predicate in annotation_predicates:
+        # Annotation leaves have their own numbering; do not collide with an
+        # eval or other relation already compiled at the same leaf index.
+        predicate = predicate.replace("%(session_relational_", "%(session_annotation_")
+        relational_predicates.append(
+            predicate.replace("%(start_date)s", "%(snapshot_start_date)s").replace(
+                "%(end_date)s", "%(snapshot_end_date)s"
+            )
+        )
+    params.update(
+        {
+            name.replace("session_relational_", "session_annotation_", 1): value
+            for name, value in annotation_params.items()
+        }
+    )
     return _SessionMembershipPlan(
         scalar_aggregates=tuple(scalar_aggregates),
         scalar_predicates=tuple(scalar_predicates),
         relational_predicates=tuple(relational_predicates),
         params=params,
+        scalar_group_predicates=tuple(scalar_group_predicates),
+        scalar_witness_predicate=scalar_witness,
+        relational_ctes=relational_ctes,
     )
+
+
+def _latest_session_rows_sql() -> str:
+    """Keep mutable Session membership predicates on complete physical winners.
+
+    A plain subquery is not a FINAL barrier: ClickHouse can push a caller's
+    exact-time/root/session predicate below replacement. The singleton tuple
+    keeps those output columns dependent on expansion after FINAL, without
+    buffering the whole window or disabling optimizations for other reads.
+    """
+    return """
+        SELECT physical.* EXCEPT (start_time, is_deleted, parent_span_id, trace_session_id),
+            latest_membership.1 AS start_time,
+            latest_membership.2 AS is_deleted,
+            latest_membership.3 AS parent_span_id,
+            latest_membership.4 AS trace_session_id
+        FROM (
+            SELECT * FROM spans FINAL
+            PREWHERE project_id = toUUID(%(project_id)s)
+              AND toStartOfHour(start_time) >= %(snapshot_scan_start_date)s
+              AND toStartOfHour(start_time) < %(snapshot_scan_end_date)s
+        ) AS physical
+        ARRAY JOIN [tuple(physical.start_time, physical.is_deleted,
+                          physical.parent_span_id, physical.trace_session_id)] AS latest_membership
+    """
 
 
 def _session_aggregate_source_sql(
@@ -3009,6 +3358,8 @@ def _session_aggregate_source_sql(
     anchor_by_session_start: bool = False,
     candidate_trace_ids_sql: str | None = None,
     candidate_trace_ids_param: str | None = None,
+    use_scalar_witness: bool = False,
+    lean_graph_source: bool = False,
 ) -> tuple[str, dict[str, Any]]:
     """Build one full-window, remap-resolved per-session source.
 
@@ -3019,18 +3370,26 @@ def _session_aggregate_source_sql(
     ``snapshot_*`` parameters are deliberately distinct from an outer graph
     partition's dates so a session can never be split at an output-bucket
     boundary.
+
+    ``lean_graph_source`` (the Sessions graph statement) returns the same
+    rows with fewer ``spans FINAL`` passes. The candidate ids are read once,
+    into a scalar array, instead of once per reference. With no span-level
+    membership leaf, they come from a narrow non-FINAL read of root VERSIONS
+    in the anchor window: the latest live root of every exact candidate is
+    itself such a version, so this is a superset of the exact ids. A superset
+    changes no lookup the aggregate makes: every remap group containing an
+    exact id is touched either way, so its survivor is the same, and each
+    aggregate row's resolved id stays in ``selected_sessions``. A membership
+    leaf resolves spans whose session is NOT a candidate through the same
+    finite map, where a larger touched set can change the survivor of a remap
+    chain; filtered charts therefore keep the exact FINAL candidates (read
+    once). The aggregate itself always stays on ``spans FINAL``: the latest
+    version of a span decides whether it is a live root at all.
     """
 
-    span_filters = [
-        item
-        for item in filters
-        if (item.get("column_id") or item.get("columnId"))
-        not in {
-            *_SESSION_POST_AGGREGATE_FILTERS,
-            *_SESSION_MESSAGE_FILTER_COLUMNS,
-            *SESSION_ID_FILTER_COLS,
-        }
-    ]
+    if lean_graph_source and not anchor_by_session_start:
+        raise ValueError("the lean Session graph source is anchored by session start")
+    span_filters = _session_span_filters(filters)
     membership_plan = _session_membership_plan(
         project_id=project_id,
         filters=span_filters,
@@ -3046,6 +3405,10 @@ def _session_aggregate_source_sql(
         "project_id": project_id,
         "snapshot_start_date": start_date,
         "snapshot_end_date": end_date,
+        "snapshot_start_date_us": _unix_microseconds(start_date),
+        "snapshot_end_date_us": _unix_microseconds(end_date),
+        "start_date_us": _unix_microseconds(start_date),
+        "end_date_us": _unix_microseconds(end_date),
     }
     snapshot_scan_start = start_date.replace(minute=0, second=0, microsecond=0)
     snapshot_scan_end = end_date.replace(minute=0, second=0, microsecond=0)
@@ -3076,14 +3439,10 @@ def _session_aggregate_source_sql(
     session_root_rows = f"""
         SELECT *
         FROM (
-            SELECT *
-            FROM spans FINAL
-            PREWHERE project_id = toUUID(%(project_id)s)
-              AND start_time >= %(snapshot_scan_start_date)s
-              AND start_time < %(snapshot_scan_end_date)s
+            {_latest_session_rows_sql()}
         ) AS snapshot_roots
-        WHERE snapshot_roots.start_time >= %(snapshot_start_date)s
-          AND snapshot_roots.start_time < %(snapshot_end_date)s
+        WHERE snapshot_roots.start_time >= fromUnixTimestamp64Micro(%(snapshot_start_date_us)s)
+          AND snapshot_roots.start_time < fromUnixTimestamp64Micro(%(snapshot_end_date_us)s)
           {root_datetime_fragment}
           AND snapshot_roots.is_deleted = 0
           AND (snapshot_roots.parent_span_id IS NULL OR
@@ -3092,7 +3451,7 @@ def _session_aggregate_source_sql(
               toUUID('00000000-0000-0000-0000-000000000000')
     """
     session_id_clause = build_session_id_filter_clause(
-        filters,
+        [item for item in filters if not _is_raw_attribute_filter(item)],
         params,
         session_col=resolved_session_id,
         param_prefix="exact_session_id_",
@@ -3110,8 +3469,8 @@ def _session_aggregate_source_sql(
         )
     elif anchor_by_session_start:
         candidate_trace_clause = (
-            "AND candidate_rs.start_time >= %(start_date)s "
-            "AND candidate_rs.start_time < %(end_date)s"
+            "AND candidate_rs.start_time >= fromUnixTimestamp64Micro(%(start_date_us)s) "
+            "AND candidate_rs.start_time < fromUnixTimestamp64Micro(%(end_date_us)s)"
         )
     else:
         raise ValueError("session source requires an entity-safe candidate scope")
@@ -3121,8 +3480,49 @@ def _session_aggregate_source_sql(
         candidate_column="physical_session_id",
         prefix="candidate_session_remap",
         map_name="ts_survivor_map",
+        candidate_array=lean_graph_source,
     )
+    candidate_physical_session_ids = f"""
+    candidate_physical_session_ids AS (
+        SELECT DISTINCT
+            candidate_rs.trace_session_id AS physical_session_id
+        FROM (
+            {session_root_rows}
+        ) AS candidate_rs
+        WHERE 1 = 1
+          {candidate_trace_clause}
+    )"""
+    if lean_graph_source and _membership_plan_is_lean(membership_plan):
+        # Root versions only, no FINAL: every exact candidate's latest live
+        # root is one of these rows (same session, same exact start_time).
+        # PREWHERE keeps to the immutable project/replacement-hour key, as the
+        # FINAL source does; the root/time/session tests read four narrow
+        # columns, and a non-FINAL read may use the parent-span bloom index.
+        candidate_physical_session_ids = """
+    candidate_physical_session_ids AS (
+        SELECT DISTINCT trace_session_id AS physical_session_id
+        FROM spans
+        PREWHERE project_id = toUUID(%(project_id)s)
+          AND toStartOfHour(start_time) >= %(snapshot_scan_start_date)s
+          AND toStartOfHour(start_time) < %(snapshot_scan_end_date)s
+        WHERE parent_span_id = ''
+          AND start_time >= fromUnixTimestamp64Micro(%(snapshot_start_date_us)s)
+          AND start_time < fromUnixTimestamp64Micro(%(snapshot_end_date_us)s)
+          AND start_time >= fromUnixTimestamp64Micro(%(start_date_us)s)
+          AND start_time < fromUnixTimestamp64Micro(%(end_date_us)s)
+          AND trace_session_id !=
+              toUUID('00000000-0000-0000-0000-000000000000')
+    )"""
     membership_ctes = ""
+    if membership_plan.relational_ctes:
+        membership_ctes = f""",
+    resolved_root_sessions AS (
+        SELECT rs.project_id, rs.trace_id, {resolved_session_id} AS session_id
+        FROM ({session_root_rows}) AS rs
+        LEFT JOIN ts_survivor_map AS ts_remap
+          ON rs.trace_session_id = ts_remap.any_id
+        WHERE {resolved_session_id} IN (SELECT session_id FROM candidate_sessions)
+    ){membership_plan.relational_ctes}"""
     selected_session_predicates: list[str] = []
     if membership_plan.scalar_predicates:
         scalar_datetime_predicate, scalar_datetime_params = (
@@ -3142,13 +3542,36 @@ def _session_aggregate_source_sql(
             membership_plan.scalar_aggregates
         )
         scalar_membership_having = "\n          AND ".join(
-            f"countIf({predicate}) > 0"
-            for predicate in membership_plan.scalar_predicates
+            membership_plan.scalar_group_predicates
         )
         scalar_resolved_session_id = resolved_id_expr(
             "latest_trace_session_id",
             "scalar_ts_remap",
         )
+        scalar_identity_scope = ""
+        if use_scalar_witness and membership_plan.scalar_witness_predicate:
+            # Acquire a physical-identity superset, not raw session membership.
+            # The subsequent replay must see every version, including changed
+            # company/session values and tombstones outside the exact boundary
+            # but inside the same replacement-key hour. Never LIMIT this set.
+            membership_ctes += f""",
+    session_scalar_witness_ids AS (
+        SELECT DISTINCT
+            project_id, observation_type, service_name,
+            toStartOfHour(start_time) AS physical_hour, trace_id, id
+        FROM spans
+        PREWHERE project_id = toUUID(%(project_id)s)
+          AND start_time >= %(snapshot_scan_start_date)s
+          AND start_time < %(snapshot_scan_end_date)s
+        WHERE {membership_plan.scalar_witness_predicate}
+    )"""
+            scalar_identity_scope = """
+          AND (project_id, observation_type, service_name,
+               toStartOfHour(start_time), trace_id, id) IN (
+              SELECT project_id, observation_type, service_name,
+                     physical_hour, trace_id, id
+              FROM session_scalar_witness_ids
+          )"""
         membership_ctes += f""",
     latest_session_filter_spans AS (
         SELECT
@@ -3166,6 +3589,7 @@ def _session_aggregate_source_sql(
         PREWHERE project_id = toUUID(%(project_id)s)
           AND start_time >= %(snapshot_scan_start_date)s
           AND start_time < %(snapshot_scan_end_date)s
+          {scalar_identity_scope}
         GROUP BY
             project_id,
             observation_type,
@@ -3182,8 +3606,8 @@ def _session_aggregate_source_sql(
         LEFT JOIN ts_survivor_map AS scalar_ts_remap
           ON latest_trace_session_id = scalar_ts_remap.any_id
         WHERE latest_is_deleted = 0
-          AND latest_start_time >= %(snapshot_start_date)s
-          AND latest_start_time < %(snapshot_end_date)s
+          AND latest_start_time >= fromUnixTimestamp64Micro(%(snapshot_start_date_us)s)
+          AND latest_start_time < fromUnixTimestamp64Micro(%(snapshot_end_date_us)s)
           {scalar_datetime_fragment}
           AND isNotNull(latest_trace_session_id)
           AND latest_trace_session_id !=
@@ -3245,16 +3669,12 @@ def _session_aggregate_source_sql(
     having_clauses: list[str] = []
     if anchor_by_session_start:
         having_clauses.append(
-            "session_start >= %(start_date)s AND session_start < %(end_date)s"
+            "session_start >= fromUnixTimestamp64Micro(%(start_date_us)s) AND session_start < fromUnixTimestamp64Micro(%(end_date_us)s)"
         )
     if having_clause:
         having_clauses.append(having_clause)
     having_fragment = "HAVING " + " AND ".join(having_clauses) if having_clauses else ""
-    needs_message_aggregates = any(
-        (item.get("column_id") or item.get("columnId"))
-        in _SESSION_MESSAGE_FILTER_COLUMNS
-        for item in filters
-    )
+    needs_message_aggregates = _session_filters_need_message_aggregates(filters)
     message_aggregate_select = (
         ",\n        argMin(rs.input, rs.start_time) AS first_message,"
         "\n        argMax(rs.input, rs.start_time) AS last_message"
@@ -3267,16 +3687,7 @@ def _session_aggregate_source_sql(
         else ""
     )
     source = f"""
-    WITH
-    candidate_physical_session_ids AS (
-        SELECT DISTINCT
-            candidate_rs.trace_session_id AS physical_session_id
-        FROM (
-            {session_root_rows}
-        ) AS candidate_rs
-        WHERE 1 = 1
-          {candidate_trace_clause}
-    ),
+    WITH{candidate_physical_session_ids},
     {session_map_ctes},
     candidate_sessions AS (
         SELECT DISTINCT
@@ -3357,17 +3768,13 @@ def _session_trace_membership_sql(
         "candidate_member.trace_session_id",
         "candidate_member_remap",
     )
-    session_member_rows = """
+    session_member_rows = f"""
         SELECT *
         FROM (
-            SELECT *
-            FROM spans FINAL
-            PREWHERE project_id = toUUID(%(project_id)s)
-              AND start_time >= %(snapshot_scan_start_date)s
-              AND start_time < %(snapshot_scan_end_date)s
+            {_latest_session_rows_sql()}
         ) AS snapshot_members
-        WHERE snapshot_members.start_time >= %(snapshot_start_date)s
-          AND snapshot_members.start_time < %(snapshot_end_date)s
+        WHERE snapshot_members.start_time >= fromUnixTimestamp64Micro(%(snapshot_start_date_us)s)
+          AND snapshot_members.start_time < fromUnixTimestamp64Micro(%(snapshot_end_date_us)s)
           AND snapshot_members.is_deleted = 0
     """
     member_map_ctes = _finite_survivor_map_ctes(
@@ -3421,13 +3828,19 @@ _USER_EVAL_FILTER_COLUMNS = frozenset(
 
 def _is_user_date_filter(item: dict[str, Any]) -> bool:
     config = item.get("filter_config") or item.get("filterConfig") or {}
-    return (item.get("column_id") or item.get("columnId")) in {
-        "created_at",
-        "start_time",
-    } and (config.get("filter_type") or config.get("filterType")) in {
-        "datetime",
-        "date",
-    }
+    return (
+        not _is_raw_attribute_filter(item)
+        and (item.get("column_id") or item.get("columnId"))
+        in {
+            "created_at",
+            "start_time",
+        }
+        and (config.get("filter_type") or config.get("filterType"))
+        in {
+            "datetime",
+            "date",
+        }
+    )
 
 
 def _user_filter_clauses(
@@ -3455,7 +3868,7 @@ def _user_filter_clauses(
             continue
         column_id = item.get("column_id") or item.get("columnId")
         config = item.get("filter_config") or item.get("filterConfig") or {}
-        if column_id in _USER_OUTPUT_FILTER_MAP:
+        if column_id in _USER_OUTPUT_FILTER_MAP and not _is_raw_attribute_filter(item):
             output_column = _USER_OUTPUT_FILTER_MAP[column_id]
             clause, clause_params = UserListQueryBuilder._condition(
                 column=output_column,
@@ -3522,6 +3935,189 @@ def _user_filter_clauses(
     )
 
 
+def _user_membership_having(
+    filters: list[dict[str, Any]],
+    *,
+    project_id: str,
+    namespace: str = "user_member",
+) -> tuple[tuple[str, ...], str, dict[str, Any]]:
+    """Match independent leaves across a user's complete latest-live spans.
+
+    The per-span flags, the per-user condition and the parameters of
+    ``_user_membership_parts``.
+    """
+    flags, condition, params, _terms = _user_membership_parts(
+        filters, project_id=project_id, namespace=namespace
+    )
+    return flags, condition, params
+
+
+def _user_membership_parts(
+    filters: list[dict[str, Any]],
+    *,
+    project_id: str,
+    namespace: str = "user_member",
+) -> tuple[tuple[str, ...], str, dict[str, Any], tuple[MembershipTerm, ...]]:
+    """Match independent leaves across a user's complete latest-live spans.
+
+    Attribute negatives follow UsersListManager's collection semantics: a
+    selected typed domain must exist and no value may satisfy the positive
+    complement. Missing attributes cannot satisfy a negative. Null means no
+    value in that typed domain on any of the user's spans.
+
+    ``namespace`` prefixes every row-flag alias and parameter, so several
+    independently compiled leaves can share one statement.
+
+    Returns the per-span flags (``(predicate) AS alias``), the per-user
+    condition (the terms joined by AND), the parameters, and the terms
+    themselves (``MembershipTerm``), so a caller can tell an existence term
+    from an absence term without parsing the SQL.
+    """
+    clauses: list[str] = []
+    row_predicates: list[str] = []
+    terms: list[MembershipTerm] = []
+    params: dict[str, Any] = {}
+    negative_ops = {
+        "not_equals": "equals",
+        "not_in": "in",
+        "not_contains": "contains",
+        "not_between": "between",
+    }
+
+    def compile_leaf(item: dict[str, Any], prefix: str) -> str:
+        predicate, _, leaf_params, _ = _user_filter_clauses(
+            [item], project_id=project_id
+        )
+        for name, value in leaf_params.items():
+            placeholder = f"%({name})s"
+            if placeholder not in predicate:
+                continue
+            new_name = f"{prefix}_{name}"
+            predicate = predicate.replace(placeholder, f"%({new_name})s")
+            params[new_name] = value
+        return predicate
+
+    def group_match(predicate: str, comparison: Literal["> 0", "= 0"]) -> str:
+        alias = f"{namespace}_match_{len(row_predicates)}"
+        row_predicates.append(f"({predicate}) AS {alias}")
+        terms.append(MembershipTerm(alias, predicate, comparison))
+        return f"countIf({alias}) {comparison}"
+
+    for index, item in enumerate(filters):
+        if _is_user_date_filter(item):
+            continue
+        column_id = item.get("column_id") or item.get("columnId")
+        raw = _is_raw_attribute_filter(item)
+        if column_id in _USER_OUTPUT_FILTER_MAP and not raw:
+            continue
+        config = item.get("filter_config") or item.get("filterConfig") or {}
+        operation = config.get("filter_op") or config.get("filterOp")
+        prefix = f"{namespace}_{index}"
+        # Legacy raw keys without a family still follow the Users list's
+        # attribute vocabulary; declared relation/system leaves keep theirs.
+        family = UserListQueryBuilder._filter_col_type(item)
+        raw = raw or family in {"", "NORMAL"}
+        relation = family in {"ANNOTATION", "EVAL_METRIC"}
+        if (raw or relation) and operation == "is_null":
+            positive = {**item, "filter_config": {**config, "filter_op": "is_not_null"}}
+            clauses.append(group_match(compile_leaf(positive, prefix), "= 0"))
+        elif (raw or relation) and operation in negative_ops:
+            # Match the Users list's whole-user relation semantics: require
+            # presence, then reject every user with a forbidden positive value.
+            # One unannotated/nonmatching sibling is never an absence proof.
+            presence = (
+                {**item, "filter_config": {**config, "filter_op": "is_not_null"}}
+                if relation
+                else item
+            )
+            negative = compile_leaf(presence, prefix)
+            positive = {
+                **item,
+                "filter_config": {**config, "filter_op": negative_ops[operation]},
+            }
+            forbidden = compile_leaf(positive, f"{prefix}_forbidden")
+            clauses.extend(
+                (group_match(negative, "> 0"), group_match(forbidden, "= 0"))
+            )
+        else:
+            clauses.append(group_match(compile_leaf(item, prefix), "> 0"))
+    return (
+        tuple(row_predicates),
+        " AND ".join(clauses) or "1 = 1",
+        params,
+        tuple(terms),
+    )
+
+
+def compile_user_membership_leaf(
+    item: dict[str, Any], *, project_id: str, namespace: str
+) -> tuple[tuple[str, ...], str, dict[str, Any], tuple[MembershipTerm, ...]]:
+    """The users graph's own membership SQL for one filter leaf.
+
+    ``_user_membership_parts`` for ``[item]`` under ``namespace``: the per-span
+    flags, the per-user condition over them, their parameters and the
+    condition's terms. The Users list decides native span-dimension leaves
+    with exactly this SQL so both surfaces answer the same leaf identically.
+    """
+
+    return _user_membership_parts([item], project_id=project_id, namespace=namespace)
+
+
+def _owned_user_eval_config_ids(
+    project_id: str,
+    *,
+    started: float | None,
+    remaining_read_ms: Callable[[int], int] | None = None,
+) -> tuple[str, ...]:
+    """Prove project ownership without a PostgreSQL statement execution cap."""
+    if started is None:
+        raise ExactGraphReadError("Evaluation ownership requires a request deadline")
+
+    def remaining_metadata_ms() -> int:
+        timeout_ms = _remaining_exact_graph_timeout_ms(started)
+        if remaining_read_ms is not None:
+            timeout_ms = min(timeout_ms, int(remaining_read_ms(timeout_ms)))
+            if timeout_ms < settings.EXACT_GRAPH_MIN_REMAINING_MS:
+                raise ReadDeadlineExceeded(
+                    "Evaluation ownership request deadline exceeded"
+                )
+        return timeout_ms
+
+    remaining_metadata_ms()
+    try:
+        project_id = str(UUID(str(project_id)))
+    except (ValueError, TypeError, AttributeError):
+        raise ExactGraphReadError(
+            "Evaluation ownership requires a valid project"
+        ) from None
+
+    try:
+        with application_postgres_reads(
+            connection=connection,
+            atomic=transaction.atomic,
+            check_request=remaining_metadata_ms,
+            read_only=True,
+        ):
+            config_ids = tuple(
+                str(UUID(str(config_id)))
+                for config_id in CustomEvalConfig.no_workspace_objects.filter(
+                    project_id=project_id,
+                    deleted=False,
+                ).values_list("id", flat=True)
+            )
+        remaining_metadata_ms()
+        return config_ids
+    except (ExactGraphReadError, ReadDeadlineExceeded):
+        raise
+    except Exception:
+        # Raw driver timeout-control errors bypass Django's DatabaseError
+        # translation. They also invalidate the ownership proof; never turn
+        # them into an empty config set or expose database error details.
+        raise ExactGraphReadError(
+            "Evaluation metadata is temporarily unavailable. Retry."
+        ) from None
+
+
 def _user_aggregate_source_sql(
     *,
     project_id: str,
@@ -3531,6 +4127,10 @@ def _user_aggregate_source_sql(
     include_trace_ids: bool,
     candidate_trace_ids_sql: str | None = None,
     candidate_trace_ids_param: str | None = None,
+    all_snapshot_users: bool = False,
+    reuse_outer_snapshot: bool = False,
+    started: float | None = None,
+    remaining_read_ms: Callable[[int], int] | None = None,
 ) -> tuple[str, dict[str, Any], bool]:
     """Build the shared full-window, remap-resolved user selector.
 
@@ -3540,21 +4140,52 @@ def _user_aggregate_source_sql(
     evaluated under one frozen request window.
     """
 
-    span_predicate, user_predicate, filter_params, needs_eval = _user_filter_clauses(
+    # Only the full system-graph reader owns a matching outer latest_spans /
+    # eu_survivor_map context. Standalone and trace-partition callers must
+    # retain their own physical replay and complete-user candidate expansion.
+    if reuse_outer_snapshot and (not all_snapshot_users or include_trace_ids):
+        raise ValueError("outer user snapshot reuse requires full system-graph scope")
+
+    _, user_predicate, filter_params, needs_eval = _user_filter_clauses(
         filters, project_id=project_id
+    )
+    user_membership_rows, user_membership, membership_params = _user_membership_having(
+        filters, project_id=project_id
+    )
+    user_membership_select = (
+        ",\n            " + ",\n            ".join(user_membership_rows)
+        if user_membership_rows
+        else ""
     )
     resolved_eu = resolved_id_expr("rs.end_user_id", "span_eu_remap")
     resolved_session = resolved_id_expr("rs.trace_session_id", "span_ts_remap")
     resolved_dimension_eu = resolved_id_expr("eu.end_user_id", "eu_remap")
     params: dict[str, Any] = {
         **filter_params,
+        **membership_params,
         "project_id": project_id,
         "snapshot_start_date": start_date,
         "snapshot_end_date": end_date,
     }
-    if candidate_trace_ids_sql and candidate_trace_ids_param:
+    if (
+        sum(
+            bool(value)
+            for value in (
+                candidate_trace_ids_sql,
+                candidate_trace_ids_param,
+                all_snapshot_users,
+            )
+        )
+        > 1
+    ):
         raise ValueError("only one candidate trace scope may be supplied")
-    if candidate_trace_ids_sql:
+    if all_snapshot_users:
+        # The unpartitioned system graph's output and membership windows are
+        # identical. Every latest-live span is already an eligible candidate;
+        # recursing through the outer graph's trace CTE only repeats the scan
+        # and exponentially expands remap subqueries in the CH25 analyzer.
+        candidate_trace_clause = "1 = 1"
+    elif candidate_trace_ids_sql:
         candidate_trace_clause = (
             f"toString(candidate_rs.trace_id) IN ({candidate_trace_ids_sql})"
         )
@@ -3564,12 +4195,16 @@ def _user_aggregate_source_sql(
         )
     else:
         raise ValueError("user source requires an entity-safe candidate scope")
-    end_user_map_ctes = _finite_survivor_map_ctes(
-        remap_table="end_user_id_remap",
-        candidate_relation="candidate_physical_end_user_ids",
-        candidate_column="physical_end_user_id",
-        prefix="candidate_end_user_remap",
-        map_name="eu_survivor_map",
+    end_user_map_ctes = (
+        ""
+        if reuse_outer_snapshot
+        else _finite_survivor_map_ctes(
+            remap_table="end_user_id_remap",
+            candidate_relation="candidate_physical_end_user_ids",
+            candidate_column="physical_end_user_id",
+            prefix="candidate_end_user_remap",
+            map_name="eu_survivor_map",
+        )
     )
     session_map_ctes = _finite_survivor_map_ctes(
         remap_table="trace_session_id_remap",
@@ -3591,7 +4226,20 @@ def _user_aggregate_source_sql(
         "            coalesce(ue.avg_output_float, 0) AS avg_output_float"
     )
     if needs_eval:
-        eval_table, eval_live = eval_logger_source("eval_scan")
+        # The logger has no project_id. Match UsersListManager._read_evals /
+        # UserListQueryBuilder.build_eval_query: only live configurations owned
+        # by this request project may contribute, even if trace IDs collide.
+        params["user_eval_config_ids"] = _owned_user_eval_config_ids(
+            project_id, started=started, remaining_read_ms=remaining_read_ms
+        )
+        eval_scope = (
+            "eval_scan.custom_eval_config_id IN %(user_eval_config_ids)s"
+            if params["user_eval_config_ids"]
+            else "0 = 1"
+        )
+        eval_table, eval_live = eval_logger_source(
+            "eval_scan", include_cdc_tombstone_guard=True
+        )
         eval_cte = f""",
         user_eval_metrics AS (
             SELECT
@@ -3611,6 +4259,7 @@ def _user_aggregate_source_sql(
             ) AS ut
               ON toString(eval_scan.trace_id) = ut.trace_id
             WHERE {eval_live}
+              AND {eval_scope}
             GROUP BY ut.end_user_id
         )"""
         eval_join = (
@@ -3633,20 +4282,74 @@ def _user_aggregate_source_sql(
         ",\n            usm.user_trace_ids" if include_trace_ids else ""
     )
 
-    source = f"""
-    WITH
-    candidate_physical_end_user_ids AS (
-        SELECT DISTINCT
-            candidate_rs.end_user_id AS physical_end_user_id
-        FROM spans AS candidate_rs FINAL
-        PREWHERE candidate_rs.project_id = toUUID(%(project_id)s)
-          AND candidate_rs.start_time >= %(snapshot_start_date)s
-          AND candidate_rs.start_time < %(snapshot_end_date)s
-        WHERE candidate_rs.is_deleted = 0
-          AND isNotNull(candidate_rs.end_user_id)
-          AND {candidate_trace_clause}
-    ),
-    {end_user_map_ctes},
+    # A full-window graph already includes every physical user in the
+    # snapshot. Re-discovering that population through remap-expanded IN
+    # subqueries cannot add a span; it only repeatedly expands the same scan
+    # in ClickHouse's CTE analyzer. Partitioned consumers still need the
+    # candidate expansion to hydrate the complete selected user's window.
+    scan_start = start_date.replace(minute=0, second=0, microsecond=0)
+    scan_end = end_date.replace(minute=0, second=0, microsecond=0)
+    if scan_end < end_date:
+        scan_end += timedelta(hours=1)
+    params.update(
+        user_membership_scan_start=scan_start,
+        user_membership_scan_end=scan_end,
+        user_membership_start_us=_unix_microseconds(start_date),
+        user_membership_end_us=_unix_microseconds(end_date),
+    )
+    snapshot_rows = f"""
+        SELECT *
+        FROM ({
+        latest_physical_span_rows_sql(
+            project_predicate="project_id = toUUID(%(project_id)s)",
+            start_hour="%(user_membership_scan_start)s",
+            end_hour="%(user_membership_scan_end)s",
+            mutable_columns=(
+                "start_time",
+                "is_deleted",
+                "end_user_id",
+                "trace_session_id",
+            ),
+        )
+    }) AS user_snapshot_rows
+        WHERE is_deleted = 0
+          AND isNotNull(end_user_id)
+          AND start_time >= fromUnixTimestamp64Micro(%(user_membership_start_us)s, 'UTC')
+          AND start_time < fromUnixTimestamp64Micro(%(user_membership_end_us)s, 'UTC')
+    """
+    if reuse_outer_snapshot:
+        # Do not redeclare either shared CTE: a same-name wrapper would shadow
+        # the outer relation and become a recursive/self-referencing query.
+        # Match the outer graph's physical domain (non-NULL). A raw NIL may
+        # resolve via another live alias's touched group; rejecting it only
+        # here would make membership metrics disagree with output metrics.
+        snapshot_rows = """
+            SELECT * FROM latest_spans
+            WHERE isNotNull(end_user_id)
+        """
+    physical_population_predicate = (
+        """
+          AND end_user_id IN (
+              SELECT physical_end_user_id FROM candidate_physical_users
+          )
+    """
+        if not all_snapshot_users
+        else ""
+    )
+    dimension_population_predicate = (
+        f"""
+          AND eu.end_user_id IN (
+              SELECT physical_end_user_id FROM candidate_physical_users
+          )
+          AND {resolved_dimension_eu} IN (SELECT end_user_id FROM candidate_users)
+    """
+        if not all_snapshot_users
+        else ""
+    )
+    # Curated dimensions are still joined to user_span_metrics below. Scanning
+    # all dimensions in this one project cannot introduce an inactive user.
+    user_population_ctes = (
+        f"""
     candidate_users AS (
         SELECT DISTINCT
             {resolved_id_expr("physical_end_user_id", "candidate_eu_remap")}
@@ -3663,18 +4366,43 @@ def _user_aggregate_source_sql(
         FROM eu_survivor_map
         WHERE survivor_id IN (SELECT end_user_id FROM candidate_users)
     ),
+    """
+        if not all_snapshot_users
+        else ""
+    )
+
+    end_user_population_ctes = (
+        ""
+        if reuse_outer_snapshot
+        else f"""
+    candidate_physical_end_user_ids AS (
+        SELECT DISTINCT
+            candidate_rs.end_user_id AS physical_end_user_id
+        FROM ({snapshot_rows}) AS candidate_rs
+        WHERE {candidate_trace_clause}
+    ),
+    {end_user_map_ctes},
+    {user_population_ctes}
+    """
+    )
+    # Reject an unresolved canonical sentinel, not a physical alias before
+    # remapping. The outer IN membership then enforces this same user domain.
+    valid_user_predicate = (
+        """
+        WHERE isNotNull(usm.end_user_id)
+          AND usm.end_user_id != toUUID('00000000-0000-0000-0000-000000000000')
+    """
+        if reuse_outer_snapshot
+        else ""
+    )
+    source = f"""
+    WITH
+    {end_user_population_ctes}
     candidate_user_spans AS (
         SELECT *
-        FROM spans FINAL
-        PREWHERE project_id = toUUID(%(project_id)s)
-          AND start_time >= %(snapshot_start_date)s
-          AND start_time < %(snapshot_end_date)s
-        WHERE is_deleted = 0
-          AND isNotNull(end_user_id)
-          AND end_user_id IN (
-              SELECT physical_end_user_id FROM candidate_physical_users
-          )
-          AND {span_predicate}
+        FROM ({snapshot_rows}) AS snapshot_user_population
+        WHERE 1 = 1
+          {physical_population_predicate}
     ),
     candidate_user_session_ids AS (
         SELECT DISTINCT trace_session_id AS physical_session_id
@@ -3698,6 +4426,7 @@ def _user_aggregate_source_sql(
             rs.latency_ms AS latency_ms,
             rs.observation_type AS observation_type,
             rs.status AS status
+            {user_membership_select}
         FROM candidate_user_spans AS rs
         LEFT JOIN eu_survivor_map AS span_eu_remap
           ON rs.end_user_id = span_eu_remap.any_id
@@ -3720,10 +4449,7 @@ def _user_aggregate_source_sql(
         WHERE eu.project_id = toUUID(%(project_id)s)
           AND eu.is_deleted = 0
           AND notEmpty(eu.user_id)
-          AND eu.end_user_id IN (
-              SELECT physical_end_user_id FROM candidate_physical_users
-          )
-          AND {resolved_dimension_eu} IN (SELECT end_user_id FROM candidate_users)
+          {dimension_population_predicate}
     ),
     user_dimensions AS (
         SELECT
@@ -3776,6 +4502,7 @@ def _user_aggregate_source_sql(
             {internal_trace_ids_select}
         FROM resolved_spans
         GROUP BY end_user_id
+        HAVING {user_membership}
     )
     {eval_cte},
     user_rows AS (
@@ -3804,6 +4531,7 @@ def _user_aggregate_source_sql(
         INNER JOIN user_dimensions AS ud
           ON ud.end_user_id = usm.end_user_id
         {eval_join}
+        {valid_user_predicate}
     )
     SELECT *
     FROM user_rows
@@ -3820,6 +4548,10 @@ def _user_id_membership_sql(
     end_date: datetime,
     candidate_trace_ids_sql: str | None = None,
     candidate_trace_ids_param: str | None = None,
+    all_snapshot_users: bool = False,
+    reuse_outer_snapshot: bool = False,
+    started: float | None = None,
+    remaining_read_ms: Callable[[int], int] | None = None,
 ) -> tuple[str, dict[str, Any], bool]:
     source, params, needs_eval = _user_aggregate_source_sql(
         project_id=project_id,
@@ -3829,6 +4561,10 @@ def _user_id_membership_sql(
         include_trace_ids=False,
         candidate_trace_ids_sql=candidate_trace_ids_sql,
         candidate_trace_ids_param=candidate_trace_ids_param,
+        all_snapshot_users=all_snapshot_users,
+        reuse_outer_snapshot=reuse_outer_snapshot,
+        started=started,
+        remaining_read_ms=remaining_read_ms,
     )
     return (
         f"SELECT end_user_id FROM ({source}) AS selected_users",
@@ -3869,6 +4605,8 @@ def _user_trace_membership_sql(
     end_date: datetime,
     candidate_trace_ids_sql: str | None = None,
     candidate_trace_ids_param: str | None = None,
+    started: float | None = None,
+    remaining_read_ms: Callable[[int], int] | None = None,
 ) -> tuple[str, dict[str, Any], bool]:
     """Return partition candidates whose complete user is selected."""
 
@@ -3880,6 +4618,8 @@ def _user_trace_membership_sql(
         include_trace_ids=False,
         candidate_trace_ids_sql=candidate_trace_ids_sql,
         candidate_trace_ids_param=candidate_trace_ids_param,
+        started=started,
+        remaining_read_ms=remaining_read_ms,
     )
     if candidate_trace_ids_sql:
         candidate_clause = (
@@ -3907,11 +4647,22 @@ def _user_trace_membership_sql(
         WITH
         candidate_members AS (
             SELECT *
-            FROM spans AS candidate_member FINAL
-            PREWHERE candidate_member.project_id = toUUID(%(project_id)s)
-              AND candidate_member.start_time >= %(snapshot_start_date)s
+            FROM ({
+            latest_physical_span_rows_sql(
+                project_predicate="project_id = toUUID(%(project_id)s)",
+                start_hour="%(user_membership_scan_start)s",
+                end_hour="%(user_membership_scan_end)s",
+                mutable_columns=(
+                    "start_time",
+                    "is_deleted",
+                    "end_user_id",
+                    "trace_session_id",
+                ),
+            )
+        }) AS candidate_member
+            WHERE candidate_member.start_time >= %(snapshot_start_date)s
               AND candidate_member.start_time < %(snapshot_end_date)s
-            WHERE candidate_member.is_deleted = 0
+              AND candidate_member.is_deleted = 0
               AND isNotNull(candidate_member.end_user_id)
               AND {candidate_clause}
         ),
@@ -3944,8 +4695,15 @@ def read_exact_user_system_graph(
 ) -> dict[str, Any]:
     """Aggregate the complete latest-live span population at user grain."""
 
+    # Local import keeps this system-graph-only optimization separate from
+    # the shared eval/annotation selectors and their membership contracts.
+    from tracer.services.clickhouse.v2.query_builders.user_time_series import (
+        UserGraphMembershipPlan,
+    )
+
     started = monotonic()
     start_date, end_date, empty = _snapshot_window(filters)
+    interval = _effective_graph_interval(interval, start_date, end_date)
     if empty:
         builder = UserTimeSeriesQueryBuilderV2(
             project_id=str(project_id),
@@ -3969,31 +4727,61 @@ def read_exact_user_system_graph(
             started=started,
         )
 
-    has_entity_filter = any(not _is_user_date_filter(item) for item in filters)
-    if has_entity_filter:
+    user_membership_plan = None
+    entity_filters = [item for item in filters if not _is_user_date_filter(item)]
+    if entity_filters and all(
+        _is_raw_attribute_filter(item) for item in entity_filters
+    ):
+        rows, having, user_membership_params = _user_membership_having(
+            filters, project_id=str(project_id)
+        )
+        user_membership_plan = UserGraphMembershipPlan.from_compiled(rows, having)
+        user_membership_sql = _active_user_dimension_membership_sql()
+    elif entity_filters:
         user_membership_sql, user_membership_params, _needs_eval = (
             _user_id_membership_sql(
                 project_id=str(project_id),
                 filters=filters,
                 start_date=start_date,
                 end_date=end_date,
-                # UserTimeSeriesQueryBuilderV2 defines this request-window CTE.
-                # The membership selector hydrates users owning one of those
-                # candidates.
-                candidate_trace_ids_sql=(
-                    "SELECT toString(trace_id) FROM candidate_trace_ids"
-                ),
+                # This reader owns one full-window statement, not an output
+                # partition. Do not recursively inline its outer trace CTE.
+                all_snapshot_users=True,
+                reuse_outer_snapshot=True,
+                started=started,
+                remaining_read_ms=getattr(analytics, "remaining_read_ms", None),
             )
         )
     else:
         user_membership_sql = _active_user_dimension_membership_sql()
         user_membership_params = {}
+    # Freeze positive bounds for the outer builder too. In particular, an
+    # implicit/default range must not advance between this reader and build()
+    # and accidentally select the narrower trace-partition population path.
+    output_filters = [
+        deepcopy(item)
+        for item in filters
+        if not _is_user_date_filter(item)
+        or BaseQueryBuilder.is_datetime_complement_filter(item)
+    ]
+    output_filters.append(
+        {
+            "column_id": "start_time",
+            "filter_config": {
+                "col_type": "SYSTEM_METRIC",
+                "filter_type": "datetime",
+                "filter_op": "between",
+                "filter_value": [start_date, end_date],
+            },
+        }
+    )
     builder = UserTimeSeriesQueryBuilderV2(
         project_id=str(project_id),
-        filters=filters,
+        filters=output_filters,
         interval=interval,
         user_membership_sql=user_membership_sql,
         user_membership_params=user_membership_params,
+        user_membership_plan=user_membership_plan,
         exact_snapshot_start=start_date,
         exact_snapshot_end=end_date,
     )
@@ -4003,7 +4791,7 @@ def read_exact_user_system_graph(
         query=query,
         params=params,
         started=started,
-        settings=EXACT_GRAPH_READ_SETTINGS,
+        settings=EXACT_GRAPH_USER_READ_SETTINGS,
     )
     rows = list(result.data or [])
     columns = list(result.columns or [])
@@ -4034,6 +4822,152 @@ def read_exact_user_system_graph(
     )
 
 
+def _session_numeric_absence_probe_sql(
+    *,
+    project_id: str,
+    filters: list[dict[str, Any]],
+    start_date: datetime,
+    end_date: datetime,
+) -> tuple[str, dict[str, Any]] | None:
+    """An absent raw numeric witness proves absence; a present one proves nothing."""
+    leaves = [
+        item
+        for item in filters
+        if _is_raw_attribute_filter(item)
+        or (item.get("column_id") or item.get("columnId"))
+        not in {"created_at", "start_time"}
+    ]
+    if len(leaves) != 1 or not _is_raw_attribute_filter(leaves[0]):
+        return None
+    config = leaves[0].get("filter_config") or leaves[0].get("filterConfig") or {}
+    if (config.get("filter_type") or config.get("filterType")) != "number":
+        return None
+    plan = _session_membership_plan(project_id=project_id, filters=filters)
+    if not plan.scalar_witness_predicate:
+        return None
+    scan_start = start_date.replace(minute=0, second=0, microsecond=0)
+    scan_end = end_date.replace(minute=0, second=0, microsecond=0)
+    if scan_end < end_date:
+        scan_end += timedelta(hours=1)
+    return (
+        f"""
+        SELECT 1 AS has_raw_witness
+        FROM spans
+        PREWHERE project_id = toUUID(%(project_id)s)
+          AND start_time >= fromUnixTimestamp64Micro(%(session_absence_start_us)s)
+          AND start_time < fromUnixTimestamp64Micro(%(session_absence_end_us)s)
+        WHERE {plan.scalar_witness_predicate}
+        LIMIT 1
+        """,
+        {
+            **plan.params,
+            "project_id": project_id,
+            "session_absence_start_us": _unix_microseconds(scan_start),
+            "session_absence_end_us": _unix_microseconds(scan_end),
+        },
+    )
+
+
+def _session_graph_read_settings() -> dict[str, Any]:
+    """The background exact-aggregation worker's settings for the Sessions
+    graph statement (an inline run keeps ``EXACT_GRAPH_READ_SETTINGS``).
+
+    It is the shared exact envelope with one change: the statement may use
+    ``EXACT_GRAPH_SESSION_READ_MAX_THREADS`` workers, which parallel FINAL
+    spreads over key ranges (ranges no fresh part overlaps skip the merge).
+    Per-partition FINAL (``do_not_merge_across_partitions_select_final``) is
+    deliberately not set: on a merged day part plus small fresh version parts
+    it sends every row through the merge and measured 2-3x more CPU. Block
+    sizes stay the shared ones; larger blocks multiplied memory ~5x. The
+    byte, memory, result and deadline ceilings stay the shared ones. Built per
+    call so a runtime or test override of the shared dict is honoured.
+    Interactive statements keep ``FILTER_SELECTOR_MAX_THREADS``.
+
+    A first/last-message chart does not use this: see
+    ``read_exact_session_system_graph``.
+    """
+
+    return {
+        **EXACT_GRAPH_READ_SETTINGS,
+        "max_threads": settings.EXACT_GRAPH_SESSION_READ_MAX_THREADS,
+    }
+
+
+def session_graph_reads_lean_roots(
+    *, project_id: str, filters: list[dict[str, Any]]
+) -> bool:
+    """Whether the Sessions graph statement for ``filters`` is the lean one.
+
+    That is the statement whose candidates come from one narrow read of root
+    versions (``_session_aggregate_source_sql``'s ``lean_graph_source`` with
+    no span-level membership leaf) and that runs alone: no scalar witness, no
+    absence probe, no first/last-message aggregate. Window, session-id and
+    post-aggregate (duration, cost, tokens, trace count) filters keep that
+    shape; span-level and message filters do not. Only this shape is costed by
+    ``session_graph_root_estimate_sql``: its work follows the live roots of
+    the window, which is what that estimate counts.
+
+    It runs on the request path, so it reads no metadata: ``has_annotation``
+    (whose plan reads the project's labels from PostgreSQL) is always a
+    span-level leaf, and a plan that cannot be built is not lean - the
+    background path owns that error and reports it as a failed refresh.
+    """
+
+    if _session_filters_need_message_aggregates(filters):
+        return False
+    span_filters = _session_span_filters(filters)
+    if any(
+        not _is_raw_attribute_filter(item)
+        and (item.get("column_id") or item.get("columnId")) == "has_annotation"
+        for item in span_filters
+    ):
+        return False
+    try:
+        plan = _session_membership_plan(project_id=project_id, filters=span_filters)
+    except Exception:
+        logger.warning("session_graph_lean_classification_failed", exc_info=True)
+        return False
+    return _membership_plan_is_lean(plan)
+
+
+def session_graph_root_estimate_sql(
+    *, project_id: str, filters: list[dict[str, Any]]
+) -> tuple[str, dict[str, Any]] | None:
+    """``EXPLAIN ESTIMATE`` of the lean Sessions statement's root read.
+
+    The rows are the live-root candidates of the window - project, window,
+    ``is_deleted = 0``, ``parent_span_id = ''``, a session - answered from part
+    metadata alone: the rows of the granules the primary key and skip indexes
+    (or ``proj_root_spans``, ordered by exactly these keys, when the optimizer
+    picks it) cannot exclude. It is therefore an upper bound rounded up to
+    whole granules of the rows present when it runs. ``None`` for an empty window:
+    the reader then sends no statement at all.
+    """
+
+    start_date, end_date, empty = _snapshot_window(filters)
+    if empty:
+        return None
+    return (
+        """
+        EXPLAIN ESTIMATE
+        SELECT trace_session_id
+        FROM spans
+        WHERE project_id = toUUID(%(project_id)s)
+          AND is_deleted = 0
+          AND parent_span_id = ''
+          AND start_time >= fromUnixTimestamp64Micro(%(start_date_us)s)
+          AND start_time < fromUnixTimestamp64Micro(%(end_date_us)s)
+          AND isNotNull(trace_session_id)
+          AND trace_session_id != toUUID('00000000-0000-0000-0000-000000000000')
+        """,
+        {
+            "project_id": project_id,
+            "start_date_us": _unix_microseconds(start_date),
+            "end_date_us": _unix_microseconds(end_date),
+        },
+    )
+
+
 def read_exact_session_system_graph(
     *,
     analytics: Any,
@@ -4041,9 +4975,21 @@ def read_exact_session_system_graph(
     filters: list[dict[str, Any]],
     interval: str,
     metric_id: str,
+    wall_ms: int | None = None,
 ) -> dict[str, Any]:
+    """The one statement behind every Sessions system chart.
+
+    The exact-aggregation worker runs it (no ``wall_ms``) on
+    ``GRAPH_BACKGROUND_WALL_MS`` with the session thread budget. A caller's
+    ``wall_ms`` runs the SAME statement (same SQL, same parameters, same
+    numbers) inline on that wall with the shared exact settings - one thread,
+    as other interactive reads - for a scope whose root estimate is
+    affordable (``session_graph``).
+    """
+
     started = monotonic()
     start_date, end_date, empty = _snapshot_window(filters)
+    interval = _effective_graph_interval(interval, start_date, end_date)
     if empty:
         return _finalize_exact_graph_payload(
             {
@@ -4053,9 +4999,11 @@ def read_exact_session_system_graph(
                     started=started,
                     query_count=0,
                     rows_returned=0,
+                    wall_ms=wall_ms,
                 ),
             },
             started=started,
+            wall_ms=wall_ms,
         )
     bucket_fn = BaseQueryBuilder.time_bucket_expr(interval)
     session_value = {
@@ -4076,47 +5024,126 @@ def read_exact_session_system_graph(
     }.get(metric_id)
     if session_value is None:
         raise ValueError("Unsupported session system metric")
-    session_source, query_params = _session_aggregate_source_sql(
-        project_id=project_id,
-        filters=filters,
-        start_date=start_date,
-        end_date=end_date,
-        include_trace_ids=False,
-        anchor_by_session_start=True,
-    )
-    query_params = {
-        **query_params,
-        "start_date": start_date,
-        "end_date": end_date,
-    }
-    query = f"""
+
+    def build_query(*, use_scalar_witness: bool) -> tuple[str, dict[str, Any]]:
+        session_source, query_params = _session_aggregate_source_sql(
+            project_id=project_id,
+            filters=filters,
+            start_date=start_date,
+            end_date=end_date,
+            include_trace_ids=False,
+            anchor_by_session_start=True,
+            use_scalar_witness=use_scalar_witness,
+            lean_graph_source=True,
+        )
+        query_params = {
+            **query_params,
+            "start_date": start_date,
+            "end_date": end_date,
+            "start_date_us": _unix_microseconds(start_date),
+            "end_date_us": _unix_microseconds(end_date),
+        }
+        query = f"""
     SELECT
         {bucket_fn}(session_start) AS time_bucket,
         {session_value} AS value,
         count() AS primary_traffic
     FROM ({session_source}) AS exact_sessions
-    WHERE session_start >= %(start_date)s
-      AND session_start < %(end_date)s
+    WHERE session_start >= fromUnixTimestamp64Micro(%(start_date_us)s)
+      AND session_start < fromUnixTimestamp64Micro(%(end_date_us)s)
     GROUP BY time_bucket
     ORDER BY time_bucket
     """
-    result = _execute_direct_exact_graph_query(
-        analytics=analytics,
-        query=query,
-        params=query_params,
-        started=started,
-        settings=EXACT_GRAPH_READ_SETTINGS,
+        return query, query_params
+
+    # On the background worker the statement may use the session thread
+    # budget; inline it keeps the shared single-thread exact settings. The
+    # absence probe below keeps the shared exact settings. A first/last-message
+    # filter selects on argMin/argMax(input, start_time), which has no
+    # tie-break: roots tied at one start_time resolve by read order, which is
+    # stable on one thread and not on several. Such a chart keeps dev's
+    # single-thread settings for the main, witness and fallback statements
+    # (the witness copies ``graph_settings``), so it selects dev's sessions.
+    if wall_ms is not None or _session_filters_need_message_aggregates(filters):
+        graph_settings = dict(EXACT_GRAPH_READ_SETTINGS)
+    else:
+        graph_settings = _session_graph_read_settings()
+    query, query_params = build_query(use_scalar_witness=True)
+    has_witness = "session_scalar_witness_ids AS (" in query
+    query_count = 1
+    probe = _session_numeric_absence_probe_sql(
+        project_id=project_id,
+        filters=filters,
+        start_date=start_date,
+        end_date=end_date,
     )
+    probe_result = None
+    if probe is not None:
+        probe_result = _execute_direct_exact_graph_query(
+            analytics=analytics,
+            query=probe[0],
+            params=probe[1],
+            started=started,
+            settings=EXACT_GRAPH_READ_SETTINGS,
+            wall_ms=wall_ms,
+        )
+        if probe_result.data:
+            query_count += 1
+    if probe_result is not None and not probe_result.data:
+        # Only a successful raw-absence proof bypasses full session work.
+        # Keep normal zero-filled graph formatting below, not the empty-window path.
+        result = probe_result
+    elif has_witness:
+        witness_settings = dict(graph_settings)
+        for name, ceiling in (
+            ("max_bytes_to_read", _SESSION_SCALAR_WITNESS_MAX_BYTES),
+            ("max_rows_in_set", _SESSION_SCALAR_WITNESS_MAX_SET_ROWS),
+            ("max_bytes_in_set", _SESSION_SCALAR_WITNESS_MAX_SET_BYTES),
+        ):
+            existing = int(witness_settings.get(name) or 0)
+            witness_settings[name] = min(existing, ceiling) if existing else ceiling
+        # A set overflow must never mean a partial/empty successful graph.
+        witness_settings["set_overflow_mode"] = "throw"
+        try:
+            result = analytics.execute_ch_query(
+                query,
+                query_params,
+                timeout_ms=_remaining_exact_graph_timeout_ms(
+                    started, _SESSION_SCALAR_WITNESS_TIMEOUT_MS, wall_ms=wall_ms
+                ),
+                settings=witness_settings,
+            )
+        except Exception as exc:
+            if not is_read_budget_error(exc):
+                raise
+            # No witness IDs or partial graph rows escape the failed statement.
+            # Rebuild the original unpruned source under the SAME refresh wall.
+            query, query_params = build_query(use_scalar_witness=False)
+            query_count += 1
+            result = _execute_direct_exact_graph_query(
+                analytics=analytics,
+                query=query,
+                params=query_params,
+                started=started,
+                settings=graph_settings,
+                wall_ms=wall_ms,
+            )
+    else:
+        result = _execute_direct_exact_graph_query(
+            analytics=analytics,
+            query=query,
+            params=query_params,
+            started=started,
+            settings=graph_settings,
+            wall_ms=wall_ms,
+        )
     rows = list(result.data or [])
     columns = list(result.columns or [])
-    values: dict[str, tuple[float, int]] = {}
+    values: dict[datetime, tuple[float, int]] = {}
     for row in rows:
-        timestamp = _row_value(row, columns, "time_bucket", None)
-        if timestamp is None:
+        key = _bucket_key(_row_value(row, columns, "time_bucket", None))
+        if key is None:
             continue
-        key = (
-            timestamp.isoformat() if hasattr(timestamp, "isoformat") else str(timestamp)
-        )
         values[key] = (
             float(_row_value(row, columns, "value", 0) or 0),
             int(_row_value(row, columns, "primary_traffic", 0) or 0),
@@ -4125,7 +5152,7 @@ def read_exact_session_system_graph(
     for timestamp in BaseQueryBuilder._generate_timestamp_range(
         start_date, end_date, interval
     ):
-        value, traffic = values.get(timestamp.isoformat(), (0.0, 0))
+        value, traffic = values.get(_bucket_key(timestamp), (0.0, 0))
         points.append(
             {
                 "timestamp": timestamp.isoformat(),
@@ -4139,11 +5166,13 @@ def read_exact_session_system_graph(
             "data": points,
             **_metadata(
                 started=started,
-                query_count=1,
+                query_count=query_count,
                 rows_returned=len(rows),
+                wall_ms=wall_ms,
             ),
         },
         started=started,
+        wall_ms=wall_ms,
     )
 
 
@@ -4158,4 +5187,6 @@ __all__ = [
     "read_exact_session_system_graph",
     "read_exact_system_graph",
     "read_exact_user_system_graph",
+    "session_graph_reads_lean_roots",
+    "session_graph_root_estimate_sql",
 ]

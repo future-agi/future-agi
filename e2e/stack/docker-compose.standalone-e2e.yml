@@ -1,0 +1,40 @@
+# Overlay on docker-compose.yml (the Standalone setup) for the
+# futureagi-e2e-standalone stack: `E2E_STACK=standalone bin/e2e up`.
+#
+# Everything the harness expects on its ports lives in the one `app`
+# container; e2e/stack/standalone-e2e.env maps the app's :3000/:8000/:4318/
+# :8080 onto the harness ports (3100/8100/24318/28090) and points the gateway
+# at e2e/stack/gateway.e2e.yaml (-> mock-llm). This file only adds what the
+# Standalone compose file deliberately leaves out for users:
+#   - host ports for Postgres and ClickHouse (the storage-lane probes);
+#   - the deterministic mock LLM on the same network as `app`;
+#   - an `agentcc-gateway` host alias inside `app`, because several flows
+#     register a custom model with the Distributed gateway URL
+#     (http://agentcc-gateway:8080/v1, e2e/lib/managed-mock.ts MOCK_BASE).
+#     In Standalone the gateway listens on 127.0.0.1:8080 in the same container.
+services:
+  app:
+    # Never read the checkout's own .env: it belongs to the developer's
+    # install and may hold real provider keys. The harness env file is the
+    # only source of interpolated values (bin/e2e passes --env-file).
+    env_file: !reset []
+    extra_hosts:
+      - "agentcc-gateway:127.0.0.1"
+    # A crash should fail the run loudly instead of restarting quietly.
+    restart: "no"
+  postgres:
+    ports:
+      - "127.0.0.1:${PG_PORT:-25432}:5432"
+    restart: "no"
+  clickhouse:
+    ports:
+      - "127.0.0.1:${CH_HTTP_PORT:-28123}:8123"
+      - "127.0.0.1:${CH_PORT:-29000}:9000"
+    restart: "no"
+  mock-llm:
+    image: node:22-alpine
+    command: ["node", "/srv/server.mjs"]
+    volumes:
+      # Paths resolve against the project directory (repo root).
+      - ./e2e/stack/mock-llm/server.mjs:/srv/server.mjs:ro
+    restart: "no"

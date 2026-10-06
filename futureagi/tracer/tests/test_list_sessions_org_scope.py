@@ -168,6 +168,7 @@ class TestListSessionsClickHouseOrgScope:
             mock.patch(
                 "tracer.views.trace_session.SessionListQueryBuilderV2",
                 side_effect=_capture_builder,
+                wraps=RealBuilder,
             ),
         ):
             view._list_sessions_clickhouse(
@@ -236,6 +237,7 @@ class TestListSessionsClickHouseOrgScope:
             mock.patch(
                 "tracer.views.trace_session.SessionListQueryBuilderV2",
                 side_effect=_capture_builder,
+                wraps=RealBuilder,
             ),
         ):
             view._list_sessions_clickhouse(
@@ -292,6 +294,7 @@ class TestListSessionsClickHouseOrgScope:
             mock.patch(
                 "tracer.views.trace_session.SessionListQueryBuilderV2",
                 side_effect=_capture_builder,
+                wraps=RealBuilder,
             ),
         ):
             view._list_sessions_clickhouse(
@@ -343,6 +346,7 @@ class TestListSessionsClickHouseOrgScope:
             mock.patch(
                 "tracer.views.trace_session.SessionListQueryBuilderV2",
                 side_effect=_capture_builder,
+                wraps=RealBuilder,
             ),
         ):
             view._list_sessions_clickhouse(

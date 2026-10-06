@@ -14,8 +14,14 @@ from enum import StrEnum
 from typing import Any, Protocol
 
 import structlog
+from clickhouse_driver.errors import Error as ClickHouseError
+from clickhouse_driver.errors import ErrorCodes
 from django.conf import settings
 
+from tracer.services.clickhouse.application_read_policy import (
+    application_read_context,
+    application_read_settings,
+)
 from tracer.services.clickhouse.attribute_reads import (
     AttributeKeyInventory,
     AttributeReadSelector,
@@ -96,13 +102,26 @@ class QueryType(StrEnum):
 
 @dataclass
 class QueryResult:
-    """Container for query results with metadata."""
+    """Container for query results with metadata.
+
+    ``read_rows`` is the server's own native rows-read counter for the
+    statement, or ``None`` when the transport cannot report it. It describes
+    the work the statement did, never its result: a caller sizing its next read
+    by it must treat ``None`` as "unmeasured", not as zero.
+
+    ``read_bytes`` is the server's own native bytes-read counter for the
+    statement, or ``None`` when the transport cannot report it. It describes
+    the work the statement did, never its result: a caller learning a read
+    density from it must treat ``None`` as "unmeasured", not as zero.
+    """
 
     data: Any  # Can be list, dict, or any serializable structure
     row_count: int
     backend_used: str  # "clickhouse" or "postgres"
     query_time_ms: float
     columns: list[str] | None = None
+    read_rows: int | None = None
+    read_bytes: int | None = None
 
     @classmethod
     def from_clickhouse_rows(cls, rows, columns, query_time_ms):
@@ -175,6 +194,13 @@ class AnalyticsQueryService:
         return self._ch_client
 
     @property
+    def supports_bounded_speculative_reads(self) -> bool:
+        # Application policy intentionally removes statement timeout/scan caps.
+        # Optional optimizer probes must not claim their tighter abort budgets
+        # are enforced merely because memory/other query settings are accepted.
+        return False
+
+    @property
     def supports_per_query_read_settings(self) -> bool:
         """Whether query-local resource ceilings reach ClickHouse.
 
@@ -200,37 +226,41 @@ class AnalyticsQueryService:
         params: dict = None,
         timeout_ms: int | None = APPLICATION_READ_TIMEOUT_MS,
         settings: dict | None = None,
+        *,
+        server_execution_cap_ms: int | None = None,
     ) -> QueryResult:
-        """Execute a query on ClickHouse and return QueryResult."""
-        # Normalize the ordinary application read lane even for older callers
-        # that omit settings. Row-count ceilings reject healthy high-volume
-        # reads before their finite byte/time/result budgets are reached.
-        requested_timeout_ms = (
-            self.read_timeout_ceiling_ms if timeout_ms is None else int(timeout_ms)
-        )
-        timeout_ms = min(
-            self.read_timeout_ceiling_ms,
-            max(1, requested_timeout_ms),
-        )
-        if self.supports_per_query_read_settings:
-            settings = dict(settings or {})
-            settings.pop("max_rows_to_read", None)
+        """Execute analytics without a per-statement time/row/byte abort cap.
 
-            def finite_ceiling(name: str, ceiling: int) -> int:
-                requested = int(settings.get(name, 0) or 0)
-                return ceiling if requested <= 0 else min(requested, ceiling)
+        ``timeout_ms`` is retained for legacy selector compatibility; it is no
+        longer a statement deadline. Request/continuation admission and transport
+        failure detection are separate from server query execution limits.
 
-            settings["max_memory_usage"] = finite_ceiling(
-                "max_memory_usage", APPLICATION_READ_MAX_MEMORY_USAGE
-            )
-            settings["max_bytes_to_read"] = finite_ceiling(
-                "max_bytes_to_read", APPLICATION_READ_MAX_BYTES_TO_READ
-            )
+        ``server_execution_cap_ms`` is the explicit exception: a caller that
+        owns a real deadline for this one statement passes it, and the native
+        client sends it as ``max_execution_time`` (every other abort cap stays
+        off). The server's timeout then surfaces as ``ReadDeadlineExceeded``.
+        A server profile locked at ``readonly=1`` accepts no query settings, so
+        on that lane only the profile's own limits apply.
+
+        The result carries the statement's own native rows-read and
+        bytes-read progress: a caller may size its next read by the rows and
+        learn what this scope costs per row from the bytes. The transport
+        leaves either unmeasured when the server reported none.
+        """
         start = time.monotonic()
         try:
-            rows, columns, qt = self.ch_client.execute_read(
-                query, params or {}, timeout_ms=timeout_ms, settings=settings
-            )
+            with application_read_context(execution_cap_ms=server_execution_cap_ms):
+                if self.supports_per_query_read_settings:
+                    settings = application_read_settings(settings)
+                (
+                    rows,
+                    columns,
+                    _,
+                    read_rows,
+                    read_bytes,
+                ) = self.ch_client.execute_read_with_progress(
+                    query, params or {}, timeout_ms=None, settings=settings
+                )
         except TimeoutError as exc:
             # Some native-driver wrappers surface socket/read deadlines as the
             # built-in timeout type. Normalize only at this ClickHouse boundary;
@@ -239,6 +269,15 @@ class AnalyticsQueryService:
             if isinstance(exc, ReadDeadlineExceeded):
                 raise
             raise ReadDeadlineExceeded("ClickHouse query timed out") from exc
+        except ClickHouseError as exc:
+            if (
+                server_execution_cap_ms is not None
+                and getattr(exc, "code", None) == ErrorCodes.TIMEOUT_EXCEEDED
+            ):
+                raise ReadDeadlineExceeded(
+                    "ClickHouse statement exceeded its execution cap"
+                ) from exc
+            raise
         elapsed = (time.monotonic() - start) * 1000
 
         col_names = [c[0] if isinstance(c, tuple) else c for c in columns]
@@ -248,6 +287,8 @@ class AnalyticsQueryService:
             "ch_query_executed",
             query_time_ms=round(elapsed, 2),
             rows=len(rows),
+            read_rows=read_rows,
+            read_bytes=read_bytes,
             backend="clickhouse",
         )
 
@@ -257,6 +298,8 @@ class AnalyticsQueryService:
             backend_used="clickhouse",
             query_time_ms=round(elapsed, 2),
             columns=col_names,
+            read_rows=read_rows,
+            read_bytes=read_bytes,
         )
 
     def get_span_attribute_keys_ch_for_projects(

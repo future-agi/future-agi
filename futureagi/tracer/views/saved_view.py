@@ -151,23 +151,24 @@ class SavedViewViewSet(BaseModelViewSetMixin, ModelViewSet):
                 # Workspace-scoped saved views are personal-only (no project to share against)
                 data["visibility"] = "personal"
 
-            # Calculate next position (scoped to the same bucket as the new view)
-            position_qs = SavedView.objects.filter(
-                created_by=request.user,
-                deleted=False,
+            scope_qs = SavedView.scoped(
+                request.user,
+                project=project,
+                workspace=request.workspace,
+                tab_type=data.get("tab_type"),
             )
-            if project is not None:
-                position_qs = position_qs.filter(project=project)
-            else:
-                position_qs = position_qs.filter(
-                    project__isnull=True,
-                    workspace=request.workspace,
-                    tab_type=data.get("tab_type"),
-                )
-            max_position = position_qs.aggregate(max_pos=models.Max("position")).get(
+
+            # Calculate next position (scoped to the same bucket as the new view)
+            max_position = scope_qs.aggregate(max_pos=models.Max("position")).get(
                 "max_pos"
             )
             next_position = (max_position or 0) + 1
+
+            # Reject duplicates with a clear error instead of silently upserting.
+            if scope_qs.filter(name=data["name"]).exists():
+                return self._gm.bad_request(
+                    f"A view named '{data['name']}' already exists."
+                )
 
             saved_view = SavedView(
                 project=project,
@@ -179,26 +180,9 @@ class SavedViewViewSet(BaseModelViewSetMixin, ModelViewSet):
             try:
                 saved_view.save()
             except IntegrityError:
-                # A view with this name already exists for this user+project — update it instead
-                lookup = {
-                    "created_by": request.user,
-                    "name": data["name"],
-                    "deleted": False,
-                }
-                if project is not None:
-                    lookup["project"] = project
-                else:
-                    lookup["project__isnull"] = True
-                    lookup["workspace"] = request.workspace
-                existing = SavedView.objects.get(**lookup)
-                update_fields = []
-                for field in ("config", "visibility", "icon", "tab_type"):
-                    if field in data:
-                        setattr(existing, field, data[field])
-                        update_fields.append(field)
-                if update_fields:
-                    existing.save(update_fields=update_fields)
-                saved_view = existing
+                return self._gm.bad_request(
+                    f"A view named '{data['name']}' already exists."
+                )
 
             response_serializer = SavedViewDetailSerializer(
                 saved_view, context={"request": request}
@@ -224,10 +208,35 @@ class SavedViewViewSet(BaseModelViewSetMixin, ModelViewSet):
             data = serializer.validated_data
             if instance.project_id is None and data.get("visibility") == "project":
                 data["visibility"] = "personal"
+
+            # Reject renaming onto a name that already exists in the same scope.
+            new_name = data.get("name")
+            if new_name and new_name != instance.name:
+                duplicate_exists = (
+                    SavedView.scoped(
+                        instance.created_by,
+                        project=instance.project,
+                        workspace=instance.workspace,
+                        tab_type=instance.tab_type,
+                    )
+                    .filter(name=new_name)
+                    .exclude(id=instance.id)
+                    .exists()
+                )
+                if duplicate_exists:
+                    return self._gm.bad_request(
+                        f"A view named '{new_name}' already exists."
+                    )
+
             for attr, value in data.items():
                 setattr(instance, attr, value)
             instance.updated_by = request.user
-            instance.save()
+            try:
+                instance.save()
+            except IntegrityError:
+                return self._gm.bad_request(
+                    f"A view named '{instance.name}' already exists."
+                )
 
             response_serializer = SavedViewDetailSerializer(
                 instance, context={"request": request}
@@ -265,25 +274,48 @@ class SavedViewViewSet(BaseModelViewSetMixin, ModelViewSet):
     def duplicate(self, request, *args, **kwargs):
         try:
             original = self.get_object()
-            new_name = request.data.get("name", f"{original.name} (Copy)")
+
+            scope_qs = SavedView.scoped(
+                request.user,
+                project=original.project,
+                workspace=request.workspace,
+                tab_type=original.tab_type,
+            )
 
             # Calculate next position
-            position_qs = SavedView.objects.filter(
-                created_by=request.user,
-                deleted=False,
-            )
-            if original.project_id is not None:
-                position_qs = position_qs.filter(project=original.project)
-            else:
-                position_qs = position_qs.filter(
-                    project__isnull=True,
-                    workspace=request.workspace,
-                    tab_type=original.tab_type,
-                )
-            max_position = position_qs.aggregate(max_pos=models.Max("position")).get(
+            max_position = scope_qs.aggregate(max_pos=models.Max("position")).get(
                 "max_pos"
             )
             next_position = (max_position or 0) + 1
+
+            # Resolve a free name: an explicit requested name that collides is
+            # rejected (same contract as create/update); the auto-generated
+            # copy name is uniquified so repeat duplicates keep working.
+            existing_names = set(scope_qs.values_list("name", flat=True))
+            max_len = SavedView._meta.get_field("name").max_length
+            requested_name = request.data.get("name")
+            if requested_name is not None and not isinstance(requested_name, str):
+                return self._gm.bad_request("View name must be a string.")
+            if isinstance(requested_name, str):
+                requested_name = requested_name.strip()
+            if requested_name:
+                new_name = requested_name
+                if new_name in existing_names:
+                    return self._gm.bad_request(
+                        f"A view named '{new_name}' already exists."
+                    )
+            elif requested_name == "":
+                return self._gm.bad_request("View name cannot be empty.")
+            else:
+                def copy_name(suffix):
+                    label = " (Copy)" if suffix is None else f" (Copy {suffix})"
+                    return f"{original.name[: max_len - len(label)]}{label}"
+
+                new_name = copy_name(None)
+                suffix = 2
+                while new_name in existing_names:
+                    new_name = copy_name(suffix)
+                    suffix += 1
 
             new_view = SavedView(
                 project=original.project,
@@ -296,7 +328,12 @@ class SavedViewViewSet(BaseModelViewSetMixin, ModelViewSet):
                 icon=original.icon,
                 config=original.config,
             )
-            new_view.save()
+            try:
+                new_view.save()
+            except IntegrityError:
+                return self._gm.bad_request(
+                    f"A view named '{new_name}' already exists."
+                )
 
             response_serializer = SavedViewDetailSerializer(
                 new_view, context={"request": request}

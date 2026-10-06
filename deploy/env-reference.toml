@@ -1,0 +1,1979 @@
+# Every environment variable of a self-hosted Future AGI install: what it
+# does, its default in each setup, which setups read it, and what breaks when
+# it is wrong.
+#
+# Source of the docs page
+# https://docs.futureagi.com/docs/self-hosting/configuration/reference
+# (future-agi/docs), which `python3 scripts/docs_site.py sync <docs checkout>`
+# renders from this file. Edit this file, never that page.
+#
+# Checked by futureagi/tests/test_env_reference.py and
+# `python3 scripts/env_reference.py --check`: every ${VAR} a compose file reads
+# and every .env.example key needs a row here, and the data must render.
+#
+# Shape (schema 1):
+#   [[setup]]  the legend of the Setups column; `setups` and `default` may use
+#              only these codes.
+#   [[part]]   a `##` heading. `role` (generated, internal, legacy) is what the
+#              tests look sections up by. `body` is the prose under it.
+#   [[part.section]]  a `###` heading (optional) and its table: `body` before
+#              the table, `after` after it, `columns` when not the default
+#              Key, Default, Setups, What it does (legacy: Key, Status).
+#   [[part.section.row]]  `keys` (what the checks read), `label` (the first
+#              cell when it is more than the key list), `default` (a string,
+#              or a table by setup code: { S = "...", "D H" = "..." }),
+#              `setups`, `text`, `tag = "telemetry"` (also rendered on the
+#              telemetry page), `audience = "internal"` (kept for the checks,
+#              left off the public page).
+# Links in prose and cells: `/docs/...` (a docs-site page), `#anchor` (a
+# heading of the rendered page) or `repo:PATH#anchor` (a file of this
+# repository; rendered as a GitHub link). No em dashes, no `<`, `{` or `}`
+# outside code: the page is MDX.
+
+schema = 1
+title = "Configuration reference"
+description = "Every environment variable of a self-hosted Future AGI install: its default in each setup, which setups read it, and what breaks when it is wrong."
+intro = '''
+Every environment variable you can set on a self-hosted Future AGI install:
+what it does, its default, which setup reads it, and what goes wrong when it
+is wrong. [Environment variables](/docs/self-hosting/configuration/environment)
+covers the keys you are most likely to set, grouped by what you want to do,
+and how `.env` is read.
+'''
+tldr = '''
+**Nothing is required for a local install.** `./bin/install` creates `.env`
+from [`.env.example`](repo:.env.example), generates every secret and starts the
+Standalone setup on [http://localhost:3000](http://localhost:3000). Come back
+here when you want LLM keys, a public URL, email, or a production deployment.
+'''
+how = '''
+**Setups.** The *Setups* column of every table below says who reads a key:
+'''
+how_after = '''
+A key marked S or D but not H only exists in the Compose files (ports, image
+tags, CPU and memory limits, installer settings); the Helm chart has its own
+values for those.
+
+Where values come from, why an empty value is not always unset, and how to
+apply a change: [How .env is read](/docs/self-hosting/configuration/environment#how-env-is-read).
+'''
+production = '''
+Start from Distributed with the production overlay or the Helm chart.
+`deploy/docker-compose.production.yml` layered on
+`docker-compose.distributed.yml`, with values in `deploy/.env.production`,
+refuses to start while a required value is empty
+([`deploy/README.md`](repo:deploy/README.md)). Standalone suits a single host;
+the same checklist applies to it. Work through the
+[production checklist](/docs/self-hosting/production/checklist).
+'''
+note = '''
+This page is generated from `deploy/env-reference.toml` in the
+[future-agi repository](https://github.com/future-agi/future-agi). To correct
+a row, open a pull request there.
+'''
+
+[[setup]]
+code = "S"
+name = "Standalone"
+description = "Standalone, the default: one `app` container plus Postgres and ClickHouse"
+files = "`docker-compose.yml` (`./bin/install`)"
+
+[[setup]]
+code = "D"
+name = "Distributed"
+description = "Distributed, for scale: one container per service, PeerDB, per-queue workers"
+files = "`docker-compose.distributed.yml` (`./bin/install --distributed`)"
+
+[[setup]]
+code = "H"
+name = "Helm"
+description = "Helm: Distributed on Kubernetes"
+files = "[`deploy/helm/futureagi`](repo:deploy/helm/futureagi/README.md); set application keys through the chart's values"
+
+[[setup]]
+code = "dev"
+name = "Development"
+description = "Hot-reload development only"
+files = "`docker-compose.dev.yml`, `docker-compose.distributed.dev.yml` (`./bin/dev`)"
+
+[[card]]
+title = "Environment variables"
+icon = "list-check"
+href = "/docs/self-hosting/configuration/environment"
+text = "The keys you are most likely to set, by situation, and how `.env` is read"
+
+[[card]]
+title = "Production checklist"
+icon = "shield"
+href = "/docs/self-hosting/production/checklist"
+text = "Secrets, URLs, TLS, pinned images and backups before others rely on the install"
+
+[[card]]
+title = "Telemetry"
+icon = "eye"
+href = "/docs/self-hosting/configuration/telemetry"
+text = "What the install sends to Future AGI and how to turn it off"
+
+[[part]]
+heading = "1. Generated by the installer"
+role = "generated"
+body = '''
+On a fresh install (no volumes of this Compose project yet) `./bin/install`
+fills every key below that is empty or still a `CHANGEME-` placeholder with a
+random value and writes it to `.env`. It never changes a value afterwards. On
+an existing install it fills only `INTEGRATION_ENCRYPTION_KEY`,
+`AGENTCC_WEBHOOK_SECRET` and, on Standalone, `REDIS_PASSWORD`, which is safe
+while they are unset, and warns about the rest.
+`--wipe-volumes` and `./bin/uninstall --wipe-data` make the next install fresh
+again, and a value already in `.env` is kept even then.
+
+Without the installer, set them yourself before the first start:
+`openssl rand -hex 32` for each, and
+`python3 -c "import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())"`
+for `INTEGRATION_ENCRYPTION_KEY`. Left empty, the stack runs on the defaults
+below, which are published in the open-source repository and therefore not
+secret.
+
+Every secret below can change at any time (set it in `.env`, then
+`docker compose up -d`), except `PG_PASSWORD`, `INTEGRATION_ENCRYPTION_KEY`
+and `CH_PASSWORD` once in use: their rows say what breaks.
+'''
+
+  [[part.section]]
+  heading = "Secrets"
+  columns = ["Key", "Default if empty", "Setups", "What it does, and what breaks if it is wrong"]
+
+    [[part.section.row]]
+    keys = ["SECRET_KEY"]
+    default = "`local-dev-only-not-for-production-replace-me`"
+    setups = ["S", "D", "H"]
+    text = "Signs logins, tokens and password-reset links. Changing it signs everyone out. With `ENV_TYPE` other than `local`, the app refuses to start on Django's built-in default."
+
+    [[part.section.row]]
+    keys = ["PG_PASSWORD"]
+    default = "`futureagi`"
+    setups = ["S", "D", "H"]
+    text = "Postgres password. Written into the Postgres volume on the first start: changing it later gives `password authentication failed` until you restore the old value or wipe the volume."
+
+    [[part.section.row]]
+    keys = ["MINIO_ROOT_PASSWORD"]
+    default = "`futureagi` (`.env.example` ships the placeholder `CHANGEME-set-by-bin-install`, which the installer replaces)"
+    setups = ["S", "D", "H"]
+    text = "Object storage password: datasets, exports, media. Compose derives `S3_SECRET_KEY` from it. A `CHANGEME-` value next to existing volumes makes the installer stop and ask."
+
+    [[part.section.row]]
+    keys = ["AGENTCC_INTERNAL_API_KEY"]
+    default = "`local-dev-only-shared-secret-replace-me`"
+    setups = ["S", "D", "H"]
+    text = "Shared secret for app-to-gateway calls, and through the gateway your provider keys. Both sides read the same value, so it can change at any time."
+
+    [[part.section.row]]
+    keys = ["AGENTCC_ADMIN_TOKEN"]
+    default = "`local-dev-only-admin-token-replace-me`"
+    setups = ["S", "D", "H"]
+    text = "Bearer token for the LLM gateway's admin API. The gateway also sends it when it loads keys from the app."
+
+    [[part.section.row]]
+    keys = ["AGENTCC_WEBHOOK_SECRET"]
+    default = { S = "a random one on every start", D = "empty, and the app refuses the gateway's request logs, so the gateway's logs and analytics stay empty" }
+    setups = ["S", "D", "H"]
+    text = "Shared secret the LLM gateway sends its request logs to the app with. Both read it on start, so it can change at any time. Helm: `secrets.agentccWebhookSecret` when set, else the key of that name in `secrets.existingSecret` when that is set, else generated."
+
+    [[part.section.row]]
+    keys = ["INTEGRATION_ENCRYPTION_KEY"]
+    default = "Empty. With `ENV_TYPE=local`, every process start makes a throwaway key, so saved integration credentials do not survive a restart. Other `ENV_TYPE`s: connecting an integration fails."
+    setups = ["S", "D", "H"]
+    text = "Fernet key (32 random bytes, URL-safe base64) that encrypts stored integration credentials. Changing it strands what was saved with the old key; those integrations must be connected again."
+
+    [[part.section.row]]
+    keys = ["REDIS_PASSWORD"]
+    default = "`local-dev-only-redis-password`"
+    setups = ["S"]
+    text = "Password of the Redis inside the `app` container, which code evals can reach. Only letters, digits and `-` `_` `.` `~` (it is part of the Redis URLs); anything else stops the container at start. Distributed runs Redis without a password on the internal network."
+
+    [[part.section.row]]
+    keys = ["CH_PASSWORD"]
+    default = "Empty: ClickHouse's `default` user has no password, and code evals can then read and change every trace"
+    setups = ["S", "D", "H"]
+    text = "Password of ClickHouse's `default` user. ClickHouse reads it at every start, and the app, the collector and the bootstrap jobs log in with it; PeerDB's init job stores it in the `ch_dest` peer when it creates that. Generated on a fresh install only: an install made before the installer generated one keeps running without it, and on an existing install the installer stops whenever the value differs from the password ClickHouse runs with. No `<`, `>` or `&`: ClickHouse reads it into its XML configuration. Changing it later stops Distributed's Postgres → ClickHouse sync until that peer carries the new one too, and removing it leaves the dictionaries spans are read through on the old one. To set or change one later, see [INSTALLATION.md](repo:INSTALLATION.md#secrets-that-must-be-changed). Helm: `clickhouse.password`, else generated."
+
+  [[part.section]]
+  heading = "Choices the installer records"
+  after = '''
+The installer also writes `FUTURE_AGI_VERSION=local` (and, for Distributed,
+the other image tags) after `--from-source`, and a free host port when a
+default port is taken. See [Images](#images) and [Host ports](#host-ports).
+'''
+
+    [[part.section.row]]
+    keys = ["COMPOSE_FILE"]
+    default = "unset: Standalone (`docker-compose.yml`)"
+    setups = ["S", "D"]
+    text = "Read by Docker Compose. `./bin/install --distributed` writes `docker-compose.distributed.yml` so plain `docker compose` commands keep using Distributed. An install keeps its setup: moving data between Standalone and Distributed is not supported, and the installer refuses. A `COMPOSE_FILE` exported in your shell wins over `.env`; the installer stops unless it lists the chosen setup's file and not the other one."
+
+    [[part.section.row]]
+    keys = ["COMPOSE_PROJECT_NAME"]
+    default = "`futureagi`"
+    setups = ["S", "D"]
+    text = "Read by Docker Compose; prefixes container, volume and network names. `./bin/install --new-instance` writes `futureagi-2`, `futureagi-3`, ... to run an isolated second copy. Changing it on an existing install points it at new, empty volumes."
+
+  [[part.section]]
+  heading = "Installer inputs from your shell"
+  body = '''
+Read by `./bin/install` from the shell environment, not from `.env`.
+'''
+
+    [[part.section.row]]
+    keys = ["FAGI_ADMIN_EMAIL", "FAGI_ADMIN_NAME", "FAGI_ADMIN_PASSWORD"]
+    default = "unset"
+    setups = ["S", "D", "H"]
+    text = "With `-y` (non-interactive), create the first account from these three. If any is missing, account creation is skipped. Helm: the bootstrap job reads them from `bootstrap.admin.existingSecret` and creates the account only if no user with that email exists; with the email set, a missing name or password, a malformed email, or a password the sign-up rules reject fails the job, which says why."
+
+    [[part.section.row]]
+    keys = ["SKIP_USER_CREATION"]
+    default = "`0`"
+    setups = ["S", "D"]
+    text = "`1` skips the first-account prompt (same as `--skip-user-creation`)."
+
+    [[part.section.row]]
+    keys = ["CI"]
+    default = "unset"
+    setups = ["S", "D"]
+    text = "Any value makes the installer non-interactive (same as `-y`)."
+
+[[part]]
+heading = "2. Recommended"
+
+  [[part.section]]
+  heading = "LLM provider keys"
+  body = '''
+Server-wide keys for built-in evals, the prompt playground and other platform
+features that call an LLM. Workspaces can also add their own provider keys in
+the UI; some eval paths prefer the server-wide key when both exist. One
+provider is enough to start.
+
+The LLM gateway in the bundled config
+(`agentcc-gateway/config.example.yaml`) routes OpenAI only. To route other
+providers through it, copy that file, enable them and point
+`AGENTCC_CONFIG_PATH` at the copy ([Application behaviour](#application-behaviour)).
+'''
+  after = '''
+A wrong key does not stop anything from starting: the calls that use it fail
+with the provider's authentication error.
+'''
+
+    [[part.section.row]]
+    keys = ["OPENAI_API_KEY"]
+    default = "empty"
+    setups = ["S", "D", "H"]
+    text = "OpenAI key for the app and the gateway's default route."
+
+    [[part.section.row]]
+    keys = ["ANTHROPIC_API_KEY"]
+    default = "empty"
+    setups = ["S", "D", "H"]
+    text = "Anthropic key for the app; for the gateway, enable Anthropic in its config."
+
+    [[part.section.row]]
+    keys = ["GOOGLE_API_KEY"]
+    default = "empty"
+    setups = ["S", "D", "H"]
+    text = "Gemini (Google AI Studio) key. The gateway receives it as `GEMINI_API_KEY`."
+
+    [[part.section.row]]
+    keys = ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"]
+    default = "empty"
+    setups = ["S", "D", "H"]
+    text = "AWS Bedrock credentials."
+
+    [[part.section.row]]
+    keys = ["AWS_REGION"]
+    default = "`us-east-1`"
+    setups = ["S", "D", "H"]
+    text = "Region for Bedrock calls."
+
+  [[part.section]]
+  heading = "Public URLs"
+  columns = ["Key", "Default", "Setups", "What it does, and what breaks if it is wrong"]
+  body = '''
+Needed as soon as anyone opens the UI from anything other than
+`http://localhost:3000`: a server IP, a domain, or a reverse proxy. With plain
+ports the UI is `http://<host>:3000` and the API `http://<host>:8000`.
+'''
+
+    [[part.section.row]]
+    keys = ["VITE_HOST_API"]
+    default = "empty: the UI calls `http://localhost:<BACKEND_PORT>` (`8000`); Helm: `urls.api`"
+    setups = ["S", "D", "H"]
+    text = "URL the browser uses to reach the API, e.g. `https://api.example.com`. Written into the UI's `config.js` at container start, no rebuild. Wrong or unset on a remote host: the UI loads but every API call fails (often reported as a CORS error). Required by the production overlay and by `docker-compose.frontend.yml` (UI only)."
+
+    [[part.section.row]]
+    keys = ["BASE_URL"]
+    default = "`http://localhost:8000`"
+    setups = ["S", "D", "H"]
+    text = "The API's own public URL: SSO and OAuth callbacks, the MCP and SDK endpoints shown in the UI, trusted CSRF origins. Wrong: SSO sign-in redirects fail and copied snippets point at localhost."
+
+    [[part.section.row]]
+    keys = ["FRONTEND_URL"]
+    default = "unset: those links use `APP_URL` (`http://` for a loopback host); Helm: `urls.app`"
+    setups = ["S", "D", "H"]
+    text = "The UI's URL, e.g. `https://app.example.com`: links in digest, annotation, discussion and rule-run emails, MCP OAuth consent redirects, and the setup check that warns about plain HTTP. Required by the production overlay."
+
+    [[part.section.row]]
+    keys = ["APP_URL"]
+    default = "`localhost:<FRONTEND_PORT>` (`localhost:3000`) in both compose files; Helm: `urls.app`"
+    setups = ["S", "D", "H"]
+    text = "The UI's address, as `host[:port]` (`app.example.com`) or a full URL (`https://app.example.com`). Invite, verification and password-reset links, the links in app emails and the SSO redirects back to the UI are built from it. A scheme you write is kept. Without one, links use `http://` for `localhost` and loopback addresses, and otherwise `https://`, or `http://` while `ENV_TYPE` is `local` or `test`. So write the full URL when that guess is wrong: `https://...` for a UI behind TLS with the default `ENV_TYPE=local`, `http://...` for a plain-HTTP host with `ENV_TYPE=production`. Wrong: invite and reset links open the wrong address."
+
+    [[part.section.row]]
+    keys = ["MINIO_URL"]
+    default = "`http://localhost:9005` (follows `MINIO_API_PORT`); Helm: `urls.objects`, else the ingress's objects host or the external endpoint, else `http://localhost:<objectStorage.bundled.service.downloadPort>`"
+    setups = ["S", "D", "H"]
+    text = "Base URL of every stored-file link the browser opens (uploads, exports, audio and image previews). Object storage listens on `127.0.0.1` only, so a remote browser needs a reverse proxy in front of port 9005 and this set to its URL. See [Opening the UI from another machine](repo:INSTALLATION.md#opening-the-ui-from-another-machine) in INSTALLATION.md. Wrong: file previews and downloads fail while the rest works."
+
+    [[part.section.row]]
+    keys = ["FI_COLLECTOR_PUBLIC_URL"]
+    default = "`http://localhost:<FI_COLLECTOR_OTLP_HTTP_PORT>` (`http://localhost:4318`); Helm: `urls.otlp`, else the OTLP host of the ingress or the Gateway API routes, else `http://localhost:4318` (the port-forward)"
+    setups = ["S", "D", "H"]
+    text = "OTLP/HTTP base URL of the trace collector as SDKs outside the stack reach it: what the in-app SDK snippet, the first-run setup screen, the installer's and the app's start-up summaries hand out as `FI_BASE_URL`. The collector listens on `127.0.0.1` in both Compose setups, so SDKs on other machines need a reverse proxy in front of port 4318 and this set to its URL. Wrong: copied snippets send traces to an address that does not answer."
+
+  [[part.section]]
+  heading = "Email"
+  body = '''
+Without email the install still works: invites return a link for you to
+share, and "Forgot password" answers with the command an administrator runs to
+set a new password:
+
+- Standalone: `docker compose exec app python manage.py reset_password --email <address>`
+- Distributed: `docker compose exec backend python manage.py reset_password --email <address>`
+- Helm: `kubectl -n <namespace> exec -it deploy/<release>-backend -c backend -- python manage.py reset_password --email <address>`
+
+With email delivery configured (`MAILGUN_API_KEY`, or an `EMAIL_BACKEND` other
+than the console or dummy backend), "Forgot password" emails the reset link
+instead, and answers the same whether or not the address has an account.
+'''
+
+    [[part.section.row]]
+    keys = ["MAILGUN_API_KEY"]
+    default = "empty: emails are written to the app log instead of sent"
+    setups = ["S", "D", "H"]
+    text = "Mailgun API key. Setting it switches the app to the Mailgun backend."
+
+    [[part.section.row]]
+    keys = ["MAILGUN_SENDER_DOMAIN"]
+    default = "empty"
+    setups = ["S", "D", "H"]
+    text = "Your Mailgun sending domain, e.g. `mg.example.com`."
+
+    [[part.section.row]]
+    keys = ["DEFAULT_FROM_EMAIL"]
+    default = "empty: `Future AGI <noreply@<MAILGUN_SENDER_DOMAIN>>`"
+    setups = ["S", "D", "H"]
+    text = "Sender of every app email (invites, verification, password resets), on `MAILGUN_SENDER_DOMAIN`: Mailgun rejects senders on other domains. Helm: `config.email.fromEmail`."
+
+    [[part.section.row]]
+    keys = ["DEFAULT_REPLY_TO_EMAIL"]
+    default = "empty: no Reply-To header, so replies go to the sender"
+    setups = ["S", "D", "H"]
+    text = "Reply-To address of app emails, e.g. `support@example.com`. Helm: `config.email.replyTo`."
+
+    [[part.section.row]]
+    keys = ["SERVER_EMAIL"]
+    default = "empty"
+    setups = ["S", "D", "H"]
+    text = "Sender of Django's own error emails."
+
+    [[part.section.row]]
+    keys = ["EMAIL_BACKEND"]
+    default = "Mailgun when `MAILGUN_API_KEY` is set, otherwise the console backend"
+    setups = ["S", "D", "H"]
+    text = "Advanced: any Django email backend class path. Mailgun is the supported provider; SMTP host settings are not read from the environment."
+
+[[part]]
+heading = "3. Optional integrations"
+body = '''
+Each of these is off until you set it.
+'''
+
+  [[part.section]]
+  heading = "Extra services"
+
+    [[part.section.row]]
+    keys = ["COMPOSE_PROFILES"]
+    default = "empty"
+    setups = ["S", "D"]
+    text = "Read by Docker Compose, comma-separated. Standalone: `sandbox` runs code evals in the privileged nsjail `code-executor` container instead of the app container (use it when people who write code evals must not trust one another; set it in `.env`, not only with `--profile`, because the app reads it to route evals); `ml` adds the `serving` embedding-model container (a few GB of RAM) for embedding-based evals and knowledge bases. Distributed: `all` adds the per-queue workers, the Temporal UI and the PeerDB UI; `workers`, `observability` and `peerdb` add one group each."
+
+  [[part.section]]
+  heading = "Google Cloud and Vertex AI"
+  body = '''
+Gemini, Imagen and embeddings on Vertex AI work in every setup. The partner
+models on Vertex (Claude, Llama, Mistral, Model Garden) need the Vertex AI SDK,
+which Standalone's app image leaves out; see
+[Backend variants](/docs/self-hosting/images#backend-variants).
+'''
+
+    [[part.section.row]]
+    keys = ["GOOGLE_APPLICATION_CREDENTIALS"]
+    default = "empty (mounts `/dev/null`)"
+    setups = ["S", "D", "H"]
+    text = "Absolute host path of a GCP service-account JSON, mounted read-only. Standalone mounts it at `/etc/futureagi/secrets/vertex.json` and points the variable there for every process in `app` (API, worker, gateway); without a file the variable is unset there, so Google's other credential sources apply. Distributed mounts it into `agentcc-gateway` and `worker-simulation-runner` only: the backend and the other workers receive the host path, so mount the file at that path with a compose override if they need it. Never commit the file."
+
+    [[part.section.row]]
+    keys = ["GOOGLE_CLOUD_PROJECT"]
+    default = "empty"
+    setups = ["S", "D", "H"]
+    text = "GCP project for Vertex AI calls."
+
+    [[part.section.row]]
+    keys = ["GOOGLE_CLOUD_LOCATION"]
+    default = "`global` (hosted agent authoring: `us-central1`)"
+    setups = ["S", "D", "H"]
+    text = "Vertex AI region."
+
+    [[part.section.row]]
+    keys = ["GOOGLE_GENAI_USE_VERTEXAI"]
+    default = "`True` for hosted agent jobs"
+    setups = ["S", "D", "H"]
+    text = "Makes Google GenAI clients inside hosted agent sandboxes use Vertex AI."
+
+    [[part.section.row]]
+    keys = ["CLOUD_ML_REGION"]
+    default = "`us-east5` (dev overlay: `global`)"
+    setups = ["S", "D", "H", "dev"]
+    text = "Vertex region for Claude-on-Vertex in hosted agent authoring."
+
+  [[part.section]]
+  heading = "Other model and voice providers"
+
+    [[part.section.row]]
+    keys = ["OPENROUTER_API_KEY"]
+    default = "empty"
+    setups = ["S", "D", "H"]
+    text = "OpenRouter key for the app."
+
+    [[part.section.row]]
+    keys = ["HUGGINGFACE_API_TOKEN"]
+    default = "empty"
+    setups = ["S", "D", "H"]
+    text = "Hugging Face token for models pulled from the Hub."
+
+    [[part.section.row]]
+    keys = ["PERPLEXITY_API_KEY", "GROQ_API_KEY", "XAI_API_KEY"]
+    default = "empty"
+    setups = ["S", "D", "H"]
+    text = "Keys the gateway config can reference as `${...}` once you enable those providers in it (see `AGENTCC_CONFIG_PATH`)."
+
+    [[part.section.row]]
+    keys = ["DEEPGRAM_API_KEY", "CARTESIA_API_KEY"]
+    default = "empty"
+    setups = ["S", "D", "H"]
+    text = "Speech providers for voice simulations."
+
+  [[part.section]]
+  heading = "Enterprise Edition"
+
+    [[part.section.row]]
+    keys = ["EE_LICENSE_KEY"]
+    default = "empty: the open-source feature set"
+    setups = ["S", "D", "H"]
+    text = "Enterprise Edition license key. Helm: `license.existingSecret` (or `license.key`) with `edition: ee`; the chart gives it to the backend, every worker and the bootstrap job."
+
+    [[part.section.row]]
+    keys = ["FUTURE_AGI_LICENSE_URL"]
+    default = "`https://api.futureagi.com`"
+    setups = ["S", "D", "H"]
+    text = "License activation and heartbeat server. Helm: `license.url`."
+
+    [[part.section.row]]
+    keys = ["FUTURE_AGI_ENTERPRISE_HEARTBEAT_DISABLED"]
+    default = "`false`"
+    setups = ["S", "D", "H"]
+    text = "`true` stops the license heartbeat. Helm: `license.heartbeat: false`, or `global.airgap`."
+
+    [[part.section.row]]
+    keys = ["EE_LICENSE_PUBLIC_KEY", "EE_LICENSE_PUBLIC_KEYS", "EE_LICENSE_KEY_ID"]
+    default = "built-in keyring"
+    setups = ["S", "D", "H"]
+    text = "Advanced: override the public keys a license is verified against. Only on instruction from Future AGI."
+
+    [[part.section.row]]
+    keys = ["EE_LICENSE_CLOCK_SKEW_SECONDS"]
+    default = "`300`"
+    setups = ["S", "D", "H"]
+    text = "Advanced: clock skew tolerated when checking a license's validity window."
+
+  [[part.section]]
+  heading = "Agent simulations in hosted sandboxes"
+  body = '''
+Agent simulations can build and run the agent under test in a remote sandbox
+from Daytona or E2B. Off until you set that provider's key.
+
+Distributed and Helm run the default backend image, which has the Daytona and
+E2B SDKs and git. Standalone's app image is built on the slim backend, which
+has neither: there, hosted runs answer `501 sandbox_sdk_missing`, and runs
+from a GitHub source `501 git_unavailable`, until you build the app image on
+the default backend ([Backend variants](/docs/self-hosting/images#backend-variants)).
+'''
+
+    [[part.section.row]]
+    keys = ["HOSTED_SANDBOX_PROVIDER"]
+    default = "`daytona`"
+    setups = ["S", "D", "H"]
+    text = "`daytona` or `e2b`. Any other value is refused."
+
+    [[part.section.row]]
+    keys = ["DAYTONA_API_KEY"]
+    default = "empty"
+    setups = ["S", "D", "H"]
+    text = "Daytona API key."
+
+    [[part.section.row]]
+    keys = ["DAYTONA_API_URL", "DAYTONA_TARGET", "DAYTONA_ORGANIZATION_ID"]
+    default = "Daytona's defaults"
+    setups = ["S", "D", "H"]
+    text = "Daytona endpoint, region and organization."
+
+    [[part.section.row]]
+    keys = ["ALK_DAYTONA_SNAPSHOT", "ALK_DAYTONA_SNAPSHOT_DIGEST"]
+    default = "empty"
+    setups = ["S", "D", "H"]
+    text = "Pre-built Daytona snapshot for the sandbox and its pinned digest."
+
+    [[part.section.row]]
+    keys = ["ALK_DAYTONA_DOCKERFILE"]
+    default = "empty"
+    setups = ["S", "D", "H"]
+    text = "Build the sandbox from a Dockerfile instead of a snapshot. Development only; leave empty in production."
+
+    [[part.section.row]]
+    keys = ["E2B_API_KEY"]
+    default = "empty"
+    setups = ["S", "D", "H"]
+    text = "E2B API key."
+
+    [[part.section.row]]
+    keys = ["ALK_E2B_TEMPLATE_REFERENCE", "ALK_E2B_TEMPLATE_BUILD_ID"]
+    default = "empty"
+    setups = ["S", "D", "H"]
+    text = "E2B template for the sandbox. The reference must end with the exact build ID."
+
+    [[part.section.row]]
+    keys = ["ALK_E2B_TEMPLATE_CPU_UNITS", "ALK_E2B_TEMPLATE_MEMORY_MB", "ALK_E2B_TEMPLATE_DISK_GB"]
+    default = "`4`, `8192`, `10`"
+    setups = ["S", "D", "H"]
+    text = "Size of the E2B sandbox."
+
+    [[part.section.row]]
+    keys = ["ALK_E2B_MAX_TTL_SECONDS"]
+    default = "`0`"
+    setups = ["S", "D", "H"]
+    text = "Your E2B plan's limit on a sandbox's lifetime. Required for E2B: at `0` every E2B job fails with a configuration error."
+
+    [[part.section.row]]
+    keys = ["HARNESS_PROVIDER"]
+    default = "`daytona` in the compose files (`hosted` in code; both mean the platform-managed path)"
+    setups = ["S", "D", "H"]
+    text = "`sandbox` sends jobs to an out-of-process sandbox server instead (development)."
+
+    [[part.section.row]]
+    keys = ["HARNESS_PUBLIC_BASE_URL"]
+    default = "empty"
+    setups = ["S", "D", "H"]
+    text = "Public URL sandboxes use to call back into the platform."
+
+    [[part.section.row]]
+    keys = ["ALK_HARNESS"]
+    default = "`claude`"
+    setups = ["S", "D", "H"]
+    text = "Agent that authors the environment inside the sandbox."
+
+    [[part.section.row]]
+    keys = ["ALK_HARNESS_MODEL"]
+    default = "derived from `ALK_HARNESS` and the gateway settings (dev overlay's local sandbox server: `claude-sonnet-4-6`)"
+    setups = ["S", "D", "H", "dev"]
+    text = "Model the authoring agent uses."
+
+    [[part.section.row]]
+    keys = ["ALK_HOSTED_AGENTCC_BASE_URL", "AGENTCC_BASE_URL"]
+    default = "empty"
+    setups = ["S", "D", "H"]
+    text = "Gateway URL reachable from inside the sandbox, for authoring through the gateway. The first wins."
+
+    [[part.section.row]]
+    keys = ["ALK_HOSTED_AGENTCC_MODEL"]
+    default = "`vertex_ai/gemini-3.7-flash`"
+    setups = ["S", "D", "H"]
+    text = "Model requested through that gateway."
+
+    [[part.section.row]]
+    keys = ["AGENTCC_HARNESS_API_KEY"]
+    default = "empty (falls back to `AGENTCC_INTERNAL_API_KEY`)"
+    setups = ["S", "D", "H"]
+    text = "Platform-owned gateway key for sandbox authoring."
+
+    [[part.section.row]]
+    keys = ["SIMULATOR_LLM_PROVIDER", "SIMULATOR_LLM_MODEL"]
+    default = "`vertex`, `gemini-3.8-flash`"
+    setups = ["S", "D", "H"]
+    text = "LLM that plays the simulated user."
+
+    [[part.section.row]]
+    keys = ["SIMULATOR_LLM_THINKING"]
+    default = "empty: the least deliberation the model accepts by default"
+    setups = ["S", "D", "H"]
+    text = "That LLM's thinking level or token budget. Set it to go lower where the model allows, e.g. `minimal` on `gemini-3.5-flash-lite` (`gemini-3.7-flash` refuses it)."
+
+    [[part.section.row]]
+    keys = ["HARNESS_CALLER_BARGE_IN_RATE"]
+    default = "`0.4`"
+    setups = ["S", "D", "H"]
+    text = "Fraction of hosted voice calls selected for optional simulator caller interruptions. Set `0` to disable or a value up to `1` to enable more calls; selected calls may contain multiple interjections."
+
+    [[part.section.row]]
+    keys = ["HARNESS_MAX_ARTIFACT_BYTES"]
+    default = "`1073741824` (1 GiB)"
+    setups = ["S", "D", "H"]
+    text = "Minimum cumulative artifact budget, in bytes, for new hosted environment jobs and simulation Runs. Applies to explicit smaller request budgets and Runs of saved environments; larger saved budgets are preserved. Existing jobs are unchanged. `0` is not an unlimited sentinel."
+
+    [[part.section.row]]
+    keys = ["ALK_HOSTED_BASE_EGRESS_DOMAINS"]
+    default = "empty"
+    setups = ["S", "D", "H"]
+    text = "Extra domains a sandbox may reach, comma-separated."
+
+    [[part.section.row]]
+    keys = ["ALK_HOSTED_WEBRTC_EGRESS_CIDRS"]
+    default = "empty"
+    setups = ["S", "D", "H"]
+    text = "CIDRs a sandbox may reach for WebRTC media, comma-separated."
+
+    [[part.section.row]]
+    keys = ["ALK_HOSTED_EGRESS_UNRESTRICTED"]
+    default = "`false`"
+    setups = ["S", "D", "H"]
+    text = "`true` lifts the sandbox egress allow-list."
+
+    [[part.section.row]]
+    keys = ["ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS"]
+    default = "`3600`"
+    setups = ["S", "D", "H"]
+    text = "Longest an authoring run may take."
+
+    [[part.section.row]]
+    keys = ["ALK_HOSTED_AUTHORING_TIMEOUT"]
+    default = "empty: `ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS` + 300"
+    setups = ["S", "D", "H"]
+    text = "Timeout of the whole authoring step, in seconds."
+
+    [[part.section.row]]
+    keys = ["ALK_HOSTED_SANDBOX_TTL_SECONDS"]
+    default = "`7200`"
+    setups = ["S", "D", "H"]
+    text = "Lifetime of a job's sandbox."
+
+    [[part.section.row]]
+    keys = ["ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS"]
+    default = "`180`"
+    setups = ["S", "D", "H"]
+    text = "Seconds a running sandbox may stay unreachable through its provider's API before the job fails it (`sandbox_unreachable`) and replaces it from its infrastructure retries. Raise it for long runs that must ride out a brief provider outage."
+
+    [[part.section.row]]
+    keys = ["ALK_HOSTED_CHAT_TTL_SECONDS"]
+    default = "`1800`"
+    setups = ["S", "D", "H"]
+    text = "Lifetime of an interactive chat sandbox."
+
+    [[part.section.row]]
+    keys = ["ALK_HOSTED_BUNDLE_DIR"]
+    default = "empty"
+    setups = ["S", "D", "H"]
+    text = "Directory of pre-authored environment bundles (`<dir>/<owner>__<repo>/manifest.json`)."
+
+    [[part.section.row]]
+    keys = ["HARNESS_PARALLELISM_ENABLED"]
+    default = "`false`"
+    setups = ["S", "D", "H"]
+    text = "`true` lets one sandbox run several of a simulation's scenarios at once. Parallelism stays off, and a run that asks for it runs one scenario at a time, unless this is `true` and the sandbox's image is in `HARNESS_PARALLEL_SNAPSHOT_DIGESTS`. A Daytona sandbox built from `ALK_DAYTONA_DOCKERFILE` (development) needs only this flag."
+
+    [[part.section.row]]
+    keys = ["HARNESS_PARALLEL_SNAPSHOT_DIGESTS"]
+    default = "empty: no image qualifies"
+    setups = ["S", "D", "H"]
+    text = "Sandbox images cleared for parallel scenarios, comma-separated: Daytona snapshot digests (`ALK_DAYTONA_SNAPSHOT_DIGEST`, or a profile's `snapshot_digest`) and E2B template build IDs (`ALK_E2B_TEMPLATE_BUILD_ID`)."
+
+    [[part.section.row]]
+    keys = ["HARNESS_MAX_WORLD_SLOTS"]
+    default = "`8`"
+    setups = ["S", "D", "H"]
+    text = "Most scenarios one sandbox runs at once, 1 to 8: any other value fails every hosted run. The sandbox's CPU and memory can lower it further."
+
+    [[part.section.row]]
+    keys = ["HARNESS_MAX_EXECUTIONS_PER_RUN"]
+    default = "`200`"
+    setups = ["S", "D", "H"]
+    text = "Most scenarios × trials one simulation Run may submit; a larger Run is refused with `run_too_large`."
+
+    [[part.section.row]]
+    keys = ["HARNESS_RESOURCE_PROFILES"]
+    default = "`[]`: every run uses the provider's fixed sandbox size"
+    setups = ["S", "D", "H"]
+    text = "Measured sandbox sizes, a JSON array of objects with `name`, `cpu_units`, `memory_mb`, `disk_gb`, `max_parallelism`, `connectors` (the agent connectors it serves) and, except for sandboxes built from `ALK_DAYTONA_DOCKERFILE`, `snapshot_name` and `snapshot_digest`. A run gets the profile that runs the most of its scenarios at once, and the smallest of those. A value that is not JSON, an empty one included, stops the app from starting; an invalid profile fails every hosted run."
+
+    [[part.section.row]]
+    keys = ["ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER", "ALK_CAB_GUEST_POC_PIN"]
+    default = "empty: off"
+    setups = ["S", "D", "H"]
+    text = "Temporary proof-of-concept scenario policy of Future AGI's hosted service (an E.164 target and its PIN), passed only to phone sandboxes whose submitted target exactly matches the configured number. Both values are required; leave empty when self-hosting."
+    audience = "internal"
+
+  [[part.section]]
+  heading = "Voice simulations (Distributed)"
+  body = '''
+Hosted voice runs execute in the `worker-simulation-runner` container, which
+runs its own image. Standalone skips its queue (`TEMPORAL_EXCLUDED_QUEUES`).
+Check the runner's effective environment with
+`scripts/verify-simulation-runner-deployment.sh --env-only`. Never give the
+runner `FI_API_KEY` or `FI_SECRET_KEY`: results would be filed under the wrong
+organization.
+
+The LiveKit and SIP trunk keys (`S` below) also reach the API: phone runs in
+hosted sandboxes ([above](#agent-simulations-in-hosted-sandboxes)) dial out
+through the platform's trunk, never a customer's, so Standalone's `app` and
+Distributed's `backend` read them too.
+'''
+
+    [[part.section.row]]
+    keys = ["LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"]
+    default = "empty"
+    setups = ["S", "D", "H"]
+    text = "LiveKit project the simulator joins. Must own the SIP trunk below. The API also hands it to phone runs in hosted sandboxes, which is why Standalone's `app` reads it."
+
+    [[part.section.row]]
+    keys = ["INTERNAL_API_SECRET"]
+    default = "empty"
+    setups = ["D", "H"]
+    text = "Bearer the runner uses to report results to the platform."
+
+    [[part.section.row]]
+    keys = ["LIVEKIT_OUTBOUND_TRUNK_ID"]
+    default = "empty"
+    setups = ["S", "D", "H"]
+    text = "Outbound SIP trunk (the platform dials the customer's agent)."
+
+    [[part.section.row]]
+    keys = ["PSTN_CALLER_NUMBER"]
+    default = "empty"
+    setups = ["S", "D", "H"]
+    text = "E.164 caller id provisioned on that trunk."
+
+    [[part.section.row]]
+    keys = ["SIP_OUTBOUND_TRUNK_ID", "SIP_OUTBOUND_FROM_NUMBER"]
+    default = "empty"
+    setups = ["S", "D", "H"]
+    text = "Fallbacks for `LIVEKIT_OUTBOUND_TRUNK_ID` and `PSTN_CALLER_NUMBER` when a phone run in a hosted sandbox dials out; those two win when set."
+
+    [[part.section.row]]
+    keys = ["ALK_SIM_SLOT_LEASE_SCRIPT"]
+    default = "empty"
+    setups = ["D", "H"]
+    text = "Path inside the runner to the lease script for inbound (Retell) runs. Unset: the SDK provisions a dispatch rule per run."
+
+    [[part.section.row]]
+    keys = ["SIM_SLOT_LEASE_STORE"]
+    default = "the lease script's own per-container default"
+    setups = ["D", "H"]
+    text = "Where that script records leases; point every runner at one shared location. Read by the lease script, not by the platform."
+
+    [[part.section.row]]
+    keys = ["HOSTED_RUNNER_ENABLED"]
+    default = "`false` (the runner container: `true`)"
+    setups = ["D", "H"]
+    text = "Send eligible simulation runs to the runner."
+
+    [[part.section.row]]
+    keys = ["HOSTED_RUNNER_VOICE_ENABLED"]
+    default = "`false`"
+    setups = ["D", "H"]
+    text = "Send voice runs to the runner too. Needs `HOSTED_RUNNER_ENABLED`."
+
+    [[part.section.row]]
+    keys = ["HOSTED_RUNNER_MAX_CASES"]
+    default = "`500` (`0` = no cap)"
+    setups = ["D", "H"]
+    text = "Most scenario rows one hosted voice run may reserve."
+
+    [[part.section.row]]
+    keys = ["HOSTED_RUNNER_MAX_WALLCLOCK_SECONDS"]
+    default = "`21600` (`0` = no cap)"
+    setups = ["D", "H"]
+    text = "Longest one hosted voice run may hold a runner slot."
+
+    [[part.section.row]]
+    keys = ["HOSTED_RUNNER_LEASED_ROOM_REUSE"]
+    default = "`false`"
+    setups = ["D", "H"]
+    text = "Serve a multi-row phone run over one leased room. Only once a runner kit that supports it is deployed."
+
+    [[part.section.row]]
+    keys = ["HOSTED_RUNNER_LEASED_ROOM_MAX_CASES"]
+    default = "`25` (`0` = no cap)"
+    setups = ["D", "H"]
+    text = "Tighter row cap for leased-number phone runs."
+
+    [[part.section.row]]
+    keys = ["HOSTED_RUNNER_LEASED_ROOM_MAX_WALLCLOCK_SECONDS"]
+    default = "`14400` (`0` = no cap)"
+    setups = ["D", "H"]
+    text = "Tighter time cap for leased-number phone runs."
+
+    [[part.section.row]]
+    keys = ["HOSTED_RUNNER_PARENT_SLACK_SECONDS"]
+    default = "`600`"
+    setups = ["D", "H"]
+    text = "Seconds the workflow timeout and number lease exceed the run's own budget. An empty value stops the worker at import: leave it unset instead."
+
+    [[part.section.row]]
+    keys = ["SIMULATOR_CONVERSATION_DIRECTION"]
+    default = "`simulator_first`"
+    setups = ["D", "H"]
+    text = "Who speaks first in a simulated call."
+
+    [[part.section.row]]
+    keys = ["ALK_RUNNER_MAX_CONCURRENCY"]
+    default = "`4`"
+    setups = ["D"]
+    text = "Concurrent runs per runner container (also its activity slots)."
+
+    [[part.section.row]]
+    keys = ["ALK_RUNNER_PYTHON"]
+    default = "`/opt/alk-venv/bin/python`"
+    setups = ["D"]
+    text = "Interpreter of the runner's SDK environment."
+
+    [[part.section.row]]
+    keys = ["TEMPORAL_SIMRUNNER_MAX_WORKFLOWS"]
+    default = "`8`"
+    setups = ["D"]
+    text = "Workflow task slots of the runner."
+
+    [[part.section.row]]
+    keys = ["SIMULATION_RUNNER_GRACEFUL_SHUTDOWN_TIMEOUT"]
+    default = "`300`"
+    setups = ["D"]
+    text = "Seconds the runner drains in-flight calls on stop."
+
+    [[part.section.row]]
+    keys = ["SIMULATION_RUNNER_STOP_GRACE_PERIOD"]
+    default = "`330s`"
+    setups = ["D"]
+    text = "Docker's stop timeout for the runner. Keep it above the drain timeout, or a call in flight is cut and its leased number stays taken."
+
+    [[part.section.row]]
+    keys = ["VAPI_API_KEY", "VAPI_PHONE_NUMBER_ID"]
+    default = "empty"
+    setups = ["S", "D", "H"]
+    text = "Vapi account for voice simulations through Vapi."
+
+    [[part.section.row]]
+    keys = ["VAPI_API_BASE_URL"]
+    default = "Vapi's public API"
+    setups = ["S", "D", "H"]
+    text = "Vapi API endpoint."
+
+    [[part.section.row]]
+    keys = ["SYSTEM_VOICE_PROVIDER"]
+    default = "`vapi`"
+    setups = ["S", "D", "H"]
+    text = "Provider of the simulator side of a voice call. Calls to LiveKit agents always use LiveKit."
+
+  [[part.section]]
+  heading = "Deployment telemetry"
+  body = '''
+Deployment telemetry is **on** by default, so Future AGI knows how many
+installs run which version. It never sends traces, prompts, completions,
+datasets or any other content. What it sends and when, what the opt-out still
+sends, and how to see what your install sent:
+[Telemetry and outbound connections](/docs/self-hosting/configuration/telemetry).
+'''
+
+    [[part.section.row]]
+    keys = ["FUTURE_AGI_TELEMETRY_DISABLED"]
+    default = "`false`"
+    setups = ["S", "D", "H"]
+    text = '`true` opts out (`1`, `yes` and `on` also work): no email addresses and no heartbeats are sent, and buffered heartbeats are deleted; one minimal registration remains ([what it contains](/docs/self-hosting/configuration/telemetry#turn-it-off)). `./bin/install --no-telemetry` (`.\bin\install.ps1 -NoTelemetry`) writes it before anything starts. Helm: `config.telemetry=false`.'
+    tag = "telemetry"
+
+    [[part.section.row]]
+    keys = ["FUTURE_AGI_TELEMETRY_URL"]
+    default = "`https://api.futureagi.com`"
+    setups = ["S", "D", "H"]
+    text = "Where registrations and heartbeats go. Change it only to test against another receiver."
+    tag = "telemetry"
+
+    [[part.section.row]]
+    keys = ["FUTURE_AGI_TELEMETRY_INTERVAL_HOURS"]
+    default = "`6`"
+    setups = ["S", "D", "H"]
+    text = "Heartbeat interval: 1, 2, 3, 4, 6, 8, 12 or 24. Other values fall back to 6."
+    tag = "telemetry"
+
+    [[part.section.row]]
+    keys = ["FUTURE_AGI_TELEMETRY_JITTER_SECONDS"]
+    default = "`1800`"
+    setups = ["S", "D", "H"]
+    text = "Maximum random delay added to each scheduled run, so installs do not all send at once."
+    tag = "telemetry"
+
+    [[part.section.row]]
+    keys = ["FUTURE_AGI_TELEMETRY_TIMEOUT_SECONDS"]
+    default = "`5`"
+    setups = ["S", "D", "H"]
+    text = "Timeout of each request. `./bin/install` runs its `create_user` with `2` unless this is set, so an unreachable telemetry URL delays the first account only briefly."
+    tag = "telemetry"
+
+    [[part.section.row]]
+    keys = ["FUTURE_AGI_TELEMETRY_BUFFER_DIR"]
+    default = { S = "`/data/telemetry`", D = "`/tmp/futureagi-deployment-telemetry`", H = "`futureagi-deployment-telemetry` under the system temp dir" }
+    setups = ["S", "D", "H"]
+    text = "Where undelivered heartbeats wait for the next attempt, in a directory only the app's user can read. Files older than 30 days are deleted."
+    tag = "telemetry"
+
+    [[part.section.row]]
+    keys = ["FUTURE_AGI_DEPLOYMENT_TYPE"]
+    default = { "S D" = "`docker`", H = "detected: `kubernetes`" }
+    setups = ["S", "D", "H"]
+    text = "Reported as `deployment_type` in telemetry. Unset, it is detected: `kubernetes`, `docker` or `bare_metal`."
+    tag = "telemetry"
+
+  [[part.section]]
+  heading = "Integrations of Future AGI's hosted service"
+  body = '''
+These power Future AGI's own cloud service. Leave them empty when you self-host:
+empty means the feature is skipped and nothing is sent.
+'''
+  after = '''
+Browser-side analytics (Mixpanel, PostHog, Sentry, ad pixels) are build-time
+settings of the UI image. The published images are built without them, so the
+UI sends nothing to those services. `VITE_MIXPANEL_SESSION_REPLAY_PERCENT` and
+`VITE_SESSION_REPLAY_BLOCKED_PATH_PREFIXES` only matter in an image built with
+a Mixpanel token.
+'''
+
+    [[part.section.row]]
+    keys = ["HUBSPOT_API_TOKEN"]
+    default = "empty: skipped"
+    setups = ["S", "D", "H"]
+    text = "Adds a HubSpot contact at signup and marks it at login."
+
+    [[part.section.row]]
+    keys = ["SLACK_WEBHOOK_CHANNEL"]
+    default = "empty: skipped"
+    setups = ["S", "D", "H"]
+    text = "Slack incoming webhook for new-signup notices."
+
+    [[part.section.row]]
+    keys = ["ERROR_LOGS_WEBHOOK"]
+    default = "empty"
+    setups = ["S", "D", "H"]
+    text = "Slack incoming webhook for selected error reports. Never used with `ENV_TYPE=local`."
+
+    [[part.section.row]]
+    keys = ["MIX_PANEL_TOKEN"]
+    default = "empty: off"
+    setups = ["S", "D", "H"]
+    text = "Server-side Mixpanel product analytics."
+
+    [[part.section.row]]
+    keys = ["POSTHOG_API_KEY"]
+    default = "empty: off"
+    setups = ["S", "D", "H"]
+    text = "Server-side PostHog product analytics."
+
+    [[part.section.row]]
+    keys = ["POSTHOG_HOST"]
+    default = "`https://us.i.posthog.com`"
+    setups = ["S", "D", "H"]
+    text = "PostHog endpoint."
+
+    [[part.section.row]]
+    keys = ["SENTRY_DSN"]
+    default = "empty: off"
+    setups = ["S", "D", "H"]
+    text = "Send errors to your Sentry project."
+
+    [[part.section.row]]
+    keys = ["SENTRY_ENABLED"]
+    default = "on outside `ENV_TYPE=local`, but only with a DSN"
+    setups = ["S", "D", "H"]
+    text = "`false` turns Sentry off even with a DSN."
+
+    [[part.section.row]]
+    keys = ["USAGE_EVENTS_ENABLED"]
+    default = "`false` in both compose files and the chart (`config.usageEvents`)"
+    setups = ["S", "D", "H"]
+    text = "Billing usage events, one per trace export and per metered action, on the Redis stream `usage:events`. The app and fi-collector (Standalone runs it inside `app`) read it. Only Future AGI Cloud drains that stream: turned on anywhere else, it grows until it reaches `USAGE_EVENTS_MAX_LEN`, taking Redis memory the cache and locks need. Unset, the app turns it on only when the image ships that consumer, and fi-collector turns it on."
+
+    [[part.section.row]]
+    keys = ["USAGE_EVENTS_MAX_LEN"]
+    default = "`1000000`"
+    setups = ["S", "D", "H"]
+    text = "Most entries kept on `usage:events` (about 160 bytes each) while its consumer is behind or stopped. A positive integer in plain digits; blank means the default. The app and fi-collector refuse to start on zero, a negative number or text."
+
+  [[part.section]]
+  heading = "Sign-up and sign-in"
+
+    [[part.section.row]]
+    keys = ["OSS_RETURN_PASSWORD_RESET_LINK"]
+    default = "`false`"
+    setups = ["S", "D", "H"]
+    text = "`true` returns the password-reset link in the browser instead of emailing it, even when email is configured. The endpoint takes no authentication, so anyone who can reach the instance can take over any account. Only on a laptop or a network where everyone is trusted. `./bin/install` warns when `.env` sets it, and the Standalone start-up summary marks it UNSAFE."
+
+    [[part.section.row]]
+    keys = ["RECAPTCHA_ENABLED"]
+    default = "`false` in the compose files; Helm: `config.recaptcha` (`false`)"
+    setups = ["S", "D", "H"]
+    text = "reCAPTCHA on sign-up, login and token refresh. Needs `RECAPTCHA_SECRET_KEY` and a UI image built with `VITE_GOOGLE_SITE_KEY`; the published images have none, so turning it on there rejects every sign-up and login. The Helm chart refuses to render `config.recaptcha=true` without `RECAPTCHA_SECRET_KEY` (in `secrets.extra` or `config.extraEnv`) or a `config.extraEnvFrom` source."
+
+    [[part.section.row]]
+    keys = ["RECAPTCHA_SECRET_KEY"]
+    default = "empty"
+    setups = ["S", "D", "H"]
+    text = "reCAPTCHA server key."
+
+    [[part.section.row]]
+    keys = ["AUTH0_CLIENT_ID", "AUTH0_CLIENT_SECRET"]
+    default = "empty: no Google sign-in"
+    setups = ["S", "D", "H"]
+    text = "Google sign-in: the OAuth client of a Google Cloud \"Web application\" (the app names Google's settings `AUTH0_*`). Redirect URI: `<API URL>/saml2_auth/auth/callback/`. Helm: `auth.google`."
+
+    [[part.section.row]]
+    keys = ["GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET"]
+    default = "empty: no GitHub sign-in"
+    setups = ["S", "D", "H"]
+    text = "GitHub sign-in: a GitHub OAuth app. Redirect URI: `<API URL>/saml2_auth/github/callback/`. Helm: `auth.github`."
+
+    [[part.section.row]]
+    keys = ["MICROSOFT_CLIENT_ID", "MICROSOFT_CLIENT_SECRET"]
+    default = "empty: no Microsoft sign-in"
+    setups = ["S", "D", "H"]
+    text = "Microsoft sign-in: a multi-tenant Entra app registration (the `common` endpoint). Redirect URI: `<API URL>/saml2_auth/microsoft/callback/`. Helm: `auth.microsoft`."
+
+    [[part.section.row]]
+    keys = ["VITE_HELP_LINK"]
+    default = "empty: the community Discord"
+    setups = ["S", "D", "H"]
+    text = "Where the sidebar's Help entry points."
+
+[[part]]
+heading = "4. Advanced tuning"
+body = '''
+Defaults are the values the compose files and the app use when a key is unset.
+'''
+
+  [[part.section]]
+  heading = "Images"
+  body = '''
+Helm pins every image to the chart's `appVersion`; override it with the chart
+value `image.tag`. The keys below are the Compose equivalents.
+'''
+
+    [[part.section.row]]
+    keys = ["FUTURE_AGI_VERSION"]
+    default = "`latest`"
+    setups = ["S", "D"]
+    text = "Tag of the Future AGI images (`futureagi/standalone` in Standalone, built on the slim backend; `futureagi/future-agi`, the default backend, in Distributed; see [backend variants](/docs/self-hosting/images#backend-variants)). Pin a release such as `v1.42.0`; `local` means images built from this checkout by `./bin/install --from-source` (needed for a development branch: published images are built from `main`). Also reported as the version in telemetry."
+
+    [[part.section.row]]
+    keys = ["FRONTEND_VERSION", "AGENTCC_GATEWAY_VERSION", "SERVING_VERSION", "CODE_EXECUTOR_VERSION"]
+    default = "`latest`"
+    setups = ["S", "D"]
+    text = "Tags of the UI, gateway, embedding-server and code-executor images. Standalone uses only `SERVING_VERSION` (`ml` profile) and `CODE_EXECUTOR_VERSION` (`sandbox` profile)."
+
+    [[part.section.row]]
+    keys = ["FI_COLLECTOR_VERSION"]
+    default = "`local` (built from `./fi-collector`)"
+    setups = ["D"]
+    text = "Tag of the trace collector image. The production overlay requires a published, reviewed tag."
+
+    [[part.section.row]]
+    keys = ["SIMULATION_RUNNER_VERSION"]
+    default = "`latest`"
+    setups = ["D"]
+    text = "Tag of the simulation runner image. Required by the production overlay."
+
+  [[part.section]]
+  heading = "Host ports"
+  columns = ["Key", "Default", "Setups", "What it publishes"]
+  body = '''
+`./bin/install` checks every port the chosen setup publishes and offers a free
+one when a default is taken. Ports marked `127.0.0.1` only accept connections
+from the Docker host; the rest listen on all interfaces. Under
+`./bin/dev --distributed`, Postgres, ClickHouse, Redis, MinIO and Temporal
+listen on all interfaces too.
+'''
+  after = '''
+Standalone publishes no Postgres, ClickHouse, Redis, Temporal or code-eval
+sandbox port, and its `ml` and `sandbox` profiles publish none either.
+'''
+
+    [[part.section.row]]
+    keys = ["FRONTEND_PORT"]
+    default = "`3000`"
+    setups = ["S", "D", "dev"]
+    text = "UI. An unset `APP_URL` follows it."
+
+    [[part.section.row]]
+    keys = ["BACKEND_PORT"]
+    default = "`8000`"
+    setups = ["S", "D", "dev"]
+    text = "API. An unset `VITE_HOST_API` follows it; when the installer moves this port it also rewrites a `VITE_HOST_API` that names `localhost`. A `VITE_HOST_API` naming another host is yours to update."
+
+    [[part.section.row]]
+    keys = ["AGENTCC_GATEWAY_PORT"]
+    default = "`8090`"
+    setups = ["S", "D", "dev"]
+    text = "LLM gateway (OpenAI-compatible)."
+
+    [[part.section.row]]
+    keys = ["FI_COLLECTOR_OTLP_PORT"]
+    default = "`4317`"
+    setups = ["S", "D", "dev"]
+    text = "OTLP gRPC trace ingest, `127.0.0.1`."
+
+    [[part.section.row]]
+    keys = ["FI_COLLECTOR_OTLP_HTTP_PORT"]
+    default = "`4318`"
+    setups = ["S", "D", "dev"]
+    text = "OTLP HTTP trace ingest, `127.0.0.1`. An unset `FI_COLLECTOR_PUBLIC_URL` follows it."
+
+    [[part.section.row]]
+    keys = ["MINIO_API_PORT"]
+    default = "`9005`"
+    setups = ["S", "D", "dev"]
+    text = "Object storage API, `127.0.0.1`. `MINIO_URL` follows it."
+
+    [[part.section.row]]
+    keys = ["FI_COLLECTOR_ADMIN_PORT"]
+    default = "`9464`"
+    setups = ["D"]
+    text = "Collector health and metrics, `127.0.0.1`."
+
+    [[part.section.row]]
+    keys = ["SERVING_PORT"]
+    default = "`8080`"
+    setups = ["D"]
+    text = "Embedding model server."
+
+    [[part.section.row]]
+    keys = ["CODE_EXECUTOR_PORT"]
+    default = "`8060`"
+    setups = ["D"]
+    text = "Code executor, `127.0.0.1`: it runs any code it is sent, without authentication."
+
+    [[part.section.row]]
+    keys = ["PG_PORT"]
+    default = "`5432`"
+    setups = ["D", "dev"]
+    text = "Postgres, `127.0.0.1`."
+
+    [[part.section.row]]
+    keys = ["CH_HTTP_PORT", "CH_PORT"]
+    default = "`8123`, `9000`"
+    setups = ["D", "dev"]
+    text = "ClickHouse HTTP and native, `127.0.0.1`."
+
+    [[part.section.row]]
+    keys = ["REDIS_PORT"]
+    default = "`6379`"
+    setups = ["D", "dev"]
+    text = "Redis, `127.0.0.1`."
+
+    [[part.section.row]]
+    keys = ["MINIO_CONSOLE_PORT"]
+    default = "`9006`"
+    setups = ["D", "dev"]
+    text = "MinIO console, `127.0.0.1`."
+
+    [[part.section.row]]
+    keys = ["TEMPORAL_PORT"]
+    default = "`7233`"
+    setups = ["D", "dev"]
+    text = "Temporal gRPC, `127.0.0.1`."
+
+    [[part.section.row]]
+    keys = ["TEMPORAL_UI_PORT"]
+    default = "`8085`"
+    setups = ["D"]
+    text = "Temporal UI (`all` or `observability` profile, or `./bin/dev --distributed`)."
+
+    [[part.section.row]]
+    keys = ["PEERDB_PORT"]
+    default = "`9900`"
+    setups = ["D"]
+    text = "PeerDB, `127.0.0.1`."
+
+    [[part.section.row]]
+    keys = ["PEERDB_UI_PORT"]
+    default = "`3001`"
+    setups = ["D"]
+    text = "PeerDB UI (`all` or `peerdb` profile, or `./bin/dev --distributed`)."
+
+    [[part.section.row]]
+    keys = ["PROPERTY_CATALOG_KAFKA_PORT"]
+    default = "`29092`"
+    setups = ["D"]
+    text = "Kafka of the observed-attribute catalog, `127.0.0.1`."
+
+  [[part.section]]
+  heading = "Standalone sizing"
+
+    [[part.section.row]]
+    keys = ["FI_APP_TEMPORAL_MAX_CONCURRENT_ACTIVITIES"]
+    default = "`8`"
+    setups = ["S"]
+    text = "Activity slots per queue of the app's embedded Temporal worker. Each running activity can hold a Postgres connection: raise it only on a larger host."
+
+    [[part.section.row]]
+    keys = ["FI_APP_TEMPORAL_MAX_CONCURRENT_WORKFLOW_TASKS"]
+    default = "`8`"
+    setups = ["S"]
+    text = "Workflow-task slots per queue of the embedded worker."
+
+    [[part.section.row]]
+    keys = ["GRANIAN_THREADS"]
+    default = "`2`"
+    setups = ["S", "D", "H"]
+    text = "API server threads."
+
+    [[part.section.row]]
+    keys = ["REDIS_MAXMEMORY"]
+    default = "`128mb`"
+    setups = ["S"]
+    text = "Memory cap of the app container's Redis (cache and locks; nothing in it must survive a restart). At the cap it evicts the least recently used keys (`allkeys-lru`)."
+
+    [[part.section.row]]
+    keys = ["SPAN_LIST_PAGE_WALL_MS", "TRACE_LIST_PAGE_WALL_MS", "SESSION_LIST_PAGE_WALL_MS"]
+    default = "Standalone: `15000`; elsewhere `5000`"
+    setups = ["S", "D", "H"]
+    text = "How long a span, trace or session list page may search before it answers with the rows found so far and a cursor for the rest (marked degraded). Standalone's ClickHouse runs two threads a query, so it waits longer. Between 100 and 60000."
+
+    [[part.section.row]]
+    keys = ["FI_ADOPT_DISTRIBUTED_INSTALL_DATA"]
+    default = "unset"
+    setups = ["S"]
+    text = "`true` makes Standalone take over a Postgres database created by Distributed. Uploads in the old MinIO volume and in-flight workflows are left behind. Moving an install between setups is otherwise refused."
+
+  [[part.section]]
+  heading = "Distributed sizing"
+
+    [[part.section.row]]
+    keys = ["GRANIAN_WORKERS"]
+    default = "`1`"
+    setups = ["D", "H"]
+    text = "API server processes."
+
+    [[part.section.row]]
+    keys = ["ENABLE_HTTP", "ENABLE_GRPC"]
+    default = "`true`, `true`"
+    setups = ["D", "H"]
+    text = "Run the backend's HTTP server and its gRPC server (port 50051)."
+
+    [[part.section.row]]
+    keys = ["TEMPORAL_ALL_QUEUES"]
+    default = "`true`"
+    setups = ["D", "H"]
+    text = "`true`: the single `worker` polls every queue except `TEMPORAL_EXCLUDED_QUEUES`. `false`: it polls only the `default` queue, so run the per-queue workers (`all` or `workers` profile) for the rest."
+
+    [[part.section.row]]
+    keys = ["TEMPORAL_MAX_CONCURRENT_ACTIVITIES", "TEMPORAL_MAX_CONCURRENT_WORKFLOW_TASKS"]
+    default = "`50`, `50`"
+    setups = ["D", "H"]
+    text = "Slots of the all-queues `worker`. Standalone ignores these (see `FI_APP_TEMPORAL_*`)."
+
+    [[part.section.row]]
+    keys = ["TEMPORAL_DEFAULT_MAX_ACTIVITIES", "TEMPORAL_DEFAULT_MAX_WORKFLOWS"]
+    default = "`100`, `100`"
+    setups = ["D"]
+    text = "Slots of `worker-default`."
+
+    [[part.section.row]]
+    keys = ["TEMPORAL_TASKS_S_MAX_ACTIVITIES", "TEMPORAL_TASKS_S_MAX_WORKFLOWS"]
+    default = "`200`, `200`"
+    setups = ["D"]
+    text = "Slots of `worker-tasks-s`."
+
+    [[part.section.row]]
+    keys = ["TEMPORAL_TASKS_L_MAX_ACTIVITIES", "TEMPORAL_TASKS_L_MAX_WORKFLOWS"]
+    default = "`50`, `50`"
+    setups = ["D"]
+    text = "Slots of `worker-tasks-l`."
+
+    [[part.section.row]]
+    keys = ["TEMPORAL_TASKS_XL_MAX_ACTIVITIES", "TEMPORAL_TASKS_XL_MAX_WORKFLOWS"]
+    default = "`10`, `20`"
+    setups = ["D"]
+    text = "Slots of `worker-tasks-xl`."
+
+    [[part.section.row]]
+    keys = ["TEMPORAL_TRACE_MAX_ACTIVITIES", "TEMPORAL_TRACE_MAX_WORKFLOWS"]
+    default = "`100`, `100`"
+    setups = ["D"]
+    text = "Slots of `worker-trace-ingestion`."
+
+    [[part.section.row]]
+    keys = ["TEMPORAL_COMPASS_MAX_ACTIVITIES", "TEMPORAL_COMPASS_MAX_WORKFLOWS"]
+    default = "`50`, `50`"
+    setups = ["D"]
+    text = "Slots of `worker-agent-compass`."
+
+    [[part.section.row]]
+    keys = ["FI_COLLECTOR_CPUS", "FI_COLLECTOR_MEMORY"]
+    default = "`1.0`, `1G`"
+    setups = ["D"]
+    text = "CPU and memory limit of the trace collector."
+
+  [[part.section]]
+  heading = "Databases and storage"
+  body = '''
+The Postgres and ClickHouse hosts are set by the compose files. To use a managed
+database, override `PG_HOST`, `PGBOUNCER_HOST` or `CH_HOST` in a
+`docker-compose.override.yml`: values in `.env` do not reach those keys.
+'''
+
+    [[part.section.row]]
+    keys = ["PG_USER", "PG_DB"]
+    default = "`futureagi`, `futureagi`"
+    setups = ["S", "D", "H"]
+    text = "Postgres user and database. Set before the first start; changing them later points the app at a database that does not exist."
+
+    [[part.section.row]]
+    keys = ["CH_DATABASE"]
+    default = "`default`"
+    setups = ["S", "D", "H"]
+    text = "ClickHouse database. `CH25_DATABASE` and `FI_CH_DATABASE` follow it unless set."
+
+    [[part.section.row]]
+    keys = ["CH25_DATABASE"]
+    default = "`CH_DATABASE`"
+    setups = ["S", "D", "H"]
+    text = "Database of the v2 trace schema. Keep it equal to `FI_CH_DATABASE`."
+
+    [[part.section.row]]
+    keys = ["FI_CH_DATABASE"]
+    default = "`CH25_DATABASE`"
+    setups = ["S", "D", "H"]
+    text = "Database the trace collector writes. A different database from the app's means traces never show up."
+
+    [[part.section.row]]
+    keys = ["CH_USERNAME"]
+    default = "`default`"
+    setups = ["S", "D", "H"]
+    text = "ClickHouse user of the app. Helm: `clickhouse.user`, which must stay `default` with the bundled ClickHouse."
+
+    [[part.section.row]]
+    keys = ["CH_ENABLED"]
+    default = "`true`"
+    setups = ["D", "H"]
+    text = "Read analytics from ClickHouse. Do not turn off: trace views need it."
+
+    [[part.section.row]]
+    keys = ["CH_USE_REPLICATED_ENGINES"]
+    default = "`false`"
+    setups = ["D", "H"]
+    text = "Create Replicated table engines, for a ClickHouse cluster."
+
+    [[part.section.row]]
+    keys = ["CH25_EVAL_LOGGER_TABLE"]
+    default = "`tracer_eval_logger`"
+    setups = ["S", "D", "H"]
+    text = "Table of eval results in the v2 schema. Do not change."
+
+    [[part.section.row]]
+    keys = ["CH25_QUERY_TYPES_V2_ONLY"]
+    default = "every query type"
+    setups = ["S", "D", "H"]
+    text = "Query types served only from the v2 schema. Do not change."
+
+    [[part.section.row]]
+    keys = ["MINIO_ROOT_USER"]
+    default = "`futureagi`"
+    setups = ["S", "D", "H"]
+    text = "Object storage user; `S3_ACCESS_KEY` follows it. Set before the first start."
+
+    [[part.section.row]]
+    keys = ["STORAGE_BACKEND"]
+    default = "`minio`"
+    setups = ["S", "D", "H"]
+    text = "Object storage flavour: `minio`, `s3` or `gcs`. The compose files wire the bundled MinIO; the others need your own `S3_*` values in a compose override."
+
+    [[part.section.row]]
+    keys = ["PGSSLMODE"]
+    default = "`prefer`"
+    setups = ["S", "D", "H"]
+    text = "TLS mode of the trace collector's Postgres connections. Use `verify-full` for a remote Postgres."
+
+    [[part.section.row]]
+    keys = ["PGSSLROOTCERT", "PGSSLCERT", "PGSSLKEY"]
+    default = "empty"
+    setups = ["S", "D", "H"]
+    text = "Certificate paths inside the collector container; mount the files read-only in a compose override. Helm: with `postgres.external.sslMode` `verify-ca` or `verify-full` and a `global.caBundle`, the chart sets `PGSSLROOTCERT` itself; otherwise mount the CA through the `extraVolumes` and `extraVolumeMounts` of `backend`, `worker`, `bootstrap` and `fiCollector`, and set `PGSSLROOTCERT` in `config.extraEnv` and `fiCollector.extraEnv` (example in the [chart README](repo:deploy/helm/futureagi/README.md#postgresql))."
+
+    [[part.section.row]]
+    keys = ["PGBOUNCER_READ_HOST", "PGBOUNCER_READ_PORT", "PG_READ_DB"]
+    default = "unset: no replica"
+    setups = ["S", "D", "H"]
+    text = "A read replica (or a pooler in front of one) for opted-in reads; same user and password as the primary. Helm: `postgres.readReplica`."
+
+    [[part.section.row]]
+    keys = ["READ_REPLICA_OPT_IN"]
+    default = "empty: nothing reads from the replica"
+    setups = ["S", "D", "H"]
+    text = "Model class names and `feature:` keys routed to the replica, comma-separated. Helm: `postgres.readReplica.optIn`."
+
+    [[part.section.row]]
+    keys = ["PG_DIRECT_HOST", "PG_DIRECT_PORT"]
+    default = "unset"
+    setups = ["S", "D", "H"]
+    text = "A direct (unpooled) Postgres connection for migrations when `PGBOUNCER_HOST` is a transaction-mode pooler. Helm sets it on the bootstrap job when `postgres.pooler` is on."
+
+    [[part.section.row]]
+    keys = ["AGENTCC_REDIS_ADDRESS", "AGENTCC_REDIS_PASSWORD", "AGENTCC_REDIS_DB"]
+    default = "unset: state in memory"
+    setups = ["D", "H"]
+    text = "Redis the LLM gateway keeps rate limits, budgets and other shared state in, as `host:port`; needed as soon as it runs more than one replica. No TLS. Helm: `agentccGateway.redis` (on by default with more than one replica, database 4); with `redis.external.tls`, a Redis without TLS set here through `agentccGateway.extraEnv`."
+
+  [[part.section]]
+  heading = "Application behaviour"
+
+    [[part.section.row]]
+    keys = ["ENV_TYPE"]
+    default = "`local`"
+    setups = ["S", "D", "H"]
+    text = "`local` keeps the self-host fallbacks: the default `SECRET_KEY` is accepted, a throwaway `INTEGRATION_ENCRYPTION_KEY` is made, links use `http://`. Any other value (the production overlay uses `production`) turns them off: the app refuses to start without a real `SECRET_KEY`, and links use `https://`."
+
+    [[part.section.row]]
+    keys = ["DEBUG"]
+    default = { S = "`false`", D = "on while `ENV_TYPE=local`" }
+    setups = ["S", "D", "H"]
+    text = "Django debug pages. Never on for an instance others can reach. The production overlay turns it off."
+
+    [[part.section.row]]
+    keys = ["LOG_LEVEL"]
+    default = "`INFO`"
+    setups = ["S", "D", "H"]
+    text = "Application log level."
+
+    [[part.section.row]]
+    keys = ["LOG_STREAM"]
+    default = "`stdout`"
+    setups = ["S", "D", "H"]
+    text = "`stderr` sends the application's logs to stderr, for a one-off `manage.py` command whose output you redirect (`sqlmigrate`, `dumpdata`); `./bin/dev manage` sets it. Leave it unset for the services: some log collectors (GKE, for one) mark every stderr line as an error."
+
+    [[part.section.row]]
+    keys = ["ALLOWED_HOSTS"]
+    default = "`*`"
+    setups = ["S", "D", "H"]
+    text = "Host names the API answers to, comma-separated. Standalone adds `127.0.0.1,localhost` to a list without `*`, because the container's own health checks call the API on loopback. Distributed adds nothing: include `backend,localhost,127.0.0.1` yourself, since the workers call the API as `backend` (live updates, harness callbacks) and `./bin/install` checks it on `localhost`. Helm: `config.allowedHosts`, to which the chart adds localhost, its service names, the API host and the pod's own IP (`$(POD_IP)`, the Host of load balancer health checks that probe pods directly); empty (the default) means the API host once the API has a public URL, else `*`."
+
+    [[part.section.row]]
+    keys = ["CORS_ALLOWED_ORIGINS"]
+    default = "empty: any origin"
+    setups = ["S", "D", "H"]
+    text = "Browser origins allowed to call the API, comma-separated (e.g. `https://app.example.com`). Setting it turns off allow-all. Helm: `config.corsAllowedOrigins`; empty (the default) means the UI's origin once the UI has a public URL, else any origin; `*` keeps any origin."
+
+    [[part.section.row]]
+    keys = ["CORS_ALLOWED_ORIGIN_REGEXES"]
+    default = "empty"
+    setups = ["S", "D", "H"]
+    text = "Same, as regular expressions."
+
+    [[part.section.row]]
+    keys = ["EXTRA_CSRF_ORIGINS"]
+    default = "empty"
+    setups = ["S", "D", "H"]
+    text = "Extra trusted CSRF origins, comma-separated."
+
+    [[part.section.row]]
+    keys = ["AGENTCC_CONFIG_PATH"]
+    default = "`agentcc-gateway/config.example.yaml`"
+    setups = ["S", "D"]
+    text = "Gateway provider config, relative to the repository root, mounted into the gateway. Copy the example to enable Anthropic, Gemini, Bedrock, Vertex and others; the copy is git-ignored. A path that does not exist stops the stack from starting."
+
+    [[part.section.row]]
+    keys = ["AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS"]
+    default = "`false`; Helm: `agentccGateway.allowPrivateProviderURLs`"
+    setups = ["S", "D", "H"]
+    text = "`true` lets org providers use base URLs on private networks (RFC 1918 addresses, Docker service names): a local Ollama or vLLM, see [INSTALLATION.md](repo:INSTALLATION.md#local-models-ollama-vllm). Read by the gateway and the API; a gateway or API from before this setting ignores it and refuses every private address. Loopback, link-local and cloud metadata addresses stay refused. Anyone who can add a provider can then reach every service on that network, ClickHouse included (its `default` user has no password while `CH_PASSWORD` is empty, as on installs made before the installer generated one), so turn it on only when they are all trusted."
+
+    [[part.section.row]]
+    keys = ["AGENTCC_SYNC_INTERVAL"]
+    default = "`60s` (Helm: `60s`, from `agentccGateway.config.control_plane.sync_interval`)"
+    setups = ["S", "D", "H"]
+    text = "A Go duration (`60s`, `5m`): the gateway also re-reads keys and org settings from the app this often, so a gateway that started before the app (Distributed on a slow host) or several gateway replicas catch up. A gateway from before this setting ignores it and syncs only on start: its `control plane sync enabled` log line shows an `interval` of `0s`. Helm sets it in the gateway's config file, which every gateway reads."
+
+    [[part.section.row]]
+    keys = ["APP_VERSION"]
+    default = "unset"
+    setups = ["S", "D", "H"]
+    text = "The running version, reported by the license check, Sentry and the model server. Helm sets it to the backend image tag."
+
+    [[part.section.row]]
+    keys = ["SIM_COLLECTOR_OTLP_ENDPOINT"]
+    default = "`fi-collector:4317`"
+    setups = ["D", "H"]
+    text = "OTLP/gRPC `host:port` where simulations and voice calls send their spans. Helm sets it to the release's collector."
+
+    [[part.section.row]]
+    keys = ["OTEL_ENABLED"]
+    default = "`false`"
+    setups = ["S", "D", "H"]
+    text = "Export the platform's own OpenTelemetry traces (monitoring Future AGI itself, not your application's traces)."
+
+    [[part.section.row]]
+    keys = ["FAST_STARTUP"]
+    default = "`false`"
+    setups = ["D", "H"]
+    text = "Skip start-up checks in the backend containers."
+
+    [[part.section.row]]
+    keys = ["TEMPORAL_TEST_EXECUTION_ENABLED"]
+    default = "`true`"
+    setups = ["S", "D", "H"]
+    text = "Run test executions as Temporal workflows."
+
+    [[part.section.row]]
+    keys = ["ERROR_LOCALIZER_BACKEND"]
+    default = { S = "`legacy`", "D H" = "`claude_agent_sdk`" }
+    setups = ["S", "D", "H"]
+    text = "Which error localizer explains a failed eval. `claude_agent_sdk` needs the `localizer` extra, which Standalone's slim image leaves out ([Backend variants](/docs/self-hosting/images#backend-variants)); `legacy` is the original localizer and cannot localize simulation call audio."
+
+    [[part.section.row]]
+    keys = ["EXACT_AGGREGATION_TASK_QUEUE"]
+    default = "`exact_aggregation`"
+    setups = ["S", "D", "H"]
+    text = "Queue of exact analytics, which a dedicated single-slot worker serves."
+
+    [[part.section.row]]
+    keys = ["TEMPORAL_EXCLUDED_QUEUES"]
+    default = "`simulation_runner`"
+    setups = ["S", "D", "H"]
+    text = "Queues the general worker does not poll. The runner queue needs its own image."
+
+    [[part.section.row]]
+    keys = ["TEMPORAL_NAMESPACE"]
+    default = "`default`"
+    setups = ["D", "H"]
+    text = "Temporal namespace."
+
+    [[part.section.row]]
+    keys = ["FI_CDC_MODE"]
+    default = "S: `outbox` (D always uses PeerDB)"
+    setups = ["S"]
+    text = "How Postgres changes reach ClickHouse. Standalone uses capture triggers drained by a Temporal schedule; do not change."
+
+    [[part.section.row]]
+    keys = ["CODE_EXECUTOR_URL"]
+    default = "`http://code-executor:8060` (the app's built-in sandbox; `sandbox` profile: the nsjail container)"
+    setups = ["S"]
+    text = "Where code evals run. The built-in sandbox runs Python only; JavaScript evals need the `sandbox` profile. Point it at your own executor only if you run one."
+
+    [[part.section.row]]
+    keys = ["CODE_EXECUTOR_EGRESS_PORTS"]
+    default = "`80,443`"
+    setups = ["S"]
+    text = "TCP ports code evals in the built-in sandbox may connect to, comma-separated; they can listen on none. Landlock enforces it where the Docker host runs Linux 6.7 or later; on older kernels evals reach every port, and the app's log says so at start. A malformed list stops the sandbox. The nsjail sandbox (`sandbox` profile) does not apply it. See [INSTALLATION.md](repo:INSTALLATION.md#code-evals-and-the-sandbox)."
+
+    [[part.section.row]]
+    keys = ["CODE_EXECUTOR_LOCAL_FALLBACK"]
+    default = "`false` (Standalone: fixed `false`)"
+    setups = ["D", "H"]
+    text = "`true` runs code evals inside the worker when `code-executor` cannot be reached, next to the platform's secrets. Off, they fail with `Code executor unavailable`. Only for installs that cannot run the privileged `code-executor` and where everyone who can write code evals is trusted; ignored on Future AGI Cloud. See [INSTALLATION.md](repo:INSTALLATION.md#code-evals-fail-with-code-executor-unavailable). Helm: `codeExecutor.localFallback`."
+
+    [[part.section.row]]
+    keys = ["MODEL_SERVING_URL"]
+    default = "`http://serving:8080`"
+    setups = ["S", "D", "H"]
+    text = "Embedding model server. Without the `ml` profile the features that need it are unavailable."
+
+    [[part.section.row]]
+    keys = ["WEBSOCKET_ENDPOINT"]
+    default = "`http://backend/call-websocket/`"
+    setups = ["D", "H"]
+    text = "Where workers post live updates for browsers. It must reach the backend from every container; change it only when the backend runs under another name or port. Standalone fixes it inside the container."
+
+    [[part.section.row]]
+    keys = ["ALK_RUNNER_API_URL"]
+    default = { S = "`http://127.0.0.1:8000`", D = "`http://backend`" }
+    setups = ["S", "D", "H"]
+    text = "Platform URL the simulation runner reports results to."
+
+  [[part.section]]
+  heading = "Observed-attribute catalog"
+  body = '''
+The span attributes and values that trace filters, dashboard widgets and task
+filters suggest (including values of built-in properties such as the model).
+The bootstrap creates the catalog database and its two users. Standalone and
+Helm collectors write it directly (`FI_OBSERVED_CATALOG_MODE=direct`, through
+a local spool); Distributed's collector publishes to Kafka and
+`fi-property-catalog-consumer` writes it. Spans stored before an install
+collected them can be indexed later with `fi-observed-catalog-backfill`
+([INSTALLATION.md](repo:INSTALLATION.md#filters-suggest-no-attributes-or-values-for-older-traces)).
+'''
+
+    [[part.section.row]]
+    keys = ["PROPERTY_CATALOG_DATABASE"]
+    default = "`property_catalog`"
+    setups = ["S", "D", "H"]
+    text = "ClickHouse database of the catalog."
+
+    [[part.section.row]]
+    keys = ["PROPERTY_CATALOG_API_PASSWORD"]
+    default = "`oss-observed-reader-local-only`"
+    setups = ["S", "D", "H"]
+    text = "Password of the catalog's read-only ClickHouse user. Required by the production overlay; reuse the provisioned value, never rotate it on retained data."
+
+    [[part.section.row]]
+    keys = ["PROPERTY_CATALOG_CONSUMER_PASSWORD"]
+    default = "`oss-observed-writer-local-only`"
+    setups = ["S", "D", "H"]
+    text = "Password of the catalog's writer user: the collector (S, H) or the Kafka consumer (D). Same rules."
+
+    [[part.section.row]]
+    keys = ["OBSERVED_CATALOG_KAFKA_TOPIC"]
+    default = "`futureagi.observed-attributes.v1`"
+    setups = ["D", "H"]
+    text = "Topic the collector publishes observations to."
+
+    [[part.section.row]]
+    keys = ["OBSERVED_CATALOG_KAFKA_GROUP"]
+    default = "`futureagi.observed-attributes.consumer.v1`"
+    setups = ["D", "H"]
+    text = "Consumer group of the catalog writer."
+
+    [[part.section.row]]
+    keys = ["OBSERVED_CATALOG_MAX_SPOOL_FILES", "OBSERVED_CATALOG_MAX_SPOOL_BYTES"]
+    default = "`10000`, `536870912`"
+    setups = ["D", "H"]
+    text = "Local spool limits of the collector while Kafka is unreachable. Standalone reads them as `FI_OBSERVED_CATALOG_MAX_SPOOL_FILES` and `FI_OBSERVED_CATALOG_MAX_SPOOL_BYTES` (while ClickHouse is unreachable)."
+
+    [[part.section.row]]
+    keys = ["FI_OBSERVED_CATALOG_MAX_KEYS_PER_SPAN", "FI_OBSERVED_CATALOG_MAX_ARRAY_MEMBERS_PER_SPAN"]
+    default = "`128`, `256`"
+    setups = ["S", "D", "H"]
+    text = "Most attribute keys and array members observed per span."
+
+    [[part.section.row]]
+    keys = ["ERROR_FEED_KAFKA_TOPIC"]
+    default = "`error-feed.trace-available.v1`"
+    setups = ["D", "H"]
+    text = "Topic announcing new traces to the error feed. Must differ from the catalog topic."
+
+    [[part.section.row]]
+    keys = ["PROPERTY_CATALOG_KAFKA_PARTITIONS"]
+    default = "`6`"
+    setups = ["D"]
+    text = "Partitions of both topics."
+
+    [[part.section.row]]
+    keys = ["PROPERTY_CATALOG_KAFKA_RETENTION_MS", "PROPERTY_CATALOG_KAFKA_RETENTION_HOURS"]
+    default = "`259200000`, `72`"
+    setups = ["D"]
+    text = "Topic retention and the broker's log retention."
+
+    [[part.section.row]]
+    keys = ["PROPERTY_CATALOG_KAFKA_CPUS", "PROPERTY_CATALOG_KAFKA_MEMORY", "PROPERTY_CATALOG_KAFKA_HEAP_OPTS"]
+    default = "`1.0`, `1G`, `-Xms256m -Xmx512m`"
+    setups = ["D"]
+    text = "Kafka container limits and JVM heap."
+
+    [[part.section.row]]
+    keys = ["PROPERTY_CATALOG_CONSUMER_CPUS", "PROPERTY_CATALOG_CONSUMER_MEMORY"]
+    default = "`0.5`, `512M`"
+    setups = ["D"]
+    text = "Catalog writer container limits."
+
+  [[part.section]]
+  heading = "Installer"
+
+    [[part.section.row]]
+    keys = ["INSTALL_READY_TIMEOUT_SECONDS"]
+    default = "`600` (60 to 1800)"
+    setups = ["S", "D"]
+    text = "How long `./bin/install` waits for the stack to become ready. The wait extends while first-boot migrations are still running."
+
+    [[part.section.row]]
+    keys = ["INSTALL_STABILITY_SECONDS"]
+    default = "`15` (5 to 120)"
+    setups = ["S", "D"]
+    text = "How long the stack must stay ready before the installer reports success."
+
+    [[part.section.row]]
+    keys = ["INSTALL_READY_MAX_SECONDS"]
+    default = "`3600` (300 to 7200)"
+    setups = ["S", "D"]
+    text = "Hard limit on the wait, extensions included. It matches the `app` healthcheck's `start_period`: on a slow or busy host a first boot's migrations can take over half an hour."
+
+  [[part.section]]
+  heading = "Fine-grained limits"
+  body = '''
+- **Application limits.** About 230 bounded numeric settings (page sizes,
+  timeouts, batch sizes, read budgets) are declared with their default, minimum
+  and maximum in `futureagi/tfc/settings/runtime_setting_specs.py`. Any of them
+  can be set by name in `.env` (Standalone and Distributed pass `.env` to the
+  app). A value outside its bounds stops the app at start with a message naming
+  the key.
+- **UI limits.** The `VITE_*` timeouts and page sizes listed in
+  `frontend/docker-entrypoint.sh`, with defaults in `frontend/.env.example`,
+  are read when the UI container starts. Standalone takes them from `.env`;
+  Distributed passes only `VITE_HOST_API` and `VITE_HELP_LINK` to the
+  `frontend` container, so set others in a compose override. Out-of-range
+  values fall back to the default.
+'''
+
+  [[part.section]]
+  heading = "Proxy, CA bundle and air-gap"
+  body = '''
+The processes honour the standard proxy and trust-store variables. Set them
+in a compose override; the Helm chart sets them from `global.proxy`,
+`global.caBundle` and `global.airgap`.
+'''
+
+    [[part.section.row]]
+    keys = ["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"]
+    label = "`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` (and lowercase)"
+    default = "unset"
+    setups = ["S", "D", "H"]
+    text = "Outbound proxy and the hosts that bypass it, object storage included; object storage on a loopback address (Standalone's) is always reached directly. On Distributed, list the internal hosts in `NO_PROXY` (`minio,code-executor,serving,agentcc-gateway,fi-collector,localhost,127.0.0.1`), or their calls go to the proxy. Helm: `global.proxy`, which builds `NO_PROXY` from the cluster's names, the release's Services and the datastore hosts plus `global.proxy.noProxy`. The LLM gateway does not use a proxy yet."
+
+    [[part.section.row]]
+    keys = ["SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "NODE_EXTRA_CA_CERTS"]
+    default = "the image's trust store"
+    setups = ["S", "D", "H"]
+    text = "A PEM bundle to trust instead of the image's (so it must include the public roots). Helm: `global.caBundle`, mounted at `/etc/futureagi/ca/ca.crt`."
+
+    [[part.section.row]]
+    keys = ["LITELLM_LOCAL_MODEL_COST_MAP"]
+    default = "unset: fetched at start"
+    setups = ["S", "D", "H"]
+    text = "`True` uses litellm's bundled model price list instead of downloading it. Helm: on with `global.airgap`."
+
+    [[part.section.row]]
+    keys = ["HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE"]
+    default = "unset"
+    setups = ["S", "D", "H"]
+    text = "`1` stops the model server from downloading models; pre-seed its cache first. Helm: on (serving only) with `global.airgap`."
+
+  [[part.section]]
+  heading = "Development overlays (`./bin/dev`)"
+  body = '''
+Read only by `docker-compose.dev.yml` and `docker-compose.distributed.dev.yml`.
+'''
+
+    [[part.section.row]]
+    keys = ["VITE_ENVIRONMENT"]
+    default = "`development`"
+    setups = ["dev"]
+    text = "Environment name the Vite dev server builds with."
+
+    [[part.section.row]]
+    keys = ["VITE_GOOGLE_SITE_KEY"]
+    default = "empty"
+    setups = ["dev"]
+    text = "reCAPTCHA site key for the Vite dev server."
+
+    [[part.section.row]]
+    keys = ["BACKEND_GRPC_PORT"]
+    default = "`50051`"
+    setups = ["dev"]
+    text = "Published gRPC port of the development backend."
+
+    [[part.section.row]]
+    keys = ["FLOWER_PORT"]
+    default = "`5555`"
+    setups = ["dev"]
+    text = "Published port 5555 of the development backend (task monitor)."
+
+    [[part.section.row]]
+    keys = ["PGBOUNCER_PORT"]
+    default = "`6432`"
+    setups = ["dev"]
+    text = "Published PgBouncer port (Distributed dev). The app's own `PGBOUNCER_PORT` is set by the compose files."
+
+    [[part.section.row]]
+    keys = ["DEV_API_PROXY_OTLP_MAX_BODY_SIZE", "DEV_API_PROXY_CONNECT_TIMEOUT", "DEV_API_PROXY_READ_TIMEOUT", "DEV_API_PROXY_SEND_TIMEOUT"]
+    default = "`16m`, `5s`, `30s`, `30s`"
+    setups = ["dev"]
+    text = "Limits of the development API proxy."
+
+    [[part.section.row]]
+    keys = ["DOCKER_SOCKET"]
+    default = "`/var/run/docker.sock`"
+    setups = ["dev"]
+    text = "Host Docker socket the local sandbox server (`local-sandbox` profile) builds with."
+
+    [[part.section.row]]
+    keys = ["ALK_HOST_WORKSPACE_ROOT"]
+    default = "required by the local sandbox server"
+    setups = ["dev"]
+    text = "Host directory holding the agent repositories the local sandbox server builds."
+
+    [[part.section.row]]
+    keys = ["ALK_REPOSITORY_PATH", "ALK_HARNESS_ENV_FILE"]
+    default = "`../alk-pr58`, `../alk-pr58/.env.acceptance`"
+    setups = ["dev"]
+    text = "Checkout and env file of the local sandbox server."
+    audience = "internal"
+
+    [[part.section.row]]
+    keys = ["ALK_SANDBOX_MAX_CONCURRENCY", "ALK_SANDBOX_PORT"]
+    default = "`1`, `8788`"
+    setups = ["dev"]
+    text = "Concurrency and published port of the local sandbox server."
+
+    [[part.section.row]]
+    keys = ["FI_API_KEY", "FI_SECRET_KEY"]
+    default = "required by the local sandbox server"
+    setups = ["dev"]
+    text = "Organization API key pair the local sandbox server files results with. Never set on the simulation runner."
+
+[[part]]
+heading = "5. Internal: set by the compose files"
+role = "internal"
+body = '''
+The compose files set these in `environment:` blocks, which win over `.env`, or
+supervisord sets them inside the `app` container. Changing them in `.env` does
+nothing. Change what they are derived from instead, or use a
+`docker-compose.override.yml` if you really mean it.
+'''
+
+  [[part.section]]
+  columns = ["Key", "Set to", "Setups", "Derived from / why"]
+
+    [[part.section.row]]
+    keys = ["PG_HOST", "PG_PORT", "PGBOUNCER_HOST", "PGBOUNCER_PORT"]
+    default = "`postgres`, `5432`"
+    setups = ["S", "D"]
+    text = "The bundled Postgres."
+
+    [[part.section.row]]
+    keys = ["CH_HOST", "CH_HTTP_PORT", "CH_USER"]
+    default = "`clickhouse`, `8123`, `default`"
+    setups = ["S", "D"]
+    text = "The bundled ClickHouse. `CH_PORT` is `9000` inside the network (its host port in Distributed is the key of the same name)."
+
+    [[part.section.row]]
+    keys = ["REDIS_HOST", "REDIS_URL", "REDIS_CACHE_URL", "REDIS_LOCK_URL", "REDIS_STATE_URL", "CHANNEL_LAYER_BACKEND", "CHANNEL_REDIS_URL"]
+    default = "the bundled Redis, databases 0 to 3"
+    setups = ["S", "D"]
+    text = "`REDIS_PASSWORD` in Standalone."
+
+    [[part.section.row]]
+    keys = ["TEMPORAL_HOST"]
+    default = "`127.0.0.1:7233` (S), `temporal:7233` (D)"
+    setups = ["S", "D"]
+    text = "The bundled Temporal."
+
+    [[part.section.row]]
+    keys = ["S3_ENDPOINT_URL", "S3_ACCESS_KEY", "S3_SECRET_KEY", "S3_BUCKET"]
+    default = "the bundled MinIO, bucket `futureagi`"
+    setups = ["S", "D"]
+    text = "`MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`."
+
+    [[part.section.row]]
+    keys = ["FI_PG_WRITE", "FI_PG_READ", "FI_CH_URL", "FI_CH_USERNAME", "FI_CH_PASSWORD", "FI_AUTH_REDIS_ADDR", "FI_AUTH_REDIS_PASSWORD", "FI_GRPC_ADDR", "FI_HTTP_ADDR", "FI_ADMIN_ADDR", "FI_DEAD_LETTER_FILE", "FI_ERROR_FEED_KAFKA_BROKERS"]
+    label = "`FI_PG_WRITE`, `FI_PG_READ`, `FI_CH_URL`, `FI_CH_USERNAME`, `FI_CH_PASSWORD`, `FI_AUTH_REDIS_ADDR`, `FI_AUTH_REDIS_PASSWORD`, `FI_GRPC_ADDR`, `FI_HTTP_ADDR`, `FI_ADMIN_ADDR`, `FI_DEAD_LETTER_FILE`, `FI_ERROR_FEED_KAFKA_BROKERS` and the other `FI_*` collector settings"
+    default = "the collector's addresses and credentials"
+    setups = ["S", "D"]
+    text = "`PG_*`, `REDIS_PASSWORD`, `CH_DATABASE`, `CH_USERNAME`, `CH_PASSWORD`, the catalog keys above."
+
+    [[part.section.row]]
+    keys = ["FI_OBSERVED_CATALOG_MODE", "FI_OBSERVED_CATALOG_CH_URL", "FI_OBSERVED_CATALOG_CH_DATABASE", "FI_OBSERVED_CATALOG_CH_USERNAME", "FI_OBSERVED_CATALOG_CH_PASSWORD", "FI_OBSERVED_CATALOG_SPOOL_DIR"]
+    default = { S = "`direct`, the catalog's writer user, spool in `/data/collector/observed-catalog`", D = "`kafka` and the `FI_OBSERVED_CATALOG_KAFKA_*` broker and topic" }
+    setups = ["S", "D"]
+    text = "How the collector hands on observed attributes. `PROPERTY_CATALOG_DATABASE`, `PROPERTY_CATALOG_CONSUMER_PASSWORD`, `OBSERVED_CATALOG_KAFKA_TOPIC`. `FI_PROPERTY_CATALOG_MODE` stays `disabled`: the collector refuses any other value of this retired key."
+
+    [[part.section.row]]
+    keys = ["FI_COLLECTOR_HOST"]
+    default = "`127.0.0.1` (S), `fi-collector` (D)"
+    setups = ["S", "D"]
+    text = "The setup checks probe the collector there, on its container port 4317 whatever `FI_COLLECTOR_OTLP_PORT` publishes on the host."
+
+    [[part.section.row]]
+    keys = ["PROPERTY_CATALOG_CH_HOST", "PROPERTY_CATALOG_CH_PORT", "PROPERTY_CATALOG_CH_USER", "PROPERTY_CATALOG_CH_PASSWORD"]
+    default = "the catalog's read-only ClickHouse user"
+    setups = ["S", "D"]
+    text = "`PROPERTY_CATALOG_API_PASSWORD`."
+
+    [[part.section.row]]
+    keys = ["DJANGO_SETTINGS_MODULE", "SERVICE_TYPE", "NO_STARTUP_DB_MUTATIONS", "FI_SKIP_CH25_MIGRATION"]
+    default = "fixed"
+    setups = ["S", "D"]
+    text = "Only the bootstrap jobs change the database schema."
+
+    [[part.section.row]]
+    keys = ["FI_EMBEDDED_TEMPORAL_WORKER", "TEMPORAL_GRACEFUL_SHUTDOWN_TIMEOUT"]
+    default = "fixed"
+    setups = ["S"]
+    text = "The embedded worker and its drain."
+
+    [[part.section.row]]
+    keys = ["TEMPORAL_TASK_QUEUE"]
+    default = "one queue per worker"
+    setups = ["D"]
+    text = "Per-queue workers."
+
+    [[part.section.row]]
+    keys = ["GEMINI_API_KEY"]
+    default = "`GOOGLE_API_KEY`"
+    setups = ["S", "D"]
+    text = "The gateway's name for the Gemini key."
+
+    [[part.section.row]]
+    keys = ["AGENTCC_INTERNAL_URL", "AGENTCC_GATEWAY_INTERNAL_URL"]
+    default = "`http://127.0.0.1:8080` (S), `http://agentcc-gateway:8080` (D)"
+    setups = ["S", "D"]
+    text = "The gateway's container port, where the app and workers call it. A host-facing URL (the published `AGENTCC_GATEWAY_PORT`, `:8090`) exported in the shell must not replace this service-to-service route. Helm sets both to the gateway's Service."
+
+    [[part.section.row]]
+    keys = ["AGENTCC_CONTROL_PLANE_URL", "AGENTCC_CONTROL_PLANE_TOKEN", "AGENTCC_SYNC_ON_STARTUP"]
+    default = "the API (`http://127.0.0.1:8000` in S, `http://backend` in D), `AGENTCC_ADMIN_TOKEN`, `true`"
+    setups = ["S", "D"]
+    text = "The gateway loads the keys and org settings made in the UI from the app: on start, retrying while the app comes up, and then every minute (`AGENTCC_SYNC_INTERVAL`, on a gateway that reads it). It posts its request logs there too. Standalone starts its gateway after the bootstrap, so the app is up by then."
+
+[[part]]
+heading = "Legacy and retired keys"
+role = "legacy"
+body = '''
+Safe to leave in an old `.env`; nothing needs them.
+'''
+
+  [[part.section]]
+  columns = ["Key", "Status"]
+  after = '''
+Older `.env.example` files also carried keys for features this page now
+documents in their own section (voice simulation, hosted sandboxes, image
+tags). Keeping them does no harm; empty values fall back to the defaults above,
+except where a row says otherwise.
+'''
+
+    [[part.section.row]]
+    keys = ["FUTURE_AGI_CLOUD_API_KEY", "FUTURE_AGI_CLOUD_API_URL"]
+    text = "Retired: the compose files no longer pass them, and no code reads them."
+
+    [[part.section.row]]
+    keys = ["RABBITMQ_USER", "RABBITMQ_PASSWORD"]
+    text = "Retired with RabbitMQ; live updates use Redis."
+
+    [[part.section.row]]
+    keys = ["HOSTED_RUNNER_MAX_DURATION_SECONDS"]
+    text = "Retired: no code reads it. Use `HOSTED_RUNNER_MAX_WALLCLOCK_SECONDS`."
+
+    [[part.section.row]]
+    keys = ["CH25_DROP_LEGACY_CDC_CHAIN"]
+    text = "Legacy. Kept for explicit migration tooling; installs never read it at start."
+
+    [[part.section.row]]
+    keys = []
+    label = "`COMPOSE_PROFILES=full`"
+    text = "Older name of the Distributed `all` profile; still accepted. On Standalone it has no effect."

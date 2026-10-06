@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-import os
 import uuid
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
-from clickhouse_driver import Client
 from django.test import override_settings
 
+from conftest import _ch_test_native_client
 from tracer.selectors.trace_filter_reads import read_bounded_filter_page
 from tracer.services.clickhouse import eval_logger_table as eval_logger_table_config
 from tracer.services.clickhouse.query_builders.voice_call_list import VAPI_PHONE_NUMBERS
@@ -23,23 +22,17 @@ from tracer.services.clickhouse.v2.query_builders.voice_call_list import (
 from tracer.services.clickhouse.v2.trace_detail_reads import (
     TraceDetailReadBuilder,
     TraceDetailReadUnavailable,
+    read_span_detail,
     read_trace_detail,
 )
 
 pytestmark = pytest.mark.integration
 
-CH_HOST = os.environ.get("CH25_HOST", "127.0.0.1")
-CH_NATIVE_PORT = int(os.environ.get("CH25_NATIVE_PORT", "19000"))
-
 
 @pytest.fixture(scope="module")
 def ch_client():
-    client = Client(host=CH_HOST, port=CH_NATIVE_PORT, connect_timeout=3)
-    try:
-        client.execute("SELECT 1")
-    except Exception as exc:
-        pytest.skip(f"CH25 is not reachable on {CH_HOST}:{CH_NATIVE_PORT} ({exc!r})")
-    return client
+    with _ch_test_native_client() as client:
+        yield client
 
 
 @pytest.fixture()
@@ -358,17 +351,34 @@ def test_voice_page_n_and_content_use_physical_latest_identity(
     assert page.complete is True
     assert [row["trace_id"] for row in page.rows] == ["trace-a"]
     selected = page.rows[0]
+    expected_rows = [
+        selected,
+        {
+            "project_id": project,
+            "trace_id": "trace-b",
+            "root_span_id": "shared-root",
+            "start_time": b_time,
+            "_root_observation_type": "conversation",
+            "_root_service_name": "svc",
+            "_root_start_hour": start,
+            "_root_version": 1,
+        },
+    ]
+    root_identities = builder.content_root_identities_for_rows(expected_rows)
+    epoch = datetime(1970, 1, 1)
+    assert root_identities[0] == (
+        project,
+        "trace-a",
+        "shared-root",
+        (a_time - epoch) // timedelta(microseconds=1),
+        "conversation",
+        "svc",
+        (start - epoch) // timedelta(microseconds=1),
+        2,
+    )
     query, params = builder.build_content_query(
-        [selected["root_span_id"]],
-        root_identities=[
-            (
-                project,
-                selected["trace_id"],
-                selected["root_span_id"],
-                selected["start_time"],
-            ),
-            (project, "trace-b", "shared-root", b_time),
-        ],
+        [identity[2] for identity in root_identities],
+        root_identities=root_identities,
     )
     content = (
         _Analytics(ch_client)
@@ -381,6 +391,7 @@ def test_voice_page_n_and_content_use_physical_latest_identity(
         .data
     )
     assert len(content) == 2
+    assert builder.content_root_rows_match(expected_rows, content)
     assert {
         (row["trace_id"], row["span_id"], row["attrs_string"]["raw_log"])
         for row in content
@@ -813,3 +824,117 @@ def test_trace_detail_fails_closed_on_two_live_physical_rows_with_same_id(
             trace_id=trace,
             deadline_ms=5000,
         )
+
+
+def test_trace_replayed_into_two_scoped_projects_serves_newest_copy(
+    ch_client, detail_tables
+):
+    older = "00000000-0000-4000-8000-000000000091"
+    newer = "00000000-0000-4000-8000-000000000092"
+    trace = "00000000-0000-4000-8000-000000000093"
+    started = datetime(2026, 9, 22, 16, 27, 36)
+    rows = []
+    for project, version in ((older, 1), (newer, 2)):
+        rows.append(
+            _span_row(
+                project_id=project,
+                trace_id=trace,
+                span_id="root",
+                started_at=started,
+                version=version,
+                input_value=f"copy-{version}",
+            )
+        )
+        rows.append(
+            _span_row(
+                project_id=project,
+                trace_id=trace,
+                span_id="child",
+                started_at=started + timedelta(milliseconds=1),
+                version=version,
+                parent="root",
+                observation_type="llm",
+                input_value=f"copy-{version}",
+            )
+        )
+    ch_client.execute(f"INSERT INTO {detail_tables.spans} {_SPAN_COLUMNS} VALUES", rows)
+    analytics = _Analytics(ch_client)
+
+    read = read_trace_detail(
+        analytics=analytics,
+        project_ids=[older, newer],
+        trace_id=trace,
+        deadline_ms=5000,
+    )
+    assert read.project_id == newer
+    assert [(row["id"], row["input"]) for row in read.spans] == [
+        ("root", "copy-2"),
+        ("child", "copy-2"),
+    ]
+
+    # A newer copy outside the caller's scope is never selected.
+    scoped = read_trace_detail(
+        analytics=analytics,
+        project_ids=[older],
+        trace_id=trace,
+        deadline_ms=5000,
+    )
+    assert scoped.project_id == older
+    assert {row["input"] for row in scoped.spans} == {"copy-1"}
+
+
+def test_span_anchor_serves_newest_live_copy_across_scoped_projects(
+    ch_client, detail_tables
+):
+    older = "00000000-0000-4000-8000-0000000000a1"
+    newer = "00000000-0000-4000-8000-0000000000a2"
+    trace = "00000000-0000-4000-8000-0000000000a3"
+    started = datetime(2026, 9, 22, 16, 27, 36)
+    ch_client.execute(
+        f"INSERT INTO {detail_tables.spans} {_SPAN_COLUMNS} VALUES",
+        [
+            _span_row(
+                project_id=project,
+                trace_id=trace,
+                span_id="shared",
+                started_at=started,
+                version=version,
+                input_value=f"copy-{version}",
+            )
+            for project, version in ((older, 1), (newer, 2))
+        ],
+    )
+    analytics = _Analytics(ch_client)
+
+    read = read_span_detail(
+        analytics=analytics,
+        project_ids=[older, newer],
+        span_id="shared",
+        deadline_ms=5000,
+    )
+    assert read.project_id == newer
+    assert [row["input"] for row in read.spans] == ["copy-2"]
+
+    # The newest write is a tombstone: the deleted copy is not resurrected and
+    # the remaining live copy is served.
+    ch_client.execute(
+        f"INSERT INTO {detail_tables.spans} {_SPAN_COLUMNS} VALUES",
+        [
+            _span_row(
+                project_id=newer,
+                trace_id=trace,
+                span_id="shared",
+                started_at=started,
+                version=3,
+                deleted=1,
+            )
+        ],
+    )
+    read = read_span_detail(
+        analytics=analytics,
+        project_ids=[older, newer],
+        span_id="shared",
+        deadline_ms=5000,
+    )
+    assert read.project_id == older
+    assert [row["input"] for row in read.spans] == ["copy-1"]

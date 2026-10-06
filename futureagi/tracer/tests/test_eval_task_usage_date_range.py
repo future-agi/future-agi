@@ -2,8 +2,12 @@
 
 Empty windows stay empty and keep the requested bounds. The endpoint must not
 turn an interactive period read into a hidden all-time history scan.
+
+Also covers the cross-reference ids each returned log row carries back to
+observe.
 """
 
+import uuid
 from datetime import UTC, datetime, timedelta
 from unittest import mock
 
@@ -13,6 +17,10 @@ from django.utils import timezone
 # Break the import cycle (see test_eval_logger_schema.py for the
 # canonical comment).
 import model_hub.tasks  # noqa: F401
+from tracer.models.observation_span import (
+    EvalLogger,
+    EvalTargetType,
+)
 from tracer.tests.eval_task_factories import (
     make_config as _config,
 )
@@ -344,3 +352,48 @@ class TestBucketAlignment:
 
         assert result["period_used"] == "7d"
         assert _chart_calls(result) == 2
+
+
+# ── Log row cross-references ───────────────────────────────────────────
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.django_db
+class TestLogItemCrossReferences:
+    """Each log row carries the ids the side panel jumps back to observe with.
+
+    The eval engine resolves a run's target from ClickHouse and the target FKs
+    are unconstrained, so a run can legitimately point at a span, trace or
+    session that has no Postgres row. The row must still report what it
+    evaluated.
+    """
+
+    def _one_row(self, auth_client, task):
+        results = _result(_get(auth_client, task, period="30d"))["logs"]["results"]
+        assert len(results) == 1
+        return results[0]
+
+    def _cfg(self, project, organization, workspace):
+        return _config(
+            project=project,
+            template=_template(organization=organization, workspace=workspace),
+            name="Toxicity",
+        )
+
+    def test_session_row_reports_its_session_id_without_a_postgres_row(
+        self, auth_client, project, organization, workspace
+    ):
+        task = _task(project=project)
+        session_id = uuid.uuid4()
+        EvalLogger.objects.create(
+            target_type=EvalTargetType.SESSION,
+            trace_session_id=session_id,
+            custom_eval_config=self._cfg(project, organization, workspace),
+            eval_task_id=str(task.id),
+            output_bool=True,
+        )
+
+        row = self._one_row(auth_client, task)
+        assert row["session_id"] == str(session_id)
+        assert row["detail"]["session_id"] == str(session_id)

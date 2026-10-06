@@ -26,8 +26,8 @@ describe("Error Feed observe project picker", () => {
 
   it("maps the complete bounded project catalog into dropdown options", async () => {
     fetchAllObserveProjects.mockResolvedValue([
-      { id: "project-1", name: "Whatfix" },
-      { id: "project-2", name: "Colektia" },
+      { id: "project-1", name: "Tertiary fixture" },
+      { id: "project-2", name: "Primary fixture" },
     ]);
 
     const { result } = renderHook(() => useObserveProjectList(), {
@@ -37,8 +37,8 @@ describe("Error Feed observe project picker", () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
     expect(result.current.data).toEqual([
-      { value: "project-1", label: "Whatfix" },
-      { value: "project-2", label: "Colektia" },
+      { value: "project-1", label: "Tertiary fixture" },
+      { value: "project-2", label: "Primary fixture" },
     ]);
     expect(fetchAllObserveProjects).toHaveBeenCalledOnce();
     expect(fetchAllObserveProjects).toHaveBeenCalledWith({
