@@ -186,13 +186,14 @@ describe("Choice field visibility depends on the eval's output type", () => {
     expect(body).toHaveProperty("metric", scoreEvalWithLabels.id);
   });
 
-  it("keeps a saved choice when the eval picker has not resolved the eval", async () => {
+  it("leaves the stored choice to the server when the eval picker has not resolved the eval", async () => {
     // baseSavedAlert is a Pass/Fail eval hydrated with threshold_metric_value
     // "Passed". The picker mock resolves to [] here, the same shape it has
     // while the get_eval_names query is in flight, 503s, or the eval simply
-    // has no ClickHouse rows yet — selectedEval is then undefined, and the
-    // saved choice must not be dropped from the submit payload on that basis
-    // alone.
+    // has no ClickHouse rows yet — selectedEval is then undefined. Without
+    // the eval the form can't tell Pass/Fail from score, so an update leaves
+    // the field out: the server keeps the stored choice for a Pass/Fail eval
+    // and drops it for a score eval, where resending it would 400.
     const detail = {
       ...baseSavedAlert,
       threshold_type: "percentage_change",
@@ -257,10 +258,7 @@ describe("Choice field visibility depends on the eval's output type", () => {
 
     await waitFor(() => expect(patch).toHaveBeenCalled());
     const body = patch.mock.calls.at(-1)[1];
-    expect(body).toHaveProperty(
-      "threshold_metric_value",
-      detail.threshold_metric_value,
-    );
+    expect(body).not.toHaveProperty("threshold_metric_value");
     expect(body).toHaveProperty("metric", detail.metric);
   });
 });
@@ -318,8 +316,8 @@ describe("Choice-thresholded evals gate the preview graph on a chosen label", ()
     });
 
     const payloadCalls = [];
-    const onPayloadChange = vi.fn((payload, enabled) =>
-      payloadCalls.push({ payload, enabled }),
+    const onPayloadChange = vi.fn((payload, enabled, awaitingLabel) =>
+      payloadCalls.push({ payload, enabled, awaitingLabel }),
     );
 
     renderWithRouter(
@@ -347,8 +345,12 @@ describe("Choice-thresholded evals gate the preview graph on a chosen label", ()
       });
     });
 
+    // An eval the picker can't resolve shows its raw id instead of its name.
+    const listed = evaluations.some(({ id }) => id === evaluation.id);
     await waitFor(() =>
-      expect(screen.getByDisplayValue(evaluation.name)).toBeInTheDocument(),
+      expect(
+        screen.getByDisplayValue(listed ? evaluation.name : evaluation.id),
+      ).toBeInTheDocument(),
     );
 
     // isQueryEnabled requires the edited form to be dirty; a name edit dirties
@@ -383,6 +385,33 @@ describe("Choice-thresholded evals gate the preview graph on a chosen label", ()
   it("enables the preview for a score eval without a choice (no regression)", async () => {
     const calls = await renderDirtiedAlert(SCORE_EVAL, "");
     await waitFor(() => expect(lastEnabled(calls)).toBe(true));
+  });
+
+  // Until the eval list resolves the form can't tell a Pass/Fail eval from a
+  // score one, so a preview sent then would go out without the label it needs.
+  it("holds the preview until the eval list has resolved the eval", async () => {
+    const PASS_FAIL_EVAL = {
+      id: "eval-1",
+      name: "Groundedness",
+      output_type: "Pass/Fail",
+      choices: ["Passed", "Failed"],
+    };
+    const calls = await renderDirtiedAlert(PASS_FAIL_EVAL, "Passed", []);
+    await new Promise((resolve) => setTimeout(resolve, 900));
+    expect(calls.some(({ enabled }) => enabled === true)).toBe(false);
+  });
+
+  it("tells the chart a choices eval is waiting on a label", async () => {
+    const calls = await renderDirtiedAlert(CHOICES_EVAL, "");
+    await waitFor(() =>
+      expect(calls[calls.length - 1].awaitingLabel).toBe(true),
+    );
+  });
+
+  it("does not report waiting once the label is set, or for a score eval", async () => {
+    const labelled = await renderDirtiedAlert(CHOICES_EVAL, "frequently");
+    await waitFor(() => expect(lastEnabled(labelled)).toBe(true));
+    expect(labelled[labelled.length - 1].awaitingLabel).toBe(false);
   });
 
   // The preview payload carries the debounced metric, so for 300ms after a

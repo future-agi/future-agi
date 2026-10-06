@@ -993,6 +993,52 @@ class TestUserAlertMonitorUpdateAPI:
         monitor.refresh_from_db()
         assert monitor.threshold_metric_value == "Incomplete"
 
+    def test_patch_pass_fail_eval_without_choice_keeps_stored_choice(
+        self, auth_client, organization, workspace, observe_project
+    ):
+        """The form leaves threshold_metric_value out when it can't resolve the
+        eval; a Pass/Fail alert must keep the choice it already has."""
+        template = EvalTemplate.objects.create(
+            name=f"Pass Fail Eval {uuid.uuid4().hex[:8]}",
+            description="A test evaluation template",
+            organization=organization,
+            workspace=workspace,
+            config={"output": "Pass/Fail"},
+            choices=["Passed", "Failed"],
+        )
+        eval_config = CustomEvalConfig.objects.create(
+            name=f"Pass Fail Eval Config {uuid.uuid4().hex[:8]}",
+            project=observe_project,
+            eval_template=template,
+            config={"threshold": 0.8},
+            mapping={"input": "input", "output": "output"},
+            filters={},
+        )
+        monitor = UserAlertMonitor.objects.create(
+            organization=organization,
+            workspace=workspace,
+            project=observe_project,
+            name="Pass Fail Alert",
+            metric_type="evaluation_metrics",
+            metric=str(eval_config.id),
+            threshold_metric_value="Passed",
+            threshold_operator="greater_than",
+            threshold_type="static",
+            critical_threshold_value=0.15,
+            alert_frequency=60,
+        )
+
+        response = auth_client.patch(
+            f"/tracer/user-alerts/{monitor.id}/",
+            {"warning_threshold_value": 0.1},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        monitor.refresh_from_db()
+        assert monitor.warning_threshold_value == 0.1
+        assert monitor.threshold_metric_value == "Passed"
+
 
 @pytest.mark.integration
 @pytest.mark.api

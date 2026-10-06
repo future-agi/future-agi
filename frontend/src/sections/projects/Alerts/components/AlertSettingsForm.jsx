@@ -272,6 +272,9 @@ export default function AlertSettingsForm({
           // Wait for the debounced metric to catch up with the picker, so the
           // preview never runs for the eval the user just left.
           debouncedMetric === metric &&
+          // Until the eval list resolves, a Pass/Fail eval looks like a score
+          // one and would be previewed without the label it needs.
+          debouncedSelectedEval &&
           // A choice-thresholded eval's graph requires the chosen label; firing
           // the preview before it is set 400s. Score evals need no choice.
           (!evalUsesChoiceThreshold(debouncedSelectedEval) ||
@@ -308,9 +311,18 @@ export default function AlertSettingsForm({
     isDirty,
   ]);
 
+  // A choice-thresholded eval with no label yet has nothing to preview; the
+  // chart says so rather than keep drawing the eval the user just left.
+  const previewAwaitingLabel = Boolean(
+    debouncedMetricType === "evaluation_metrics" &&
+      debouncedMetric === metric &&
+      evalUsesChoiceThreshold(debouncedSelectedEval) &&
+      !debouncedThresHoldMetricValue,
+  );
+
   useEffect(() => {
-    onPayloadChange(queryPayload, isQueryEnabled);
-  }, [queryPayload, isQueryEnabled, onPayloadChange]);
+    onPayloadChange(queryPayload, isQueryEnabled, previewAwaitingLabel);
+  }, [queryPayload, isQueryEnabled, previewAwaitingLabel, onPayloadChange]);
 
   useEffect(() => {
     if (queryPayload) {
@@ -389,6 +401,16 @@ export default function AlertSettingsForm({
       return;
     }
 
+    const isUpdate = Boolean(openSheetView && !duplicateAlertName);
+    // Send the choice only for an eval known to take one. While the eval list
+    // is unresolved an update leaves it out: the server keeps the stored choice
+    // for a Pass/Fail eval and drops it for a score eval, where resending it
+    // would 400 with no visible field to clear. A new alert has no stored
+    // choice to fall back on, so it keeps sending what the form holds.
+    const sendChoice = selectedEval
+      ? evalUsesChoiceThreshold(selectedEval)
+      : !isUpdate;
+
     const payload = {
       name: data?.name,
       metric_type: data?.metric_type,
@@ -408,7 +430,7 @@ export default function AlertSettingsForm({
       ...(data?.metric_type === "evaluation_metrics" && {
         metric: data?.metric,
         ...(data?.threshold_metric_value &&
-          !(selectedEval && !evalUsesChoiceThreshold(selectedEval)) && {
+          sendChoice && {
             threshold_metric_value: data?.threshold_metric_value,
           }),
       }),
