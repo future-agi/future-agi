@@ -310,9 +310,7 @@ const SpanGrid = React.forwardRef(
     // that was genuinely visited unreachable again. `frontierPage` is
     // 1-indexed (matches the UI); `canReachPage` takes the same 0-indexed
     // convention as `requestParams`.
-    const furthestPage = cursorPagination.current.canReachPage(
-      frontierPage - 1,
-    )
+    const furthestPage = cursorPagination.current.canReachPage(frontierPage - 1)
       ? frontierPage
       : 0;
 

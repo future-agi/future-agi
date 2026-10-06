@@ -33,9 +33,9 @@ const hasCursorContract = (metadata) =>
 
 /**
  * `has_more` means "more window left to search", NOT "another row exists"
- * (see list_cursor.py:518-520). Only a reported total strictly greater than
- * the rows already seen proves a further page has content, so only then may a
- * page number be drawn for it.
+ * (see `cursor_page_metadata` in list_cursor.py). Only a reported total
+ * strictly greater than the rows already seen proves a further page has
+ * content, so only then may a page number be drawn for it.
  */
 export const getListPagerState = ({
   metadata = null,

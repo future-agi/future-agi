@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { getListPagerState, pickPagerMetadata, pagerMetadataEquals, windowedPageNumbers } from "../listPagerState";
+import {
+  getListPagerState,
+  pickPagerMetadata,
+  pagerMetadataEquals,
+  windowedPageNumbers,
+} from "../listPagerState";
 
 describe("getListPagerState", () => {
   // Captured from the local API on 2026-09-07, project 501e948b.
@@ -122,7 +127,9 @@ describe("getListPagerState", () => {
 
 describe("windowedPageNumbers", () => {
   it("shows page 1 and the proven next page", () => {
-    expect(windowedPageNumbers({ page: 1, provenNext: true }).pages).toEqual([1, 2]);
+    expect(windowedPageNumbers({ page: 1, provenNext: true }).pages).toEqual([
+      1, 2,
+    ]);
   });
 
   it("stays contiguous while the window touches page 1", () => {
@@ -144,26 +151,31 @@ describe("windowedPageNumbers", () => {
   });
 
   it("clamps a bad page to 1", () => {
-    expect(windowedPageNumbers({ page: 0, provenNext: false }).pages).toEqual([1]);
+    expect(windowedPageNumbers({ page: 0, provenNext: false }).pages).toEqual([
+      1,
+    ]);
   });
 
   describe("furthestPage boundary", () => {
     // Hand-worked examples from the design brief: walking to page 11 and back.
     it("draws the furthest page as a right-hand boundary after a walk-and-return", () => {
       expect(
-        windowedPageNumbers({ page: 1, provenNext: true, furthestPage: 11 }).pages,
+        windowedPageNumbers({ page: 1, provenNext: true, furthestPage: 11 })
+          .pages,
       ).toEqual([1, 2, 11]);
     });
 
     it("opens a second gap for the boundary while keeping the leading gap", () => {
       expect(
-        windowedPageNumbers({ page: 5, provenNext: true, furthestPage: 11 }).pages,
+        windowedPageNumbers({ page: 5, provenNext: true, furthestPage: 11 })
+          .pages,
       ).toEqual([1, 4, 5, 6, 11]);
     });
 
     it("draws no separate boundary once standing on the furthest page itself", () => {
       expect(
-        windowedPageNumbers({ page: 11, provenNext: false, furthestPage: 11 }).pages,
+        windowedPageNumbers({ page: 11, provenNext: false, furthestPage: 11 })
+          .pages,
       ).toEqual([1, 10, 11]);
     });
 
@@ -178,7 +190,8 @@ describe("windowedPageNumbers", () => {
       // The window already reaches page 9 (provenNext), so a furthest page of
       // 9 or lower adds nothing new.
       expect(
-        windowedPageNumbers({ page: 8, provenNext: true, furthestPage: 9 }).pages,
+        windowedPageNumbers({ page: 8, provenNext: true, furthestPage: 9 })
+          .pages,
       ).toEqual([1, 7, 8, 9]);
     });
 
@@ -186,10 +199,12 @@ describe("windowedPageNumbers", () => {
       // A stale/lower furthestPage (e.g. from a route that no longer exists,
       // or simply behind where the walk has since moved) must never appear.
       expect(
-        windowedPageNumbers({ page: 8, provenNext: true, furthestPage: 3 }).pages,
+        windowedPageNumbers({ page: 8, provenNext: true, furthestPage: 3 })
+          .pages,
       ).toEqual([1, 7, 8, 9]);
       expect(
-        windowedPageNumbers({ page: 8, provenNext: true, furthestPage: 8 }).pages,
+        windowedPageNumbers({ page: 8, provenNext: true, furthestPage: 8 })
+          .pages,
       ).toEqual([1, 7, 8, 9]);
     });
 
@@ -199,7 +214,8 @@ describe("windowedPageNumbers", () => {
       // furthestPage equal to the *previous* page must not draw a boundary
       // one click ahead of itself.
       expect(
-        windowedPageNumbers({ page: 5, provenNext: true, furthestPage: 4 }).pages,
+        windowedPageNumbers({ page: 5, provenNext: true, furthestPage: 4 })
+          .pages,
       ).toEqual([1, 4, 5, 6]);
     });
 
