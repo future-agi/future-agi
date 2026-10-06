@@ -28,6 +28,10 @@ MemoizedBarsIcon.displayName = "MemoizedBarsIcon";
 const MEDIA_ERR_NETWORK = 2;
 const MEDIA_ERR_DECODE = 3;
 
+// The multitrack stops a track itself a frame before its end, so "at the end"
+// has to allow for that gap.
+const END_TOLERANCE_S = 0.25;
+
 const MultiTrackAudioPlayer = ({
   trackUrls,
   audioUrls,
@@ -40,6 +44,7 @@ const MultiTrackAudioPlayer = ({
   const isDark = theme.palette.mode === "dark";
   const multiTrackAudioRef = useRef(null);
   const mtRef = useRef(null);
+  const mediasRef = useRef([]);
   const onInstanceRef = useRef(onInstance);
   const reportedInstanceRef = useRef(false);
   const [ready, setReady] = useState(0);
@@ -84,6 +89,7 @@ const MultiTrackAudioPlayer = ({
       media.preload = "metadata";
       return media;
     });
+    mediasRef.current = medias;
 
     const onMediaError = (media) => () => {
       const code = media.error?.code;
@@ -104,6 +110,17 @@ const MultiTrackAudioPlayer = ({
       media.addEventListener("error", handler);
       return handler;
     });
+
+    // Only the button changes `isPlaying`, so the end of the recording has to
+    // be caught here or the button keeps showing pause. Listen for "pause",
+    // not "ended": the multitrack pauses each track itself a frame before its
+    // end, so "ended" never fires. Tracks can differ in length, so wait until
+    // the last one has stopped.
+    const onMediaPause = () => {
+      if (cancelled) return;
+      if (medias.every((media) => media.paused)) setIsPlaying(false);
+    };
+    medias.forEach((media) => media.addEventListener("pause", onMediaPause));
 
     const tracks = playable.map(({ url, color, name, peaks }, index) => ({
       id: `track-${index}`,
@@ -170,6 +187,7 @@ const MultiTrackAudioPlayer = ({
       // fire a spurious "source refused" error per track. Do not reorder.
       medias.forEach((media, index) => {
         media.removeEventListener("error", mediaErrorHandlers[index]);
+        media.removeEventListener("pause", onMediaPause);
       });
       multitrack.destroy();
       mtRef.current = null;
@@ -197,6 +215,15 @@ const MultiTrackAudioPlayer = ({
       mtRef.current.pause();
       setIsPlaying(false);
     } else {
+      // Playing from the end would only replay the last frame and stop, so a
+      // finished recording starts over.
+      const end = Math.max(
+        0,
+        ...mediasRef.current.map((media) => media.duration || 0),
+      );
+      if (end && mtRef.current.getCurrentTime() >= end - END_TOLERANCE_S) {
+        mtRef.current.setTime(0);
+      }
       mtRef.current.play();
       setIsPlaying(true);
     }

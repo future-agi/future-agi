@@ -52,6 +52,12 @@ vi.mock("wavesurfer-multitrack", () => ({
     destroy() {}
     play() {}
     pause() {}
+    getCurrentTime() {
+      return this.currentTime ?? 0;
+    }
+    setTime(time) {
+      this.currentTime = time;
+    }
   },
 }));
 
@@ -398,5 +404,95 @@ describe("MultiTrackAudioPlayer failure behaviour", () => {
     latest().tracks.forEach((track, i) => {
       expect(track.options.media).toBe(medias[i]);
     });
+  });
+});
+
+describe("MultiTrackAudioPlayer — end of playback", () => {
+  const setMediaState = (index, state) =>
+    Object.entries(state).forEach(([key, value]) =>
+      Object.defineProperty(medias[index], key, {
+        configurable: true,
+        value,
+      }),
+    );
+
+  // The multitrack pauses a track itself just before its end, so "ended"
+  // never fires; "pause" is what arrives.
+  const endMedia = (index) =>
+    act(() => {
+      setMediaState(index, { paused: true });
+      medias[index].dispatchEvent(new Event("pause"));
+    });
+
+  it("goes back to play once every track has finished", async () => {
+    const user = userEvent.setup();
+    renderPlayer();
+    act(() => latest().succeed());
+    const play = vi.spyOn(latest(), "play");
+    const pause = vi.spyOn(latest(), "pause");
+    const button = await screen.findByRole("button", { name: /play-pause/i });
+    await waitFor(() => expect(button).toBeEnabled());
+
+    await user.click(button);
+    expect(play).toHaveBeenCalledTimes(1);
+    setMediaState(0, { paused: false });
+    setMediaState(1, { paused: false });
+
+    // The shorter track ending leaves the other one playing.
+    endMedia(0);
+    await user.click(button);
+    expect(pause).toHaveBeenCalledTimes(1);
+
+    await user.click(button);
+    expect(play).toHaveBeenCalledTimes(2);
+    setMediaState(0, { paused: false });
+    setMediaState(1, { paused: false });
+
+    endMedia(0);
+    endMedia(1);
+    await user.click(button);
+    expect(play).toHaveBeenCalledTimes(3);
+    expect(pause).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts over when play is pressed after the end", async () => {
+    const user = userEvent.setup();
+    renderPlayer();
+    act(() => latest().succeed());
+    const setTime = vi.spyOn(latest(), "setTime");
+    const play = vi.spyOn(latest(), "play");
+    const button = await screen.findByRole("button", { name: /play-pause/i });
+    await waitFor(() => expect(button).toBeEnabled());
+    setMediaState(0, { duration: 4 });
+    setMediaState(1, { duration: 4 });
+
+    await user.click(button);
+    setMediaState(0, { paused: false });
+    setMediaState(1, { paused: false });
+    // Where the multitrack leaves the cursor when it stops a track itself.
+    latest().currentTime = 3.93;
+    endMedia(0);
+    endMedia(1);
+
+    await user.click(button);
+    expect(setTime).toHaveBeenCalledWith(0);
+    expect(play).toHaveBeenCalledTimes(2);
+  });
+
+  it("resumes where it was after a pause mid-way", async () => {
+    const user = userEvent.setup();
+    renderPlayer();
+    act(() => latest().succeed());
+    const setTime = vi.spyOn(latest(), "setTime");
+    const button = await screen.findByRole("button", { name: /play-pause/i });
+    await waitFor(() => expect(button).toBeEnabled());
+    setMediaState(0, { duration: 4 });
+    setMediaState(1, { duration: 4 });
+
+    await user.click(button);
+    latest().currentTime = 1.5;
+    await user.click(button);
+    await user.click(button);
+    expect(setTime).not.toHaveBeenCalled();
   });
 });
