@@ -7,7 +7,7 @@ mechanism is an open auth-owner decision.
 """
 
 import pytest
-from django.urls import reverse
+from django.urls import get_resolver, reverse
 from rest_framework import status
 from rest_framework.test import APIClient
 
@@ -17,6 +17,20 @@ from accounts.models.user import OrgApiKey, User
 from accounts.models.workspace import Workspace
 from agent_playground.models.graph import Graph
 from tfc.constants.roles import OrganizationRoles
+from tfc.middleware.workspace_context import clear_workspace_context
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _import_views_without_workspace_context():
+    """Load the URLconf (and every view module) before any workspace context.
+
+    Views with class-level querysets capture the context active at import; the
+    root ``user`` fixture sets one, so the first real request of this module
+    must not be the one that imports them (it leaked into
+    test_cross_org_isolation.py).
+    """
+    clear_workspace_context()
+    _ = get_resolver().url_patterns
 
 
 @pytest.fixture
