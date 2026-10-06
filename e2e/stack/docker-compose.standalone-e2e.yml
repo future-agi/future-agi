@@ -20,6 +20,13 @@ services:
     env_file: !reset []
     extra_hosts:
       - "agentcc-gateway:127.0.0.1"
+    # The test licence's public key (README "Licences on the E2E stacks";
+    # EE_LICENSE_KEY itself is in docker-compose.yml). The stack must never
+    # call Future AGI's licence service.
+    environment:
+      EE_LICENSE_PUBLIC_KEY: ${EE_LICENSE_PUBLIC_KEY:-}
+      FUTURE_AGI_ENTERPRISE_HEARTBEAT_DISABLED: "true"
+      FUTURE_AGI_LICENSE_URL: http://127.0.0.1:9
     # A crash should fail the run loudly instead of restarting quietly.
     restart: "no"
   postgres:
