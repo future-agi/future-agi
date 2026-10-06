@@ -18,7 +18,8 @@ const makeWavesurfer = () => {
     on: (event, cb) => {
       (handlers[event] ||= []).push(cb);
     },
-    emit: (event, ...args) => (handlers[event] || []).forEach((cb) => cb(...args)),
+    emit: (event, ...args) =>
+      (handlers[event] || []).forEach((cb) => cb(...args)),
   };
 };
 
@@ -66,8 +67,16 @@ const NETWORK = 2;
 const DECODE = 3;
 
 const TRACKS = [
-  { url: "https://example.test/customer.wav", color: "#f00", name: "Customer Audio" },
-  { url: "https://example.test/assistant.wav", color: "#00f", name: "Assistant Audio" },
+  {
+    url: "https://example.test/customer.wav",
+    color: "#f00",
+    name: "Customer Audio",
+  },
+  {
+    url: "https://example.test/assistant.wav",
+    color: "#00f",
+    name: "Assistant Audio",
+  },
 ];
 
 const LOADING_COPY = /painting sound waves/i;
@@ -143,7 +152,9 @@ describe("MultiTrackAudioPlayer — recording unavailable", () => {
     failMedia(0, SRC_NOT_SUPPORTED);
 
     await screen.findByText(UNAVAILABLE_COPY);
-    expect(screen.queryByRole("button", { name: /^retry$/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /^retry$/i }),
+    ).not.toBeInTheDocument();
   });
 
   // "No recording at all" is the caller's case, not this component's: it owns
@@ -213,7 +224,9 @@ describe("MultiTrackAudioPlayer — audio failed to load", () => {
     failMedia(0, NETWORK);
 
     await screen.findByText(FAILED_COPY);
-    expect(screen.getByRole("button", { name: /^retry$/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /^retry$/i }),
+    ).toBeInTheDocument();
   });
 
   it("recovers when the retry succeeds", async () => {
@@ -316,7 +329,9 @@ describe("MultiTrackAudioPlayer failure behaviour", () => {
 
     // Arrival order must not decide whether a refused source offers a retry.
     expect(await screen.findByText(UNAVAILABLE_COPY)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^retry$/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /^retry$/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("fails when one track errors even though the other is fine", async () => {

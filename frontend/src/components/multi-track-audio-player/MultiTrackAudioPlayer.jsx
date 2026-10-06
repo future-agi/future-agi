@@ -48,7 +48,10 @@ const MultiTrackAudioPlayer = ({
   // trackUrls is always the fixed [customer, assistant] pair; either side can
   // arrive with no recording. Everything below is driven off the tracks that
   // actually have one to play.
-  const playable = useMemo(() => trackUrls.filter(({ url }) => url), [trackUrls]);
+  const playable = useMemo(
+    () => trackUrls.filter(({ url }) => url),
+    [trackUrls],
+  );
   const isReady = playable.length > 0 && ready === playable.length && !failure;
 
   // Keep latest onInstance in a ref so the instance callback fires with the
@@ -59,9 +62,10 @@ const MultiTrackAudioPlayer = ({
 
   const [isPlaying, setIsPlaying] = useState(false);
   useEffect(() => {
-    // No URL is the quiet case: a track with nothing to play is simply not
-    // built, and once neither side has a recording there is nothing here for
-    // the caller to fall back from — it renders its own "No recording found".
+    // A track with nothing to play is simply not built. Callers never hand
+    // over a set with no URL at all: AudioPlayerCustom says "No recording
+    // found" for a call without one, and StereoMultiTrackPlayer reports a
+    // failed stereo split itself.
     if (!multiTrackAudioRef.current || playable.length === 0) return;
     let cancelled = false;
     setReady(0);
@@ -266,52 +270,22 @@ const MultiTrackAudioPlayer = ({
           the whole transport goes rather than leaving a dead play button
           beside the failure message. */}
       {!failure && (
-      <Stack
-        direction="row"
-        justifyContent="space-between"
-        alignItems="center"
-        sx={{
-          width: "100%",
-          paddingTop: 1.4,
-        }}
-      >
-        <IconButton
-          aria-label="play-pause"
-          onClick={(event) => {
-            event.stopPropagation();
-            togglePlay();
-          }}
-          disabled={!isReady}
+        <Stack
+          direction="row"
+          justifyContent="space-between"
+          alignItems="center"
           sx={{
-            padding: "6px",
-            bgcolor: "background.paper",
-            border: "1px solid",
-            borderColor: "divider",
-            borderRadius: 0.5,
-            opacity: isReady ? 1 : 0.5,
+            width: "100%",
+            paddingTop: 1.4,
           }}
         >
-          <Icon
-            icon={isPlaying ? "lineicons:pause" : "akar-icons:play"}
-            width={20}
-            height={20}
-            color="text.primary"
-            style={{ pointerEvents: "none" }}
-          />
-        </IconButton>
-        <ShowComponent condition={allowDownload && isReady}>
-          <AudioDownloadButton
-            audioUrls={{
-              mono:
-                audioUrls?.mono?.combinedUrl ||
-                audioUrls?.combined ||
-                (typeof audioUrls?.mono === "string" ? audioUrls.mono : ""),
-              stereo: audioUrls?.stereoUrl || audioUrls?.stereo,
-              assistant: audioUrls?.mono?.assistantUrl || audioUrls?.assistant,
-              customer: audioUrls?.mono?.customerUrl || audioUrls?.customer,
+          <IconButton
+            aria-label="play-pause"
+            onClick={(event) => {
+              event.stopPropagation();
+              togglePlay();
             }}
-            filename={`recording-${id || "audio"}.wav`}
-            size="small"
+            disabled={!isReady}
             sx={{
               padding: "6px",
               bgcolor: "background.paper",
@@ -320,9 +294,40 @@ const MultiTrackAudioPlayer = ({
               borderRadius: 0.5,
               opacity: isReady ? 1 : 0.5,
             }}
-          />
-        </ShowComponent>
-      </Stack>
+          >
+            <Icon
+              icon={isPlaying ? "lineicons:pause" : "akar-icons:play"}
+              width={20}
+              height={20}
+              color="text.primary"
+              style={{ pointerEvents: "none" }}
+            />
+          </IconButton>
+          <ShowComponent condition={allowDownload && isReady}>
+            <AudioDownloadButton
+              audioUrls={{
+                mono:
+                  audioUrls?.mono?.combinedUrl ||
+                  audioUrls?.combined ||
+                  (typeof audioUrls?.mono === "string" ? audioUrls.mono : ""),
+                stereo: audioUrls?.stereoUrl || audioUrls?.stereo,
+                assistant:
+                  audioUrls?.mono?.assistantUrl || audioUrls?.assistant,
+                customer: audioUrls?.mono?.customerUrl || audioUrls?.customer,
+              }}
+              filename={`recording-${id || "audio"}.wav`}
+              size="small"
+              sx={{
+                padding: "6px",
+                bgcolor: "background.paper",
+                border: "1px solid",
+                borderColor: "divider",
+                borderRadius: 0.5,
+                opacity: isReady ? 1 : 0.5,
+              }}
+            />
+          </ShowComponent>
+        </Stack>
       )}
     </Stack>
   );
