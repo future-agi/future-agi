@@ -623,34 +623,52 @@ const niceCeil = (value) => {
  * real zero instead of skipping it.
  */
 export const getSeriesExtent = (series = [], { stacked = false } = {}) => {
-  const totals = [];
+  // `Number(null)` is 0, so reading a point's value arithmetically would let an
+  // empty bucket register as a real zero: it anchors the floor at 0 using data
+  // the chart never draws, and on a 90-day minute range it pads the sample from
+  // hundreds of observations to six figures.
+  const valueOf = (point) => {
+    const raw = typeof point === "number" ? point : point?.y;
+    if (raw == null) return null;
+    const value = Number(raw);
+    return Number.isFinite(value) ? value : null;
+  };
+
+  // Folded in one pass rather than collected and spread into `Math.min`:
+  // spreading is an argument list, and a minute-granularity quarter carries
+  // ~132k points, well past the engine's limit (TH-7757).
+  let min = Infinity;
+  let max = -Infinity;
+  let observed = 0;
+  const fold = (value) => {
+    if (value < min) min = value;
+    if (value > max) max = value;
+    observed += 1;
+  };
+
   if (stacked) {
     // The backend pads every bucket (null for gaps) so series are aligned and
     // equal-length — the same positional sum ApexCharts itself does.
     const byIndex = [];
-    for (const s of series) {
-      (s?.data || []).forEach((pt, i) => {
-        const raw = typeof pt === "number" ? pt : pt?.y;
-        if (raw == null) return;
-        const value = Number(raw);
-        if (!Number.isFinite(value)) return;
-        byIndex[i] = (byIndex[i] || 0) + value;
+    for (const item of series) {
+      (item?.data || []).forEach((point, index) => {
+        const value = valueOf(point);
+        if (value === null) return;
+        byIndex[index] = (byIndex[index] || 0) + value;
       });
     }
-    totals.push(...byIndex.filter((v) => Number.isFinite(v)));
+    // Sparse array: forEach visits only the buckets some series reported.
+    byIndex.forEach((total) => fold(total));
   } else {
-    for (const s of series) {
-      for (const pt of s?.data || []) {
-        const raw = typeof pt === "number" ? pt : pt?.y;
-        if (raw == null) continue;
-        const value = Number(raw);
-        if (Number.isFinite(value)) totals.push(value);
+    for (const item of series) {
+      for (const point of item?.data || []) {
+        const value = valueOf(point);
+        if (value !== null) fold(value);
       }
     }
   }
 
-  if (!totals.length) return null;
-  return { min: Math.min(...totals), max: Math.max(...totals) };
+  return observed < 1 ? null : { min, max };
 };
 
 /**

@@ -899,6 +899,20 @@ describe("getSeriesExtent", () => {
   });
 });
 
+describe("getSeriesExtent on a long range", () => {
+  // Spreading ~125k values into Math.min overflows the call stack; 13 series
+  // of 10,081 minute buckets is a realistic week.
+  it("measures 131k points without throwing", () => {
+    const series = Array.from({ length: 13 }, (_, s) => ({
+      data: Array.from({ length: 10081 }, (_, i) => ({
+        x: i,
+        y: (i + s) % 997,
+      })),
+    }));
+    expect(getSeriesExtent(series)).toEqual({ min: 0, max: 996 });
+  });
+});
+
 describe("parseBound", () => {
   it("treats empty, undefined and non-numeric input as unset", () => {
     expect(parseBound("")).toBeNull();
