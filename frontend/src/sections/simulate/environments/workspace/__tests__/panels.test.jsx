@@ -126,6 +126,66 @@ describe("WorkspacePanels", () => {
     expect(screen.getByRole("tab", { name: /Runs 3/ })).toBeInTheDocument();
   });
 
+  // The runs list's total is what the tab lists; the environment's own count
+  // arrives first and stands in only until the list loads.
+  it("badges runs from the runs list's total once it loads, not the first page", () => {
+    runsApi.useEnvironmentRuns.mockReturnValue({
+      runs: Array.from({ length: 10 }, (_, i) => ({ id: `r${i}` })),
+      count: 23,
+      isLoading: false,
+    });
+    renderPanels({
+      counts: { scenarios: 5, evals: 2 },
+      overviewCounts: { runs: 23 },
+    });
+    expect(screen.getByRole("tab", { name: /Runs 23/ })).toBeInTheDocument();
+  });
+
+  // A deleted run leaves its job behind, so the environment's count can run
+  // higher than the runs the tab lists.
+  it("follows the runs list over a higher environment count once it loads", () => {
+    runsApi.useEnvironmentRuns.mockReturnValue({
+      runs: [{ id: "r1" }, { id: "r2" }],
+      count: 2,
+      isLoading: false,
+    });
+    renderPanels({
+      counts: { scenarios: 5, evals: 2 },
+      overviewCounts: { runs: 5 },
+    });
+    expect(screen.getByRole("tab", { name: /Runs 2/ })).toBeInTheDocument();
+  });
+
+  it("hides the Runs tab once every run is deleted, whatever the environment still counts", () => {
+    runsApi.useEnvironmentRuns.mockReturnValue({
+      runs: [],
+      count: 0,
+      isLoading: false,
+    });
+    renderPanels({
+      counts: { scenarios: 5, evals: 2 },
+      overviewCounts: { runs: 3 },
+    });
+    expect(screen.queryByRole("tab", { name: /Runs/ })).toBeNull();
+  });
+
+  it("shows the Runs tab from the environment's run count while the runs list loads", () => {
+    runsApi.useEnvironmentRuns.mockReturnValue({ runs: [], isLoading: true });
+    renderPanels({
+      counts: { scenarios: 5, evals: 2 },
+      overviewCounts: { runs: 4 },
+    });
+    expect(screen.getByRole("tab", { name: /Runs 4/ })).toBeInTheDocument();
+  });
+
+  it("hides the Runs tab when the environment's run count is zero", () => {
+    renderPanels({
+      counts: { scenarios: 5, evals: 2 },
+      overviewCounts: { runs: 0 },
+    });
+    expect(screen.queryByRole("tab", { name: /Runs/ })).toBeNull();
+  });
+
   it("shows no numeric badges when counts is omitted (builder still streaming)", () => {
     renderPanels({
       envState: baseEnvState({ runs: [{ id: "r1" }] }),

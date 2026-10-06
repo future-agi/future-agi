@@ -981,6 +981,7 @@ ERROR_FEED_GROUPING_DEBOUNCE_SECONDS = int(
 # selects its infrastructure implementation independently through HOSTED_SANDBOX_PROVIDER.
 HARNESS_PUBLIC_BASE_URL = os.getenv("HARNESS_PUBLIC_BASE_URL", "")
 HARNESS_PROVIDER = os.getenv("HARNESS_PROVIDER", "hosted")
+HARNESS_MAX_ARTIFACT_BYTES = int(os.getenv("HARNESS_MAX_ARTIFACT_BYTES", "1073741824"))
 HOSTED_SANDBOX_PROVIDER = os.getenv("HOSTED_SANDBOX_PROVIDER", "daytona")
 ALK_HARNESS_SANDBOX_URL = os.getenv("ALK_HARNESS_SANDBOX_URL", "")
 ALK_HARNESS_SANDBOX_TOKEN = os.getenv("ALK_HARNESS_SANDBOX_TOKEN", "")
@@ -1096,6 +1097,8 @@ HARNESS_PARALLELISM_ENABLED = os.getenv("HARNESS_PARALLELISM_ENABLED", "").lower
     "yes",
 )
 HARNESS_MAX_WORLD_SLOTS = int(os.getenv("HARNESS_MAX_WORLD_SLOTS", "8"))
+# Most scenarios × trials one simulation Run may submit.
+HARNESS_MAX_EXECUTIONS_PER_RUN = int(os.getenv("HARNESS_MAX_EXECUTIONS_PER_RUN", "200"))
 # Each profile is an operator-certified size/connector/snapshot combination.
 HARNESS_RESOURCE_PROFILES = json.loads(os.getenv("HARNESS_RESOURCE_PROFILES", "[]"))
 # Comma-separated allowlist of provider runtime identifiers certified for W>1.
