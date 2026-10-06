@@ -333,6 +333,9 @@ SWAGGER_SETTINGS = {
             "name": "X-Secret-Key",
         },
     },
+    # APIKeyAuthentication needs both headers together: one requirement
+    # object lists both keys (AND), instead of one object per key (OR).
+    "SECURITY_REQUIREMENTS": [{"X-Api-Key": [], "X-Secret-Key": []}],
     "USE_SESSION_AUTH": False,
 }
 

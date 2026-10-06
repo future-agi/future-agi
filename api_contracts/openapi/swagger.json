@@ -38,9 +38,7 @@
     },
     "security": [
         {
-            "X-Api-Key": []
-        },
-        {
+            "X-Api-Key": [],
             "X-Secret-Key": []
         }
     ],
