@@ -741,6 +741,21 @@ describe("RunTraceTable", () => {
       expect(expandAll()).not.toBeChecked();
     });
 
+    it("leaves an Expand all the user switched on themselves on when the chip is dismissed", async () => {
+      const user = userEvent.setup();
+      const { container } = renderTable({
+        initialFilters: { callExecutionId: ["t2"] },
+      });
+      await user.click(expandAll());
+      await user.click(expandAll());
+
+      await user.click(container.querySelector(".MuiChip-deleteIcon"));
+
+      expect(expandAll()).toBeChecked();
+      expect(persona.refund()).toBeInTheDocument();
+      expect(persona.timeout()).toBeInTheDocument();
+    });
+
     it("starts an analytics hand-off closed, like any other filter", () => {
       renderTable({ initialFilters: { goal_outcome: ["escalated"] } });
 

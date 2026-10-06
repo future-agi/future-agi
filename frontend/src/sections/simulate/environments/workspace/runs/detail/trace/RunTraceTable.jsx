@@ -85,6 +85,11 @@ export default function RunTraceTable({
     all: !!initialFilters.callExecutionId?.length,
     expandedByAxis: {},
   });
+  // Whether Expand all is still the hand-off's, so dismissing its chip may end
+  // it. Once the user works the toggle, Expand all is theirs.
+  const [handoffExpanded, setHandoffExpanded] = useState(
+    () => !!initialFilters.callExecutionId?.length,
+  );
   const groupView = useMemo(
     () => ({
       all: groupState.all,
@@ -322,7 +327,8 @@ export default function RunTraceTable({
             <Switch
               size="small"
               checked={allOpen}
-              onChange={() =>
+              onChange={() => {
+                setHandoffExpanded(false);
                 setGroupView((prev) =>
                   allOpen
                     ? CLOSED_GROUP_VIEW
@@ -333,8 +339,8 @@ export default function RunTraceTable({
                           ...groups.map((g) => g.label),
                         ]),
                       },
-                )
-              }
+                );
+              }}
             />
           }
           label="Expand all"
@@ -408,9 +414,11 @@ export default function RunTraceTable({
           label={`${affectedCalls} affected call${affectedCalls === 1 ? "" : "s"}`}
           onDelete={() => {
             setFilters(({ callExecutionId: _ids, ...rest }) => rest);
-            // The groups those calls sat in stay open; the rest of the run
-            // comes back closed.
-            setGroupState((prev) => ({ ...prev, all: false }));
+            // The groups of those calls the user saw stay open; the rest of the
+            // run comes back closed, unless the user turned Expand all on.
+            if (handoffExpanded)
+              setGroupState((prev) => ({ ...prev, all: false }));
+            setHandoffExpanded(false);
             setPage(1);
           }}
           sx={{ typography: "s2", fontWeight: 600 }}
