@@ -514,3 +514,409 @@ def test_activation_is_explicit_and_does_not_requeue_or_reconcile(
         == before
     )
     assert not TraceGroupingDecision.no_workspace_objects.filter(scope=scope).exists()
+
+
+def test_budget_wait_is_visible_and_requeue_preserves_spend(sampled_claim, caplog):
+    from tracer.models.trace_grouping import TraceGroupingFindingState
+    from tracer.services.grouping.budget_recovery import requeue_budget_work
+
+    scope, _, _, claim, _ = sampled_claim
+    paid = {
+        "attempt_id": claim["attempt_id"],
+        "lease_token": claim["lease_token"],
+        "request_key": "earlier-paid-call",
+        "request_digest": "sha256:" + "d" * 64,
+    }
+    reserve_call(**paid, max_cost_usd="0.01")
+    settle_call(
+        **paid, status="settled", cost_usd="0.002", failure_code="invalid_output"
+    )
+    with override_settings(ERROR_FEED_GROUPING_PROJECT_BUDGET_USD="0.005"):
+        denied = reserve_call(
+            attempt_id=claim["attempt_id"],
+            lease_token=claim["lease_token"],
+            request_key="budget-recovery",
+            request_digest="sha256:" + "c" * 64,
+            max_cost_usd="0.01",
+        )
+    assert denied["reason"] == "budget_exhausted:project"
+    assert any(
+        record.budget_limit == "project"
+        for record in caplog.records
+        if getattr(record, "event", None) == "grouping_budget_refused"
+    )
+    reply = publish_grouping(
+        attempt_id=claim["attempt_id"],
+        lease_token=claim["lease_token"],
+        idempotency_key="budget-wait",
+        snapshot_digest=claim["snapshot_digest"],
+        registry_revision=claim["registry_revision"],
+        receipt_ids=[],
+        commands=[
+            {
+                "type": "defer",
+                "occurrence_ids": claim["pending_ids"],
+                "reason": denied["reason"],
+            }
+        ],
+    )
+    assert reply["waiting_for_budget"] == len(claim["pending_ids"])
+    work = TraceGroupingAttempt.no_workspace_objects.get(pk=claim["attempt_id"]).work
+    work.refresh_from_db()
+    work.report.refresh_from_db()
+    assert work.state == "waiting_budget" and work.report.grouping_status == "pending"
+    assert TraceGroupingFindingState.no_workspace_objects.filter(
+        finding_id__in=claim["pending_ids"], disposition="waiting_budget"
+    ).count() == len(claim["pending_ids"])
+    assert claim_grouping_work(worker_id="no-auto-retry", limit=1)["claims"] == []
+    with override_settings(ERROR_FEED_GROUPING_PROJECT_BUDGET_USD="0.005"):
+        blocked = requeue_budget_work(
+            project_id=scope.project_id,
+            apply=True,
+            expected_registry_revision=reply["registry_revision"],
+        )
+    assert blocked["works"][0]["blocked_reason"] == "project_budget_unavailable"
+    preview = requeue_budget_work(project_id=scope.project_id)
+    assert preview["works"][0]["eligible"] and not preview["works"][0]["requeued"]
+    with pytest.raises(GroupingConflict):
+        requeue_budget_work(
+            project_id=scope.project_id, apply=True, expected_registry_revision=-1
+        )
+    recovered = requeue_budget_work(
+        project_id=scope.project_id,
+        apply=True,
+        expected_registry_revision=reply["registry_revision"],
+    )
+    assert recovered["works"][0]["requeued"]
+    scope.refresh_from_db()
+    assert scope.spent_usd == Decimal("0.002") and scope.reserved_usd == 0
+    new = claim_grouping_work(worker_id="budget-recovery", limit=1)["claims"][0]
+    assert new["pending_ids"] == claim["pending_ids"]
+    assert new["checkpoint"] == {} and new["attempt_id"] != claim["attempt_id"]
+
+
+@override_settings(
+    ERROR_FEED_GROUPING_ENABLED=True,
+    ERROR_FEED_GROUPING_ALL_PROJECTS=True,
+    ERROR_FEED_GROUPING_DEBOUNCE_SECONDS=0,
+    ERROR_FEED_GROUPING_PROJECT_BUDGET_USD="10",
+    ERROR_FEED_GROUPING_WORK_BUDGET_USD="10",
+    ERROR_FEED_GROUPING_TENANT_BUDGET_USD="10",
+)
+def test_partial_report_recovery_selects_only_unassigned_findings(
+    observe_project, monkeypatch
+):
+    import copy
+
+    from tracer.services.grouping.control import claim_feature_jobs
+    from tracer.services.grouping.feature_completion import complete_feature_job
+    from tracer.services.grouping_features import enqueue_grouping_features
+    from tracer.tests.test_grouping_runtime import _feature_rows, _saved_report
+
+    report = _saved_report(observe_project)
+    first = report.findings.get()
+    second = copy.copy(first)
+    second.pk = uuid.uuid4()
+    second.finding_id = "second-finding"
+    second.ordinal += 1
+    second._state.adding = True
+    second.save(force_insert=True)
+    from tracer.queries.grouping import export_grouping_snapshot
+
+    export_grouping_snapshot(report=report)
+    enqueue_grouping_features(report=report)
+    prepared = claim_feature_jobs(worker_id="prepare-recovery", limit=1)["claims"][0]
+    complete_feature_job(
+        feature_job_id=prepared["feature_job_id"],
+        lease_token=prepared["lease_token"],
+        status="ready",
+        features=_feature_rows(prepared["snapshot"]),
+        store=FakeFeatureStore(),
+    )
+    monkeypatch.setattr(context, "GroupingFeatureStore", FakeFeatureStore)
+    scope = TraceGroupingScope.no_workspace_objects.get(project=observe_project)
+    scope.policy_version = SAMPLED_GROUPING_POLICY_VERSION
+    scope.save(update_fields=["policy_version", "updated_at"])
+    issue = _new_issue(
+        scope,
+        {
+            "mechanism": "Known mechanism",
+            "fix_hypothesis": "Fix operation",
+            "falsifier": "Operation succeeds",
+        },
+        [str(first.pk)],
+    )
+    _assign(first, issue, scope)
+    claim = claim_grouping_work(worker_id="partial-recovery", limit=1)["claims"][0]
+    assert claim["pending_ids"] == [str(second.pk)]
+    assert (
+        len(claim["snapshot"]["occurrences"]) == 2
+    )  # Full source binding remains intact.
+    result = publish_grouping(
+        attempt_id=claim["attempt_id"],
+        lease_token=claim["lease_token"],
+        idempotency_key="partial-recovery",
+        snapshot_digest=claim["snapshot_digest"],
+        registry_revision=claim["registry_revision"],
+        receipt_ids=[],
+        commands=[
+            {
+                "type": "defer",
+                "occurrence_ids": [str(second.pk)],
+                "reason": "budget_exhausted:work",
+            }
+        ],
+    )
+    first.refresh_from_db()
+    assert first.cluster_id == issue.cluster_id and result["waiting_for_budget"] == 1
+
+
+@override_settings(
+    ERROR_FEED_GROUPING_ENABLED=True,
+    ERROR_FEED_GROUPING_ALL_PROJECTS=True,
+    ERROR_FEED_GROUPING_DEBOUNCE_SECONDS=0,
+    ERROR_FEED_GROUPING_PROJECT_BUDGET_USD="10",
+    ERROR_FEED_GROUPING_WORK_BUDGET_USD="10",
+    ERROR_FEED_GROUPING_TENANT_BUDGET_USD="10",
+)
+def test_requeued_peer_keeps_original_cohort_spending_limit(
+    observe_project, monkeypatch
+):
+    from tracer.services.grouping.budget_recovery import requeue_budget_work
+
+    _prepare_runtime(observe_project, monkeypatch, identity="budget-primary")
+    _prepare_runtime(observe_project, monkeypatch, identity="budget-peer")
+    scope = TraceGroupingScope.no_workspace_objects.get(project=observe_project)
+    scope.policy_version = SAMPLED_GROUPING_POLICY_VERSION
+    scope.save(update_fields=["policy_version", "updated_at"])
+    claim = claim_grouping_work(worker_id="cohort-spend", limit=1)["claims"][0]
+    original = TraceGroupingAttempt.no_workspace_objects.get(
+        pk=claim["attempt_id"]
+    ).work
+    peer = (
+        TraceGroupingWork.no_workspace_objects.filter(scope=scope)
+        .exclude(pk=original.pk)
+        .get()
+    )
+    assert peer.budget_work_id == original.pk
+    call = {
+        "attempt_id": claim["attempt_id"],
+        "lease_token": claim["lease_token"],
+        "request_key": "paid-cohort-call",
+        "request_digest": "sha256:" + "f" * 64,
+    }
+    reserve_call(**call, max_cost_usd="0.01")
+    settle_call(
+        **call, status="settled", cost_usd="0.002", failure_code="invalid_output"
+    )
+    reply = publish_grouping(
+        attempt_id=claim["attempt_id"],
+        lease_token=claim["lease_token"],
+        idempotency_key="cohort-budget-wait",
+        snapshot_digest=claim["snapshot_digest"],
+        registry_revision=claim["registry_revision"],
+        receipt_ids=[],
+        commands=[
+            {
+                "type": "defer",
+                "occurrence_ids": claim["pending_ids"],
+                "reason": "budget_exhausted:work",
+            }
+        ],
+    )
+    # Simulate the primary report already having a validated placement. Only the
+    # other report needs recovery and therefore becomes the next primary work.
+    first = original.report.findings.get()
+    issue = _new_issue(
+        scope,
+        {
+            "mechanism": "Known failure",
+            "fix_hypothesis": "Fix operation",
+            "falsifier": "Operation succeeds",
+        },
+        [str(first.pk)],
+    )
+    _assign(first, issue, scope)
+    original.state = "completed"
+    original.save(update_fields=["state", "updated_at"])
+    with override_settings(ERROR_FEED_GROUPING_WORK_BUDGET_USD="0.005"):
+        blocked = requeue_budget_work(project_id=scope.project_id)
+    assert blocked["works"][0]["blocked_reason"] == "work_budget_unavailable"
+    recovered = requeue_budget_work(
+        project_id=scope.project_id,
+        apply=True,
+        expected_registry_revision=reply["registry_revision"],
+    )
+    assert recovered["works"][0]["requeued"]
+    new = claim_grouping_work(worker_id="peer-recovery", limit=1)["claims"][0]
+    assert (
+        TraceGroupingAttempt.no_workspace_objects.get(pk=new["attempt_id"]).work_id
+        == peer.pk
+    )
+    with override_settings(ERROR_FEED_GROUPING_WORK_BUDGET_USD="0.005"):
+        denied = reserve_call(
+            attempt_id=new["attempt_id"],
+            lease_token=new["lease_token"],
+            request_key="new-peer-call",
+            request_digest="sha256:" + "e" * 64,
+            max_cost_usd="0.01",
+        )
+    assert denied["reason"] == "budget_exhausted:work"
+    scope.refresh_from_db()
+    assert scope.spent_usd == Decimal("0.002") and scope.reserved_usd == 0
+
+
+@pytest.mark.parametrize(
+    "status,sampled", [("acknowledged", True), ("resolved", True), ("resolved", False)]
+)
+@override_settings(
+    ERROR_FEED_GROUPING_ENABLED=True,
+    ERROR_FEED_GROUPING_ALL_PROJECTS=True,
+    ERROR_FEED_GROUPING_DEBOUNCE_SECONDS=0,
+    ERROR_FEED_GROUPING_PROJECT_BUDGET_USD="10",
+    ERROR_FEED_GROUPING_WORK_BUDGET_USD="10",
+    ERROR_FEED_GROUPING_TENANT_BUDGET_USD="10",
+)
+def test_reviewed_attachment_preserves_identity_and_reopens_resolved_issue(
+    observe_project, monkeypatch, status, sampled
+):
+    old = _prepare_runtime(observe_project, monkeypatch, identity="reviewed-existing")
+    scope = TraceGroupingScope.no_workspace_objects.get(project=observe_project)
+    if sampled:
+        scope.policy_version = SAMPLED_GROUPING_POLICY_VERSION
+        scope.save(update_fields=["policy_version", "updated_at"])
+    mechanism = {
+        "title": "Refund uses the wrong amount",
+        "mechanism": "Incorrect refund amount",
+        "fix_hypothesis": "Refund the requested amount",
+        "falsifier": "Correct amount refunded",
+    }
+    first = old.findings.get()
+    issue = _new_issue(scope, mechanism, [str(first.id)])
+    _assign(first, issue, scope)
+    issue.cluster.status = status
+    issue.cluster.rca_synthesis = "Human-reviewed root cause"
+    issue.cluster.rca_fix = "Human-reviewed fix"
+    issue.cluster.save(
+        update_fields=["status", "rca_synthesis", "rca_fix", "updated_at"]
+    )
+    TraceGroupingWork.no_workspace_objects.filter(scope=scope).update(state="completed")
+    new = _prepare_runtime(observe_project, monkeypatch, identity="reviewed-recurrence")
+    second = new.findings.get()
+
+    class Candidates(FakeFeatureStore):
+        def candidate_occurrences(self, **kwargs):
+            return [str(first.id)]
+
+    monkeypatch.setattr(context, "GroupingFeatureStore", Candidates)
+    claim = claim_grouping_work(worker_id="reviewed-attachment", limit=1)["claims"][0]
+    assert claim["candidate_window"]["issues"][0]["protected"]
+    citations = [
+        {
+            "occurrence_id": str(row.id),
+            "evidence_id": "report",
+            "evidence_digest": _text_digest(row.statement),
+            "quote": row.statement[:24],
+        }
+        for row in [first, second]
+    ]
+    raw = {
+        "target_issue_id": str(issue.cluster_id),
+        "member_ids": [str(second.id)],
+        **mechanism,
+        "predicted_observations": ["Requested and executed amounts differ"],
+        "citations": [
+            {
+                "finding_id": item["occurrence_id"],
+                **{key: value for key, value in item.items() if key != "occurrence_id"},
+            }
+            for item in citations
+        ],
+        "contradictions": [],
+        "alternatives": ["Recognition failure"],
+        "missing_evidence": [],
+    }
+    attempt = TraceGroupingAttempt.no_workspace_objects.get(pk=claim["attempt_id"])
+    receipt = TraceGroupingCall.no_workspace_objects.create(
+        scope=scope,
+        work=attempt.work,
+        attempt=attempt,
+        request_key="reviewed-attach",
+        request_digest="sha256:" + "a" * 64,
+        status="settled",
+        max_cost_usd=Decimal("0.01"),
+        cost_usd=Decimal("0.001"),
+        result={"groups": [raw], "deferred": []},
+    )
+    payload = {
+        "attempt_id": attempt.pk,
+        "lease_token": claim["lease_token"],
+        "idempotency_key": "reviewed-attach",
+        "snapshot_digest": claim["snapshot_digest"],
+        "registry_revision": claim["registry_revision"],
+        "receipt_ids": [str(receipt.pk)],
+        "commands": [
+            {
+                "type": "attach",
+                "issue_id": str(issue.cluster_id),
+                "expected_issue_revision": issue.revision,
+                "occurrence_ids": [str(second.pk)],
+                "citations": citations,
+                "admission": {
+                    "primary_receipt_id": str(receipt.pk),
+                    "group_index": 0,
+                    "repair_receipt_id": None,
+                },
+            }
+        ],
+    }
+    if not sampled:
+        with pytest.raises(GroupingConflict, match="attach target"):
+            publish_grouping(**payload)
+        second.refresh_from_db()
+        issue.cluster.refresh_from_db()
+        assert second.cluster_id is None and issue.cluster.status == "resolved"
+        return
+    if status == "resolved":
+        import copy
+
+        invalid = copy.deepcopy(payload)
+        invalid["idempotency_key"] = "rollback-reviewed-attach"
+        invalid["commands"].append(
+            {
+                "type": "defer",
+                "occurrence_ids": [str(second.pk)],
+                "reason": "duplicate disposition",
+            }
+        )
+        with pytest.raises(GroupingConflict, match="duplicated or not pending"):
+            publish_grouping(**invalid)
+        issue.refresh_from_db()
+        issue.cluster.refresh_from_db()
+        second.refresh_from_db()
+        assert second.cluster_id is None and issue.cluster.status == "resolved"
+        assert not issue.protected
+        assert not TraceGroupingDecision.no_workspace_objects.filter(
+            idempotency_key="rollback-reviewed-attach"
+        ).exists()
+    result = publish_grouping(**payload)
+    issue.refresh_from_db()
+    issue.cluster.refresh_from_db()
+    second.refresh_from_db()
+    assert second.cluster_id == issue.cluster_id and issue.cluster.error_count == 2
+    assert issue.mechanism == mechanism and issue.revision == 1
+    assert issue.cluster.title == mechanism["title"]
+    assert issue.cluster.rca_synthesis == "Human-reviewed root cause"
+    assert issue.cluster.rca_fix == "Human-reviewed fix"
+    assert issue.cluster.status == ("for_review" if status == "resolved" else status)
+    if status == "resolved":
+        assert issue.protected
+        assert result["reopened_issues"][0]["reason"] == "new_occurrence"
+        assert result["reopened_issues"][0]["from_status"] == "resolved"
+        assert result["reopened_issues"][0]["occurrence_ids"] == [str(second.pk)]
+    else:
+        assert result["reopened_issues"] == []
+    assert publish_grouping(**payload) == result
+    assert (
+        TraceGroupingDecision.no_workspace_objects.filter(attempt=attempt).count() == 1
+    )

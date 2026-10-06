@@ -144,6 +144,11 @@ def build_claim_context(
         for snap in pending_snapshots
         for item in snap["occurrences"]
     }
+    if (
+        scope.policy_version == SAMPLED_GROUPING_POLICY_VERSION
+        and attempt.pending_occurrence_ids
+    ):
+        pending_ids = set(attempt.pending_occurrence_ids)
     pending_reports = {snap["report"]["id"]: snap for snap in pending_snapshots}
     receipts = list(
         TraceGroupingFeature.no_workspace_objects.filter(

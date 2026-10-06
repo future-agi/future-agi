@@ -9,7 +9,11 @@ from django.db.models import Count, F, Max, Min, Q
 from django.utils import timezone
 
 from tracer.constants.grouping_versions import SAMPLED_GROUPING_POLICY_VERSION
-from tracer.models.trace_error_analysis import ErrorClusterTraces, TraceErrorGroup
+from tracer.models.trace_error_analysis import (
+    ErrorClusterTraces,
+    FeedIssueStatus,
+    TraceErrorGroup,
+)
 from tracer.models.trace_grouping import (
     GroupingAttemptState,
     GroupingWorkState,
@@ -605,7 +609,9 @@ def _clear_rca(cluster: TraceErrorGroup) -> None:
     cluster.rca_trace = None
 
 
-def _recount(state: TraceGroupingIssueState) -> None:
+def _recount(
+    state: TraceGroupingIssueState, *, preserve_reviewed: bool = False
+) -> None:
     cluster = state.cluster
     memberships = ErrorClusterTraces.no_workspace_objects.filter(
         Q(
@@ -641,7 +647,8 @@ def _recount(state: TraceGroupingIssueState) -> None:
     cluster.error_ids = []
     cluster.first_seen = totals["first"]
     cluster.last_seen = totals["last"]
-    _clear_rca(cluster)
+    if not preserve_reviewed:
+        _clear_rca(cluster)
     cluster.save(
         update_fields=[
             "error_count",
@@ -774,7 +781,12 @@ def _unassign(
         finding=finding,
         defaults={
             "scope": scope,
-            "disposition": "deferred",
+            "disposition": (
+                "waiting_budget"
+                if scope.policy_version == SAMPLED_GROUPING_POLICY_VERSION
+                and reason.startswith("budget_exhausted:")
+                else "deferred"
+            ),
             "reason": reason[:255],
             "source_digest": canonical_grouping_source_digest(
                 export_grouping_snapshot(report=finding.report)
@@ -969,6 +981,13 @@ def publish_grouping(
             for snap in ordered_snapshots
             for item in snap["occurrences"]
         }
+        if (
+            scope.policy_version == SAMPLED_GROUPING_POLICY_VERSION
+            and attempt.pending_occurrence_ids
+        ):
+            if not set(attempt.pending_occurrence_ids).issubset(pending_ids):
+                raise GroupingConflict("claimed pending finding disappeared")
+            pending_ids = set(attempt.pending_occurrence_ids)
         states = {
             str(item.cluster_id): item
             for item in TraceGroupingIssueState.no_workspace_objects.select_for_update()
@@ -1099,6 +1118,7 @@ def publish_grouping(
             raise GroupingConflict("pending finding is already owned")
         assigned_pending = set()
         deferred_pending = set()
+        reopened_issues = []
         touched = set()
         new_ids = {}
         if (
@@ -1189,7 +1209,7 @@ def publish_grouping(
                 if (
                     state is None
                     or state.retired
-                    or _protected(state)
+                    or (_protected(state) and not sampled)
                     or state.revision != command["expected_issue_revision"]
                 ):
                     raise GroupingConflict("attach target is stale or not offered")
@@ -1222,8 +1242,25 @@ def publish_grouping(
                 for item in ids:
                     _assign(findings[item], state, scope)
                 membership[command["issue_id"]] = combined
+                if sampled and state.cluster.status == FeedIssueStatus.RESOLVED:
+                    # Recurrence changes workflow, not the reviewed issue identity.
+                    state.cluster.status = FeedIssueStatus.FOR_REVIEW
+                    state.cluster.save(update_fields=["status", "updated_at"])
+                    state.protected = True
+                    reopened_issues.append(
+                        {
+                            "issue_id": str(state.cluster_id),
+                            "from_status": FeedIssueStatus.RESOLVED,
+                            "to_status": FeedIssueStatus.FOR_REVIEW,
+                            "reason": "new_occurrence",
+                            "occurrence_ids": ids,
+                            "reopened_at": timezone.now().isoformat(),
+                        }
+                    )
                 state.membership_revision += 1
-                state.save(update_fields=["membership_revision", "updated_at"])
+                state.save(
+                    update_fields=["membership_revision", "protected", "updated_at"]
+                )
                 assigned_pending.update(ids)
                 touched.add(str(state.cluster_id))
             elif kind == "refresh":
@@ -1573,14 +1610,29 @@ def publish_grouping(
             state = TraceGroupingIssueState.no_workspace_objects.select_related(
                 "cluster"
             ).get(cluster_id=_uuid(key, "issue ID"))
-            _recount(state)
+            _recount(state, preserve_reviewed=sampled and _protected(state))
             from tracer.services.grouping.severity import enqueue_severity
 
             enqueue_severity(issue=state, attempt=attempt)
+        waiting_reports = set(
+            TraceGroupingFindingState.no_workspace_objects.filter(
+                scope=scope,
+                finding_id__in=deferred_pending,
+                disposition="waiting_budget",
+            ).values_list("finding__report_id", flat=True)
+        )
         for work in works:
-            work.state = GroupingWorkState.COMPLETED
+            work.state = (
+                GroupingWorkState.WAITING_BUDGET
+                if work.report_id in waiting_reports
+                else GroupingWorkState.COMPLETED
+            )
             work.save(update_fields=["state", "updated_at"])
-            work.report.grouping_status = TraceInvestigationGroupingStatus.COMPLETED
+            work.report.grouping_status = (
+                TraceInvestigationGroupingStatus.PENDING
+                if work.report_id in waiting_reports
+                else TraceInvestigationGroupingStatus.COMPLETED
+            )
             work.report.save(update_fields=["grouping_status", "updated_at"])
         attempt.state = GroupingAttemptState.COMPLETED
         attempt.save(update_fields=["state", "updated_at"])
@@ -1591,8 +1643,16 @@ def publish_grouping(
             "status": "completed",
             "registry_revision": scope.registry_revision,
             "created_issue_ids": new_ids,
+            "reopened_issues": reopened_issues,
             "assigned": len(assigned_pending),
             "deferred": len(deferred_pending),
+            "waiting_for_budget": len(
+                TraceGroupingFindingState.no_workspace_objects.filter(
+                    scope=scope,
+                    finding_id__in=deferred_pending,
+                    disposition="waiting_budget",
+                )
+            ),
         }
         TraceGroupingDecision.no_workspace_objects.create(
             scope=scope,

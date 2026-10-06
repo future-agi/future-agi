@@ -49,6 +49,7 @@ OPERATOR_STARTUP_MUTATION_COMMANDS = frozenset(
         "migrate",
         "provision_grouping_features",
         "enable_sampled_grouping",
+        "requeue_budget_grouping",
         "register_temporal_schedules",
         "seed_system_evals",
     }
