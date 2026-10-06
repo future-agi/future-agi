@@ -1,0 +1,2 @@
+livekit-agents[deepgram,google,silero]>=1.8.3,<2
+pyyaml

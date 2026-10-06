@@ -118,6 +118,7 @@ export function harnessDetailToEnvironment(detail) {
     seed: derivedWorld.seed,
     evalPreset: contract?.chosen_evals || undefined,
     testSubject: overview.agent ?? null,
+    sharedTemplate: Boolean(overview.shared_template),
     platform: {
       runTestId: overview.run?.run_test_id,
       testExecutionId: overview.run?.test_execution_id,

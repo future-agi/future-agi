@@ -1,9 +1,17 @@
 import { describe, it, expect, vi, beforeAll } from "vitest";
 import { render, screen, fireEvent } from "src/utils/test-utils";
-import OptionCard from "../cards/OptionCard";
-import TemplateHeroCard from "../cards/TemplateHeroCard";
-import WebEnvironmentsHeroCard from "../cards/WebEnvironmentsHeroCard";
-import { OPTIONS, OPTION_ID } from "../environmentOptions";
+
+const prebuilt = { data: [] };
+vi.mock("src/api/simulate-environments/prebuilt", () => ({
+  usePrebuiltEnvironments: () => prebuilt,
+}));
+
+const { default: OptionCard } = await import("../cards/OptionCard");
+const { default: TemplateHeroCard } = await import("../cards/TemplateHeroCard");
+const { default: WebEnvironmentsHeroCard } = await import(
+  "../cards/WebEnvironmentsHeroCard"
+);
+const { OPTIONS, OPTION_ID } = await import("../environmentOptions");
 
 const optionById = (id) => OPTIONS.find((o) => o.id === id);
 
@@ -57,31 +65,30 @@ describe("OptionCard", () => {
 });
 
 describe("TemplateHeroCard", () => {
-  it("renders the coming-soon prebuilt hero and is inert", () => {
+  const named = (...names) => names.map((name) => ({ id: name, name }));
+
+  it("names the library's own templates and opens it on click", () => {
+    prebuilt.data = named("Collections", "Insurance FNOL", "Healthcare", "Banking");
     const onClick = vi.fn();
     render(<TemplateHeroCard onClick={onClick} />);
 
     expect(screen.getByText("Prebuilt Environments")).toBeInTheDocument();
-    expect(screen.getByText("· Fastest")).toBeInTheDocument();
-    expect(screen.getByText("Customer Support Line")).toBeInTheDocument();
-    expect(screen.getByText("Coding")).toBeInTheDocument();
-    expect(screen.getByText("Browser")).toBeInTheDocument();
-    expect(screen.getByText("Airline Rebooking")).toBeInTheDocument();
-    expect(screen.getByText("+ 10 more")).toBeInTheDocument();
-    expect(screen.getByLabelText("Coming soon")).toBeInTheDocument();
+    ["Collections", "Insurance FNOL", "Healthcare", "Banking"].forEach((name) => {
+      expect(screen.getByText(name)).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/more$/)).toBeNull();
+    expect(screen.queryByLabelText("Coming soon")).toBeNull();
 
     fireEvent.click(screen.getByRole("button"));
-    expect(onClick).not.toHaveBeenCalled();
+    expect(onClick).toHaveBeenCalledTimes(1);
   });
 
-  it("does not activate on Enter while coming soon", () => {
-    const onClick = vi.fn();
-    render(<TemplateHeroCard onClick={onClick} />);
+  it("counts the templates it does not name", () => {
+    prebuilt.data = named("A", "B", "C", "D", "E", "F");
+    render(<TemplateHeroCard onClick={vi.fn()} />);
 
-    const btn = screen.getByRole("button");
-    expect(btn).toHaveAttribute("tabindex", "-1");
-    fireEvent.keyDown(btn, { key: "Enter" });
-    expect(onClick).not.toHaveBeenCalled();
+    expect(screen.queryByText("E")).toBeNull();
+    expect(screen.getByText("+ 2 more")).toBeInTheDocument();
   });
 });
 

@@ -24,6 +24,12 @@ class HarnessEnvironmentListQuerySerializer(serializers.Serializer):
 
 
 
+class HarnessEnvironmentCopyResponseSerializer(serializers.Serializer):
+    """The caller's own copy of a shared template, to edit and run in its place."""
+
+    environment_id = serializers.UUIDField()
+
+
 class HarnessEnvironmentRenameSerializer(serializers.Serializer):
     """The only field an environment exposes for editing.
 
@@ -101,6 +107,7 @@ class HarnessEnvironmentOverviewSerializer(HarnessEnvironmentSerializer):
     evaluations_count = serializers.IntegerField()
     run = HarnessEnvironmentRunLinkSerializer()
     agent = HarnessEnvironmentAgentSerializer(allow_null=True)
+    shared_template = serializers.BooleanField()
 
 
 class HarnessEnvironmentAddEvaluationSerializer(serializers.Serializer):
@@ -430,3 +437,44 @@ class HarnessEnvironmentDetailSerializer(serializers.Serializer):
     scenarios = HarnessEnvironmentScenarioSerializer(many=True)
     evaluations = HarnessEnvironmentEvaluationsSerializer()
     settings = HarnessEnvironmentSettingsSerializer()
+
+
+class HarnessEnvironmentTemplateToolSerializer(serializers.Serializer):
+    name = serializers.CharField()
+    description = serializers.CharField(allow_blank=True)
+
+
+class HarnessEnvironmentTemplateSerializer(serializers.Serializer):
+    """One system template, as every user sees it before using it."""
+
+    slug = serializers.SlugField()
+    # Open the template read-only at this environment id; the first edit or run copies it.
+    environment_id = serializers.UUIDField()
+    name = serializers.CharField()
+    description = serializers.CharField(allow_blank=True)
+    surface = serializers.CharField(allow_blank=True)
+    direction = serializers.CharField(allow_blank=True)
+    languages = serializers.ListField(child=serializers.CharField())
+    domain = serializers.CharField(allow_blank=True)
+    scenario_count = serializers.IntegerField()
+    tools = HarnessEnvironmentTemplateToolSerializer(many=True)
+    rules = serializers.ListField(child=serializers.CharField())
+    evaluations = serializers.ListField(child=serializers.CharField())
+    updated_at = serializers.DateTimeField()
+
+
+class HarnessEnvironmentTemplateListResponseSerializer(serializers.Serializer):
+    results = HarnessEnvironmentTemplateSerializer(many=True)
+
+
+class HarnessEnvironmentTemplateScenarioSerializer(serializers.Serializer):
+    scenario_key = serializers.CharField()
+    name = serializers.CharField(allow_blank=True)
+    use_case = serializers.CharField(allow_blank=True)
+    situation = serializers.CharField(allow_blank=True)
+    outcome = serializers.CharField(allow_blank=True)
+    persona = serializers.DictField()
+
+
+class HarnessEnvironmentTemplateDetailSerializer(HarnessEnvironmentTemplateSerializer):
+    scenarios = HarnessEnvironmentTemplateScenarioSerializer(many=True)

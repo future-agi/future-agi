@@ -32,15 +32,12 @@ export default function PrebuiltEnvironmentsBrowse() {
   const [selectedId, setSelectedId] = useState(null);
   const { data, isLoading } = usePrebuiltEnvironments();
 
-  const templates = useMemo(
-    () => (data ?? []).filter((t) => t.agentType !== "twin_backed"),
-    [data],
-  );
+  const templates = useMemo(() => data ?? [], [data]);
 
   const grouped = useMemo(() => {
     const q = query.trim().toLowerCase();
     const filtered = q
-      ? templates.filter((t) => `${t.name} ${t.tagline} ${t.description || ""}`.toLowerCase().includes(q))
+      ? templates.filter((t) => `${t.name} ${t.tagline} ${t.domain || ""}`.toLowerCase().includes(q))
       : templates;
     return groupByAgentGroup(filtered);
   }, [templates, query]);
@@ -48,13 +45,6 @@ export default function PrebuiltEnvironmentsBrowse() {
   const flat = useMemo(() => grouped.flatMap((g) => g.items), [grouped]);
   const totalShown = flat.length;
   const selected = flat.find((t) => t.id === selectedId) || null;
-
-  const popularityThreshold = useMemo(() => {
-    const nums = templates.map((t) => t.popularity || 0).sort((a, b) => b - a);
-    /* Top ~30% get the "· popular" typographic marker. Text-only so it
-       reads at the same visual weight as the surface label — no color. */
-    return nums[Math.floor(nums.length * 0.3)] || Infinity;
-  }, [templates]);
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
@@ -137,7 +127,6 @@ export default function PrebuiltEnvironmentsBrowse() {
                       <TemplateRow
                         key={t.id}
                         template={t}
-                        popular={(t.popularity || 0) >= popularityThreshold}
                         selected={selected?.id === t.id}
                         onClick={() => setSelectedId(t.id)}
                       />

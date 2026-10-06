@@ -53,5 +53,4 @@ export const BROWSE_COPY = {
   searchPlaceholder: "Search templates…",
   emptyLibrary: "No prebuilt environments yet.",
   noMatch: (query) => `No templates match "${query}". Try a different search.`,
-  popular: "Popular",
 };

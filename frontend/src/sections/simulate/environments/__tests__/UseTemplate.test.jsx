@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "src/utils/test-utils";
 
 const navigate = vi.fn();
-let params = { templateId: "env-voice-support" };
+let params = { templateId: "banking_support" };
 
 vi.mock("react-router-dom", async () => {
   const actual = await vi.importActual("react-router-dom");
@@ -16,19 +16,19 @@ vi.mock("react-router-dom", async () => {
 const usePrebuiltEnvironments = vi.fn();
 vi.mock("src/api/simulate-environments/prebuilt", () => ({
   usePrebuiltEnvironments: () => usePrebuiltEnvironments(),
+  usePrebuiltEnvironment: () => ({ data: undefined }),
 }));
 
 const { default: UseTemplate } = await import("../UseTemplate");
 
 const TEMPLATE = {
-  id: "env-voice-support",
-  name: "Customer Support Line",
+  id: "banking_support",
+  name: "Banking — Card, Fraud & Account Support",
   surface: "voice",
-  tagline: "Inbound phone support for an online storefront",
-  difficulty: "Starter",
-  seed: { tables: [{ name: "orders", rows: 500, note: "delayed" }] },
-  tools: [{ name: "lookup_order", desc: "x" }],
-  rules: ["Refunds need approval"],
+  tagline: "Retail-bank support with step-up auth.",
+  scenarioCount: 12,
+  tools: [{ name: "lock_card", desc: "x" }],
+  rules: ["Never move money"],
   evalPreset: ["task_success"],
 };
 
@@ -46,7 +46,7 @@ const renderSection = () => {
 describe("UseTemplate", () => {
   beforeEach(() => {
     navigate.mockReset();
-    params = { templateId: "env-voice-support" };
+    params = { templateId: "banking_support" };
     usePrebuiltEnvironments.mockReturnValue({ data: [TEMPLATE], isLoading: false });
   });
 
@@ -54,10 +54,12 @@ describe("UseTemplate", () => {
     vi.clearAllMocks();
   });
 
-  it("renders the build panel for the routed template", () => {
+  it("renders the panel for the routed template", () => {
     renderSection();
-    expect(screen.getByText("Customer Support Line")).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: /Build here/ })).toBeInTheDocument();
+    expect(
+      screen.getByText("Banking — Card, Fraud & Account Support"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Open template/ })).toBeInTheDocument();
   });
 
   it("goes back to the templates browse from the back button", async () => {
@@ -74,7 +76,7 @@ describe("UseTemplate", () => {
   it("shows a graceful not-found for an unknown template id", () => {
     params = { templateId: "does-not-exist" };
     renderSection();
-    expect(screen.queryByRole("tab", { name: /Build here/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Open template/ })).toBeNull();
     expect(screen.getByText(/isn't available/i)).toBeInTheDocument();
   });
 });

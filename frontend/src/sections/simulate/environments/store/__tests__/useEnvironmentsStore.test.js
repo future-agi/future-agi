@@ -110,10 +110,10 @@ describe("useEnvironmentsStore", () => {
     it("patchEnvState() merges into emptyEnvState for an unseen env", () => {
       useEnvironmentsStore
         .getState()
-        .patchEnvState("env-a", { seededFromTemplate: true, evals: ["e1"] });
+        .patchEnvState("env-a", { baselineRunId: "run-1", evals: ["e1"] });
       expect(useEnvironmentsStore.getState().byEnv["env-a"]).toEqual({
         ...emptyEnvState(),
-        seededFromTemplate: true,
+        baselineRunId: "run-1",
         evals: ["e1"],
       });
     });
@@ -143,14 +143,14 @@ describe("useEnvironmentsStore", () => {
         .adoptEnvironment({ id: "env-a", name: "A" }, "t0");
       useEnvironmentsStore.getState().forkEnvironment("env-a", {
         env: { id: "env-a-fork-1", name: "A · fork" },
-        envState: { ...emptyEnvState(), seededFromTemplate: false },
+        envState: { ...emptyEnvState(), activeAgentVersion: "v1" },
       });
 
       const s = useEnvironmentsStore.getState();
       expect(Object.keys(s.workspaceEnvs)).toEqual(["env-a-fork-1", "env-a"]);
       expect(s.byEnv["env-a-fork-1"]).toEqual({
         ...emptyEnvState(),
-        seededFromTemplate: false,
+        activeAgentVersion: "v1",
       });
     });
   });
@@ -230,12 +230,12 @@ describe("useEnvironmentsStore", () => {
       act(() => {
         useEnvironmentsStore
           .getState()
-          .patchEnvState("env-boot", { seededFromTemplate: true });
+          .patchEnvState("env-boot", { baselineRunId: "run-1" });
       });
       rerender();
       expect(
-        useEnvironmentsStore.getState().byEnv["env-boot"].seededFromTemplate,
-      ).toBe(true);
+        useEnvironmentsStore.getState().byEnv["env-boot"].baselineRunId,
+      ).toBe("run-1");
       expect(useEnvironmentsStore.getState().byEnv["env-boot"].agent).toEqual({
         via: "endpoint",
       });

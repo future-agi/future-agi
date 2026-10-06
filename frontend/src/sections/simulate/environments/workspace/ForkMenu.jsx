@@ -6,11 +6,9 @@ import CustomTooltip from "src/components/tooltip";
 import { WORKSPACE_COPY } from "./workspace.constants";
 import { DELETE_TONE } from "../myEnvironments.constants";
 
-// The header overflow menu. A regular environment keeps Fork tucked inside the
-// overflow; a template-seeded env surfaces Fork inside the Overview card
-// instead, so the shell hides this menu for those (renders nothing when locked).
+// The header overflow menu; the shell hides it while the environment is locked.
 // `onDelete` is supplied only for real backend-backed environments (§2 DELETE);
-// forked/template envs have no backend row to remove, so it is omitted for them.
+// forked envs have no backend row to remove, so it is omitted for them.
 // `onFork` is temporarily unused while the Fork action is commented out below.
 export default function ForkMenu({ onDelete }) {
   const [anchor, setAnchor] = useState(null);

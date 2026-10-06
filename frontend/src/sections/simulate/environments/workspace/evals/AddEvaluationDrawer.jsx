@@ -132,7 +132,7 @@ export default function AddEvaluationDrawer({
       throw new Error(NO_INPUTS);
     }
     try {
-      await addToRunTest.mutateAsync({ runTestId, body });
+      await addToRunTest.mutateAsync({ envId, runTestId, body });
     } catch (error) {
       enqueueSnackbar(refusalText(error, ADD_FALLBACK), { variant: "error" });
       throw error;

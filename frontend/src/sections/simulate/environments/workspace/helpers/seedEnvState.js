@@ -42,53 +42,9 @@ export function envFromDraft(draft, name, audit) {
   };
 }
 
-// Per-env state for a template-adopted environment: the template's baseline
-// agent (a seeded v1), the full generated scenario pool from the templates
-// source, no added evals (the preset surfaces as Suggested), and the sticker
-// that locks version editing until the env is forked.
-export function seedFromTemplate(template, now) {
-  const scenarios = generatedPool(template);
-  return {
-    agent: {
-      typeId: template.agentType,
-      values: {},
-      via: "seed",
-      seeded: true,
-      name: SEED_COPY.templateBaselineName,
-      connectedAt: now,
-    },
-    agentVersions: [
-      {
-        id: "agent-v1",
-        label: "v1",
-        note: SEED_COPY.templateAgentNote,
-        reach: "seed",
-        createdAt: now,
-      },
-    ],
-    envVersions: [
-      {
-        id: `${template.id}-v1`,
-        label: "v1",
-        createdAt: now,
-        note: SEED_COPY.templateEnvNote,
-        scenarios: scenarios.length,
-        changed: ["contract", "seed"],
-      },
-    ],
-    envDerivedForAgent: "v1",
-    activeAgentVersion: "v1",
-    scenarios,
-    scenarioSource: "templates",
-    evals: [],
-    runs: [],
-    seededFromTemplate: true,
-  };
-}
-
 // Per-env state for an agent-built environment: a fresh v1 for both the agent
 // and the environment, the scenarios derived from the build's world, and empty
-// evals/runs. `seededFromTemplate` stays false so version editing is unlocked.
+// evals/runs.
 export function seedAgentBuilt(draft, audit, now) {
   const world = worldFor(audit);
   const scenarios = generatedPool(world);
@@ -123,6 +79,5 @@ export function seedAgentBuilt(draft, audit, now) {
     scenarios,
     evals: [],
     runs: [],
-    seededFromTemplate: false,
   };
 }

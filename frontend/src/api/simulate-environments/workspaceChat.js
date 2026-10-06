@@ -38,7 +38,12 @@ const NOT_A_HARNESS_ENV = "Chat connects once this environment is built.";
 const jobIdFor = (env, source) =>
   source === "harness" || env?.origin === "harness" ? env?.id : null;
 
-export function useWorkspaceChat(env, { source } = {}) {
+// `ownEnvironmentId` resolves where a message goes: an open shared template is
+// copied first, and the conversation runs on the copy.
+export function useWorkspaceChat(
+  env,
+  { source, ownEnvironmentId = async (id) => id } = {},
+) {
   const jobId = jobIdFor(env, source);
   const queryClient = useQueryClient();
 
@@ -61,8 +66,8 @@ export function useWorkspaceChat(env, { source } = {}) {
   const [pending, setPending] = useState([]);
 
   const mutation = useMutation({
-    mutationFn: ({ id, payload }) =>
-      sendHarnessConversationMessage(id, payload),
+    mutationFn: async ({ id, payload }) =>
+      sendHarnessConversationMessage(await ownEnvironmentId(id), payload),
     onSuccess: async (value, { id, requestId }) => {
       setPending((prev) => prev.filter((p) => p.id !== requestId));
       if (!value) return;

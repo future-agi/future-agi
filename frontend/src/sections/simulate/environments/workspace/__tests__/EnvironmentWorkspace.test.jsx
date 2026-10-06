@@ -36,7 +36,6 @@ const { useEnvironmentsStore, resetEnvironmentsStore } = await import(
   "../../store/useEnvironmentsStore"
 );
 const { emptyEnvState } = await import("../../store/envState");
-const { seedFromTemplate } = await import("../helpers/seedEnvState");
 const { PIPELINE_CHECKS_COPY } = await import("../../buildEnvironment/build.constants");
 
 const NOW = "2026-09-15T09:00:00Z";
@@ -437,16 +436,6 @@ describe("EnvironmentWorkspace route shell", () => {
       "/dashboard/simulate/environments/job-build",
     );
   }, 12000);
-
-  it("locks a template-seeded env: no overflow, Fork to edit on Overview", async () => {
-    seedClientEnv(TEMPLATE, seedFromTemplate(TEMPLATE, NOW));
-
-    renderWorkspace("/dashboard/simulate/environments/env-1");
-
-    expect(await screen.findByText("Refund Copilot", { selector: "p" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "More actions" })).toBeNull();
-    expect(screen.getByRole("button", { name: /Fork to edit/ })).toBeInTheDocument();
-  });
 
   // Fork is temporarily commented out in ForkMenu — re-enable this with it.
   it.skip("forks an unlocked env into a new id and navigates to it", async () => {

@@ -102,6 +102,7 @@ from .views.agent_version import (
 )
 from .views.alk_simulate_ingestion import ALKSimulateIngestionViewSet
 from .views.harness_environment import HarnessEnvironmentViewSet
+from .views.harness_environment_template import HarnessEnvironmentTemplateViewSet
 from .views.harness_job import HarnessJobViewSet
 from .views.hosted_harness import (
     HostedHarnessAttemptViewSet,
@@ -146,6 +147,11 @@ router.register(
     r"harness-environments",
     HarnessEnvironmentViewSet,
     basename="harness-environment",
+)
+router.register(
+    r"harness-environment-templates",
+    HarnessEnvironmentTemplateViewSet,
+    basename="harness-environment-template",
 )
 router.register(
     r"harness/attempts",

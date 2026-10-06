@@ -14,11 +14,13 @@ import { draftToPreflightPayload } from "src/api/simulate-environments/preflight
 import {
   listHarnessEnvironments,
   deleteHarnessEnvironment,
+  getHarnessEnvironment,
   renameHarnessEnvironment,
   deleteAppliedEvaluation,
   addRunEvaluation,
 } from "src/api/simulate-environments/harnessEnvironments";
 import { harnessEnvironmentKey } from "src/api/simulate-environments/environment";
+import { useOwnEnvironmentId } from "src/api/simulate-environments/ownEnvironment";
 import { harnessEnvToRow } from "src/sections/simulate/environments/helpers/harnessJobToRow";
 import { LIVE_ENV_STATUSES } from "src/sections/simulate/environments/myEnvironments.constants";
 
@@ -85,11 +87,14 @@ export function useDeleteEnvironment() {
 // Blank/too-long/unknown-field bodies come back 400 — the caller surfaces it.
 export function useRenameEnvironment() {
   const queryClient = useQueryClient();
+  const ownEnvironmentId = useOwnEnvironmentId();
   return useMutation({
     meta: { errorHandled: true },
-    mutationFn: ({ id, name }) => renameHarnessEnvironment(id, name),
-    onSuccess: (detail, { id }) => {
-      if (detail) queryClient.setQueryData(harnessEnvironmentKey(id), detail);
+    mutationFn: async ({ id, name }) =>
+      renameHarnessEnvironment(await ownEnvironmentId(id), name),
+    onSuccess: (detail) => {
+      if (detail)
+        queryClient.setQueryData(harnessEnvironmentKey(detail.id), detail);
       queryClient.invalidateQueries({ queryKey: myEnvironmentsListKey() });
     },
   });
@@ -109,12 +114,13 @@ export function useRenameEnvironment() {
 // box reads, so a removed eval can be picked again.
 export function useRemoveAppliedEvaluation() {
   const queryClient = useQueryClient();
+  const ownEnvironmentId = useOwnEnvironmentId();
   return useMutation({
     // The global handler only fires on `error?.result`, which this endpoint's
     // `{"detail": …}` body never has — `EvalsStep` shows the message itself.
     meta: { errorHandled: true },
-    mutationFn: ({ id, evalConfigId }) =>
-      deleteAppliedEvaluation(id, evalConfigId),
+    mutationFn: async ({ id, evalConfigId }) =>
+      deleteAppliedEvaluation(await ownEnvironmentId(id), evalConfigId),
     onSettled: (_data, _error, { id }) => {
       queryClient.invalidateQueries({ queryKey: harnessEnvironmentKey(id) });
       queryClient.invalidateQueries({
@@ -152,15 +158,23 @@ export function useEnvironmentRunTest(runTestId, { enabled = true } = {}) {
 
 // Add one eval with the person's own mapping, exactly as the simulation page
 // does. Refreshing the run test's list here is what moves the new eval out of
-// the picker's list and into its "Added evaluations" box.
+// the picker's list and into its "Added evaluations" box. On an open template
+// the eval goes to the run test of the person's own copy.
 export function useAddRunTestEval() {
   const queryClient = useQueryClient();
+  const ownEnvironmentId = useOwnEnvironmentId();
   return useMutation({
     meta: { errorHandled: true },
-    mutationFn: ({ runTestId, body }) =>
-      axios.post(endpoints.runTests.addEvals(runTestId), {
+    mutationFn: async ({ envId, runTestId, body }) => {
+      const ownId = await ownEnvironmentId(envId);
+      const target =
+        ownId === envId
+          ? runTestId
+          : (await getHarnessEnvironment(ownId)).overview.run.run_test_id;
+      return axios.post(endpoints.runTests.addEvals(target), {
         evaluations_config: [body],
-      }),
+      });
+    },
     onSuccess: (_data, { runTestId }) => {
       queryClient.invalidateQueries({
         queryKey: environmentRunTestKey(runTestId),
@@ -256,18 +270,6 @@ export function useUploadSecretFile() {
         size: res.size ?? file.size,
       };
     },
-  });
-}
-
-// TODO: swap to axios.post(endpoints.simulateEnvironments.adopt, { templateId })
-// Adopting a prebuilt template mints a fresh environment instance from the
-// library entry. Return only the server-minted id — never echo the template
-// back into the mutation cache.
-export function useAdoptTemplate() {
-  return useMutation({
-    mutationFn: async () => ({
-      envId: `env-${Math.random().toString(36).slice(2, 10)}`,
-    }),
   });
 }
 
