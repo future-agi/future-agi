@@ -367,3 +367,39 @@ def test_op036_models_list_matches_contract(swagger, auth_client, user):
         response,
         request=query,
     )
+
+
+def _query_parameters(swagger, path):
+    return {
+        parameter["name"]: parameter.get("required", False)
+        for parameter in swagger["paths"][path]["get"].get("parameters", [])
+        if parameter.get("in") == "query"
+    }
+
+
+def test_op035_op036_declare_their_real_query_parameters(swagger):
+    assert _query_parameters(swagger, MODEL_PARAMETERS) == {
+        "model": True,
+        "provider": True,
+        "model_type": True,
+    }
+    assert _query_parameters(swagger, MODELS_LIST) == {
+        "name": False,
+        "search": False,
+        "model_type": False,
+        "exclude_providers": False,
+        "page": False,
+        "limit": False,
+    }
+
+
+def test_label_lookups_declare_their_real_query_parameters(swagger):
+    assert _query_parameters(swagger, LABEL_BY_NAME) == {
+        "name": False,
+        "version": False,
+        "label": False,
+    }
+    assert _query_parameters(swagger, TEMPLATE_LABELS) == {
+        "template_id": False,
+        "template_name": False,
+    }
