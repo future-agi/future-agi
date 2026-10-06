@@ -8,7 +8,8 @@ for the repo's extensions (``x-nullable``, ``x-json-value``,
 ``x-string-or-object``, ``x-string-or-array``) and is stricter in one way: an
 object schema that declares ``properties`` but no ``additionalProperties``
 rejects undeclared keys, so a response that emits fields the contract does
-not mention fails parity instead of passing silently.
+not mention fails parity instead of passing silently. Because of that rule
+``allOf`` is unsupported and raises ``NotImplementedError``.
 
 Captures: ``assert_capture`` sanitises a body (UUIDs, timestamps, emails) and
 compares it with the checked-in fixture. Regenerate fixtures with::
@@ -108,7 +109,13 @@ class _Converter:
             elif key == "additionalProperties":
                 out[key] = value if isinstance(value, bool) else self.convert(value)
             elif key == "allOf":
-                out["allOf"] = [self.convert(item) for item in value]
+                # Each closed (additionalProperties: false) branch would reject
+                # the other branches' keys, so a composed object could never
+                # validate. swagger.json has no allOf today; refuse rather
+                # than silently mis-validate.
+                raise NotImplementedError(
+                    "openapi_parity does not support allOf with closed objects"
+                )
             elif key == "format" and value != "uuid":
                 continue
             elif key == "type" and value == "file":
