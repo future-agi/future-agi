@@ -317,7 +317,10 @@ async function runGeneration(schemaPath) {
 
   const interruptionNullableFields = {
     RunCallApi: ["avg_stop_time_after_interruption", "ai_interruption_count"],
-    GroupAggregatesApi: ["avg_stop_time_after_interruption", "ai_interruptions"],
+    GroupAggregatesApi: [
+      "avg_stop_time_after_interruption",
+      "ai_interruptions",
+    ],
   };
   const voiceCallDetailNullableFields = [
     "provider_call_id",
@@ -368,7 +371,9 @@ async function runGeneration(schemaPath) {
   if (fs.existsSync(schemasOutputPath)) {
     let schemas = fs.readFileSync(schemasOutputPath, "utf8");
 
-    for (const [typeName, fields] of Object.entries(interruptionNullableFields)) {
+    for (const [typeName, fields] of Object.entries(
+      interruptionNullableFields,
+    )) {
       for (const field of fields) {
         schemas = assertReplaceInNamedBlock(
           schemas,
@@ -679,13 +684,26 @@ export type ${jsonAlias} = JsonValueApi;`,
       "APIKeyBulkItemApi.expires_at nullable",
     );
 
+    // GraphDetail.active_version is x-nullable: graph retrieve returns null
+    // when the graph has no versions (captured in
+    // graph_retrieve_own_without_versions_200.json). Orval drops x-nullable.
+    schemas = assertReplaceInNamedBlock(
+      schemas,
+      "export interface GraphDetailApi {",
+      "active_version?: GraphActiveVersionApi;",
+      "active_version?: GraphActiveVersionApi | null;",
+      "GraphDetailApi.active_version nullable",
+    );
+
     fs.writeFileSync(schemasOutputPath, schemas);
   }
 
   if (fs.existsSync(zodOutputPath)) {
     let zod = fs.readFileSync(zodOutputPath, "utf8");
 
-    for (const field of new Set(Object.values(interruptionNullableFields).flat())) {
+    for (const field of new Set(
+      Object.values(interruptionNullableFields).flat(),
+    )) {
       zod = assertReplaceInNamedBlock(
         zod,
         "export const SimulateV3TestExecutionCallsResponse =",
@@ -694,6 +712,16 @@ export type ${jsonAlias} = JsonValueApi;`,
         `SimulateV3TestExecutionCallsResponse.${field} nullable`,
       );
     }
+
+    // GraphDetail.active_version is x-nullable (null when the graph has no
+    // versions); Orval drops x-nullable from the generated zod schema too.
+    zod = assertReplaceRegexInNamedBlock(
+      zod,
+      "export const AgentPlaygroundGraphsReadResponse =",
+      /\.optional\(\)(\s*\.describe\(\s*['"]Get the latest version \(highest version_number\) with full nested structure\.['"])/,
+      ".nullable().optional()$1",
+      "AgentPlaygroundGraphsReadResponse.result.active_version nullable",
+    );
 
     zod = assertReplace(
       zod,

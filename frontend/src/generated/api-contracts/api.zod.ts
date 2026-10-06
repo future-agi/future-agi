@@ -2853,6 +2853,7 @@ export const AgentPlaygroundGraphsReadResponse = zod.object({
           }),
         ),
       })
+      .nullable()
       .optional()
       .describe(
         "Get the latest version (highest version_number) with full nested structure.",

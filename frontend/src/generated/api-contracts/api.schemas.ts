@@ -2342,7 +2342,7 @@ export interface GraphDetailApi {
   readonly is_template?: boolean;
   readonly created_at?: string;
   readonly updated_at?: string;
-  active_version?: GraphActiveVersionApi;
+  active_version?: GraphActiveVersionApi | null;
 }
 
 export interface GraphDetailResponseApi {
