@@ -5,7 +5,7 @@ import { alpha } from "@mui/material/styles";
 import { useMemo } from "react";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
-import { PARTIAL_INPUT_WARNING_TYPE } from "src/sections/common/EvalsTasks/PartialInputWarningDetails";
+import { PARTIAL_INPUT_WARNING_TYPE } from "src/sections/common/EvalsTasks/warningTypes";
 
 export const ScoreCell = ({ value }) => {
   if (value == null)
@@ -152,12 +152,12 @@ export const decodeColumnConfig = (str, base) => {
   return result.length ? result : null;
 };
 
-export const StatPill = ({ label, value, color }) => (
+export const StatPill = ({ label, value }) => (
   <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
     <Typography variant="s3" color="text.secondary">
       {label}:
     </Typography>
-    <Typography variant="s2" fontWeight="fontWeightBold" color={color}>
+    <Typography variant="s2" fontWeight="fontWeightBold">
       {value}
     </Typography>
   </Box>

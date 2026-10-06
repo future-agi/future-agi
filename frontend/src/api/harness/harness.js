@@ -1,0 +1,140 @@
+import axios from "src/utils/axios";
+import { apiPath } from "src/api/contracts/api-surface";
+
+const jobsPath = () => apiPath("/simulate/api/harness-jobs/");
+const jobPath = (id) => apiPath("/simulate/api/harness-jobs/{id}/", { id });
+const cancelPath = (id) =>
+  apiPath("/simulate/api/harness-jobs/{id}/cancel/", { id });
+const adjustPath = (id) =>
+  apiPath("/simulate/api/harness-jobs/{id}/adjust/", { id });
+const preflightPath = () => apiPath("/simulate/api/harness-jobs/preflight/");
+const sourcesPath = () => apiPath("/simulate/api/harness-jobs/sources/");
+const secretFilesPath = () =>
+  apiPath("/simulate/api/harness-jobs/secret-files/");
+const secretValuesPath = () =>
+  apiPath("/simulate/api/harness-jobs/secret-values/");
+const extendPath = (id) =>
+  apiPath("/simulate/api/harness-jobs/{id}/extend/", { id });
+const conversationMessagesPath = (id) =>
+  apiPath("/simulate/api/harness-jobs/{id}/conversation/messages/", { id });
+const scenariosPath = (id) =>
+  apiPath("/simulate/api/harness-jobs/{id}/scenarios/", { id });
+const scenarioCoveragePath = (id) =>
+  apiPath("/simulate/api/harness-jobs/{id}/scenarios/coverage/", { id });
+const amendScenariosPath = (id) =>
+  apiPath("/simulate/api/harness-jobs/{id}/scenarios/amend/", { id });
+
+export const listHarnessJobs = async () => (await axios.get(jobsPath())).data;
+
+// `crypto.randomUUID` is not available in every browser/webview context.  This
+// key is only used to make a create request idempotent; failing to construct it
+// must never prevent the request from leaving the browser.
+export const harnessIdempotencyKey = () => {
+  const randomUUID = globalThis.crypto?.randomUUID;
+  if (typeof randomUUID === "function") {
+    return randomUUID.call(globalThis.crypto);
+  }
+  return `harness-${Date.now().toString(36)}-${Math.random()
+    .toString(36)
+    .slice(2)}`;
+};
+
+export const createHarnessJob = async (
+  payload,
+  idempotencyKey = harnessIdempotencyKey(),
+) =>
+  (
+    await axios.post(jobsPath(), payload, {
+      headers: { "Idempotency-Key": idempotencyKey },
+    })
+  ).data;
+export const preflightHarnessJob = async (payload) =>
+  (await axios.post(preflightPath(), payload)).data;
+export const uploadHarnessSource = async (formData, onUploadProgress) =>
+  (
+    await axios.post(sourcesPath(), formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+      onUploadProgress,
+      timeout: 300000,
+    })
+  ).data;
+export const uploadHarnessSecretFile = async (formData) =>
+  (
+    await axios.post(secretFilesPath(), formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+      timeout: 60000,
+    })
+  ).data;
+export const storeHarnessSecretValues = async (environmentValues) =>
+  (
+    await axios.post(secretValuesPath(), {
+      environment_values: environmentValues,
+    })
+  ).data;
+export const getHarnessJob = async (id) => (await axios.get(jobPath(id))).data;
+export const adjustHarnessJob = async (id, payload) =>
+  (await axios.post(adjustPath(id), payload)).data;
+// The contract marks this endpoint runtimeRequestValidation: true against
+// HarnessJobAction, so it must be sent an object. Posting no body at all makes the
+// validator parse `undefined`, which fails before the request ever leaves the browser.
+// `reason` is optional, so it is omitted rather than sent empty.
+export const cancelHarnessJob = async (id, reason) => {
+  const body = {};
+  const trimmed = typeof reason === "string" ? reason.trim() : "";
+  if (trimmed) body.reason = trimmed.slice(0, 500);
+  return (await axios.post(cancelPath(id), body)).data;
+};
+// The RL-environment chat, once terminal, drives follow-ups: "add 5 scenarios with more
+// neutral happy flows" adds scenarios against the saved world; a message with no count
+// just reruns the saved suite.
+export const extendHarnessJob = async (id, payload) =>
+  (await axios.post(extendPath(id), payload)).data;
+
+// Post a turn into the live builder conversation. `payload` carries the required
+// { content, client_request_id, kind } and, for a reply to a blocking question,
+// { reply_to }. The backend returns the full conversation (202); the caller
+// writes it straight into the ["harness-job", id] cache so the composer clears
+// against the real state, not an optimistic guess.
+export const sendHarnessConversationMessage = async (id, payload) =>
+  (await axios.post(conversationMessagesPath(id), payload)).data;
+
+// One page of a run's suite, filtered and grouped by the server. The tab used to read every
+// scenario out of the job payload and filter in the browser, which cannot survive a suite of five
+// hundred: a browser filter only ever sees the page it was handed.
+export const listHarnessScenarios = async (id, params = {}) => {
+  const search = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === "") return;
+    (Array.isArray(value) ? value : [value]).forEach((one) =>
+      search.append(key, String(one)),
+    );
+  });
+  const query = search.toString();
+  return (await axios.get(`${scenariosPath(id)}${query ? `?${query}` : ""}`))
+    .data;
+};
+
+export const getHarnessScenarioCoverage = async (id, params = {}) => {
+  const search = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === "") return;
+    // A repeated key is one property's OR-set, so an array has to stay several params.
+    (Array.isArray(value) ? value : [value]).forEach((one) =>
+      search.append(key, String(one)),
+    );
+  });
+  const query = search.toString();
+  return (
+    await axios.get(`${scenarioCoveragePath(id)}${query ? `?${query}` : ""}`)
+  ).data;
+};
+
+// Edit a finished run's authored suite. `changes` is a batch, and the reply is one receipt per
+// change saying what happened to it (applied, reworked, or refused, and why) rather than a
+// job that merely looks saved. `rework: false` applies only what cannot affect the suite's
+// correctness and refuses the rest, which is how a caller declines to pay for a re-proof.
+export const amendHarnessScenarios = async (
+  id,
+  changes,
+  { rework = true } = {},
+) => (await axios.post(amendScenariosPath(id), { changes, rework })).data;

@@ -5,6 +5,7 @@ import {
   OBSERVE_GRID_MAX_BLOCKS_IN_CACHE,
 } from "src/config/runtime_limits";
 import { isGridApiLive } from "src/utils/gridApi";
+import { awaitAggregationRequestWithDeadline } from "src/utils/queryReadState";
 
 const CURSOR_MODE = "cursor";
 const NUMBERED_MODE = "numbered";
@@ -24,28 +25,16 @@ const requestWithinDeadline = async ({
   cancellationSignal,
   remainingMs,
 }) => {
-  const requestController = new AbortController();
-  const cancelRequest = () => requestController.abort();
-  cancellationSignal?.addEventListener("abort", cancelRequest, {
-    once: true,
-  });
-  if (cancellationSignal?.aborted) cancelRequest();
-
-  let timer;
   try {
-    const result = await Promise.race([
-      Promise.resolve()
-        .then(() => request(requestController.signal))
-        .then((response) => ({ completed: true, response })),
-      new Promise((resolve) => {
-        timer = setTimeout(() => resolve({ completed: false }), remainingMs);
-      }),
-    ]);
-    if (!result.completed) requestController.abort();
-    return result;
-  } finally {
-    clearTimeout(timer);
-    cancellationSignal?.removeEventListener("abort", cancelRequest);
+    // Settle cancellation even if the transport does not acknowledge abort.
+    const response = await awaitAggregationRequestWithDeadline(request, {
+      timeoutMs: remainingMs,
+      signal: cancellationSignal,
+    });
+    return { completed: true, response };
+  } catch (error) {
+    if (error?.code !== "aggregation_request_timeout") throw error;
+    return { completed: false };
   }
 };
 

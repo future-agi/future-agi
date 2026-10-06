@@ -8,7 +8,9 @@ from datetime import datetime
 from time import monotonic
 from typing import Any
 
+import structlog
 from django.conf import settings
+from django.core.cache import cache
 
 from tracer.services.clickhouse.bounded_graph_reads import (
     GRAPH_CANDIDATE_LIMIT,
@@ -17,12 +19,30 @@ from tracer.services.clickhouse.bounded_graph_reads import (
     GraphCandidateSample,
     read_graph_candidates,
 )
+from tracer.services.clickhouse.exact_graph_reads import (
+    ExactGraphReadError,
+    read_exact_session_system_graph,
+    session_graph_reads_lean_roots,
+    session_graph_root_estimate_sql,
+)
 from tracer.services.clickhouse.graph_dispatch import (
+    _GRAPH_SEED_ESTIMATE_QUERY_MS,
+    _GRAPH_SEED_PROBE_ERRORS,
+    OBSERVE_SYSTEM_GRAPH_PAYLOAD_VERSION,
+    _pending_graph_payload,
+    _require_rollup_result_shape,
     degraded_graph_response,
     fetch_annotation_graph_ch,
     fetch_eval_graph_ch,
     format_system_metric_graph,
+    graph_payload_is_publishable,
 )
+from tracer.services.clickhouse.graph_metric_statistic import (
+    publishes_latency,
+    snapshot_names_its_statistic,
+    stamps_metric_statistic,
+)
+from tracer.services.clickhouse.graph_read_cost import reduce_spans_estimate
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.session_time_series import (
     SessionRollupTimeSeriesQueryBuilder,
@@ -30,6 +50,7 @@ from tracer.services.clickhouse.query_builders.session_time_series import (
 from tracer.services.clickhouse.query_service import QueryExecutor, QueryResult
 from tracer.services.clickhouse.read_budget import (
     ReadDeadline,
+    WallCappedAnalytics,
     is_clickhouse_query_error,
     is_read_budget_error,
 )
@@ -37,8 +58,12 @@ from tracer.services.clickhouse.v2.query_builders.trace_list import (
     TraceListQueryBuilderV2,
 )
 from tracer.services.exact_aggregation_cache import (
+    raw_observe_identity_key,
     read_or_schedule_exact_snapshot,
+    refresh_failure_seconds,
 )
+
+logger = structlog.get_logger(__name__)
 
 SESSION_GRAPH_WALL_DEADLINE_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
 SESSION_GRAPH_QUERY_TIMEOUT_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
@@ -72,22 +97,14 @@ _SESSION_IDENTITY_ONLY_METRICS = frozenset(
     {"traffic", "session_count", "avg_traces_per_session"}
 )
 _SESSION_ROLLUP_METRICS = SESSION_SYSTEM_METRICS - {"avg_traces_per_session"}
-_SESSION_ROLLUP_RESULT_COLUMNS = frozenset(
-    {
-        "time_bucket",
-        "avg_latency",
-        "total_tokens",
-        "avg_cost",
-        "traffic_count",
-        "prompt_tokens",
-        "completion_tokens",
-        "error_rate",
-        "session_count",
-        "avg_duration",
-        "avg_traces_per_session",
-        "total_cost_sum",
-    }
-)
+# The inline attempt (estimate plus read) may use at most half of what is left
+# of the request's wall, and never more than this. The browser's first graph
+# request gives up after 30 s (AGGREGATION_REQUEST_TIMEOUT_MS, counted from
+# before the view starts) and then stops polling, so a misjudged scope must
+# leave the fallback time to answer. Basis: 2 M live roots - the default
+# threshold - take ~4 s on one thread at the largest tenant's measured rate.
+SESSION_GRAPH_INLINE_WALL_MS = 15_000
+_SESSION_GRAPH_NAMESPACE = "observe-session-system-graph"
 
 _SESSION_GRAPH_READ_CAPS = {
     "max_threads": settings.DASHBOARD_TRACE_READ_MAX_THREADS,
@@ -133,25 +150,6 @@ def _has_only_positive_window_filters(filters: list[dict[str, Any]]) -> bool:
     )
 
 
-def _require_rollup_result_shape(rows: list[Any], columns: list[str]) -> None:
-    """Reject schema drift instead of publishing a successful zero graph."""
-
-    missing = _SESSION_ROLLUP_RESULT_COLUMNS.difference(columns)
-    if missing:
-        raise BoundedGraphReadError("query_failed")
-    bucket_index = columns.index("time_bucket")
-    for row in rows:
-        bucket = (
-            row.get("time_bucket")
-            if isinstance(row, dict)
-            else row[bucket_index]
-            if bucket_index < len(row)
-            else None
-        )
-        if bucket is None:
-            raise BoundedGraphReadError("query_failed")
-
-
 def _fetch_rollup_system_metric_graph(
     *,
     analytics: QueryExecutor,
@@ -167,6 +165,7 @@ def _fetch_rollup_system_metric_graph(
         project_id=project_id,
         filters=filters,
         interval=interval,
+        metric_id=metric_id,
     )
     query, params = builder.build()
     if (
@@ -182,11 +181,20 @@ def _fetch_rollup_system_metric_graph(
             query,
             params,
             timeout_ms=SESSION_GRAPH_INTERACTIVE_QUERY_TIMEOUT_MS,
-            settings={"max_threads": 4},
+            # ``spans_per_session`` is sorted by (project_id, trace_session_id,
+            # hour_first_seen); with the project fixed by the PREWHERE the
+            # per-session GROUP BY runs on a sort-key prefix, so ClickHouse can
+            # retire each session as the key advances instead of holding a hash
+            # table for every session in the window.
+            settings={"max_threads": 4, "optimize_aggregation_in_order": 1},
         )
         rows = list(result.data or [])
         columns = list(result.columns or [])
-        _require_rollup_result_shape(rows, columns)
+        _require_rollup_result_shape(
+            rows,
+            columns,
+            expected_columns=builder.result_columns,
+        )
         query_count = 1
     response = format_system_metric_graph(
         builder.format_result(rows, columns),
@@ -215,6 +223,13 @@ class _DeadlineBoundAnalytics:
         self._deadline = deadline
         self.supports_per_query_read_settings = bool(
             getattr(delegate, "supports_per_query_read_settings", True)
+        )
+        from tracer.services.clickhouse.application_read_policy import (
+            supports_bounded_speculative_reads,
+        )
+
+        self.supports_bounded_speculative_reads = supports_bounded_speculative_reads(
+            delegate
         )
 
     def execute_ch_query(
@@ -667,6 +682,174 @@ def _fetch_system_metric_graph(
         )
 
 
+def _session_graph_root_estimate(
+    *, analytics: Any, project_id: str, filters: list[dict[str, Any]]
+) -> int | None:
+    """Estimated live-root candidates of the window, or ``None`` if unknown.
+
+    One ``EXPLAIN ESTIMATE`` (part metadata only) with a small server cap,
+    read by the shared ``spans`` estimate reducer. A statement that fails, is
+    stopped, or answers in an unexpected shape is ``None``: never guess inline.
+    An empty answer with the estimate's columns is zero rows; an empty window
+    sends nothing and is zero.
+    """
+
+    built = session_graph_root_estimate_sql(project_id=project_id, filters=filters)
+    if built is None:
+        return 0
+    query, params = built
+    try:
+        result = analytics.execute_ch_query(
+            query,
+            params,
+            timeout_ms=_GRAPH_SEED_ESTIMATE_QUERY_MS,
+            # Index analysis parallelises over parts; the estimate reads no
+            # column data (the raw graph's seed estimate uses the same budget).
+            settings={"max_threads": settings.DASHBOARD_TRACE_READ_MAX_THREADS},
+            server_execution_cap_ms=_GRAPH_SEED_ESTIMATE_QUERY_MS,
+        )
+    except _GRAPH_SEED_PROBE_ERRORS as exc:
+        # Fail open to the worker, loudly, as the raw graph's seed probe does:
+        # a broken estimate statement must not silently turn inline off.
+        logger.warning(
+            "session_graph_inline_estimate_unavailable",
+            error_type=type(exc).__name__,
+            exc_info=True,
+        )
+        return None
+    rows = getattr(result, "data", None)
+    if rows is None:
+        # The shared reducer reads a missing result set as zero rows (the raw
+        # graph's gate wants that); here it is an unknown answer, never inline.
+        return None
+    return reduce_spans_estimate(rows, getattr(result, "columns", None))
+
+
+def session_latency_may_inline(
+    *, analytics: Any, project_id: str, filters: list[dict[str, Any]]
+) -> bool:
+    """Whether a Sessions latency chart for ``filters`` may be computed inline.
+
+    Inline is on (``SESSION_GRAPH_INLINE_MAX_ESTIMATED_ROWS`` > 0), the lane
+    can carry per-query settings (neither the caps nor the thread pin would
+    reach the server otherwise), and the statement is the lean one - the only
+    shape the root estimate costs. Pure: no statement, no cache read.
+    """
+
+    if int(settings.SESSION_GRAPH_INLINE_MAX_ESTIMATED_ROWS) <= 0:
+        return False
+    if not bool(getattr(analytics, "supports_per_query_read_settings", True)):
+        return False
+    return session_graph_reads_lean_roots(project_id=project_id, filters=filters)
+
+
+def _inline_failure_key(identity: dict[str, Any]) -> str | None:
+    """The backoff marker of one requested scope (its raw, unfrozen filters)."""
+
+    return raw_observe_identity_key(_SESSION_GRAPH_NAMESPACE, identity, "inline-failed")
+
+
+def _inline_failed_recently(identity: dict[str, Any]) -> bool:
+    key = _inline_failure_key(identity)
+    try:
+        return key is not None and cache.get(key) is not None
+    except Exception:
+        # No marker store means no memory, not a failed request: the attempt
+        # below is still bounded by its own share of the wall.
+        logger.warning("session_graph_inline_backoff_unavailable", exc_info=True)
+        return False
+
+
+def _remember_inline_failure(identity: dict[str, Any]) -> None:
+    """Send the scope straight to the worker for the failed-refresh backoff,
+    instead of every poll and reload paying the estimate and the inline wall
+    again."""
+
+    key = _inline_failure_key(identity)
+    if key is None:
+        return
+    try:
+        cache.set(key, 1, timeout=refresh_failure_seconds())
+    except Exception:
+        logger.warning("session_graph_inline_backoff_unavailable", exc_info=True)
+
+
+def _inline_session_latency_graph(
+    *,
+    analytics: QueryExecutor,
+    project_id: str,
+    filters: list[dict[str, Any]],
+    interval: str,
+    metric_id: str,
+    wall_deadline_ms: int,
+    identity: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Compute an affordable Sessions latency chart inline, or return ``None``.
+
+    Every Sessions latency chart is an exact snapshot, and the exact worker
+    has one slot per region: a small tenant's 0.3-1.6 s chart queued behind
+    the largest tenant's 30-day read. So on a cache miss, before the job is
+    scheduled, one metadata estimate costs the lean statement's root read. At
+    or below ``SESSION_GRAPH_INLINE_MAX_ESTIMATED_ROWS`` the SAME statement
+    runs here with the interactive settings (one thread), and the chart is
+    returned complete and not cached, as an inline trace graph is. The caller
+    has already checked ``session_latency_may_inline`` and the cache.
+
+    ``None`` - the caller takes the unchanged background path - when the
+    scope's inline read failed within the backoff, the wall is too short to
+    share, the estimate is unknown or too large, or the inline read is
+    stopped. The whole attempt gets at most half of what is left of the wall
+    (``SESSION_GRAPH_INLINE_WALL_MS`` at most) and every statement asks the
+    server to stop there, so the fallback still answers inside the browser's
+    request timeout; a failed read marks the scope so the next requests skip
+    straight to the worker (``session_graph_inline_read_failed`` is the
+    alarm).
+    """
+
+    if _inline_failed_recently(identity):
+        logger.info("session_graph_inline_skipped_after_failure")
+        return None
+    floor_ms = int(settings.EXACT_GRAPH_MIN_REMAINING_MS)
+    inline_wall_ms = min(int(wall_deadline_ms) // 2, SESSION_GRAPH_INLINE_WALL_MS)
+    if inline_wall_ms < floor_ms:
+        return None
+    deadline = ReadDeadline.start(inline_wall_ms)
+    capped = WallCappedAnalytics(analytics, deadline, floor_ms=floor_ms)
+    max_estimated_rows = int(settings.SESSION_GRAPH_INLINE_MAX_ESTIMATED_ROWS)
+    estimated_rows = _session_graph_root_estimate(
+        analytics=capped, project_id=project_id, filters=filters
+    )
+    if estimated_rows is None or estimated_rows > max_estimated_rows:
+        logger.info(
+            "session_graph_inline_declined",
+            estimated_rows=estimated_rows,
+            max_estimated_rows=max_estimated_rows,
+        )
+        return None
+    try:
+        return read_exact_session_system_graph(
+            analytics=capped,
+            project_id=project_id,
+            filters=filters,
+            interval=interval,
+            metric_id=metric_id,
+            wall_ms=deadline.remaining_ms(floor_ms=floor_ms),
+        )
+    except ExactGraphReadError as exc:
+        error_type = type(exc).__name__
+    except Exception as exc:
+        if not (is_read_budget_error(exc) or is_clickhouse_query_error(exc)):
+            raise
+        error_type = type(exc).__name__
+    _remember_inline_failure(identity)
+    logger.info(
+        "session_graph_inline_read_failed",
+        estimated_rows=estimated_rows,
+        error_type=error_type,
+    )
+    return None
+
+
 def _session_scoped_filters(
     filters: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -686,6 +869,14 @@ def _session_scoped_filters(
     ]
 
 
+def _requested_session_system_metric(call: dict[str, Any]) -> str | None:
+    config = call.get("req_data_config") or {}
+    if str(config.get("type") or "") != "SYSTEM_METRIC":
+        return None
+    return str(config.get("id") or "session_count")
+
+
+@stamps_metric_statistic("session", _requested_session_system_metric)
 def fetch_session_graph_ch(
     *,
     analytics: QueryExecutor,
@@ -709,8 +900,15 @@ def fetch_session_graph_ch(
     if metric_type == "SYSTEM_METRIC":
         if metric_id not in SESSION_SYSTEM_METRICS:
             raise ValueError("Unsupported session system metric")
-        if metric_id in _SESSION_ROLLUP_METRICS and _has_only_positive_window_filters(
-            filters
+        # Latency never reads the rollup: ``spans_per_session`` holds only
+        # per-session t-digest states (no latency sum), so an unfiltered
+        # latency graph takes the exact statement below with its empty filter
+        # set and publishes the same mean as any filtered one - inline when
+        # its root estimate is affordable, else as a background snapshot.
+        if (
+            metric_id in _SESSION_ROLLUP_METRICS
+            and not publishes_latency("session", metric_id)
+            and _has_only_positive_window_filters(filters)
         ):
             if not bool(getattr(analytics, "supports_per_query_read_settings", True)):
                 return degraded_graph_response(
@@ -762,23 +960,67 @@ def fetch_session_graph_ch(
             "filters": filters,
             "interval": interval,
             "metric_id": metric_id,
+            "payload_version": OBSERVE_SYSTEM_GRAPH_PAYLOAD_VERSION,
         }
         if organization_id is not None:
             identity["organization_id"] = str(organization_id)
         if workspace_id is not None:
             identity["workspace_id"] = str(workspace_id)
+        pending_payload = _pending_graph_payload(metric_id)
+
+        def accept_snapshot(payload: Any) -> bool:
+            # A latency snapshot not marked as the mean is a miss.
+            return snapshot_names_its_statistic(
+                _SESSION_GRAPH_NAMESPACE, metric_id, payload
+            )
+
+        if publishes_latency("session", metric_id) and session_latency_may_inline(
+            analytics=analytics, project_id=str(project_id), filters=filters
+        ):
+            # An affordable scope is answered now instead of queueing on the
+            # one exact slot - but only on a true miss, as the trace path does:
+            # a cached hit is served, a running refresh is polled, and an
+            # explicit refresh of a hit goes to the worker.
+            cached = read_or_schedule_exact_snapshot(
+                _SESSION_GRAPH_NAMESPACE,
+                dict(identity),
+                refresh=False,
+                pending_payload=pending_payload,
+                schedule_on_miss=False,
+                accept_snapshot=accept_snapshot,
+                # An explicit refresh re-calls with refresh=True below; a probe
+                # claim would make that call find its own claim.
+                revalidate_open_window=not refresh,
+            )
+            hit = (
+                isinstance(cached, dict)
+                and cached.get("query_status") == "complete"
+                and graph_payload_is_publishable(cached, allow_sampled=False)
+            )
+            if isinstance(cached, dict) and cached.get("query_refreshing") is True:
+                return cached
+            if hit and not refresh:
+                return cached
+            if not hit:
+                inline = _inline_session_latency_graph(
+                    analytics=analytics,
+                    project_id=str(project_id),
+                    filters=filters,
+                    interval=interval,
+                    metric_id=metric_id,
+                    wall_deadline_ms=wall_deadline_ms,
+                    identity=identity,
+                )
+                if inline is not None:
+                    return inline
         return read_or_schedule_exact_snapshot(
-            "observe-session-system-graph",
+            _SESSION_GRAPH_NAMESPACE,
             identity,
             refresh=bool(refresh),
-            pending_payload={
-                "metric_name": metric_id,
-                "data": [],
-                "query_complete": False,
-                "query_status": "pending",
-                "query_sampled": False,
-                "query_refreshing": True,
-            },
+            pending_payload=pending_payload,
+            accept_snapshot=accept_snapshot,
+            # A revisit of an open window serves the hit and refreshes it.
+            revalidate_open_window=True,
         )
 
     # Eval and annotation graphs, like filtered system graphs, are exact

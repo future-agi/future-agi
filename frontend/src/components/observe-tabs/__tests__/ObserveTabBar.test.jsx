@@ -12,6 +12,11 @@ vi.mock("src/api/project/saved-views", () => ({
   useUpdateSavedView: () => ({ mutate: vi.fn() }),
   useDeleteSavedView: () => ({ mutate: vi.fn() }),
   useReorderSavedViews: () => ({ mutate: vi.fn() }),
+  // Mirror of the real helper (the factory replaces the whole module).
+  getOwnViewNames: (views, userId) =>
+    (views ?? [])
+      .filter((v) => userId && String(v.created_by?.id) === String(userId))
+      .map((v) => v.name),
 }));
 
 const renderWithCtx = ({

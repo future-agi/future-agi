@@ -123,34 +123,22 @@ def test_unwrapped_session_list_original_acquires_fallback_deadline(monkeypatch)
 
 
 @pytest.mark.unit
-def test_session_list_postgres_statement_uses_shrinking_request_timeout():
-    from tracer.views.trace_session import _execute_session_list_query_with_deadline
+def test_session_list_postgres_statement_is_uncapped_and_restored(monkeypatch):
+    from tracer.tests.test_postgres_application_read_policy import FakePostgres
+    from tracer.views import trace_session
 
+    pg = FakePostgres(outer=True)
     deadline = mock.MagicMock()
-    deadline.remaining_ms.side_effect = [7_321, 6_123]
-    driver_cursor = mock.MagicMock()
-    context = {"cursor": SimpleNamespace(cursor=driver_cursor)}
-    execute = mock.MagicMock(return_value="result")
-
-    result = _execute_session_list_query_with_deadline(
-        deadline,
-        execute,
-        "SELECT 1",
-        (),
-        False,
-        context,
+    deadline.remaining_ms.return_value = 7_321
+    monkeypatch.setattr(trace_session, "connection", pg)
+    monkeypatch.setattr(trace_session, "transaction", SimpleNamespace(atomic=pg.atomic))
+    with trace_session._bounded_session_list_postgres_reads(deadline):
+        assert pg.execute("SELECT 1") == "SELECT 1"
+    assert pg.query_timeouts == ["0"] and pg.timeout == "750ms"
+    assert deadline.remaining_ms.call_args_list
+    assert all(
+        call == mock.call(floor_ms=1) for call in deadline.remaining_ms.call_args_list
     )
-
-    assert result == "result"
-    driver_cursor.execute.assert_called_once_with(
-        "SELECT set_config('statement_timeout', %s, true)",
-        ("7321",),
-    )
-    execute.assert_called_once_with("SELECT 1", (), False, context)
-    assert deadline.remaining_ms.call_args_list == [
-        mock.call(floor_ms=1),
-        mock.call(floor_ms=1),
-    ]
 
 
 @pytest.mark.unit

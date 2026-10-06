@@ -121,8 +121,8 @@ def test_relation_probes_are_pruned_to_finite_candidate_span_entities():
         "toString(eval_scan.observation_span_id)) " + finite_entity_probe
     ) in sql
     assert (
-        "toString(s.observation_span_id) IN (SELECT toString(id) FROM "
-        "relation_candidate_span_entities)"
+        "tuple(toString(s.tracer_project_id), ifNull(toString(s.observation_span_id), '')) "
+        "IN (SELECT tuple(toString(project_id), toString(id)) FROM relation_candidate_spans"
     ) in sql
     assert sql.count(finite_entity_probe) >= 2
     assert sql.index(finite_entity_probe) < sql.index("LIMIT 1 BY eval_scan.id")

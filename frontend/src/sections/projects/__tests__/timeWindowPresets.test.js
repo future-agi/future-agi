@@ -11,7 +11,8 @@ import {
 const freezeClock = () => {
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
-    vi.setSystemTime(new Date("2026-08-21T06:00:00Z"));
+    // Presets and labels use browser-local time, not a fixed UTC calendar day.
+    vi.setSystemTime(new Date(2026, 7, 21, 6));
   });
   afterEach(() => vi.useRealTimers());
 };

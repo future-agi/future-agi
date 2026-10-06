@@ -12,6 +12,7 @@ import {
   Typography,
   Link,
   Collapse,
+  Divider,
   IconButton,
   Tooltip,
   useTheme,
@@ -25,6 +26,8 @@ import {
   CHECK_REVEAL_STAGGER_MS,
   CONNECTION_STATE,
   LAUNCH_MODE,
+  getSetupMeta,
+  nextSteps,
 } from "./constants";
 
 const { PENDING, PASSED, WARNING, FAILED, SKIPPED } = CHECK_STATUS;
@@ -46,6 +49,36 @@ const REVALIDATE_MIN_SPIN_MS = 900;
 const STALL_TIMEOUT_MS = 60000;
 
 const PANEL_MAX_WIDTH = 460;
+
+const SUPPORT_EMAIL = "support@futureagi.com";
+
+// A `fix` string (and a next step) carries inline code spans and nothing else,
+// so a markdown dependency would be overkill.
+function renderInlineCode(text) {
+  return String(text)
+    .split("`")
+    .map((part, i) =>
+      i % 2 === 1 ? (
+        <Box
+          key={`${i}:${part}`}
+          component="code"
+          sx={{
+            fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+            fontSize: "0.92em",
+            color: "text.primary",
+            bgcolor: (t) => alpha(t.palette.common.white, 0.07),
+            px: 0.6,
+            py: 0.15,
+            borderRadius: 0.5,
+          }}
+        >
+          {part}
+        </Box>
+      ) : (
+        part
+      ),
+    );
+}
 
 // `warning.main` disappears on a light surface.
 const WARNING_COLOR = "amber.600";
@@ -81,9 +114,10 @@ const STATUS_META = {
 
 export default function ValidationStep({
   mode,
-  onBack,
+  onSwitchMode,
   onContinue,
   onProgress,
+  authenticated = false,
 }) {
   const theme = useTheme();
   const [expanded, setExpanded] = useState(true);
@@ -102,6 +136,13 @@ export default function ValidationStep({
   });
 
   const checks = useMemo(() => data?.checks ?? [], [data]);
+  const setupMeta = getSetupMeta(data?.setup);
+  const collectorUrl = data?.collector_http_url;
+  const accountExists = Boolean(data?.account_exists);
+  const steps = useMemo(
+    () => nextSteps({ authenticated, accountExists, collectorUrl }),
+    [authenticated, accountExists, collectorUrl],
+  );
 
   let connectionState = CONNECTION_STATE.CONNECTING;
   if (isError) connectionState = CONNECTION_STATE.UNREACHABLE;
@@ -235,6 +276,34 @@ export default function ValidationStep({
     return parts.join(" · ") || "Running pre-flight…";
   }, [counts, reachable]);
 
+  // One line per check that is actually down, warnings included: on a test
+  // flight a stopped minio comes back WARNING and its uploads still fail, so
+  // the operator needs the same remedy. The row itself already says what
+  // breaks, so this stays a single sentence.
+  const needsFix = useMemo(
+    () =>
+      checks.filter(
+        (c) => (c.status === FAILED || c.status === WARNING) && c.fix,
+      ),
+    [checks],
+  );
+
+  const supportHref = useMemo(() => {
+    const ids = checks
+      .filter((c) => c.status === FAILED)
+      .map((c) => c.id)
+      .join(", ");
+    const subject = `Self-hosted pre-flight: ${ids || "need a hand"}`;
+    const body = `Launch mode: ${mode}\nFailed checks: ${ids || "none"}\n\nWhat I have already tried:\n`;
+    // mailto, not Gmail's web compose: that sends anyone on Outlook, Fastmail
+    // or a corporate client to a Google sign-in page instead of a draft.
+    return (
+      `mailto:${SUPPORT_EMAIL}` +
+      `?subject=${encodeURIComponent(subject)}` +
+      `&body=${encodeURIComponent(body)}`
+    );
+  }, [checks, mode]);
+
   const amberMain = theme.palette.amber[600];
   const tint = (key, opacity = 0.16) => alpha(theme.palette[key].main, opacity);
 
@@ -309,6 +378,30 @@ export default function ValidationStep({
         </Link>{" "}
         are your co-pilot if a check needs a hand.
       </Typography>
+      {setupMeta && (
+        <Stack
+          direction="row"
+          spacing={1}
+          alignItems="flex-start"
+          sx={{ mt: 1.5, maxWidth: PANEL_MAX_WIDTH }}
+          data-testid="oss-setup-kind"
+        >
+          <Iconify
+            icon={setupMeta.icon}
+            width={18}
+            sx={{ color: "primary.main", flexShrink: 0, mt: "1px" }}
+          />
+          <Typography variant="s2_1" sx={{ color: "text.secondary" }}>
+            <Box
+              component="span"
+              sx={{ color: "text.primary", fontWeight: "fontWeightSemiBold" }}
+            >
+              {setupMeta.title}.
+            </Box>{" "}
+            {setupMeta.description}
+          </Typography>
+        </Stack>
+      )}
     </Stack>
   );
 
@@ -469,37 +562,182 @@ export default function ValidationStep({
     </Box>
   );
 
+  const renderDetails = needsFix.length > 0 && !stillRevealing && (
+    <Box
+      sx={{
+        maxWidth: PANEL_MAX_WIDTH,
+        mt: 1.25,
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: 1,
+      }}
+    >
+      <Typography
+        variant="s2_1"
+        fontWeight="fontWeightSemiBold"
+        sx={{
+          display: "block",
+          px: 2,
+          pt: 1.5,
+          color: "text.disabled",
+          textTransform: "uppercase",
+          letterSpacing: "0.09em",
+        }}
+      >
+        Details
+      </Typography>
+      {needsFix.map((check, i) => (
+        <Stack
+          key={check.id}
+          direction="row"
+          spacing={1.25}
+          sx={{
+            px: 2,
+            py: 1.25,
+            borderTop: i === 0 ? "none" : "1px solid",
+            borderColor: "divider",
+          }}
+        >
+          <Link
+            href={check.docs_url || undefined}
+            target="_blank"
+            rel="noopener"
+            variant="s2_2"
+            fontWeight="fontWeightSemiBold"
+            sx={{ width: 150, flexShrink: 0, color: "text.primary" }}
+          >
+            {check.label}
+          </Link>
+          <Typography variant="s2_1" sx={{ color: "text.secondary" }}>
+            {renderInlineCode(check.fix)}
+          </Typography>
+        </Stack>
+      ))}
+    </Box>
+  );
+
+  // Plain-language next moves, once nothing stands between the operator and
+  // Continue.
+  const renderNextSteps = !blocked && (
+    <Box
+      sx={{
+        maxWidth: PANEL_MAX_WIDTH,
+        mt: 1.25,
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: 1,
+        px: 2,
+        py: 1.5,
+      }}
+    >
+      <Typography
+        variant="s2_1"
+        fontWeight="fontWeightSemiBold"
+        sx={{
+          display: "block",
+          color: "text.disabled",
+          textTransform: "uppercase",
+          letterSpacing: "0.09em",
+        }}
+      >
+        Next up
+      </Typography>
+      <Stack component="ol" spacing={1} sx={{ m: 0, mt: 1, p: 0 }}>
+        {steps.map((next) => (
+          <Stack
+            key={next.id}
+            component="li"
+            direction="row"
+            spacing={1.25}
+            alignItems="flex-start"
+            sx={{ listStyle: "none" }}
+          >
+            <Iconify
+              icon={next.icon}
+              width={16}
+              sx={{ color: "text.secondary", flexShrink: 0, mt: "2px" }}
+            />
+            <Typography variant="s2_1" sx={{ color: "text.secondary" }}>
+              {renderInlineCode(next.text)}
+              {next.link && (
+                <>
+                  {" "}
+                  <Link
+                    href={next.link.href}
+                    target="_blank"
+                    rel="noopener"
+                    underline="always"
+                  >
+                    {next.link.label}
+                  </Link>
+                </>
+              )}
+            </Typography>
+          </Stack>
+        ))}
+      </Stack>
+    </Box>
+  );
+
   return (
     <>
       {renderHead}
       {renderChecks}
+      {renderDetails}
+      {renderNextSteps}
 
       <Stack spacing={0.5} sx={{ maxWidth: PANEL_MAX_WIDTH, mt: 2 }}>
         <LoadingButton
           fullWidth
           color="primary"
           variant="contained"
-          onClick={onContinue}
+          onClick={() => onContinue({ accountExists })}
           disabled={blocked}
           sx={{ height: 40, borderRadius: 0.5 }}
         >
           Continue
         </LoadingButton>
         {blockedByFailure && !stillRevealing && (
-          <Typography
-            variant="s2_1"
-            sx={{ color: "error.main", textAlign: "center", pt: 0.5 }}
+          <>
+            <Typography
+              variant="s2_1"
+              sx={{ color: "error.main", textAlign: "center", pt: 0.5 }}
+            >
+              Fix the failed systems to continue with a production launch.
+            </Typography>
+            <Divider sx={{ my: 1, color: "text.disabled" }}>
+              <Typography variant="s2_1">or</Typography>
+            </Divider>
+            <LoadingButton
+              fullWidth
+              variant="outlined"
+              onClick={() => onSwitchMode(LAUNCH_MODE.EXPERIMENT)}
+              sx={{ height: 40, borderRadius: 0.5 }}
+            >
+              Continue with Test flight
+            </LoadingButton>
+          </>
+        )}
+        {/* Once a mode is picked the only moves are forward: there is no Back. */}
+        {mode === LAUNCH_MODE.EXPERIMENT && (
+          <LoadingButton
+            fullWidth
+            variant="text"
+            onClick={() => onSwitchMode(LAUNCH_MODE.LIVE)}
+            sx={{ height: 34, borderRadius: 0.5, color: "text.secondary" }}
           >
-            Fix the failed systems to continue with a production launch.
-          </Typography>
+            Switch to Production
+          </LoadingButton>
         )}
         <LoadingButton
           fullWidth
           variant="text"
-          onClick={onBack}
+          href={supportHref}
+          target="_blank"
+          rel="noopener"
           sx={{ height: 34, borderRadius: 0.5, color: "text.secondary" }}
         >
-          Back
+          Contact support
         </LoadingButton>
       </Stack>
     </>
@@ -508,7 +746,8 @@ export default function ValidationStep({
 
 ValidationStep.propTypes = {
   mode: PropTypes.string,
-  onBack: PropTypes.func.isRequired,
+  onSwitchMode: PropTypes.func.isRequired,
   onContinue: PropTypes.func.isRequired,
   onProgress: PropTypes.func,
+  authenticated: PropTypes.bool,
 };

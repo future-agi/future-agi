@@ -42,17 +42,11 @@ import {
   PROPERTY_CATALOG_REQUEST_TIMEOUT_MS,
   usePropertyCatalog,
 } from "src/hooks/useDashboards";
-import {
-  format,
-  startOfToday,
-  startOfTomorrow,
-  startOfYesterday,
-  sub,
-} from "date-fns";
+import { format } from "date-fns";
 import _ from "lodash";
 import GraphSkeleton from "./GraphSkeleton";
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
-import { formatDate } from "src/utils/report-utils";
+import { observePresetDateFilter } from "../../timeWindowPresets";
 import { toBackendFilters } from "../common";
 import { combineGraphFilters } from "./graphFilterUtils";
 import {
@@ -141,7 +135,7 @@ const COMPARE_DATE_OPTIONS = [
 // ---------------------------------------------------------------------------
 // Hook: fetch metrics from dashboard API (system + eval + annotation)
 // ---------------------------------------------------------------------------
-function useLegacyGraphMetrics(projectId, transportSource, enabled = true) {
+function useLegacyGraphMetrics(projectId, systemSource, enabled = true) {
   const query = useInfiniteQuery({
     queryKey: ["graph-metrics", projectId],
     queryFn: async ({ pageParam = 1, signal }) => {
@@ -181,7 +175,7 @@ function useLegacyGraphMetrics(projectId, transportSource, enabled = true) {
   );
   return {
     ...query,
-    data: buildGraphMetricGroups(metrics, transportSource),
+    data: buildGraphMetricGroups(metrics, systemSource),
     continuationKey:
       query.hasNextPage && Number.isSafeInteger(currentPage) && currentPage >= 1
         ? `legacy-page:${currentPage + 1}`
@@ -189,7 +183,7 @@ function useLegacyGraphMetrics(projectId, transportSource, enabled = true) {
   };
 }
 
-function buildGraphMetricGroups(metrics, transportSource) {
+function buildGraphMetricGroups(metrics, systemSource) {
   // Group by category, filter to graphable numeric types.
   const groups = {};
 
@@ -201,9 +195,11 @@ function buildGraphMetricGroups(metrics, transportSource) {
 
     const metricSources = Array.isArray(m.sources) ? m.sources : [];
     const compatibleSystemSources =
-      transportSource === "traces"
-        ? ["traces", "spans", "all", "both"]
-        : [transportSource, "traces", "spans", "all"];
+      systemSource === "users"
+        ? ["users", "all"]
+        : systemSource === "traces"
+          ? ["traces", "spans", "all", "both"]
+          : [systemSource, "traces", "spans", "all"];
     const supportsGraphSource =
       !m.source ||
       compatibleSystemSources.includes(m.source) ||
@@ -242,15 +238,21 @@ function buildGraphMetricGroups(metrics, transportSource) {
   return groups;
 }
 
-function useGraphMetrics(projectId, transportSource, enabled = true) {
+function useGraphMetrics(
+  projectId,
+  transportSource,
+  enabled = true,
+  systemSource = transportSource,
+) {
   const fallbackScopeKey = JSON.stringify([
     "graph-property-catalog",
     projectId || "",
+    systemSource,
   ]);
   const systemCatalog = usePropertyCatalog({
     category: GRAPH_METRIC_CATEGORIES[0],
     projectIds: projectId ? [projectId] : [],
-    source: transportSource,
+    source: systemSource,
     perEvalConfig: true,
     role: "metric",
     pageSize: PROPERTY_CATALOG_SEARCH_PAGE_SIZE,
@@ -286,7 +288,7 @@ function useGraphMetrics(projectId, transportSource, enabled = true) {
   );
   const legacy = useLegacyGraphMetrics(
     projectId,
-    transportSource,
+    systemSource,
     enabled && legacyFallbackRequired,
   );
 
@@ -312,7 +314,7 @@ function useGraphMetrics(projectId, transportSource, enabled = true) {
   return {
     data: buildGraphMetricGroups(
       catalogs.flatMap((catalog) => catalog.metrics || []),
-      transportSource,
+      systemSource,
     ),
     fetchNextPage: nextCatalog?.fetchNextPage || (() => Promise.resolve()),
     continuationKey:
@@ -357,8 +359,15 @@ const PrimaryGraph = ({
   // Label used for the traffic (bar) series in the tooltip, e.g. "traces",
   // "spans", "sessions", or "users". Defaults to "traces".
   trafficLabel = "traces",
+  // Optional: trace-graph population, e.g. "voice" to count only voice calls
+  // (the Voice screen's list_voice_calls population). Omitted = every trace.
+  observeType,
+  // Voice population only: the Voice list's "exclude simulation calls" toggle.
+  removeSimulationCalls = false,
 }) => {
   const { observeId } = useParams();
+  const excludeSimulationCalls =
+    observeType === "voice" && Boolean(removeSimulationCalls);
   const effectiveObserveId = observeIdOverride || observeId;
   // Keep the logical registry namespace (users/spans) distinct from the
   // physical transport adapter (sessions/traces).
@@ -375,9 +384,18 @@ const PrimaryGraph = ({
     : "traces";
   const theme = useTheme();
   const aggregationSourceId = useId();
-  const [selectedMetric, setSelectedMetric] = useState(
-    defaultMetric || "latency",
-  );
+  const initialMetric = defaultMetric || "latency";
+  const [selectedMetric, setSelectedMetric] = useState(initialMetric);
+  // A metric selected in one project may not exist in the next one's catalog,
+  // so a project change returns to the default. Only the project and the
+  // user's own pick decide the selection: the catalog loads while the picker
+  // is open, one category at a time and in any order, and must not change it.
+  const [selectedMetricProject, setSelectedMetricProject] =
+    useState(effectiveObserveId);
+  if (selectedMetricProject !== effectiveObserveId) {
+    setSelectedMetricProject(effectiveObserveId);
+    setSelectedMetric(initialMetric);
+  }
   const [pickerAnchor, setPickerAnchor] = useState(null);
   const [pickerSearch, setPickerSearch] = useState("");
   const [dateAnchor, setDateAnchor] = useState(null);
@@ -393,47 +411,9 @@ const PrimaryGraph = ({
         setCustomDateOpen(true);
         return;
       }
-      let filter = null;
-      switch (option) {
-        case "Today":
-          filter = [formatDate(startOfToday()), formatDate(startOfTomorrow())];
-          break;
-        case "Yesterday":
-          filter = [formatDate(startOfYesterday()), formatDate(startOfToday())];
-          break;
-        case "7D":
-          filter = [
-            formatDate(sub(new Date(), { days: 7 })),
-            formatDate(startOfTomorrow()),
-          ];
-          break;
-        case "30D":
-          filter = [
-            formatDate(sub(new Date(), { days: 30 })),
-            formatDate(startOfTomorrow()),
-          ];
-          break;
-        case "3M":
-          filter = [
-            formatDate(sub(new Date(), { months: 3 })),
-            formatDate(startOfTomorrow()),
-          ];
-          break;
-        case "6M":
-          filter = [
-            formatDate(sub(new Date(), { months: 6 })),
-            formatDate(startOfTomorrow()),
-          ];
-          break;
-        case "12M":
-          filter = [
-            formatDate(sub(new Date(), { months: 12 })),
-            formatDate(startOfTomorrow()),
-          ];
-          break;
-        default:
-          break;
-      }
+      // One shared window per preset: hour-floored start, next-midnight end,
+      // identical to the default load (see observePresetDateFilter).
+      const filter = observePresetDateFilter(option);
       if (filter)
         setDateFilter((prev) => ({
           ...prev,
@@ -472,6 +452,9 @@ const PrimaryGraph = ({
     effectiveObserveId,
     graphTransportSource,
     !staticMetrics && Boolean(pickerAnchor),
+    // Users system definitions live in their logical catalog, not sessions.
+    // Eval/annotation catalog lookups and graph requests keep the transport.
+    graphPropertyNamespace === "users" ? "users" : graphTransportSource,
   );
   // Use staticMetrics if provided (for sessions/users), otherwise dynamic
   const metricGroups = staticMetrics || dynamicMetricGroups;
@@ -482,14 +465,15 @@ const PrimaryGraph = ({
     return Object.values(metricGroups).flat();
   }, [metricGroups]);
 
-  // Current selected metric definition
+  // Current selected metric definition. Until the catalog lists the selection
+  // (the sessions and users catalogs never list latency), graph the system
+  // latency default rather than whichever catalog entry arrived first.
   const metricDef = useMemo(
     () =>
       allMetrics.find(
         (m) =>
           graphMetricIdentity(m) === selectedMetric || m.id === selectedMetric,
-      ) ||
-      allMetrics[0] || {
+      ) || {
         id: "latency",
         propertyId: `system_attribute:${graphPropertyNamespace}:latency`,
         source: graphTransportSource,
@@ -506,22 +490,6 @@ const PrimaryGraph = ({
     }
     return metricDef.propertyId || metricDef.property_id || "";
   }, [graphPropertyNamespace, metricDef]);
-
-  // A metric selected in one project may not exist in the next one's catalog.
-  // Drop it once loaded so the trigger label and picker highlight agree. The
-  // catalog-backed picker stores canonical property ids, while legacy entries
-  // may still be selected by metric id, so both identities must be accepted.
-  useEffect(() => {
-    if (!metricGroups || !allMetrics.length) return;
-    if (
-      !allMetrics.some(
-        (m) =>
-          graphMetricIdentity(m) === selectedMetric || m.id === selectedMetric,
-      )
-    ) {
-      setSelectedMetric(graphMetricIdentity(metricDef));
-    }
-  }, [metricGroups, allMetrics, selectedMetric, metricDef]);
 
   // Filter metrics by search term for the picker
   const filteredGroups = useMemo(() => {
@@ -655,6 +623,8 @@ const PrimaryGraph = ({
       apiEndpoint,
       graphPropertyId,
       graphTransportSource,
+      observeType,
+      excludeSimulationCalls,
     ],
     queryFn: async ({ queryKey, signal }) => {
       const refresh = forceRefreshRef.current;
@@ -683,6 +653,10 @@ const PrimaryGraph = ({
                   }),
                 },
                 project_id: effectiveObserveId,
+                ...(observeType && { observe_type: observeType }),
+                ...(excludeSimulationCalls && {
+                  remove_simulation_calls: true,
+                }),
               },
               {
                 params: refresh ? { refresh: true } : undefined,
@@ -706,6 +680,10 @@ const PrimaryGraph = ({
     },
     enabled: !!effectiveObserveId && !!metricDef.id,
     staleTime: Infinity,
+    // Rolling presets now keep one window for an hour, so an in-app revisit
+    // has the same key. Ask the server anyway: it serves the cached exact
+    // snapshot at once and says whether a newer read of it is under way.
+    refetchOnMount: "always",
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     refetchInterval: (query) => {
@@ -840,6 +818,17 @@ const PrimaryGraph = ({
         updatedAt: completedAt,
       });
     }
+    const publishSnapshotAge = () => {
+      if (!completedAt) return;
+      window.dispatchEvent(
+        new CustomEvent("observe-aggregation-completed", {
+          detail: {
+            observeId: effectiveObserveId,
+            queryCompletedAt: completedAt.toISOString(),
+          },
+        }),
+      );
+    };
     if (
       isRefreshing &&
       !refreshFailed &&
@@ -847,6 +836,10 @@ const PrimaryGraph = ({
     ) {
       setRefreshUnavailable(graphReadState !== "complete");
       notifyAggregationRefresh(true);
+      // A cached exact snapshot served while its window is re-read (a
+      // revisit's background revalidation, or an explicit Reload) is shown
+      // now: publish its age so the header says how old it is.
+      if (graphReadState === "complete") publishSnapshotAge();
       return;
     }
     notifyAggregationRefresh(false);
@@ -859,16 +852,7 @@ const PrimaryGraph = ({
       return;
     }
     setRefreshUnavailable(false);
-    if (completedAt) {
-      window.dispatchEvent(
-        new CustomEvent("observe-aggregation-completed", {
-          detail: {
-            observeId: effectiveObserveId,
-            queryCompletedAt: completedAt.toISOString(),
-          },
-        }),
-      );
-    }
+    publishSnapshotAge();
   }, [
     effectiveObserveId,
     graphData,
@@ -956,8 +940,19 @@ const PrimaryGraph = ({
       ? "rgba(147, 130, 220, 0.30)"
       : "rgba(147, 160, 230, 0.25)");
 
-  const metricSeriesName = metricDef.unit
-    ? `${metricDef.label} (${metricDef.unit})`
+  // The server names the statistic of every system-metric series; latency is
+  // always the mean. Only the latency series is captioned, and only when the
+  // payload says "mean": one without the field (an older server) or with a
+  // retired or unknown statistic keeps the plain metric name rather than a
+  // guess. Cost is a mean too but has always been read as one.
+  const metricStatistic = (displayGraphData || graphData)?.metric_statistic;
+  const statisticLabel =
+    metricDef.id === "latency" && metricStatistic === "mean" ? "avg" : null;
+  const metricSeriesQualifiers = [statisticLabel, metricDef.unit].filter(
+    Boolean,
+  );
+  const metricSeriesName = metricSeriesQualifiers.length
+    ? `${metricDef.label} (${metricSeriesQualifiers.join(", ")})`
     : metricDef.label;
   const lineSeriesName = metricSeriesName;
   const trafficSeriesName = "Traffic";
@@ -1182,6 +1177,15 @@ const PrimaryGraph = ({
               sx={{ flexShrink: 0, color: "text.secondary" }}
             />
           </ButtonBase>
+          {statisticLabel && (
+            <Typography
+              data-testid="graph-metric-statistic"
+              noWrap
+              sx={{ fontSize: 12, color: "text.secondary" }}
+            >
+              ({statisticLabel})
+            </Typography>
+          )}
 
           {/* Metric picker popover */}
           <Popover
@@ -1500,6 +1504,8 @@ PrimaryGraph.propTypes = {
   observeIdOverride: PropTypes.string,
   hasActiveFilter: PropTypes.bool,
   onFilterToggle: PropTypes.func,
+  observeType: PropTypes.oneOf(["trace", "voice"]),
+  removeSimulationCalls: PropTypes.bool,
 };
 
 export default React.memo(PrimaryGraph);

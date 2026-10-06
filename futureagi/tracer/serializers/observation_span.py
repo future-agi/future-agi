@@ -1,6 +1,10 @@
 import json
+import re
+from datetime import UTC
 
 from django.db.models import Q
+from django.utils.dateparse import parse_datetime
+from django.utils.timezone import is_aware
 from rest_framework import serializers
 
 from tfc.utils.serializer_fields import JsonValueField
@@ -9,6 +13,7 @@ from tracer.models.observation_span import ObservationSpan
 from tracer.models.project import Project
 from tracer.models.project_version import ProjectVersion
 from tracer.models.trace import Trace
+from tracer.serializers.attribute_key import ExactAttributeKeyField
 from tracer.serializers.cursor_pagination import (
     CURSOR_HELP_TEXT,
     validate_cursor_exclusivity,
@@ -19,7 +24,6 @@ from tracer.serializers.filters import (
     bounded_filter_list_query_param_field,
     filter_list_query_param_field,
 )
-from tracer.services.clickhouse.attribute_reads import validate_attribute_key
 
 
 class ProjectScopeQueryParamField(serializers.CharField):
@@ -58,17 +62,7 @@ class ObservationAttributeListQuerySerializer(serializers.Serializer):
         required=False,
         default="spans",
     )
-    q = serializers.CharField(
-        required=False,
-        allow_blank=False,
-        max_length=512,
-    )
-
-    def validate_q(self, value):
-        try:
-            return validate_attribute_key(value)
-        except ValueError as exc:
-            raise serializers.ValidationError(str(exc)) from exc
+    q = ExactAttributeKeyField(required=False)
 
 
 class ObservationAttributeListResponseSerializer(serializers.Serializer):
@@ -98,6 +92,108 @@ class RootSpansQuerySerializer(serializers.Serializer):
 class RootSpansResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField(default=True)
     result = serializers.DictField(child=serializers.CharField())
+
+
+class _SpanReferenceTimestampField(serializers.DateTimeField):
+    """Require an explicit timezone and never silently truncate microseconds."""
+
+    def __init__(self, **kwargs):
+        super().__init__(default_timezone=UTC, **kwargs)
+
+    def to_internal_value(self, data):
+        if not isinstance(data, str) or re.search(r"[.,]\d{7,}", data):
+            self.fail(
+                "invalid",
+                format="ISO-8601 with timezone and at most 6 fractional digits",
+            )
+        try:
+            parsed = parse_datetime(data)
+        except ValueError:
+            parsed = None
+        if parsed is None or not is_aware(parsed):
+            self.fail("invalid", format="ISO-8601 with explicit timezone")
+        return super().to_internal_value(data)
+
+
+class _SpanReferenceVersionField(serializers.CharField):
+    def to_internal_value(self, data):
+        if (
+            not isinstance(data, str)
+            or re.fullmatch(r"(?:0|[1-9][0-9]{0,19})", data) is None
+            or int(data) > 2**64 - 1
+        ):
+            raise serializers.ValidationError(
+                "Expected a canonical UInt64 decimal string."
+            )
+        return data
+
+
+class SpanReferenceQuerySerializer(StrictInputSerializer):
+    """An empty selector preserves bare GET; ``project_id`` alone pins the bare
+    span id to one project; any other selector requires every field."""
+
+    project_id = serializers.UUIDField(required=False)
+    trace_id = serializers.CharField(
+        required=False, allow_blank=False, trim_whitespace=False
+    )
+    start_hour = _SpanReferenceTimestampField(required=False)
+    observation_type = serializers.CharField(
+        required=False, allow_blank=True, trim_whitespace=False
+    )
+    service_name = serializers.CharField(
+        required=False, allow_blank=True, trim_whitespace=False
+    )
+    expected_start_time = _SpanReferenceTimestampField(required=False)
+    expected_version = _SpanReferenceVersionField(required=False, trim_whitespace=False)
+
+    def to_internal_value(self, data):
+        if hasattr(data, "getlist"):
+            repeated = [name for name in self.fields if len(data.getlist(name)) > 1]
+            if repeated:
+                raise serializers.ValidationError(
+                    dict.fromkeys(repeated, "Supply this selector once.")
+                )
+        return super().to_internal_value(data)
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        if not attrs or attrs.keys() == {"project_id"}:
+            return attrs
+        missing = self.fields.keys() - attrs.keys()
+        if missing:
+            raise serializers.ValidationError(
+                dict.fromkeys(
+                    sorted(missing), "The span reference selector is all-or-none."
+                )
+            )
+        hour = attrs["start_hour"]
+        if hour.minute or hour.second or hour.microsecond:
+            raise serializers.ValidationError(
+                {"start_hour": "Must be aligned to a UTC hour."}
+            )
+        if (
+            attrs["expected_start_time"].replace(minute=0, second=0, microsecond=0)
+            != hour
+        ):
+            raise serializers.ValidationError(
+                {"expected_start_time": "Must belong to start_hour."}
+            )
+        return attrs
+
+
+class ObservationSpanDetailResultSerializer(serializers.Serializer):
+    observation_span = serializers.DictField(child=JsonValueField(allow_null=True))
+    evals_metrics = serializers.DictField(
+        child=JsonValueField(allow_null=True), allow_null=True
+    )
+    enrichment = serializers.DictField(
+        child=JsonValueField(allow_null=True), required=False
+    )
+
+
+class ObservationSpanDetailResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = ObservationSpanDetailResultSerializer()
 
 
 class ObservationSpanSerializer(serializers.ModelSerializer):
@@ -334,6 +430,11 @@ class SpanListMetadataSerializer(serializers.Serializer):
         r"^[0-9a-f]{64}$", required=False
     )
     query_applied_filter_count = serializers.IntegerField(required=False, min_value=0)
+    # Exactness is published on every successful list page, next to the
+    # completeness it qualifies; see tracer.services.clickhouse.
+    # list_page_contract.
+    query_exact = serializers.BooleanField(required=False)
+    ordering_exact = serializers.BooleanField(required=False)
 
 
 class SpanListColumnConfigSerializer(serializers.Serializer):

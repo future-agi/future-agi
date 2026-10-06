@@ -6,7 +6,7 @@ const { enqueueSnackbarMock, getMock, gridState, sessionStoreState } =
   vi.hoisted(() => ({
     enqueueSnackbarMock: vi.fn(),
     getMock: vi.fn(),
-    gridState: { props: null, api: null },
+    gridState: { props: null, api: null, drawer: null },
     sessionStoreState: {
       toggledNodes: [],
       selectAll: false,
@@ -39,6 +39,7 @@ vi.mock("src/sections/develop-detail/Common/TotalRowsStatusBar", () => ({
   default: () => null,
 }));
 vi.mock("src/utils/axios", () => ({
+  readQuery: (...args) => getMock(...args),
   default: { get: (...args) => getMock(...args) },
   endpoints: {
     project: { projectSessionList: () => "/sessions/list/" },
@@ -47,7 +48,13 @@ vi.mock("src/utils/axios", () => ({
 vi.mock("notistack", () => ({
   enqueueSnackbar: (...args) => enqueueSnackbarMock(...args),
 }));
-vi.mock("../../TracesDrawer/TracesDrawer", () => ({ default: () => null }));
+vi.mock("../../TracesDrawer/TracesDrawer", () => ({ default: (props) => {
+  gridState.drawer = props;
+  return null;
+} }));
+vi.mock("src/contexts/WorkspaceContext", () => ({
+  useWorkspace: () => ({ currentWorkspaceId: "workspace-1" }),
+}));
 vi.mock("src/hooks/use-ag-theme", () => ({ useAgThemeWith: () => ({}) }));
 vi.mock("../common", () => ({
   getSessionListColumnDef: (column) => ({ field: column.id }),
@@ -77,6 +84,7 @@ vi.mock("../ReplaySessions/store", () => {
 });
 
 import SessionGrid from "../Session-grid";
+import * as listCursorPagination from "../../LLMTracing/listCursorPagination";
 import { OBSERVE_LIST_REFRESH_EVENT } from "../../observeEvents";
 
 const sessionResponse = ({
@@ -109,7 +117,7 @@ const sessionResponse = ({
 
 const row = (number) => ({ session_id: `session-${number}` });
 
-const renderGrid = () =>
+const renderGrid = (props = {}) =>
   render(
     <SessionGrid
       ref={React.createRef()}
@@ -122,6 +130,7 @@ const renderGrid = () =>
       onSelectionChanged={vi.fn()}
       className=""
       onGridReady={vi.fn()}
+      {...props}
     />,
   );
 
@@ -182,12 +191,499 @@ const getRows = async (params) => {
   });
 };
 
+const deferredCompletion = () => {
+  let resolve;
+  let reject;
+  const promise = new Promise((accept, decline) => {
+    resolve = accept;
+    reject = decline;
+  });
+  return { promise, resolve, reject };
+};
+
+const completionGrid = async (datasource) => {
+  const { createGrid, ModuleRegistry } = await import("ag-grid-community");
+  const { AllEnterpriseModule } = await import("ag-grid-enterprise");
+  ModuleRegistry.registerModules([AllEnterpriseModule]);
+  const reads = [];
+  const track = (source) => ({
+    getRows(params) {
+      const read = {
+        ...params,
+        success: vi.fn(params.success),
+        fail: vi.fn(params.fail),
+      };
+      reads.push(read);
+      read.settled = source.getRows(read);
+    },
+  });
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  let api;
+  act(() => {
+    api = createGrid(host, {
+      theme: "legacy",
+      domLayout: "autoHeight",
+      columnDefs: [{ field: "session_id" }],
+      rowModelType: "serverSide",
+      cacheBlockSize: 25,
+      serverSideInitialRowCount: 5,
+      maxConcurrentDatasourceRequests: 1,
+      rowSelection: { mode: "multiRow" },
+      suppressServerSideFullWidthLoadingRow: true,
+      serverSideDatasource: track(datasource),
+    });
+    gridState.api = api;
+  });
+  return {
+    api,
+    reads,
+    replace: (source) => act(() => api.setGridOption("serverSideDatasource", track(source))),
+    close: () => {
+      act(() => api.destroy());
+      host.remove();
+    },
+  };
+};
+
+describe("SessionGrid completion regression", () => {
+  beforeEach(() => {
+    getMock.mockReset();
+    enqueueSnackbarMock.mockReset();
+    gridState.props = null;
+    gridState.api = null;
+  });
+
+  const userFilter = {
+    column_id: "user_id",
+    filter_config: {
+      filter_type: "text", filter_op: "equals", filter_value: "shared@example.test",
+    },
+  };
+  const today = [userFilter, {
+    column_id: "created_at",
+    filter_config: {
+      filter_type: "datetime", filter_op: "between",
+      filter_value: ["2026-09-09T00:00:00Z", "2026-09-09T23:59:59Z"],
+    },
+  }];
+  const pastSevenDays = [userFilter, {
+    column_id: "created_at",
+    filter_config: {
+      filter_type: "datetime", filter_op: "between",
+      filter_value: ["2026-09-03T00:00:00Z", "2026-09-09T23:59:59Z"],
+    },
+  }];
+  const subject = (props, filters) => (
+    <SessionGrid
+      updateObj={{ session_id: true }}
+      columns={[{ id: "session_id", isVisible: true }]}
+      projectId={null}
+      cellHeight="Short"
+      {...props}
+      filters={filters}
+    />
+  );
+
+  it.each(["success", "failure"])(
+    "releases the real concurrency-one queue before cancelled transport late %s",
+    async (outcome) => {
+      const old = deferredCompletion();
+      const current = deferredCompletion();
+      getMock.mockReturnValueOnce(old.promise).mockReturnValueOnce(current.promise);
+      const props = { ref: React.createRef(), setColumns: vi.fn() };
+      const view = render(subject(props, today));
+      const grid = await completionGrid(gridState.props.serverSideDatasource);
+      try {
+        await waitFor(() => expect(getMock).toHaveBeenCalledOnce());
+        const oldSignal = getMock.mock.calls[0][1].signal;
+        view.rerender(subject(props, pastSevenDays));
+        // Let the real AG Grid loader dispatch the new range, not the test.
+        grid.replace(gridState.props.serverSideDatasource);
+        expect(oldSignal.aborted).toBe(true);
+        await act(async () => { await grid.reads[0].settled; });
+        await waitFor(() => expect(getMock).toHaveBeenCalledTimes(2));
+        expect(grid.reads[0].fail).toHaveBeenCalledOnce();
+        expect(grid.reads[0].success).not.toHaveBeenCalled();
+        expect(JSON.parse(getMock.mock.calls[1][1].params.filters)).toEqual(pastSevenDays);
+        expect(getMock.mock.calls[1][1].params).not.toHaveProperty("project_id");
+        await act(async () => {
+          if (outcome === "success") old.resolve(sessionResponse());
+          else old.reject(new Error("obsolete transport failure"));
+          await grid.reads[0].settled;
+        });
+        expect(enqueueSnackbarMock).not.toHaveBeenCalled();
+        expect(grid.api.getDisplayedRowAtIndex(0)?.data).toBeUndefined();
+        expect(grid.reads[1].success).not.toHaveBeenCalled();
+        expect(grid.reads[1].fail).not.toHaveBeenCalled();
+        await act(async () => {
+          current.resolve(sessionResponse({ rows: [row(99)], hasMore: false }));
+          await grid.reads[1].settled;
+        });
+        expect(grid.api.getDisplayedRowAtIndex(0)?.data).toEqual(row(99));
+        expect(grid.reads[0].fail).toHaveBeenCalledOnce();
+        expect(grid.reads[0].success).not.toHaveBeenCalled();
+        expect(grid.reads[1].success).toHaveBeenCalledOnce();
+        expect(grid.reads[1].fail).not.toHaveBeenCalled();
+      } finally {
+        grid.close();
+        await act(async () => {
+          old.resolve(sessionResponse());
+          current.resolve(sessionResponse({ rows: [row(99)], hasMore: false }));
+          await Promise.all(grid.reads.map((read) => read.settled));
+        });
+      }
+    },
+  );
+
+  it.each(["success", "failure"])(
+    "completes stale page %s without changing replacement state",
+    async (outcome) => {
+      const old = deferredCompletion();
+      const current = deferredCompletion();
+      const loadPage = vi.spyOn(listCursorPagination, "loadExactListPage")
+        .mockReturnValueOnce(old.promise);
+      getMock.mockReturnValueOnce(current.promise);
+      const props = { ref: React.createRef(), setColumns: vi.fn() };
+      const view = render(subject(props, today));
+      const grid = await completionGrid(gridState.props.serverSideDatasource);
+      try {
+        await waitFor(() => expect(loadPage).toHaveBeenCalledOnce());
+        view.rerender(subject(props, pastSevenDays));
+        grid.replace(gridState.props.serverSideDatasource);
+        props.setColumns.mockClear();
+        await act(async () => {
+          if (outcome === "success") old.resolve({ rows: [], response: { data: {} }, isLastPage: true });
+          else old.reject(new Error("obsolete page failure"));
+          await grid.reads[0].settled;
+        });
+        expect(enqueueSnackbarMock).not.toHaveBeenCalled();
+        expect(props.setColumns).not.toHaveBeenCalled();
+        expect(grid.reads[0].success).not.toHaveBeenCalled();
+        expect(grid.reads[0].fail).toHaveBeenCalledOnce();
+        await waitFor(() => expect(grid.reads).toHaveLength(2));
+        await act(async () => {
+          current.resolve(sessionResponse({ rows: [row(99)], hasMore: false }));
+          await grid.reads[1].settled;
+        });
+        expect(grid.api.getDisplayedRowAtIndex(0)?.data).toEqual(row(99));
+        expect(grid.reads[1].success).toHaveBeenCalledOnce();
+        expect(grid.reads[1].fail).not.toHaveBeenCalled();
+      } finally {
+        grid.close();
+        await act(async () => {
+          old.resolve({ rows: [], response: { data: {} }, isLastPage: true });
+          current.resolve(sessionResponse({ rows: [row(99)], hasMore: false }));
+          await Promise.all(grid.reads.map((read) => read.settled));
+        });
+        loadPage.mockRestore();
+      }
+    },
+  );
+
+  it("discards a queued manual reload when filters advance the generation", async () => {
+    const old = deferredCompletion();
+    const loadPage = vi.spyOn(listCursorPagination, "loadExactListPage")
+      .mockReturnValueOnce(old.promise);
+    getMock.mockResolvedValue(sessionResponse({ rows: [row(99)], hasMore: false, nextCursor: null }));
+    const props = { ref: React.createRef(), setColumns: vi.fn() };
+    const view = render(subject(props, today));
+    const grid = await completionGrid(gridState.props.serverSideDatasource);
+    const refresh = vi.spyOn(grid.api, "refreshServerSide");
+    try {
+      await waitFor(() => expect(loadPage).toHaveBeenCalledOnce());
+      act(() => window.dispatchEvent(new Event("observe-refresh")));
+      view.rerender(subject(props, pastSevenDays));
+      grid.replace(gridState.props.serverSideDatasource);
+      await act(async () => {
+        old.resolve({ rows: [], response: { data: {} }, isLastPage: true });
+        await grid.reads[0].settled;
+      });
+      await waitFor(() => expect(grid.api.getDisplayedRowAtIndex(0)?.data).toEqual(row(99)));
+      expect(refresh).not.toHaveBeenCalled();
+      expect(getMock).toHaveBeenCalledOnce();
+      expect(JSON.parse(getMock.mock.calls[0][1].params.filters)).toEqual(pastSevenDays);
+      expect(grid.reads[0].fail).toHaveBeenCalledOnce();
+      expect(grid.reads[0].success).not.toHaveBeenCalled();
+      expect(enqueueSnackbarMock).not.toHaveBeenCalled();
+    } finally {
+      grid.close();
+      await act(async () => {
+        old.resolve({ rows: [], response: { data: {} }, isLastPage: true });
+        await Promise.all(grid.reads.map((read) => read.settled));
+      });
+      refresh.mockRestore();
+      loadPage.mockRestore();
+    }
+  });
+
+  it("does not let an already-dead API release another read's refresh guard", async () => {
+    const current = deferredCompletion();
+    getMock.mockReturnValueOnce(current.promise);
+    renderGrid();
+    const params = makeParams();
+    gridState.api = params.api;
+    let read;
+    act(() => { read = gridState.props.serverSideDatasource.getRows(params); });
+    try {
+      await waitFor(() => expect(getMock).toHaveBeenCalledOnce());
+      const dead = makeParams();
+      dead.api.isDestroyed = () => true;
+      await getRows(dead);
+      gridState.api = params.api;
+      act(() => window.dispatchEvent(new Event(OBSERVE_LIST_REFRESH_EVENT)));
+      expect.soft(params.api.refreshServerSide).not.toHaveBeenCalled();
+      expect.soft(dead.fail).toHaveBeenCalledOnce();
+      expect(dead.success).not.toHaveBeenCalled();
+      expect(getMock).toHaveBeenCalledOnce();
+    } finally {
+      await act(async () => {
+        current.resolve(sessionResponse({ rows: [row(99)], hasMore: false }));
+        await read;
+      });
+    }
+  });
+});
+
+describe("SessionGrid refresh cache regression", () => {
+  beforeEach(() => {
+    getMock.mockReset();
+    enqueueSnackbarMock.mockReset();
+    gridState.props = null;
+    gridState.api = null;
+  });
+
+  it("does not refresh a remounted grid through a reused forwarded ref after cancellation", async () => {
+    const old = deferredCompletion();
+    const current = deferredCompletion();
+    getMock.mockReturnValueOnce(old.promise).mockReturnValueOnce(current.promise);
+    const ref = React.createRef();
+    const oldView = renderGrid({ ref });
+    const oldParams = makeParams();
+    let oldDestroyed = false;
+    oldParams.api.isDestroyed = () => oldDestroyed;
+    gridState.api = oldParams.api;
+    let oldRead;
+    let currentRead;
+    let currentView;
+    act(() => { oldRead = gridState.props.serverSideDatasource.getRows(oldParams); });
+    try {
+      await waitFor(() => expect(getMock).toHaveBeenCalledOnce());
+      const oldSignal = getMock.mock.calls[0][1].signal;
+      // Keep the real cancellable page wrapper: the obsolete transport itself
+      // stays unresolved while React unmounts/remounts with the same parent ref.
+      act(() => window.dispatchEvent(new Event("observe-refresh")));
+      expect(oldSignal.aborted).toBe(true);
+      oldView.unmount();
+      oldDestroyed = true;
+      expect(ref.current).toBeNull();
+      const currentParams = makeParams();
+      gridState.api = currentParams.api;
+      currentView = renderGrid({ ref, projectId: "project-2" });
+      expect(ref.current.api).toBe(currentParams.api);
+      act(() => { currentRead = gridState.props.serverSideDatasource.getRows(currentParams); });
+
+      await act(async () => { await oldRead; });
+      await waitFor(() => expect(getMock).toHaveBeenCalledTimes(2));
+      expect(currentParams.api.refreshServerSide).not.toHaveBeenCalled();
+      expect(currentParams.api.paginationGoToFirstPage).not.toHaveBeenCalled();
+      expect(oldParams.fail).toHaveBeenCalledOnce();
+      expect(oldParams.success).not.toHaveBeenCalled();
+      expect(currentParams.success).not.toHaveBeenCalled();
+      expect(currentParams.fail).not.toHaveBeenCalled();
+      expect(getMock.mock.calls[1][1].params.project_id).toBe("project-2");
+      expect(getMock.mock.calls[1][1].signal.aborted).toBe(false);
+      expect(enqueueSnackbarMock).not.toHaveBeenCalled();
+
+      await act(async () => {
+        old.resolve(sessionResponse({ rows: [row(1)], hasMore: false, nextCursor: null }));
+        current.resolve(sessionResponse({ rows: [row(99)], hasMore: false, nextCursor: null }));
+        await currentRead;
+      });
+      expect(currentParams.success).toHaveBeenCalledExactlyOnceWith({ rowData: [row(99)], rowCount: 1 });
+      expect(oldParams.fail).toHaveBeenCalledOnce();
+      expect(oldParams.success).not.toHaveBeenCalled();
+      expect(currentParams.api.refreshServerSide).not.toHaveBeenCalled();
+    } finally {
+      oldView.unmount();
+      currentView?.unmount();
+      await act(async () => {
+        old.resolve(sessionResponse());
+        current.resolve(sessionResponse({ rows: [row(99)], hasMore: false, nextCursor: null }));
+        await Promise.all([oldRead, currentRead]);
+      });
+    }
+  });
+
+  it.each(["observe-refresh", OBSERVE_LIST_REFRESH_EVENT])(
+    "%s rereads the same query and keeps real grid rows until an exact empty replacement",
+    async (eventName) => {
+      const replacement = deferredCompletion();
+      getMock
+        .mockResolvedValueOnce(sessionResponse({ rows: [row(1)], hasMore: false, nextCursor: null }))
+        .mockReturnValueOnce(replacement.promise);
+      renderGrid();
+      const datasource = gridState.props.serverSideDatasource;
+      const grid = await completionGrid(datasource);
+      const refresh = vi.spyOn(grid.api, "refreshServerSide");
+      try {
+        await waitFor(() => expect(grid.api.getDisplayedRowAtIndex(0)?.data).toEqual(row(1)));
+        expect(getMock).toHaveBeenCalledOnce();
+
+        act(() => window.dispatchEvent(new Event(eventName)));
+        await waitFor(() => expect(getMock).toHaveBeenCalledTimes(2));
+        expect(refresh).toHaveBeenCalledExactlyOnceWith({ purge: false });
+        expect(gridState.props.serverSideDatasource).toBe(datasource);
+        expect(gridState.props.loading).toBe(false);
+        expect(grid.api.getDisplayedRowAtIndex(0)?.data).toEqual(row(1));
+        expect(grid.reads[1].success).not.toHaveBeenCalled();
+        expect(getMock.mock.calls[1][1].params).toEqual(getMock.mock.calls[0][1].params);
+
+        await act(async () => {
+          replacement.resolve(sessionResponse({ rows: [], hasMore: false, nextCursor: null }));
+          await grid.reads[1].settled;
+        });
+        expect(grid.reads[1].success).toHaveBeenCalledExactlyOnceWith({ rowData: [], rowCount: 0 });
+        expect(grid.reads[1].fail).not.toHaveBeenCalled();
+        expect(grid.api.getDisplayedRowCount()).toBe(0);
+        expect(enqueueSnackbarMock).not.toHaveBeenCalled();
+      } finally {
+        grid.close();
+        await act(async () => {
+          replacement.resolve(sessionResponse({ rows: [], hasMore: false, nextCursor: null }));
+          await Promise.all(grid.reads.map((read) => read.settled));
+        });
+        refresh.mockRestore();
+      }
+    },
+  );
+
+  it("retains cached reads and page-2 cursors until manual reload, while auto refresh stays paused", async () => {
+    const firstRows = Array.from({ length: 25 }, (_, index) => row(index));
+    getMock
+      .mockResolvedValueOnce(sessionResponse({ rows: firstRows, hasMore: true, nextCursor: "opaque-page-2" }))
+      .mockResolvedValueOnce(sessionResponse({ rows: [row(25)], hasMore: false, nextCursor: null }))
+      .mockResolvedValueOnce(sessionResponse({ rows: [row(99)], hasMore: false, nextCursor: null }));
+    renderGrid();
+    const first = makeParams();
+    await getRows(first);
+    await getRows(first);
+    expect(getMock).toHaveBeenCalledOnce();
+    expect(first.success).toHaveBeenLastCalledWith({ rowData: firstRows, rowCount: 26 });
+
+    await userEvent.click(screen.getByRole("button", { name: "Go to page 2" }));
+    const second = makeParams({ startRow: 25 });
+    await getRows(second);
+    expect(getMock).toHaveBeenCalledTimes(2);
+    expect(getMock.mock.calls[1][1].params.cursor).toBe("opaque-page-2");
+    act(() => window.dispatchEvent(new Event(OBSERVE_LIST_REFRESH_EVENT)));
+    expect(second.api.refreshServerSide).not.toHaveBeenCalled();
+    expect(second.api.paginationGoToFirstPage).not.toHaveBeenCalled();
+    await getRows(second);
+    expect(getMock).toHaveBeenCalledTimes(2);
+    expect(second.success).toHaveBeenLastCalledWith({ rowData: [row(25)], rowCount: 26 });
+
+    act(() => window.dispatchEvent(new Event("observe-refresh")));
+    expect(second.api.paginationGoToFirstPage).toHaveBeenCalledOnce();
+    expect(second.api.refreshServerSide).toHaveBeenCalledExactlyOnceWith({ purge: false });
+    const reloaded = makeParams();
+    await getRows(reloaded);
+    expect(getMock).toHaveBeenCalledTimes(3);
+    expect(getMock.mock.calls[2][1].params).toEqual(getMock.mock.calls[0][1].params);
+    expect(reloaded.success).toHaveBeenCalledExactlyOnceWith({ rowData: [row(99)], rowCount: 1 });
+  });
+
+  it.each(["success", "failure"])(
+    "manual reload supersedes an active read without letting late %s release the replacement guard",
+    async (outcome) => {
+      const old = deferredCompletion();
+      const current = deferredCompletion();
+      getMock.mockReturnValueOnce(old.promise).mockReturnValueOnce(current.promise);
+      renderGrid();
+      const grid = await completionGrid(gridState.props.serverSideDatasource);
+      const refresh = vi.spyOn(grid.api, "refreshServerSide");
+      try {
+        await waitFor(() => expect(getMock).toHaveBeenCalledOnce());
+        const oldSignal = getMock.mock.calls[0][1].signal;
+        act(() => window.dispatchEvent(new Event(OBSERVE_LIST_REFRESH_EVENT)));
+        expect(refresh).not.toHaveBeenCalled();
+        expect(oldSignal.aborted).toBe(false);
+
+        act(() => {
+          window.dispatchEvent(new Event("observe-refresh"));
+          window.dispatchEvent(new Event("observe-refresh"));
+        });
+        expect(oldSignal.aborted).toBe(true);
+        await waitFor(() => expect(getMock).toHaveBeenCalledTimes(2));
+        expect(refresh).toHaveBeenCalledExactlyOnceWith({ purge: false });
+        expect(grid.reads[0].fail).toHaveBeenCalledOnce();
+        expect(grid.reads[0].success).not.toHaveBeenCalled();
+        refresh.mockClear();
+        await act(async () => {
+          if (outcome === "success") old.resolve(sessionResponse({ rows: [row(1)], hasMore: false }));
+          else old.reject(new Error("obsolete transport failure"));
+          await grid.reads[0].settled;
+        });
+        act(() => window.dispatchEvent(new Event(OBSERVE_LIST_REFRESH_EVENT)));
+        expect(refresh).not.toHaveBeenCalled();
+        expect(getMock).toHaveBeenCalledTimes(2);
+        expect(getMock.mock.calls[1][1].signal.aborted).toBe(false);
+        expect(grid.reads[1].success).not.toHaveBeenCalled();
+        expect(grid.reads[1].fail).not.toHaveBeenCalled();
+        expect(grid.api.getDisplayedRowAtIndex(0)?.data).toBeUndefined();
+        expect(enqueueSnackbarMock).not.toHaveBeenCalled();
+
+        await act(async () => {
+          current.resolve(sessionResponse({ rows: [row(99)], hasMore: false }));
+          await grid.reads[1].settled;
+        });
+        expect(grid.api.getDisplayedRowAtIndex(0)?.data).toEqual(row(99));
+        expect(grid.reads[0].fail).toHaveBeenCalledOnce();
+        expect(grid.reads[0].success).not.toHaveBeenCalled();
+        expect(grid.reads[1].success).toHaveBeenCalledOnce();
+        expect(grid.reads[1].fail).not.toHaveBeenCalled();
+      } finally {
+        grid.close();
+        await act(async () => {
+          old.resolve(sessionResponse());
+          current.resolve(sessionResponse({ rows: [row(99)], hasMore: false }));
+          await Promise.all(grid.reads.map((read) => read.settled));
+        });
+        refresh.mockRestore();
+      }
+    },
+  );
+});
+
 describe("SessionGrid cursor continuation", () => {
   beforeEach(() => {
     getMock.mockReset();
     enqueueSnackbarMock.mockReset();
     gridState.props = null;
     gridState.api = null;
+  });
+
+  it.each(["project-1", null])("hands the successful %s list context to the drawer", async (projectId) => {
+    const filters = [{ column_id: "created_at", filter_config: { filter_type: "datetime",
+      filter_op: "between", filter_value: ["2026-07-01", "2026-08-01"] } },
+      { column_id: "company_id", property_id: "custom_attribute:company_id", source: "traces", filter_config: {
+        col_type: "SPAN_ATTRIBUTE", filter_type: "text", filter_op: "in", filter_value: [2, 5, 10],
+        attribute_value_types: ["number", "number", "number"] } }];
+    const selected = row(1);
+    getMock.mockResolvedValue(sessionResponse({ rows: [selected], hasMore: false }));
+    renderGrid({ projectId, filters, userIdForUserMode: projectId ? undefined : "public-user" });
+    await waitFor(() => expect(gridState.props).not.toBeNull());
+    const params = makeParams({ sortModel: [{ colId: "total_tokens", sort: "asc" }] });
+    await getRows(params);
+    await act(async () => gridState.props.onRowClicked({ data: params.success.mock.calls[0][0].rowData[0] }));
+    expect(gridState.drawer.navigationContext).toEqual({
+      project_id: projectId, workspace_id: "workspace-1", filters,
+      sort_params: [{ column_id: "total_tokens", direction: "asc" }],
+      cursor_mode: false,
+      ...(projectId ? {} : { user_id: "public-user" }),
+    });
+    filters[1].filter_config.filter_value[0] = 99;
+    expect(gridState.drawer.navigationContext.filters[1].filter_config.filter_value).toEqual([2, 5, 10]);
   });
 
   it("keeps cache purging enabled with a fixed row height", async () => {
@@ -669,7 +1165,7 @@ describe("SessionGrid cursor continuation", () => {
     const params = makeParams();
     await getRows(params);
 
-    expect(params.fail).not.toHaveBeenCalled();
+    expect(params.fail).toHaveBeenCalledOnce();
     expect(params.success).not.toHaveBeenCalled();
     expect(enqueueSnackbarMock).not.toHaveBeenCalled();
   });
@@ -698,6 +1194,89 @@ describe("SessionGrid cursor continuation", () => {
     );
   });
 
+  it("settles cancelled session reads without releasing the replacement page loader", async () => {
+    let resolveOld;
+    let rejectCurrent;
+    getMock
+      .mockResolvedValueOnce(
+        sessionResponse({
+          rows: Array.from({ length: 25 }, (_, index) => row(index)),
+          hasMore: true,
+          nextCursor: "page-2",
+          totalRows: 26,
+        }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveOld = resolve;
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectCurrent = reject;
+          }),
+      );
+    renderGrid();
+    await getRows(makeParams());
+    await userEvent.click(screen.getByRole("button", { name: "Go to page 2" }));
+    const oldParams = makeParams({ startRow: 25 });
+    const settled = vi.fn();
+    let oldRead;
+    act(() => {
+      oldRead = gridState.props.serverSideDatasource
+        .getRows(oldParams)
+        .then(settled);
+    });
+    await waitFor(() => expect(resolveOld).toBeTypeOf("function"));
+    const oldSignal = getMock.mock.calls[1][1].signal;
+    const currentParams = makeParams({
+      startRow: 25,
+      sortModel: [{ colId: "started_at", sort: "desc" }],
+    });
+    gridState.api = currentParams.api;
+    let currentRead;
+    act(() => {
+      currentRead = gridState.props.serverSideDatasource.getRows(currentParams);
+    });
+    await waitFor(() => expect(rejectCurrent).toBeTypeOf("function"));
+    try {
+      await waitFor(() => expect(settled).toHaveBeenCalledOnce());
+      expect(oldSignal.aborted).toBe(true);
+      expect(screen.getByRole("status")).toHaveTextContent("Loading page…");
+      expect(screen.getByRole("button", { name: "page 2" })).toBeDisabled();
+      expect(oldParams.success).not.toHaveBeenCalled();
+      expect(oldParams.fail).toHaveBeenCalledOnce();
+      expect(currentParams.success).not.toHaveBeenCalled();
+      expect(enqueueSnackbarMock).not.toHaveBeenCalled();
+      expect(currentParams.api.showNoRowsOverlay).not.toHaveBeenCalled();
+      expect(getMock.mock.calls[2][1].params).not.toHaveProperty("cursor");
+      await act(async () => {
+        rejectCurrent(new Error("replacement transport failed"));
+        await currentRead;
+      });
+      expect(currentParams.fail).toHaveBeenCalledOnce();
+      expect(currentParams.success).not.toHaveBeenCalled();
+      expect(enqueueSnackbarMock).toHaveBeenCalledWith(
+        "Session data could not be loaded. Please retry.",
+        { variant: "error" },
+      );
+      expect(currentParams.api.showNoRowsOverlay).not.toHaveBeenCalled();
+      await waitFor(() =>
+        expect(screen.queryByText("Loading page…")).not.toBeInTheDocument(),
+      );
+    } finally {
+      await act(async () => {
+        resolveOld(sessionResponse({ rows: [row(1)] }));
+        rejectCurrent(new Error("replacement transport failed"));
+        await Promise.all([oldRead, currentRead]);
+      });
+    }
+    expect(oldParams.success).not.toHaveBeenCalled();
+    expect(oldParams.fail).toHaveBeenCalledOnce();
+  });
+
   it("silently discards an in-flight response from an older sort generation", async () => {
     let resolveStale;
     const staleResponse = new Promise((resolve) => {
@@ -721,7 +1300,7 @@ describe("SessionGrid cursor continuation", () => {
     await act(async () => staleRead);
 
     expect(currentParams.success).toHaveBeenCalledTimes(1);
-    expect(staleParams.fail).not.toHaveBeenCalled();
+    expect(staleParams.fail).toHaveBeenCalledOnce();
     expect(staleParams.success).not.toHaveBeenCalled();
     expect(enqueueSnackbarMock).not.toHaveBeenCalled();
   });
@@ -748,7 +1327,7 @@ describe("SessionGrid cursor continuation", () => {
     await act(async () => read);
 
     expect(params.success).not.toHaveBeenCalled();
-    expect(params.fail).not.toHaveBeenCalled();
+    expect(params.fail).toHaveBeenCalledOnce();
     expect(enqueueSnackbarMock).not.toHaveBeenCalled();
   });
 });

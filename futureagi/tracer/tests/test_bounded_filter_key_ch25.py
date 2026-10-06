@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import re
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -10,8 +9,8 @@ from time import monotonic
 from unittest import mock
 
 import pytest
-from clickhouse_driver import Client
 
+from conftest import _ch_test_native_client
 from tracer.selectors.trace_filter_reads import read_bounded_filter_page
 from tracer.services.clickhouse.attribute_reads import (
     _STRATIFIED_CANDIDATE_SQL,
@@ -44,11 +43,6 @@ from tracer.services.clickhouse.v2.query_builders.trace_list import (
 
 pytestmark = pytest.mark.integration
 
-CH_HOST = os.environ.get("CH25_HOST", "127.0.0.1")
-CH_NATIVE_PORT = int(os.environ.get("CH25_NATIVE_PORT", "19000"))
-CH_USER = os.environ.get("CH25_USER", "default")
-CH_PASSWORD = os.environ.get("CH25_PASSWORD", "")
-
 
 def _unix_microseconds(value: datetime) -> int:
     utc_value = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
@@ -58,18 +52,8 @@ def _unix_microseconds(value: datetime) -> int:
 
 @pytest.fixture(scope="module")
 def ch_client():
-    client = Client(
-        host=CH_HOST,
-        port=CH_NATIVE_PORT,
-        user=CH_USER,
-        password=CH_PASSWORD,
-        connect_timeout=3,
-    )
-    try:
-        client.execute("SELECT 1")
-    except Exception as exc:
-        pytest.skip(f"CH 25.3 not reachable on {CH_HOST}:{CH_NATIVE_PORT} ({exc!r})")
-    return client
+    with _ch_test_native_client(settings={"optimize_on_insert": 0}) as client:
+        yield client
 
 
 @pytest.fixture()
@@ -107,7 +91,7 @@ def bounded_span_table(ch_client):
             project_version_id Nullable(UUID),
             name String,
             service_name String DEFAULT '',
-            observation_type String,
+            observation_type String DEFAULT 'span',
             status Nullable(String),
             start_time DateTime64(6, 'UTC'),
             end_time Nullable(DateTime64(6, 'UTC')),
@@ -127,7 +111,7 @@ def bounded_span_table(ch_client):
             attrs_bool Map(String, UInt8),
             attributes_extra String
         )
-        ENGINE = MergeTree
+        ENGINE = ReplacingMergeTree(_version, is_deleted)
         ORDER BY (
             project_id,
             observation_type,
@@ -138,6 +122,7 @@ def bounded_span_table(ch_client):
         )
         """
     )
+    ch_client.execute(f"SYSTEM STOP MERGES {table}")
     try:
         yield table
     finally:
@@ -174,10 +159,15 @@ def bounded_score_table(ch_client):
 def production_score_table(ch_client):
     """Create an ephemeral Score table with the deployed tracer-project column.
 
-    ``CDC_MODEL_HUB_SCORE`` intentionally stays schema-change-free for this
-    release. Production already receives ``tracer_project_id`` through the
-    Score CDC schema, so this test-only table models that deployed shape without
-    changing or exercising runtime DDL.
+    This fixture used to inject ``tracer_project_id`` itself, because
+    ``CDC_MODEL_HUB_SCORE`` did not declare it and the docstring recorded that
+    as intentional for that release. This branch adds the column to the CDC
+    declaration, so injecting it again produced
+    ``Cannot add column tracer_project_id: column with this name already
+    exists`` and errored the whole fixture.
+
+    The column is now added only when the shared declaration lacks it, so the
+    fixture keeps modelling the deployed shape whichever side owns the column.
     """
 
     from tracer.services.clickhouse.schema import CDC_MODEL_HUB_SCORE
@@ -194,11 +184,12 @@ def production_score_table(ch_client):
         ddl,
         count=1,
     )
-    ddl = ddl.replace(
-        "    project_id Nullable(UUID),\n",
-        "    project_id Nullable(UUID),\n    tracer_project_id UUID,\n",
-        1,
-    )
+    if "tracer_project_id" not in ddl:
+        ddl = ddl.replace(
+            "    project_id Nullable(UUID),\n",
+            "    project_id Nullable(UUID),\n    tracer_project_id UUID,\n",
+            1,
+        )
     ch_client.execute(ddl)
     try:
         yield table
@@ -907,7 +898,7 @@ def test_attribute_detail_executes_latest_state_and_tombstones_on_ch25(
                 1,
                 "Rejected",
                 trace_id="trace-shared-a",
-                started_at=shared_start + timedelta(minutes=1),
+                started_at=shared_start - timedelta(hours=1),
             ),
         ],
     )
@@ -938,6 +929,7 @@ def test_attribute_detail_executes_latest_state_and_tombstones_on_ch25(
     ).read_detail([project_id], key, horizon_days=7)
 
     assert read.attribute_type == "string"
+    # A different storage hour is a distinct physical span with the same bare ID.
     assert [(item.value, item.count) for item in read.rows] == [("Rejected", 4)]
     assert read.metadata.query_complete is True
     # Typed values use a light version certificate between candidate discovery
@@ -1408,10 +1400,9 @@ def test_bounded_reader_handles_duplicates_tombstone_and_latest_updates(
 
     assert page.complete is True
     assert [item["id"] for item in page.rows] == ["duplicate", "stable", "moved"]
-    # A selective typed-Map equality now uses the bounded raw-witness anchor
-    # before exact latest-state classification.
+    # The selective anchor resolves latest versions before returning identities.
     assert page.attempts[0].kind == "anchor"
-    assert page.attempts[0].rows_returned == 5
+    assert page.attempts[0].rows_returned == 3
 
 
 def test_bounded_span_reader_isolates_reused_ids_by_trace_on_ch25(
@@ -3153,6 +3144,8 @@ def test_candidate_scoped_annotation_residual_executes_on_ch25(
                 "trace_id": trace_id,
                 "id": "annotated-span",
                 "start_time": started_at,
+                "observation_type": "span",
+                "service_name": "",
             }
         ]
     )
@@ -3264,6 +3257,8 @@ def test_span_annotation_filter_rejects_same_id_score_from_other_project_ch25(
                 "trace_id": trace_id,
                 "id": shared_span_id,
                 "start_time": started_at,
+                "observation_type": "span",
+                "service_name": "",
             }
         ]
     )

@@ -260,15 +260,11 @@ export function convertNewToOld(newFilters, { rowType } = {}) {
 }
 
 // ── form filter → new panel format ──
-// One form row → one panel row. Only ops with a natural multi-value shape
-// (range, list, or string equals/not_equals just rewritten to in/not_in via
-// HYDRATE_STRING_OP) collapse same-(field, op) rows into one multi-value
-// panel row — grouping any other op (e.g. not_contains) would let the chip
-// + panel UI fold "exclude A AND exclude B" into a single "[A, B]" row.
+// Keep each AND clause separate; list values belong to their own row and
+// separate range clauses must never overwrite one another on edit-open.
 // eslint-disable-next-line react-refresh/only-export-components
 export function convertOldToNew(oldFilters, { rowType } = {}) {
   const isVoiceCalls = String(rowType || "").toLowerCase() === "voicecalls";
-  const groups = new Map();
   const result = [];
   (oldFilters || []).forEach((f) => {
     if (!f) return;
@@ -302,51 +298,22 @@ export function convertOldToNew(oldFilters, { rowType } = {}) {
       op = HYDRATE_STRING_OP[op];
     }
 
-    const isMultiValueOp =
-      RANGE_OPS.has(op) || LIST_OPS.has(op) || Boolean(hydrated);
-
-    let entry;
-    if (isMultiValueOp) {
-      const key = `${registryId || "legacy"}|${field}|${op}|${category}`;
-      entry = groups.get(key);
-      if (!entry) {
-        entry = {
-          field,
-          ...(registryId ? { registryId } : {}),
-          fieldLabel: voiceField?.label || f.fieldLabel || field,
-          fieldType,
-          fieldCategory: category,
-          apiColType:
-            voiceField?.apiColType ||
-            resolveApiColType(
-              f.apiColType || f?.filterConfig?.colType,
-              category,
-            ),
-          operator: op,
-          value: [],
-          valueTypes: [],
-        };
-        groups.set(key, entry);
-        result.push(entry);
-      }
-    } else {
-      entry = {
-        field,
-        ...(registryId ? { registryId } : {}),
-        fieldLabel: voiceField?.label || f.fieldLabel || field,
-        fieldType,
-        fieldCategory: category,
-        // Preserved so the panel re-renders the right chip on edit-open.
-        apiColType: resolveApiColType(
-          voiceField?.apiColType || f.apiColType || f?.filterConfig?.colType,
-          category,
-        ),
-        operator: op,
-        value: [],
-        valueTypes: [],
-      };
-      result.push(entry);
-    }
+    const entry = {
+      field,
+      ...(registryId ? { registryId } : {}),
+      fieldLabel: voiceField?.label || f.fieldLabel || field,
+      fieldType,
+      fieldCategory: category,
+      // Preserved so the panel re-renders the right chip on edit-open.
+      apiColType: resolveApiColType(
+        voiceField?.apiColType || f.apiColType || f?.filterConfig?.colType,
+        category,
+      ),
+      operator: op,
+      value: [],
+      valueTypes: [],
+    };
+    result.push(entry);
 
     if (NO_VALUE_OPS.has(op)) return;
 
@@ -484,6 +451,7 @@ const TaskFilterBar = ({
   projectId,
   isSimulator = false,
   rowType,
+  toolbarStart,
 }) => {
   // Read the form filters (old format) and mirror them in local state (new format).
   const formFilters = useWatch({ control, name: "filters" });
@@ -625,7 +593,35 @@ const TaskFilterBar = ({
 
   return (
     <Box ref={barRef} sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
-      {hasFilters ? (
+      {(toolbarStart || !hasFilters) && (
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+          {toolbarStart}
+          <Button
+            onClick={openPanel}
+            variant="outlined"
+            size="small"
+            startIcon={<Iconify icon="mdi:filter-variant" width={14} />}
+            sx={{
+              textTransform: "none",
+              fontWeight: 500,
+              fontSize: "12px",
+              height: 30,
+              width: "fit-content",
+              flexShrink: 0,
+              borderColor: "divider",
+              color: "text.secondary",
+              "&:hover": {
+                borderColor: "text.disabled",
+                bgcolor: "action.hover",
+                color: "text.primary",
+              },
+            }}
+          >
+            Add filter
+          </Button>
+        </Box>
+      )}
+      {hasFilters && (
         <Box
           sx={{
             display: "flex",
@@ -642,38 +638,40 @@ const TaskFilterBar = ({
             />
           ))}
 
-          <Box
-            component="button"
-            type="button"
-            onClick={openPanel}
-            sx={(theme) => ({
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              width: 26,
-              height: 26,
-              p: 0,
-              border: "1px solid",
-              borderColor: "divider",
-              borderRadius: "6px",
-              bgcolor:
-                theme.palette.mode === "dark"
-                  ? "rgba(255,255,255,0.04)"
-                  : "background.paper",
-              color: "text.secondary",
-              cursor: "pointer",
-              "&:hover": {
-                color: "text.primary",
+          {!toolbarStart && (
+            <Box
+              component="button"
+              type="button"
+              onClick={openPanel}
+              sx={(theme) => ({
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 26,
+                height: 26,
+                p: 0,
+                border: "1px solid",
+                borderColor: "divider",
+                borderRadius: "6px",
                 bgcolor:
                   theme.palette.mode === "dark"
-                    ? "rgba(255,255,255,0.08)"
-                    : "action.hover",
-                borderColor: "text.disabled",
-              },
-            })}
-          >
-            <Iconify icon="mdi:plus" width={14} />
-          </Box>
+                    ? "rgba(255,255,255,0.04)"
+                    : "background.paper",
+                color: "text.secondary",
+                cursor: "pointer",
+                "&:hover": {
+                  color: "text.primary",
+                  bgcolor:
+                    theme.palette.mode === "dark"
+                      ? "rgba(255,255,255,0.08)"
+                      : "action.hover",
+                  borderColor: "text.disabled",
+                },
+              })}
+            >
+              <Iconify icon="mdi:plus" width={14} />
+            </Box>
+          )}
 
           <Box sx={{ flex: 1 }} />
           <Button
@@ -691,29 +689,6 @@ const TaskFilterBar = ({
             Clear
           </Button>
         </Box>
-      ) : (
-        <Button
-          onClick={openPanel}
-          variant="outlined"
-          size="small"
-          startIcon={<Iconify icon="mdi:filter-variant" width={14} />}
-          sx={{
-            textTransform: "none",
-            fontWeight: 500,
-            fontSize: "12px",
-            height: 30,
-            width: "fit-content",
-            borderColor: "divider",
-            color: "text.secondary",
-            "&:hover": {
-              borderColor: "text.disabled",
-              bgcolor: "action.hover",
-              color: "text.primary",
-            },
-          }}
-        >
-          Add filter
-        </Button>
       )}
 
       <TraceFilterPanel
@@ -746,6 +721,7 @@ TaskFilterBar.propTypes = {
   projectId: PropTypes.string,
   isSimulator: PropTypes.bool,
   rowType: PropTypes.string,
+  toolbarStart: PropTypes.node,
 };
 
 export default TaskFilterBar;

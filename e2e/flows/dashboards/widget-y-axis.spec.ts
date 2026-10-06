@@ -447,10 +447,10 @@ async function seedWidget(
 const uniqueName = (flow: string, testInfo: { workerIndex: number }) =>
   `e2e-${flow}-${testInfo.workerIndex}-${Date.now().toString(36)}`;
 
-test('DASH-E2E-001: widget y-axis fits its data unless a bound is typed', {
+test('DASH-E2E-013: widget y-axis fits its data unless a bound is typed', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'DASH-E2E-001',
+    id: 'DASH-E2E-013',
     area: 'dashboards',
     userGoal:
       'A user reading a dashboard widget gets a y-axis sized to the data, and can override it by typing a Threshold Bound',
@@ -528,10 +528,10 @@ test('DASH-E2E-001: widget y-axis fits its data unless a bound is typed', {
   await req.dispose();
 });
 
-test('DASH-E2E-002: Out of Bounds decides whether a typed bound clips the data', {
+test('DASH-E2E-014: Out of Bounds decides whether a typed bound clips the data', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'DASH-E2E-002',
+    id: 'DASH-E2E-014',
     area: 'dashboards',
     userGoal:
       'A user who typed a Threshold Bound tighter than their data chooses whether the chart widens to keep every point visible or clips at the bound',
@@ -609,10 +609,10 @@ test('DASH-E2E-002: Out of Bounds decides whether a typed bound clips the data',
   await req.dispose();
 });
 
-test('DASH-E2E-003: a dual-axis widget keeps one scale per side and keeps it when a series is hidden', {
+test('DASH-E2E-015: a dual-axis widget keeps one scale per side and keeps it when a series is hidden', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'DASH-E2E-003',
+    id: 'DASH-E2E-015',
     area: 'dashboards',
     userGoal:
       'A user plotting a large and a small metric together assigns one of them to the right axis, reads both off their own scale, and keeps that layout after hiding a series',
@@ -712,10 +712,10 @@ test('DASH-E2E-003: a dual-axis widget keeps one scale per side and keeps it whe
   await req.dispose();
 });
 
-test('DASH-E2E-004: a column widget keeps its bars proportional while a line widget fits the band', {
+test('DASH-E2E-016: a column widget keeps its bars proportional while a line widget fits the band', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'DASH-E2E-004',
+    id: 'DASH-E2E-016',
     area: 'dashboards',
     userGoal:
       'A user switching a widget to columns reads bar heights that are true to their values, while the same data on a line widget still gets the tight fitted axis',

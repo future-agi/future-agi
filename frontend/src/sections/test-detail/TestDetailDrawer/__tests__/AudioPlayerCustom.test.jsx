@@ -6,8 +6,9 @@ const captured = { trackUrls: null, singleUrl: null };
 
 // Mutable so a case can hand back real split channels; hoisted because the
 // vi.mock factory below is lifted above this file's other statements.
-const { stereo } = vi.hoisted(() => ({
+const { stereo, stereoArgs } = vi.hoisted(() => ({
   stereo: { assistantUrl: "", customerUrl: "", loading: false, error: null },
+  stereoArgs: { current: null },
 }));
 
 vi.mock("src/components/iconify", () => ({
@@ -17,7 +18,10 @@ vi.mock("src/components/iconify", () => ({
 }));
 
 vi.mock("src/hooks/use-stereo-channels", () => ({
-  default: () => stereo,
+  default: (...args) => {
+    stereoArgs.current = args;
+    return stereo;
+  },
 }));
 
 vi.mock("src/components/multi-track-audio-player/MultiTrackAudioPlayer", () => ({
@@ -108,6 +112,33 @@ describe("StereoMultiTrackPlayer track selection", () => {
     ]);
   });
 
+  it("hands the stereo split the backend's channel layout", () => {
+    const layout = { left: "customer", right: "assistant" };
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <AudioPlayerCustom
+          data={{
+            id: "call-3",
+            status: "completed",
+            provider: "phone",
+            call_type: "Inbound",
+            recordings: {
+              stereo: "https://example.test/stereo.wav",
+              stereo_channels: layout,
+            },
+          }}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(stereoArgs.current).toEqual([
+      "https://example.test/stereo.wav",
+      true,
+      "phone",
+      layout,
+    ]);
+  });
+
   it("uses the single-track bar when only a combined mix exists", () => {
     // A two-row waveform can neither be filled nor separate the speakers, and
     // it never reports ready while a track URL is missing.
@@ -155,6 +186,25 @@ describe("AudioPlayerCustom picks the renderer from the recording shape", () => 
             recording_available: true,
             call_metadata: {},
             recording: { mono: { combined_url: COMBINED } },
+          }}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(captured.singleUrl).toBe(COMBINED);
+    expect(captured.trackUrls).toBeNull();
+  });
+
+  it("uses audio_url when an older detail response has no recordings map", () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <AudioPlayerCustom
+          data={{
+            module: "simulate",
+            status: "completed",
+            simulation_call_type: "voice",
+            audio_url: COMBINED,
+            recordings: {},
           }}
         />
       </QueryClientProvider>,

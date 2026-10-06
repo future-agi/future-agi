@@ -25,6 +25,19 @@ const TOP_LEVEL_SIBLING_KEY_BY_PROPERTY = {
   trace_id: "trace_id",
 };
 
+// Source-less positive ID links retain their legacy sibling payload.
+// Explicit identities and exclusions need canonical rows to retain semantics.
+const isCanonicalIdFilter = (filter) =>
+  ["trace_id", "session_id"].includes(filter?.property) &&
+  Boolean(
+    filter.apiColType ||
+      filter.filterConfig?.colType ||
+      filter.fieldCategory ||
+      filter.registryId ||
+      filter.property_id ||
+      !["equals", "in"].includes(filter.filterConfig?.filterOp || "equals"),
+  );
+
 // One form row → one wire entry. Cross-row composition is the BE's job —
 // merging same-column rows would collapse "not_contains A AND not_contains B"
 // into "in [A, B]" and invert intent. OR is expressed within a single multi-
@@ -33,6 +46,7 @@ export const extractAttributeFilters = (filters) => {
   const attributeRows = (filters || []).filter((f) => {
     if (!f) return false;
     // Sibling keys are emitted separately by getNewTaskFilters.
+    if (isCanonicalIdFilter(f)) return true;
     if (f.property in TOP_LEVEL_SIBLING_KEY_BY_PROPERTY) return false;
     // Legacy rows with neither apiColType nor propertyId are BE no-ops.
     if (!f.propertyId && f.property !== "attributes") return false;
@@ -47,8 +61,19 @@ export const extractAttributeFilters = (filters) => {
 const extractSiblingFilters = (filters) => {
   const out = {};
   (filters || []).forEach((f) => {
-    const beKey = TOP_LEVEL_SIBLING_KEY_BY_PROPERTY[f?.property];
-    if (!beKey) return;
+    // Preserve old saved span links without retyping canonical or raw rows.
+    const beKey =
+      TOP_LEVEL_SIBLING_KEY_BY_PROPERTY[f?.property] ||
+      (f?.property === "span_id" &&
+      !f.propertyId &&
+      !f.apiColType &&
+      !f.filterConfig?.colType &&
+      !f.fieldCategory &&
+      !f.registryId &&
+      !f.property_id
+        ? "span_id"
+        : undefined);
+    if (!beKey || isCanonicalIdFilter(f)) return;
     const val = f?.filterConfig?.filterValue;
     const vals = Array.isArray(val)
       ? val

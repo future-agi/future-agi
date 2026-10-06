@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import axios, { endpoints } from "src/utils/axios";
+import { readQuery, endpoints } from "src/utils/axios";
 import {
   AGGREGATION_REQUEST_TIMEOUT_MS,
   awaitAggregationRequestWithDeadline,
@@ -87,7 +87,7 @@ export const useAgentGraph = (
       try {
         response = await awaitAggregationRequestWithDeadline(
           (requestSignal) =>
-            axios.get(endpoints.project.getAgentGraph(), {
+            readQuery(endpoints.project.getAgentGraph(), {
               params: {
                 project_id: projectId,
                 filters: JSON.stringify(filters || []),
@@ -139,6 +139,10 @@ export const useAgentGraph = (
     },
     enabled: !!projectId && enabled,
     staleTime: Infinity,
+    // The toolbar window is hour-stable, so a remount replays the same key.
+    // Ask the server: it serves the cached graph and, when that graph is old
+    // and its window still open, refreshes it in the background.
+    refetchOnMount: "always",
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     refetchInterval: (activeQuery) => {

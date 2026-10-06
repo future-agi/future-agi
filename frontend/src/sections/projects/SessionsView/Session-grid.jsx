@@ -11,9 +11,10 @@ import React, {
 import PropTypes from "prop-types";
 import { getRandomId } from "src/utils/utils";
 import TotalRowsStatusBar from "src/sections/develop-detail/Common/TotalRowsStatusBar";
-import axios, { endpoints } from "src/utils/axios";
+import { readQuery, endpoints } from "src/utils/axios";
 import { enqueueSnackbar } from "notistack";
 import TracesDrawer from "../TracesDrawer/TracesDrawer";
+import { useWorkspace } from "src/contexts/WorkspaceContext";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import {
   getSessionListColumnDef,
@@ -107,8 +108,21 @@ const SessionGrid = React.forwardRef(
   ) => {
     const [open, setOpen] = useState(false);
     const [currentRowData, setCurrentRowData] = useState(null);
+    const [navigationContext, setNavigationContext] = useState(null);
+    const rowNavigationContexts = useRef(new WeakMap());
+    const { currentWorkspaceId: workspaceId } = useWorkspace();
     const [continuationNotice, setContinuationNotice] = useState(null);
     const activeListReadsRef = useRef(0);
+    const inFlightPageLoads = useRef(new Map());
+    const cursorPagination = useRef(createListCursorPagination());
+    const refreshSettledRef = useRef(null);
+    useEffect(
+      () => () => {
+        // A parent may reuse the forwarded ref for a different grid after unmount.
+        cursorPagination.current.reset();
+      },
+      [],
+    );
     const gridElementRef = useRef(null);
     const {
       beginPageLoad,
@@ -128,6 +142,35 @@ const SessionGrid = React.forwardRef(
         setContinuationNotice(null);
       }
     }, [continuationNotice, gridApiRef]);
+    const refreshGrid = useCallback(() => {
+      // Same-query refresh replaces cached pages, not the currently visible rows.
+      const pendingReads = [...inFlightPageLoads.current.values()];
+      if (refreshSettledRef.current) pendingReads.push(refreshSettledRef.current);
+      inFlightPageLoads.current.clear();
+      cursorPagination.current.reset();
+      const generation = cursorPagination.current.generation();
+      const refresh = () => {
+        if (!cursorPagination.current.isCurrent(generation)) return;
+        resetPagination();
+        withLiveGridApi(gridApiRef?.current?.api, (api) =>
+          api.refreshServerSide?.({ purge: false }),
+        );
+      };
+      // AG Grid ignores refreshes of a block still loading. Let cancellation
+      // release that slot first, even if the transport never acknowledges abort.
+      if (pendingReads.length) {
+        const settled = Promise.allSettled(pendingReads);
+        refreshSettledRef.current = settled;
+        settled.then(() => {
+          if (refreshSettledRef.current === settled) {
+            refreshSettledRef.current = null;
+          }
+          refresh();
+        });
+      } else {
+        refresh();
+      }
+    }, [gridApiRef, resetPagination]);
     useEffect(() => {
       const refreshRows = () => {
         if (page > 1) {
@@ -135,14 +178,15 @@ const SessionGrid = React.forwardRef(
           return;
         }
         if (activeListReadsRef.current > 0) return;
-        withLiveGridApi(gridApiRef?.current?.api, (api) =>
-          api.refreshServerSide?.({ purge: false }),
-        );
+        refreshGrid();
       };
+      window.addEventListener("observe-refresh", refreshGrid);
       window.addEventListener(OBSERVE_LIST_REFRESH_EVENT, refreshRows);
-      return () =>
+      return () => {
+        window.removeEventListener("observe-refresh", refreshGrid);
         window.removeEventListener(OBSERVE_LIST_REFRESH_EVENT, refreshRows);
-    }, [gridApiRef, page]);
+      };
+    }, [page, refreshGrid]);
     const theme = useTheme();
     const gridThemeParams = useMemo(
       () => getSessionGridThemeParams(theme),
@@ -283,18 +327,18 @@ const SessionGrid = React.forwardRef(
 
     const [filteredColumnDefs, setFilteredColumnDefs] = useState([]);
 
-    const inFlightPageLoads = useRef(new Map());
-    const cursorPagination = useRef(createListCursorPagination());
     const cursorQueryKeyRef = useRef(null);
     const paginationRequestKey = useMemo(
       () =>
         JSON.stringify({
           projectId: projectId || null,
+          workspaceId,
+          userIdForUserMode,
           filters: toBackendFilters(filters),
           dateInterval: dateInterval || null,
           pageSize,
         }),
-      [dateInterval, filters, pageSize, projectId],
+      [dateInterval, filters, pageSize, projectId, workspaceId, userIdForUserMode],
     );
     const previousPaginationRequestKeyRef = useRef(paginationRequestKey);
     useEffect(() => {
@@ -311,14 +355,24 @@ const SessionGrid = React.forwardRef(
         cursorQueryKeyRef.current = null;
         return {
           getRows: async (params) => {
+            let requestCompleted = false;
+            const finishRequest = (result) => {
+              if (requestCompleted) return;
+              requestCompleted = true;
+              if (result) params.success(result);
+              else params.fail();
+            };
             let pageNumber = 0;
             let pageLoadRequestId = null;
             let pageLoadSucceeded = false;
             let pageLoadRowCount = 0;
             let requestGeneration = null;
+            let counted = false;
+            let continuationPending = false;
             try {
               if (!isGridApiLive(params.api)) return;
               activeListReadsRef.current += 1;
+              counted = true;
               const { request } = params;
 
               const requestPageSize = request.endRow - request.startRow;
@@ -366,7 +420,7 @@ const SessionGrid = React.forwardRef(
                     pageNumber,
                     targetRowCount: requestPageSize,
                     loadResponse: (signal) =>
-                      axios.get(endpoints.project.projectSessionList(), {
+                      readQuery(endpoints.project.projectSessionList(), {
                         params: buildParams(pageNumber),
                         signal,
                       }),
@@ -381,7 +435,7 @@ const SessionGrid = React.forwardRef(
                     isCurrent: () =>
                       cursorPagination.current.isCurrent(requestGeneration),
                     nextResponse: (_cursor, signal) =>
-                      axios.get(endpoints.project.projectSessionList(), {
+                      readQuery(endpoints.project.projectSessionList(), {
                         params: buildParams(pageNumber),
                         signal,
                       }),
@@ -486,11 +540,11 @@ const SessionGrid = React.forwardRef(
                 resumePendingListPage({
                   page: exactPage,
                   resume: () => {
+                    finishRequest();
                     if (
                       cursorPagination.current.isCurrent(requestGeneration) &&
                       isGridApiLive(params.api)
                     ) {
-                      params.fail();
                       if (params.api?.retryServerSideLoads) {
                         params.api.retryServerSideLoads();
                       } else {
@@ -500,12 +554,24 @@ const SessionGrid = React.forwardRef(
                   },
                 })
               ) {
+                continuationPending = true;
                 return;
               }
               const listReadMessage = getListReadMessage({
                 result: { table: rows, metadata },
               });
               if (listReadMessage) throw new Error(listReadMessage);
+              // Bind the actual successful request to its rows, not the route
+              // project or a later filter/sort render. Never lose decorated IDs.
+              const context = JSON.parse(JSON.stringify({
+                project_id: projectId || null,
+                workspace_id: workspaceId,
+                filters: backendFilters,
+                sort_params: sortParams,
+                cursor_mode: !sortParams.length && Boolean(buildParams(pageNumber).cursor_mode),
+                ...(userIdForUserMode ? { user_id: userIdForUserMode } : {}),
+              }));
+              rows.forEach((row) => rowNavigationContexts.current.set(row, context));
 
               const isLastPage = exactPage.isLastPage;
               // A terminal cursor is an exact exhaustion proof. Normalize an
@@ -533,7 +599,7 @@ const SessionGrid = React.forwardRef(
                 isLastPage,
               });
 
-              params.success({
+              finishRequest({
                 rowData: rows,
                 rowCount: discoveredRowCount,
               });
@@ -556,7 +622,7 @@ const SessionGrid = React.forwardRef(
                 // already rendered. This bounded pause is neutral and only a
                 // deliberate refresh/retry resumes the next exact segment.
                 setContinuationNotice(true);
-                params.fail();
+                finishRequest();
                 return;
               }
               if (
@@ -567,7 +633,7 @@ const SessionGrid = React.forwardRef(
               ) {
                 inFlightPageLoads.current.clear();
                 cursorPagination.current.disableCursor();
-                params.fail();
+                finishRequest();
                 params.api?.refreshServerSide?.({ purge: true });
                 return;
               }
@@ -582,12 +648,16 @@ const SessionGrid = React.forwardRef(
               // default AG Grid no-rows overlay would incorrectly present a
               // degraded/error response as an exact empty result; the retry
               // snackbar above is the explicit failure state instead.
-              params.fail();
+              finishRequest();
             } finally {
-              activeListReadsRef.current = Math.max(
-                0,
-                activeListReadsRef.current - 1,
-              );
+              // A promise settling alone does not release AG Grid's slot.
+              if (!continuationPending) finishRequest();
+              if (counted) {
+                activeListReadsRef.current = Math.max(
+                  0,
+                  activeListReadsRef.current - 1,
+                );
+              }
               finishPageLoad(pageLoadRequestId, {
                 succeeded: pageLoadSucceeded,
                 rowCount: pageLoadRowCount,
@@ -674,6 +744,7 @@ const SessionGrid = React.forwardRef(
       }
 
       setCurrentRowData(event.data);
+      setNavigationContext(rowNavigationContexts.current.get(event.data) || null);
       setOpen(true);
       trackEvent(Events.observeSessionidClicked);
     };
@@ -770,10 +841,12 @@ const SessionGrid = React.forwardRef(
             />
             {currentRowData ? (
               <TracesDrawer
+                key={currentRowData?.session_id}
                 open={open}
                 onClose={handleDrawerClose}
                 rowData={currentRowData}
                 userIdForUserMode={userIdForUserMode}
+                navigationContext={navigationContext}
               />
             ) : null}
           </Box>

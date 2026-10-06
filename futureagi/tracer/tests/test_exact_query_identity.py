@@ -16,6 +16,7 @@ from tracer.services.exact_aggregation_cache import (
     read_or_schedule_exact_snapshot,
     snapshot_cache_key,
 )
+from tracer.tests._graph_cost_stub import AffordableScanAnalytics
 
 PROJECT_ID = "22222222-2222-4222-8222-222222222222"
 
@@ -176,30 +177,34 @@ def test_no_filter_poll_at_a_later_time_reuses_the_original_frozen_job(monkeypat
 
 
 @pytest.mark.unit
-def test_filtered_system_graph_uses_inline_exact_reader_without_snapshot(
+def test_filtered_system_graph_uses_inline_raw_reader_without_snapshot(
     monkeypatch,
 ):
     from tracer.services.clickhouse import graph_dispatch
 
-    exact_calls = []
+    direct_calls = []
 
-    def exact_read(**kwargs):
-        exact_calls.append(kwargs)
+    def direct_read(**kwargs):
+        direct_calls.append(kwargs)
         return {
             "metric_name": "latency",
             "data": [],
             "query_complete": True,
             "query_status": "complete",
             "query_sampled": False,
+            "query_exact": False,
+            "query_provenance": "bounded_candidates",
         }
 
     monkeypatch.setattr(
         graph_dispatch,
-        "read_exact_system_graph",
-        exact_read,
+        "_fetch_direct_raw_system_metric_graph",
+        direct_read,
     )
     result = graph_dispatch.fetch_system_metric_graph_ch(
-        analytics=object(),
+        # The routing cost probe runs before the reader is chosen; this test is
+        # about the reader, so the probe is answered and answered cheaply.
+        analytics=AffordableScanAnalytics(),
         project_id=PROJECT_ID,
         filters=[_attribute_filter()],
         interval="day",
@@ -210,12 +215,12 @@ def test_filtered_system_graph_uses_inline_exact_reader_without_snapshot(
     assert result["query_status"] == "complete"
     assert result["query_complete"] is True
     assert result["query_sampled"] is False
-    assert result["query_exact"] is True
-    assert result["query_provenance"] == "exact_snapshot"
-    assert len(exact_calls) == 1
-    assert exact_calls[0]["project_id"] == PROJECT_ID
-    assert exact_calls[0]["filters"] == [_attribute_filter()]
-    assert exact_calls[0]["observe_type"] == "span"
+    assert result["query_exact"] is False
+    assert result["query_provenance"] == "bounded_candidates"
+    assert len(direct_calls) == 1
+    assert direct_calls[0]["project_id"] == PROJECT_ID
+    assert direct_calls[0]["filters"] == [_attribute_filter()]
+    assert direct_calls[0]["observe_type"] == "span"
 
 
 @pytest.mark.unit

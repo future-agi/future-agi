@@ -60,3 +60,5 @@ playwright-report/
 **/.DS_Store
 
 *.core
+# local hosted-harness bundle store (stopgap bundle delivery)
+.harness-bundles/

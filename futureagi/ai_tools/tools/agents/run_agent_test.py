@@ -37,7 +37,6 @@ class RunAgentTestTool(BaseTool):
     input_model = RunAgentTestInput
 
     def execute(self, params: RunAgentTestInput, context: ToolContext) -> ToolResult:
-
         from django.utils import timezone
 
         from simulate.models.run_test import RunTest
@@ -110,6 +109,25 @@ class RunAgentTestTool(BaseTool):
                 "The simulator agent assigned to this test has been deleted. "
                 "Please assign a new simulator agent before running."
             )
+
+        # Apply the same deployment and plan gate as the HTTP execute view
+        # before persisting or dispatching anything.
+        from simulate.models.agent_definition import AgentDefinition
+
+        if (
+            run_test.agent_definition is not None
+            and run_test.agent_definition.agent_type
+            == AgentDefinition.AgentTypeChoices.VOICE
+        ):
+            from tfc.ee_gates import voice_sim_gate_response
+
+            denial = voice_sim_gate_response(context.organization)
+            if denial is not None:
+                return ToolResult.error(
+                    denial.data["message"],
+                    data=denial.data,
+                    error_code=denial.data["code"],
+                )
 
         # Create test execution using ExecutionStatus enum
         execution = TestExecution(

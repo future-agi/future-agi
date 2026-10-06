@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -15,6 +16,24 @@ from tracer.services.clickhouse.list_cursor import (
     list_cursor_boundary_fingerprint,
 )
 from tracer.services.filter_attestation import applied_filter_attestation
+
+
+def _builder_class_mock(*, return_value=mock.DEFAULT, **kwargs):
+    """Stub query construction, retaining real class-level admission policy."""
+    from tracer.services.clickhouse.v2.query_builders.session_list import (
+        SessionListQueryBuilderV2,
+    )
+
+    factory = mock.MagicMock(wraps=SessionListQueryBuilderV2, **kwargs)
+    if return_value is not mock.DEFAULT:
+
+        def construct(**params):
+            return_value.page_number = params.get("page_number", 0)
+            return_value.page_size = params.get("page_size", 30)
+            return return_value
+
+        factory.side_effect = construct
+    return factory
 
 
 def _attribute_filter() -> dict:
@@ -61,7 +80,19 @@ def _bounded_page(
     continuation_slice_end: datetime | None = None,
     continuation_before_start_time: datetime | None = None,
     continuation_before_id: str | None = None,
+    continuation_published_order_floor: tuple | None = None,
 ) -> BoundedFilterPage:
+    if continuation_published_order_floor is None and (
+        not complete and continuation_slice_end is not None
+    ):
+        # The selector commits a publication floor with every checkpoint it
+        # commits, and the session builder keysets on the order it publishes,
+        # so a checkpoint without a floor is not a reachable page.
+        continuation_published_order_floor = (
+            (continuation_before_start_time, continuation_before_id)
+            if continuation_before_start_time is not None
+            else (continuation_slice_end, None)
+        )
     return BoundedFilterPage(
         rows=list(rows or []),
         has_more=has_more,
@@ -77,6 +108,7 @@ def _bounded_page(
         continuation_slice_end=continuation_slice_end,
         continuation_before_start_time=continuation_before_start_time,
         continuation_before_id=continuation_before_id,
+        continuation_published_order_floor=continuation_published_order_floor,
     )
 
 
@@ -103,8 +135,282 @@ def _view_and_request():
     return view, request
 
 
+def _native_user_filter(operator, value=None):
+    return {
+        "column_id": "user_id",
+        "filter_config": {
+            "col_type": "SYSTEM_METRIC",
+            "filter_type": "text",
+            "filter_op": operator,
+            "filter_value": value,
+        },
+    }
+
+
+def _session_handler_resolved_filters(filters, *, user_id=None, org_scope=False):
+    """Run the public serializer and handler up to the query construction boundary."""
+    from tracer.serializers.trace_session import TraceSessionListQuerySerializer
+    from tracer.views.trace_session import TraceSessionView
+
+    view, request = _view_and_request()
+    project_id = str(uuid.uuid4())
+    project_ids = [project_id, str(uuid.uuid4())] if org_scope else None
+    data = {"filters": json.dumps(filters)}
+    if user_id is not None:
+        data["user_id"] = user_id
+    serializer = TraceSessionListQuerySerializer(data=data)
+    serializer.is_valid(raise_exception=True)
+    analytics = mock.MagicMock()
+    display_rows = mock.MagicMock()
+    display_rows.filter.return_value = display_rows
+    display_rows.values.return_value.first.return_value = None
+    with (
+        mock.patch(
+            "tracer.services.clickhouse.v2.end_user_dict_reader.resolve_end_user_ids_by_user_id",
+            side_effect=lambda value, **kwargs: {
+                "user-a": [str(uuid.UUID(int=1))],
+                "user-b": [str(uuid.UUID(int=2))],
+            }.get(value, []),
+        ) as resolve,
+        mock.patch(
+            "tracer.views.trace_session.EndUser.objects.filter",
+            return_value=display_rows,
+        ),
+        mock.patch(
+            "tracer.views.trace_session.SessionListQueryBuilderV2",
+            _builder_class_mock(
+                side_effect=RuntimeError("stop at session query boundary")
+            ),
+        ) as builder,
+        pytest.raises(RuntimeError, match="stop at session query boundary"),
+    ):
+        TraceSessionView._list_sessions_clickhouse(
+            view,
+            request,
+            project_id=project_id,
+            project=None,
+            analytics=analytics,
+            validated_data=serializer.validated_data,
+            org_project_ids=project_ids,
+        )
+    for call in resolve.call_args_list:
+        assert call.kwargs["organization_id"] == request.organization.id
+        assert call.kwargs["project_id"] == (None if org_scope else project_id)
+        assert call.kwargs["timeout_ms"] > 0
+        assert call.kwargs["settings"] is not None
+    # Repeated leaves remain separate, but reuse the same tenant-scoped lookup.
+    assert len(resolve.call_args_list) == len(
+        {call.args[0] for call in resolve.call_args_list}
+    )
+    if display_rows.filter.called:
+        display_rows.filter.assert_any_call(organization=request.organization)
+        if org_scope:
+            assert all(
+                "project_id" not in call.kwargs
+                for call in display_rows.filter.call_args_list
+            )
+        else:
+            display_rows.filter.assert_any_call(project_id=project_id)
+    assert builder.call_args.kwargs["project_id"] == (None if org_scope else project_id)
+    assert builder.call_args.kwargs["project_ids"] == project_ids
+    analytics.execute_ch_query.assert_not_called()
+    return builder.call_args.kwargs["filters"]
+
+
 @pytest.mark.unit
-def test_session_partial_page_cursor_prefers_hidden_rollup_seed_order():
+def test_session_handler_native_user_disjoint_leaves_remain_and():
+    filters = _session_handler_resolved_filters(
+        [_native_user_filter("in", ["user-a"]), _native_user_filter("in", ["user-b"])]
+    )
+
+    assert [item["column_id"] for item in filters] == ["end_user_id", "end_user_id"]
+    assert [item["filter_config"]["filter_op"] for item in filters] == ["in", "in"]
+    assert [item["filter_config"]["filter_value"] for item in filters] == [
+        [str(uuid.UUID(int=1))],
+        [str(uuid.UUID(int=2))],
+    ]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("leaves", "user_id", "org_scope", "expected"),
+    [
+        pytest.param(
+            [("in", ["user-a", "user-b", "user-a"])],
+            None,
+            False,
+            [("in", [1, 2])],
+            id="multivalue-one-leaf",
+        ),
+        pytest.param(
+            [("not_in", ["user-a", "user-b"])],
+            None,
+            False,
+            [("not_in", [1, 2])],
+            id="negative-multivalue-one-leaf",
+        ),
+        pytest.param(
+            [("equals", "user-a"), ("not_equals", "user-b")],
+            None,
+            False,
+            [("in", [1]), ("not_in", [2])],
+            id="mixed-operators-positive-first",
+        ),
+        pytest.param(
+            [("not_equals", "user-b"), ("equals", "user-a")],
+            None,
+            False,
+            [("not_in", [2]), ("in", [1])],
+            id="mixed-operators-negative-first",
+        ),
+        pytest.param(
+            [("in", ["user-a"]), ("in", ["user-a"])],
+            None,
+            False,
+            [("in", [1]), ("in", [1])],
+            id="duplicate-valid-leaves-preserved",
+        ),
+        pytest.param(
+            [("equals", "unknown"), ("equals", "user-a")],
+            None,
+            False,
+            [("in", [0]), ("in", [1])],
+            id="unknown-positive-retains-and",
+        ),
+        pytest.param(
+            [("not_equals", "unknown"), ("equals", "user-a")],
+            None,
+            False,
+            [("in", [1])],
+            id="unknown-negative-retains-other-leaf",
+        ),
+        pytest.param(
+            [("in", ["unknown", "user-a"])],
+            None,
+            False,
+            [("in", [1])],
+            id="unknown-with-known-in-one-leaf",
+        ),
+        pytest.param(
+            [("equals", "user-a"), ("is_null", None)],
+            None,
+            False,
+            [("in", [1]), ("is_null", None)],
+            id="null-after-positive",
+        ),
+        pytest.param(
+            [("is_not_null", None), ("equals", "user-a")],
+            None,
+            False,
+            [("is_not_null", None), ("in", [1])],
+            id="positive-after-not-null",
+        ),
+        pytest.param(
+            [("in", ["user-b"])],
+            "user-a",
+            True,
+            [("in", [1]), ("in", [2])],
+            id="org-query-scope-not-unioned",
+        ),
+        pytest.param(
+            [("not_equals", "user-a")],
+            "user-a",
+            True,
+            [("in", [1]), ("not_in", [1])],
+            id="org-query-scope-not-negated",
+        ),
+        pytest.param(
+            [("equals", "unknown")],
+            "user-a",
+            True,
+            [("in", [1]), ("in", [0])],
+            id="org-query-scope-and-unknown",
+        ),
+        pytest.param(
+            [("not_equals", "unknown")],
+            "user-a",
+            True,
+            [("in", [1])],
+            id="org-query-scope-survives-unknown-negative",
+        ),
+    ],
+)
+def test_session_handler_native_user_leaf_semantics(
+    leaves, user_id, org_scope, expected
+):
+    # A property named user_id is not a native identity constraint.
+    attribute = _native_user_filter("in", ["attribute-user"])
+    attribute["filter_config"]["col_type"] = "SPAN_ATTRIBUTE"
+    filters = _session_handler_resolved_filters(
+        [attribute, *(_native_user_filter(op, value) for op, value in leaves)],
+        user_id=user_id,
+        org_scope=org_scope,
+    )
+
+    assert filters == [
+        attribute,
+        *(
+            {
+                "column_id": "end_user_id",
+                "filter_config": {
+                    "col_type": "SYSTEM_METRIC",
+                    "filter_type": "text",
+                    "filter_op": op,
+                    **(
+                        {"filter_value": [str(uuid.UUID(int=value)) for value in ids]}
+                        if ids is not None
+                        else {}
+                    ),
+                },
+            }
+            for op, ids in expected
+        ),
+    ]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("unsupported_first", [False, True])
+def test_session_handler_native_user_checks_each_operator(unsupported_first):
+    from tracer.serializers.trace_session import TraceSessionListQuerySerializer
+    from tracer.views.trace_session import TraceSessionView
+
+    filters = [
+        _native_user_filter("equals", "user-a"),
+        _native_user_filter("contains", "user-b"),
+    ]
+    if unsupported_first:
+        filters.reverse()
+    serializer = TraceSessionListQuerySerializer(data={"filters": json.dumps(filters)})
+    serializer.is_valid(raise_exception=True)
+    view, request = _view_and_request()
+    analytics = mock.MagicMock()
+    with (
+        mock.patch(
+            "tracer.services.clickhouse.v2.end_user_dict_reader.resolve_end_user_ids_by_user_id",
+            return_value=[],
+        ),
+        mock.patch(
+            "tracer.views.trace_session.SessionListQueryBuilderV2",
+            _builder_class_mock(),
+        ) as builder,
+    ):
+        response = TraceSessionView._list_sessions_clickhouse(
+            view,
+            request,
+            project_id=str(uuid.uuid4()),
+            project=None,
+            analytics=analytics,
+            validated_data=serializer.validated_data,
+        )
+
+    assert response[0] == "bad_request"
+    assert "Unsupported operator 'contains' for user_id filter" in response[1]
+    builder.assert_not_called()
+    analytics.execute_ch_query.assert_not_called()
+
+
+@pytest.mark.unit
+def test_session_partial_page_cursor_uses_canonical_order_not_stale_rollup():
     from tracer.views.trace_session import _session_list_cursor_order_for_partial_page
 
     seed_start = datetime(2025, 1, 1, 0, 0)
@@ -112,20 +418,41 @@ def test_session_partial_page_cursor_prefers_hidden_rollup_seed_order():
     raw_session_id = str(uuid.uuid4())
     canonical_session_id = str(uuid.uuid4())
 
+    rows = [
+        {
+            "session_id": canonical_session_id,
+            "start_time": exact_start,
+            "_seed_order_start": seed_start,
+            "_seed_order_id": raw_session_id,
+        }
+    ]
+
+    # A page that filled its prefix and left matches over resumes at its last
+    # published row, in the classified order, never at the raw seed rollup.
     order = _session_list_cursor_order_for_partial_page(
-        rows=[
-            {
-                "session_id": canonical_session_id,
-                "start_time": exact_start,
-                "_seed_order_start": seed_start,
-                "_seed_order_id": raw_session_id,
-            }
-        ],
-        bounded_page=SimpleNamespace(),
+        rows=rows,
+        bounded_page=SimpleNamespace(
+            has_more=True,
+            continuation_published_order_floor=None,
+        ),
         cursor_state=None,
     )
 
-    assert order == (seed_start, raw_session_id)
+    assert order == (exact_start, canonical_session_id)
+
+    # A page stopped at its wall resumes at the boundary the selector proves,
+    # which is the only value that makes the next hop's exclusive bound true.
+    floor_start = datetime(2026, 8, 20, 6, 0)
+    checkpoint_order = _session_list_cursor_order_for_partial_page(
+        rows=rows,
+        bounded_page=SimpleNamespace(
+            has_more=False,
+            continuation_published_order_floor=(floor_start, raw_session_id),
+        ),
+        cursor_state=None,
+    )
+
+    assert checkpoint_order == (floor_start, raw_session_id)
 
 
 @pytest.mark.unit
@@ -139,7 +466,7 @@ def test_org_session_relational_collision_fails_before_id_only_hydration():
     builder.supports_candidate_first_page.return_value = False
     builder.supports_bounded_filter_scan.return_value = True
     builder.recommended_filter_classify_batch_size.return_value = 50
-    builder_cls = mock.MagicMock(return_value=builder)
+    builder_cls = _builder_class_mock(return_value=builder)
     analytics = mock.MagicMock()
     bounded = _bounded_page(
         rows=[
@@ -183,9 +510,7 @@ def test_org_session_relational_collision_fails_before_id_only_hydration():
         "Session data is temporarily unavailable. Please retry.",
         "service_unavailable",
     )
-    builder.build_page_metrics_query.assert_not_called()
-    builder.build_content_query.assert_not_called()
-    builder.build_span_attributes_query.assert_not_called()
+    builder.build_page_hydration_query.assert_not_called()
     analytics.execute_ch_query.assert_not_called()
 
 
@@ -199,7 +524,7 @@ def test_default_org_session_collision_fails_before_id_only_hydration():
     builder = mock.MagicMock()
     builder.supports_candidate_first_page.return_value = True
     builder.build_candidate_page_query.return_value = ("candidate page", {})
-    builder_cls = mock.MagicMock(return_value=builder)
+    builder_cls = _builder_class_mock(return_value=builder)
     analytics = mock.MagicMock()
     analytics.execute_ch_query.return_value = SimpleNamespace(
         data=[
@@ -237,9 +562,7 @@ def test_default_org_session_collision_fails_before_id_only_hydration():
         "Session data is temporarily unavailable. Please retry.",
         "service_unavailable",
     )
-    builder.build_page_metrics_query.assert_not_called()
-    builder.build_content_query.assert_not_called()
-    builder.build_span_attributes_query.assert_not_called()
+    builder.build_page_hydration_query.assert_not_called()
 
 
 @pytest.mark.unit
@@ -255,7 +578,7 @@ def test_org_session_view_passes_disjoint_annotation_label_sets_to_builder():
     builder.supports_candidate_first_page.return_value = True
     builder.build_candidate_page_query.return_value = ("candidate page", {})
     builder.build_candidate_count_query.return_value = ("candidate count", {})
-    builder_cls = mock.MagicMock(return_value=builder)
+    builder_cls = _builder_class_mock(return_value=builder)
     analytics = mock.MagicMock()
     analytics.execute_ch_query.side_effect = [
         SimpleNamespace(data=[]),
@@ -320,13 +643,20 @@ def test_direct_write_session_attribute_query_replays_all_typed_maps():
         ],
     )
 
-    query, _ = builder.build_span_attributes_query([str(uuid.uuid4())])
+    query, _ = builder.build_page_hydration_query([str(uuid.uuid4())])
 
     assert "argMax(attrs_string, _version) AS latest_attrs_string" in query
     assert "argMax(attrs_number, _version) AS latest_attrs_number" in query
     assert "argMax(attrs_bool, _version) AS latest_attrs_bool" in query
-    assert "latest_attrs_bool AS attrs_bool" in query
+    assert "latest_attrs_bool AS session_attribute_bool" in query
     assert "length(mapKeys(latest_attrs_bool)) > 0" in query
+    assert (
+        "groupArrayIf(session_attribute_bool, has_span_attributes)"
+        " AS session_attribute_bool_list" in query
+    )
+    assert ("session_attribute_bool_list", "attrs_bool") in (
+        SessionListQueryBuilderV2.PAGE_ATTRIBUTE_ARRAY_COLUMNS
+    )
 
 
 @pytest.mark.unit
@@ -454,7 +784,7 @@ def test_session_end_user_dictionary_lookup_remap_is_candidate_bounded():
 
 
 @pytest.mark.unit
-def test_user_detail_reverse_lookup_keeps_transport_and_query_under_10_seconds(
+def test_user_detail_reverse_lookup_keeps_transport_safety_not_statement_caps(
     monkeypatch,
 ):
     import sys
@@ -505,14 +835,16 @@ def test_user_detail_reverse_lookup_keeps_transport_and_query_under_10_seconds(
         reader._reset_client()
 
     assert client_factory.call_args.kwargs["send_receive_timeout"] == 9.5
-    assert "settings" not in client_factory.call_args.kwargs
+    assert client_factory.call_args.kwargs["settings"]["max_execution_time"] == 0
+    assert client.timeout.read_timeout is None
+    assert client.timeout.connect_timeout == 10
     query_settings = client.query.call_args.kwargs["settings"]
-    assert query_settings["max_execution_time"] == 9.5
-    assert "max_rows_to_read" not in query_settings
+    assert query_settings["max_execution_time"] == 0
+    assert query_settings["max_rows_to_read"] == 0
     assert query_settings["max_memory_usage"] == 36 * 1024 * 1024 * 1024
-    assert query_settings["max_bytes_to_read"] == 256 * 1024 * 1024
+    assert query_settings["max_bytes_to_read"] == 0
     assert query_settings["max_threads"] == 2
-    assert query_settings["max_result_rows"] == 10_000
+    assert query_settings["max_result_rows"] == 0
 
 
 @pytest.mark.unit
@@ -589,18 +921,34 @@ def test_attribute_session_list_uses_bounded_protocol_and_page_scoped_hydration(
     builder.supports_candidate_first_page.return_value = False
     builder.supports_bounded_filter_scan.return_value = True
     builder.recommended_filter_classify_batch_size.return_value = 50
-    builder.build_page_metrics_query.return_value = ("page metrics", {})
-    builder.build_content_query.return_value = ("page content", {})
-    builder.build_span_attributes_query.return_value = ("page attributes", {})
+    builder.build_page_hydration_query.return_value = ("page hydration", {})
+    builder.expand_page_attribute_rows.return_value = []
     builder.format_sessions.side_effect = lambda rows, columns: [
         dict(zip(columns, row, strict=True)) for row in rows
     ]
-    builder_cls = mock.MagicMock(return_value=builder)
+    builder_cls = _builder_class_mock(return_value=builder)
 
     analytics = mock.MagicMock()
+    attribute_values = {f"custom_{i}": f"value_{i}" for i in range(260)}
+    attribute_values.update({"long_text": "K" * 2048, "raw.custom": "visible"})
+    attribute_rows = [
+        {
+            "session_id": session_id,
+            "attrs_string": attribute_values,
+            "attrs_number": {"amount": 1.5},
+            "attrs_bool": {"approved": 0},
+            "span_attributes_raw": json.dumps({"structured": {"steps": [1, 2]}}),
+        },
+        {
+            "session_id": session_id,
+            "attrs_string": {"session_id": "must-not-replace-identity"},
+            "attrs_bool": {"approved": 1},
+            "span_attributes_raw": json.dumps({"structured": {"steps": [1, 2]}}),
+        },
+    ]
 
     def _execute(query, _params, **_kwargs):
-        if query == "page metrics":
+        if query == "page hydration":
             return SimpleNamespace(
                 data=[
                     {
@@ -611,23 +959,14 @@ def test_attribute_session_list_uses_bounded_protocol_and_page_scoped_hydration(
                         "total_cost": 0,
                         "total_tokens": 0,
                         "traces_count": 1,
-                    }
-                ]
-            )
-        if query == "page content":
-            return SimpleNamespace(
-                data=[
-                    {
-                        "session_id": session_id,
                         "first_message": "first",
                         "last_message": "last",
                     }
                 ]
             )
-        if query == "page attributes":
-            return SimpleNamespace(data=[])
         raise AssertionError(f"unexpected broad ClickHouse query: {query}")
 
+    builder.expand_page_attribute_rows.return_value = attribute_rows
     analytics.execute_ch_query.side_effect = _execute
     view._fetch_session_names = mock.MagicMock(return_value={})
     view._fetch_end_user_info = mock.MagicMock(return_value={})
@@ -740,6 +1079,13 @@ def test_attribute_session_list_uses_bounded_protocol_and_page_scoped_hydration(
     }
     assert payload["table"][0]["first_message"] == "first"
     assert payload["table"][0]["last_message"] == "last"
+    hydrated = payload["table"][0]
+    assert all(hydrated.get(key) == value for key, value in attribute_values.items())
+    assert hydrated["amount"] == 1.5
+    assert hydrated["approved"] == [False, True]
+    assert all(type(value) is bool for value in hydrated["approved"])
+    assert hydrated["structured"] == {"steps": [1, 2]}
+    assert hydrated["session_id"] == session_id
     assert bounded_read.call_count == 4
     bounded_kwargs = bounded_read.call_args.kwargs
     assert bounded_kwargs["key_field"] == "session_id"
@@ -749,9 +1095,7 @@ def test_attribute_session_list_uses_bounded_protocol_and_page_scoped_hydration(
     assert bounded_kwargs["classify_batch_size"] == 50
     builder.build_candidate_page_query.assert_not_called()
     builder.build.assert_not_called()
-    assert builder.build_page_metrics_query.call_count == 4
-    assert builder.build_content_query.call_count == 4
-    assert builder.build_span_attributes_query.call_count == 4
+    assert builder.build_page_hydration_query.call_count == 4
 
 
 @pytest.mark.unit
@@ -763,7 +1107,7 @@ def test_candidate_first_session_list_keeps_exact_metadata():
     builder.supports_candidate_first_page.return_value = True
     builder.build_candidate_page_query.return_value = ("candidate page", {})
     builder.build_candidate_count_query.return_value = ("candidate count", {})
-    builder_cls = mock.MagicMock(return_value=builder)
+    builder_cls = _builder_class_mock(return_value=builder)
     analytics = mock.MagicMock()
 
     def _execute(query, _params, **_kwargs):
@@ -820,9 +1164,8 @@ def test_session_list_keeps_exact_page_when_end_user_label_enrichment_exhausts_b
     builder = mock.MagicMock()
     builder.supports_candidate_first_page.return_value = True
     builder.build_candidate_page_query.return_value = ("candidate page", {})
-    builder.build_page_metrics_query.return_value = ("page metrics", {})
-    builder.build_content_query.return_value = ("page content", {})
-    builder.build_span_attributes_query.return_value = ("page attributes", {})
+    builder.build_page_hydration_query.return_value = ("page hydration", {})
+    builder.expand_page_attribute_rows.return_value = []
     builder.format_sessions.side_effect = lambda rows, columns: [
         dict(zip(columns, row, strict=True)) for row in rows
     ]
@@ -831,7 +1174,7 @@ def test_session_list_keeps_exact_page_when_end_user_label_enrichment_exhausts_b
     def _execute(query, _params, **_kwargs):
         if query == "candidate page":
             return SimpleNamespace(data=[{"session_id": session_id, "total_count": 1}])
-        if query == "page metrics":
+        if query == "page hydration":
             return SimpleNamespace(
                 data=[
                     {
@@ -842,13 +1185,11 @@ def test_session_list_keeps_exact_page_when_end_user_label_enrichment_exhausts_b
                         "total_cost": 0,
                         "total_tokens": 0,
                         "traces_count": 1,
+                        "first_message": "",
+                        "last_message": "",
                     }
                 ]
             )
-        if query == "page content":
-            return SimpleNamespace(data=[])
-        if query == "page attributes":
-            return SimpleNamespace(data=[])
         raise AssertionError(f"unexpected ClickHouse query: {query}")
 
     analytics.execute_ch_query.side_effect = _execute
@@ -860,7 +1201,7 @@ def test_session_list_keeps_exact_page_when_end_user_label_enrichment_exhausts_b
     with (
         mock.patch(
             "tracer.views.trace_session.SessionListQueryBuilderV2",
-            return_value=builder,
+            _builder_class_mock(return_value=builder),
         ),
         mock.patch(
             "tracer.views.trace_session.AnnotationsLabels.objects.filter",
@@ -900,9 +1241,8 @@ def test_session_export_rejects_truncated_exact_first_page():
     builder = mock.MagicMock()
     builder.supports_candidate_first_page.return_value = True
     builder.build_candidate_page_query.return_value = ("candidate page", {})
-    builder.build_page_metrics_query.return_value = ("page metrics", {})
-    builder.build_content_query.return_value = ("page content", {})
-    builder.build_span_attributes_query.return_value = ("page attributes", {})
+    builder.build_page_hydration_query.return_value = ("page hydration", {})
+    builder.expand_page_attribute_rows.return_value = []
     builder.format_sessions.side_effect = lambda rows, columns: [
         dict(zip(columns, row, strict=True)) for row in rows
     ]
@@ -911,7 +1251,7 @@ def test_session_export_rejects_truncated_exact_first_page():
     def _execute(query, _params, **_kwargs):
         if query == "candidate page":
             return SimpleNamespace(data=[{"session_id": session_id, "total_count": 2}])
-        if query == "page metrics":
+        if query == "page hydration":
             return SimpleNamespace(
                 data=[
                     {
@@ -922,21 +1262,11 @@ def test_session_export_rejects_truncated_exact_first_page():
                         "total_cost": 0,
                         "total_tokens": 0,
                         "traces_count": 1,
-                    }
-                ]
-            )
-        if query == "page content":
-            return SimpleNamespace(
-                data=[
-                    {
-                        "session_id": session_id,
                         "first_message": "first",
                         "last_message": "last",
                     }
                 ]
             )
-        if query == "page attributes":
-            return SimpleNamespace(data=[])
         raise AssertionError(f"unexpected ClickHouse query: {query}")
 
     analytics.execute_ch_query.side_effect = _execute
@@ -946,7 +1276,7 @@ def test_session_export_rejects_truncated_exact_first_page():
     with (
         mock.patch(
             "tracer.views.trace_session.SessionListQueryBuilderV2",
-            return_value=builder,
+            _builder_class_mock(return_value=builder),
         ),
         mock.patch(
             "tracer.views.trace_session.AnnotationsLabels.objects.filter",
@@ -984,7 +1314,7 @@ def test_incomplete_bounded_session_list_returns_sanitized_503_without_hydration
     builder = mock.MagicMock()
     builder.supports_candidate_first_page.return_value = False
     builder.supports_bounded_filter_scan.return_value = True
-    builder_cls = mock.MagicMock(return_value=builder)
+    builder_cls = _builder_class_mock(return_value=builder)
     analytics = mock.MagicMock()
 
     with (
@@ -1023,7 +1353,7 @@ def test_incomplete_bounded_session_list_returns_sanitized_503_without_hydration
     analytics.execute_ch_query.assert_not_called()
     builder.build_candidate_page_query.assert_not_called()
     builder.build.assert_not_called()
-    builder.build_page_metrics_query.assert_not_called()
+    builder.build_page_hydration_query.assert_not_called()
 
 
 @pytest.mark.unit
@@ -1073,20 +1403,29 @@ def test_positive_user_cursor_uses_exact_keyset_pages_without_duplicates():
     builder.supports_candidate_first_page.return_value = True
     builder.supports_candidate_cursor_page.return_value = True
     builder.supports_bounded_filter_scan.return_value = True
+    # The real builder answers ``None`` unless the seed witness lane is on.
+    builder.filter_seed_witness_slack_hours.return_value = None
+    # Match the real builder: the insert-only rollup seed is retired.
+    builder.filter_candidate_seed_is_sampled.return_value = False
     builder.parse_time_range.return_value = (window_start, window_end)
     builder.build_candidate_cursor_page_query.side_effect = [
         ("candidate cursor first", {}),
         ("candidate cursor next", {}),
     ]
-    builder.build_page_metrics_query.side_effect = lambda ids: (
-        "page metrics",
+    # The candidate cursor route costs every candidate slice width against an
+    # index-only probe before it narrows anything. This double answers with an
+    # unreadable estimate, which is the explicit "do not narrow" case, so both
+    # pages below are the whole-window statement exactly as before.
+    builder.build_candidate_slice_density_probe_query.return_value = (
+        "candidate density probe",
+        {},
+    )
+    builder.candidate_slice_density_estimate.return_value = None
+    builder.build_page_hydration_query.side_effect = lambda ids: (
+        "page hydration",
         {"ids": tuple(ids)},
     )
-    builder.build_content_query.side_effect = lambda ids: (
-        "page content",
-        {"ids": tuple(ids)},
-    )
-    builder.build_span_attributes_query.return_value = ("page attributes", {})
+    builder.expand_page_attribute_rows.return_value = []
     builder.format_sessions.side_effect = lambda rows, columns: [
         dict(zip(columns, row, strict=True)) for row in rows
     ]
@@ -1131,22 +1470,19 @@ def test_positive_user_cursor_uses_exact_keyset_pages_without_duplicates():
                     }
                 ]
             )
-        if query == "page metrics":
-            return SimpleNamespace(
-                data=[_metrics_row(sid, starts[sid]) for sid in params["ids"]]
-            )
-        if query == "page content":
+        if query == "page hydration":
             return SimpleNamespace(
                 data=[
-                    {
-                        "session_id": sid,
+                    _metrics_row(sid, starts[sid])
+                    | {
                         "first_message": f"first-{sid}",
                         "last_message": f"last-{sid}",
                     }
                     for sid in params["ids"]
                 ]
             )
-        if query == "page attributes":
+        if query == "candidate density probe":
+            # No ``columns``: the width reducer reports "unknown", not zero.
             return SimpleNamespace(data=[])
         raise AssertionError(f"unexpected ClickHouse query: {query}")
 
@@ -1174,7 +1510,7 @@ def test_positive_user_cursor_uses_exact_keyset_pages_without_duplicates():
     with (
         mock.patch(
             "tracer.views.trace_session.SessionListQueryBuilderV2",
-            return_value=builder,
+            _builder_class_mock(return_value=builder),
         ),
         mock.patch(
             "tracer.views.trace_session.read_bounded_filter_page"
@@ -1215,6 +1551,8 @@ def test_positive_user_cursor_uses_exact_keyset_pages_without_duplicates():
         "query_complete": True,
         "query_status": "complete",
         "query_error_code": None,
+        "query_exact": True,
+        "ordering_exact": True,
         **applied_filter_attestation(
             project_id=project_id,
             observe_type="session",
@@ -1231,6 +1569,8 @@ def test_positive_user_cursor_uses_exact_keyset_pages_without_duplicates():
         "query_complete": True,
         "query_status": "complete",
         "query_error_code": None,
+        "query_exact": True,
+        "ordering_exact": True,
         **applied_filter_attestation(
             project_id=project_id,
             observe_type="session",
@@ -1242,10 +1582,12 @@ def test_positive_user_cursor_uses_exact_keyset_pages_without_duplicates():
     assert first_call.kwargs == {
         "before_start_time": None,
         "before_session_id": None,
+        "scan_start_time": None,
     }
     assert second_call.kwargs == {
         "before_start_time": newest_start,
         "before_session_id": newest_id,
+        "scan_start_time": None,
     }
 
 
@@ -1271,18 +1613,19 @@ def test_sparse_session_cursor_follows_checkpoint_without_skip_or_duplicate(
     builder.supports_candidate_first_page.return_value = True
     builder.supports_candidate_cursor_page.return_value = False
     builder.supports_bounded_filter_scan.return_value = True
+    # The real builder answers ``None`` unless the seed witness lane is on.
+    builder.filter_seed_witness_slack_hours.return_value = None
     builder.recommended_filter_classify_batch_size.return_value = 50
     builder.parse_time_range.return_value = (window_start, window_end)
-    builder.build_page_metrics_query.return_value = ("page metrics", {})
-    builder.build_content_query.return_value = ("page content", {})
-    builder.build_span_attributes_query.return_value = ("page attributes", {})
+    builder.build_page_hydration_query.return_value = ("page hydration", {})
+    builder.expand_page_attribute_rows.return_value = []
     builder.format_sessions.side_effect = lambda rows, columns: [
         dict(zip(columns, row, strict=True)) for row in rows
     ]
     analytics = mock.MagicMock()
 
     def _execute(query, _params, **_kwargs):
-        if query == "page metrics":
+        if query == "page hydration":
             return SimpleNamespace(
                 data=[
                     {
@@ -1293,21 +1636,11 @@ def test_sparse_session_cursor_follows_checkpoint_without_skip_or_duplicate(
                         "total_cost": 0,
                         "total_tokens": 0,
                         "traces_count": 1,
-                    }
-                ]
-            )
-        if query == "page content":
-            return SimpleNamespace(
-                data=[
-                    {
-                        "session_id": session_id,
                         "first_message": "first",
                         "last_message": "last",
                     }
                 ]
             )
-        if query == "page attributes":
-            return SimpleNamespace(data=[])
         raise AssertionError(f"unexpected ClickHouse query: {query}")
 
     analytics.execute_ch_query.side_effect = _execute
@@ -1335,7 +1668,7 @@ def test_sparse_session_cursor_follows_checkpoint_without_skip_or_duplicate(
     with (
         mock.patch(
             "tracer.views.trace_session.SessionListQueryBuilderV2",
-            return_value=builder,
+            _builder_class_mock(return_value=builder),
         ),
         mock.patch(
             "tracer.views.trace_session.read_bounded_filter_page",
@@ -1369,9 +1702,16 @@ def test_sparse_session_cursor_follows_checkpoint_without_skip_or_duplicate(
     assert first_payload["metadata"]["total_rows"] == 0
     assert first_payload["metadata"]["total_rows_is_lower_bound"] is True
     assert first_payload["metadata"]["has_more"] is True
-    assert first_payload["metadata"]["query_complete"] is True
-    assert first_payload["metadata"]["query_status"] == "complete"
-    assert first_payload["metadata"]["query_error_code"] is None
+    # This first page did NOT finish its chunk: it stopped on its deadline and
+    # published the checkpoint it had reached. Carrying a cursor is what makes
+    # it resumable, not what makes it whole, so it is published as degraded
+    # and incomplete with the reason it stopped. The rest of this test is
+    # about the cursor following that checkpoint without skipping or
+    # duplicating a row, which is unchanged.
+    # A checkpoint that proved no row is an unfinished scan, not an answer.
+    assert first_payload["metadata"]["query_complete"] is False
+    assert first_payload["metadata"]["query_status"] == "degraded"
+    assert first_payload["metadata"]["query_error_code"] == "deadline_exceeded"
     assert first_payload["metadata"]["query_exact"] is False
     assert first_payload["metadata"]["query_provenance"] == (
         "spans_per_session_candidate"
@@ -1393,3 +1733,383 @@ def test_sparse_session_cursor_follows_checkpoint_without_skip_or_duplicate(
     assert continuation["bounded_continuation"] is True
     assert continuation["include_incomplete_rows"] is True
     assert continuation["continuation_slice_end"] == checkpoint_end
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("org", [False, True])
+@pytest.mark.parametrize("cursor", [False, True])
+# Every typed picker map takes the walk: a number or boolean leaf used to keep
+# the candidate lane, whose any-span witness dies before start at long windows
+# on a high-volume tenant (see ``prefers_bounded_filter_page``).
+@pytest.mark.parametrize(
+    "kind,preferred",
+    [("text", True), ("mixed", True), ("number", True), ("boolean", True)],
+)
+def test_string_page_public_dispatch_and_old_order_token(org, cursor, kind, preferred):
+    from tracer.services.clickhouse.list_cursor import encode_list_cursor
+    from tracer.tests.test_session_positive_witness_page import (
+        OTHER,
+        PROJECT,
+        START,
+        USER,
+        builder,
+        leaf,
+    )
+    from tracer.views.trace_session import TraceSessionView
+
+    filters = [leaf("company", ["alpha"], "text", "in")]
+    if kind in {"mixed", "number"}:
+        filters.append(
+            leaf("other", False, "boolean") if kind == "mixed" else leaf("other", 7)
+        )
+    elif kind == "boolean":
+        filters = [leaf("flag", True, "boolean")]
+    view, request = _view_and_request()
+    analytics = SimpleNamespace(
+        execute_ch_query=mock.Mock(return_value=SimpleNamespace(data=[]))
+    )
+    data = {
+        "filters": builder(*filters).filters,
+        "sort_params": [],
+        "page_number": 0,
+        "page_size": 2,
+        "cursor_mode": cursor,
+    }
+    kwargs = {
+        "project_id": None if org else PROJECT,
+        "project": None,
+        "analytics": analytics,
+        "org_project_ids": [PROJECT, OTHER] if org else None,
+    }
+    with mock.patch(
+        "tracer.views.trace_session._read_session_filter_page",
+        return_value=_bounded_page(),
+    ) as bounded:
+        selected = TraceSessionView._select_session_page(
+            view, request, validated_data=data, **kwargs
+        )
+    # The candidate cursor route costs its slice width against an index-only
+    # density probe before the page statement; this double reports no columns,
+    # so the width reducer says "unknown" and the page is read unnarrowed.
+    expected_reads = 0 if preferred else (2 if cursor else 1)
+    assert (
+        bounded.call_count == int(preferred)
+        and analytics.execute_ch_query.call_count == expected_reads
+    )
+    assert selected.candidate_cursor is (cursor and not preferred)
+    assert (
+        selected.cursor_query["session_order_contract"]
+        == "latest-root-physical-key-v2-string-page-first"
+    )
+    if cursor:
+        token = encode_list_cursor(
+            resource="observe_sessions",
+            scope=selected.cursor_scope,
+            query={
+                **selected.cursor_query,
+                "session_order_contract": "latest-root-physical-key-v1",
+            },
+            page_size=2,
+            window_start=START,
+            window_end=START + timedelta(days=7),
+            order=(START, USER),
+            seen_rows=2,
+        )
+        analytics.execute_ch_query.reset_mock()
+        with (
+            pytest.raises(ListCursorError),
+            mock.patch(
+                "tracer.views.trace_session._read_session_filter_page",
+                side_effect=AssertionError("Old order must fail before reading"),
+            ),
+        ):
+            TraceSessionView._select_session_page(
+                view, request, validated_data={**data, "cursor": token}, **kwargs
+            )
+        analytics.execute_ch_query.assert_not_called()
+
+
+@pytest.mark.unit
+def test_wall_stopped_session_hops_advance_the_public_bound_to_each_floor():
+    """Each wall-stopped hop hands out the boundary its own scan proved.
+
+    A hop that publishes nothing used to re-hand the bound it was given, and a
+    hop that published one row handed out that row's rank. Neither is a fact
+    about the scan: on this route a session is ranked by its oldest root and
+    discovered by any of them, so the published rank sits arbitrarily far below
+    the position the walk reached. The next hop then classified sessions that
+    outranked the bound, dropped every one of them as "already published", and
+    advanced its checkpoint past their seeds - so they left the list for good.
+    The bound has to descend with the floor instead.
+    """
+
+    from tracer.views.trace_session import TraceSessionView
+
+    view, request = _view_and_request()
+    request.query_params = {"cursor_mode": "true", "allow_sampled": "false"}
+    project_id = str(uuid.uuid4())
+    session_id = str(uuid.uuid4())
+    window_start = datetime(2025, 8, 1, tzinfo=UTC)
+    window_end = datetime(2026, 8, 1, tzinfo=UTC)
+    first_floor = window_end - timedelta(days=9)
+    second_floor_time = window_end - timedelta(days=11)
+    second_floor_id = str(uuid.uuid4())
+    session_start = window_start + timedelta(days=2)
+
+    builder = mock.MagicMock()
+    builder.supports_candidate_first_page.return_value = True
+    builder.supports_candidate_cursor_page.return_value = False
+    builder.supports_bounded_filter_scan.return_value = True
+    builder.filter_seed_witness_slack_hours.return_value = None
+    builder.recommended_filter_classify_batch_size.return_value = 50
+    builder.parse_time_range.return_value = (window_start, window_end)
+    builder.build_page_hydration_query.return_value = ("page hydration", {})
+    builder.expand_page_attribute_rows.return_value = []
+    builder.format_sessions.side_effect = lambda rows, columns: [
+        dict(zip(columns, row, strict=True)) for row in rows
+    ]
+    analytics = mock.MagicMock()
+
+    def _execute(query, _params, **_kwargs):
+        if query == "page hydration":
+            return SimpleNamespace(
+                data=[
+                    {
+                        "session_id": session_id,
+                        "session_start": session_start,
+                        "session_end": session_start,
+                        "duration": 0,
+                        "total_cost": 0,
+                        "total_tokens": 0,
+                        "traces_count": 1,
+                        "first_message": "first",
+                        "last_message": "last",
+                    }
+                ]
+            )
+        raise AssertionError(f"unexpected ClickHouse query: {query}")
+
+    analytics.execute_ch_query.side_effect = _execute
+    view._fetch_session_names = mock.MagicMock(return_value={})
+    view._fetch_end_user_info = mock.MagicMock(return_value={})
+    pages = [
+        # An exhausted slice: the whole boundary microsecond is published.
+        _bounded_page(
+            complete=False,
+            error_code="deadline_exceeded",
+            continuation_slice_end=first_floor,
+        ),
+        # An in-slice keyset: the row at the keyset itself was consumed.
+        _bounded_page(
+            complete=False,
+            error_code="deadline_exceeded",
+            continuation_slice_end=window_end - timedelta(days=10),
+            continuation_before_start_time=second_floor_time,
+            continuation_before_id=second_floor_id,
+        ),
+        _bounded_page(
+            rows=[{"session_id": session_id, "start_time": session_start}],
+            complete=True,
+            total_rows_lower_bound=1,
+        ),
+    ]
+    validated_data = {
+        "filters": [_attribute_filter()],
+        "sort_params": [],
+        "page_number": 0,
+        "page_size": 1,
+        "cursor_mode": True,
+        "allow_sampled": False,
+    }
+
+    statuses = []
+    payloads = []
+    with (
+        mock.patch(
+            "tracer.views.trace_session.SessionListQueryBuilderV2",
+            _builder_class_mock(return_value=builder),
+        ),
+        mock.patch(
+            "tracer.views.trace_session.read_bounded_filter_page",
+            side_effect=pages,
+        ) as bounded_read,
+        mock.patch(
+            "tracer.views.trace_session.AnnotationsLabels.objects.filter",
+            return_value=[],
+        ),
+    ):
+        cursor = None
+        for _ in pages:
+            status, payload = TraceSessionView._list_sessions_clickhouse(
+                view,
+                request,
+                project_id=project_id,
+                project=None,
+                analytics=analytics,
+                validated_data=(
+                    validated_data
+                    if cursor is None
+                    else {**validated_data, "cursor": cursor}
+                ),
+            )
+            statuses.append(status)
+            payloads.append(payload)
+            cursor = payload["metadata"]["next_cursor"]
+
+    assert statuses == ["ok", "ok", "ok"]
+    assert [payload["table"] for payload in payloads[:2]] == [[], []]
+    # A wall-stopped page reports no more rows on the page it just published
+    # and still hands out a cursor, because its scan carries a checkpoint; the
+    # client keeps hopping on has_more. It is also disclosed as unfinished:
+    # a cursor does not make an unfinished page complete.
+    for payload in payloads[:2]:
+        assert payload["metadata"]["next_cursor"] is not None
+        assert payload["metadata"]["has_more"] is True
+        assert payload["metadata"]["query_complete"] is False
+    assert [row["session_id"] for row in payloads[2]["table"]] == [session_id]
+    assert bounded_read.call_count == 3
+    first, second, third = bounded_read.call_args_list
+    assert first.kwargs["cursor_start_time"] is None
+    assert first.kwargs["cursor_order_token"] is None
+    # An exhausted slice bounds the next hop at its end, below every token.
+    assert second.kwargs["cursor_start_time"] == first_floor
+    assert second.kwargs["cursor_order_token"] == ""
+    # A keyset bounds it at the keyset itself, which is inclusive of that row.
+    assert third.kwargs["cursor_start_time"] == second_floor_time
+    assert third.kwargs["cursor_order_token"] == second_floor_id
+
+
+def _session_list_outcome(*, complete: bool, seed_is_sampled: bool):
+    """Drive one bounded session page and return the view's raw outcome."""
+    from tracer.views.trace_session import TraceSessionView
+
+    view, request = _view_and_request()
+    session_id = str(uuid.uuid4())
+    start_time = datetime(2026, 7, 31, 12, 0)
+
+    builder = mock.MagicMock()
+    builder.supports_candidate_first_page.return_value = False
+    builder.supports_bounded_filter_scan.return_value = True
+    builder.recommended_filter_classify_batch_size.return_value = 50
+    builder.prefers_bounded_filter_page.return_value = True
+    builder.filter_candidate_seed_is_sampled.return_value = seed_is_sampled
+    # The train fused the page's three enrichment reads (metrics, content,
+    # span attributes) into one hydration statement, so that is the binding
+    # this helper has to stub; the retired trio is never called.
+    builder.build_page_hydration_query.return_value = ("page hydration", {})
+    builder.expand_page_attribute_rows.return_value = []
+    builder.format_sessions.side_effect = lambda rows, columns: [
+        dict(zip(columns, row, strict=True)) for row in rows
+    ]
+
+    def _execute(query, _params, **_kwargs):
+        if query == "page hydration":
+            return SimpleNamespace(
+                data=[
+                    {
+                        "session_id": session_id,
+                        "session_start": start_time,
+                        "session_end": start_time,
+                        "duration": 0,
+                        "total_cost": 0,
+                        "total_tokens": 0,
+                        "traces_count": 1,
+                    }
+                ]
+            )
+        return SimpleNamespace(data=[])
+
+    analytics = mock.MagicMock()
+    analytics.execute_ch_query.side_effect = _execute
+    view._fetch_session_names = mock.MagicMock(return_value={})
+    view._fetch_end_user_info = mock.MagicMock(return_value={})
+
+    bounded = _bounded_page(
+        rows=[{"session_id": session_id, "start_time": start_time}],
+        complete=complete,
+        # No continuation: on this stack Rule B publishes a resumable
+        # wall-stopped page as INCOMPLETE beside its ``has_more`` (see
+        # ``test_wall_stopped_session_hops_advance_the_public_bound_to_each_floor``),
+        # so the page that reaches the 503 refusal is the one with nowhere
+        # left to go.
+        continuation_slice_end=None,
+        total_rows_lower_bound=1,
+    )
+    with (
+        mock.patch(
+            "tracer.views.trace_session.SessionListQueryBuilderV2",
+            _builder_class_mock(return_value=builder),
+        ),
+        mock.patch(
+            "tracer.views.trace_session.read_bounded_filter_page",
+            return_value=bounded,
+        ),
+        mock.patch(
+            "tracer.views.trace_session.AnnotationsLabels.objects.filter",
+            return_value=[],
+        ),
+    ):
+        outcome = TraceSessionView._list_sessions_clickhouse(
+            view,
+            request,
+            project_id=str(uuid.uuid4()),
+            project=None,
+            analytics=analytics,
+            validated_data={
+                "filters": [_attribute_filter()],
+                "sort_params": [],
+                "page_number": 0,
+                "page_size": 25,
+                "cursor_mode": True,
+            },
+        )
+    return outcome
+
+
+def _session_list_metadata(*, complete: bool, seed_is_sampled: bool) -> dict:
+    """The metadata a bounded session page published, or the failure it raised."""
+
+    outcome = _session_list_outcome(complete=complete, seed_is_sampled=seed_is_sampled)
+    assert outcome[0] == "ok", outcome
+    return outcome[1]["metadata"]
+
+
+@pytest.mark.unit
+def test_complete_session_page_states_it_is_exact_not_only_complete():
+    metadata = _session_list_metadata(complete=True, seed_is_sampled=False)
+
+    assert metadata["query_complete"] is True
+    assert metadata["query_exact"] is True
+    assert metadata["ordering_exact"] is True
+    assert "query_provenance" not in metadata
+
+
+@pytest.mark.unit
+def test_sampled_candidate_seed_page_states_it_is_inexact():
+    metadata = _session_list_metadata(complete=True, seed_is_sampled=True)
+
+    assert metadata["query_complete"] is True
+    assert metadata["query_exact"] is False
+    assert metadata["ordering_exact"] is False
+    assert metadata["query_provenance"] == "spans_per_session_candidate"
+
+
+@pytest.mark.unit
+def test_unfinished_session_read_is_refused_rather_than_published_as_exact():
+    """The session list is the one list that cannot publish an unfinished page.
+
+    An incomplete bounded read with nowhere to continue is refused with 503
+    (``trace_session.py`` ``session_list_bounded_read_incomplete``), and one
+    that can continue is published as an INCOMPLETE cursor page carrying
+    ``has_more`` — Rule B's contract on this route, not the older "a cursor
+    makes it whole" one.  Either way no session page reaches the exactness
+    publisher as a complete-but-unfinished read, and the degraded case that
+    does change CSV output is the trace/span/voice one, pinned in
+    ``test_bounded_trace_filter_reads``.
+    """
+
+    outcome = _session_list_outcome(complete=False, seed_is_sampled=False)
+
+    assert outcome[0] == "error"
+    assert outcome[1] == 503
+    assert outcome[3] == "service_unavailable"

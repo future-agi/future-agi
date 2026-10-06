@@ -1,0 +1,15 @@
+# CI only: OpenShift security contexts forced over examples/bundled.yaml, with
+# a datastore override; auto-detection is checked by hack/check.sh with
+# --api-versions security.openshift.io/v1.
+global:
+  compatibility:
+    openshift:
+      adaptSecurityContext: force
+postgres:
+  bundled:
+    containerSecurityContext:
+      readOnlyRootFilesystem: false
+redis:
+  bundled:
+    podSecurityContext:
+      fsGroupChangePolicy: OnRootMismatch

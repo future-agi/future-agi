@@ -36,6 +36,10 @@ from rest_framework.utils.urls import replace_query_param
 from rest_framework.viewsets import ModelViewSet
 
 from model_hub.models.evals_metric import EvalTemplate
+from model_hub.utils.eval_input_validation import (
+    PARTIAL_INPUT_MESSAGE,
+    PARTIAL_INPUT_WARNING_TYPE,
+)
 from tfc.temporal.eval_tasks.client import (
     signal_pause_eval_task_workflow,
     start_eval_task_workflow_sync,
@@ -49,9 +53,20 @@ from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
 from tracer.models.custom_eval_config import CustomEvalConfig
-from tracer.models.eval_task import EvalTask, EvalTaskLogger, EvalTaskStatus, RunType
+from tracer.models.eval_task import (
+    RESUMABLE_TASK_STATUSES,
+    EvalTask,
+    EvalTaskLogger,
+    EvalTaskStatus,
+    RowType,
+    RunType,
+)
 from tracer.models.observation_span import EvalEntryStatus, EvalLogger, ObservationSpan
 from tracer.models.project import Project
+from tracer.selectors.eval_tasks.scope import (
+    eval_tasks_in_scope,
+    project_workspace_scope_q,
+)
 from tracer.serializers.eval_task import (
     EVAL_TASK_USAGE_MAX_PAGE,
     EditEvalTaskSerializer,
@@ -73,6 +88,11 @@ from tracer.services.eval_tasks.entries import soft_delete_live
 from tracer.services.filter_principal_context import (
     FilterPrincipalContextError,
     bind_request_my_annotations_principal,
+)
+from tracer.services.postgres_read_policy import application_postgres_reads
+from tracer.utils.eval import (
+    GROUND_TRUTH_NOT_APPLIED_MESSAGE,
+    GROUND_TRUTH_NOT_APPLIED_WARNING_TYPE,
 )
 from tracer.utils.filters import FilterEngine
 from tracer.utils.helper import get_default_eval_task_config
@@ -132,6 +152,16 @@ _EVAL_TASK_LIST_COMPATIBILITY_FILTER_UNITS = (
     settings.EVAL_TASK_LIST_COMPATIBILITY_FILTER_UNITS
 )
 _EVAL_TASK_ROOT_JSON_PREFLIGHT_UNITS = settings.EVAL_TASK_ROOT_JSON_PREFLIGHT_UNITS
+# The EvalLogger column that names an entry's target, per task row type. A task
+# materializes one entry per (target, eval), so its targets are the distinct
+# values here, not its entries. Trace entries also carry the root span id, so
+# they count by trace.
+_EVAL_TASK_TARGET_FIELD = {
+    RowType.SPANS: "observation_span_id",
+    RowType.VOICE_CALLS: "observation_span_id",
+    RowType.TRACES: "trace_id",
+    RowType.SESSIONS: "trace_session_id",
+}
 
 
 class _EvalTaskPageNumberPagination(ExtendedPageNumberPagination):
@@ -307,44 +337,15 @@ def _bounded_eval_task_compatibility_rows(queryset):
     return rows
 
 
-def _execute_eval_task_query_with_deadline(
-    deadline, execute, sql, params, many, context
-):
-    """Execute one query after shrinking its PostgreSQL statement timeout."""
-
-    remaining_ms = deadline.remaining_ms(floor_ms=1)
-    context["cursor"].cursor.execute(
-        "SELECT set_config('statement_timeout', %s, true)",
-        (f"{remaining_ms}ms",),
-    )
-    result = execute(sql, params, many, context)
-    deadline.remaining_ms(floor_ms=1)
-    return result
-
-
 @contextmanager
 def _bounded_eval_task_read_transaction(deadline):
-    """Apply the one request deadline to every PostgreSQL statement.
-
-    Django's ``statement_timeout`` is per statement.  Updating it from an
-    execute wrapper before each query makes the timeout shrink with the one
-    monotonic request wall instead of granting every count/prefetch/page query
-    a fresh 8.5 seconds.  The raw driver cursor deliberately bypasses the
-    wrapper for the ``SET LOCAL`` itself.
-    """
-
-    def execute_with_remaining_timeout(execute, sql, params, many, context):
-        return _execute_eval_task_query_with_deadline(
-            deadline, execute, sql, params, many, context
-        )
-
-    with transaction.atomic():
-        if connection.vendor != "postgresql":
-            yield
-            deadline.remaining_ms(floor_ms=1)
-            return
-        with connection.execute_wrapper(execute_with_remaining_timeout):
-            yield
+    """Keep request checks separate from uncapped PostgreSQL statements."""
+    with application_postgres_reads(
+        connection=connection,
+        atomic=transaction.atomic,
+        check_request=lambda: deadline.remaining_ms(floor_ms=1),
+    ):
+        yield
 
 
 def _bounded_eval_task_read(view_method):
@@ -355,9 +356,7 @@ def _bounded_eval_task_read(view_method):
         deadline = ReadDeadline.start(_EVAL_TASK_LIST_WALL_MS)
         try:
             with _bounded_eval_task_read_transaction(deadline):
-                response = view_method(view, request, *args, **kwargs)
-                deadline.remaining_ms(floor_ms=1)
-                return response
+                return view_method(view, request, *args, **kwargs)
         except (ReadDeadlineExceeded, DatabaseError) as exc:
             logger.warning(
                 "eval_task.read_unavailable",
@@ -380,7 +379,16 @@ def _bounded_usage_text(value):
     return f"{text[:_USAGE_DETAIL_TEXT_MAX_CHARS]} [truncated]"
 
 
-def _extract_partial_input_warnings(output_metadata):
+# Warnings persist as a bare type on the row; the copy lives here so a
+# 300-char string is not written to every EvalLogger and APICallLog.
+_WARNING_FALLBACK_MESSAGES = {
+    PARTIAL_INPUT_WARNING_TYPE: PARTIAL_INPUT_MESSAGE,
+    GROUND_TRUTH_NOT_APPLIED_WARNING_TYPE: GROUND_TRUTH_NOT_APPLIED_MESSAGE,
+}
+
+
+def _extract_run_warnings(output_metadata):
+    """Every typed warning on one EvalLogger row, whatever its type."""
     if not isinstance(output_metadata, dict):
         return []
     warnings = output_metadata.get("warnings") or []
@@ -390,7 +398,7 @@ def _extract_partial_input_warnings(output_metadata):
         return []
     result = []
     for warning in warnings:
-        if not isinstance(warning, dict) or warning.get("type") != "partial_input":
+        if not isinstance(warning, dict) or not warning.get("type"):
             continue
 
         def bounded_keys(value):
@@ -408,7 +416,7 @@ def _extract_partial_input_warnings(output_metadata):
             message = ""
         result.append(
             {
-                "type": "partial_input",
+                "type": str(warning["type"])[:_EVAL_TASK_WARNING_KEY_MAX_CHARS],
                 "empty_keys": bounded_keys(warning.get("empty_keys")),
                 "filled_keys": bounded_keys(warning.get("filled_keys")),
                 "message": message[:_EVAL_TASK_WARNING_MESSAGE_MAX_CHARS],
@@ -616,12 +624,15 @@ def _bounded_period_usage_rows(queryset):
     return rows, sampled
 
 
-def _terminal_usage_queryset(queryset):
-    """Limit usage calls/logs to attempts which actually reached a result."""
+def _successful_usage_queryset(queryset):
+    """Limit usage calls/logs to successful runs.
 
-    return queryset.filter(
-        status__in=(EvalEntryStatus.COMPLETED, EvalEntryStatus.ERRORED)
-    )
+    Usage counts only successful runs; errored and skipped runs stay in the
+    task logs. Legacy rows keep the default COMPLETED status with error=True,
+    so success needs both columns.
+    """
+
+    return queryset.filter(status=EvalEntryStatus.COMPLETED, error=False)
 
 
 def _usage_logs_page_metadata(
@@ -798,21 +809,18 @@ def _build_eval_task_warning_groups(rows, *, group_limit):
             warning_text_truncated = True
             continue
         warnings = _parse_usage_json_preview(preview, original_length)
-        for warning in _extract_partial_input_warnings({"warnings": warnings}):
+        for warning in _extract_run_warnings({"warnings": warnings}):
+            warning_type = warning["type"]
             empty_keys = warning["empty_keys"]
             filled_keys = warning["filled_keys"]
-            key = tuple(empty_keys)
+            key = (warning_type, tuple(empty_keys))
             if key not in warning_groups_by_key:
                 warning_groups_by_key[key] = {
-                    "type": "partial_input",
+                    "type": warning_type,
                     "empty_keys": empty_keys,
                     "filled_keys": filled_keys,
                     "message": warning["message"]
-                    or (
-                        "Eval ran with some inputs empty. "
-                        "Result may be less reliable. "
-                        "Ignore if this is intentional."
-                    ),
+                    or _WARNING_FALLBACK_MESSAGES.get(warning_type, ""),
                     "count": 0,
                 }
             warning_groups_by_key[key]["count"] += 1
@@ -848,7 +856,7 @@ def _bounded_usage_logs_queryset(queryset):
         output_field=models.TextField(),
     )
     return (
-        _terminal_usage_queryset(queryset)
+        _successful_usage_queryset(queryset)
         .annotate(
             usage_reason=Left(reason_source, _USAGE_DETAIL_TEXT_MAX_CHARS),
             usage_reason_length=Length(reason_source),
@@ -1089,18 +1097,11 @@ def _aggregate_usage_chart_rows(rows, bucket_delta):
         }
     )
     for row in rows:
-        row_status = row.get("status")
-        if row_status not in (
-            EvalEntryStatus.COMPLETED,
-            EvalEntryStatus.ERRORED,
-        ):
+        if row.get("status") != EvalEntryStatus.COMPLETED:
             continue
         bucket = _floor_usage_bucket(row["created_at"], bucket_delta)
         values = buckets[bucket]
         values["calls"] += 1
-        if row_status == EvalEntryStatus.ERRORED:
-            values["fail_count"] += 1
-            continue
         if row["output_bool"] is True:
             values["pass_count"] += 1
             values["score_sum"] += 1.0
@@ -1455,6 +1456,7 @@ def _eval_task_progress_by_id(tasks):
     task.  The root route can return a large page, so serialize that field from
     one grouped query instead of allowing a page-sized N+1 query pattern.
     """
+    from tracer.selectors.eval_tasks.progress import progress_block
 
     historical_ids = [
         str(task.id) for task in tasks if task.run_type == RunType.HISTORICAL
@@ -1472,25 +1474,15 @@ def _eval_task_progress_by_id(tasks):
     for row in rows:
         counts_by_task[str(row["eval_task_id"])][row["status"]] = row["n"]
 
-    progress_by_id = {}
-    for task_id in historical_ids:
-        counts = counts_by_task[task_id]
-        done = (
-            counts.get(EvalEntryStatus.COMPLETED, 0)
-            + counts.get(EvalEntryStatus.ERRORED, 0)
-            + counts.get(EvalEntryStatus.SKIPPED, 0)
-        )
-        remaining = counts.get(EvalEntryStatus.PENDING, 0) + counts.get(
-            EvalEntryStatus.RUNNING, 0
-        )
-        total = done + remaining
-        progress_by_id[task_id] = {
-            "dispatched": total,
-            "completed": done,
-            "missing": remaining,
-            "percent": round(100.0 * done / total, 2) if total else None,
-        }
-    return progress_by_id
+    # Same arithmetic as ``EvalTaskSerializer.get_progress``, from the shared
+    # selector: this route drops the serializer's ``progress`` field and
+    # refills it from here, so a second copy of the formula meant the two
+    # endpoints answered differently about the same task. They did: this one
+    # counted skipped rows as completed, so a task that skipped every row
+    # reported 100 % on the route that renders the task table.
+    return {
+        task_id: progress_block(counts_by_task[task_id]) for task_id in historical_ids
+    }
 
 
 class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
@@ -1686,32 +1678,18 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
         return getattr(user, "organization", None)
 
     def _project_workspace_scope_q(self, organization_id):
-        workspace = getattr(self.request, "workspace", None)
-        if not workspace:
-            return Q()
-        if getattr(workspace, "is_default", False):
-            return (
-                Q(project__workspace=workspace)
-                | Q(
-                    project__workspace__is_default=True,
-                    project__workspace__organization_id=organization_id,
-                )
-                | Q(
-                    project__workspace__isnull=True,
-                    project__organization_id=organization_id,
-                )
-            )
-        return Q(project__workspace=workspace)
+        return project_workspace_scope_q(
+            organization_id, getattr(self.request, "workspace", None)
+        )
 
     def _scope_eval_task_queryset(self, queryset):
-        organization = self._get_request_organization()
-        if organization is None:
-            return queryset.none()
-        organization_id = organization.id
-        return queryset.filter(
-            project__organization_id=organization_id,
-            project__deleted=False,
-        ).filter(self._project_workspace_scope_q(organization_id))
+        # Shared with the AI tool's Resume, so a task id resolves to the same
+        # task, or to none, whichever surface asks.
+        return eval_tasks_in_scope(
+            queryset,
+            organization=self._get_request_organization(),
+            workspace=getattr(self.request, "workspace", None),
+        )
 
     def _scope_project_queryset(self, queryset):
         organization = self._get_request_organization()
@@ -2102,16 +2080,23 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 deleted=False,
             ).aggregate(
                 total_count=Count("id"),
+                # Distinct spans/traces/sessions/calls the entries cover; the
+                # UI's "Total Spans" card reads this, not the per-eval total.
+                target_count=Count(
+                    _EVAL_TASK_TARGET_FIELD.get(
+                        eval_task.row_type, "observation_span_id"
+                    ),
+                    distinct=True,
+                ),
                 success_count=Count("id", filter=Q(status=EvalEntryStatus.COMPLETED)),
                 errors_count=Count("id", filter=Q(status=EvalEntryStatus.ERRORED)),
                 # Skipped: the eval never ran (e.g. a mapped span attribute
                 # was absent). Counted separately so it stays out of the
                 # success and failure tallies.
                 skipped_count=Count("id", filter=Q(status=EvalEntryStatus.SKIPPED)),
-                # Partial-input warnings live in
-                # output_metadata.warnings as a JSON array. has_key on
-                # the JSONField gives us a cheap "any warnings?" filter
-                # without scanning the contents.
+                # Rows carrying at least one warning. A row can carry more
+                # than one, so this is not the sum of the group counts; the
+                # UI labels it "runs with warnings" for that reason.
                 warnings_count=Count(
                     "id",
                     filter=Q(
@@ -2191,6 +2176,7 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 "skipped_count": counts["skipped_count"],
                 "warnings_count": counts["warnings_count"],
                 "total_count": counts["total_count"],
+                "target_count": counts["target_count"],
                 "error_groups": error_groups,
                 "warning_groups": warning_groups,
                 # Indicates whether we capped at _ERROR_GROUPS_LIMIT — the
@@ -2378,11 +2364,11 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 ]
 
             # ── Base queryset ──
-            # Match the existing get_eval_task_logs filter exactly so any
-            # task that shows logs also shows usage. Soft-deleted predecessor
-            # work items are excluded so re-evaluation never double-counts a
-            # superseded result and the partial time index stays applicable.
-            base_qs = _terminal_usage_queryset(
+            # Only successful runs are usage; get_eval_task_logs keeps
+            # reporting every run. Soft-deleted predecessor work items are
+            # excluded so re-evaluation never double-counts a superseded
+            # result and the partial time index stays applicable.
+            base_qs = _successful_usage_queryset(
                 EvalLogger.objects.filter(
                     eval_task_id=str(eval_task_id),
                     deleted=False,
@@ -2403,15 +2389,6 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 total_runs, total_runs_is_lower_bound = _bounded_usage_count(base_qs)
                 period_rows, period_sampled = _bounded_period_usage_rows(period_qs)
             runs_period = len(period_rows)
-            success_count = sum(
-                row["status"] == EvalEntryStatus.COMPLETED for row in period_rows
-            )
-            error_count = sum(
-                row["status"] == EvalEntryStatus.ERRORED for row in period_rows
-            )
-            pass_rate = (
-                round((success_count / runs_period * 100), 2) if runs_period > 0 else 0
-            )
 
             # ── Chart data — bucket by period and aggregate ──
             chart_data = []
@@ -2459,14 +2436,10 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 # the typed output columns. EvalLogger splits output across
                 # output_bool / output_float / output_str depending on the
                 # eval template's output type — see the model definition.
-                if log.status == EvalEntryStatus.ERRORED:
-                    result_label = "Error"
-                    score = None
-                    status = "error"
-                elif log.status != EvalEntryStatus.COMPLETED:
-                    # The queryset is terminal-only. Keep this defense in depth
-                    # so a future caller cannot render in-flight/skipped work as
-                    # a successful evaluation.
+                if log.status != EvalEntryStatus.COMPLETED or log.error:
+                    # The queryset is success-only. Keep this defense in depth
+                    # so a future caller cannot render failed, in-flight or
+                    # skipped work as a successful evaluation.
                     continue
                 elif log.output_bool is True:
                     result_label = "Passed"
@@ -2581,8 +2554,11 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                             if log.trace_id
                             else None
                         ),
+                        # Off the row's own FK column: the target FKs are
+                        # unconstrained, so a run can reference a session with
+                        # no PG row and must still report what it evaluated.
                         "session_id": (
-                            str(trace_session.id) if trace_session else None
+                            str(log.trace_session_id) if log.trace_session_id else None
                         ),
                         "eval_id": str(config.id) if config else None,
                         "eval_name": config.name if config else None,
@@ -2618,7 +2594,9 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                                 else None
                             ),
                             "session_id": (
-                                str(trace_session.id) if trace_session else None
+                                str(log.trace_session_id)
+                                if log.trace_session_id
+                                else None
                             ),
                             "session_name": (
                                 trace_session.name if trace_session else None
@@ -2694,9 +2672,11 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                     stats={
                         "total_runs": total_runs,
                         "runs_period": runs_period,
-                        "success_count": success_count,
-                        "error_count": error_count,
-                        "pass_rate": pass_rate,
+                        # Usage is successful runs only, so these three are
+                        # constant.
+                        "success_count": runs_period,
+                        "error_count": 0,
+                        "pass_rate": 100.0 if runs_period else 0,
                         "total_runs_is_lower_bound": total_runs_is_lower_bound,
                         "runs_period_is_lower_bound": period_sampled,
                     },
@@ -2855,18 +2835,32 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             except EvalTask.DoesNotExist:
                 return self._gm.bad_request("Eval task not found")
 
-            if eval_task.status != EvalTaskStatus.PAUSED:
+            # PAUSED and FAILED; ``RESUMABLE_TASK_STATUSES`` says why failed is
+            # in it. The AI tool and the task UIs accept the same set.
+            if eval_task.status not in RESUMABLE_TASK_STATUSES:
                 return self._gm.bad_request(
                     f"Cannot unpause eval task with status '{eval_task.status}'. "
-                    "Only paused tasks can be resumed."
+                    "Only paused or failed tasks can be resumed."
                 )
 
+            recovered_from = eval_task.status
+            undrained = EvalLogger.objects.filter(
+                eval_task_id=str(eval_task.id),
+                status__in=[EvalEntryStatus.PENDING, EvalEntryStatus.RUNNING],
+            ).count()
             eval_task.status = EvalTaskStatus.PENDING
             eval_task.save(update_fields=["status"])
 
             # Pause exits the workflow; resuming starts a fresh run that picks up
             # the remaining pending/running entries.
             start_eval_task_workflow_sync(eval_task, replace_existing=True)
+            # Counts and the previous status only — never an entry payload or
+            # any tenant-identifying value.
+            logger.info(
+                "eval_task_recovered",
+                recovered_from=str(recovered_from),
+                undrained_entries=undrained,
+            )
 
             return self._gm.success_response(
                 {"message": "Eval task unpaused successfully"}

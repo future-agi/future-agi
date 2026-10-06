@@ -15,6 +15,7 @@ from django.test import override_settings
 from tracer.services.clickhouse.exact_graph_reads import (
     EXACT_GRAPH_MAX_BYTES_TO_READ,
     ExactGraphReadError,
+    TimeSeriesQueryBuilder,
     _annotation_label_ids_for_filters,
     _enumerate_exact_trace_ids,
     _filter_relation_requirements,
@@ -55,6 +56,7 @@ from tracer.services.exact_aggregation_cache import (
     refresh_claim_is_current,
     snapshot_cache_key,
 )
+from tracer.tests._graph_cost_stub import AffordableScanAnalytics
 
 
 def _time_filter(start: datetime, end: datetime) -> dict:
@@ -160,7 +162,11 @@ def test_exact_span_scan_aligns_partial_window_to_storage_identity_hour():
 
 
 @pytest.mark.unit
-def test_exact_span_sparse_partitions_grow_without_gaps_or_duplicates():
+def test_exact_span_sparse_partitions_grow_without_gaps_or_duplicates(monkeypatch):
+    # Exercise the adaptive fallback even when a compiler witness is available.
+    monkeypatch.setattr(
+        TimeSeriesQueryBuilder, "_exact_span_candidate_plan", lambda _: None
+    )
     start = datetime(2026, 8, 1, 0, 2)
     end = datetime(2026, 8, 1, 3, 14)
 
@@ -224,7 +230,11 @@ def test_exact_span_sparse_partitions_grow_without_gaps_or_duplicates():
 
 
 @pytest.mark.unit
-def test_exact_span_budget_retry_halves_same_cursor_and_learns_ceiling():
+def test_exact_span_budget_retry_halves_same_cursor_and_learns_ceiling(monkeypatch):
+    # Exercise the adaptive fallback even when a compiler witness is available.
+    monkeypatch.setattr(
+        TimeSeriesQueryBuilder, "_exact_span_candidate_plan", lambda _: None
+    )
     start = datetime(2026, 8, 1)
     end = start + timedelta(hours=8)
 
@@ -282,7 +292,11 @@ def test_exact_span_budget_retry_halves_same_cursor_and_learns_ceiling():
 
 
 @pytest.mark.unit
-def test_exact_span_adaptive_reader_does_not_retry_programming_errors():
+def test_exact_span_adaptive_reader_does_not_retry_programming_errors(monkeypatch):
+    # Exercise the adaptive fallback even when a compiler witness is available.
+    monkeypatch.setattr(
+        TimeSeriesQueryBuilder, "_exact_span_candidate_plan", lambda _: None
+    )
     start = datetime(2026, 8, 1)
     end = start + timedelta(hours=2)
 
@@ -566,6 +580,36 @@ def test_cold_miss_is_pending_poll_dedupes_then_exact_publish_becomes_visible():
     assert polled["query_status"] == "complete"
     assert polled["query_completed_at"] == exact["query_completed_at"]
     assert polled["query_refreshing"] is False
+
+
+@pytest.mark.unit
+def test_cache_only_probe_does_not_enqueue_a_true_cold_miss():
+    cache.clear()
+    identity = {"project": "p", "metric": "latency"}
+    pending = {
+        "metric_name": "latency",
+        "data": [],
+        "query_complete": False,
+        "query_status": "pending",
+        "query_sampled": False,
+    }
+
+    with patch(
+        "tracer.tasks.exact_aggregation.refresh_exact_aggregation_snapshot.apply_async"
+    ) as enqueue:
+        result = read_or_schedule_exact_snapshot(
+            "test-cache-probe",
+            identity,
+            refresh=False,
+            pending_payload=pending,
+            schedule_on_miss=False,
+        )
+
+    assert result["query_status"] == "pending"
+    assert result["query_refreshing"] is False
+    assert result["query_refresh_failed"] is False
+    enqueue.assert_not_called()
+    assert exact_refresh_state("test-cache-probe", identity) is None
 
 
 @pytest.mark.unit
@@ -2535,7 +2579,7 @@ def test_snapshot_key_changes_when_exact_query_contract_version_changes(monkeypa
     monkeypatch.setattr(cache_module, "_CACHE_VERSION", 1)
     legacy_key = cache_module.snapshot_cache_key("observe-system-graph", identity)
 
-    assert current_key.startswith("exact-aggregation:v2:")
+    assert current_key.startswith("exact-aggregation:v5:")
     assert legacy_key.startswith("exact-aggregation:v1:")
     assert current_key != legacy_key
 
@@ -3629,13 +3673,19 @@ def test_exact_system_graph_combines_scalar_array_map_and_legacy_json(observe_ty
     assert params["graph_filter_3_latest_filter_key_3"] == "profile"
     assert params["graph_filter_4_latest_filter_key_4"] == "legacy_payload"
     assert "additional_table_filters" not in settings
-    assert query.count("FROM spans") == 1
+    assert query.count("FROM spans") == 2
+    assert (
+        "SELECT project_id, observation_type, service_name, toStartOfHour(start_time), trace_id, id"
+        in query
+    )
     assert "FROM spans FINAL" not in query
     assert "argMax(" in query
     assert "toUInt8(is_deleted)" in query
     assert "tupleElement(graph_latest_row, 8) = 0" in query
     assert "PREWHERE project_id = %(project_id)s" in query
-    prewhere = query.split("PREWHERE", 1)[1].split("GROUP BY", 1)[0]
+    prewhere = query.split("PREWHERE", 1)[1].split(
+        "AND (project_id, observation_type", 1
+    )[0]
     assert "project_id" in prewhere
     assert "start_time" in prewhere
     assert "attrs_" not in prewhere
@@ -5981,6 +6031,9 @@ def test_exact_span_graph_merges_additive_partitions_only_after_all_succeed():
 def test_exact_span_graph_fails_closed_before_merging_a_partial_partition(
     monkeypatch,
 ):
+    monkeypatch.setattr(
+        TimeSeriesQueryBuilder, "_exact_span_candidate_plan", lambda _: None
+    )
     from tracer.services.clickhouse import exact_graph_reads as exact_module
 
     start = datetime(2026, 8, 1)
@@ -6189,7 +6242,7 @@ def test_exact_graph_budget_failure_does_not_publish_or_split_contribution_batch
 
 
 @pytest.mark.unit
-def test_public_filtered_graph_runs_exact_snapshot_reader_inline_without_scheduling():
+def test_public_filtered_graph_runs_direct_raw_reader_inline_without_scheduling():
     from tracer.services.clickhouse import graph_dispatch
 
     cache.clear()
@@ -6198,7 +6251,7 @@ def test_public_filtered_graph_runs_exact_snapshot_reader_inline_without_schedul
     end = datetime(2026, 8, 8, 0, 0)
     exact_calls = []
 
-    def exact_read(**kwargs):
+    def direct_read(**kwargs):
         exact_calls.append(kwargs)
         return {
             "metric_name": "traffic",
@@ -6206,15 +6259,19 @@ def test_public_filtered_graph_runs_exact_snapshot_reader_inline_without_schedul
             "query_complete": True,
             "query_status": "complete",
             "query_sampled": False,
+            "query_exact": False,
+            "query_provenance": "bounded_candidates",
         }
 
     with patch.object(
         graph_dispatch,
-        "read_exact_system_graph",
-        side_effect=exact_read,
+        "_fetch_direct_raw_system_metric_graph",
+        side_effect=direct_read,
     ):
         result = graph_dispatch.fetch_system_metric_graph_ch(
-            analytics=object(),
+            # The routing cost probe runs before the reader is chosen; this
+            # test is about the reader, so the probe is answered and cheaply.
+            analytics=AffordableScanAnalytics(),
             project_id="11111111-1111-4111-8111-111111111111",
             filters=_exact_multi_filters(start, end),
             interval="day",
@@ -6226,10 +6283,8 @@ def test_public_filtered_graph_runs_exact_snapshot_reader_inline_without_schedul
     assert result["query_status"] == "complete"
     assert result["query_complete"] is True
     assert result["query_sampled"] is False
-    assert result["query_exact"] is True
-    # exact_snapshot is the established public enum; the patched reader above
-    # proves execution is still request-time and never scheduled.
-    assert result["query_provenance"] == "exact_snapshot"
+    assert result["query_exact"] is False
+    assert result["query_provenance"] == "bounded_candidates"
     assert exact_calls[0]["filters"] == _exact_multi_filters(start, end)
 
 
@@ -6599,7 +6654,7 @@ def test_exact_session_graph_combines_native_session_and_aggregate_filters():
     assert params["session_having_2"] == 10
     assert params["session_having_3"] == "%hello%"
     assert "session_duration >= %(session_having_1)s" in query
-    assert "session_start >= %(start_date)s" in query
+    assert "session_start >= fromUnixTimestamp64Micro(%(start_date_us)s)" in query
     assert "candidate_physical_session_ids AS" in query
     assert "candidate_session_remap_target_new_ids AS" in query
     assert "candidate_sessions AS" in query
@@ -6693,8 +6748,14 @@ def test_exact_session_scalar_filters_intersect_after_session_membership():
     assert params["snapshot_scan_end_date"] == datetime(2026, 3, 15, 4)
     assert "start_time >= %(snapshot_scan_start_date)s" in matching_sql
     assert "start_time < %(snapshot_scan_end_date)s" in matching_sql
-    assert "latest_start_time >= %(snapshot_start_date)s" in matching_sql
-    assert "latest_start_time < %(snapshot_end_date)s" in matching_sql
+    assert (
+        "latest_start_time >= fromUnixTimestamp64Micro(%(snapshot_start_date_us)s)"
+        in matching_sql
+    )
+    assert (
+        "latest_start_time < fromUnixTimestamp64Micro(%(snapshot_end_date_us)s)"
+        in matching_sql
+    )
     assert "%(start_date)s" not in matching_sql
     assert "%(end_date)s" not in matching_sql
 
@@ -6869,6 +6930,24 @@ def test_exact_session_message_filters_match_session_list_having_semantics(
         assert params["session_having_1"] == expected_param
 
 
+@pytest.mark.unit
+def test_exact_session_graph_uses_weekly_buckets_beyond_three_months():
+    analytics = _ExactEntityAnalytics()
+    start = datetime(2026, 1, 1)
+    end = datetime(2026, 5, 1)
+
+    read_exact_session_system_graph(
+        analytics=analytics,
+        project_id="22222222-2222-4222-8222-222222222222",
+        filters=[_time_filter(start, end)],
+        interval="day",
+        metric_id="session_count",
+    )
+
+    query, _params, _settings = analytics.main_calls[0]
+    assert "toMonday(session_start) AS time_bucket" in query
+
+
 class _SessionContextAnalytics(_ExactEntityAnalytics):
     def execute_ch_query(self, query, params, *, timeout_ms, settings):
         if "toUnixTimestamp64Nano(now64" in query:
@@ -6900,8 +6979,14 @@ def _assert_session_membership_sql(query, params, start, end):
     assert "AS snapshot_members" in query
     assert "start_time >= %(snapshot_scan_start_date)s" in query
     assert "start_time < %(snapshot_scan_end_date)s" in query
-    assert "snapshot_members.start_time >= %(snapshot_start_date)s" in query
-    assert "snapshot_members.start_time < %(snapshot_end_date)s" in query
+    assert (
+        "snapshot_members.start_time >= fromUnixTimestamp64Micro(%(snapshot_start_date_us)s)"
+        in query
+    )
+    assert (
+        "snapshot_members.start_time < fromUnixTimestamp64Micro(%(snapshot_end_date_us)s)"
+        in query
+    )
     assert "FROM (" in query and "AS selected_sessions" in query
     assert "argMin(rs.input, rs.start_time) AS first_message" in query
     assert "session_duration >= %(session_having_1)s" in query
@@ -7016,6 +7101,55 @@ def test_entity_eval_graph_does_not_stitch_budget_failed_statements(
     assert "SELECT DISTINCT toString(candidate_member.trace_id) AS trace_id" in query
     assert 0 < timeout_ms <= exact_module.EXACT_GRAPH_QUERY_TIMEOUT_MS
     assert "additional_table_filters" not in settings
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("aggregation_context", ["session", "user"])
+def test_entity_eval_graph_keeps_legacy_logger_columns_through_v2_rewrite(
+    monkeypatch,
+    settings,
+    aggregation_context,
+):
+    """The candidate read must name columns the legacy eval logger has.
+
+    Unlike the neighbouring SQL-contract tests, ``eval_logger_source`` is not
+    patched to the v2 table: the legacy PeerDB table is the default
+    ``CH25_EVAL_LOGGER_TABLE``, and it has no ``is_deleted`` column.
+    """
+    from tracer.services.clickhouse import exact_graph_reads as exact_module
+
+    settings.CH25_EVAL_LOGGER_TABLE = "tracer_eval_logger"
+    analytics = _EntityBudgetSplittingAnalytics()
+    start = datetime(2026, 8, 1, 0)
+    end = datetime(2026, 8, 1, 1)
+    config = SimpleNamespace(
+        name="quality",
+        eval_template=SimpleNamespace(config={"output": "SCORE"}, choices=[]),
+    )
+    monkeypatch.setattr(
+        exact_module.CustomEvalConfig.objects,
+        "select_related",
+        lambda *_args: SimpleNamespace(get=lambda **_kwargs: config),
+    )
+
+    read_exact_eval_graph(
+        analytics=analytics,
+        project_id="22222222-2222-4222-8222-222222222222",
+        filters=[_time_filter(start, end)],
+        interval="hour",
+        req_data_config={
+            "id": "33333333-3333-4333-8333-333333333333",
+            "output_type": "SCORE",
+        },
+        observe_type="trace",
+        aggregation_context=aggregation_context,
+    )
+
+    assert len(analytics.main_calls) == 1
+    query = analytics.main_calls[0][0]
+    assert "FROM tracer_eval_logger AS candidate_eval FINAL" in query
+    assert "candidate_eval._peerdb_is_deleted = 0" in query
+    assert "candidate_eval.is_deleted" not in query
 
 
 @pytest.mark.unit
@@ -7157,32 +7291,22 @@ class _ScoreListManager:
 
 
 @pytest.mark.unit
-def test_annotation_reader_sets_postgres_readonly_snapshot_and_remaining_timeout(
+def test_annotation_reader_sets_readonly_snapshot_without_statement_timeout(
     monkeypatch,
 ):
     from tracer.services.clickhouse import exact_graph_reads as exact_module
+    from tracer.tests.test_postgres_application_read_policy import FakePostgres
 
-    statements: list[str] = []
-    transaction_state = {"active": False}
+    pg = FakePostgres()
 
-    class Atomic:
-        def __enter__(self):
-            transaction_state["active"] = True
+    class ScopeRows(_ScoreRows):
+        def iterator(self, **kwargs):
+            pg.execute("SELECT score")
+            return super().iterator(**kwargs)
 
-        def __exit__(self, exc_type, exc, traceback):
-            transaction_state["active"] = False
-
-    class Cursor:
-        def __enter__(self):
-            assert transaction_state["active"] is True
-            return self
-
-        def __exit__(self, exc_type, exc, traceback):
-            return None
-
-        def execute(self, statement):
-            assert transaction_state["active"] is True
-            statements.append(statement)
+    class ScopeManager(_ScoreManager):
+        def filter(self, **kwargs):
+            return ScopeRows(super().filter(**kwargs).rows)
 
     start = datetime(2026, 1, 1)
     end = datetime(2026, 1, 2)
@@ -7196,19 +7320,17 @@ def test_annotation_reader_sets_postgres_readonly_snapshot_and_remaining_timeout
     monkeypatch.setattr(
         exact_module,
         "Score",
-        SimpleNamespace(no_workspace_objects=_ScoreManager(score)),
+        SimpleNamespace(no_workspace_objects=ScopeManager(score)),
     )
     monkeypatch.setattr(
         exact_module,
         "get_annotation_labels_for_project",
-        lambda _project_id: SimpleNamespace(get=lambda **_kwargs: label),
+        lambda _project_id: SimpleNamespace(
+            get=lambda **_kwargs: (pg.execute("SELECT label"), label)[1]
+        ),
     )
-    monkeypatch.setattr(exact_module.transaction, "atomic", lambda: Atomic())
-    monkeypatch.setattr(
-        exact_module,
-        "connection",
-        SimpleNamespace(vendor="postgresql", cursor=lambda: Cursor()),
-    )
+    monkeypatch.setattr(exact_module.transaction, "atomic", pg.atomic)
+    monkeypatch.setattr(exact_module, "connection", pg)
     clock = iter((0.0, 1.25))
     monkeypatch.setattr(exact_module, "monotonic", lambda: next(clock, 1.25))
 
@@ -7224,14 +7346,11 @@ def test_annotation_reader_sets_postgres_readonly_snapshot_and_remaining_timeout
         observe_type="trace",
     )
 
-    remaining_timeout_ms = exact_module.EXACT_GRAPH_WALL_DEADLINE_MS - 1_250
-    assert statements == [
+    assert [sql for sql, _ in pg.events if sql.startswith("SET TRANSACTION")] == [
         "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY",
-        f"SET LOCAL statement_timeout = '{remaining_timeout_ms}ms'",
-        "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY",
-        f"SET LOCAL statement_timeout = '{remaining_timeout_ms}ms'",
-    ]
-    assert transaction_state["active"] is False
+    ] * 2
+    assert pg.query_timeouts == ["0", "0"]
+    assert pg.timeout == "750ms" and not pg.in_atomic_block and not pg.wrappers
     assert result["query_complete"] is True
 
 
@@ -7240,17 +7359,19 @@ def test_annotation_slow_empty_postgres_partition_exhausts_shared_deadline(
     monkeypatch,
 ):
     from tracer.services.clickhouse import exact_graph_reads as exact_module
+    from tracer.tests.test_postgres_application_read_policy import FakePostgres
 
     analytics = _RelationSnapshotAnalytics()
     start = datetime(2026, 1, 1)
     end = datetime(2026, 1, 2)
     label = SimpleNamespace(name="quality", type="numeric")
     clock = {"value": 0.0}
-    statements: list[str] = []
+    pg = FakePostgres()
 
     class SlowEmptyRows(_ScoreRows):
         def iterator(self, *, chunk_size):
             assert chunk_size > 0
+            pg.execute("SELECT score")
             clock["value"] = exact_module.EXACT_GRAPH_QUERY_TIMEOUT_MS / 1000 + 0.001
             return iter(())
 
@@ -7259,7 +7380,6 @@ def test_annotation_slow_empty_postgres_partition_exhausts_shared_deadline(
         def filter(**_kwargs):
             return SlowEmptyRows([])
 
-    cursor = SimpleNamespace(execute=lambda statement: statements.append(statement))
     monkeypatch.setattr(
         exact_module,
         "Score",
@@ -7268,17 +7388,12 @@ def test_annotation_slow_empty_postgres_partition_exhausts_shared_deadline(
     monkeypatch.setattr(
         exact_module,
         "get_annotation_labels_for_project",
-        lambda _project_id: SimpleNamespace(get=lambda **_kwargs: label),
-    )
-    monkeypatch.setattr(exact_module.transaction, "atomic", nullcontext)
-    monkeypatch.setattr(
-        exact_module,
-        "connection",
-        SimpleNamespace(
-            vendor="postgresql",
-            cursor=lambda: nullcontext(cursor),
+        lambda _project_id: SimpleNamespace(
+            get=lambda **_kwargs: (pg.execute("SELECT label"), label)[1]
         ),
     )
+    monkeypatch.setattr(exact_module.transaction, "atomic", pg.atomic)
+    monkeypatch.setattr(exact_module, "connection", pg)
     monkeypatch.setattr(exact_module, "monotonic", lambda: clock["value"])
 
     with pytest.raises(ExactGraphReadError, match="deadline exceeded"):
@@ -7294,18 +7409,8 @@ def test_annotation_slow_empty_postgres_partition_exhausts_shared_deadline(
             observe_type="trace",
         )
 
-    assert statements == [
-        "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY",
-        (
-            "SET LOCAL statement_timeout = "
-            f"'{exact_module.EXACT_GRAPH_WALL_DEADLINE_MS}ms'"
-        ),
-        "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY",
-        (
-            "SET LOCAL statement_timeout = "
-            f"'{exact_module.EXACT_GRAPH_WALL_DEADLINE_MS}ms'"
-        ),
-    ]
+    assert pg.query_timeouts == ["0", "0"]
+    assert pg.timeout == "750ms" and pg.events[-1][0] == "rollback"
     assert analytics.main_calls == []
 
 
@@ -7314,13 +7419,14 @@ def test_annotation_slow_label_discovery_exhausts_deadline_before_score_work(
     monkeypatch,
 ):
     from tracer.services.clickhouse import exact_graph_reads as exact_module
+    from tracer.tests.test_postgres_application_read_policy import FakePostgres
 
     analytics = _RelationSnapshotAnalytics()
     start = datetime(2026, 1, 1)
     end = datetime(2026, 1, 2)
     label = SimpleNamespace(name="quality", type="numeric")
     clock = {"value": 0.0}
-    statements: list[str] = []
+    pg = FakePostgres()
     score_filters: list[dict] = []
 
     class ForbiddenScoreManager:
@@ -7332,10 +7438,10 @@ def test_annotation_slow_label_discovery_exhausts_deadline_before_score_work(
     class SlowLabels:
         @staticmethod
         def get(**_kwargs):
+            pg.execute("SELECT label")
             clock["value"] = exact_module.EXACT_GRAPH_QUERY_TIMEOUT_MS / 1000 + 0.001
             return label
 
-    cursor = SimpleNamespace(execute=lambda statement: statements.append(statement))
     monkeypatch.setattr(
         exact_module,
         "Score",
@@ -7346,15 +7452,8 @@ def test_annotation_slow_label_discovery_exhausts_deadline_before_score_work(
         "get_annotation_labels_for_project",
         lambda _project_id: SlowLabels(),
     )
-    monkeypatch.setattr(exact_module.transaction, "atomic", nullcontext)
-    monkeypatch.setattr(
-        exact_module,
-        "connection",
-        SimpleNamespace(
-            vendor="postgresql",
-            cursor=lambda: nullcontext(cursor),
-        ),
-    )
+    monkeypatch.setattr(exact_module.transaction, "atomic", pg.atomic)
+    monkeypatch.setattr(exact_module, "connection", pg)
     monkeypatch.setattr(exact_module, "monotonic", lambda: clock["value"])
 
     with pytest.raises(ExactGraphReadError, match="deadline exceeded"):
@@ -7370,13 +7469,8 @@ def test_annotation_slow_label_discovery_exhausts_deadline_before_score_work(
             observe_type="trace",
         )
 
-    assert statements == [
-        "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY",
-        (
-            "SET LOCAL statement_timeout = "
-            f"'{exact_module.EXACT_GRAPH_WALL_DEADLINE_MS}ms'"
-        ),
-    ]
+    assert pg.query_timeouts == ["0"]
+    assert pg.timeout == "750ms" and pg.events[-1][0] == "commit"
     assert score_filters == []
     assert analytics.main_calls == []
 
@@ -7826,6 +7920,8 @@ def test_exact_worker_forwards_session_context_to_eval_annotation_reader(
 
 @pytest.mark.unit
 def test_exact_user_graph_uses_one_full_window_current_state_statement():
+    from tracer.services.clickhouse import exact_graph_reads as exact_module
+
     analytics = _ExactEntityAnalytics()
     start = datetime(2026, 1, 1)
     end = datetime(2026, 3, 15)
@@ -7842,15 +7938,31 @@ def test_exact_user_graph_uses_one_full_window_current_state_statement():
     query, params, settings = analytics.main_calls[0]
     assert params["start_date"] == start
     assert params["end_date"] == end
-    assert "candidate_trace_ids AS" in query
-    assert "HAVING min(start_time) >= %(start_date)s" in query
-    assert "start_time >= %(snapshot_start_date)s" in query
+    # Output and snapshot bounds are equal: every live snapshot trace already
+    # belongs to this output. Replace recursive min-trace partition selection
+    # with a full-hour ordered replay, then apply precise timestamps to the
+    # winners — one scan of the window, and no FINAL merge over its parts.
+    assert "candidate_trace_ids AS" not in query
+    assert "HAVING min(start_time)" not in query
+    assert "FROM spans FINAL" not in query
+    assert query.count("FROM spans") == 1
+    assert query.count("FROM latest_spans") == 1
+    assert params["user_snapshot_scan_start"] == start
+    assert params["user_snapshot_scan_end"] == end
+    assert "fromUnixTimestamp64Micro(%(user_snapshot_start_us)s, 'UTC')" in query
+    assert "fromUnixTimestamp64Micro(%(user_snapshot_end_us)s, 'UTC')" in query
+    assert "HAVING latest_state.2 = 0" in query
     assert "GROUP BY end_user_id, trace_id" in query
     assert "FROM end_users AS dimension_user FINAL" in query
     assert "FROM user_rows" not in query
     assert "candidate_user_session_remap_target_new_ids AS" not in query
-    assert "OVER (PARTITION BY new_id)" not in query
     assert "additional_table_filters" not in settings
+    # The replay is in sort-key order, so this reader gets a thread budget
+    # instead of the filter selector's single thread.
+    assert settings["max_threads"] == exact_module.settings.DASHBOARD_TRACE_READ_MAX_THREADS
+    assert settings["max_threads"] > exact_module.settings.FILTER_SELECTOR_MAX_THREADS
+    assert settings["optimize_move_to_prewhere_if_final"] == 0
+    assert settings["max_bytes_to_read"] == exact_module.EXACT_GRAPH_MAX_BYTES_TO_READ
     assert result["query_complete"] is True
     assert result["query_sampled"] is False
 
@@ -7962,7 +8074,23 @@ def test_user_eval_filter_is_full_window_membership_not_raw_span_attribute(monke
     analytics = _SessionContextAnalytics()
     start = datetime(2026, 1, 1)
     end = datetime(2026, 3, 15)
+    project_id = "22222222-2222-4222-8222-222222222222"
     eval_config_id = "33333333-3333-4333-8333-333333333333"
+    ownership_lookups = []
+
+    def owned_configs(**lookup):
+        assert lookup == {"project_id": project_id, "deleted": False}
+        ownership_lookups.append(lookup)
+
+        def values_list(*fields, flat):
+            assert fields == ("id",) and flat is True
+            return (eval_config_id,)
+
+        return SimpleNamespace(values_list=values_list)
+
+    monkeypatch.setattr(
+        exact_module.CustomEvalConfig.no_workspace_objects, "filter", owned_configs
+    )
     config = SimpleNamespace(
         name="quality",
         eval_template=SimpleNamespace(config={"output": "SCORE"}, choices=[]),
@@ -8002,7 +8130,7 @@ def test_user_eval_filter_is_full_window_membership_not_raw_span_attribute(monke
 
     result = read_exact_eval_graph(
         analytics=analytics,
-        project_id="22222222-2222-4222-8222-222222222222",
+        project_id=project_id,
         filters=filters,
         interval="day",
         req_data_config={"id": eval_config_id, "output_type": "SCORE"},
@@ -8019,6 +8147,10 @@ def test_user_eval_filter_is_full_window_membership_not_raw_span_attribute(monke
     assert "candidate_user_session_remap_target_new_ids AS" in query
     assert "OVER (PARTITION BY new_id)" not in query
     assert "user_eval_metrics AS" in query
+    assert ownership_lookups == [{"project_id": project_id, "deleted": False}]
+    assert "eval_scan.custom_eval_config_id IN %(user_eval_config_ids)s" in query
+    assert params["user_eval_config_ids"] == (eval_config_id,)
+    assert params["project_id"] == project_id
     assert "WHERE bool_eval_pass_rate >= %(user_filter_1)s" in query
     assert "total_cost < %(user_filter_2)s" in query
     assert "span_attr_num['eval_score']" not in query
@@ -8027,3 +8159,53 @@ def test_user_eval_filter_is_full_window_membership_not_raw_span_attribute(monke
     assert "additional_table_filters" not in settings
     assert result["query_complete"] is True
     assert result["query_sampled"] is False
+
+
+@pytest.mark.unit
+def test_exact_worker_runs_the_users_graph_on_the_graph_thread_budget(monkeypatch):
+    """The scheduled lane must keep the budget the interactive hand-off assumes.
+
+    The users graph is handed to this worker precisely because the interactive
+    wall could not finish it. The one ordered latest-state statement therefore
+    has to reach the worker with the graph read budget, not the single-thread
+    filter-selector default the shared exact-graph settings carry.
+    """
+
+    from django.conf import settings as django_settings
+
+    from tracer.tasks import exact_aggregation
+
+    analytics = _ExactEntityAnalytics()
+    monkeypatch.setattr(
+        exact_aggregation,
+        "_exact_observe_analytics",
+        lambda: nullcontext(analytics),
+    )
+    monkeypatch.setattr(
+        exact_aggregation,
+        "_reauthorize_exact_observe_project",
+        lambda _identity: None,
+    )
+
+    payload = exact_aggregation._observe_payload(
+        "observe-user-system-graph",
+        {
+            "project_id": "22222222-2222-4222-8222-222222222222",
+            "organization_id": "33333333-3333-4333-8333-333333333333",
+            "filters": [_time_filter(datetime(2026, 1, 1), datetime(2026, 3, 15))],
+            "interval": "day",
+            "metric_id": "active_users",
+        },
+    )
+
+    assert exact_payload_is_complete(payload)
+    assert analytics.main_calls
+    for _query, _params, statement_settings in analytics.main_calls:
+        assert (
+            statement_settings["max_threads"]
+            == django_settings.DASHBOARD_TRACE_READ_MAX_THREADS
+        )
+        assert (
+            statement_settings["max_threads"]
+            > django_settings.FILTER_SELECTOR_MAX_THREADS
+        )
