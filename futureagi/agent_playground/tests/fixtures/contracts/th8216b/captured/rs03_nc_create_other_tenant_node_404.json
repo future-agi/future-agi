@@ -10,11 +10,11 @@
   },
   "label": "captured",
   "method": "POST",
-  "note": "A system-template node reads like a missing node (was 400).",
+  "note": "Another tenant's node reads like a missing node (was 400).",
   "operation": "agent-playground_graphs_versions_node-connections_create",
   "path": "/agent-playground/graphs/{id}/versions/{version_id}/node-connections/",
   "request": {
-    "body": ["id", "source_node_id", "target_node_id(template)"]
+    "body": ["id", "source_node_id", "target_node_id(other tenant)"]
   },
   "status": 404
 }

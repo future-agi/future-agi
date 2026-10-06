@@ -70,6 +70,35 @@ def _url(path, **ids):
 
 
 @pytest.fixture
+def foreign_tenant_version(db):
+    """An active version of a graph owned by another organization."""
+    from accounts.models.organization import Organization
+    from accounts.models.organization_membership import OrganizationMembership
+    from accounts.models.user import User
+    from agent_playground.models.graph import Graph
+
+    foreign_org = Organization.objects.create(name="Foreign Organization")
+    foreign_user = User.objects.create_user(
+        email="foreign@futureagi.com",
+        password="testpassword123",
+        name="Foreign User",
+        organization=foreign_org,
+    )
+    OrganizationMembership.no_workspace_objects.get_or_create(
+        user=foreign_user, organization=foreign_org, defaults={"is_active": True}
+    )
+    foreign_graph = Graph.no_workspace_objects.create(
+        organization=foreign_org,
+        workspace=None,
+        name="Foreign Graph",
+        created_by=foreign_user,
+    )
+    return GraphVersion.no_workspace_objects.create(
+        graph=foreign_graph, version_number=1, status=GraphVersionStatus.ACTIVE
+    )
+
+
+@pytest.fixture
 def inactive_graph_version(db, graph):
     return GraphVersion.no_workspace_objects.create(
         graph=graph, version_number=3, status=GraphVersionStatus.INACTIVE, tags=[]
@@ -126,7 +155,7 @@ def test_th8413_template_version_activate_is_a_declared_404(
     )
 
 
-def test_rs03_nc_create_with_foreign_node_is_a_declared_404(
+def test_rs03_nc_create_with_template_node_is_a_declared_404(
     swagger,
     authenticated_client,
     graph,
@@ -161,43 +190,62 @@ def test_rs03_nc_create_with_foreign_node_is_a_declared_404(
     assert response.status_code == 404
     _check(
         swagger,
-        "rs03_nc_create_foreign_node_404",
+        "rs03_nc_create_template_node_404",
         "agent-playground_graphs_versions_node-connections_create",
         "post",
         NCS,
         response,
-        request={"body": ["id", "source_node_id", "target_node_id(foreign)"]},
-        note="A node outside the caller's scope reads like a missing node (was 400).",
+        request={"body": ["id", "source_node_id", "target_node_id(template)"]},
+        note="A system-template node reads like a missing node (was 400).",
+    )
+
+
+def test_rs03_nc_create_with_other_tenant_node_is_a_declared_404(
+    swagger,
+    authenticated_client,
+    graph,
+    graph_version,
+    node,
+    foreign_tenant_version,
+    node_template,
+):
+    from agent_playground.models.node import Node
+
+    outsider = Node.no_workspace_objects.create(
+        graph_version=foreign_tenant_version,
+        node_template=node_template,
+        type=NodeType.ATOMIC,
+        name="Outsider",
+        config={},
+    )
+
+    response = authenticated_client.post(
+        _url(NCS, id=graph.id, version_id=graph_version.id),
+        {
+            "id": str(uuid.uuid4()),
+            "source_node_id": str(node.id),
+            "target_node_id": str(outsider.id),
+        },
+        format="json",
+    )
+
+    assert response.status_code == 404
+    _check(
+        swagger,
+        "rs03_nc_create_other_tenant_node_404",
+        "agent-playground_graphs_versions_node-connections_create",
+        "post",
+        NCS,
+        response,
+        request={"body": ["id", "source_node_id", "target_node_id(other tenant)"]},
+        note="Another tenant's node reads like a missing node (was 400).",
     )
 
 
 def test_rs03_version_create_with_foreign_ref_is_a_declared_400(
-    swagger, authenticated_client, graph, graph_version
+    swagger, authenticated_client, graph, graph_version, foreign_tenant_version
 ):
-    from accounts.models.organization import Organization
-    from accounts.models.organization_membership import OrganizationMembership
-    from accounts.models.user import User
-    from agent_playground.models.graph import Graph
-
-    foreign_org = Organization.objects.create(name="Foreign Organization")
-    foreign_user = User.objects.create_user(
-        email="foreign@futureagi.com",
-        password="testpassword123",
-        name="Foreign User",
-        organization=foreign_org,
-    )
-    OrganizationMembership.no_workspace_objects.get_or_create(
-        user=foreign_user, organization=foreign_org, defaults={"is_active": True}
-    )
-    foreign_graph = Graph.no_workspace_objects.create(
-        organization=foreign_org,
-        workspace=None,
-        name="Foreign Graph",
-        created_by=foreign_user,
-    )
-    foreign_ref = GraphVersion.no_workspace_objects.create(
-        graph=foreign_graph, version_number=1, status=GraphVersionStatus.ACTIVE
-    )
+    foreign_ref = foreign_tenant_version
 
     response = authenticated_client.post(
         _url(VERSIONS, id=graph.id),
