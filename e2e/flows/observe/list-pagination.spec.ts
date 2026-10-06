@@ -123,10 +123,10 @@ async function readPager(page: Page): Promise<PagerState> {
 /**
  * Seeds `count` traces into one fresh project (first trace sent alone so
  * project auto-create settles before the rest arrive in parallel batches —
- * same reasoning as OBS-E2E-021's own seed step) and waits for all of them to
+ * same reasoning as OBS-E2E-027's own seed step) and waits for all of them to
  * land in CH before returning the project id. Shared by every test below that
  * just needs "N traces, one project" and does not otherwise duplicate
- * OBS-E2E-021's own inline seed, which stays as-is to avoid touching a test
+ * OBS-E2E-027's own inline seed, which stays as-is to avoid touching a test
  * already pinned against a passing run.
  */
 async function seedTraceProject(
@@ -278,7 +278,7 @@ async function assertAncestorIsChurning(page: Page): Promise<void> {
 // {current-1..current+1 or current+proven-next}`, at most four numbers during
 // a forward walk (a fifth, right-hand boundary number is drawn only once a
 // walk returns to an earlier page than the furthest one reached — not
-// exercised by this forward-only walk, see OBS-E2E-030), always including
+// exercised by this forward-only walk, see OBS-E2E-036), always including
 // page 1; a leading gap opens once the window first leaves page 1's
 // neighbourhood; the trailing ellipsis and Next both disappear only on the
 // true last page. With 45 rows at page size 10 that walk is 5 pages long and
@@ -294,10 +294,10 @@ const EXPECTED_WINDOWS: Array<{
   { page: LAST_PAGE, numbers: [1, 4, 5], leading: true, trailing: false, prevDisabled: false, nextDisabled: true, rows: LAST_PAGE_ROWS },
 ];
 
-test('OBS-E2E-021: trace list pager windows forward without an endless page count', {
+test('OBS-E2E-027: trace list pager windows forward without an endless page count', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'OBS-E2E-021', area: 'observe',
+    id: 'OBS-E2E-027', area: 'observe',
     userGoal: 'A developer paging through a large trace list always knows where they are and when they have reached the end',
     steps: ['seed 45 traces into one project over OTLP',
             "open the project's trace list",
@@ -414,7 +414,7 @@ test('OBS-E2E-021: trace list pager windows forward without an endless page coun
       // the furthest-visited-page boundary) and always includes page 1. A
       // pure forward walk never actually reaches five — the frontier always
       // equals the current page here — so this is the same bound `<= 4` would
-      // give for this walk; the wider cap is what OBS-E2E-030 exercises.
+      // give for this walk; the wider cap is what OBS-E2E-036 exercises.
       expect(pager.numbers.length).toBeLessThanOrEqual(5);
       expect(pager.numbers).toContain(1);
       // Assertion 5: the highest page number offered never exceeds currentPage + 1.
@@ -521,10 +521,10 @@ test('OBS-E2E-021: trace list pager windows forward without an endless page coun
   await req.dispose();
 });
 
-test('OBS-E2E-022: Next stays usable through a full Back-Back-Next-Next round trip from the terminal page', {
+test('OBS-E2E-028: Next stays usable through a full Back-Back-Next-Next round trip from the terminal page', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'OBS-E2E-022', area: 'observe',
+    id: 'OBS-E2E-028', area: 'observe',
     userGoal: 'A developer bouncing back and forth near the end of a trace list never loses forward navigation',
     steps: ['seed 25 traces into one project over OTLP',
             "open the project's trace list at page size 10 (3 pages)",
@@ -613,10 +613,10 @@ test('OBS-E2E-022: Next stays usable through a full Back-Back-Next-Next round tr
   await req.dispose();
 });
 
-test('OBS-E2E-023: an exactly-full final page ends pagination without offering a phantom next page', {
+test('OBS-E2E-029: an exactly-full final page ends pagination without offering a phantom next page', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'OBS-E2E-023', area: 'observe',
+    id: 'OBS-E2E-029', area: 'observe',
     userGoal: 'A developer whose trace count divides evenly by the page size sees a real last page, not an empty page N+1',
     steps: ['seed 30 traces (exactly 3 full pages of 10) into one project over OTLP',
             "open the project's trace list at page size 10",
@@ -667,10 +667,10 @@ test('OBS-E2E-023: an exactly-full final page ends pagination without offering a
   await req.dispose();
 });
 
-test('OBS-E2E-024: has_more without a strictly greater total promises no page number, but keeps Next enabled', {
+test('OBS-E2E-030: has_more without a strictly greater total promises no page number, but keeps Next enabled', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'OBS-E2E-024', area: 'observe',
+    id: 'OBS-E2E-030', area: 'observe',
     userGoal: 'A developer searching a sparse cursor window is never shown a page number the transport cannot prove exists',
     steps: ['seed 25 traces into one project over OTLP',
             "open the project's trace list at page size 10",
@@ -743,10 +743,10 @@ test('OBS-E2E-024: has_more without a strictly greater total promises no page nu
   await req.dispose();
 });
 
-test('OBS-E2E-025: the Next label DOM node survives ~1.5s of ancestor re-render churn', {
+test('OBS-E2E-031: the Next label DOM node survives ~1.5s of ancestor re-render churn', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'OBS-E2E-025', area: 'observe',
+    id: 'OBS-E2E-031', area: 'observe',
     userGoal: "A developer's pointer never lands on a button whose label React just tore down and rebuilt underneath it",
     steps: ['seed 15 traces into one project over OTLP',
             "open the project's trace list at page size 10 (Next enabled)",
@@ -809,10 +809,10 @@ test('OBS-E2E-025: the Next label DOM node survives ~1.5s of ancestor re-render 
   await req.dispose();
 });
 
-test('OBS-E2E-026: a real dwell-click on Next/Back actually fires a click, not just a press', {
+test('OBS-E2E-032: a real dwell-click on Next/Back actually fires a click, not just a press', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'OBS-E2E-026', area: 'observe',
+    id: 'OBS-E2E-032', area: 'observe',
     userGoal: "A developer's mouse press on Back/Next always produces a click, even while the ancestor is mid-re-render",
     steps: ['seed 15 traces into one project over OTLP',
             "open the project's trace list at page size 10",
@@ -878,10 +878,10 @@ test('OBS-E2E-026: a real dwell-click on Next/Back actually fires a click, not j
   await req.dispose();
 });
 
-test('OBS-E2E-027: changing page size changes the outbound page_size, the rendered row count, and resets to page 1', {
+test('OBS-E2E-033: changing page size changes the outbound page_size, the rendered row count, and resets to page 1', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'OBS-E2E-027', area: 'observe',
+    id: 'OBS-E2E-033', area: 'observe',
     userGoal: 'A developer who changes results-per-page gets exactly that many rows and starts back at page 1, not a stale mid-list position',
     steps: ['seed 60 traces into one project over OTLP',
             "open the project's trace list at the default page size",
@@ -918,10 +918,10 @@ test('OBS-E2E-027: changing page size changes the outbound page_size, the render
   await req.dispose();
 });
 
-test('OBS-E2E-028: the agent call-log pager (a plain DRF-paginated, non-cursor screen) still paginates and reaches its last row', {
+test('OBS-E2E-034: the agent call-log pager (a plain DRF-paginated, non-cursor screen) still paginates and reaches its last row', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'OBS-E2E-028', area: 'observe',
+    id: 'OBS-E2E-034', area: 'observe',
     userGoal: "A developer browsing an agent version's call logs gets a working pager even though this screen has no cursor `has_more` contract",
     steps: ["seed 12 completed CallExecution rows for one fresh AgentDefinition/AgentVersion directly through the backend (no simulate/voice infra runs in this harness — see e2e/lib/simulate-seed.ts)",
             "open the agent's Call Logs tab for that version",
@@ -972,7 +972,7 @@ test('OBS-E2E-028: the agent call-log pager (a plain DRF-paginated, non-cursor s
   // initial load, plus a 404 probe for a page 3 that does not exist), so
   // this click is served from that cache rather than guaranteed to hit the
   // wire — wait on the pager's own DOM state, not a response (same reasoning
-  // as the cached-page legs in OBS-E2E-022/OBS-E2E-026).
+  // as the cached-page legs in OBS-E2E-028/OBS-E2E-032).
   await pagerButton(page, 'Next page').click();
   await waitForCurrentPage(page, 2);
 
@@ -981,10 +981,10 @@ test('OBS-E2E-028: the agent call-log pager (a plain DRF-paginated, non-cursor s
   expect(finalPager.nextDisabled).toBe(true);
 });
 
-test('OBS-E2E-029: changing the date filter resets pagination to page 1 and drops the old cursor', {
+test('OBS-E2E-035: changing the date filter resets pagination to page 1 and drops the old cursor', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'OBS-E2E-029', area: 'observe',
+    id: 'OBS-E2E-035', area: 'observe',
     userGoal: 'A developer who narrows the date range never sees stale rows or a stale page position from the filter they just replaced',
     steps: ['seed 45 traces into one project over OTLP',
             "open the project's trace list at page size 10, date range Past 12M",
@@ -1068,10 +1068,10 @@ test('OBS-E2E-029: changing the date filter resets pagination to page 1 and drop
   await req.dispose();
 });
 
-test('OBS-E2E-030: the furthest-visited page reappears as a boundary after walking back to page 1', {
+test('OBS-E2E-036: the furthest-visited page reappears as a boundary after walking back to page 1', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'OBS-E2E-030', area: 'observe',
+    id: 'OBS-E2E-036', area: 'observe',
     userGoal: 'A developer who has already paged deep into a trace list and jumps back to page 1 can still return straight to the page they left off on',
     steps: ['seed 45 traces into one project over OTLP',
             "open the project's trace list at page size 10 (5 pages)",
@@ -1124,7 +1124,7 @@ test('OBS-E2E-030: the furthest-visited page reappears as a boundary after walki
     // Page 1 was fetched during the initial load and is still cached
     // client-side, so this click is not guaranteed to hit the wire — wait on
     // the pager's own DOM state, not a response (same reasoning as the
-    // cached-page legs in OBS-E2E-022/OBS-E2E-026/OBS-E2E-028).
+    // cached-page legs in OBS-E2E-028/OBS-E2E-032/OBS-E2E-034).
     await pagerButton(page, 'Go to page 1').click();
     await waitForCurrentPage(page, 1);
     await expect(traceNames).toHaveCount(SIZE, { timeout: UI_READY });
@@ -1165,4 +1165,4 @@ test('OBS-E2E-030: the furthest-visited page reappears as a boundary after walki
 // earlier page. `EXPECTED_WINDOWS` itself needed no change: during a forward
 // walk the frontier always equals the current page, so the boundary sits
 // inside the window the formula already produces — the widened cap and the
-// boundary-return behaviour are covered separately by OBS-E2E-030 below.
+// boundary-return behaviour are covered separately by OBS-E2E-036 below.
