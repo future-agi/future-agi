@@ -680,6 +680,19 @@ def _subgraph_version_body(ref_graph_version_id, ref_port_id=None):
     }
 
 
+def _assert_no_foreign_leak(response, foreign):
+    """Nothing about the foreign graph beyond the caller's own input is echoed
+    (a linked subgraph node would serialise ref_graph_id / ref_graph_name)."""
+    text = response.content.decode()
+    for leaked in (
+        str(foreign["graph"].id),
+        foreign["graph"].name,
+        foreign["node"].name,
+        foreign["node_b"].name,
+    ):
+        assert leaked not in text
+
+
 def _own_versions(graph):
     return sorted(
         GraphVersion.all_objects.filter(graph=graph).values_list("id", flat=True)
@@ -730,6 +743,7 @@ def test_rs03_version_create_foreign_ref_graph_version_reads_like_missing(
         format="json",
     )
 
+    _assert_no_foreign_leak(response, foreign)
     assert response.status_code == status.HTTP_400_BAD_REQUEST
     _assert_same_answer(
         response, missing_response, swap=(str(foreign_ref.id), str(missing_ref))
@@ -764,6 +778,7 @@ def test_rs03_version_create_foreign_ref_port_reads_like_missing(
         format="json",
     )
 
+    _assert_no_foreign_leak(response, foreign)
     assert response.status_code == status.HTTP_400_BAD_REQUEST
     _assert_same_answer(
         response, missing_response, swap=(str(foreign["port"].id), str(missing_port))
