@@ -404,6 +404,7 @@ import type {
   DynamicColumnCreateResponseApi,
   DynamicColumnMessageResponseApi,
   EditRunPromptColumnApi,
+  EditionEnvelopeApi,
   EmbeddingsResponseApi,
   EmptyRequestApi,
   EnterpriseHeartbeatResponseApi,
@@ -18871,6 +18872,48 @@ export const apiDeploymentInfoList = async (
       method: "GET",
     },
   );
+};
+
+export type apiEditionListResponse200 = {
+  data: EditionEnvelopeApi;
+  status: 200;
+};
+
+export type apiEditionListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type apiEditionListResponseSuccess = apiEditionListResponse200 & {
+  headers: Headers;
+};
+export type apiEditionListResponseError = apiEditionListResponseDefault & {
+  headers: Headers;
+};
+
+export type apiEditionListResponse =
+  | apiEditionListResponseSuccess
+  | apiEditionListResponseError;
+
+export const getApiEditionListUrl = () => {
+  return `/api/edition/`;
+};
+
+/**
+ * GET /api/edition/: the self-hosted edition, Community limits with current
+usage, and (admins only) the licence status, for Settings > Plan & License.
+
+Cloud answers ``{"edition": "cloud"}``. The raw licence key is never
+returned or logged: the licence id is masked and the key appears only as
+the first 8 hex digits of its SHA-256.
+ */
+export const apiEditionList = async (
+  options?: RequestInit,
+): Promise<apiEditionListResponse> => {
+  return apiMutator<apiEditionListResponse>(getApiEditionListUrl(), {
+    ...options,
+    method: "GET",
+  });
 };
 
 export type apiHealthClickhouseListResponse200 = {

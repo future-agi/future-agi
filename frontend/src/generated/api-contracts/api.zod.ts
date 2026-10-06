@@ -9361,6 +9361,7 @@ export const ApiCapabilitiesListResponse = zod.object({
         "NETWORK_REQUIRED",
         "USAGE_LIMIT_REACHED",
         "PLAN_FEATURE_MISSING",
+        "ENTERPRISE_FEATURE_REQUIRED",
         "LICENSE_VERSION_UNSUPPORTED",
       ]),
       requires_network: zod.boolean(),
@@ -9402,6 +9403,78 @@ export const ApiDeploymentInfoListResponse = zod.object({
   status: zod.boolean().default(apiDeploymentInfoListResponseStatusDefault),
   result: zod.object({
     mode: zod.enum(["oss", "ee", "cloud"]),
+  }),
+});
+
+/**
+ * GET /api/edition/: the self-hosted edition, Community limits with current
+usage, and (admins only) the licence status, for Settings > Plan & License.
+
+Cloud answers ``{"edition": "cloud"}``. The raw licence key is never
+returned or logged: the licence id is masked and the key appears only as
+the first 8 hex digits of its SHA-256.
+ */
+export const apiEditionListResponseResultLimitsOrganizationsCurrentMin = 0;
+
+export const apiEditionListResponseResultLimitsWorkspacesCurrentMin = 0;
+
+export const apiEditionListResponseResultLimitsMembersCurrentMin = 0;
+
+export const ApiEditionListResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    edition: zod.enum(["community", "enterprise", "cloud"]),
+    deployment: zod.enum(["self_hosted", "cloud"]).optional(),
+    limits: zod
+      .object({
+        organizations: zod.object({
+          limit: zod.number(),
+          current: zod
+            .number()
+            .min(apiEditionListResponseResultLimitsOrganizationsCurrentMin),
+        }),
+        workspaces: zod.object({
+          limit: zod.number(),
+          current: zod
+            .number()
+            .min(apiEditionListResponseResultLimitsWorkspacesCurrentMin),
+        }),
+        members: zod.object({
+          limit: zod.number(),
+          current: zod
+            .number()
+            .min(apiEditionListResponseResultLimitsMembersCurrentMin),
+        }),
+      })
+      .optional(),
+    over_limit: zod.boolean().optional(),
+    enterprise_features: zod.array(zod.string().min(1)).optional(),
+    contact: zod.string().email().min(1).optional(),
+    activation: zod
+      .object({
+        method: zod.enum(["env_restart"]),
+      })
+      .optional(),
+    license: zod
+      .object({
+        state: zod.enum([
+          "not_applicable",
+          "missing",
+          "invalid",
+          "active",
+          "grace",
+          "expired",
+          "trial_active",
+          "trial_expired",
+        ]),
+        license_type: zod.enum(["production", "trial"]),
+        issued_to: zod.string(),
+        expires_at: zod.string().datetime({ offset: true }),
+        grace_ends_at: zod.string().datetime({ offset: true }),
+        license_id_masked: zod.string().min(1),
+        key_fingerprint: zod.string().min(1),
+      })
+      .optional(),
   }),
 });
 

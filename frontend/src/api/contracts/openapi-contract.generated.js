@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1055,
+  endpointCount: 1056,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -8738,6 +8738,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           500: {
             $ref: "#/definitions/ApiTextErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/api/edition/": {
+      get: {
+        operationId: "api_edition_list",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/EditionEnvelope",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -57131,6 +57148,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    EditionEnvelope: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/EditionResponse",
+        },
+      },
+    },
     EmbeddingsResponse: {
       required: ["status", "result"],
       type: "object",
@@ -85275,6 +85305,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "NETWORK_REQUIRED",
             "USAGE_LIMIT_REACHED",
             "PLAN_FEATURE_MISSING",
+            "ENTERPRISE_FEATURE_REQUIRED",
             "LICENSE_VERSION_UNSUPPORTED",
           ],
           "x-nullable": true,
@@ -88046,6 +88077,48 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Message",
           type: "string",
           minLength: 1,
+        },
+      },
+    },
+    EditionResponse: {
+      required: ["edition"],
+      type: "object",
+      properties: {
+        edition: {
+          title: "Edition",
+          type: "string",
+          enum: ["community", "enterprise", "cloud"],
+        },
+        deployment: {
+          title: "Deployment",
+          type: "string",
+          enum: ["self_hosted", "cloud"],
+        },
+        limits: {
+          $ref: "#/definitions/EditionLimits",
+        },
+        over_limit: {
+          title: "Over limit",
+          type: "boolean",
+        },
+        enterprise_features: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        contact: {
+          title: "Contact",
+          type: "string",
+          format: "email",
+          minLength: 1,
+        },
+        activation: {
+          $ref: "#/definitions/EditionActivation",
+        },
+        license: {
+          $ref: "#/definitions/EditionLicense",
         },
       },
     },
@@ -106086,6 +106159,95 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    EditionActivation: {
+      required: ["method"],
+      type: "object",
+      properties: {
+        method: {
+          title: "Method",
+          type: "string",
+          enum: ["env_restart"],
+        },
+      },
+    },
+    EditionLicense: {
+      required: [
+        "state",
+        "license_type",
+        "issued_to",
+        "expires_at",
+        "grace_ends_at",
+        "license_id_masked",
+        "key_fingerprint",
+      ],
+      type: "object",
+      properties: {
+        state: {
+          title: "State",
+          type: "string",
+          enum: [
+            "not_applicable",
+            "missing",
+            "invalid",
+            "active",
+            "grace",
+            "expired",
+            "trial_active",
+            "trial_expired",
+          ],
+        },
+        license_type: {
+          title: "License type",
+          type: "string",
+          enum: ["production", "trial"],
+          "x-nullable": true,
+        },
+        issued_to: {
+          title: "Issued to",
+          type: "string",
+          "x-nullable": true,
+        },
+        expires_at: {
+          title: "Expires at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        grace_ends_at: {
+          title: "Grace ends at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        license_id_masked: {
+          title: "License id masked",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        key_fingerprint: {
+          title: "Key fingerprint",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
+    EditionLimits: {
+      required: ["organizations", "workspaces", "members"],
+      type: "object",
+      properties: {
+        organizations: {
+          $ref: "#/definitions/EditionLimit",
+        },
+        workspaces: {
+          $ref: "#/definitions/EditionLimit",
+        },
+        members: {
+          $ref: "#/definitions/EditionLimit",
+        },
+      },
+    },
     EmbeddingProvider: {
       required: ["name", "description", "requires_api_key", "config_schema"],
       type: "object",
@@ -115298,6 +115460,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Percentage change",
           type: "number",
           "x-nullable": true,
+        },
+      },
+    },
+    EditionLimit: {
+      required: ["limit", "current"],
+      type: "object",
+      properties: {
+        limit: {
+          title: "Limit",
+          type: "integer",
+          "x-nullable": true,
+        },
+        current: {
+          title: "Current",
+          type: "integer",
+          minimum: 0,
         },
       },
     },
