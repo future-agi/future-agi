@@ -116,7 +116,6 @@ import {
   getYAxisRangeWarning,
   getVisibleIndices,
   resolveWidgetAxisPlan,
-  makeSeriesKey,
   resolveSavedSelection,
   toAxisConfigPayload,
 } from "./widgetUtils";
@@ -3756,9 +3755,9 @@ export default function WidgetEditorView() {
   );
 
   // Match the saved-dashboard renderer: null means an absent aggregate
-  // bucket, not zero, so line previews connect the neighbouring exact points.
-  // Memoized so the big chartOptions memo below (which depends on this
-  // object) doesn't recompute on every render from a fresh {min,max}.
+  // bucket, not zero (see getPlottedChartSeries). Memoized so the big
+  // chartOptions memo below (which depends on this object) doesn't recompute
+  // on every render from a fresh {min,max}.
   const chartTimeWindow = useMemo(
     () => getChartTimeWindow(previewResult),
     [previewResult],

@@ -519,8 +519,8 @@ export default function WidgetChart({
     [series, visibleSeries],
   );
 
-  // A missing aggregate bucket is not a zero: line and area charts drop the
-  // null points so Apex connects the neighbouring observed ones.
+  // A missing aggregate bucket is not a zero: unstacked charts drop the null
+  // points and stacked charts pad them (see getPlottedChartSeries).
   const chartTimeWindow = getChartTimeWindow(result);
 
   const plottedChartSeries = useMemo(

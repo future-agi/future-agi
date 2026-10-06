@@ -22,7 +22,10 @@ function Harness({ mountChartImmediately = true }) {
   );
 }
 
-const setTop = (el, top) => act(() => { el.style.top = top; });
+const setTop = (el, top) =>
+  act(() => {
+    el.style.top = top;
+  });
 
 // A caller can end up handing the same ref object to genuinely different DOM
 // nodes across renders — e.g. a loading state and a loaded state that render
