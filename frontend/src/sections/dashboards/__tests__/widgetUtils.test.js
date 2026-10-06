@@ -355,9 +355,7 @@ describe("getExactDashboardResult", () => {
 
 describe("getYAxisRangeWarning", () => {
   it("returns null when no min/max is configured", () => {
-    expect(
-      getYAxisRangeWarning(series([2, 7]), [0], leftAxis({})),
-    ).toBeNull();
+    expect(getYAxisRangeWarning(series([2, 7]), [0], leftAxis({}))).toBeNull();
     expect(
       getYAxisRangeWarning(series([2, 7]), [0], leftAxis({ min: "", max: "" })),
     ).toBeNull();
@@ -889,10 +887,9 @@ describe("getSeriesExtent", () => {
   it("skips an all-null stacked bucket instead of summing it to 0", () => {
     // currently min 0
     expect(
-      getSeriesExtent(
-        [{ data: pts(100, null) }, { data: pts(50, null) }],
-        { stacked: true },
-      ),
+      getSeriesExtent([{ data: pts(100, null) }, { data: pts(50, null) }], {
+        stacked: true,
+      }),
     ).toEqual({ min: 150, max: 150 });
   });
 
@@ -1210,8 +1207,7 @@ describe("resolveWidgetAxisPlan", () => {
 
   it("anchors a column chart at zero instead of fitting the band", () => {
     expect(
-      resolveWidgetAxisPlan(band, [0], {}, { chartType: "column" }).bounds
-        .left,
+      resolveWidgetAxisPlan(band, [0], {}, { chartType: "column" }).bounds.left,
     ).toEqual({ min: 0, max: 250 });
   });
 
@@ -1245,25 +1241,40 @@ describe("resolveWidgetAxisPlan", () => {
 
   it("still lets a typed bound win over the zero baseline", () => {
     expect(
-      resolveWidgetAxisPlan(band, [0], { leftY: { min: "100" } }, {
-        chartType: "column",
-      }).bounds.left,
+      resolveWidgetAxisPlan(
+        band,
+        [0],
+        { leftY: { min: "100" } },
+        {
+          chartType: "column",
+        },
+      ).bounds.left,
     ).toEqual({ min: 100, max: 250 });
   });
 
   it("anchors a single-point column at zero", () => {
     expect(
-      resolveWidgetAxisPlan([{ data: pts(500) }], [0], {}, {
-        chartType: "column",
-      }).bounds.left,
+      resolveWidgetAxisPlan(
+        [{ data: pts(500) }],
+        [0],
+        {},
+        {
+          chartType: "column",
+        },
+      ).bounds.left,
     ).toEqual({ min: 0, max: 500 });
   });
 
   it("falls through to ApexCharts for a mixed-sign column", () => {
     expect(
-      resolveWidgetAxisPlan([{ data: pts(-50, 100, 200) }], [0], {}, {
-        chartType: "column",
-      }).bounds.left,
+      resolveWidgetAxisPlan(
+        [{ data: pts(-50, 100, 200) }],
+        [0],
+        {},
+        {
+          chartType: "column",
+        },
+      ).bounds.left,
     ).toEqual({ min: undefined, max: undefined });
   });
 });
