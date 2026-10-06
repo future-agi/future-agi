@@ -6,19 +6,28 @@ from simulate.models import CallExecution, SimulateEvalConfig
 
 
 def iter_live_eval_outputs(eval_outputs, eval_configs: Container[str]):
-    """Yield only the (eval_id, eval_data) pairs whose eval config is still live.
+    """Yield the (eval_id, eval_data) pairs whose id is in ``eval_configs``.
 
     ``eval_outputs`` (JSONB on ``SimulateCallExecution``) is a snapshot and is
     not pruned when an eval config is soft-deleted, so its keys can outlive the
-    config. Callers pass ``eval_configs`` -- any ``Container[str]`` of the
-    currently-live eval config ids (a ``dict[str, SimulateEvalConfig]`` keyed by
-    id, or a ``set[str]``) -- and this filters the stale keys out. Membership is
-    tested with ``in``, so pass a set/dict (not a list) to keep it O(1) per key.
+    config. Liveness is the caller's definition, not this function's: pass a
+    live-only map/set to filter to still-live configs, or a map that also
+    includes soft-deleted ones to keep their rows too -- the call-details view
+    deliberately does the latter (TH-8045) so a removed eval's verdict still
+    surfaces, marked ``removed``. Membership is tested with ``in``, so pass a
+    set/dict (not a list) to keep it O(1) per key.
     """
     if not isinstance(eval_outputs, dict):
         return
     for eval_id, eval_data in eval_outputs.items():
-        if str(eval_id) in eval_configs:
+        # Harness-native checks are already-computed execution evidence and do
+        # not necessarily have a reusable EvalTemplate/SimulateEvalConfig. They
+        # remain live by source marker; template-backed harness judgements use a
+        # normal config ID and pass the membership check below.
+        is_harness_result = (
+            isinstance(eval_data, dict) and eval_data.get("source") == "harness"
+        )
+        if str(eval_id) in eval_configs or is_harness_result:
             yield eval_id, eval_data
 
 

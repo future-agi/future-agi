@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import unicodedata
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
 from tracer.utils.attribute_suggestion_contract import (
     TYPED_STRING_SUGGESTION_MAX_UTF8_BYTES as TYPED_STRING_SUGGESTION_MAX_UTF8_BYTES,
@@ -84,6 +86,10 @@ JSON_FILTER_SIGNED_INT_MIN = -(1 << 63)
 JSON_FILTER_SIGNED_INT_MAX = (1 << 63) - 1
 JSON_FILTER_UNSIGNED_INT_MAX = (1 << 64) - 1
 
+_CANONICAL_UUID = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE
+)
+
 
 def normalize_filter_type(filter_type: str | None) -> str:
     if not filter_type:
@@ -141,6 +147,46 @@ def normalize_span_attribute_filter_type(
     if raw_type == "json" and isinstance(filter_value, dict):
         return "map"
     return normalize_filter_type(raw_type)
+
+
+def split_comma_joined_uuid_members(item: dict[str, Any]) -> dict[str, Any]:
+    """Return a text in/not_in filter whose comma-joined UUID members are split.
+
+    Every list member is one exact value, commas included: a picked system
+    prompt or ``"Paris, France"`` must match verbatim. The exception is an
+    untyped member made only of canonical UUIDs joined by commas, which is what
+    a free-text value box sends when several ids are pasted into it; it becomes
+    one member per id. Picker selections carry ``attribute_value_types`` and
+    always stay exact, so a stored value that is itself a UUID list can still
+    be matched by picking it.
+    """
+
+    config = item.get("filter_config")
+    if not isinstance(config, dict) or config.get("attribute_value_types") is not None:
+        return item
+    values = config.get("filter_value")
+    if (
+        config.get("filter_op") not in LIST_FILTER_OPS
+        or not isinstance(values, list)
+        or normalize_span_attribute_filter_type(config.get("filter_type"), values)
+        != "text"
+    ):
+        return item
+
+    members: list[Any] = []
+    for value in values:
+        ids = (
+            [part.strip() for part in value.split(",") if part.strip()]
+            if isinstance(value, str) and "," in value
+            else []
+        )
+        if ids and all(_CANONICAL_UUID.fullmatch(member_id) for member_id in ids):
+            members.extend(ids)
+        else:
+            members.append(value)
+    if members == values:
+        return item
+    return {**item, "filter_config": {**config, "filter_value": members}}
 
 
 def validate_json_map_filter_value(value: object) -> dict[str, object]:

@@ -101,7 +101,12 @@ export const StereoMultiTrackPlayer = ({
     customerUrl: stereoCustomer,
     loading: stereoLoading,
     error: stereoError,
-  } = useStereoChannels(recordings?.stereo || "", isInbound, provider);
+  } = useStereoChannels(
+    recordings?.stereo || "",
+    isInbound,
+    provider,
+    recordings?.stereoChannels,
+  );
 
   // Use stereo-split channels when available, fall back to separate mono files
   const useStereo =
@@ -254,7 +259,13 @@ const AudioPlayerCustom = ({ data, onInstance }) => {
   }
 
   // Normalize recordings structure to flat format: {stereo, combined, assistant, customer}
-  const recordings = normalizeRecordings(data?.recordings);
+  const recordings = normalizeRecordings({
+    ...(data?.recordings || {}),
+    // Keep the player resilient to older/detail responses that expose only
+    // the canonical audio_url field.
+    combined:
+      data?.recordings?.combined || data?.audio_url || data?.audioUrl || "",
+  });
   const hasRecordingData =
     (data?.audio_url ?? data?.audioUrl) ||
     recordings?.assistant ||
@@ -273,30 +284,6 @@ const AudioPlayerCustom = ({ data, onInstance }) => {
           status="fetching"
           message={"Fetching the recording"}
         />
-      </Box>
-    );
-  }
-
-  // `hasRecordingData` is satisfied by `audio_url` alone, which the player
-  // never receives — so the gate can pass while every URL the player would
-  // use is still empty. Wait rather than hand it nothing.
-  const hasPlayableUrl = Boolean(
-    recordings?.stereo ||
-      recordings?.combined ||
-      recordings?.assistant ||
-      recordings?.customer,
-  );
-  if (hasRecordingData && !hasPlayableUrl) {
-    return data?.recording_detail_pending ? (
-      <Box sx={{ height: 200 }}>
-        <LoadingStateComponent
-          status="fetching"
-          message="Fetching the recording"
-        />
-      </Box>
-    ) : (
-      <Box sx={{ position: "relative", height: 200 }}>
-        <RecordingFailure variant={UNAVAILABLE} />
       </Box>
     );
   }

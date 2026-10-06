@@ -1,4 +1,4 @@
-package generated
+package generated_test
 
 import (
 	"encoding/json"
@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	gatewayadmin "github.com/futureagi/agentcc-gateway/internal/contracts/generated"
 	"github.com/futureagi/agentcc-gateway/internal/tenant"
 )
 
@@ -16,7 +17,7 @@ func TestOrgConfigContractRoundTripsIntoGatewayTenantConfig(t *testing.T) {
 		t.Fatalf("read fixture: %v", err)
 	}
 
-	var contract OrgConfig
+	var contract gatewayadmin.OrgConfig
 	if err := json.Unmarshal(body, &contract); err != nil {
 		t.Fatalf("decode generated contract DTO: %v", err)
 	}
@@ -37,6 +38,18 @@ func TestOrgConfigContractRoundTripsIntoGatewayTenantConfig(t *testing.T) {
 	}
 	if openai.APIKey != "sk-test-openai" {
 		t.Fatalf("provider api key mismatch: %q", openai.APIKey)
+	}
+	emptyPrefix := ""
+	contract.Providers["openai"].APIPathPrefix = &emptyPrefix
+	encoded, err = json.Marshal(contract)
+	if err != nil {
+		t.Fatalf("encode generated contract with path prefix: %v", err)
+	}
+	if err := json.Unmarshal(encoded, &runtime); err != nil {
+		t.Fatalf("decode gateway runtime path prefix: %v", err)
+	}
+	if got := runtime.Providers["openai"].APIPathPrefix; got == nil || *got != "" {
+		t.Fatalf("provider api path prefix mismatch: %#v", got)
 	}
 	if runtime.Routing == nil || runtime.Routing.Strategy != "weighted" {
 		t.Fatalf("routing strategy mismatch: %#v", runtime.Routing)

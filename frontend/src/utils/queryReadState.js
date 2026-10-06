@@ -72,7 +72,7 @@ const hasBoundedReadMetadata = (candidate) =>
       key.startsWith("query_sampling_"),
   );
 
-const hasValidStatusPair = (candidate) => {
+export const hasValidStatusPair = (candidate) => {
   if (!hasBoundedReadMetadata(candidate)) return true;
 
   const status = candidate?.query_status;
@@ -98,6 +98,11 @@ const hasValidStatusPair = (candidate) => {
     );
   }
   if (status === "degraded") return complete === false;
+  // Compatibility with older catalog APIs: false/partial remains a valid
+  // incomplete read and retains its degraded presentation. Current suggestion
+  // APIs use true/complete for successful page reads, without asserting source
+  // completeness. Do not extend that success contract to exact aggregations.
+  if (status === "partial") return complete === false;
   return false;
 };
 

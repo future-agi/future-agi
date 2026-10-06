@@ -6,8 +6,9 @@ const captured = { trackUrls: null, singleUrl: null };
 
 // Mutable so a case can hand back real split channels; hoisted because the
 // vi.mock factory below is lifted above this file's other statements.
-const { stereo } = vi.hoisted(() => ({
+const { stereo, stereoArgs } = vi.hoisted(() => ({
   stereo: { assistantUrl: "", customerUrl: "", loading: false, error: null },
+  stereoArgs: { current: null },
 }));
 
 vi.mock("src/components/iconify", () => ({
@@ -17,7 +18,10 @@ vi.mock("src/components/iconify", () => ({
 }));
 
 vi.mock("src/hooks/use-stereo-channels", () => ({
-  default: () => stereo,
+  default: (...args) => {
+    stereoArgs.current = args;
+    return stereo;
+  },
 }));
 
 vi.mock("src/components/multi-track-audio-player/MultiTrackAudioPlayer", () => ({
@@ -105,6 +109,33 @@ describe("StereoMultiTrackPlayer track selection", () => {
     expect(captured.trackUrls.map((t) => t.name)).toEqual([
       "Customer Audio",
       "Assistant Audio",
+    ]);
+  });
+
+  it("hands the stereo split the backend's channel layout", () => {
+    const layout = { left: "customer", right: "assistant" };
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <AudioPlayerCustom
+          data={{
+            id: "call-3",
+            status: "completed",
+            provider: "phone",
+            call_type: "Inbound",
+            recordings: {
+              stereo: "https://example.test/stereo.wav",
+              stereo_channels: layout,
+            },
+          }}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(stereoArgs.current).toEqual([
+      "https://example.test/stereo.wav",
+      true,
+      "phone",
+      layout,
     ]);
   });
 
@@ -203,42 +234,22 @@ describe("AudioPlayerCustom picks the renderer from the recording shape", () => 
     expect(captured.trackUrls).toBeNull();
   });
 
-  it("shows the fetching spinner while the detail query is pending", () => {
+  it("uses audio_url when an older detail response has no recordings map", () => {
     render(
       <QueryClientProvider client={new QueryClient()}>
         <AudioPlayerCustom
           data={{
-            audio_url: "https://example.test/audio.wav",
-            recordings: {},
-            recording_detail_pending: true,
-          }}
-        />
-      </QueryClientProvider>,
-    );
-
-    expect(screen.getByText("Fetching the recording")).toBeInTheDocument();
-    expect(screen.queryByText("Recording unavailable")).not.toBeInTheDocument();
-    expect(captured.trackUrls).toBeNull();
-    expect(captured.singleUrl).toBeNull();
-  });
-
-  it("shows recording unavailable once the detail query settles without URLs", () => {
-    render(
-      <QueryClientProvider client={new QueryClient()}>
-        <AudioPlayerCustom
-          data={{
-            audio_url: "https://example.test/audio.wav",
+            module: "simulate",
+            status: "completed",
+            simulation_call_type: "voice",
+            audio_url: COMBINED,
             recordings: {},
           }}
         />
       </QueryClientProvider>,
     );
 
-    expect(screen.getByText("Recording unavailable")).toBeInTheDocument();
-    expect(
-      screen.queryByText("Fetching the recording"),
-    ).not.toBeInTheDocument();
+    expect(captured.singleUrl).toBe(COMBINED);
     expect(captured.trackUrls).toBeNull();
-    expect(captured.singleUrl).toBeNull();
   });
 });

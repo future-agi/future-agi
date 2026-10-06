@@ -21,7 +21,7 @@ import React, {
 import { Helmet } from "react-helmet-async";
 import GridTable from "./GridTable";
 import { getWorkspaceQueryOptions } from "./getWorkspaceQueryOptions";
-import { useQueryClient, useMutation } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import AllActionForm from "./AllActionForm";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
@@ -30,7 +30,7 @@ import logger from "src/utils/logger";
 import PropTypes from "prop-types";
 import { useNavigate } from "react-router";
 import { APP_CONSTANTS } from "src/utils/constants";
-import axiosInstance, { endpoints } from "src/utils/axios";
+import { useCreateWorkspace } from "src/api/workspaces/create";
 import { useSnackbar } from "notistack";
 import { useOrganization } from "src/contexts/OrganizationContext";
 
@@ -107,9 +107,7 @@ const WorkSpaceManagement = () => {
   const [createOpen, setCreateOpen] = useState(false);
   const [newWorkspaceName, setNewWorkspaceName] = useState("");
 
-  const createMutation = useMutation({
-    mutationFn: (payload) =>
-      axiosInstance.post(endpoints.workspaces.create, payload),
+  const createMutation = useCreateWorkspace({
     onSuccess: () => {
       enqueueSnackbar("Workspace created", { variant: "success" });
       setCreateOpen(false);
@@ -129,7 +127,7 @@ const WorkSpaceManagement = () => {
     if (!newWorkspaceName.trim()) return;
     createMutation.mutate({
       name: newWorkspaceName.trim(),
-      displayName: newWorkspaceName.trim(),
+      display_name: newWorkspaceName.trim(),
       emails: [],
       role: "workspace_admin", // Backend expects lowercase with underscore, not "Workspace Admin"
     });

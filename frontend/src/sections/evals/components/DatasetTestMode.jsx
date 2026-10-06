@@ -1424,7 +1424,14 @@ const DatasetTestMode = React.forwardRef(
     );
 
     return (
-      <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
+      <Box
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 1.5,
+          height: "100%",
+        }}
+      >
         {/* Dataset selector — hidden when initialDatasetId or sourceColumns is provided */}
         {!initialDatasetId && !isWorkbenchMode && (
           <Box>

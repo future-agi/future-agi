@@ -23,6 +23,7 @@ vi.mock("./hooks/useRequestLogs", () => ({
           cache_hit: true,
           guardrail_triggered: true,
           fallback_used: true,
+          metadata: { application: "checkout", service: "recommendations" },
         },
       ],
       count: 1,
@@ -52,6 +53,8 @@ describe("RequestTable", () => {
     expect(table.getByText("456ms")).toBeInTheDocument();
     expect(table.getByText("10 / 12")).toBeInTheDocument();
     expect(table.getByText("session-1")).toBeInTheDocument();
+    expect(table.getByText("checkout")).toBeInTheDocument();
+    expect(table.getByText("recommendations")).toBeInTheDocument();
     expect(table.queryByText("N/A")).not.toBeInTheDocument();
 
     table.getByText("gpt-4o-mini").closest("tr").click();

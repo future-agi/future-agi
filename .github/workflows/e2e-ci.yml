@@ -6,6 +6,17 @@ on:
   push:
     branches: [dev, main]
   merge_group:
+  # The Standalone leg (E2E_STACK=standalone): nightly, on demand, and next to
+  # the Distributed leg on a PR that carries the e2e-standalone label.
+  schedule:
+    - cron: "37 2 * * *"
+  workflow_dispatch:
+    inputs:
+      stack:
+        description: Which setup the suite runs against
+        type: choice
+        options: [distributed, standalone]
+        default: standalone
 
 permissions:
   contents: read
@@ -16,6 +27,8 @@ concurrency:
 
 env:
   CACHE_REPO: ghcr.io/future-agi/future-agi/e2e-cache
+  # The release builds' layer cache, read only (the slim backend's).
+  BUILD_CACHE: ghcr.io/future-agi/future-agi/build-cache
 
 jobs:
   changes:
@@ -29,6 +42,7 @@ jobs:
       backend: ${{ steps.filter.outputs.backend || steps.always.outputs.backend }}
       frontend: ${{ steps.filter.outputs.frontend || steps.always.outputs.frontend }}
       gateway: ${{ steps.filter.outputs.gateway || steps.always.outputs.gateway }}
+      stacks: ${{ steps.stacks.outputs.stacks }}
     steps:
       - uses: actions/checkout@v4
       - id: filter
@@ -51,6 +65,14 @@ jobs:
               - 'e2e/**'
               - 'bin/e2e'
               - 'docker-compose.yml'
+              - 'docker-compose.distributed.yml'
+              - 'docker-compose.dev.yml'
+              - 'docker-compose.distributed.dev.yml'
+              - 'deploy/**'
+              - 'bin/install*'
+              - 'bin/lib/**'
+              - 'bin/uninstall'
+              - 'scripts/reclaim-runner-disk.sh'
               - '.github/workflows/e2e-ci.yml'
       - id: always
         if: github.event_name != 'pull_request'
@@ -61,41 +83,77 @@ jobs:
             echo "frontend=true"
             echo "gateway=true"
           } >> "$GITHUB_OUTPUT"
+      - id: stacks
+        env:
+          EVENT: ${{ github.event_name }}
+          DISPATCHED: ${{ inputs.stack }}
+          # The labels the PR had when this run started: a re-run keeps them,
+          # so add the label, then push.
+          STANDALONE_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'e2e-standalone') }}
+        run: |
+          case "$EVENT" in
+            schedule) stacks='["standalone"]' ;;
+            workflow_dispatch) stacks="[\"$DISPATCHED\"]" ;;
+            pull_request)
+              if [ "$STANDALONE_LABEL" = true ]; then
+                stacks='["distributed","standalone"]'
+              else
+                stacks='["distributed"]'
+              fi ;;
+            *) stacks='["distributed"]' ;;
+          esac
+          echo "stacks=$stacks" >> "$GITHUB_OUTPUT"
 
   e2e:
+    name: e2e (${{ matrix.stack }})
     needs: changes
     if: needs.changes.outputs.any == 'true'
+    strategy:
+      # A labelled PR runs both legs; one failing must not cancel the other.
+      fail-fast: false
+      matrix:
+        stack: ${{ fromJSON(needs.changes.outputs.stacks) }}
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     permissions:
       contents: read
       packages: write # ghcr build-cache: read on PRs, written on pushes
     env:
-      BUILD_BACKEND: ${{ needs.changes.outputs.backend }}
+      # bin/e2e and lib/managed-mock.ts pick the stack from this.
+      E2E_STACK: ${{ matrix.stack }}
+      # Always from source: the stack's compose file runs backend modules at
+      # boot (e.g. tracer.services.clickhouse.oss_cdc_install), so a released
+      # :latest that predates them fails the boot for every PR that does not
+      # touch futureagi/ — the same drift BUILD_FRONTEND/BUILD_GATEWAY avoid.
+      BUILD_BACKEND: "true"
       # Always from source: specs land with the frontend behavior they assert,
       # so the released frontend image can be too old for them (TH-7733).
       BUILD_FRONTEND: "true"
-      BUILD_GATEWAY: ${{ needs.changes.outputs.gateway }}
+      # Always from source for the same reason: gateway flows (GW-E2E-002)
+      # land with the gateway behavior they assert, so a PR that does not
+      # touch agentcc-gateway/ would otherwise run them against a released
+      # :latest that predates that behavior.
+      BUILD_GATEWAY: "true"
     steps:
       - uses: actions/checkout@v4
+
+      - name: Tag for the images built below
+        # Standalone runs the tag e2e/stack/standalone-e2e.env names
+        # (FUTURE_AGI_VERSION), which `bin/e2e build standalone-app` reads too;
+        # Distributed runs e2e-ci, which a later step writes into e2e.env.
+        run: |
+          if [ "$E2E_STACK" = standalone ]; then
+            tag=$(sed -n 's/^FUTURE_AGI_VERSION=//p' e2e/stack/standalone-e2e.env)
+          else
+            tag=e2e-ci
+          fi
+          echo "IMAGE_TAG=${tag:?no FUTURE_AGI_VERSION in e2e/stack/standalone-e2e.env}" >> "$GITHUB_ENV"
 
       - name: Reclaim runner disk
         # / is the small volume and the backend image alone unpacks ~15GB of
         # CUDA/nvidia libs, so docker moves to /mnt (~65GB free). Must run
         # before setup-buildx creates its builder container under the old root.
-        run: |
-          df -h / /mnt
-          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android \
-            /opt/hostedtoolcache/CodeQL /usr/local/share/boost || true
-          # Unguarded on purpose: a half-applied move leaves docker broken, so
-          # every step below must fail the job rather than be tolerated.
-          sudo systemctl stop docker docker.socket
-          sudo mv /var/lib/docker /mnt/docker
-          sudo ln -s /mnt/docker /var/lib/docker
-          sudo systemctl start docker
-          timeout 60 bash -c 'until docker info >/dev/null 2>&1; do sleep 2; done'
-          docker info --format 'docker root: {{.DockerRootDir}}'
-          df -h / /mnt
+        run: scripts/reclaim-runner-disk.sh
 
       - uses: docker/setup-buildx-action@v3
 
@@ -107,20 +165,22 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: ghcr login (cache reads on internal PRs)
+      - name: ghcr login (cache reads on internal PRs and the Standalone leg)
         # Fork PRs get no token and read anonymously, which works only once the
         # e2e-cache package is made public — a one-time manual step in the org's
         # package settings. Until then forks build cold.
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false
+        if: >-
+          (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false)
+          || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # A backend/gateway image whose filter did not fire is NOT built from
-      # this PR — the stack runs the released :latest for it. Deliberate speed
-      # trade. The frontend is exempt (see BUILD_FRONTEND above).
+      # The backend, frontend and gateway images are always built from this
+      # PR's code (see the env block above); the registry cache keeps the
+      # backend build short.
       - name: Build backend image from PR code
         if: env.BUILD_BACKEND == 'true'
         uses: docker/build-push-action@v5
@@ -130,8 +190,14 @@ jobs:
           context: futureagi
           file: futureagi/Dockerfile.oss
           load: true
-          tags: futureagi/future-agi:e2e-ci
-          cache-from: type=registry,ref=${{ env.CACHE_REPO }}:backend
+          # Standalone assembles its app image on the slim variant, as a release
+          # does. It shares the default variant's dependency layers; the
+          # release builds keep its own cache.
+          build-args: ${{ matrix.stack == 'standalone' && 'IMAGE_VARIANT=slim' || '' }}
+          tags: futureagi/future-agi:${{ env.IMAGE_TAG }}
+          cache-from: |
+            type=registry,ref=${{ env.CACHE_REPO }}:backend
+            ${{ matrix.stack == 'standalone' && format('type=registry,ref={0}:backend-slim-amd64', env.BUILD_CACHE) || '' }}
           cache-to: ${{ github.event_name == 'push' && format('type=registry,ref={0}:backend,mode=max', env.CACHE_REPO) || '' }}
 
       - name: Build fi-collector image from PR code
@@ -141,7 +207,7 @@ jobs:
           context: fi-collector
           file: fi-collector/Dockerfile
           load: true
-          tags: futureagi/fi-collector:e2e-ci
+          tags: futureagi/fi-collector:${{ env.IMAGE_TAG }}
           cache-from: type=registry,ref=${{ env.CACHE_REPO }}:fi-collector
           cache-to: ${{ github.event_name == 'push' && format('type=registry,ref={0}:fi-collector,mode=max', env.CACHE_REPO) || '' }}
 
@@ -152,7 +218,7 @@ jobs:
           context: frontend
           file: frontend/Dockerfile
           load: true
-          tags: futureagi/frontend:e2e-ci
+          tags: futureagi/frontend:${{ env.IMAGE_TAG }}
           cache-from: type=registry,ref=${{ env.CACHE_REPO }}:frontend
           cache-to: ${{ github.event_name == 'push' && format('type=registry,ref={0}:frontend,mode=max', env.CACHE_REPO) || '' }}
 
@@ -165,9 +231,17 @@ jobs:
           context: agentcc-gateway
           file: agentcc-gateway/Dockerfile
           load: true
-          tags: futureagi/agentcc-gateway:e2e-ci
+          tags: futureagi/agentcc-gateway:${{ env.IMAGE_TAG }}
           cache-from: type=registry,ref=${{ env.CACHE_REPO }}:gateway
           cache-to: ${{ github.event_name == 'push' && format('type=registry,ref={0}:gateway,mode=max', env.CACHE_REPO) || '' }}
+
+      - name: Assemble futureagi/standalone from those images
+        if: matrix.stack == 'standalone'
+        # The docker driver's builder sees the images loaded above; the buildx
+        # container builder would look for them on Docker Hub.
+        env:
+          BUILDX_BUILDER: default
+        run: bin/e2e build standalone-app
 
       - name: Drop the buildkit copy of the built images
         # buildx holds a second copy of every loaded image; the cross-run
@@ -178,30 +252,35 @@ jobs:
 
       - name: Point the stack at the built images
         # printf, not echo: e2e.env's last line may lack a trailing newline.
+        # standalone-e2e.env already names the Standalone leg's tag.
+        if: matrix.stack == 'distributed'
         run: |
           if [ "$BUILD_BACKEND" = "true" ]; then
-            printf '\n%s\n' "FUTURE_AGI_VERSION=e2e-ci" >> e2e/stack/e2e.env
-            printf '%s\n' "E2E_FI_COLLECTOR_VERSION=e2e-ci" >> e2e/stack/e2e.env
+            printf '\n%s\n' "FUTURE_AGI_VERSION=$IMAGE_TAG" >> e2e/stack/e2e.env
+            printf '%s\n' "E2E_FI_COLLECTOR_VERSION=$IMAGE_TAG" >> e2e/stack/e2e.env
           fi
           if [ "$BUILD_FRONTEND" = "true" ]; then
-            printf '\n%s\n' "FRONTEND_VERSION=e2e-ci" >> e2e/stack/e2e.env
+            printf '\n%s\n' "FRONTEND_VERSION=$IMAGE_TAG" >> e2e/stack/e2e.env
           fi
           if [ "$BUILD_GATEWAY" = "true" ]; then
-            printf '\n%s\n' "AGENTCC_GATEWAY_VERSION=e2e-ci" >> e2e/stack/e2e.env
+            printf '\n%s\n' "AGENTCC_GATEWAY_VERSION=$IMAGE_TAG" >> e2e/stack/e2e.env
           fi
 
       - name: Prefetch vendor images
         # fi-collector, agentcc-gateway and the app images are deliberately
-        # absent: when their filter fires their tag is the locally-built
-        # e2e-ci and a pull would 404 (failing the whole invocation, not just
-        # that image); `up` resolves whatever is left.
+        # absent: their tag is the locally built IMAGE_TAG and a pull would
+        # 404 (failing the whole invocation, not just that image); `up`
+        # resolves whatever is left.
         run: |
-          nohup bin/e2e compose pull --quiet \
-            postgres clickhouse redis rabbitmq minio temporal mock-llm \
-            peerdb-server peerdb-flow-worker peerdb-flow-snapshot-worker \
-            peerdb-flow-api peerdb-catalog peerdb-temporal peerdb-temporal-init \
-            peerdb-minio \
-            > /tmp/e2e-pull.log 2>&1 &
+          if [ "$E2E_STACK" = standalone ]; then
+            services=(postgres clickhouse mock-llm)
+          else
+            services=(postgres clickhouse redis minio temporal mock-llm
+              peerdb-server peerdb-flow-worker peerdb-flow-snapshot-worker
+              peerdb-flow-api peerdb-catalog peerdb-temporal peerdb-temporal-init
+              peerdb-minio)
+          fi
+          nohup bin/e2e compose pull --quiet "${services[@]}" > /tmp/e2e-pull.log 2>&1 &
 
       - uses: actions/setup-node@v4
         with:
@@ -245,7 +324,7 @@ jobs:
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report
+          name: ${{ matrix.stack == 'standalone' && 'playwright-report-standalone' || 'playwright-report' }}
           path: e2e/playwright-report
           retention-days: 7
           # A job that dies before the suite runs has no report; the real

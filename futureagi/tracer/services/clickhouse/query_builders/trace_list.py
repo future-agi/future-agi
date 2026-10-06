@@ -790,9 +790,13 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         ``user``/``user_id`` values are external identifiers, so resolve them
         through the existing curated end-user/remap expansion before probing
         the indexed span UUID. ``end_user_id`` is already a physical structural
-        UUID and can use the normal direct-column compiler. The returned
-        predicate is a necessary candidate condition only; the existing finite
-        latest-state classifier remains authoritative for publication.
+        UUID and uses the normal direct-column compiler. Whatever comparison
+        that compiler chooses, the predicate carries the membership envelope
+        here, because the CTE it seeds spans the whole table.
+
+        The returned predicate is a necessary candidate condition only; the
+        existing finite latest-state classifier remains authoritative for
+        publication.
         """
 
         filter_item = self._positive_exact_end_user_seed_filter()
@@ -837,7 +841,16 @@ class TraceListQueryBuilder(BaseQueryBuilder):
                 operation,
                 value,
             )
-        return predicate or "", dict(filter_builder._params)
+        if not predicate:
+            return "", {}
+        # This predicate seeds a trace-membership CTE over the whole span
+        # table, so it needs the same event-time envelope every membership
+        # subquery ``translate`` compiles already carries. Without it the CTE
+        # is the one read in the statement that does not shrink with the
+        # request window: it rescans the project's entire span history for a
+        # one-day page exactly as it does for a year.
+        predicate += filter_builder._span_membership_date_filter()
+        return predicate, dict(filter_builder._params)
 
     def supports_filter_candidate_seed_page(self) -> bool:
         """Use necessary scalar or relational membership before ordered roots."""
@@ -3589,6 +3602,39 @@ class TraceListQueryBuilder(BaseQueryBuilder):
                 if _restrict_scalar_root_population
                 else ""
             )
+            # The roots THIS statement can publish are the ones inside the
+            # slice, tightened to the cursor on a keyset continuation: an
+            # older-direction resume can never publish a root above the
+            # cursor, a newer-direction one never below it. A lane that
+            # declares a witness envelope derives it from those bounds, so its
+            # envelope is the tightest one that still carries every
+            # publishable root's own witness.
+            witness_envelope_fragment, witness_envelope_params = (
+                self._scalar_candidate_witness_envelope(
+                    root_start=(
+                        before_start_time
+                        if before_start_time is not None and direction == "newer"
+                        else slice_start
+                    ),
+                    root_end=(
+                        before_start_time
+                        if before_start_time is not None and direction == "older"
+                        else slice_end
+                    ),
+                )
+            )
+            params.update(witness_envelope_params)
+            # A conjunction may additionally require, per trace, that every
+            # other positive leaf's key is witnessed inside the same envelope.
+            # A lane declares that gate only when it also declares an envelope.
+            conjunction_gate_fragment, conjunction_gate_params = (
+                self._scalar_candidate_conjunction_gate(
+                    scalar_anchor,
+                    witness_envelope_fragment=witness_envelope_fragment,
+                    project_version_fragment=project_version_fragment,
+                )
+            )
+            params.update(conjunction_gate_params)
             # All child timestamps and physical versions must participate.
             # No inner LIMIT: truncating raw witnesses could hide an older
             # matching root. Statement limits throw instead of proving absence.
@@ -3597,8 +3643,8 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             SELECT DISTINCT trace_id
             FROM {self.TABLE}
             PREWHERE {self.project_filter_sql()}
-              {project_version_fragment}
-              {root_population}
+              {project_version_fragment}{witness_envelope_fragment}
+              {root_population}{conjunction_gate_fragment}
             WHERE {raw_witness}
         )
             """
@@ -3650,6 +3696,47 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         """Storage-specific necessary trace population; never leaf semantics."""
 
         return ""
+
+    def _scalar_candidate_conjunction_gate(
+        self,
+        anchor: LatestFilterPredicate,
+        *,
+        witness_envelope_fragment: str,
+        project_version_fragment: str,
+    ) -> tuple[str, dict[str, Any]]:
+        """Optional per-trace presence gate on the candidate CTE; none by default.
+
+        The candidate CTE seeds a conjunction from ONE anchor leaf's raw value
+        witness and leaves every other leaf to the exact classifier. A lane
+        may additionally require, per candidate trace, that each other
+        positive leaf's typed-Map key is witnessed by some raw row inside the
+        same envelope the anchor's witness is confined to. That narrows
+        candidacy only, never membership: the classifier stays the authority.
+
+        An empty fragment must leave the statement byte-identical, so the
+        fragment carries its own leading newline and indentation.
+        """
+
+        del anchor, witness_envelope_fragment, project_version_fragment
+        return "", {}
+
+    def _scalar_candidate_witness_envelope(
+        self, *, root_start: datetime, root_end: datetime
+    ) -> tuple[str, dict[str, Any]]:
+        """Optional time bound on the candidate witness scan; none by default.
+
+        The shipped contract lets any raw span of a candidate trace carry the
+        value whatever its own start time, so this emits nothing and the
+        witness CTE stays time-unbounded. A lane may declare an envelope
+        around ``[root_start, root_end]`` - the roots the calling statement can
+        publish - which narrows *candidacy*, never membership: the exact
+        latest-state classifier is a separate statement and is unaffected.
+
+        An empty fragment must leave the statement byte-identical, so the
+        fragment carries its own leading newline and indentation.
+        """
+
+        return "", {}
 
     def build_filter_candidate_seed_page(
         self,

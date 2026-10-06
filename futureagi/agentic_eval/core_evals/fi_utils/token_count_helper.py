@@ -253,11 +253,26 @@ def calculate_total_cost(
         input_cost_per_1M = pricing["input_per_1M_tokens"]
         output_cost_per_1M = pricing["output_per_1M_tokens"]
 
-        # Use `or 0` to handle both missing keys AND explicit None values
+        # Provider usage includes cache reads in prompt_tokens. Price that subset at
+        # the model's cache-read rate when the catalog declares one.
         prompt_tokens = token_usage.get("prompt_tokens") or 0
         completion_tokens = token_usage.get("completion_tokens") or 0
-
-        prompt_cost = round((prompt_tokens / 1_000_000) * input_cost_per_1M, 6)
+        cached_input_tokens = min(
+            max(token_usage.get("cached_input_tokens") or 0, 0), prompt_tokens
+        )
+        cached_input_rate = pricing.get("cached_input_per_1M_tokens")
+        if cached_input_rate is None:
+            prompt_cost = round((prompt_tokens / 1_000_000) * input_cost_per_1M, 6)
+        else:
+            uncached_input_tokens = prompt_tokens - cached_input_tokens
+            prompt_cost = round(
+                (
+                    uncached_input_tokens * input_cost_per_1M
+                    + cached_input_tokens * cached_input_rate
+                )
+                / 1_000_000,
+                6,
+            )
         completion_cost = round((completion_tokens / 1_000_000) * output_cost_per_1M, 6)
 
     # Character-based pricing (TTS models)

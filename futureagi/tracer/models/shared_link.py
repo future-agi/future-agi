@@ -15,6 +15,7 @@ class ResourceType(models.TextChoices):
     EVAL_RUN = "eval_run", "Eval Run"
     DATASET = "dataset", "Dataset"
     PROJECT = "project", "Project"
+    CALL_EXECUTION = "call_execution", "Call Execution"
 
 
 class AccessType(models.TextChoices):

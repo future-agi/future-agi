@@ -314,6 +314,9 @@ def test_voice_list_response_accepts_mixed_json_rows_and_typed_config():
             "has_more": False,
             "query_complete": True,
             "query_status": "complete",
+            "query_exact": True,
+            "ordering_exact": True,
+            "query_count": 3,
             **_filter_evidence(),
         }
     )

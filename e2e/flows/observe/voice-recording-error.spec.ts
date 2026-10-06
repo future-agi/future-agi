@@ -48,10 +48,10 @@ async function openVoiceCall(page: Page, projectId: string) {
     .click({ timeout: UI_READY });
 }
 
-test('OBS-E2E-010: an unreachable recording shows an error, not an endless loader', {
+test('OBS-E2E-012: an unreachable recording shows an error, not an endless loader', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'OBS-E2E-010', area: 'observe',
+    id: 'OBS-E2E-012', area: 'observe',
     userGoal: 'A user opens a voice call whose recording cannot be fetched and learns that, instead of watching a spinner forever',
     steps: ['seed a voice call whose recording URLs 404',
             'open Voice Observe', 'open the call detail drawer',
@@ -113,10 +113,10 @@ test('OBS-E2E-010: an unreachable recording shows an error, not an endless loade
   });
 });
 
-test('OBS-E2E-011: a voice call with no recording says so', {
+test('OBS-E2E-013: a voice call with no recording says so', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'OBS-E2E-011', area: 'observe',
+    id: 'OBS-E2E-013', area: 'observe',
     userGoal: 'A user opens a voice call that has no recording at all and sees a plain explanation',
     steps: ['seed a voice call with no recording attributes',
             'open the call detail drawer', 'see "No recording found"'],
