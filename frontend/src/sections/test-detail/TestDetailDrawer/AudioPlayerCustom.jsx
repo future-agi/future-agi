@@ -234,10 +234,8 @@ const AudioPlayerCustom = ({ data, onInstance }) => {
 
     // Normalize recordings to flat format for project module
     const normalizedRecordings = normalizeRecordings(data?.recording);
-    // `recording_available` rides on the list row, so it is already true while
-    // the detail response carrying the URLs is still in flight. Handing the
-    // player an empty set there would have it report a failure for a call that
-    // is only still loading.
+    // The drawer only mounts this once the detail response has arrived, so a
+    // call that still has no URL here has none to play.
     const hasAnyUrl = Boolean(
       normalizedRecordings.stereo ||
         normalizedRecordings.combined ||
@@ -245,14 +243,7 @@ const AudioPlayerCustom = ({ data, onInstance }) => {
         normalizedRecordings.customer,
     );
     if (!hasAnyUrl) {
-      return data?.recording_detail_pending ? (
-        <Box sx={{ height: 200 }}>
-          <LoadingStateComponent
-            status="fetching"
-            message="Fetching the recording"
-          />
-        </Box>
-      ) : (
+      return (
         <Box sx={{ position: "relative", height: 200 }}>
           <RecordingFailure variant={UNAVAILABLE} />
         </Box>
@@ -350,8 +341,7 @@ const areRecordingPropsEqual = (prev, next) => {
     p?.recordings === n?.recordings &&
     p?.audio_url === n?.audio_url &&
     p?.id === n?.id &&
-    p?.timestamp === n?.timestamp &&
-    p?.recording_detail_pending === n?.recording_detail_pending
+    p?.timestamp === n?.timestamp
   );
 };
 //Avoid re-rendering while change in other data other than data of this component
