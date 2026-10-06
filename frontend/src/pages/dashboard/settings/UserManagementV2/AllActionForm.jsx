@@ -22,6 +22,7 @@ import { LoadingButton } from "@mui/lab";
 import axios, { endpoints } from "src/utils/axios";
 import { orgRoleOptions, wsRoleOptions, LEVELS } from "./constant";
 import { useDeploymentMode } from "src/hooks/useDeploymentMode";
+import { isEnterpriseGateError } from "src/hooks/use-credit-exhaustion";
 import { InviteLinksResult, normalizeInvites } from "./invite-links";
 import { ShowComponent } from "src/components/show";
 import { useAuthContext } from "src/auth/hooks";
@@ -274,6 +275,11 @@ const AllActionForm = ({
     // `error.result`: the interceptor rejects with the flattened body.
     meta: { errorHandled: true },
     onError: (error) => {
+      // A 4th member on Community: the Enterprise gate dialog explains.
+      if (isEnterpriseGateError(error)) {
+        handleOnClose();
+        return;
+      }
       enqueueSnackbar(error?.result || "Failed to send invite", {
         variant: "error",
       });

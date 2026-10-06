@@ -31,6 +31,7 @@ import PropTypes from "prop-types";
 import { useNavigate } from "react-router";
 import { APP_CONSTANTS } from "src/utils/constants";
 import { useCreateWorkspace } from "src/api/workspaces/create";
+import { isEnterpriseGateError } from "src/hooks/use-credit-exhaustion";
 import { useSnackbar } from "notistack";
 import { useOrganization } from "src/contexts/OrganizationContext";
 
@@ -116,6 +117,11 @@ const WorkSpaceManagement = () => {
       gridApiRef?.current?.api?.refreshServerSide({ purge: true });
     },
     onError: (err) => {
+      // A 2nd workspace on Community: the Enterprise gate dialog explains.
+      if (isEnterpriseGateError(err)) {
+        setCreateOpen(false);
+        return;
+      }
       enqueueSnackbar(
         err?.response?.data?.message || "Failed to create workspace",
         { variant: "error" },

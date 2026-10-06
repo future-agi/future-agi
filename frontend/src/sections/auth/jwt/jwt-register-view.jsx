@@ -26,6 +26,7 @@ import { getRecaptchaToken } from "src/utils/recaptchaService";
 import PasswordSentView from "./password-sent-view";
 import { useBoolean } from "src/hooks/use-boolean";
 import logger from "src/utils/logger";
+import { isEnterpriseGateError } from "src/hooks/use-credit-exhaustion";
 import SvgColor from "src/components/svg-color";
 import { RouterLink } from "src/routes/components";
 import RegionSelect from "src/components/RegionSelect";
@@ -274,6 +275,14 @@ export default function JwtRegisterView() {
         logger.info("Registration Error (expected)", error);
       } else {
         logger.error("Registration Error:", error);
+      }
+      // A 2nd organization on Community: the Enterprise gate dialog explains;
+      // keep a pointer on the page after it is closed.
+      if (isEnterpriseGateError(error)) {
+        setErrorMsg(
+          "This install already has its organization. Ask an admin to invite you, or activate an Enterprise license.",
+        );
+        return;
       }
       const signupErrors = getSignupFieldErrors(error);
       if (signupErrors) {

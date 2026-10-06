@@ -15,6 +15,7 @@ import { useForm } from "react-hook-form";
 import { CreateWorkspaceValidation } from "./validation";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useCreateWorkspace } from "src/api/workspaces/create";
+import { isEnterpriseGateError } from "src/hooks/use-credit-exhaustion";
 import { LoadingButton } from "@mui/lab";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import WorkspaceSuccess from "./WorkspaceSuccess";
@@ -35,6 +36,10 @@ const CreateWorkspaceForm = () => {
       trackEvent(Events.workspaceCreateRequestSubmitted, {
         [PropertyName.click]: "click",
       });
+    },
+    // A 2nd workspace on Community: the Enterprise gate dialog explains.
+    onError: (error) => {
+      if (isEnterpriseGateError(error)) setOpen(false);
     },
   });
 
