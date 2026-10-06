@@ -49,6 +49,9 @@ class InviteUsersTool(BaseTool):
             WorkspaceMembership,
         )
         from accounts.utils import generate_password
+        from tfc.capabilities import edition
+        from tfc.capabilities.edition import EditionResource
+        from tfc.capabilities.errors import EnterpriseFeatureRequired
         from tfc.constants.roles import RoleMapping, RolePermissions
 
         org = context.organization
@@ -112,6 +115,17 @@ class InviteUsersTool(BaseTool):
             workspace_role = RoleMapping.get_workspace_role(role)
         else:
             workspace_role = role
+
+        # Community edition: up to 3 organization members, checked before any
+        # user is created (users this tool creates count by their legacy FK).
+        try:
+            edition.assert_can_create(
+                EditionResource.MEMBER,
+                organization=org,
+                new_member_emails=params.emails,
+            )
+        except EnterpriseFeatureRequired as exc:
+            return ToolResult.enterprise_gate(exc)
 
         results = []
         errors = []

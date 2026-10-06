@@ -291,11 +291,32 @@ class TestCommunityLimits:
         assert edition.count(EditionResource.MEMBER, organization=org_a) == 3
         assert edition.count(EditionResource.MEMBER, organization=org_b) == 1
 
-    def test_legacy_fk_users_without_membership_are_not_counted(self, community):
-        """AC-08: OrganizationMembership is the source of truth (R12)."""
+    def test_legacy_fk_only_users_hold_a_seat(self, community):
+        """AC-08 / R12: users with only the legacy User.organization FK (the AI
+        invite tool creates them) count, so that path cannot add members one
+        at a time without limit."""
         org = make_org()
         make_owner(org)
-        make_user(organization=org)
+        legacy = make_user(organization=org)
+        assert edition.count(EditionResource.MEMBER, organization=org) == 2
+        decision = edition.check_creation(
+            EditionResource.MEMBER, organization=org, new_member_emails=[legacy.email]
+        )
+        assert decision.requested == 0
+
+    def test_removed_members_with_a_stale_fk_do_not_hold_a_seat(self, community):
+        """AC-08: a deactivated or deleted membership frees the seat even when
+        the legacy FK still points at the organization."""
+        from accounts.models.organization_membership import OrganizationMembership
+
+        org = make_org()
+        make_owner(org)
+        removed = make_member(org)
+        OrganizationMembership.no_workspace_objects.filter(user=removed).update(
+            deleted=True
+        )
+        make_member(org, active=False)
+        make_user(organization=org, is_active=False)
         assert edition.count(EditionResource.MEMBER, organization=org) == 1
 
 

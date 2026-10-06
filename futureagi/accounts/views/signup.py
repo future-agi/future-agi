@@ -61,6 +61,9 @@ from analytics.utils import (
     track_mixpanel_event,
 )
 from saml2_auth.models import SAMLMetadataModel
+from tfc.capabilities import edition
+from tfc.capabilities.edition import EditionResource
+from tfc.capabilities.errors import EnterpriseFeatureRequired
 from tfc.constants.levels import Level
 from tfc.constants.roles import OrganizationRoles
 from tfc.ee_gating import is_oss
@@ -280,6 +283,11 @@ def user_signup(request):
             }
         )
 
+    except EnterpriseFeatureRequired:
+        # Community edition: a second organization needs Enterprise. The 402
+        # gate tells the person to ask an admin for an invite instead.
+        raise
+
     except DRFValidationError as exc:
         logger.info(
             "signup_validation_failed",
@@ -366,6 +374,10 @@ def activate_account(request, uidb64, token):
         if account_activation_token.check_token(user, token):
             # Use transaction to ensure atomicity of account activation
             with transaction.atomic():
+                # Community edition: activation creates an organization.
+                with edition.creation_lock():
+                    edition.assert_can_create(EditionResource.ORGANIZATION)
+
                 # Activate the user and save the new status
                 user.is_active = True
 
@@ -418,6 +430,8 @@ def activate_account(request, uidb64, token):
 
     except User.DoesNotExist:
         return _gm.bad_request("User does not exist.")
+    except EnterpriseFeatureRequired:
+        raise
     except Exception:
         logger.exception("Error during account activation")
         return _gm.internal_server_error_response(

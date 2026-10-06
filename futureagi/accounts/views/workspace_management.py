@@ -79,6 +79,9 @@ from analytics.utils import (
     get_mixpanel_properties,
     track_mixpanel_event,
 )
+from tfc.capabilities import edition
+from tfc.capabilities.edition import EditionResource
+from tfc.capabilities.errors import EnterpriseFeatureRequired
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 from tfc.constants.levels import Level
 from tfc.constants.roles import RoleMapping, RolePermissions
@@ -442,6 +445,16 @@ class WorkspaceInviteAPIView(APIView):
                 # Role is already a workspace-level role
                 workspace_role = role
 
+            # Community edition: up to 3 organization members (no-op on Cloud
+            # and when licensed). The lock is held until this request's
+            # transaction commits.
+            with edition.creation_lock():
+                edition.assert_can_create(
+                    EditionResource.MEMBER,
+                    organization=organization,
+                    new_member_emails=emails,
+                )
+
             results = []
             errors = []
 
@@ -671,6 +684,8 @@ class WorkspaceInviteAPIView(APIView):
 
             return self._gm.success_response(response_data)
 
+        except EnterpriseFeatureRequired:
+            raise
         except Exception as e:
             logger.exception(f"Error in inviting users to workspace: {str(e)}")
             return self._gm.bad_request("Error in inviting users to workspace")
@@ -1976,6 +1991,22 @@ class ManageTeamView(APIView):
             organization.is_new = False
             organization.save()
 
+            # Community edition: up to 3 organization members, checked before
+            # any workspace or member is written. Off-cloud this replaces the
+            # Free-tier USERS limit below (A3), which only caps on Cloud; new
+            # members are added through the M11 backstop, which holds the lock.
+            new_members = validated_data.get("members") or []
+            if isinstance(new_members, list) and new_members:
+                edition.assert_can_create(
+                    EditionResource.MEMBER,
+                    organization=organization,
+                    new_member_emails=[
+                        str(member.get("email") or "").lower()
+                        for member in new_members
+                        if isinstance(member, dict)
+                    ],
+                )
+
             # Handle workspace creation/management
             workspace_data = validated_data.get("workspace", {})
             workspace = None
@@ -1997,14 +2028,16 @@ class ManageTeamView(APIView):
                         workspace.description = workspace_description
                         workspace.save()
                     except Workspace.DoesNotExist:
-                        # Create new workspace
-                        workspace = Workspace.objects.create(
-                            name=workspace_name,
-                            display_name=workspace_display_name,
-                            description=workspace_description,
-                            organization=organization,
-                            created_by=user,
-                        )
+                        # Create new workspace (Community edition: one per install)
+                        with edition.creation_lock():
+                            edition.assert_can_create(EditionResource.WORKSPACE)
+                            workspace = Workspace.objects.create(
+                                name=workspace_name,
+                                display_name=workspace_display_name,
+                                description=workspace_description,
+                                organization=organization,
+                                created_by=user,
+                            )
 
                         # Add organization owner to workspace with admin role
                         create_workspace_membership(
@@ -2318,6 +2351,8 @@ class ManageTeamView(APIView):
                 return self._gm.bad_request(response_data)
 
             return self._gm.create_response(response_data)
+        except EnterpriseFeatureRequired:
+            raise
         except Exception as e:
             traceback.print_exc()
             logger.exception(f"Error in managing users: {str(e)}")

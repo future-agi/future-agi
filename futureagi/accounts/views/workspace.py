@@ -29,6 +29,8 @@ from accounts.serializers.contracts import (
 )
 from accounts.services.workspace_membership import create_workspace_membership
 from accounts.utils import generate_password, resolve_org, resolve_org_role
+from tfc.capabilities import edition
+from tfc.capabilities.edition import EditionResource
 from tfc.constants.levels import Level
 from tfc.constants.roles import OrganizationRoles
 from tfc.settings import settings
@@ -200,6 +202,23 @@ class WorkspaceManagementView(APIView):
             return self._gm.bad_request(
                 f"Invalid role. Must be either an organization-level role ({', '.join([r.value for r in organization_level_roles])}) or a workspace-level role ({', '.join([r.value for r in workspace_level_roles])})"
             )
+
+        # Community edition: one workspace per install, and invited emails
+        # without an account become members. No-op on Cloud and when
+        # licensed; the lock is held until this request's transaction commits.
+        with edition.creation_lock():
+            edition.assert_can_create(EditionResource.WORKSPACE)
+            new_member_emails = [
+                email
+                for email in emails
+                if not User.objects.filter(email=email).exists()
+            ]
+            if new_member_emails:
+                edition.assert_can_create(
+                    EditionResource.MEMBER,
+                    organization=organization,
+                    new_member_emails=new_member_emails,
+                )
 
         try:
             # Create new workspace
@@ -706,6 +725,17 @@ class WorkspaceMembershipView(APIView):
         ]
         added_users = []
         errors = []
+
+        # Community edition: up to 3 organization members (no-op on Cloud and
+        # when licensed). Emails that already hold a seat need none.
+        with edition.creation_lock():
+            edition.assert_can_create(
+                EditionResource.MEMBER,
+                organization=organization,
+                new_member_emails=[
+                    (user_data.get("email") or "").lower() for user_data in users_data
+                ],
+            )
 
         for user_data in users_data:
             user_email = user_data.get("email", "").lower()

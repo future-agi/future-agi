@@ -155,12 +155,15 @@ def current_edition() -> str:
 def _seats(organization) -> tuple[int, set[str], set[str]]:
     """(active member count, their emails, pending-invite emails without a seat).
 
-    Members are active OrganizationMemberships. A pending, unexpired invite
-    holds a seat until it is accepted, cancelled or expires, so accepting an
-    invite never needs a check.
+    Members are active OrganizationMemberships, plus active users whose legacy
+    ``User.organization`` FK points here and who never had a membership row
+    (paths such as the AI invite tool create those). A pending, unexpired
+    invite holds a seat until it is accepted, cancelled or expires, so
+    accepting an invite never needs a check.
     """
     from accounts.models.organization_invite import InviteStatus, OrganizationInvite
     from accounts.models.organization_membership import OrganizationMembership
+    from accounts.models.user import User
     from tfc.constants.levels import INVITE_VALIDITY_DAYS
 
     active = list(
@@ -169,6 +172,15 @@ def _seats(organization) -> tuple[int, set[str], set[str]]:
         )
         .values_list("user_id", "user__email")
         .distinct()
+    )
+    active += list(
+        User.objects.filter(organization=organization, is_active=True)
+        .exclude(
+            id__in=OrganizationMembership.all_objects.filter(
+                organization=organization
+            ).values("user_id")
+        )
+        .values_list("id", "email")
     )
     active_emails = {email.strip().lower() for _, email in active if email}
     cutoff = timezone.now() - timedelta(days=INVITE_VALIDITY_DAYS)

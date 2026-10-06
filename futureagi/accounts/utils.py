@@ -33,6 +33,9 @@ from analytics.utils import (
     track_mixpanel_event,
 )
 from saml2_auth.models import SAMLMetadataModel
+from tfc.capabilities import edition
+from tfc.capabilities.edition import EditionResource
+from tfc.capabilities.errors import EnterpriseFeatureRequired
 from tfc.constants.email import FREE_EMAIL_DOMAINS
 from tfc.constants.levels import Level
 from tfc.ee_loader import is_cloud_env
@@ -303,10 +306,15 @@ def first_signup(data, mode=None):
 
     serializer = UserSignupSerializer(data=data)
     if serializer.is_valid():
-        user = serializer.save()
-        organization = Organization.objects.create(
-            name=data["company_name"], region=settings.REGION
-        )
+        # Community edition: one organization per install (no-op on Cloud and
+        # when licensed). Checked before the user is saved so a refused signup
+        # leaves nothing behind.
+        with edition.creation_lock():
+            edition.assert_can_create(EditionResource.ORGANIZATION)
+            user = serializer.save()
+            organization = Organization.objects.create(
+                name=data["company_name"], region=settings.REGION
+            )
         user.organization = organization
         user.organization_role = "Owner"
         user.is_active = True
@@ -370,12 +378,19 @@ def first_signup(data, mode=None):
         raise Exception(str(error_messages))
 
 
+COMMUNITY_OWNER_ACCOUNT_REFUSAL = (
+    "Community includes one organization; invite the user from Settings, "
+    "or activate an Enterprise license."
+)
+
+
 def create_owner_account(email, full_name, password):
     """An account that owns a new organization, as a first signup creates it:
     ``manage.py create_user`` and the Helm chart's first admin
     (``bootstrap_install``). Raises ValidationError, with messages for the
-    operator, for a missing field, a malformed or taken email, or a password
-    AUTH_PASSWORD_VALIDATORS reject, before anything is created."""
+    operator, for a missing field, a malformed or taken email, a password
+    AUTH_PASSWORD_VALIDATORS reject, or a second organization on Community,
+    before anything is created."""
     if not email or not full_name or not password:
         raise ValidationError("Email, name, and password are all required.")
     validate_email(email)
@@ -384,14 +399,17 @@ def create_owner_account(email, full_name, password):
         raise ValidationError(f"A user with the email {email} already exists.")
     # UserSignupSerializer trims the password before it validates and stores it.
     validate_password(password.strip())
-    return first_signup(
-        {
-            "email": email,
-            "full_name": full_name,
-            "password": password,
-            "allow_email": True,
-        }
-    )
+    try:
+        return first_signup(
+            {
+                "email": email,
+                "full_name": full_name,
+                "password": password,
+                "allow_email": True,
+            }
+        )
+    except EnterpriseFeatureRequired:
+        raise ValidationError(COMMUNITY_OWNER_ACCOUNT_REFUSAL) from None
 
 
 def persist_pending_org_invite(

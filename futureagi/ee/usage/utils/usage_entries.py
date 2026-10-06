@@ -28,6 +28,7 @@ from accounts.services.aws_marketplace_metering import (
 )
 from agentic_eval.core.utils.functions import detect_input_type
 from ee.usage.deployment import DeploymentMode
+from tfc.capabilities import edition
 from tfc.utils.api_errors import ApiErrorCode
 
 logger = structlog.get_logger(__name__)
@@ -2130,6 +2131,10 @@ def create_usage_entries():
 
 
 def check_if_user_creation_is_allowed(organization, config):
+    # Self-hosted: the Community edition rule (tfc.capabilities.edition)
+    # replaces the Free-tier USERS limit, which only caps on Cloud.
+    if not edition.commercial_caps_apply():
+        return True, {}
     try:
         create_organization_subscription_if_not_exists(organization)
         organization_subscription = OrganizationSubscription.objects.filter(

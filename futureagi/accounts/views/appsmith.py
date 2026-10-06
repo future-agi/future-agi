@@ -22,6 +22,8 @@ from accounts.serializers.user import (
     UserSerializer,
 )
 from accounts.services.sos_service import start_sos_session
+from tfc.capabilities import edition
+from tfc.capabilities.edition import EditionResource
 from tfc.constants.roles import OrganizationRoles
 from tfc.permissions.permissions import APIKeyPermission
 from tfc.utils.api_contracts import validated_request
@@ -70,9 +72,13 @@ class UserApiView(APIView):
     def post(self, request):
         data = request.validated_data
 
-        organization = Organization.objects.create(
-            name=data["organization_name"], region=settings.REGION
-        )
+        # Community edition: one organization per install (no-op on Cloud and
+        # when licensed).
+        with edition.creation_lock():
+            edition.assert_can_create(EditionResource.ORGANIZATION)
+            organization = Organization.objects.create(
+                name=data["organization_name"], region=settings.REGION
+            )
 
         # Create the user
         user = User.objects.create(

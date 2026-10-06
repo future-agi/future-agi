@@ -29,6 +29,9 @@ class CreateWorkspaceTool(BaseTool):
         from django.db import IntegrityError
 
         from accounts.models.workspace import OrganizationRoles, Workspace
+        from tfc.capabilities import edition
+        from tfc.capabilities.edition import EditionResource
+        from tfc.capabilities.errors import EnterpriseFeatureRequired
 
         org = context.organization
         actor = context.user
@@ -45,16 +48,19 @@ class CreateWorkspaceTool(BaseTool):
             )
 
         try:
-            workspace = Workspace(
-                name=params.name,
-                display_name=params.name,
-                description=params.description or "",
-                organization=org,
-                created_by=actor,
-                is_active=True,
-                is_default=False,
-            )
-            workspace.save()
+            # Community edition: one workspace per install.
+            with edition.creation_lock():
+                edition.assert_can_create(EditionResource.WORKSPACE)
+                workspace = Workspace(
+                    name=params.name,
+                    display_name=params.name,
+                    description=params.description or "",
+                    organization=org,
+                    created_by=actor,
+                    is_active=True,
+                    is_default=False,
+                )
+                workspace.save()
 
             # Add creator as workspace admin (matches WorkspaceManagementView.post behavior)
             from accounts.models.workspace import WorkspaceMembership
@@ -65,6 +71,8 @@ class CreateWorkspaceTool(BaseTool):
                 role=OrganizationRoles.WORKSPACE_ADMIN,
                 invited_by=actor,
             )
+        except EnterpriseFeatureRequired as exc:
+            return ToolResult.enterprise_gate(exc)
         except IntegrityError:
             return ToolResult.error(
                 f"A workspace with the name '{params.name}' already exists in this organization.",
