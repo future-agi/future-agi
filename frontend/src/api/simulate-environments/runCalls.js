@@ -178,7 +178,7 @@ export function taskFromCallDetail(detail) {
  */
 export function buildTraceColumns(columnOrder = []) {
   const staticCols = TRACE_COLUMNS.filter(
-    (c) => c.key !== "evals" && c.key !== "subGoalEvals",
+    (c) => c.key !== "subGoalEvals",
   ).map((c) => ({
     key: c.key,
     label: c.label,
