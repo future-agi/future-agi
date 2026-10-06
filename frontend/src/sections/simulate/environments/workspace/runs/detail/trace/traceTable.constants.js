@@ -8,8 +8,9 @@ import { STATUS_META } from "../../runs.constants";
 /*
   Column picker vocabulary. `defaultOn` is what shows on first load: the run's
   own outcome (Run details), the differentiating persona and the system metrics
-  read a run at a glance; the restated Scenario column starts hidden. `evals` is
-  a single toggle for the whole (data-driven) evaluation group.
+  read a run at a glance; the restated Scenario column starts hidden. The run's
+  evaluations aren't listed here: they come from the calls API, and the picker
+  offers each one on its own.
 */
 export const TRACE_COLUMNS = [
   {
@@ -109,7 +110,6 @@ export const TRACE_COLUMNS = [
     defaultOn: false,
     group: "Sub-goal Results",
   },
-  { key: "evals", label: "Evaluations", defaultOn: true, group: "Evaluations" },
 ];
 
 // Columns a chat run has no data for: interruptions only happen on a voice call.
