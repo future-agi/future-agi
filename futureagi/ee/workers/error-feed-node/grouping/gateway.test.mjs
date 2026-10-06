@@ -241,10 +241,12 @@ test('sampled merge budget denial occurs before paid inference',async()=>{
 
 test('sampled discovery budget denial is distinct from a lease conflict and sends no inference',async()=>{
   const f=fixture();
+  const diagnostics=[];
   const gateway=await createGroupingInvestigator({claim:{...claim,policy_version:'f6-minilm-sampled/v2'},
-    config,reserveUsd:0.01,...f,control:async(_path,body)=>({status:'budget_exhausted',
-      reason:'Work spending limit reached',request_digest:body.request_digest,created:false})});
-  await assert.rejects(()=>gateway.investigate({findings:[]},{}),{name:'GroupingBudgetExceeded'});
+    config,reserveUsd:0.01,...f,onDiagnostic:event=>diagnostics.push(event),control:async(_path,body)=>({status:'budget_exhausted',
+      limit:'work',reason_code:'budget_exhausted',reason:'budget_exhausted:work',request_digest:body.request_digest,created:false})});
+  await assert.rejects(()=>gateway.investigate({findings:[]},{}),{name:'GroupingBudgetExceeded',message:'budget_exhausted:work'});
+  assert.ok(diagnostics.some(event=>event.event==='grouping_budget_refused'&&event.limit==='work'));
   assert.equal(f.calls.length,0);
   assert.deepEqual(gateway.receiptIds(),[]);
 });

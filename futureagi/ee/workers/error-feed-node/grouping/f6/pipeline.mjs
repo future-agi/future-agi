@@ -14,7 +14,7 @@ const assigned = registry => new Set(registry.issues.filter(i => i.active).flatM
 
 export function matchKnown(id, registry, context) {
   const {byId, scorePair, policy} = context;
-  const alternatives = registry.issues.filter(i => i.active && !i.protected && i.scope === scopeKey(byId.get(id))).map(issue => {
+  const alternatives = registry.issues.filter(i => i.active && i.scope === scopeKey(byId.get(id))).map(issue => {
     const scores = issue.prototypes.map(p => scorePair(id, p));
     const hard = issue.members.some(p => pairSafety(byId.get(id), byId.get(p), context.constraints));
     return {issue_id: issue.id, mechanism_revision: issue.mechanism_revision, scores,
@@ -32,7 +32,7 @@ export function matchKnown(id, registry, context) {
 }
 
 export function retrieveIssues(cohort, registry, index, policy) {
-  return registry.issues.filter(i => i.active && !i.protected && i.scope === scopeKey(index.rows.get(cohort.seed)))
+  return registry.issues.filter(i => i.active && i.scope === scopeKey(index.rows.get(cohort.seed)))
     .map(i => ({...i, retrieval_score: Math.max(...cohort.members.flatMap(id => i.prototypes.map(p => index.similarity(id, p))))}))
     .sort((a, b) => b.retrieval_score - a.retrieval_score || a.id.localeCompare(b.id)).slice(0, policy.candidate_issues);
 }
@@ -375,13 +375,14 @@ export async function runPipeline({rows, features, cannotLinks = [], policy, pai
     }
   } catch (error) {
     if (policy.sampled_merge_reviews && error.name === 'GroupingBudgetExceeded') {
+      error.onBudgetPause?.(state.phase);
       // A refused reservation has no model result. Preserve decisions already
       // admitted with receipts, and defer remaining findings without calling
       // them negative evidence or discarding a valid merge from this pass.
       const receipt = digest(['spending_limit', state.phase, state.registry.sequence]);
       state.receipts.push({id:receipt,status:'held',reason:error.message});
       findings.filter(id => !assigned(state.registry).has(id))
-        .forEach(id => hold(id, error.message, receipt));
+        .forEach(id => hold(id, `budget_exhausted:${error.limit || 'unspecified'}`, receipt));
       state.budget_exhausted = {phase:state.phase,reason:error.message};
       state.phase = 'complete'; state.status = 'complete'; await save();
     } else {

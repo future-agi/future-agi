@@ -337,8 +337,15 @@ model calls stay in the spending ledger but are excluded from publication
 evidence. An unresolved prior merge reservation holds without a paid resend.
 Under the sampled policy, a general project/work/tenant spending refusal is
 also an explicit budget response, distinct from a lease or registry conflict.
-The pipeline preserves already admitted commands and defers remaining pending
-findings when further discovery cannot be reserved. The merge prompt states
+The pipeline preserves already admitted commands and marks unfinished findings
+`waiting_budget` with `budget_exhausted:<limit>`. Affected work remains
+`waiting_budget` and its report remains pending. Backend and worker diagnostics
+record the refusal; worker diagnostics include the processing phase. Ordinary
+polling does not retry budget-blocked work. The backend's preview-first
+`requeue_budget_grouping` command checks current budget, source identity and
+registry revision before explicit requeue. It preserves receipts, attempt
+counters and cohort spending history, and a fresh claim selects only unassigned
+findings without changing full source snapshots. The merge prompt states
 the existing headline limit of 12 words / 120 characters.
 
 Unchanged candidates use lightweight membership metadata and sampled finding
@@ -351,8 +358,16 @@ change bounds model hydration and finding locks, not all metadata reads.
 The backend verifies the complete source membership under locks, including
 hard constraints on unsampled findings, then atomically moves all members and
 retires the sources. Full membership is not constrained by a model sample cap.
-Protected issues remain excluded from automatic attachment/merge/refresh;
+Under the sampled policy, protected issues can receive evidence-grounded new
+occurrences while retaining their reviewed title, mechanism and saved diagnosis.
+Acknowledged status is retained. Attaching to a resolved issue reopens the same
+issue as `for_review`, keeps it protected, and records the transition and its
+triggering occurrences in the durable publication decision. Attachment and
+reopening commit atomically; repeated publication cannot duplicate the transition.
+Protected issues remain excluded from automatic merge/split/removal/refresh;
 manual merging is deferred. Partial samples cannot authorize split/removal.
+Default-policy worker attachment selection retains its original behavior; the
+backend's existing default-policy protected-attachment restriction remains.
 
 A worker checkpoint's topology status is `proposed`, not a database commit.
 The coordinator freezes the exact publication payload, including receipt
@@ -367,7 +382,8 @@ Review entry points:
 - Worker: `grouping/policy.mjs`, `grouping/f6/pipeline.mjs`,
   `grouping/f6/registry.mjs`, `grouping/coordinator.mjs`, `grouping/gateway.mjs`.
 - Backend: `tracer/services/grouping/sampling.py`, `context.py`, `publish.py`,
-  `accounting.py`, and `tracer/management/commands/enable_sampled_grouping.py`.
+  `accounting.py`, `budget_recovery.py`, and the `enable_sampled_grouping` /
+  `requeue_budget_grouping` management commands.
 - New backend coverage: `tracer/tests/test_grouping_sampled_merges.py`.
 - Worker coverage: `grouping/engine.test.mjs`, `coordinator.test.mjs`,
   `gateway.test.mjs`, `f6/pipeline-budget.test.mjs`; the cross-service fixture
@@ -375,23 +391,5 @@ Review entry points:
 
 The activation command previews by default. `--apply` requires the reviewed
 registry revision and refuses active attempts or outstanding reservations.
-It fences old checkpoints without rewriting them. Failed Matic work must be
+It fences old checkpoints without rewriting them. Previously failed work must be
 reviewed and requeued separately after grouping publication is validated.
-
-After human code review, local validation passed: 95 worker grouping tests
-(3 existing skips), 175 focused backend tests including the Node-to-backend
-publication contract under both policies, and Ruff/Black checks on the Python
-changes. Regression tests used disposable local PostgreSQL, Redis and
-ClickHouse containers with scripted model responses. Two additional opt-in
-Matic snapshot replays used real MiniLM embeddings, local ClickHouse retrieval,
-Gemini 3.8 Flash decisions and backend accounting/publication. They preserved
-all 37 original member findings and the protected issue, and the voicemail
-replay merged S-2F85BEFC with S-7EE3CE1F. Spending-limit deferral and duplicate
-publication also passed. Combined reported gateway cost, including earlier
-attempts, was $0.819839; saved responses were reused on harness retries.
-The replay loaded production exports through read-only transactions, remapped
-tenant identity locally, and used the existing local Omega compiled transport
-build. It reused stored investigations, without validating their audio claims.
-The activation command was exercised only inside isolated tests. No deployment,
-live project activation or production reconciliation was performed. The exact
-original production publication failure has not been reproduced.

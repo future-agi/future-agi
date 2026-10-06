@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {MAX_CHECKPOINT_BYTES, processFeatureClaim, processGroupingClaim, engineInput} from './coordinator.mjs';
 import {makeGroupingSnapshotFixture} from './snapshot-fixture.mjs';
-import {adaptGroupingSnapshot} from './snapshot.mjs';
+import {adaptGroupingSnapshot, canonicalSnapshotDigest} from './snapshot.mjs';
 import {FEATURE_VERSION, featureDigest} from './features.mjs';
 import {createGroupingInvestigator} from './gateway.mjs';
 
@@ -247,4 +247,20 @@ test('a publication validation conflict is not retried', async () => {
     },
   }),/stale publication/);
   assert.equal(sends,1);
+});
+
+
+test('sampled recovery retains full source snapshots but processes only selected pending findings',()=>{
+  const base=claim();
+  const other=structuredClone(base.snapshot);
+  other.report.id='22222222-2222-4222-8222-222222222222';
+  other.occurrences[0].occurrence_id='33333333-3333-4333-8333-333333333333';
+  const {snapshot_digest,...body}=other; other.snapshot_digest=canonicalSnapshotDigest(body);
+  const work={...base,policy_version:'f6-minilm-sampled/v2',pending_snapshots:[base.snapshot,other]};
+  const input=engineInput(work,model);
+  assert.deepEqual(input.pendingIds,base.pending_ids);
+  assert.equal(input.rows.length,1);
+  assert.throws(()=>engineInput({...work,pending_ids:[]},model),/membership mismatch/);
+  assert.throws(()=>engineInput({...work,pending_ids:['not-in-snapshot']},model),/membership mismatch/);
+  assert.throws(()=>engineInput({...work,policy_version:'f6-minilm/v1'},model),/membership mismatch/);
 });

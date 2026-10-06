@@ -78,9 +78,12 @@ async function runFeatureClaim(claim, options) {
 export function engineInput(claim, configuredModel) {
   const pendingSnapshots = claim.pending_snapshots ?? [claim.snapshot];
   if (!Array.isArray(pendingSnapshots) || pendingSnapshots.length > 20) throw new Error('Invalid pending snapshot count');
-  const pendingRows = pendingSnapshots.flatMap(adaptGroupingSnapshot);
+  const snapshotRows = pendingSnapshots.flatMap(adaptGroupingSnapshot);
+  const selected = new Set(claim.pending_ids);
+  const pendingRows = claim.policy_version === 'f6-minilm-sampled/v2'
+    ? snapshotRows.filter(row=>selected.has(row.id)) : snapshotRows;
   const pendingIds = pendingRows.map(row=>row.id);
-  if (new Set(pendingIds).size !== pendingIds.length || !Array.isArray(claim.pending_ids)
+  if (!pendingIds.length || new Set(pendingIds).size !== pendingIds.length || !Array.isArray(claim.pending_ids)
       || featureDigest([...pendingIds].sort()) !== featureDigest([...claim.pending_ids].sort())) {
     throw new Error('Claimed pending membership mismatch');
   }

@@ -62,7 +62,6 @@ export function commitCommand(registry, command, context) {
     case 'create': newIssue(command.group, command.receipt, 'create'); break;
     case 'attach': {
       const issue = active(next, command.issue_id); requiredRevision(issue);
-      assert.ok(!issue.protected, 'Protected issue cannot receive automatic attachments');
       if (command.receipt.kind === 'investigation') assert.equal(command.receipt.group.target_issue_id, issue.id);
       else assert.equal(command.receipt.target_issue_id, issue.id);
       validateReceipt(command.receipt, command.member_ids, context, next);

@@ -109,7 +109,15 @@ export async function createGroupingInvestigator({claim, control, config, signal
       }
       if (purpose === 'grouping' && claim.policy_version === 'f6-minilm-sampled/v2'
           && reservation.status === 'budget_exhausted') {
-        const error = new Error(reservation.reason || 'Grouping spending limit reached');
+        const limit = reservation.limit || 'unspecified';
+        onDiagnostic({event:'grouping_budget_refused',project_id:claim.project_id,
+          work_id:claim.work_id,attempt_id:claim.attempt_id,
+          phase:prompt.candidate?.type || 'investigation',reason_code:'budget_exhausted',limit});
+        const error = new Error(`budget_exhausted:${limit}`);
+        error.limit = limit;
+        error.onBudgetPause = phase => onDiagnostic({event:'grouping_budget_paused',
+          project_id:claim.project_id,work_id:claim.work_id,attempt_id:claim.attempt_id,
+          phase,reason_code:'budget_exhausted',limit});
         error.name = sampledMerge ? 'MergeReviewBudgetExceeded' : 'GroupingBudgetExceeded';
         throw error;
       }

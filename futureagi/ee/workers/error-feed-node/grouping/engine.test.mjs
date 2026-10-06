@@ -422,31 +422,50 @@ test('merge budget exhaustion holds topology and still allows publication',async
 });
 
 test('discovery budget exhaustion after a merge preserves publication and defers the pending finding',async()=>{
-  const setup=sampledSetup();let merged=false;
+  const setup=sampledSetup();let merged=false,pausedPhase;
   const result=await runGrouping({...setup.input,investigate:withReceipts(async prompt=>{
     if(prompt.candidate){
       merged=true;
       return {action:'merge',groups:[groupFor(prompt,prompt.findings.map(item=>item.id))],
         removed_ids:[],reason:'Same corrective action'};
     }
-    if(merged)throw Object.assign(new Error('Work spending limit reached'),{name:'GroupingBudgetExceeded'});
+    if(merged)throw Object.assign(new Error('Work spending limit reached'),{name:'GroupingBudgetExceeded',limit:'work',onBudgetPause:phase=>{pausedPhase=phase;}});
     return {groups:[],deferred:prompt.findings.map(item=>({finding_id:item.id,reason:'uncertain'}))};
   })});
   assert.equal(result.status,'complete');
   assert.equal(result.commands.filter(item=>item.type==='merge').length,1);
+  assert.equal(pausedPhase,'discovery');
   assert.ok(result.decision_receipts.some(item=>item.reason==='Work spending limit reached'));
-  assert.ok(result.dispositions.some(item=>item.state==='deferred'&&item.reason==='Work spending limit reached'));
+  assert.ok(result.dispositions.some(item=>item.state==='deferred'&&item.reason==='budget_exhausted:work'));
   const resumed=await runGrouping({...setup.input,investigate:async()=>{throw new Error('Completed budget-limited work retried inference');}});
   assert.deepEqual(resumed.commands,result.commands);
 });
 
-test('protected candidates are not offered for automatic attachment',async()=>{
+test('default policy retains reviewed candidates as attachment targets',async()=>{
   const setup=fixture(), owned=addSecondFinding(setup);
   const result=await runGrouping({rows:[setup.row,owned],pendingIds:[setup.row.id],features:setup.features,
     candidateWindow:{...setup.candidateWindow,issues:[offeredIssue([owned],true)]},store:setup.store,
     investigate:async prompt=>{
-      assert.deepEqual(prompt.existing_issues,[]);
+      assert.ok(prompt.existing_issues.some(issue=>issue.id===offeredIssue([owned],true).issue_id));
       return {groups:[],deferred:prompt.findings.map(item=>({finding_id:item.id,reason:'uncertain'}))};
     }});
   assert.equal(result.commands.some(item=>item.type==='attach'),false);
+});
+
+test('sampled policy attaches to a reviewed issue without refreshing or changing its identity',async()=>{
+  const setup=fixture(),owned=addSecondFinding(setup);
+  const issue={...offeredIssue([owned],true),evidence_mode:'sampled',member_count:1,
+    membership_complete:true,membership_revision:1,membership_digest:'sha256:'+'a'.repeat(64)};
+  const result=await runGrouping({rows:[setup.row,owned],pendingIds:[setup.row.id],features:setup.features,
+    policy:SAMPLED_F6_MINILM_POLICY,candidateWindow:{...setup.candidateWindow,issues:[issue]},store:setup.store,
+    investigate:withReceipts(async prompt=>{
+      assert.ok(prompt.existing_issues.some(item=>item.id===issue.issue_id));
+      return {groups:[groupFor(prompt,[setup.row.id],{target:issue.issue_id,prototypeIds:[owned.id]})],deferred:[]};
+    })});
+  assert.deepEqual(result.commands.map(command=>command.type),['attach']);
+  const current=result.registry.issues.find(item=>item.id===issue.issue_id);
+  assert.equal(current.protected,true);
+  assert.equal(current.mechanism_revision,issue.revision);
+  assert.equal(current.title,issue.mechanism.title);
+  assert.equal(current.member_count,2);
 });
