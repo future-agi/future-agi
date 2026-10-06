@@ -281,7 +281,15 @@ async def call_generated_tool(name: str, arguments: dict):
     except APIExecutionError as exc:
         is_error = True
         error_message = str(exc)
-        result = _error_result(str(exc), code=f"HTTP_{exc.status_code}", data=exc.data)
+        gate = exc.data.get("enterprise_gate") if isinstance(exc.data, dict) else None
+        if exc.status_code == 402 and gate is not None:
+            # Self-hosted Enterprise gate (TH-8084): keep its stable code.
+            code = exc.data.get("code") or "ENTERPRISE_FEATURE_REQUIRED"
+            result = _error_result(str(exc), code=code, data=gate)
+        else:
+            result = _error_result(
+                str(exc), code=f"HTTP_{exc.status_code}", data=exc.data
+            )
     except Exception as exc:
         logger.exception("mcp_generated_tool_failed", tool=name)
         is_error = True
