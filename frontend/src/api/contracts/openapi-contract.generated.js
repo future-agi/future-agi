@@ -91214,7 +91214,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Description",
           type: "string",
           readOnly: true,
-          minLength: 1,
           "x-nullable": true,
         },
         is_template: {

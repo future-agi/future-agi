@@ -694,6 +694,13 @@ export type ${jsonAlias} = JsonValueApi;`,
       "active_version?: GraphActiveVersionApi | null;",
       "GraphDetailApi.active_version nullable",
     );
+    schemas = assertReplaceInNamedBlock(
+      schemas,
+      "export interface GraphDetailApi {",
+      "readonly description?: string;",
+      "readonly description?: string | null;",
+      "GraphDetailApi.description nullable",
+    );
 
     fs.writeFileSync(schemasOutputPath, schemas);
   }
@@ -721,6 +728,15 @@ export type ${jsonAlias} = JsonValueApi;`,
       /\.optional\(\)(\s*\.describe\(\s*['"]Get the latest version \(highest version_number\) with full nested structure\.['"])/,
       ".nullable().optional()$1",
       "AgentPlaygroundGraphsReadResponse.result.active_version nullable",
+    );
+    // GraphDetail.description is x-nullable too (graphs created without one
+    // store NULL); the first description in the block is the graph's own.
+    zod = assertReplaceRegexInNamedBlock(
+      zod,
+      "export const AgentPlaygroundGraphsReadResponse =",
+      /(["']?description["']?:\s*zod\.string\(\))(\.optional\(\))/,
+      "$1.nullable()$2",
+      "AgentPlaygroundGraphsReadResponse.result.description nullable",
     );
 
     zod = assertReplace(

@@ -39,4 +39,15 @@ describe("generated agent-playground graph contracts", () => {
       false,
     );
   });
+
+  it.each([
+    ["graph_retrieve_own_null_description_200.json", null],
+    ["graph_retrieve_own_blank_description_200.json", ""],
+  ])("accepts the captured graph retrieve response %s", (capture, value) => {
+    const body = capturedBody(capture);
+    expect(body.result.description).toBe(value);
+    expect(
+      AgentPlaygroundGraphsReadResponse.parse(body).result.description,
+    ).toBe(value);
+  });
 });

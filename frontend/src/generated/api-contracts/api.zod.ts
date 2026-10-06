@@ -2688,7 +2688,7 @@ export const AgentPlaygroundGraphsReadResponse = zod.object({
   result: zod.object({
     id: zod.string().uuid().optional(),
     name: zod.string().min(1).optional().describe("Display name"),
-    description: zod.string().min(1).optional(),
+    description: zod.string().nullable().optional(),
     is_template: zod.boolean().optional(),
     created_at: zod.string().datetime({ offset: true }).optional(),
     updated_at: zod.string().datetime({ offset: true }).optional(),

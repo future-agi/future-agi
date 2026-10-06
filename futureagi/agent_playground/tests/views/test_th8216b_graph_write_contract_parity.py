@@ -462,14 +462,27 @@ def test_ra01_delete_active_version_matches_contract(
 # ── Graph retrieve envelope (review B03) ─────────────────────────────────────
 
 
-@pytest.mark.parametrize("subject", ["own", "own_without_versions", "template"])
+@pytest.mark.parametrize(
+    "subject",
+    [
+        "own",
+        "own_without_versions",
+        "template",
+        "own_null_description",
+        "own_blank_description",
+    ],
+)
 def test_graph_retrieve_matches_contract(
     swagger, authenticated_client, graph, template_graph, node_template, subject
 ):
     from agent_playground.models.node import Node
 
     target = template_graph if subject == "template" else graph
-    if subject != "own_without_versions":
+    if subject.endswith("_description"):
+        # Graphs created without a description store NULL; the UI can clear it to "".
+        target.description = None if subject == "own_null_description" else ""
+        target.save(update_fields=["description"])
+    elif subject != "own_without_versions":
         version = GraphVersion.no_workspace_objects.create(
             graph=target, version_number=1, status=GraphVersionStatus.ACTIVE
         )

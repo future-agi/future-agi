@@ -106,6 +106,11 @@ class GraphActiveVersionSerializer(GraphVersionDetailSerializer):
 class GraphDetailSerializer(serializers.ModelSerializer):
     """Full detail serializer for graphs with current version expanded."""
 
+    # Declaration only: the model field is TextField(null=True, blank=True), but
+    # read_only_fields drops allow_blank, so drf-yasg declared minLength 1.
+    description = serializers.CharField(
+        read_only=True, allow_null=True, allow_blank=True
+    )
     active_version = serializers.SerializerMethodField()
 
     class Meta:

@@ -2337,8 +2337,7 @@ export interface GraphDetailApi {
    * @minLength 1
    */
   readonly name?: string;
-  /** @minLength 1 */
-  readonly description?: string;
+  readonly description?: string | null;
   readonly is_template?: boolean;
   readonly created_at?: string;
   readonly updated_at?: string;
