@@ -817,6 +817,51 @@ def test_rs03_version_create_own_and_template_references_still_resolve(
     assert Port.no_workspace_objects.get(node=node).ref_port_id == ref_port.id
 
 
+def test_rs03_version_create_other_workspace_reference_reads_like_missing(
+    authenticated_client, graph, graph_version, user
+):
+    """A version in another workspace of the caller's own organization is not
+    referenceable from version create, matching the granular node route and the
+    frontend's referenceable-graphs picker: it answers exactly like a missing id."""
+    other_workspace = Workspace.objects.create(
+        name="Other Workspace",
+        organization=graph.organization,
+        is_default=False,
+        is_active=True,
+        created_by=user,
+    )
+    other_graph = Graph.no_workspace_objects.create(
+        organization=graph.organization,
+        workspace=other_workspace,
+        name="Other Workspace Graph",
+        created_by=user,
+    )
+    other_version = GraphVersion.no_workspace_objects.create(
+        graph=other_graph, version_number=1, status=GraphVersionStatus.ACTIVE
+    )
+    missing_ref = uuid.uuid4()
+    before = _own_versions(graph)
+
+    response = authenticated_client.post(
+        VERSIONS.format(g=graph.id),
+        _subgraph_version_body(other_version.id),
+        format="json",
+    )
+    missing_response = authenticated_client.post(
+        VERSIONS.format(g=graph.id),
+        _subgraph_version_body(missing_ref),
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    _assert_same_answer(
+        response, missing_response, swap=(str(other_version.id), str(missing_ref))
+    )
+    assert other_graph.name not in response.content.decode()
+    assert not Node.all_objects.filter(ref_graph_version=other_version).exists()
+    assert _own_versions(graph) == before
+
+
 def test_rs03_version_content_without_scope_resolves_templates_only(
     graph_version, active_referenced_graph_version, template_versions
 ):

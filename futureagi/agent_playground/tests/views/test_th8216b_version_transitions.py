@@ -345,7 +345,8 @@ class TestRA01Transitions:
     ):
         """CHARACTERIZATION, not an invariant: owner decision O2 may change it.
 
-        R-A01 is open on the read surface. ``active_version`` (detail) and
+        R-A01 holds in storage; the read naming is owner decision O2.
+        ``active_version`` (detail) and
         ``active_version_id`` (list) mean "latest version of any status", so
         after the active version is deleted they name the latest remaining
         (inactive) version, which reads like an implicit fallback.
