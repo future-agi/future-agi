@@ -340,12 +340,15 @@ export const seriesHasDataPoints = (series = []) =>
 // a fitted non-zero floor lies about the data — a 250 bar on a 180-255 axis
 // draws as though it were 70. ApexCharts itself forces minY to 0 for bar
 // series unless an explicit min overrides it, so this only has to keep the
-// caller from asking it to fit. `bar`/`stacked_bar` are listed here for
+// caller from asking it to fit. A stacked line is the same case: it renders as
+// a stacked area, every layer is filled from zero, and a fitted floor clips the
+// lower layers off the plot. `bar`/`stacked_bar` are listed here for
 // completeness, though in this codebase they render as the horizontal table,
 // not a y-axis chart.
 const BASELINE_ANCHORED_CHART_TYPES = new Set([
   "column",
   "stacked_column",
+  "stacked_line",
   "bar",
   "stacked_bar",
 ]);

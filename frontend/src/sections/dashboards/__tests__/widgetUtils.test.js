@@ -1287,9 +1287,14 @@ describe("chartTypeFitsBand", () => {
     expect(chartTypeFitsBand("stacked_bar")).toBe(false);
   });
 
-  it("fits the band for line-shaped chart types", () => {
+  // A stacked line is an area chart: each layer is filled from zero, so a
+  // fitted floor clips the lower layers off the plot.
+  it("does not fit the band for a stacked line", () => {
+    expect(chartTypeFitsBand("stacked_line")).toBe(false);
+  });
+
+  it("fits the band for an unstacked line", () => {
     expect(chartTypeFitsBand("line")).toBe(true);
-    expect(chartTypeFitsBand("stacked_line")).toBe(true);
     expect(chartTypeFitsBand(undefined)).toBe(true);
   });
 });
