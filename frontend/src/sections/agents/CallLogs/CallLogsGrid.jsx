@@ -10,13 +10,7 @@ import { AgGridReact } from "ag-grid-react";
 import "src/styles/clean-data-table.css";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
-import {
-  Box,
-  Button,
-  Skeleton,
-  Typography,
-  useTheme,
-} from "@mui/material";
+import { Box, Button, Skeleton, Typography, useTheme } from "@mui/material";
 import {
   getCallLogsColumnDefs,
   useCallLogs,
@@ -570,11 +564,19 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
   // replayed by React Query when they become visible, racing the same chain
   // and multiplying expensive list calls.
   useEffect(() => {
+    // Decided from this page's own read: pagerState still describes the
+    // previous page for a render after a page change, and trusting it here
+    // asks for a page past the end.
+    const currentPageProvesNext = getListPagerState({
+      metadata: pagerMetadata,
+      startRow: (page - 1) * pageLimit,
+      rowCount: responseRows.length,
+    }).provenNext;
     if (
       module !== "project" &&
       isUsableListRead &&
       responseRows.length > 0 &&
-      pagerState.provenNext &&
+      currentPageProvesNext &&
       (!exactPage || exactPage.canPrefetch)
     ) {
       prefetchCallLogs(queryClient, {
@@ -587,9 +589,8 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
       });
     }
   }, [
-    data,
     page,
-    pagerState.provenNext,
+    pagerMetadata,
     queryClient,
     module,
     id,

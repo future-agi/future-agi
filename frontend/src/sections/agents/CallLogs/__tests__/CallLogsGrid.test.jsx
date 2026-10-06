@@ -126,12 +126,14 @@ const agentDefinitionPage = (page = 1, pageSize = 25, count = 137) => {
   };
 };
 
-const agentDefinitionRead = (count) => ({ page }) => ({
-  data: agentDefinitionPage(page, 25, count),
-  isLoading: false,
-  error: null,
-  queryKey: ["callLogs", "simulate", "agent-1", "version-1", 25, {}, page],
-});
+const agentDefinitionRead =
+  (count) =>
+  ({ page }) => ({
+    data: agentDefinitionPage(page, 25, count),
+    isLoading: false,
+    error: null,
+    queryKey: ["callLogs", "simulate", "agent-1", "version-1", 25, {}, page],
+  });
 
 describe("CallLogsGrid bounded-read state", () => {
   beforeEach(() => {
@@ -360,6 +362,26 @@ describe("CallLogsGrid bounded-read state", () => {
     );
   });
 
+  it("does not prefetch past the last agent-definition page", async () => {
+    // 30 calls at 25 a page: page 2 is the last. The prefetch decision must
+    // come from page 2's own read, not the state page 1 left behind, or it
+    // asks for a page 3 the server answers with 404.
+    useCallLogsMock.mockImplementation(agentDefinitionRead(30));
+
+    render(<CallLogsGrid id="agent-1" module="simulate" hideDrawer />);
+    await waitFor(() => expect(prefetchCallLogsMock).toHaveBeenCalledOnce());
+
+    await userEvent.click(screen.getByRole("button", { name: "Next page" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Next page" })).toBeDisabled(),
+    );
+
+    const prefetchedPages = prefetchCallLogsMock.mock.calls.map(
+      ([, options]) => options.page,
+    );
+    expect(prefetchedPages).not.toContain(3);
+  });
+
   it("numbers agent-definition pages from the exact DRF count", async () => {
     // REGRESSION GUARD (C2): 137 calls over 6 pages. Reading only has_more —
     // which this endpoint never sends — left one page of 6 and 112 calls
@@ -388,10 +410,9 @@ describe("CallLogsGrid bounded-read state", () => {
       await screen.findByRole("button", { name: "Go to page 2" }),
     );
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Go to page 2" })).toHaveAttribute(
-        "aria-current",
-        "page",
-      ),
+      expect(
+        screen.getByRole("button", { name: "Go to page 2" }),
+      ).toHaveAttribute("aria-current", "page"),
     );
 
     expect(screen.getByRole("button", { name: "Next page" })).toBeDisabled();
@@ -412,13 +433,14 @@ describe("CallLogsGrid bounded-read state", () => {
       expect(screen.getByRole("button", { name: "Next page" })).toBeDisabled(),
     );
 
-    await userEvent.click(screen.getByRole("button", { name: "Previous page" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Previous page" }),
+    );
 
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Go to page 1" })).toHaveAttribute(
-        "aria-current",
-        "page",
-      ),
+      expect(
+        screen.getByRole("button", { name: "Go to page 1" }),
+      ).toHaveAttribute("aria-current", "page"),
     );
     expect(
       screen.getByRole("button", { name: "Go to page 2" }),
@@ -857,7 +879,9 @@ describe("CallLogsGrid bounded-read state", () => {
       rowCount: 0,
     });
     expect(state.provenNext).toBe(false);
-    expect(windowedPageNumbers({ page: 1, provenNext: state.provenNext }).pages).toEqual([1]);
+    expect(
+      windowedPageNumbers({ page: 1, provenNext: state.provenNext }).pages,
+    ).toEqual([1]);
   });
 
   it("disables the pager and falls back to page 1 during an unusable, non-loading read", async () => {
