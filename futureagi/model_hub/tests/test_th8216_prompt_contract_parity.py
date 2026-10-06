@@ -3,10 +3,13 @@
 Every test builds real rows, calls the real endpoint through ``auth_client``
 and (1) stores a sanitised capture under
 ``fixtures/contracts/th8216/captured/`` and (2) validates the live body
-against the operation's declared schema. Regenerate captures with
+against the operation's declared schema. Hand-written future-evolution cases
+live separately under ``fixtures/contracts/th8216/synthetic/``. Regenerate captures with
 ``TH8216_REGENERATE_CAPTURES=1`` (see ``tfc/tests/openapi_parity.py``).
 """
 
+import copy
+import json
 from pathlib import Path
 
 import pytest
@@ -18,6 +21,7 @@ from tfc.tests.openapi_parity import (
     assert_response_matches_contract,
     capture_record,
     load_swagger,
+    validation_errors,
 )
 
 CAPTURED = Path(__file__).parent / "fixtures" / "contracts" / "th8216" / "captured"
@@ -403,3 +407,40 @@ def test_label_lookups_declare_their_real_query_parameters(swagger):
         "template_id": False,
         "template_name": False,
     }
+
+
+SYNTHETIC = CAPTURED.parent / "synthetic"
+
+
+def _evolve(row, case_id):
+    row = copy.deepcopy(row)
+    if case_id == "unknown-provider-key-in-open-snapshot":
+        row["prompt_config_snapshot"]["configuration"]["model_detail"][
+            "reasoning_tiers"
+        ] = ["low", "high"]
+    elif case_id == "null-snapshot-legacy-row":
+        row["prompt_config_snapshot"] = None
+    elif case_id == "future-label-type":
+        row["labels"] = [
+            {"id": row["id"], "name": "experiment-a", "type": "experiment"}
+        ]
+    elif case_id == "new-top-level-field":
+        row["archived_at"] = None
+    elif case_id == "string-output":
+        row["output"] = "legacy text output"
+    else:
+        raise AssertionError(f"unknown synthetic case {case_id}")
+    return row
+
+
+def test_op099_synthetic_evolution_cases_match_declared_openness(swagger):
+    """Synthetic (not captured) rows: which future shapes the contract admits."""
+    spec = json.loads((SYNTHETIC / "op099_history_evolution.json").read_text())
+    captured = json.loads((CAPTURED / "op099_versions_default_page.json").read_text())
+    base_row = captured["body"]["results"][0]
+    schema = {"$ref": "#/definitions/PromptHistoryExecution"}
+
+    assert spec["label"] == "synthetic"
+    for case in spec["cases"]:
+        errors = validation_errors(swagger, schema, _evolve(base_row, case["id"]))
+        assert (not errors) is case["declared"], (case["id"], errors)
