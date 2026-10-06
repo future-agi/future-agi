@@ -2025,16 +2025,15 @@ export const GraphVersionListApiStatus = {
 export type GraphVersionListApiTags = { [key: string]: unknown };
 
 export interface GraphVersionListApi {
-  readonly id?: string;
-  readonly version_number?: number;
+  readonly id: string;
+  readonly version_number: number;
   /** Version status (inactive for historical versions) */
-  readonly status?: GraphVersionListApiStatus;
+  readonly status: GraphVersionListApiStatus;
   /** Any valid JSON value. */
-  readonly tags?: GraphVersionListApiTags;
-  /** @minLength 1 */
-  readonly commit_message?: string;
-  readonly created_at?: string;
-  readonly global_variables?: readonly string[];
+  readonly tags: GraphVersionListApiTags;
+  readonly commit_message: string;
+  readonly created_at: string;
+  readonly global_variables: readonly string[];
 }
 
 export interface GraphVersionPageMetadataApi {
@@ -2083,16 +2082,14 @@ export const NodeReadApiType = {
 /**
  * Any valid JSON value.
  */
-export type LinkedPromptTemplateReadApiMessagesItem = {
-  [key: string]: unknown;
-};
+export type LinkedPromptTemplateReadApiMessages = { [key: string]: unknown };
 
 /**
- * String or JSON object.
+ * Any valid JSON value.
  */
-export type LinkedPromptTemplateReadApiResponseFormat =
-  | string
-  | { [key: string]: unknown };
+export type LinkedPromptTemplateReadApiResponseFormat = {
+  [key: string]: unknown;
+};
 
 /**
  * Any valid JSON value.
@@ -2102,11 +2099,45 @@ export type LinkedPromptTemplateReadApiResponseSchema = {
 };
 
 /**
- * String or JSON object.
+ * Any valid JSON value.
  */
-export type LinkedPromptTemplateReadApiModel =
-  | string
-  | { [key: string]: unknown };
+export type LinkedPromptTemplateReadApiModel = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type LinkedPromptTemplateReadApiTemperature = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type LinkedPromptTemplateReadApiMaxTokens = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type LinkedPromptTemplateReadApiTopP = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type LinkedPromptTemplateReadApiFrequencyPenalty = {
+  [key: string]: unknown;
+};
+
+/**
+ * Any valid JSON value.
+ */
+export type LinkedPromptTemplateReadApiPresencePenalty = {
+  [key: string]: unknown;
+};
+
+/**
+ * Any valid JSON value.
+ */
+export type LinkedPromptTemplateReadApiOutputFormat = {
+  [key: string]: unknown;
+};
 
 /**
  * Any valid JSON value.
@@ -2126,6 +2157,13 @@ export type LinkedPromptTemplateReadApiModelDetail = { [key: string]: unknown };
 /**
  * Any valid JSON value.
  */
+export type LinkedPromptTemplateReadApiTemplateFormat = {
+  [key: string]: unknown;
+};
+
+/**
+ * Any valid JSON value.
+ */
 export type LinkedPromptTemplateReadApiVariableNames = {
   [key: string]: unknown;
 };
@@ -2141,34 +2179,39 @@ export type LinkedPromptTemplateReadApiMetadata = { [key: string]: unknown };
 export interface LinkedPromptTemplateReadApi {
   prompt_template_id: string;
   prompt_version_id: string;
-  messages: LinkedPromptTemplateReadApiMessagesItem[];
-  /** String or JSON object. */
+  /** Any valid JSON value. */
+  messages: LinkedPromptTemplateReadApiMessages;
+  /** Any valid JSON value. */
   response_format: LinkedPromptTemplateReadApiResponseFormat;
   /** Any valid JSON value. */
   response_schema: LinkedPromptTemplateReadApiResponseSchema;
-  /** String or JSON object. */
+  /** Any valid JSON value. */
   model: LinkedPromptTemplateReadApiModel;
-  temperature: number;
-  max_tokens: number;
-  top_p: number;
-  frequency_penalty: number;
-  presence_penalty: number;
-  /** @minLength 1 */
-  output_format: string;
+  /** Any valid JSON value. */
+  temperature: LinkedPromptTemplateReadApiTemperature;
+  /** Any valid JSON value. */
+  max_tokens: LinkedPromptTemplateReadApiMaxTokens;
+  /** Any valid JSON value. */
+  top_p: LinkedPromptTemplateReadApiTopP;
+  /** Any valid JSON value. */
+  frequency_penalty: LinkedPromptTemplateReadApiFrequencyPenalty;
+  /** Any valid JSON value. */
+  presence_penalty: LinkedPromptTemplateReadApiPresencePenalty;
+  /** Any valid JSON value. */
+  output_format: LinkedPromptTemplateReadApiOutputFormat;
   /** Any valid JSON value. */
   tools: LinkedPromptTemplateReadApiTools;
   /** Any valid JSON value. */
   tool_choice: LinkedPromptTemplateReadApiToolChoice;
   /** Any valid JSON value. */
   model_detail: LinkedPromptTemplateReadApiModelDetail;
-  /** @minLength 1 */
-  template_format: string;
+  /** Any valid JSON value. */
+  template_format: LinkedPromptTemplateReadApiTemplateFormat;
   /** Any valid JSON value. */
   variable_names: LinkedPromptTemplateReadApiVariableNames;
   /** Any valid JSON value. */
   metadata: LinkedPromptTemplateReadApiMetadata;
   is_draft: boolean;
-  /** @minLength 1 */
   template_version: string;
 }
 
@@ -2209,25 +2252,25 @@ export type PortReadApiDefaultValue = { [key: string]: unknown };
 export type PortReadApiMetadata = { [key: string]: unknown };
 
 export interface PortReadApi {
-  readonly id?: string;
+  readonly id: string;
   /**
    * Identifier (e.g., 'prompt', 'result')
    * @minLength 1
    */
-  readonly key?: string;
+  readonly key: string;
   /**
    * User-facing name for the port
    * @minLength 1
    */
-  readonly display_name?: string;
-  readonly direction?: PortReadApiDirection;
+  readonly display_name: string;
+  readonly direction: PortReadApiDirection;
   /** JSON Schema for validation */
-  readonly data_schema?: PortReadApiDataSchema;
-  readonly required?: boolean;
+  readonly data_schema: PortReadApiDataSchema;
+  readonly required: boolean;
   /** Any valid JSON value. */
-  readonly default_value?: PortReadApiDefaultValue;
-  readonly metadata?: PortReadApiMetadata;
-  readonly ref_port_id?: string;
+  readonly default_value: PortReadApiDefaultValue;
+  readonly metadata: PortReadApiMetadata;
+  readonly ref_port_id: string;
 }
 
 /**
@@ -2241,25 +2284,25 @@ export type NodeReadApiConfig = { [key: string]: unknown };
 export type NodeReadApiPosition = { [key: string]: unknown };
 
 export interface NodeReadApi {
-  readonly id?: string;
+  readonly id: string;
   /** 'subgraph' for subgraph nodes, 'atomic' for nodes using a NodeTemplate */
-  readonly type?: NodeReadApiType;
+  readonly type: NodeReadApiType;
   /**
    * Display name
    * @minLength 1
    */
-  readonly name?: string;
+  readonly name: string;
   /** Node-specific configuration (validated against node_template.config_schema for atomic nodes) */
-  readonly config?: NodeReadApiConfig;
+  readonly config: NodeReadApiConfig;
   /** UI coordinates {"x": 0, "y": 0} */
-  readonly position?: NodeReadApiPosition;
-  readonly node_template_id?: string;
-  readonly ref_graph_version_id?: string;
+  readonly position: NodeReadApiPosition;
+  readonly node_template_id: string;
+  readonly ref_graph_version_id: string;
   /** @minLength 1 */
-  readonly ref_graph_name?: string;
-  readonly ref_graph_id?: string;
-  prompt_template?: LinkedPromptTemplateReadApi;
-  node_connection?: NodeConnectionSummaryApi;
+  readonly ref_graph_name: string;
+  readonly ref_graph_id: string;
+  prompt_template: LinkedPromptTemplateReadApi;
+  node_connection: NodeConnectionSummaryApi;
   /** Reconstruct input_mappings as list of key-value objects.
 
           Returns a list like [
@@ -2270,14 +2313,14 @@ export interface NodeReadApi {
           Uses prefetched ``ports`` and ``incoming_edges`` when available
           (see ``prefetch_version_detail``) to avoid N+1 queries.
    */
-  readonly input_mappings?: readonly InputMappingReadApi[];
-  readonly ports?: readonly PortReadApi[];
+  readonly input_mappings: readonly InputMappingReadApi[];
+  readonly ports: readonly PortReadApi[];
 }
 
 export interface NodeConnectionReadApi {
-  readonly id?: string;
-  readonly source_node_id?: string;
-  readonly target_node_id?: string;
+  readonly id: string;
+  readonly source_node_id: string;
+  readonly target_node_id: string;
 }
 
 /**
@@ -2286,17 +2329,16 @@ export interface NodeConnectionReadApi {
 export type GraphVersionDetailApiTags = { [key: string]: unknown };
 
 export interface GraphVersionDetailApi {
-  readonly id?: string;
-  readonly version_number?: number;
+  readonly id: string;
+  readonly version_number: number;
   /** Version status (inactive for historical versions) */
-  readonly status?: GraphVersionDetailApiStatus;
+  readonly status: GraphVersionDetailApiStatus;
   /** Any valid JSON value. */
-  readonly tags?: GraphVersionDetailApiTags;
-  /** @minLength 1 */
-  readonly commit_message?: string;
-  readonly created_at?: string;
-  readonly nodes?: readonly NodeReadApi[];
-  readonly node_connections?: readonly NodeConnectionReadApi[];
+  readonly tags: GraphVersionDetailApiTags;
+  readonly commit_message: string;
+  readonly created_at: string;
+  readonly nodes: readonly NodeReadApi[];
+  readonly node_connections: readonly NodeConnectionReadApi[];
 }
 
 export interface GraphVersionDetailResponseApi {
@@ -32280,6 +32322,17 @@ export type AgentPlaygroundGraphsVersionsListParams = {
    * Version number filter: 'v3', 'V3' or '3'; other text is ignored.
    */
   search?: string;
+  /**
+   * 'true' (any case) resolves the graph among system graph templates instead of the caller's own graphs; other values are ignored.
+   */
+  is_template?: string;
+};
+
+export type AgentPlaygroundGraphsVersionsReadParams = {
+  /**
+   * 'true' (any case) resolves the graph among system graph templates instead of the caller's own graphs; other values are ignored.
+   */
+  is_template?: string;
 };
 
 export type AgentPlaygroundGraphsVersionsNodesPossibleEdgeMappingsParams = {

@@ -90,6 +90,7 @@ import type {
   AgentPlaygroundGraphsVersionsListParams,
   AgentPlaygroundGraphsVersionsNodesPossibleEdgeMappings200,
   AgentPlaygroundGraphsVersionsNodesPossibleEdgeMappingsParams,
+  AgentPlaygroundGraphsVersionsReadParams,
   AgentPlaygroundNodeTemplatesList200,
   AgentPlaygroundNodeTemplatesListParams,
   AgentPromptOptimiserGraphResponseApi,
@@ -10315,8 +10316,25 @@ export type agentPlaygroundGraphsVersionsReadResponse =
 export const getAgentPlaygroundGraphsVersionsReadUrl = (
   id: string,
   versionId: string,
+  params?: AgentPlaygroundGraphsVersionsReadParams,
 ) => {
-  return `/agent-playground/graphs/${id}/versions/${versionId}/`;
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/agent-playground/graphs/${id}/versions/${versionId}/?${stringifiedParams}`
+    : `/agent-playground/graphs/${id}/versions/${versionId}/`;
 };
 
 /**
@@ -10325,10 +10343,11 @@ export const getAgentPlaygroundGraphsVersionsReadUrl = (
 export const agentPlaygroundGraphsVersionsRead = async (
   id: string,
   versionId: string,
+  params?: AgentPlaygroundGraphsVersionsReadParams,
   options?: RequestInit,
 ): Promise<agentPlaygroundGraphsVersionsReadResponse> => {
   return apiMutator<agentPlaygroundGraphsVersionsReadResponse>(
-    getAgentPlaygroundGraphsVersionsReadUrl(id, versionId),
+    getAgentPlaygroundGraphsVersionsReadUrl(id, versionId, params),
     {
       ...options,
       method: "GET",

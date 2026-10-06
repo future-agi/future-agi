@@ -22,28 +22,33 @@ class LinkedPromptTemplateReadSerializer(serializers.Serializer):
     Known config keys are read from ``configuration`` first, then the snapshot
     root; other provider keys in the snapshot are not projected. A legacy list
     snapshot contributes only its first entry.
+
+    Snapshot values are copied without validation and model_hub writers store
+    ``prompt_config`` entries as untyped dicts, so every snapshot-derived key
+    is open JSON. Tighten these once TH-6029 types the writer.
     """
 
     prompt_template_id = serializers.UUIDField()
     prompt_version_id = serializers.UUIDField()
-    messages = serializers.ListField(child=JsonValueField())
-    response_format = StringOrObjectField(allow_null=True)
+    messages = JsonValueField(allow_null=True)
+    response_format = JsonValueField(allow_null=True)
     response_schema = JsonValueField(allow_null=True)
-    model = StringOrObjectField(allow_null=True)
-    temperature = serializers.FloatField(allow_null=True)
-    max_tokens = serializers.FloatField(allow_null=True)
-    top_p = serializers.FloatField(allow_null=True)
-    frequency_penalty = serializers.FloatField(allow_null=True)
-    presence_penalty = serializers.FloatField(allow_null=True)
-    output_format = serializers.CharField(allow_null=True)
+    model = JsonValueField(allow_null=True)
+    temperature = JsonValueField(allow_null=True)
+    max_tokens = JsonValueField(allow_null=True)
+    top_p = JsonValueField(allow_null=True)
+    frequency_penalty = JsonValueField(allow_null=True)
+    presence_penalty = JsonValueField(allow_null=True)
+    output_format = JsonValueField(allow_null=True)
     tools = JsonValueField(allow_null=True)
     tool_choice = JsonValueField(allow_null=True)
     model_detail = JsonValueField(allow_null=True)
-    template_format = serializers.CharField(allow_null=True)
+    template_format = JsonValueField(allow_null=True)
     variable_names = JsonValueField(allow_null=True)
     metadata = JsonValueField(allow_null=True)
     is_draft = serializers.BooleanField()
-    template_version = serializers.CharField()
+    # From the PromptVersion column, not the snapshot.
+    template_version = serializers.CharField(allow_blank=True)
 
 
 class NodeConnectionSummarySerializer(serializers.Serializer):
@@ -101,6 +106,7 @@ class NodeReadSerializer(serializers.ModelSerializer):
             "ports",
         ]
         read_only_fields = fields
+        swagger_schema_fields = {"required": fields}
 
     @swagger_serializer_method(
         serializer_or_field=LinkedPromptTemplateReadSerializer(allow_null=True)
@@ -163,7 +169,9 @@ class NodeReadSerializer(serializers.ModelSerializer):
         }
 
     @swagger_serializer_method(
-        serializer_or_field=InputMappingReadSerializer(many=True, allow_null=True)
+        serializer_or_field=serializers.ListField(
+            child=InputMappingReadSerializer(), allow_null=True
+        )
     )
     def get_input_mappings(self, obj):
         """Reconstruct input_mappings as list of key-value objects.
@@ -400,7 +408,10 @@ class PromptTemplateDataSerializer(serializers.Serializer):
         required=False, allow_null=True, allow_blank=True, default=None
     )
     template_format = serializers.CharField(
-        required=False, allow_null=True, allow_blank=True, default=None,
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+        default=None,
         help_text="Template format: 'mustache' or 'jinja'",
     )
     save_prompt_version = serializers.BooleanField(required=False, default=False)

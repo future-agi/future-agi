@@ -4221,6 +4221,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
               type: "string",
             },
           },
+          is_template: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
         },
         responses: {
           200: {
@@ -4273,7 +4279,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeRequestValidation: false,
         runtimeResponseValidation: false,
         requestBody: null,
-        queryParameters: {},
+        queryParameters: {
+          is_template: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+        },
         responses: {
           200: {
             $ref: "#/definitions/GraphVersionDetailResponse",
@@ -66685,6 +66698,21 @@ export const OPENAPI_CONTRACT = Object.freeze({
           readOnly: true,
         },
       },
+      required: [
+        "id",
+        "type",
+        "name",
+        "config",
+        "position",
+        "node_template_id",
+        "ref_graph_version_id",
+        "ref_graph_name",
+        "ref_graph_id",
+        "prompt_template",
+        "node_connection",
+        "input_mappings",
+        "ports",
+      ],
     },
     NodeReadResponse: {
       required: ["status", "result"],
@@ -91109,7 +91137,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Commit message",
           type: "string",
           readOnly: true,
-          minLength: 1,
           "x-nullable": true,
         },
         created_at: {
@@ -91133,6 +91160,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
           readOnly: true,
         },
       },
+      required: [
+        "id",
+        "version_number",
+        "status",
+        "tags",
+        "commit_message",
+        "created_at",
+        "nodes",
+        "node_connections",
+      ],
     },
     GraphVersionListResult: {
       required: ["versions", "metadata"],
@@ -95233,7 +95270,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "x-nullable": true,
         },
       },
-      "x-nullable": true,
     },
     LinkedPromptTemplateRead: {
       description:
@@ -95273,19 +95309,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
           format: "uuid",
         },
         messages: {
-          type: "array",
-          items: {
-            type: "object",
-            "x-json-value": true,
-            description: "Any valid JSON value.",
-          },
+          title: "Messages",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
         },
         response_format: {
           title: "Response format",
           type: "object",
           "x-nullable": true,
-          "x-string-or-object": true,
-          description: "String or JSON object.",
+          "x-json-value": true,
+          description: "Any valid JSON value.",
         },
         response_schema: {
           title: "Response schema",
@@ -95298,39 +95333,50 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Model",
           type: "object",
           "x-nullable": true,
-          "x-string-or-object": true,
-          description: "String or JSON object.",
+          "x-json-value": true,
+          description: "Any valid JSON value.",
         },
         temperature: {
           title: "Temperature",
-          type: "number",
+          type: "object",
           "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
         },
         max_tokens: {
           title: "Max tokens",
-          type: "number",
+          type: "object",
           "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
         },
         top_p: {
           title: "Top p",
-          type: "number",
+          type: "object",
           "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
         },
         frequency_penalty: {
           title: "Frequency penalty",
-          type: "number",
+          type: "object",
           "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
         },
         presence_penalty: {
           title: "Presence penalty",
-          type: "number",
+          type: "object",
           "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
         },
         output_format: {
           title: "Output format",
-          type: "string",
-          minLength: 1,
+          type: "object",
           "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
         },
         tools: {
           title: "Tools",
@@ -95355,9 +95401,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         template_format: {
           title: "Template format",
-          type: "string",
-          minLength: 1,
+          type: "object",
           "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
         },
         variable_names: {
           title: "Variable names",
@@ -95380,7 +95427,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         template_version: {
           title: "Template version",
           type: "string",
-          minLength: 1,
         },
       },
       "x-nullable": true,
@@ -95470,6 +95516,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "x-nullable": true,
         },
       },
+      required: [
+        "id",
+        "key",
+        "display_name",
+        "direction",
+        "data_schema",
+        "required",
+        "default_value",
+        "metadata",
+        "ref_port_id",
+      ],
     },
     ObservationSpanDetailResult: {
       required: ["observation_span", "evals_metrics"],
@@ -109385,6 +109442,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           readOnly: true,
         },
       },
+      required: ["id", "source_node_id", "target_node_id"],
     },
     GraphVersionList: {
       type: "object",
@@ -109418,7 +109476,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Commit message",
           type: "string",
           readOnly: true,
-          minLength: 1,
           "x-nullable": true,
         },
         created_at: {
@@ -109436,6 +109493,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
           readOnly: true,
         },
       },
+      required: [
+        "id",
+        "version_number",
+        "status",
+        "tags",
+        "commit_message",
+        "created_at",
+        "global_variables",
+      ],
     },
     GraphVersionPageMetadata: {
       required: [

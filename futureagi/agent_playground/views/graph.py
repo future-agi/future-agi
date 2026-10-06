@@ -38,6 +38,7 @@ from agent_playground.serializers.graph_version import (
 )
 from agent_playground.serializers.response_contracts import (
     GRAPH_VERSION_LIST_QUERY_PARAMETERS,
+    IS_TEMPLATE_QUERY_PARAMETER,
     GraphVersionDetailResponseSerializer,
     GraphVersionListResponseSerializer,
 )
@@ -76,6 +77,7 @@ list_versions_schema = swagger_auto_schema(
 )
 retrieve_version_schema = swagger_auto_schema(
     auto_schema=ExplicitQueryAutoSchema,
+    manual_parameters=[IS_TEMPLATE_QUERY_PARAMETER],
     responses={
         200: GraphVersionDetailResponseSerializer,
         **AGENT_PLAYGROUND_ERROR_RESPONSES,

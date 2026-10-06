@@ -56,6 +56,7 @@ class PortReadSerializer(serializers.ModelSerializer):
             "ref_port_id",
         ]
         read_only_fields = fields
+        swagger_schema_fields = {"required": fields}
 
 
 class PortWriteSerializer(serializers.Serializer):

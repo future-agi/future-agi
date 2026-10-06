@@ -48,6 +48,16 @@ class NodeReadResponseSerializer(serializers.Serializer):
     result = NodeReadSerializer()
 
 
+IS_TEMPLATE_QUERY_PARAMETER = openapi.Parameter(
+    "is_template",
+    openapi.IN_QUERY,
+    description=(
+        "'true' (any case) resolves the graph among system graph templates "
+        "instead of the caller's own graphs; other values are ignored."
+    ),
+    type=openapi.TYPE_STRING,
+)
+
 GRAPH_VERSION_LIST_QUERY_PARAMETERS = [
     openapi.Parameter(
         "page_number",
@@ -67,4 +77,5 @@ GRAPH_VERSION_LIST_QUERY_PARAMETERS = [
         description="Version number filter: 'v3', 'V3' or '3'; other text is ignored.",
         type=openapi.TYPE_STRING,
     ),
+    IS_TEMPLATE_QUERY_PARAMETER,
 ]

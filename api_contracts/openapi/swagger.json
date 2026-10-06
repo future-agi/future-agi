@@ -7897,6 +7897,12 @@
                         "in": "query",
                         "description": "Version number filter: 'v3', 'V3' or '3'; other text is ignored.",
                         "type": "string"
+                    },
+                    {
+                        "name": "is_template",
+                        "in": "query",
+                        "description": "'true' (any case) resolves the graph among system graph templates instead of the caller's own graphs; other values are ignored.",
+                        "type": "string"
                     }
                 ],
                 "responses": {
@@ -7997,7 +8003,14 @@
             "get": {
                 "operationId": "agent-playground_graphs_versions_read",
                 "description": "Get a specific version with full nested structure (nodes→ports, edges).",
-                "parameters": [],
+                "parameters": [
+                    {
+                        "name": "is_template",
+                        "in": "query",
+                        "description": "'true' (any case) resolves the graph among system graph templates instead of the caller's own graphs; other values are ignored.",
+                        "type": "string"
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "",
@@ -85622,7 +85635,6 @@
                     "title": "Commit message",
                     "type": "string",
                     "readOnly": true,
-                    "minLength": 1,
                     "x-nullable": true
                 },
                 "created_at": {
@@ -85639,7 +85651,16 @@
                     },
                     "readOnly": true
                 }
-            }
+            },
+            "required": [
+                "id",
+                "version_number",
+                "status",
+                "tags",
+                "commit_message",
+                "created_at",
+                "global_variables"
+            ]
         },
         "GraphVersionPageMetadata": {
             "required": [
@@ -85752,19 +85773,18 @@
                     "format": "uuid"
                 },
                 "messages": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "x-json-value": true,
-                        "description": "Any valid JSON value."
-                    }
+                    "title": "Messages",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
                 },
                 "response_format": {
                     "title": "Response format",
                     "type": "object",
                     "x-nullable": true,
-                    "x-string-or-object": true,
-                    "description": "String or JSON object."
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
                 },
                 "response_schema": {
                     "title": "Response schema",
@@ -85777,39 +85797,50 @@
                     "title": "Model",
                     "type": "object",
                     "x-nullable": true,
-                    "x-string-or-object": true,
-                    "description": "String or JSON object."
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
                 },
                 "temperature": {
                     "title": "Temperature",
-                    "type": "number",
-                    "x-nullable": true
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
                 },
                 "max_tokens": {
                     "title": "Max tokens",
-                    "type": "number",
-                    "x-nullable": true
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
                 },
                 "top_p": {
                     "title": "Top p",
-                    "type": "number",
-                    "x-nullable": true
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
                 },
                 "frequency_penalty": {
                     "title": "Frequency penalty",
-                    "type": "number",
-                    "x-nullable": true
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
                 },
                 "presence_penalty": {
                     "title": "Presence penalty",
-                    "type": "number",
-                    "x-nullable": true
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
                 },
                 "output_format": {
                     "title": "Output format",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
                 },
                 "tools": {
                     "title": "Tools",
@@ -85834,9 +85865,10 @@
                 },
                 "template_format": {
                     "title": "Template format",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
                 },
                 "variable_names": {
                     "title": "Variable names",
@@ -85858,8 +85890,7 @@
                 },
                 "template_version": {
                     "title": "Template version",
-                    "type": "string",
-                    "minLength": 1
+                    "type": "string"
                 }
             },
             "x-nullable": true
@@ -85909,8 +85940,7 @@
                     "minLength": 1,
                     "x-nullable": true
                 }
-            },
-            "x-nullable": true
+            }
         },
         "PortRead": {
             "type": "object",
@@ -85975,7 +86005,18 @@
                     "readOnly": true,
                     "x-nullable": true
                 }
-            }
+            },
+            "required": [
+                "id",
+                "key",
+                "display_name",
+                "direction",
+                "data_schema",
+                "required",
+                "default_value",
+                "metadata",
+                "ref_port_id"
+            ]
         },
         "NodeRead": {
             "type": "object",
@@ -86065,7 +86106,22 @@
                     },
                     "readOnly": true
                 }
-            }
+            },
+            "required": [
+                "id",
+                "type",
+                "name",
+                "config",
+                "position",
+                "node_template_id",
+                "ref_graph_version_id",
+                "ref_graph_name",
+                "ref_graph_id",
+                "prompt_template",
+                "node_connection",
+                "input_mappings",
+                "ports"
+            ]
         },
         "NodeConnectionRead": {
             "type": "object",
@@ -86088,7 +86144,12 @@
                     "format": "uuid",
                     "readOnly": true
                 }
-            }
+            },
+            "required": [
+                "id",
+                "source_node_id",
+                "target_node_id"
+            ]
         },
         "GraphVersionDetail": {
             "type": "object",
@@ -86126,7 +86187,6 @@
                     "title": "Commit message",
                     "type": "string",
                     "readOnly": true,
-                    "minLength": 1,
                     "x-nullable": true
                 },
                 "created_at": {
@@ -86149,7 +86209,17 @@
                     },
                     "readOnly": true
                 }
-            }
+            },
+            "required": [
+                "id",
+                "version_number",
+                "status",
+                "tags",
+                "commit_message",
+                "created_at",
+                "nodes",
+                "node_connections"
+            ]
         },
         "GraphVersionDetailResponse": {
             "required": [

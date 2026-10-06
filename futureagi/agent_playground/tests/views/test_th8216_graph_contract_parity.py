@@ -6,6 +6,8 @@ real rows, real endpoints, sanitised captures under
 Regenerate captures with ``TH8216_REGENERATE_CAPTURES=1``.
 """
 
+import copy
+import json
 import uuid
 from pathlib import Path
 
@@ -219,15 +221,63 @@ def test_op018_graph_versions_page_edges_match_contract(
     )
 
 
-@pytest.mark.django_db
-def test_op018_declares_its_real_query_parameters(swagger):
-    parameters = {
-        parameter["name"]
-        for parameter in operation(swagger, VERSIONS, "GET").get("parameters", [])
+def _query_parameters(swagger, path):
+    return {
+        parameter["name"]: parameter.get("type")
+        for parameter in operation(swagger, path, "GET").get("parameters", [])
         if parameter.get("in") == "query"
     }
 
-    assert parameters == {"page_number", "page_size", "search"}
+
+@pytest.mark.django_db
+def test_op018_op020_declare_their_real_query_parameters(swagger):
+    # GraphViewSet.get_queryset reads is_template on every action (C05).
+    assert _query_parameters(swagger, VERSIONS) == {
+        "page_number": "integer",
+        "page_size": "integer",
+        "search": "string",
+        "is_template": "string",
+    }
+    assert _query_parameters(swagger, VERSION) == {"is_template": "string"}
+
+
+@pytest.mark.django_db
+def test_op018_op020_blank_commit_message_matches_contract(
+    swagger, authenticated_client, graph, linked_version
+):
+    """C01: the version writer accepts commit_message "" and stores it."""
+    created = authenticated_client.post(
+        f"/agent-playground/graphs/{graph.id}/versions/",
+        {"commit_message": ""},
+        format="json",
+    )
+    assert created.status_code in (200, 201), created.content
+    version_id = created.json()["result"]["id"]
+
+    listed = authenticated_client.get(f"/agent-playground/graphs/{graph.id}/versions/")
+    detail = authenticated_client.get(
+        f"/agent-playground/graphs/{graph.id}/versions/{version_id}/"
+    )
+
+    assert detail.status_code == 200
+    assert detail.json()["result"]["commit_message"] == ""
+    assert "" in {row["commit_message"] for row in listed.json()["result"]["versions"]}
+    _check(
+        swagger,
+        "op018_versions_list_blank_commit_message",
+        "OP-018",
+        "GET",
+        VERSIONS,
+        listed,
+    )
+    _check(
+        swagger,
+        "op020_version_detail_blank_commit_message",
+        "OP-020",
+        "GET",
+        VERSION,
+        detail,
+    )
 
 
 @pytest.mark.django_db
@@ -408,3 +458,125 @@ def test_s07_legacy_list_snapshot_reads_first_entry(
         response,
         note="legacy list snapshot: read projects only the first entry",
     )
+
+
+@pytest.mark.django_db
+def test_op028_model_hub_created_version_linked_to_node_matches_contract(
+    swagger, authenticated_client, graph, graph_version, node, prompt_template
+):
+    """C08: model_hub drafts store prompt_config entries as untyped dicts."""
+    from model_hub.models.run_prompt import PromptVersion
+
+    snapshot = _prompt_snapshot()
+    snapshot["configuration"].update(
+        {"max_tokens": "1024", "output_format": "", "template_format": None}
+    )
+    created = authenticated_client.post(
+        f"/model-hub/prompt-templates/{prompt_template.id}/add-new-draft/",
+        {
+            "new_prompts": [
+                {
+                    "prompt_config": [snapshot],
+                    "variable_names": {},
+                    "evaluation_configs": [],
+                    "metadata": {},
+                }
+            ]
+        },
+        format="json",
+    )
+    assert created.status_code == 200, created.content
+    prompt_version = PromptVersion.no_workspace_objects.get(
+        id=created.json()["result"][0]["id"]
+    )
+    PromptTemplateNode.no_workspace_objects.create(
+        node=node, prompt_template=prompt_template, prompt_version=prompt_version
+    )
+
+    response = authenticated_client.get(
+        f"/agent-playground/graphs/{graph.id}/versions/{graph_version.id}/nodes/{node.id}/"
+    )
+
+    assert response.status_code == 200
+    linked = response.json()["result"]["prompt_template"]
+    assert linked["max_tokens"] == "1024" and linked["output_format"] == ""
+    _check(
+        swagger,
+        "op028_model_hub_version_linked_node",
+        "OP-028",
+        "GET",
+        NODE,
+        response,
+        note="version created through model_hub add-new-draft, then linked",
+    )
+
+
+@pytest.mark.django_db
+def test_node_read_input_mappings_are_a_nullable_array_of_objects(swagger):
+    """C07: null is legal for the list, never for one of its items."""
+    schema = {"$ref": "#/definitions/NodeRead"}
+    body = json.loads((CAPTURED / "op028_linked_prompt_node.json").read_text())
+    node = body["body"]["result"]
+
+    assert "x-nullable" not in swagger["definitions"]["InputMappingRead"]
+    assert validation_errors(swagger, schema, {**node, "input_mappings": None}) == []
+    assert (
+        validation_errors(
+            swagger, schema, {**node, "input_mappings": [{"key": "q", "value": None}]}
+        )
+        == []
+    )
+    assert validation_errors(swagger, schema, {**node, "input_mappings": [None]})
+
+
+# M2: read definitions require every key the serializer always emits. Keys
+# that can legitimately be absent are listed here (and in REPORT.md).
+OPTIONAL_READ_KEYS = {
+    "GraphVersionList": set(),
+    "GraphVersionDetail": set(),
+    "NodeRead": set(),
+    "PortRead": set(),
+    "NodeConnectionRead": set(),
+    "LinkedPromptTemplateRead": set(),
+}
+
+
+@pytest.mark.parametrize("definition", sorted(OPTIONAL_READ_KEYS))
+def test_read_definitions_require_every_always_emitted_key(swagger, definition):
+    schema = swagger["definitions"][definition]
+
+    assert set(schema.get("required", [])) == (
+        set(schema["properties"]) - OPTIONAL_READ_KEYS[definition]
+    )
+
+
+@pytest.mark.parametrize(
+    "capture, path, definition, key",
+    [
+        ("op018_versions_list", ("versions", 0), "GraphVersionList", "tags"),
+        ("op020_version_detail", (), "GraphVersionDetail", "node_connections"),
+        ("op020_version_detail", ("nodes", 0), "NodeRead", "input_mappings"),
+        ("op020_version_detail", ("nodes", 0, "ports", 0), "PortRead", "ref_port_id"),
+        (
+            "op020_version_detail",
+            ("node_connections", 0),
+            "NodeConnectionRead",
+            "target_node_id",
+        ),
+    ],
+)
+def test_dropping_an_always_emitted_key_fails_parity(
+    swagger, capture, path, definition, key
+):
+    body = json.loads((CAPTURED / f"{capture}.json").read_text())["body"]["result"]
+    row = copy.deepcopy(body)
+    for step in path:
+        row = row[step]
+    schema = {"$ref": f"#/definitions/{definition}"}
+    assert validation_errors(swagger, schema, row) == []
+
+    del row[key]
+
+    assert validation_errors(swagger, schema, row) == [
+        f"<root>: '{key}' is a required property"
+    ]
