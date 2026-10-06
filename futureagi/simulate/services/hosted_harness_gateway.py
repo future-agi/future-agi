@@ -373,25 +373,6 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
     return values, credential_bytes
 
 
-def _add_scoped_guest_pin_policy(values: dict[str, str], job: HostedHarnessJob) -> bool:
-    """Release the private POC policy only for its exact phone target."""
-    target = str(os.environ.get("ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER") or "").strip()
-    pin = str(os.environ.get("ALK_CAB_GUEST_POC_PIN") or "").strip()
-    agent = (job.payload or {}).get("agent") or {}
-    config = agent.get("config") or {}
-    submitted_target = str(config.get("phone_number") or "").strip()
-    if (
-        str(agent.get("connector") or "").strip().lower() != "phone"
-        or submitted_target != target
-        or not target
-        or not pin
-    ):
-        return False
-    values["ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER"] = target
-    values["ALK_CAB_GUEST_POC_PIN"] = pin
-    return True
-
-
 def _scenario_delta(instruction: str) -> int | None:
     number_words = {
         "one": 1,
@@ -440,7 +421,7 @@ def _adjustment_stage(instruction: str, current_stage: str) -> str:
 
 
 def _scenarios_cli_command(
-    *, name: str, count: int, guidance: list[str], include_job: bool = False
+    *, name: str, count: int, guidance: list[str]
 ) -> str:
     """A non-interactive invocation of the harness's own scenario CLI against the reused
     ``/work/authoring``: reach exactly ``count`` scenarios, preserving existing ones, steered
@@ -454,8 +435,6 @@ def _scenarios_cli_command(
         f"--count {int(count)}",
         "--once",
     ]
-    if include_job:
-        parts.insert(-1, "--job /work/job.json")
     for item in guidance:
         text = str(item).strip()
         if text:
@@ -464,7 +443,7 @@ def _scenarios_cli_command(
 
 
 def _hosted_scenario_repair_command(
-    *, name: str, expected: int, actual: int, include_job: bool = False
+    *, name: str, expected: int, actual: int
 ) -> str:
     """Non-interactive scenario-only repair: reach the exact ``expected`` count, preserving
     existing coverage, so Bundle V2's exact-cardinality gate is satisfied without a privileged
@@ -484,7 +463,6 @@ def _hosted_scenario_repair_command(
         name=name,
         count=expected,
         guidance=[instruction],
-        include_job=include_job,
     )
 
 
@@ -492,7 +470,7 @@ _SCENARIO_EXTEND_REPAIR_PASSES = 2
 
 
 def _hosted_scenario_extend_command(
-    *, name: str, target_count: int, guidance: list[str], include_job: bool = False
+    *, name: str, target_count: int, guidance: list[str]
 ) -> str:
     """Chat-driven 'add N scenarios': re-run scenario generation against the reused world to
     reach ``target_count`` total, preserving existing scenarios, steered by the caller's
@@ -507,7 +485,7 @@ def _hosted_scenario_extend_command(
     """
     target = int(target_count)
     extend = _scenarios_cli_command(
-        name=name, count=target, guidance=guidance, include_job=include_job
+        name=name, count=target, guidance=guidance
     )
     repair = _scenarios_cli_command(
         name=name,
@@ -517,7 +495,6 @@ def _hosted_scenario_extend_command(
             f"scenario exactly and add only new distinct validated scenarios until exactly "
             f"{target} are saved."
         ],
-        include_job=include_job,
     )
     passes = " ".join(str(i) for i in range(1, _SCENARIO_EXTEND_REPAIR_PASSES + 1))
     return (
@@ -528,7 +505,7 @@ def _hosted_scenario_extend_command(
 
 
 def _extend_command_for(
-    job: HostedHarnessJob, payload: dict, *, include_job: bool = False
+    job: HostedHarnessJob, payload: dict
 ) -> str | None:
     """Return the reused-authoring scenario-extension CLI command when the job carries a
     pending chat-driven 'add scenarios' request (a target count), else None for a normal run.
@@ -552,7 +529,6 @@ def _extend_command_for(
         name=name,
         target_count=int(target_count),
         guidance=guidance,
-        include_job=include_job,
     )
 
 
@@ -1639,7 +1615,6 @@ class HostedHarnessGateway:
         # Authoring reaches only the model provider and the source host - never the target
         # (LiveKit/Deepgram) media secrets, which belong to the execution sandbox alone.
         simulator_env, simulator_vertex_credentials = _platform_simulator_material()
-        guest_pin_policy_released = _add_scoped_guest_pin_policy(simulator_env, job)
         project_id = str(simulator_env.get("GOOGLE_CLOUD_PROJECT") or "")
 
         # Authoring reaches the source host, the authoring model provider (Vertex/Claude), and
@@ -1828,7 +1803,6 @@ class HostedHarnessGateway:
                             ),
                             expected=job.scenario_count,
                             actual=produced,
-                            include_job=guest_pin_policy_released,
                         )
                         repair = sandbox.process.exec(
                             repair_command,
@@ -1902,13 +1876,12 @@ class HostedHarnessGateway:
             # newly-authored jobs. This must happen before network policy and job.json are built.
             payload = resolve_authored_connector(payload, authoring_archive)
         simulator_env, simulator_vertex_credentials = _platform_simulator_material()
-        guest_pin_policy_released = _add_scoped_guest_pin_policy(simulator_env, job)
         # A chat-driven "add N scenarios" request replays the frozen world but re-runs
         # scenario-gen (extend) against it. The marker persists across infra retries and is
         # cleared only once the extended authoring is stored (store_authoring_archive), so a
         # mid-flight retry re-extends to the same total instead of replaying the old set.
         extend_command = (
-            _extend_command_for(job, payload, include_job=guest_pin_policy_released)
+            _extend_command_for(job, payload)
             if authoring_archive is not None
             else None
         )
@@ -2154,8 +2127,6 @@ class HostedHarnessGateway:
                     "ALK_CLAUDE_GATEWAY_API_KEY",
                     "ALK_VERTEX_LOCATION",
                     "ALK_VOICEMAIL_SCENARIOS",
-                    "ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER",
-                    "ALK_CAB_GUEST_POC_PIN",
                     "GOOGLE_APPLICATION_CREDENTIALS",
                     "GOOGLE_CLOUD_LOCATION",
                     "GOOGLE_CLOUD_PROJECT",
@@ -2304,7 +2275,6 @@ class HostedHarnessGateway:
     ) -> HostedHarnessConversationLease:
         """Start the conversation process beside the job's existing harness process."""
         simulator_env, simulator_vertex_credentials = _platform_simulator_material()
-        _add_scoped_guest_pin_policy(simulator_env, job)
         capability = issue_conversation_capability(
             conversation,
             endpoint_base_url=endpoint_base_url,
@@ -2370,8 +2340,6 @@ class HostedHarnessGateway:
                 "ALK_CLAUDE_GATEWAY_URL",
                 "ALK_CLAUDE_GATEWAY_API_KEY",
                 "CLAUDE_CODE_USE_VERTEX",
-                "ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER",
-                "ALK_CAB_GUEST_POC_PIN",
                 "CLOUD_ML_REGION",
                 "GOOGLE_APPLICATION_CREDENTIALS",
                 "GOOGLE_CLOUD_LOCATION",
@@ -2608,7 +2576,6 @@ class HostedHarnessGateway:
             workspace_archive = _empty_workspace_archive()
         source_archive, _commit_sha = HostedSourceAcquirer().acquire(job)
         simulator_env, simulator_vertex_credentials = _platform_simulator_material()
-        _add_scoped_guest_pin_policy(simulator_env, job)
         platform_host = _hostname_from_url(endpoint_base_url)
         allowed_domains = _resolved_egress_domains(
             job.payload,
@@ -2698,8 +2665,6 @@ class HostedHarnessGateway:
                     "ALK_CLAUDE_GATEWAY_URL",
                     "ALK_CLAUDE_GATEWAY_API_KEY",
                     "CLAUDE_CODE_USE_VERTEX",
-                    "ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER",
-                    "ALK_CAB_GUEST_POC_PIN",
                     "CLOUD_ML_REGION",
                     "GOOGLE_APPLICATION_CREDENTIALS",
                     "GOOGLE_CLOUD_LOCATION",

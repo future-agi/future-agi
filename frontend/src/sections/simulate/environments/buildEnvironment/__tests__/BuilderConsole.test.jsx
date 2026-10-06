@@ -165,7 +165,7 @@ describe("BuilderConsole", () => {
             id: "s1",
             kind: "note",
             markdown: true,
-            text: '```\n{"guest_booking_pin_policy":{"target_phone_number":"+19258565786","pin":"7682"}}\n```',
+            text: '```\n{"example_policy":{"setting":"a long value that should scroll inside its own box"}}\n```',
           },
         ],
       };

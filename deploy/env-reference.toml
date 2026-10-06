@@ -720,13 +720,6 @@ the default backend ([Backend variants](/docs/self-hosting/images#backend-varian
     setups = ["S", "D", "H"]
     text = "Measured sandbox sizes, a JSON array of objects with `name`, `cpu_units`, `memory_mb`, `disk_gb`, `max_parallelism`, `connectors` (the agent connectors it serves) and, except for sandboxes built from `ALK_DAYTONA_DOCKERFILE`, `snapshot_name` and `snapshot_digest`. A run gets the profile that runs the most of its scenarios at once, and the smallest of those. A value that is not JSON, an empty one included, stops the app from starting; an invalid profile fails every hosted run."
 
-    [[part.section.row]]
-    keys = ["ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER", "ALK_CAB_GUEST_POC_PIN"]
-    default = "empty: off"
-    setups = ["S", "D", "H"]
-    text = "Temporary proof-of-concept scenario policy of Future AGI's hosted service (an E.164 target and its PIN), passed only to phone sandboxes whose submitted target exactly matches the configured number. Both values are required; leave empty when self-hosting."
-    audience = "internal"
-
   [[part.section]]
   heading = "Voice simulations (Distributed)"
   body = '''
