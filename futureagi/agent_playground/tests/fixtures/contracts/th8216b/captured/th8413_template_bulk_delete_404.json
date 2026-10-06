@@ -18,7 +18,7 @@
   },
   "label": "captured",
   "method": "POST",
-  "note": "Template ids are reported as missing (was 200, template deleted).",
+  "note": "Template ids are reported as missing (was 500, rolled back).",
   "operation": "agent-playground_graphs_bulk_delete",
   "path": "/agent-playground/graphs/delete/",
   "request": {

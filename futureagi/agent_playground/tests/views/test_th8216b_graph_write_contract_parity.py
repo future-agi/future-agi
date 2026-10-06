@@ -506,5 +506,5 @@ def test_graph_bulk_delete_missing_is_a_declared_404(
         BULK_DELETE,
         response,
         request={"query": {"is_template": "true"}, "body": ["ids[template]"]},
-        note="Template ids are reported as missing (was 200, template deleted).",
+        note="Template ids are reported as missing (was 500, rolled back).",
     )
