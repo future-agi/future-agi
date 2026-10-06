@@ -1,0 +1,40 @@
+# CI only: the digests the published chart carries in image.digests, over
+# examples/bundled.yaml. Each image on the chart's appVersion and its published
+# repository is pinned; an image on another tag or repository is not
+# (hack/rendered_checks.py).
+image:
+  digests:
+    backend: sha256:1111111111111111111111111111111111111111111111111111111111111111
+    frontend: sha256:2222222222222222222222222222222222222222222222222222222222222222
+    fiCollector: sha256:3333333333333333333333333333333333333333333333333333333333333333
+    agentccGateway: sha256:4444444444444444444444444444444444444444444444444444444444444444
+    serving: sha256:5555555555555555555555555555555555555555555555555555555555555555
+    codeExecutor: sha256:6666666666666666666666666666666666666666666666666666666666666666
+# Another registry, the same repository path: a mirror, so it keeps the
+# digest (a different build there needs image.pinDigests=false).
+frontend:
+  image:
+    registry: mirror.example.com
+serving:
+  enabled: true
+codeExecutor:
+  enabled: true
+  # A private repository: runs by tag.
+  image:
+    repository: acme/code-executor
+worker:
+  queues:
+    # Its own tag: runs by tag.
+    - name: tasks_s
+      image:
+        tag: v0.0.0-queue
+# A bundled datastore on another tag runs by tag; PostgreSQL on its default
+# tag stays pinned to the chart's digest.
+redis:
+  bundled:
+    image:
+      tag: 7.4.10-alpine
+objectStorage:
+  bundled:
+    image:
+      tag: RELEASE.2025-09-07T16-13-09Z

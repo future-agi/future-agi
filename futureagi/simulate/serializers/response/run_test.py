@@ -153,19 +153,33 @@ class TestExecutionItemResponseSerializer(serializers.Serializer):
     agent_type = serializers.CharField(read_only=True)
     total_number_of_fagi_agent_turns = serializers.IntegerField(read_only=True)
     source_type = serializers.CharField(read_only=True)
+    scenario_keys = serializers.ListField(child=serializers.CharField(), read_only=True)
+    selected_scenarios = serializers.IntegerField(read_only=True)
+    trials = serializers.IntegerField(read_only=True)
+    total_calls = serializers.IntegerField(read_only=True)
+    completed_calls = serializers.IntegerField(read_only=True)
+    failed_calls = serializers.IntegerField(read_only=True)
+    pending_calls = serializers.IntegerField(read_only=True)
+    completed_at = serializers.CharField(read_only=True, allow_null=True)
+    outcome_passed = serializers.IntegerField(read_only=True, allow_null=True)
+    outcome_failed = serializers.IntegerField(read_only=True, allow_null=True)
+    outcome_skipped = serializers.IntegerField(read_only=True, allow_null=True)
 
 
 class RunTestExecutionsResponseSerializer(serializers.Serializer):
     """Paginated envelope returned by GET /run-tests/{run_test_id}/executions/.
 
     Runtime shape comes from ``paginator.get_paginated_response(...)``:
-    ``{count, next, previous, results: [TestExecutionItem, ...]}``.
+    ``{count, next, previous, results: [TestExecutionItem, ...]}`` plus
+    ``covered_scenario_count``, the distinct scenarios every execution of the
+    run test has covered (not only this page).
     """
 
     count = serializers.IntegerField(read_only=True)
     next = serializers.CharField(read_only=True, allow_null=True)
     previous = serializers.CharField(read_only=True, allow_null=True)
     results = TestExecutionItemResponseSerializer(many=True, read_only=True)
+    covered_scenario_count = serializers.IntegerField(read_only=True)
 
 
 class RunTestScenarioItemResponseSerializer(serializers.Serializer):

@@ -1,6 +1,8 @@
 import logging
 import time
-from typing import Any, Dict, List, Optional, Callable
+from typing import Any, Dict, List, Optional, Callable, Union
+
+import litellm
 
 try:
     import gepa.optimize_anything as oa
@@ -50,6 +52,54 @@ class GEPAOptimizer(BaseOptimizer):
         logger.info(
             f"GEPAOptimizer initialized: reflection={reflection_model}, generator={generator_model}"
         )
+
+    def _verify_reflection_auth(self) -> None:
+        """Fail fast on a rejected key: gepa swallows reflection errors mid-run,
+        which would burn the metric budget and return the seed prompt as success."""
+        try:
+            litellm.completion(
+                model=self.reflection_model,
+                messages=[{"role": "user", "content": "ping"}],
+                max_tokens=1,
+                api_key=self.api_key,
+                drop_params=True,
+            )
+        except (litellm.AuthenticationError, litellm.PermissionDeniedError) as e:
+            raise RuntimeError(
+                f"Reflection model rejected the configured API key: {e}"
+            ) from e
+        except Exception:
+            logger.warning(
+                "Reflection auth pre-flight inconclusive; continuing", exc_info=True
+            )
+
+    def _build_reflection_lm(
+        self,
+    ) -> Callable[[Union[str, List[Dict[str, Any]]]], str]:
+        """Org-key-authenticated reflection LM callable for GEPA."""
+        if not self.api_key:
+            raise ValueError(
+                "No API key provided for the reflection model; refusing to run "
+                "GEPA on environment credentials."
+            )
+
+        self._verify_reflection_auth()
+
+        def _reflection_lm(prompt: Union[str, List[Dict[str, Any]]]) -> str:
+            messages = (
+                prompt
+                if isinstance(prompt, list)
+                else [{"role": "user", "content": prompt}]
+            )
+            response = litellm.completion(
+                model=self.reflection_model,
+                messages=messages,
+                api_key=self.api_key,
+                drop_params=True,
+            )
+            return response.choices[0].message.content or ""
+
+        return _reflection_lm
 
     def optimize(
         self,
@@ -208,7 +258,7 @@ class GEPAOptimizer(BaseOptimizer):
                     display_progress_bar=True,
                 ),
                 reflection=ReflectionConfig(
-                    reflection_lm=self.reflection_model,
+                    reflection_lm=self._build_reflection_lm(),
                 ),
             ),
         )

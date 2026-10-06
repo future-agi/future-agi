@@ -5,6 +5,7 @@ import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import {
   AlertConfigValidationSchema,
   getDefaultAlertConfigValues,
+  getThresholdValueDefaults,
 } from "./validation";
 import { zodResolver } from "@hookform/resolvers/zod";
 import CardWrapper from "./CardWrapper";
@@ -154,6 +155,24 @@ export default function AlertSettingsForm({
     enabled: Boolean(observeId && metricType === "evaluation_metrics"),
   });
 
+  const selectedEvalOutputType = useMemo(() => {
+    if (!expandedEvaluations?.length || !metric) return null;
+    return (
+      expandedEvaluations.find((evaluation) => evaluation?.id === metric)
+        ?.output_type ?? null
+    );
+  }, [expandedEvaluations, metric]);
+  // Choice and Pass/Fail evals aggregate to a rate between 0 and 1; score
+  // evals are avg(output_float) with no upper bound, so only the bounded
+  // kinds get the fraction label. percentage_change divides this same field
+  // by 100 for every metric type (backend: 0-100 scale), so that mode is
+  // labelled as a percent instead.
+  const isEvalFractionScale =
+    metricType === "evaluation_metrics" &&
+    thresholdType === "static" &&
+    ["choices", "Pass/Fail"].includes(selectedEvalOutputType);
+  const isPercentScale = thresholdType === "percentage_change";
+
   const selectedMetricOptions = useMemo(() => {
     if (expandedEvaluations?.length > 0 && metric) {
       const selectedEval = expandedEvaluations.find(
@@ -229,8 +248,10 @@ export default function AlertSettingsForm({
       debouncedMetricType &&
       debouncedOperator &&
       debouncedType &&
-      debouncedCritical &&
-      debouncedWarning &&
+      // Presence, not truthiness — 0 is a valid threshold and would
+      // otherwise disable the preview graph for the whole form.
+      debouncedCritical !== undefined &&
+      debouncedWarning !== undefined &&
       debouncedFrequency &&
       !hasErrors &&
       (debouncedMetricType === "evaluation_metrics" ? debouncedMetric : true);
@@ -459,6 +480,40 @@ export default function AlertSettingsForm({
                 inputProps={{ "data-alert-field": "metric-type" }}
                 onChange={(e) => {
                   handleChangeAlertType(e?.target?.value);
+                  // FormSearchSelectFieldControl calls this onChange BEFORE
+                  // react-hook-form's own field.onChange, so metric_type in
+                  // form state is still the old value at this point. Set it
+                  // here so the zod re-validation below (and the scale
+                  // lookup) both see the metric the user just picked, not
+                  // the one they're leaving.
+                  setValue("metric_type", e?.target?.value);
+                  // Reset the thresholds only when the switch actually moves
+                  // them onto a different scale. Overwriting unconditionally
+                  // would destroy a saved value (e.g. a stored 250) on a
+                  // switch between two metrics that read the field the same
+                  // way.
+                  const previous = getThresholdValueDefaults(
+                    metricType,
+                    thresholdType,
+                  );
+                  const next = getThresholdValueDefaults(
+                    e?.target?.value,
+                    thresholdType,
+                  );
+                  if (previous.critical !== next.critical) {
+                    // Set both before validating — the cross-field
+                    // (critical > warning) check in the zod schema needs both
+                    // new values in place together, or validating right after
+                    // the first setValue checks it against the other field's
+                    // stale value and raises a spurious error.
+                    setValue("critical_threshold_value", next.critical);
+                    setValue("warning_threshold_value", next.warning);
+                  }
+                  trigger([
+                    "metric",
+                    "critical_threshold_value",
+                    "warning_threshold_value",
+                  ]);
                 }}
                 options={alertTypes.flatMap((group, groupIndex) => [
                   {
@@ -485,6 +540,7 @@ export default function AlertSettingsForm({
                   control={control}
                   fieldName={"metric"}
                   label="Metric"
+                  required
                   size="small"
                   options={expandedEvaluations?.map((evaluation) => ({
                     label: evaluation?.name,
@@ -548,6 +604,25 @@ export default function AlertSettingsForm({
                   optionColor="text.primary"
                   onChange={(e) => {
                     onThresholdTypeChange(e?.target?.value);
+                    // Same scale-guarded re-derivation as the metric-type
+                    // switch above — static and percentage_change read this
+                    // field on different scales (fraction vs percent) for
+                    // eval metrics, but a switch that keeps the same scale
+                    // must leave a saved value alone.
+                    const previous = getThresholdValueDefaults(
+                      metricType,
+                      thresholdType,
+                    );
+                    const next = getThresholdValueDefaults(
+                      metricType,
+                      e?.target?.value,
+                    );
+                    if (previous.critical !== next.critical) {
+                      // Set both before validating — see the same note on the
+                      // metric_type handler above.
+                      setValue("critical_threshold_value", next.critical);
+                      setValue("warning_threshold_value", next.warning);
+                    }
                     if (
                       debouncedWarning !== undefined ||
                       debouncedCritical !== undefined ||
@@ -639,13 +714,6 @@ export default function AlertSettingsForm({
                             color={"text.primary"}
                             fontWeight={"fontWeightRegular"}
                           >
-                            %
-                          </Typography>
-                          <Typography
-                            variant="s1"
-                            color={"text.primary"}
-                            fontWeight={"fontWeightRegular"}
-                          >
                             of
                           </Typography>
                         </Stack>
@@ -694,7 +762,18 @@ export default function AlertSettingsForm({
                             ]);
                           }
                         }}
-                        label="Value"
+                        label={
+                          isEvalFractionScale
+                            ? "Value (0-1)"
+                            : isPercentScale
+                              ? "Percentage"
+                              : "Value"
+                        }
+                        helperText={
+                          isEvalFractionScale
+                            ? "Fraction between 0 and 1, e.g. 0.095 for 9.5%"
+                            : undefined
+                        }
                         size="small"
                         fullWidth
                         fieldType="number"
@@ -751,13 +830,6 @@ export default function AlertSettingsForm({
                             color={"text.primary"}
                             fontWeight={"fontWeightRegular"}
                           >
-                            %
-                          </Typography>
-                          <Typography
-                            variant="s1"
-                            color={"text.primary"}
-                            fontWeight={"fontWeightRegular"}
-                          >
                             of
                           </Typography>
                         </Stack>
@@ -807,7 +879,18 @@ export default function AlertSettingsForm({
                             ]);
                           }
                         }}
-                        label="Value"
+                        label={
+                          isEvalFractionScale
+                            ? "Value (0-1)"
+                            : isPercentScale
+                              ? "Percentage"
+                              : "Value"
+                        }
+                        helperText={
+                          isEvalFractionScale
+                            ? "Fraction between 0 and 1, e.g. 0.095 for 9.5%"
+                            : undefined
+                        }
                         size="small"
                         fullWidth
                         fieldType="number"
@@ -912,13 +995,6 @@ export default function AlertSettingsForm({
                                 maxWidth: "400px",
                               }}
                             />
-                            <Typography
-                              variant="s1"
-                              color={"text.primary"}
-                              fontWeight={"fontWeightRegular"}
-                            >
-                              %
-                            </Typography>
                             <Typography
                               variant="s1"
                               color={"text.primary"}

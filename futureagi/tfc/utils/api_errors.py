@@ -40,6 +40,12 @@ class ApiErrorCode(StrEnum):
     # Domain-specific 413 variants: a specific cap was exceeded, so the FE can
     # distinguish "narrow your selection" from a generic request-too-large.
     ITEMS_TOO_LARGE = "items_too_large"
+    # Domain-specific codes a client can act on; each message lives in
+    # tfc/utils/error_codes.py under the same name in upper case.
+    USER_FILTER_REQUIRES_CURSOR = "user_filter_requires_cursor"
+    SCORE_PROJECT_MISMATCH = "score_project_mismatch"
+    DATASET_LIMIT_CHECK_FAILED = "dataset_limit_check_failed"
+    FILTER_VALUE_INVENTORY_TOO_BROAD = "filter_value_inventory_too_broad"
 
 
 API_ERROR_TYPE_CHOICES = [(item.value, item.value) for item in ApiErrorType]

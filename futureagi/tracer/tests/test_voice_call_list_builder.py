@@ -200,31 +200,40 @@ def test_build_does_not_embed_phone_numbers_in_sql():
 
 @pytest.mark.unit
 def test_is_simulator_call_vapi_match():
-    attrs = {"raw_log": {"customer": {"number": VAPI_PHONE_NUMBERS[0]}}}
-    assert VoiceCallListQueryBuilder.is_simulator_call(attrs, "vapi") is True
+    raw_log = {"customer": {"number": VAPI_PHONE_NUMBERS[0]}}
+    assert VoiceCallListQueryBuilder.is_simulator_call(raw_log, "vapi") is True
 
 
 @pytest.mark.unit
 def test_is_simulator_call_vapi_non_match():
-    attrs = {"raw_log": {"customer": {"number": "+10000000000"}}}
-    assert VoiceCallListQueryBuilder.is_simulator_call(attrs, "vapi") is False
+    raw_log = {"customer": {"number": "+10000000000"}}
+    assert VoiceCallListQueryBuilder.is_simulator_call(raw_log, "vapi") is False
 
 
 @pytest.mark.unit
 def test_is_simulator_call_retell_match():
-    attrs = {"raw_log": {"from_number": VAPI_PHONE_NUMBERS[1]}}
-    assert VoiceCallListQueryBuilder.is_simulator_call(attrs, "retell") is True
+    raw_log = {"from_number": VAPI_PHONE_NUMBERS[1]}
+    assert VoiceCallListQueryBuilder.is_simulator_call(raw_log, "retell") is True
 
 
 @pytest.mark.unit
 def test_is_simulator_call_unknown_provider():
-    attrs = {"raw_log": {"customer": {"number": VAPI_PHONE_NUMBERS[0]}}}
-    assert VoiceCallListQueryBuilder.is_simulator_call(attrs, "twilio") is False
+    raw_log = {"customer": {"number": VAPI_PHONE_NUMBERS[0]}}
+    assert VoiceCallListQueryBuilder.is_simulator_call(raw_log, "twilio") is False
 
 
 @pytest.mark.unit
 def test_is_simulator_call_missing_raw_log():
     assert VoiceCallListQueryBuilder.is_simulator_call({}, "vapi") is False
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("customer", ["+18568806998", ["+18568806998"], 7])
+def test_is_simulator_call_non_object_customer_is_not_a_simulator(customer):
+    # SQL's JSONExtractString(raw_log, 'customer', 'number') reads '' for these
+    # and keeps the row, so the Python check sees them and must not raise.
+    raw_log = {"customer": customer}
+    assert VoiceCallListQueryBuilder.is_simulator_call(raw_log, "vapi") is False
 
 
 # ---------------------------------------------------------------------------
@@ -1156,7 +1165,10 @@ def test_v2_content_query_uses_valid_latest_json_aggregate():
 
     assert "argMax(tuple(" in sql
     assert "AS _root" in sql
-    assert "JSONExtractKeysAndValuesRaw(toJSONString(attributes_extra))" in sql
+    assert "JSONExtractKeysAndValuesRaw(toString(attributes_extra))" in sql
+    assert "toJSONString(attributes_extra)" not in sql
+    assert "kv.1 != 'call_logs'" in sql
+    assert "mapFilter((k, v) -> k != 'call_logs', attrs_string)" in sql
     assert (
         "GROUP BY project_id, observation_type, service_name, "
         "toStartOfHour(start_time), trace_id, id"

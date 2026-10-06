@@ -240,6 +240,7 @@ const EvalPickerConfig = ({ evalData, onBack, onSave, isSaving }) => {
       <Box
         sx={{
           flex: 1,
+          minHeight: 0,
           overflow: "auto",
           py: 2,
           display: "flex",

@@ -11,12 +11,15 @@ export const OSS_SETUP_KEYS = {
   checks: (mode) => ["ossSetup", "checks", mode],
 };
 
+// Every field the SetupCheck contract declares, or the screen silently loses it.
 const normalizeCheck = (check) => ({
   id: check.id,
   label: check.label,
   status: check.status,
   required: Boolean(check.required),
   detail: check.detail || "",
+  fix: check.fix || "",
+  docs_url: check.docs_url || "",
 });
 
 export async function fetchSetupChecks(mode, { signal } = {}) {
@@ -28,6 +31,15 @@ export async function fetchSetupChecks(mode, { signal } = {}) {
   return {
     status: result.status ?? "issues",
     mode: result.mode ?? mode,
+    // "standalone" | "distributed" | "helm"; null from a server that
+    // predates it.
+    setup: result.setup ?? null,
+    // Where the SDK sends traces, e.g. "http://localhost:4318"; null from a
+    // server that predates it.
+    collector_http_url: result.collector_http_url || null,
+    // Whether someone can sign in already (./bin/install made the owner);
+    // false from a server that predates it, which keeps the sign-up path.
+    account_exists: Boolean(result.account_exists),
     checks: Array.isArray(result.checks)
       ? result.checks.map(normalizeCheck)
       : [],

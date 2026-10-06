@@ -41,7 +41,7 @@ def get_scan_config(project_id: str) -> ScanConfig | None:
         project_id=project_id,
         defaults={"sampling_rate": 0, "enabled": True},
     )
-    if not config.enabled:
+    if not config.enabled or config.scan_version != "v7.2":
         return None
     return ScanConfig(
         sampling_rate=config.sampling_rate,

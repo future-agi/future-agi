@@ -49,6 +49,7 @@ def test_scan_traces_task_runs_scan_and_write_inside_guardrails():
         return []  # empty results are fine — we only need the wrapped call to run
 
     with contextlib.ExitStack() as stack:
+        stack.enter_context(patch.object(scanner, "get_scan_config", return_value=object()))
         stack.enter_context(patch.object(scanner, "SCAN_DELAY_SECONDS", 0))
         stack.enter_context(patch.object(scanner, "scan_and_write", side_effect=spy))
         # Load-bearing: the activity dispatches embed unconditionally after the

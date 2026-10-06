@@ -127,6 +127,9 @@ const RequestExplorerSection = () => {
         if (filters.search) params.search = filters.search;
         if (filters.model) params.model = filters.model;
         if (filters.provider) params.provider = filters.provider;
+        if (filters.application) params.application = filters.application;
+        if (filters.service) params.service = filters.service;
+        if (filters.tags) params.tags = filters.tags;
         if (filters.startedAfter) params.started_after = filters.startedAfter;
         if (filters.startedBefore)
           params.started_before = filters.startedBefore;

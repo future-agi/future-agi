@@ -1,3 +1,6 @@
+from urllib.parse import urlsplit
+
+from django.core.validators import URLValidator
 from rest_framework import serializers
 
 from integrations.services.credentials import CredentialManager
@@ -54,11 +57,43 @@ class AgentccProviderCredentialSerializer(serializers.ModelSerializer):
         return masked
 
 
+class ProviderBaseURLField(serializers.URLField):
+    """An http(s) URL with a host, which may be a single label.
+
+    Django's URLValidator wants a dotted domain, so it refused a provider on
+    the Docker network or in the cluster (http://ollama:11434, a Kubernetes
+    Service short name) that the gateway UI saves. Whether the host may be
+    called is ``ensure_provider_base_url_allowed``'s decision, in the view.
+    """
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.validators = [
+            v for v in self.validators if not isinstance(v, URLValidator)
+        ]
+
+    def to_internal_value(self, data):
+        value = super().to_internal_value(data)
+        try:
+            parts = urlsplit(value)
+            _ = parts.port  # raises unless the port is a number in 0-65535
+        except ValueError:
+            self.fail("invalid")
+        if (
+            parts.scheme.lower() not in ("http", "https")
+            or not parts.hostname
+            # The gateway's url.Parse refuses control characters.
+            or any(ch.isspace() or not ch.isprintable() for ch in value)
+        ):
+            self.fail("invalid")
+        return value
+
+
 class AgentccProviderCredentialCreateSerializer(serializers.Serializer):
     provider_name = serializers.CharField(max_length=100)
     display_name = serializers.CharField(max_length=255, required=False, default="")
     credentials = serializers.DictField(child=serializers.CharField())
-    base_url = serializers.URLField(max_length=500, required=False, default="")
+    base_url = ProviderBaseURLField(max_length=500, required=False, default="")
     api_format = serializers.CharField(max_length=50, required=False, default="openai")
     models_list = serializers.ListField(
         child=serializers.CharField(), required=False, default=list
@@ -82,7 +117,7 @@ class AgentccProviderCredentialUpdateSerializer(serializers.Serializer):
     """Partial update serializer — credentials can be rotated via the rotate action."""
 
     display_name = serializers.CharField(max_length=255, required=False)
-    base_url = serializers.URLField(max_length=500, required=False, allow_blank=True)
+    base_url = ProviderBaseURLField(max_length=500, required=False, allow_blank=True)
     api_format = serializers.CharField(max_length=50, required=False)
     models_list = serializers.ListField(child=serializers.CharField(), required=False)
     default_timeout_seconds = serializers.IntegerField(required=False)
