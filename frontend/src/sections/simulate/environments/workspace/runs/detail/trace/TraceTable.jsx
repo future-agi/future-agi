@@ -121,16 +121,12 @@ export default function TraceTable({
   const expandedForRef = expandedForRefProp || ownExpandedForRef;
   const visible = columns || defaultTraceColumns();
   const show = (key) => visible.has(key);
-  const showEvals = show("evals");
   const showSubGoalEvals = show("subGoalEvals");
-  const scoredColumns = [
-    ...(showSubGoalEvals ? subGoalEvals : []),
-    ...(showEvals ? evals : []),
-  ];
+  const scoredColumns = [...(showSubGoalEvals ? subGoalEvals : []), ...evals];
   // The band above the head row: one segment per run of columns sharing a
   // group, in column order, then the scored columns under their own names.
   const bandSegments = TRACE_COLUMNS.filter(
-    (c) => c.key !== "evals" && c.key !== "subGoalEvals" && show(c.key),
+    (c) => c.key !== "subGoalEvals" && show(c.key),
   ).reduce((acc, c) => {
     const last = acc[acc.length - 1];
     if (last && last.name === c.group) last.span += 1;
@@ -139,7 +135,7 @@ export default function TraceTable({
   }, []);
   if (showSubGoalEvals && subGoalEvals.length)
     bandSegments.push({ name: "Sub-goal Results", span: subGoalEvals.length });
-  if (showEvals && evals.length)
+  if (evals.length)
     bandSegments.push({ name: "Evaluations", span: evals.length });
   const headSx = { ...headCellSx, top: GROUP_BAND_PX };
   // The server's group figures can't tell a call still running from one with no
