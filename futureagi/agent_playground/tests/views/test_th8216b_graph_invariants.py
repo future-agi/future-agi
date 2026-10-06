@@ -923,31 +923,56 @@ def test_rs03_granular_node_port_ref_reads_like_missing(
     assert _foreign_state(foreign) == before
 
 
+@pytest.mark.parametrize("referenced", ["own", "template"])
+@pytest.mark.parametrize("route", ["node-create", "node-patch"])
 def test_rs03_granular_node_port_ref_own_still_resolves(
     authenticated_client,
     graph,
     graph_version,
     node_template,
     active_referenced_graph_version,
+    template_versions,
     ref_output_port,
+    route,
+    referenced,
 ):
-    """A same-tenant ``ref_port_id`` on node create is stored as before."""
-    own_port = ref_output_port(active_referenced_graph_version)
+    """Same-tenant and system-template ``ref_port_id`` values on node create and
+    node PATCH are stored as before."""
+    ref_version = {
+        "own": active_referenced_graph_version,
+        "template": template_versions["active"],
+    }[referenced]
+    ref_port = ref_output_port(ref_version)
 
-    response = authenticated_client.post(
-        NODES.format(g=graph.id, v=graph_version.id),
-        {
-            "id": str(uuid.uuid4()),
-            "type": "atomic",
-            "name": "Atomic",
-            "node_template_id": str(node_template.id),
-            "ports": [_fe_port(own_port.id)],
-        },
-        format="json",
-    )
+    if route == "node-create":
+        response = authenticated_client.post(
+            NODES.format(g=graph.id, v=graph_version.id),
+            {
+                "id": str(uuid.uuid4()),
+                "type": "atomic",
+                "name": "Atomic",
+                "node_template_id": str(node_template.id),
+                "ports": [_fe_port(ref_port.id)],
+            },
+            format="json",
+        )
+        assert response.status_code == status.HTTP_201_CREATED
+    else:
+        node = Node.no_workspace_objects.create(
+            graph_version=graph_version,
+            node_template=node_template,
+            type=NodeType.ATOMIC,
+            name="Own Node",
+            config={},
+        )
+        response = authenticated_client.patch(
+            NODE.format(g=graph.id, v=graph_version.id, n=node.id),
+            {"ports": [_fe_port(ref_port.id)]},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK
 
-    assert response.status_code == status.HTTP_201_CREATED
-    assert Port.no_workspace_objects.filter(ref_port=own_port).count() == 1
+    assert Port.no_workspace_objects.filter(ref_port=ref_port).count() == 1
 
 
 def test_rs03_version_content_without_scope_resolves_templates_only(
