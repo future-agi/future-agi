@@ -572,6 +572,84 @@ def test_th8413_template_needs_the_flag_even_for_reads(
     _assert_same_answer(response, missing_response)
 
 
+@pytest.fixture
+def template_content(template_graph, node_template):
+    """A system template's draft version with two nodes, a port and a connection."""
+    draft = GraphVersion.no_workspace_objects.create(
+        graph=template_graph, version_number=1, status=GraphVersionStatus.DRAFT
+    )
+    first, second = (
+        Node.no_workspace_objects.create(
+            graph_version=draft,
+            node_template=node_template,
+            type=NodeType.ATOMIC,
+            name=name,
+            config={},
+        )
+        for name in ("Template Node A", "Template Node B")
+    )
+    port = Port.no_workspace_objects.create(
+        node=first,
+        key="input1",
+        display_name="input1",
+        direction=PortDirection.INPUT,
+        data_schema={"type": "string"},
+    )
+    connection = NodeConnection.no_workspace_objects.create(
+        graph_version=draft, source_node=first, target_node=second
+    )
+    return {
+        "graph": template_graph,
+        "version": draft,
+        "node": first,
+        "node_b": second,
+        "port": port,
+        "nc": connection,
+    }
+
+
+@pytest.fixture
+def orgless_client(api_client, user):
+    """A caller whose request resolves no organization (e.g. removed from it).
+
+    APIKeyAuthentication lets such users authenticate with request.organization
+    = None; the view layer must not treat None as "matches org-less rows".
+    """
+    api_client.force_authenticate(user=user)
+    api_client.set_organization(None)
+    yield api_client
+    api_client.stop_workspace_injection()
+
+
+NODE_SCOPED = [e for e in ENDPOINTS if e[2].startswith(NODES[: -len("nodes/")])]
+
+
+@pytest.mark.parametrize(
+    "name,method,path,payload", NODE_SCOPED, ids=[e[0] for e in NODE_SCOPED]
+)
+def test_rs03_orgless_caller_cannot_reach_template_content(
+    orgless_client, template_content, node_template, name, method, path, payload
+):
+    """Node/port/connection endpoints never resolve a system template's graph."""
+    before = _foreign_state(template_content)
+    template_id = str(node_template.id)
+
+    response = _call(
+        orgless_client,
+        method,
+        path,
+        _foreign_ids(template_content, template_id),
+        payload,
+    )
+    missing_response = _call(
+        orgless_client, method, path, _missing_ids(template_id), payload
+    )
+
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+    _assert_same_answer(response, missing_response)
+    assert _foreign_state(template_content) == before
+
+
 # =============================================================================
 # Atomic graph metadata writes
 # =============================================================================
