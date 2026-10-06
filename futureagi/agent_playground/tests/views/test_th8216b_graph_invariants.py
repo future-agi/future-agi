@@ -862,6 +862,94 @@ def test_rs03_version_create_other_workspace_reference_reads_like_missing(
     assert _own_versions(graph) == before
 
 
+def _fe_port(ref_port_id):
+    return {
+        "id": str(uuid.uuid4()),
+        "key": "custom",
+        "display_name": "summary",
+        "direction": PortDirection.OUTPUT,
+        "ref_port_id": str(ref_port_id),
+    }
+
+
+@pytest.mark.parametrize("route", ["node-create", "node-patch"])
+def test_rs03_granular_node_port_ref_reads_like_missing(
+    authenticated_client, graph, graph_version, node_template, foreign, route
+):
+    """Verifier r2 M1: node create / node PATCH ``ports[].ref_port_id`` from
+    another tenant answers exactly like a missing id and stores no link."""
+    missing_port = uuid.uuid4()
+    before = _foreign_state(foreign)
+    if route == "node-create":
+        url = NODES.format(g=graph.id, v=graph_version.id)
+
+        def _send(ref):
+            return authenticated_client.post(
+                url,
+                {
+                    "id": str(uuid.uuid4()),
+                    "type": "atomic",
+                    "name": "Atomic",
+                    "node_template_id": str(node_template.id),
+                    "ports": [_fe_port(ref)],
+                },
+                format="json",
+            )
+
+    else:
+        node = Node.no_workspace_objects.create(
+            graph_version=graph_version,
+            node_template=node_template,
+            type=NodeType.ATOMIC,
+            name="Own Node",
+            config={},
+        )
+        url = NODE.format(g=graph.id, v=graph_version.id, n=node.id)
+
+        def _send(ref):
+            return authenticated_client.patch(
+                url, {"ports": [_fe_port(ref)]}, format="json"
+            )
+
+    response = _send(foreign["port"].id)
+    missing_response = _send(missing_port)
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    _assert_same_answer(
+        response, missing_response, swap=(str(foreign["port"].id), str(missing_port))
+    )
+    _assert_no_foreign_leak(response, foreign)
+    assert not Port.all_objects.filter(ref_port=foreign["port"]).exists()
+    assert _foreign_state(foreign) == before
+
+
+def test_rs03_granular_node_port_ref_own_still_resolves(
+    authenticated_client,
+    graph,
+    graph_version,
+    node_template,
+    active_referenced_graph_version,
+    ref_output_port,
+):
+    """A same-tenant ``ref_port_id`` on node create is stored as before."""
+    own_port = ref_output_port(active_referenced_graph_version)
+
+    response = authenticated_client.post(
+        NODES.format(g=graph.id, v=graph_version.id),
+        {
+            "id": str(uuid.uuid4()),
+            "type": "atomic",
+            "name": "Atomic",
+            "node_template_id": str(node_template.id),
+            "ports": [_fe_port(own_port.id)],
+        },
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_201_CREATED
+    assert Port.no_workspace_objects.filter(ref_port=own_port).count() == 1
+
+
 def test_rs03_version_content_without_scope_resolves_templates_only(
     graph_version, active_referenced_graph_version, template_versions
 ):
