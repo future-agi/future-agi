@@ -55,7 +55,9 @@ def _detect_mode() -> DeploymentModeType:
         cloud_secret = getattr(settings, "CLOUD_DEPLOYMENT_SECRET", "")
         if _validate_cloud_secret(cloud_secret):
             return "cloud"
-        logger.warning(
+        # Error level: falling back switches Cloud caps off and the
+        # self-hosted edition rule on for this process.
+        logger.error(
             "cloud_secret_invalid",
             cloud_deployment=cloud_deployment,
             msg="CLOUD_DEPLOYMENT is set but CLOUD_DEPLOYMENT_SECRET is "

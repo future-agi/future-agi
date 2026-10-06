@@ -1019,6 +1019,30 @@ def model_serving_down(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _edition_license_default(request, monkeypatch):
+    """Treat the Enterprise licence as usable unless a test opts into the rule.
+
+    ``tfc.settings.test`` sets an unverifiable ``EE_LICENSE_KEY``, so without
+    this every suite that creates a second organization, workspace or a fourth
+    member would hit the Community edition rule. Edition tests mark themselves
+    ``@pytest.mark.edition_rule`` to run against the real licence check.
+    """
+    if request.node.get_closest_marker("edition_rule") is not None:
+        return
+    from tfc.capabilities import edition
+
+    monkeypatch.setattr(edition, "enterprise_license_usable", lambda: True)
+
+
+@pytest.fixture
+def edition_cloud(monkeypatch):
+    """Answer as Future AGI Cloud in the edition policy (commercial caps on)."""
+    from tfc.capabilities import edition
+
+    monkeypatch.setattr(edition, "is_cloud", lambda: True)
+
+
+@pytest.fixture(autouse=True)
 def _teardown_workspace_aware_clients():
     """Stop any APIView.initial patches left behind by leaked clients.
 

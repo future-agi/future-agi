@@ -1053,6 +1053,9 @@ def custom_exception_handler(exc, context):
         }
         if exc.upgrade_cta is not None:
             body["upgrade_cta"] = exc.upgrade_cta
+        enterprise_gate = getattr(exc, "enterprise_gate", None)
+        if enterprise_gate is not None:
+            body["enterprise_gate"] = enterprise_gate
         return Response(body, status=status.HTTP_402_PAYMENT_REQUIRED)
 
     # Handle Pydantic ValidationError (not caught by DRF's default handler)
