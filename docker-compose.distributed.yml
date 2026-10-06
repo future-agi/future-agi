@@ -564,6 +564,9 @@ services:
       # https://docs.futureagi.com/docs/self-hosting/configuration/reference#application-behaviour
       AGENTCC_SYNC_INTERVAL: ${AGENTCC_SYNC_INTERVAL:-60s}
       AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS: ${AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS:-false}
+      # Future AGI Cloud's gateway request quota: on when unset, so a
+      # self-hosted install turns it off. Customer budgets stay on.
+      COMMERCIAL_QUOTAS_ENABLED: ${COMMERCIAL_QUOTAS_ENABLED:-false}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       GEMINI_API_KEY: ${GOOGLE_API_KEY:-}
@@ -868,6 +871,10 @@ services:
       FI_AUTH_REDIS_ADDR: redis:6379
       # Billing usage events: only Future AGI Cloud drains usage:events.
       USAGE_EVENTS_ENABLED: ${USAGE_EVENTS_ENABLED:-false}
+      # Future AGI Cloud's free-tier caps and budget pauses: on when unset, so
+      # a self-hosted install turns them off. Redis keeps serving auth and key
+      # revocation.
+      COMMERCIAL_QUOTAS_ENABLED: ${COMMERCIAL_QUOTAS_ENABLED:-false}
       FI_GRPC_ADDR: ":4317"
       # OTLP/HTTP receiver — needed by browser SDKs + lightweight clients.
       # `FI_HTTP_ADDR=disable` turns the listener off if you front the

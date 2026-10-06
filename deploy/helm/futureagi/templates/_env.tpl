@@ -334,6 +334,7 @@ pod's 1Gi emptyDir with the dead-letter file. */ -}}
       "FI_ADMIN_ADDR" ":9464"
       "FI_DEAD_LETTER_FILE" "/var/lib/fi-collector/dead_letter.jsonl"
       "USAGE_EVENTS_ENABLED" (toString $v.config.usageEvents)
+      "COMMERCIAL_QUOTAS_ENABLED" (toString $v.config.commercialQuotas)
       "FI_OBSERVED_CATALOG_MODE" $observedMode
       "FI_OBSERVED_CATALOG_SPOOL_DIR" "/var/lib/fi-collector/observed-catalog"
       "FI_OBSERVED_CATALOG_MAX_SPOOL_BYTES" "268435456"
@@ -403,6 +404,7 @@ redis.external.tls. */}}
 {{- $plain := dict
       "AGENTCC_PORT" (include "futureagi.gateway.port" $root)
       "AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS" (toString $g.allowPrivateProviderURLs)
+      "COMMERCIAL_QUOTAS_ENABLED" (toString $v.config.commercialQuotas)
       "AWS_REGION" $v.secrets.llm.awsRegion
       "FI_BASE_URL" (printf "http://%s:%v" $backend $v.backend.service.port)
       "GOMEMLIMIT" $g.goMemLimit

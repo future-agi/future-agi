@@ -29,6 +29,19 @@ type Config struct {
 	UsageEvents *bool `yaml:"usage_events"`
 	// UsageEventsMaxLen caps that stream (USAGE_EVENTS_MAX_LEN); 0 → default.
 	UsageEventsMaxLen int64 `yaml:"usage_events_max_len"`
+	// CommercialQuotas controls Future AGI Cloud's plan quotas: the free-tier
+	// hard caps on usage: counters and budget pause: keys
+	// (COMMERCIAL_QUOTAS_ENABLED). Unset means on, so Cloud needs no new
+	// setting; self-hosted installs set it to false so Redis keys carried over
+	// from Cloud can never cap them. Redis stays in use for auth and key
+	// revocation either way.
+	CommercialQuotas *bool `yaml:"commercial_quotas"`
+}
+
+// CommercialQuotasOn reports whether Cloud plan quotas apply: unless
+// configured otherwise, they do.
+func (c Config) CommercialQuotasOn() bool {
+	return c.CommercialQuotas == nil || *c.CommercialQuotas
 }
 
 // UsageEventsOn reports whether the collector writes usage events: unless
