@@ -30,7 +30,7 @@ const STATUS_TONE = {
   failed: { label: "Failed", tone: BUILD_TONES.red },
 };
 
-export default function OptimizationRunsList({ runs, isLoading, onOpen }) {
+export default function OptimizationRunsList({ runs = [], isLoading, onOpen }) {
   if (isLoading) {
     return (
       <Stack alignItems="center" sx={{ py: 8 }}>

@@ -8,11 +8,13 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+from django.test import override_settings
 from django.utils import timezone as django_timezone
 from rest_framework.test import APIClient
 
 from simulate.models import CallExecution, HostedHarnessJob, HostedHarnessReceipt
 from simulate.models.chat_message import ChatMessageModel
+from simulate.serializers.hosted_harness import HarnessCallSerializer
 from simulate.services.harness_scenarios import index_scenarios
 from simulate.services.hosted_harness import (
     HostedHarnessError,
@@ -24,6 +26,7 @@ from simulate.services.hosted_harness import (
     update_execution_counts,
 )
 from simulate.services.hosted_harness_ingestion import (
+    _apply_target_metrics,
     _apply_receipt_to_call,
     _call_lifecycle_status,
     _ingest_hosted_transcript,
@@ -36,6 +39,36 @@ from simulate.services.hosted_harness_ingestion import (
 )
 
 BASE = "/simulate/api/harness/attempts"
+
+
+def test_retry_target_metrics_replace_tokens_without_erasing_other_metrics():
+    call = SimpleNamespace(
+        conversation_metrics_data={"csat_score": 8, "turn_count": 4},
+        ended_reason="",
+    )
+    _apply_target_metrics(
+        call,
+        {
+            "usage": {
+                "prompt_tokens": 900,
+                "completion_tokens": 100,
+                "total_tokens": 1000,
+            },
+            "cost_cents": 12,
+        },
+    )
+    assert call.conversation_metrics_data["total_tokens"] == 1000
+
+    _apply_target_metrics(call, {"usage": {"prompt_tokens": 50}})
+    assert call.conversation_metrics_data == {
+        "csat_score": 8,
+        "turn_count": 4,
+        "input_tokens": 50,
+    }
+    assert call.customer_cost_cents is None
+
+    _apply_target_metrics(call, None)
+    assert call.conversation_metrics_data == {"csat_score": 8, "turn_count": 4}
 
 
 @pytest.mark.django_db
@@ -682,6 +715,7 @@ def test_receipt_projects_actual_call_end_time_and_duration():
             "duration_ms": 82_000,
             "recording_artifacts": [],
             "stop_reason": "simulator_end_call",
+            "script_completed": False,
         },
         "sub_goals": [],
         "evaluations": [],
@@ -702,8 +736,27 @@ def test_receipt_projects_actual_call_end_time_and_duration():
     assert call.completed_at == "2026-08-27T10:01:22Z"
     assert call.duration_seconds == 82
     assert call.ended_reason == "simulator_end_call"
+    assert (
+        call.call_metadata["hosted_harness_receipt"]["call"]["script_completed"]
+        is False
+    )
     assert call.error_message == ""
     call.save.assert_called_once()
+
+
+@pytest.mark.parametrize("script_completed", [True, False])
+def test_call_receipt_accepts_explicit_script_completion(script_completed):
+    call = {
+        "started_at": "2026-08-27T10:00:00Z",
+        "ended_at": "2026-08-27T10:01:22Z",
+        "duration_ms": 82_000,
+        "turns": 4,
+        "stop_reason": "simulator_end_call",
+        "script_completed": script_completed,
+    }
+    serializer = HarnessCallSerializer(data=call)
+    assert serializer.is_valid(), serializer.errors
+    assert serializer.validated_data["script_completed"] is script_completed
 
 
 def test_read_hosted_tool_trace_ignores_blank_and_malformed_lines():
@@ -802,6 +855,39 @@ def _headers(capability):
         "HTTP_AUTHORIZATION": f"Bearer {capability.token}",
         "HTTP_X_HARNESS_FENCE": capability.fence,
     }
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "requested_budget,effective_budget",
+    [
+        (1_073_741_824, 10_737_418_240),
+        (21_474_836_480, 21_474_836_480),
+    ],
+)
+def test_hosted_job_budget_floor_preserves_request_identity(
+    organization, requested_budget, effective_budget
+):
+    payload = _payload()
+    payload["artifacts"]["max_artifact_bytes"] = requested_budget
+    request_digest = canonical_digest(payload)
+    with override_settings(HARNESS_MAX_ARTIFACT_BYTES=10_737_418_240):
+        job, created = create_hosted_job(
+            organization, payload, idempotency_key="configured-artifact-budget"
+        )
+    with override_settings(HARNESS_MAX_ARTIFACT_BYTES=32_212_254_720):
+        retried, retry_created = create_hosted_job(
+            organization, payload, idempotency_key="configured-artifact-budget"
+        )
+
+    job.refresh_from_db()
+    assert created is True
+    assert retry_created is False
+    assert retried.id == job.id
+    assert job.max_artifact_bytes == effective_budget
+    assert job.payload["artifacts"]["max_artifact_bytes"] == effective_budget
+    assert job.request_digest == request_digest
+    assert payload["artifacts"]["max_artifact_bytes"] == requested_budget
 
 
 @pytest.mark.django_db
@@ -1146,6 +1232,112 @@ def test_failed_scenario_is_completed_call_in_the_submitting_workspace(
         "failed": 0,
         "complete": True,
     }
+
+
+@pytest.mark.django_db
+def test_receipt_target_metrics_fill_customer_fields_not_platform_cost(
+    organization, workspace
+):
+    """A Vapi/Retell target's own cost, latency and tokens arrive on the signed receipt
+    and land in the customer fields, never in `cost_cents`, the platform's own cost."""
+    job, _ = create_hosted_job(
+        organization,
+        _payload(),
+        idempotency_key="target-metrics-key",
+        workspace=workspace,
+    )
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    client = APIClient()
+    headers = _headers(capability)
+    provisioned = client.post(
+        f"{BASE}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "provision",
+            "name": "Target metrics",
+            "modality": "voice",
+            "personas": [
+                {
+                    "scenario_key": "booking",
+                    "name": "Caller",
+                    "situation": "Books a ride",
+                    "outcome": "Ride booked",
+                }
+            ],
+        },
+        format="json",
+        **headers,
+    ).json()["result"]
+    begin = client.post(
+        f"{BASE}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "begin",
+            "run_test_id": provisioned["run_test_id"],
+            "scenario_keys": ["booking"],
+        },
+        format="json",
+        **headers,
+    )
+    assert begin.status_code == 200, begin.content
+
+    def post(call_extra):
+        receipt = {
+            "schema_version": "futureagi.harness-result.v1",
+            "job_id": str(job.id),
+            "attempt_id": str(capability.attempt.id),
+            "attempt_number": 1,
+            "scenario_key": "booking",
+            "scenario_id": provisioned["scenarios"][0]["scenario_id"],
+            "scenario_attempt": 1,
+            "world_index": 0,
+            "status": "passed",
+            "sub_goals": [],
+            "evaluations": [],
+            "call": {
+                "started_at": "2026-09-28T10:00:00.000Z",
+                "ended_at": "2026-09-28T10:01:00.000Z",
+                "duration_ms": 60_000,
+                "turns": 4,
+                "transcript_artifact": None,
+                "recording_artifacts": [],
+                **call_extra,
+            },
+            "failure": None,
+        }
+        receipt["digest"] = canonical_digest(receipt)
+        with patch("simulate.services.hosted_harness_ingestion.transaction.on_commit"):
+            response = client.post(
+                f"{BASE}/{capability.attempt.id}/results/",
+                receipt,
+                format="json",
+                **headers,
+            )
+        assert response.status_code == 200, response.content
+        call = job.scenario_registrations.get().call_execution
+        call.refresh_from_db()
+        return call
+
+    call = post(
+        {
+            "target_metrics": {
+                "provider": "vapi",
+                "usage": {
+                    "prompt_tokens": 900,
+                    "completion_tokens": 100,
+                    "total_tokens": 1000,
+                },
+                "cost_cents": 12,
+                "latency": {"turn": 1180, "model": 520, "turns": [900, 1461]},
+            }
+        }
+    )
+    assert call.customer_cost_cents == 12
+    assert call.cost_cents is None
+    assert call.customer_latency_metrics == {
+        "systemMetrics": {"turn": 1180, "model": 520},
+        "turnLatencies": [900, 1461],
+    }
+    assert call.conversation_metrics_data["input_tokens"] == 900
+    assert call.conversation_metrics_data["output_tokens"] == 100
 
 
 @pytest.mark.django_db
@@ -1810,7 +2002,8 @@ def test_artifact_upload_is_content_addressed_and_manifest_is_acked(organization
 
 
 @pytest.mark.django_db
-def test_artifact_budget_is_rechecked_after_concurrent_upload(organization):
+def test_artifact_budget_is_rechecked_after_concurrent_upload(organization, settings):
+    settings.HARNESS_MAX_ARTIFACT_BYTES = 10
     payload = _payload(
         artifacts={
             "level": "full",
