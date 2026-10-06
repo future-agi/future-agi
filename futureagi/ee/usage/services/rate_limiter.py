@@ -23,6 +23,7 @@ import structlog
 
 from ee.usage.services.emitter import get_redis
 from ee.usage.services.entitlements import Entitlements
+from tfc.capabilities import edition
 
 logger = structlog.get_logger(__name__)
 
@@ -58,6 +59,11 @@ class RateLimiter:
         Returns:
             RateLimitResult with allowed=True/False.
         """
+        # Cloud plan limits only: stored PlanEntitlement rows or ``ent:``
+        # cache entries carried over to a self-hosted install never cap it.
+        if not edition.commercial_caps_apply():
+            return RateLimitResult(allowed=True)
+
         feature = RATE_LIMIT_FEATURES.get(limit_type)
         if not feature:
             return RateLimitResult(allowed=True)

@@ -1085,6 +1085,10 @@ def create_organization_subscription_if_not_exists(organization):
 
 
 def check_if_api_call_is_rate_limited(organization, api_call_type):
+    # Cloud plan cap: self-hosted installs have no commercial usage caps
+    # (tfc.capabilities.edition); seeded rows are never read off-cloud.
+    if not edition.commercial_caps_apply():
+        return False, {}
     # get the subscription tier of the organization
     try:
         create_organization_subscription_if_not_exists(organization)
@@ -2216,7 +2220,10 @@ def check_if_dataset_creation_is_allowed(organization, config=None):
 
 
 def check_if_row_limit_reached(organization, row_count):
-    pass
+    # Cloud plan cap: self-hosted installs have no commercial usage caps
+    # (tfc.capabilities.edition); seeded rows are never read off-cloud.
+    if not edition.commercial_caps_apply():
+        return True, {}
 
     try:
         create_organization_subscription_if_not_exists(organization)
@@ -2279,6 +2286,10 @@ def check_if_observe_creation_is_allowed(organization, existing=False):
     Returns:
       (allowed: bool, cost: float)
     """
+    # Cloud plan cap: self-hosted installs have no commercial usage caps
+    # (tfc.capabilities.edition); seeded rows are never read off-cloud.
+    if not edition.commercial_caps_apply():
+        return True, {}
     from tracer.models.project import Project
     from tracer.models.trace import Trace
 
@@ -2364,6 +2375,10 @@ def check_if_prototype_creation_is_allowed(organization, existing=False):
     Returns:
       (allowed: bool, cost: float)
     """
+    # Cloud plan cap: self-hosted installs have no commercial usage caps
+    # (tfc.capabilities.edition); seeded rows are never read off-cloud.
+    if not edition.commercial_caps_apply():
+        return True, {}
     from tracer.models.project import Project
 
     try:
@@ -2428,6 +2443,10 @@ def check_if_prototype_creation_is_allowed(organization, existing=False):
 
 
 def check_if_trace_creation_is_allowed(organization):
+    # Cloud plan cap: self-hosted installs have no commercial usage caps
+    # (tfc.capabilities.edition); seeded rows are never read off-cloud.
+    if not edition.commercial_caps_apply():
+        return True, {}
     from django.utils import timezone  # Import timezone to work with dates
 
     from tracer.models.trace import Trace
@@ -2509,6 +2528,10 @@ def check_if_trace_creation_is_allowed(organization):
 
 # Check KB limit
 def check_if_kb_creation_is_allowed(organization):
+    # Cloud plan cap: self-hosted installs have no commercial usage caps
+    # (tfc.capabilities.edition); seeded rows are never read off-cloud.
+    if not edition.commercial_caps_apply():
+        return True, {}
     from model_hub.models.develop_dataset import KnowledgeBaseFile
 
     try:
