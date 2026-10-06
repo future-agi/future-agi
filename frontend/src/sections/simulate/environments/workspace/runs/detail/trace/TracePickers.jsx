@@ -88,6 +88,13 @@ TraceGroupByPicker.propTypes = {
   onChange: PropTypes.func.isRequired,
 };
 
+// The theme's icon slot (36px wide plus a 16px margin) leaves each label far
+// from its checkbox; a checkbox-wide slot keeps the labels lined up.
+const columnItemSx = {
+  py: 0.5,
+  "& .MuiListItemIcon-root": { minWidth: 28, mr: 1 },
+};
+
 const toggled = (set, key) => {
   const next = new Set(set);
   if (next.has(key)) next.delete(key);
@@ -199,8 +206,8 @@ export function TraceColumnsPicker({
             {section.name}
           </Typography>,
           ...section.items.map((c) => (
-            <MenuItem key={c.key} onClick={c.onToggle} sx={{ py: 0.5 }}>
-              <ListItemIcon sx={{ minWidth: 32 }}>
+            <MenuItem key={c.key} onClick={c.onToggle} sx={columnItemSx}>
+              <ListItemIcon>
                 <Checkbox
                   size="small"
                   checked={c.checked}
@@ -220,9 +227,9 @@ export function TraceColumnsPicker({
             onChange(defaultTraceColumns());
             onHiddenEvalsChange?.(new Set());
           }}
-          sx={{ py: 0.5 }}
+          sx={columnItemSx}
         >
-          <ListItemIcon sx={{ minWidth: 32 }}>
+          <ListItemIcon>
             <Iconify icon="solar:restart-linear" width={16} />
           </ListItemIcon>
           <ListItemText
