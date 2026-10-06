@@ -315,7 +315,7 @@ class TestRA01Transitions:
         assert second.status_code == status.HTTP_400_BAD_REQUEST
         assert GraphVersion.no_workspace_objects.filter(pk=graph_version.pk).exists()
 
-    def test_delete_active_version_leaves_no_active_version(
+    def test_delete_active_version_leaves_no_active_version_in_storage(
         self,
         authenticated_client,
         graph,
@@ -323,12 +323,7 @@ class TestRA01Transitions:
         active_graph_version,
         inactive_graph_version,
     ):
-        """Explicit state: no version is active and nothing is promoted implicitly.
-
-        ``active_version`` / ``active_version_id`` on graph reads mean "latest
-        version" (any status), so after the delete they point at the latest
-        remaining version and carry its own status.
-        """
+        """R-A01 in storage: no version is active and nothing is promoted."""
         response = authenticated_client.delete(
             _version_url(graph, active_graph_version)
         )
@@ -339,6 +334,23 @@ class TestRA01Transitions:
             graph_version.id: GraphVersionStatus.DRAFT,
             inactive_graph_version.id: GraphVersionStatus.INACTIVE,
         }
+
+    def test_characterization_o2_read_surface_after_active_delete(
+        self,
+        authenticated_client,
+        graph,
+        graph_version,
+        active_graph_version,
+        inactive_graph_version,
+    ):
+        """CHARACTERIZATION, not an invariant: owner decision O2 may change it.
+
+        R-A01 is open on the read surface. ``active_version`` (detail) and
+        ``active_version_id`` (list) mean "latest version of any status", so
+        after the active version is deleted they name the latest remaining
+        (inactive) version, which reads like an implicit fallback.
+        """
+        authenticated_client.delete(_version_url(graph, active_graph_version))
 
         detail = authenticated_client.get(GRAPH.format(g=graph.id)).json()["result"]
         assert detail["active_version"]["id"] == str(inactive_graph_version.id)
