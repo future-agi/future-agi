@@ -5,7 +5,7 @@ import Iconify from "src/components/iconify";
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import { BUILD_TONES } from "../buildEnvironment/buildTones";
 
-export default function RuntimePreflight({ status = "idle", canRun = false, onRun, result, error }) {
+export default function RuntimePreflight({ status = "idle", canRun = false, blockedReason = null, onRun, result, error }) {
   if (status === "idle" || status === "running") {
     const running = status === "running";
     return (
@@ -23,7 +23,7 @@ export default function RuntimePreflight({ status = "idle", canRun = false, onRu
         </Button>
         {!running && (
           <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-            We check the source and credentials before building.
+            {blockedReason || "We check the source and credentials before building."}
           </Typography>
         )}
       </Stack>
@@ -113,6 +113,7 @@ export default function RuntimePreflight({ status = "idle", canRun = false, onRu
 RuntimePreflight.propTypes = {
   status: PropTypes.oneOf(["idle", "running", "done", "error"]),
   canRun: PropTypes.bool,
+  blockedReason: PropTypes.string,
   onRun: PropTypes.func,
   result: PropTypes.shape({ ready_to_submit: PropTypes.bool, credentials: PropTypes.object }),
   error: PropTypes.object,
