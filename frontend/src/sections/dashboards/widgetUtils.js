@@ -390,23 +390,57 @@ export const getFittedYAxisBounds = (
   if (zeroAnchored) return zeroAnchored;
 
   const extent = getSeriesExtent(series, { stacked });
-  if (!extent) return null;
-  const span = extent.max - extent.min;
-  if (span <= 0) return null;
+  if (!extent || extent.max - extent.min <= 0) return null;
+  return getStepGridBounds(extent.min, extent.max, tickAmount);
+};
 
-  // Flooring the min onto the step grid consumes up to a full step, and the
-  // max is measured from that lowered floor — so a step sized off the raw span
-  // alone can land below the peak, which ApexCharts then clips. Grow the step
-  // until the floored grid still reaches the peak.
-  let step = niceCeil(span / tickAmount);
-  let min = Math.floor(extent.min / step) * step;
-  while (min + step * tickAmount < extent.max) {
-    step = niceCeil(
-      step + (extent.max - (min + step * tickAmount)) / tickAmount,
-    );
-    min = Math.floor(extent.min / step) * step;
+/**
+ * Bounds for a mark measured from zero (a bar, a stacked area): always
+ * explicit, always containing zero, so a side that dips negative keeps one
+ * shared scale instead of handing its series back to ApexCharts. Null only
+ * where there is nothing to scale: a logarithmic side, no finite points, or
+ * every point at zero.
+ */
+const getBaselineYAxisBounds = (
+  series = [],
+  { stacked = false, logarithmic = false, tickAmount = 5 } = {},
+) => {
+  if (logarithmic) return null;
+  const extent = getSeriesExtent(series, { stacked });
+  if (!extent) return null;
+  const low = Math.min(0, extent.min);
+  const high = Math.max(0, extent.max);
+  if (high - low <= 0) return null;
+  return getStepGridBounds(low, high, tickAmount);
+};
+
+// One end typed and the other auto: the auto end was sized for its own floor
+// or ceiling, so pairing it with the typed one leaves an odd step (100 / 1580
+// / 3060 ...). Re-derive it from the typed end and the data instead. A zero
+// end is kept as it is, since it is a deliberate anchor rather than a fit.
+const roundFromTypedBound = (
+  { min, max },
+  { typedMin, typedMax, extent, tickAmount },
+) => {
+  if (typedMin != null && typedMax == null && max != null && max !== 0) {
+    const span = extent.max - typedMin;
+    if (span > 0) {
+      const top = normalize(
+        typedMin + niceCeil(span / tickAmount) * tickAmount,
+      );
+      return { min, max: max < 0 ? Math.min(top, 0) : top };
+    }
   }
-  return { min: normalize(min), max: normalize(min + step * tickAmount) };
+  if (typedMax != null && typedMin == null && min != null && min !== 0) {
+    const span = typedMax - extent.min;
+    if (span > 0) {
+      const floor = normalize(
+        typedMax - niceCeil(span / tickAmount) * tickAmount,
+      );
+      return { min: min > 0 ? Math.max(floor, 0) : floor, max };
+    }
+  }
+  return { min, max };
 };
 
 /**
@@ -427,22 +461,15 @@ export const resolveAxisBounds = (
   cfg = {},
   { stacked = false, tickAmount = 5, fit = false } = {},
 ) => {
-  // A non-fitting axis (bars) still needs explicit bounds wherever the
-  // dual-axis invariant requires them — it just may not leave zero the way
-  // the fitted path does for a narrow band, so the deferral is switched off
-  // rather than falling back to getFittedYAxisBounds.
-  const auto = fit
-    ? getFittedYAxisBounds(series, {
-        stacked,
-        logarithmic: cfg.scale === "logarithmic",
-        tickAmount,
-      })
-    : getAutoYAxisBounds(series, {
-        stacked,
-        logarithmic: cfg.scale === "logarithmic",
-        tickAmount,
-        deferNarrowBand: false,
-      });
+  // A non-fitting axis (bars, stacked areas) still needs explicit bounds
+  // wherever the dual-axis invariant requires them — it just may not leave
+  // zero the way the fitted path does for a narrow band.
+  const logarithmic = cfg.scale === "logarithmic";
+  const auto = (fit ? getFittedYAxisBounds : getBaselineYAxisBounds)(series, {
+    stacked,
+    logarithmic,
+    tickAmount,
+  });
   const extent = getSeriesExtent(series, { stacked });
   const widen = cfg.outOfBounds !== "hidden" && extent;
   const typedMin = parseBound(cfg.min);
@@ -451,7 +478,14 @@ export const resolveAxisBounds = (
     widen && typedMin != null && typedMin > extent.min ? null : typedMin;
   const userMax =
     widen && typedMax != null && typedMax < extent.max ? null : typedMax;
-  return { min: userMin ?? auto?.min, max: userMax ?? auto?.max };
+  const bounds = { min: userMin ?? auto?.min, max: userMax ?? auto?.max };
+  if (!auto || !extent) return bounds;
+  return roundFromTypedBound(bounds, {
+    typedMin: userMin,
+    typedMax: userMax,
+    extent,
+    tickAmount,
+  });
 };
 
 /**
@@ -612,6 +646,21 @@ const niceCeil = (value) => {
   return normalize(rung * magnitude);
 };
 
+// The tightest `tickAmount`-step grid with a round step that contains
+// [low, high]. Flooring the min onto the grid consumes up to a full step, and
+// the max is measured from that lowered floor, so a step sized off the raw
+// span alone can land below `high`, which ApexCharts then clips. Grow the step
+// until the floored grid still reaches it.
+const getStepGridBounds = (low, high, tickAmount) => {
+  let step = niceCeil((high - low) / tickAmount);
+  let min = Math.floor(low / step) * step;
+  while (min + step * tickAmount < high) {
+    step = niceCeil(step + (high - (min + step * tickAmount)) / tickAmount);
+    min = Math.floor(low / step) * step;
+  }
+  return { min: normalize(min), max: normalize(min + step * tickAmount) };
+};
+
 /**
  * Lowest and highest value the chart actually plots, or null if there is
  * nothing finite to measure. Stacked charts are read off the summed height.
@@ -682,19 +731,10 @@ export const getSeriesExtent = (series = [], { stacked = false } = {}) => {
  * forcing 0 would waste *more* space than it saves. Null is a deferral, not a
  * verdict: callers pass it to getFittedYAxisBounds, which fits the band where
  * it actually sits.
- *
- * `deferNarrowBand` (default true) gates that deferral. A mark that must stay
- * anchored at zero regardless — a bar, whose height *is* the value — passes
- * `false` so a narrow band still comes back zero-anchored instead of null.
  */
 export const getAutoYAxisBounds = (
   series = [],
-  {
-    stacked = false,
-    logarithmic = false,
-    tickAmount = 5,
-    deferNarrowBand = true,
-  } = {},
+  { stacked = false, logarithmic = false, tickAmount = 5 } = {},
 ) => {
   if (logarithmic) return null;
 
@@ -707,8 +747,8 @@ export const getAutoYAxisBounds = (
 
   // Only act where the data already runs most of the way to zero. Above that
   // the series is a narrow high band and zero-anchoring is a regression —
-  // unless the caller has already ruled out fitting the band instead.
-  if (deferNarrowBand && floor > 0.3 * peak) return null;
+  // getFittedYAxisBounds fits that band instead.
+  if (floor > 0.3 * peak) return null;
 
   const step = niceCeil(peak / tickAmount);
   const max = normalize(step * tickAmount);

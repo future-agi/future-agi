@@ -589,15 +589,15 @@ test('DASH-E2E-014: Out of Bounds decides whether a typed bound clips the data',
     });
   });
 
-  await test.step('UI: min and max resolve independently — a typed floor with a fitted ceiling', async () => {
+  await test.step('UI: a typed floor keeps a round step — the ceiling is re-derived from it', async () => {
     await actor.api.patch(`/tracer/dashboard/${fixture.dashboardId}/widgets/${fixture.widgetId}/`, {
       chart_config: chartConfig({ leftY: { min: '1000', max: '', out_of_bounds: 'hidden' } }),
     });
     await page.reload({ waitUntil: 'domcontentloaded' });
-    // The floor is the typed 1000; the ceiling is still the fitted 7500, which
-    // is what "per side" means. ApexCharts then spaces the five ticks between
-    // them: 1000 + n x 1300.
-    const chart = await chartWithTicks(page, [[7500, 6200, 4900, 3600, 2300, 1000]]);
+    // The floor is the typed 1000. Keeping the auto 7500 ceiling would space
+    // the ticks 1300 apart; the ceiling is re-derived from the floor instead:
+    // step = niceCeil((7043 - 1000) / 5) = 1500, so 1000 + 5 x 1500 = 8500.
+    const chart = await chartWithTicks(page, [[8500, 7000, 5500, 4000, 2500, 1000]]);
     expect(clippedAboveGrid(chart)).toBe(0);
 
     const detail = await actor.api.get<WidgetDetail>(
