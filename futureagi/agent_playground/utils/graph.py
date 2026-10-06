@@ -116,6 +116,24 @@ def get_graph_and_version(request, pk, version_id):
     return graph, version
 
 
+def require_visible_nodes(request, node_ids):
+    """Raise Node.DoesNotExist unless every node is in the caller's scope.
+
+    Same org/workspace scope as ``get_graph_and_version``, so another tenant's
+    node id answers exactly like a missing one.
+    """
+    from agent_playground.models.node import Node
+
+    qs = Node.no_workspace_objects.filter(
+        id__in=set(node_ids),
+        graph_version__graph__organization=request.organization,
+    )
+    if request.workspace:
+        qs = qs.filter(graph_version__graph__workspace=request.workspace)
+    if qs.count() != len(set(node_ids)):
+        raise Node.DoesNotExist
+
+
 def require_draft(version):
     """Return True if version is NOT draft, else False."""
     if version.status != GraphVersionStatus.DRAFT:

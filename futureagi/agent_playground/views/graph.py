@@ -107,13 +107,20 @@ class GraphViewSet(ModelViewSet):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    # The only actions that may serve system templates (?is_template=true).
+    TEMPLATE_READ_ACTIONS = frozenset(
+        {"list", "retrieve", "list_versions", "retrieve_version"}
+    )
+
     def get_queryset(self):
         """
         Get graphs filtered by organization and workspace, or templates.
 
-        If is_template=true query param is passed, returns system-wide templates
-        (no org/workspace filter). Otherwise returns user's graphs filtered by
-        org/workspace.
+        If is_template=true query param is passed on a template read action,
+        returns system-wide templates (no org/workspace filter). Templates are
+        read-only: any other action with is_template=true finds no graph, so it
+        answers exactly like a missing graph (TH-8413). Otherwise returns user's
+        graphs filtered by org/workspace.
         """
         is_template = self.request.query_params.get("is_template")
         is_template_bool = (
@@ -122,6 +129,8 @@ class GraphViewSet(ModelViewSet):
 
         # Templates are system-wide, no org/workspace filter
         if is_template_bool:
+            if self.action not in self.TEMPLATE_READ_ACTIONS:
+                return Graph.no_workspace_objects.none()
             return Graph.no_workspace_objects.filter(is_template=True)
 
         organization = self.request.organization
@@ -293,7 +302,8 @@ class GraphViewSet(ModelViewSet):
         """
         Update graph metadata only (name, description).
 
-        Does NOT touch versions.
+        Does NOT touch versions. The save and its post-save signals are atomic:
+        a failure leaves no partial write.
         """
         try:
             instance = self.get_object()
@@ -301,17 +311,18 @@ class GraphViewSet(ModelViewSet):
             if not serializer.is_valid():
                 return self._gm.bad_request(serializer.errors)
 
-            # Update only provided fields
-            for field, value in serializer.validated_data.items():
-                setattr(instance, field, value)
-            instance.save()
+            with transaction.atomic():
+                # Update only provided fields
+                for field, value in serializer.validated_data.items():
+                    setattr(instance, field, value)
+                instance.save()
 
-            # Re-fetch with annotations for GraphListSerializer
-            instance = annotate_graph_list_fields(
-                Graph.no_workspace_objects.filter(pk=instance.pk)
-                .select_related("created_by")
-                .prefetch_related("collaborators")
-            ).get()
+                # Re-fetch with annotations for GraphListSerializer
+                instance = annotate_graph_list_fields(
+                    Graph.no_workspace_objects.filter(pk=instance.pk)
+                    .select_related("created_by")
+                    .prefetch_related("collaborators")
+                ).get()
 
             response_serializer = GraphListSerializer(instance)
             return self._gm.success_response(response_serializer.data)
@@ -334,14 +345,14 @@ class GraphViewSet(ModelViewSet):
         Soft-delete a graph through the router detail route with cascade validation.
         """
         try:
-            graph = self.get_object()
-            graphs_to_delete = self.get_queryset().filter(id=graph.id)
-
-            blocking_message = self._blocking_reference_message(graphs_to_delete)
-            if blocking_message:
-                return self._gm.bad_request(blocking_message)
-
             with transaction.atomic():
+                graph = self.get_object()
+                graphs_to_delete = self.get_queryset().filter(id=graph.id)
+
+                blocking_message = self._blocking_reference_message(graphs_to_delete)
+                if blocking_message:
+                    return self._gm.bad_request(blocking_message)
+
                 cascade_soft_delete_graph(graph)
 
             return self._gm.success_response({"message": "Graph deleted successfully"})

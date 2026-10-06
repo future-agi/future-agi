@@ -17,7 +17,11 @@ from agent_playground.serializers.node_connection import (
 )
 from agent_playground.services.dataset_bridge import sync_dataset_columns
 from agent_playground.services.node_crud import cascade_soft_delete_node_connection
-from agent_playground.utils.graph import get_graph_and_version, require_draft
+from agent_playground.utils.graph import (
+    get_graph_and_version,
+    require_draft,
+    require_visible_nodes,
+)
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 
@@ -61,6 +65,9 @@ class NodeConnectionCrudViewSet(ModelViewSet):
                 return self._gm.bad_request(serializer.errors)
 
             data = serializer.validated_data
+            require_visible_nodes(
+                request, [data["source_node_id"], data["target_node_id"]]
+            )
 
             with transaction.atomic():
                 nc = NodeConnection(
