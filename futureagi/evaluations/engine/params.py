@@ -84,6 +84,23 @@ def prepare_run_params(
         if "required_keys" not in run_params:
             run_params["required_keys"] = eval_template.config.get("required_keys", [])
 
+        # Forward optional_keys so the evaluator can tell truly-required
+        # keys from keys allowed to be absent at run time. Mirrors
+        # EvaluationRunner.map_fields(): system evals honor the template's
+        # declared list; user evals treat every required key as optional
+        # (the rule_prompt's Jinja decides how to handle nulls).
+        if "optional_keys" not in run_params:
+            from model_hub.models.choices import OwnerChoices
+
+            if getattr(eval_template, "owner", None) == OwnerChoices.SYSTEM.value:
+                declared_optional = eval_template.config.get("optional_keys")
+                if declared_optional is not None:
+                    run_params["optional_keys"] = declared_optional
+            else:
+                run_params["optional_keys"] = list(
+                    eval_template.config.get("required_keys") or []
+                )
+
     return run_params
 
 
