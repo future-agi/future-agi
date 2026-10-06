@@ -47831,6 +47831,26 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
         tokens: zod.number(),
         evaluations: zod.object({}).passthrough(),
       }),
+      distinct: zod.object({
+        personas: zod
+          .number()
+          .describe("Distinct personas among the group's calls on this page."),
+        situations: zod
+          .number()
+          .describe(
+            "Distinct situations among the group's calls on this page.",
+          ),
+        outcomes: zod
+          .number()
+          .describe(
+            "Distinct ideal outcomes among the group's calls on this page.",
+          ),
+        branches: zod
+          .number()
+          .describe(
+            "Distinct conversation branches among the group's calls on this page.",
+          ),
+      }),
     }),
   ),
   facets: zod.object({

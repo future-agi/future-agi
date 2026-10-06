@@ -56,6 +56,12 @@ METRIC_FIELDS = {
     "cost_cents": "result_cost_cents",
 }
 SUBSET_PARAMS = ("search", "filters", "group_by", "group_key", "ordering")
+PAGE_DISTINCT_FIELDS = {
+    "personas": "persona",
+    "situations": "scenario_details",
+    "outcomes": "ideal_outcome",
+    "branches": "conversation_branch",
+}
 # CSAT and other per-call metrics can still land after the run completes
 # without moving anything in the cache key, so a cached pass stays short-lived.
 CACHE_TIMEOUT = 5 * 60
@@ -347,3 +353,20 @@ def page_groups(
             _score_expressions(execution, columns),
         )
     return group_call_values(rows, query.get("group_by"), page["page_ids"], columns)
+
+
+def with_page_distinct_counts(
+    groups: list[dict[str, Any]], page_rows: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    rows_by_id = {str(row["id"]): row for row in page_rows}
+    for group in groups:
+        members = [
+            rows_by_id[str(call_id)]
+            for call_id in group["result_ids"]
+            if str(call_id) in rows_by_id
+        ]
+        group["distinct"] = {
+            name: len({row.get(field) for row in members if row.get(field)})
+            for name, field in PAGE_DISTINCT_FIELDS.items()
+        }
+    return groups

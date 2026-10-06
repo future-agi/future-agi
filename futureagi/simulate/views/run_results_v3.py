@@ -34,6 +34,7 @@ from simulate.services.run_results_v3_page import (
     page_calls,
     page_groups,
     run_calls_page,
+    with_page_distinct_counts,
 )
 from simulate.services.run_results_v3_queries import (
     GROUP_FIELDS,
@@ -298,11 +299,27 @@ class GroupAggregatesSerializer(serializers.Serializer):
     evaluations = serializers.JSONField()
 
 
+class GroupDistinctCountsSerializer(serializers.Serializer):
+    personas = serializers.IntegerField(
+        help_text="Distinct personas among the group's calls on this page."
+    )
+    situations = serializers.IntegerField(
+        help_text="Distinct situations among the group's calls on this page."
+    )
+    outcomes = serializers.IntegerField(
+        help_text="Distinct ideal outcomes among the group's calls on this page."
+    )
+    branches = serializers.IntegerField(
+        help_text="Distinct conversation branches among the group's calls on this page."
+    )
+
+
 class RunGroupSerializer(RunSummarySerializer):
     key = serializers.CharField()
     label = serializers.CharField()
     result_ids = serializers.ListField(child=serializers.UUIDField())
     aggregates = GroupAggregatesSerializer()
+    distinct = GroupDistinctCountsSerializer()
 
 
 class RunCallsV3ResponseSerializer(serializers.Serializer):
@@ -573,7 +590,10 @@ class RunCallsV3View(APIView):
             "page_size": page_size,
             "total_pages": max(1, (count + page_size - 1) // page_size),
             "results": page_rows,
-            "groups": page_groups(execution, calls_page, query, columns, base_queryset),
+            "groups": with_page_distinct_counts(
+                page_groups(execution, calls_page, query, columns, base_queryset),
+                page_rows,
+            ),
             "facets": run_call_facets(facet_queryset, facets_cache_key),
             "evaluation_columns": columns,
         }

@@ -23007,6 +23007,17 @@ export interface GroupAggregatesApi {
   evaluations: GroupAggregatesApiEvaluations;
 }
 
+export interface GroupDistinctCountsApi {
+  /** Distinct personas among the group's calls on this page. */
+  personas: number;
+  /** Distinct situations among the group's calls on this page. */
+  situations: number;
+  /** Distinct ideal outcomes among the group's calls on this page. */
+  outcomes: number;
+  /** Distinct conversation branches among the group's calls on this page. */
+  branches: number;
+}
+
 export interface RunGroupApi {
   total: number;
   outcomes: OutcomeCountsApi;
@@ -23022,6 +23033,7 @@ export interface RunGroupApi {
   label: string;
   result_ids: string[];
   aggregates: GroupAggregatesApi;
+  distinct: GroupDistinctCountsApi;
 }
 
 export interface FacetValueApi {
