@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen } from "src/utils/test-utils";
 import userEvent from "@testing-library/user-event";
 import { within } from "@testing-library/react";
@@ -950,6 +950,99 @@ describe("RunTraceTable", () => {
       expect(
         screen.getByRole("menuitem", { name: "Fact checker" }),
       ).toBeInTheDocument();
+    });
+
+    it("shows an evaluation the run adds later, ticked, and keeps a hidden one hidden", async () => {
+      const user = userEvent.setup();
+      const impl = useRunCalls.getMockImplementation();
+      let columns = [{ key: "eval-1", label: "Tone", group: "Evaluations" }];
+      useRunCalls.mockImplementation((...args) => ({
+        ...impl(...args),
+        columns,
+      }));
+      const { rerender } = renderTable();
+      await openPicker(user);
+      await user.click(screen.getByRole("menuitem", { name: "Tone" }));
+      await user.keyboard("{Escape}");
+
+      columns = [
+        { key: "eval-1", label: "Tone", group: "Evaluations" },
+        { key: "eval-2", label: "Fact checker", group: "Evaluations" },
+      ];
+      rerender(<RunTraceTable executionId="ex1" onOpenCall={vi.fn()} />);
+
+      expect(
+        screen.getByRole("columnheader", { name: "Fact checker" }),
+      ).toBeInTheDocument();
+      expect(screen.queryByRole("columnheader", { name: "Tone" })).toBeNull();
+      await openPicker(user);
+      const checkbox = (name) =>
+        within(screen.getByRole("menuitem", { name })).getByRole("checkbox");
+      expect(checkbox("Fact checker")).toBeChecked();
+      expect(checkbox("Tone")).not.toBeChecked();
+    });
+
+    describe("the full name on hover", () => {
+      const LONG = "Checks every fact the agent states against the policy";
+
+      beforeEach(() => {
+        vi.stubGlobal(
+          "ResizeObserver",
+          class {
+            observe() {}
+            disconnect() {}
+          },
+        );
+        // jsdom lays nothing out: report the long name as overflowing its box.
+        ["scrollWidth", "clientWidth"].forEach((prop) => {
+          Object.defineProperty(HTMLElement.prototype, prop, {
+            configurable: true,
+            get() {
+              const cut = this.textContent === LONG;
+              return prop === "scrollWidth" && cut ? 400 : 200;
+            },
+          });
+        });
+      });
+
+      afterEach(() => {
+        vi.unstubAllGlobals();
+        ["scrollWidth", "clientWidth"].forEach((prop) => {
+          delete HTMLElement.prototype[prop];
+        });
+      });
+
+      const withNames = () => {
+        const impl = useRunCalls.getMockImplementation();
+        useRunCalls.mockImplementation((...args) => ({
+          ...impl(...args),
+          columns: [
+            { key: "eval-1", label: "Tone", group: "Evaluations" },
+            { key: "eval-2", label: LONG, group: "Evaluations" },
+          ],
+        }));
+      };
+
+      it("shows a tooltip on a name cut off with an ellipsis", async () => {
+        const user = userEvent.setup();
+        withNames();
+        renderTable();
+        await openPicker(user);
+        await user.hover(within(screen.getByRole("menu")).getByText(LONG));
+
+        expect(await screen.findByRole("tooltip")).toHaveTextContent(LONG);
+      });
+
+      it("shows no tooltip on a name that fits", async () => {
+        const user = userEvent.setup();
+        withNames();
+        renderTable();
+        await openPicker(user);
+        await user.hover(within(screen.getByRole("menu")).getByText("Tone"));
+
+        await new Promise((r) => setTimeout(r, 300));
+        expect(screen.queryByRole("tooltip")).toBeNull();
+      });
     });
   });
 
