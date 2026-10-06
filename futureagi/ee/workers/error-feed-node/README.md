@@ -302,3 +302,94 @@ failed investigations export `ERROR`; a detected customer failure still counts
 as a completed investigation. Historical trace statuses are unchanged.
 
 Feature preparation uses the trace name `error_feed.prepare_findings_for_grouping`: it prepares embeddings and lookup features from investigation findings before grouping compares them.
+
+
+## Sampled grouping review (TH-8368)
+
+The `f6-minilm-sampled/v2` algorithm is explicitly enabled per project in the
+backend. The worker also accepts the existing `f6-minilm/v1` policy. Deploy the
+compatible backend and dual-policy worker before activating a project; this
+change does not automatically activate projects, requeue failed work, or run
+reconciliation. Historical decisions and feature recipes remain unchanged.
+
+Large issues carry a full membership count, revision and digest, plus up to
+8 evidence examples. Backend selection retains existing prototypes, a recent
+example and lexically diverse examples. It reads finding text for selection;
+it does not send every call to the model or fetch every call recording.
+
+Merge reviews use at most 8 examples per source (16 total). Whole examples can
+be removed to meet the existing 400 KB evidence budget, retaining at least a
+representative and a contrasting example per source when available. An
+oversized minimum sample is held without inference. The model must cover every
+shown example; uncertainty leaves issues separate. There is no automatic
+second review or exhaustive verification pass in this version. Sampling can
+miss an incompatible unseen call, so a positive sample is not certification
+of every member.
+
+A sampled merge requires a durable `merge-review:` receipt. The backend limits
+these requests to 10 per durable work item, across retries, and applies
+`ERROR_FEED_GROUPING_MERGE_BUDGET_USD` (default `1`). This additional ceiling
+counts maximum reservations conservatively, including interrupted/unknown
+usage, even when general budget enforcement is disabled. Existing project,
+work and tenant budgets remain additional constraints. Budget denial produces
+a recorded hold and permits unrelated grouping results to publish. Failed
+model calls stay in the spending ledger but are excluded from publication
+evidence. An unresolved prior merge reservation holds without a paid resend.
+Under the sampled policy, a general project/work/tenant spending refusal is
+also an explicit budget response, distinct from a lease or registry conflict.
+The pipeline preserves already admitted commands and marks unfinished findings
+`waiting_budget` with `budget_exhausted:<limit>`. Affected work remains
+`waiting_budget` and its report remains pending. Backend and worker diagnostics
+record the refusal; worker diagnostics include the processing phase. Ordinary
+polling does not retry budget-blocked work. The backend's preview-first
+`requeue_budget_grouping` command checks current budget, source identity and
+registry revision before explicit requeue. It preserves receipts, attempt
+counters and cohort spending history, and a fresh claim selects only unassigned
+findings without changing full source snapshots. The merge prompt states
+the existing headline limit of 12 words / 120 characters.
+
+Unchanged candidates use lightweight membership metadata and sampled finding
+rows. Publication locks complete finding rows only for sources of merges,
+splits and removals, plus the bounded evidence and pending rows. Candidate
+preparation checks available sample capacity before scanning another issue.
+Complete membership IDs and sampling statements still require reads; this
+change bounds model hydration and finding locks, not all metadata reads.
+
+The backend verifies the complete source membership under locks, including
+hard constraints on unsampled findings, then atomically moves all members and
+retires the sources. Full membership is not constrained by a model sample cap.
+Under the sampled policy, protected issues can receive evidence-grounded new
+occurrences while retaining their reviewed title, mechanism and saved diagnosis.
+Acknowledged status is retained. Attaching to a resolved issue reopens the same
+issue as `for_review`, keeps it protected, and records the transition and its
+triggering occurrences in the durable publication decision. Attachment and
+reopening commit atomically; repeated publication cannot duplicate the transition.
+Protected issues remain excluded from automatic merge/split/removal/refresh;
+manual merging is deferred. Partial samples cannot authorize split/removal.
+Default-policy worker attachment selection retains its original behavior; the
+backend's existing default-policy protected-attachment restriction remains.
+
+A worker checkpoint's topology status is `proposed`, not a database commit.
+The coordinator freezes the exact publication payload, including receipt
+ordering, before sending it. Ambiguous transport/server errors receive one
+identical retry; validation conflicts do not. Reclaimed attempts reuse that
+payload without model work. Success requires the backend's `completed`
+acknowledgement and registry revision. Backend membership postconditions are
+checked before committing the decision.
+
+Review entry points:
+
+- Worker: `grouping/policy.mjs`, `grouping/f6/pipeline.mjs`,
+  `grouping/f6/registry.mjs`, `grouping/coordinator.mjs`, `grouping/gateway.mjs`.
+- Backend: `tracer/services/grouping/sampling.py`, `context.py`, `publish.py`,
+  `accounting.py`, `budget_recovery.py`, and the `enable_sampled_grouping` /
+  `requeue_budget_grouping` management commands.
+- New backend coverage: `tracer/tests/test_grouping_sampled_merges.py`.
+- Worker coverage: `grouping/engine.test.mjs`, `coordinator.test.mjs`,
+  `gateway.test.mjs`, `f6/pipeline-budget.test.mjs`; the cross-service fixture
+  follows the explicit committed acknowledgement contract.
+
+The activation command previews by default. `--apply` requires the reviewed
+registry revision and refuses active attempts or outstanding reservations.
+It fences old checkpoints without rewriting them. Previously failed work must be
+reviewed and requeued separately after grouping publication is validated.

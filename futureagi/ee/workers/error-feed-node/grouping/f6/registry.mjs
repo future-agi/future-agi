@@ -52,7 +52,9 @@ export function commitCommand(registry, command, context) {
       title: group.title, mechanism: group.mechanism, fix_hypothesis: group.fix_hypothesis, falsifier: group.falsifier,
       members: unique(group.member_ids), prototypes: context.selectPrototypes(group.member_ids),
       evidence_state: admission.state, admission, workflow: 'open', protected: false, aliases: [],
-      membership_sequence: next.sequence + 1};
+      membership_sequence: next.sequence + 1,
+      ...(context.policy.sampled_merge_reviews ? {member_count:group.member_ids.length,
+        membership_complete:true} : {})};
     next.issues.push(issue); return issue;
   };
   const requiredRevision = issue => assert.equal(command.expected_revisions?.[issue.id], issue.mechanism_revision, 'Missing expected mechanism revision');
@@ -64,6 +66,7 @@ export function commitCommand(registry, command, context) {
       else assert.equal(command.receipt.target_issue_id, issue.id);
       validateReceipt(command.receipt, command.member_ids, context, next);
       validateMembers(unique([...issue.members, ...command.member_ids]), byId, constraints);
+      if (context.policy.sampled_merge_reviews) issue.member_count += command.member_ids.length;
       issue.members = unique([...issue.members, ...command.member_ids]); issue.membership_sequence = next.sequence + 1;
       // Routine membership doesn't bump semantics/prototypes. Explicit refresh does.
       break;
@@ -72,9 +75,25 @@ export function commitCommand(registry, command, context) {
       assert.ok(unique(command.issue_ids).length === command.issue_ids.length && command.issue_ids.length >= 2);
       const sources = command.issue_ids.map(id => active(next, id)); sources.forEach(requiredRevision);
       assert.ok(sources.every(i => !i.protected), 'Human-owned/ticketed issue requires operator approval');
-      assert.deepEqual(unique(command.group.member_ids), unique(sources.flatMap(i => i.members)), 'Merge lost/invented members');
+      const represented = unique(sources.flatMap(i => i.members));
+      if (context.policy.sampled_merge_reviews) {
+        assert.ok(command.group.member_ids.every(id => represented.includes(id)), 'Merge sampled an unknown member');
+        for (const source of sources) {
+          const reviewed = command.group.member_ids.filter(id => source.members.includes(id));
+          assert.ok(reviewed.length > 0 && reviewed.length <= context.policy.merge_sample_members_per_issue,
+            'Merge sample must cover both sources within budget');
+        }
+      } else assert.deepEqual(unique(command.group.member_ids), represented, 'Merge lost/invented members');
       assert.equal(command.group.target_issue_id, null);
       const target = newIssue(command.group, command.receipt, 'merge');
+      if (context.policy.sampled_merge_reviews) {
+        // The registry carries shown rows, not unseen authoritative members.
+        // Publication resolves the complete source union under database locks.
+        validateMembers(represented, byId, constraints);
+        target.members = represented;
+        target.member_count = sources.reduce((n, item) => n + item.member_count, 0);
+        target.membership_complete = target.member_count === target.members.length;
+      }
       target.aliases = unique(sources.flatMap(i => [i.id, ...i.aliases]));
       sources.forEach(i => { i.active = false; i.mechanism_revision++; });
       break;
@@ -95,6 +114,7 @@ export function commitCommand(registry, command, context) {
       const kept = issue.members.filter(id => !command.member_ids.includes(id)); assert.ok(kept.length);
       for (const id of command.member_ids) assert.ok(kept.some(p => context.scorePair(id, p).contradictions.length)
         || issue.prototypes.filter(p => kept.includes(p)).length && issue.prototypes.filter(p => kept.includes(p)).every(p => context.scorePair(id, p).decision === 'reject'), 'Unsupported removal');
+      if (context.policy.sampled_merge_reviews) issue.member_count -= command.member_ids.length;
       issue.members = kept; issue.prototypes = context.selectPrototypes(kept); issue.mechanism_revision++; break;
     }
     case 'refresh': {
