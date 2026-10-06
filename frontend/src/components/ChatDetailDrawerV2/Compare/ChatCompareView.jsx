@@ -5,13 +5,11 @@ import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 
 import { transformToConversations } from "src/sections/test-detail/TestDetailDrawer/BasLineCompare/common";
+import CompareHeaderBar from "src/components/BaselineCompare/CompareHeaderBar";
+import CompareMetrics from "src/components/BaselineCompare/CompareMetrics";
+import CompareScenarioSummary from "src/components/BaselineCompare/CompareScenarioSummary";
+import CompareTranscript from "src/components/BaselineCompare/CompareTranscript";
 
-import CompareHeaderBar from "./CompareHeaderBar";
-import ChatCompareMetrics from "./ChatCompareMetrics";
-import ChatCompareTranscript from "./ChatCompareTranscript";
-import CompareScenarioSummary from "./CompareScenarioSummary";
-
-// Top-level chat baseline-vs-replay view, rendered inside the ChatDetailDrawerV2 shell.
 const ChatCompareView = ({ data, onBack }) => {
   const callExecutionId = data?.id;
 
@@ -24,9 +22,9 @@ const ChatCompareView = ({ data, onBack }) => {
   });
 
   const transcripts = useMemo(() => {
-    if (!compareData?.comparisonTranscripts) return null;
-    return transformToConversations(compareData.comparisonTranscripts);
-  }, [compareData?.comparisonTranscripts]);
+    if (!compareData?.comparison_transcripts) return null;
+    return transformToConversations(compareData.comparison_transcripts);
+  }, [compareData?.comparison_transcripts]);
 
   return (
     <Box
@@ -43,23 +41,19 @@ const ChatCompareView = ({ data, onBack }) => {
         onBack={onBack}
         scenarioName={data?.scenario}
         sessionId={data?.session_id ?? data?.sessionId}
+        backLabel="Back to chat"
       />
 
       <Stack gap={2} sx={{ p: 1.5 }}>
-        <ChatCompareMetrics
+        <CompareMetrics
           data={compareData?.comparison_metrics}
           isLoading={isLoading}
+          simulationCallType={data?.simulation_call_type}
         />
 
-        {/* Compact scenario summary scoped to the compare view. The
-            legacy `TestDetailDrawerScenarioTable` (still used by voice
-            compare) is intentionally chunkier with nested borders and
-            fixed-height columns; we use a denser layout here so the
-            scenario block reads as a peer of the KPI strip rather
-            than dominating the page. */}
         <CompareScenarioSummary data={data} />
 
-        <ChatCompareTranscript data={transcripts} isLoading={isLoading} />
+        <CompareTranscript data={transcripts} isLoading={isLoading} />
       </Stack>
     </Box>
   );

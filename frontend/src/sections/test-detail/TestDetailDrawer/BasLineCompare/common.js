@@ -31,7 +31,10 @@ export const formatIfFloat = (value) => {
 };
 
 export const transformToConversations = (data) => {
-  const { baseSessionTranscripts, comparisonCallTranscripts } = data || {};
+  const baseSessionTranscripts =
+    data?.base_session_transcripts ?? data?.baseSessionTranscripts;
+  const comparisonCallTranscripts =
+    data?.comparison_call_transcripts ?? data?.comparisonCallTranscripts;
 
   // Normalize voice transcript roles to chat roles (assistant/user)
   // Voice uses: "bot" = AI assistant, "agent" = human/customer caller

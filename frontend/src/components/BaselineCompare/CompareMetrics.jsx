@@ -6,31 +6,13 @@ import {
   getChangeText,
   getPerformanceMetricsLabel,
 } from "src/sections/test-detail/TestDetailDrawer/BasLineCompare/common";
-
-// KPI strip for chat baseline-vs-replay comparison (label + value + delta chip).
-
-const SectionLabel = ({ children }) => (
-  <Typography
-    sx={{
-      fontSize: 10,
-      fontWeight: 600,
-      color: "text.secondary",
-      textTransform: "uppercase",
-      letterSpacing: "0.06em",
-    }}
-  >
-    {children}
-  </Typography>
-);
-SectionLabel.propTypes = { children: PropTypes.node };
+import { AGENT_TYPES } from "src/sections/agents/constants";
+import CompareSectionLabel from "./CompareSectionLabel";
 
 const DeltaChip = ({ change, changePercent, changeText }) => {
   const isPositive = changePercent > 0;
   const isNegative = changePercent < 0;
 
-  // Theme-aware colors so the chip is readable on the translucent
-  // overlay background in both modes. See
-  // memory/feedback_use_theme_palette_mode.md.
   const fg = (theme) => {
     if (isPositive) {
       return theme.palette.mode === "dark"
@@ -167,11 +149,13 @@ KpiCell.propTypes = {
   changeText: PropTypes.string,
 };
 
-const ChatCompareMetrics = ({ data, isLoading }) => {
+const CompareMetrics = ({ data, isLoading, simulationCallType }) => {
+  const isVoice = simulationCallType === AGENT_TYPES.VOICE;
+
   if (isLoading) {
     return (
       <Stack gap={0.75}>
-        <SectionLabel>Performance overview</SectionLabel>
+        <CompareSectionLabel>Performance overview</CompareSectionLabel>
         <Box
           sx={{
             display: "grid",
@@ -209,7 +193,7 @@ const ChatCompareMetrics = ({ data, isLoading }) => {
 
   return (
     <Stack gap={0.75}>
-      <SectionLabel>Performance overview</SectionLabel>
+      <CompareSectionLabel>Performance overview</CompareSectionLabel>
       <Box
         sx={{
           display: "grid",
@@ -223,8 +207,7 @@ const ChatCompareMetrics = ({ data, isLoading }) => {
         {metrics.map((m) => (
           <KpiCell
             key={m.id ?? m.metric}
-            // `isVoice=false` — this view only renders for chat.
-            label={getPerformanceMetricsLabel(m?.metric, false)}
+            label={getPerformanceMetricsLabel(m?.metric, isVoice)}
             value={String(formatIfFloat(m?.value) ?? "—")}
             change={m?.change != null ? Number(formatIfFloat(m.change)) : null}
             changePercent={
@@ -232,7 +215,7 @@ const ChatCompareMetrics = ({ data, isLoading }) => {
                 ? Number(formatIfFloat(m.percentageChange))
                 : null
             }
-            changeText={getChangeText(false)}
+            changeText={getChangeText(isVoice)}
           />
         ))}
       </Box>
@@ -240,9 +223,10 @@ const ChatCompareMetrics = ({ data, isLoading }) => {
   );
 };
 
-ChatCompareMetrics.propTypes = {
+CompareMetrics.propTypes = {
   data: PropTypes.array,
   isLoading: PropTypes.bool,
+  simulationCallType: PropTypes.string,
 };
 
-export default ChatCompareMetrics;
+export default CompareMetrics;
