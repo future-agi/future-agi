@@ -39,19 +39,6 @@ import {
   toolbarButtonSx,
 } from "./traceTable.constants";
 
-const STATUS_CHIP_API = {
-  failing: "failed",
-  errored: "error",
-  inconclusive: "inconclusive",
-  passing: "passed",
-};
-const STATUS_LABELS = {
-  passed: "Passed",
-  failed: "Failed",
-  error: "Errored",
-  inconclusive: "Not measured",
-};
-
 const PAGE_SIZE = 50;
 // Room left under the table box for the pager row and the page's bottom gutter.
 const BELOW_TABLE_PX = 88;
@@ -121,7 +108,9 @@ export default function RunTraceTable({
     if (filters.subGoal?.length) next.sub_goal = filters.subGoal;
     if (filters.status?.length) next.status = filters.status;
     if (filters.goal_outcome?.length) next.goal_outcome = filters.goal_outcome;
-    if (statusChip !== "all") next.status = [STATUS_CHIP_API[statusChip]];
+    // STATUS_CHIPS ids are the server's own status values, so the chip needs no
+    // translation. It is applied last so it narrows within the panel filters.
+    if (statusChip !== "all") next.status = [statusChip];
     return next;
   }, [filters, statusChip]);
 
