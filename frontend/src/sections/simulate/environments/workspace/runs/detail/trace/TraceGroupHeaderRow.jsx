@@ -67,8 +67,12 @@ export default function TraceGroupHeaderRow({
 
   const descColumns = DESC_KEYS.filter((k) => show(k));
   const a = group.agg || {};
-  const uniqueBy = (fn) => new Set(group.rows.map(fn).filter(Boolean)).size;
-  const personaCount = uniqueBy((t) => t.persona);
+  const {
+    personas: personaCount,
+    situations: situationCount,
+    outcomes: outcomeCount,
+    branches: branchCount,
+  } = group.distinct || {};
 
   const descSummary = (key) => {
     if (key === "persona")
@@ -79,7 +83,9 @@ export default function TraceGroupHeaderRow({
     // scenario trial).
     if (key === "scenario") return null;
     if (key === "situation")
-      return `${group.count} situation${group.count === 1 ? "" : "s"}`;
+      return situationCount
+        ? `${situationCount} situation${situationCount === 1 ? "" : "s"}`
+        : "-";
     if (key === "subGoals") {
       // Counted from the rows here, so only once every call in the group is
       // on this page: a page's share would read as the whole group's.
@@ -94,9 +100,13 @@ export default function TraceGroupHeaderRow({
         : "-";
     }
     if (key === "idealOutcome")
-      return `${group.count} outcome${group.count === 1 ? "" : "s"}`;
+      return outcomeCount
+        ? `${outcomeCount} outcome${outcomeCount === 1 ? "" : "s"}`
+        : "-";
     if (key === "conversationBranch")
-      return `${group.count} branch${group.count === 1 ? "" : "es"}`;
+      return branchCount
+        ? `${branchCount} branch${branchCount === 1 ? "" : "es"}`
+        : "-";
     return "-";
   };
 
