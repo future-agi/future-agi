@@ -17,10 +17,10 @@ export const OPTIONS = [
     title: "Prebuilt Environments",
     icon: "solar:widget-linear",
     blurb:
-      "Skip world setup: pick a prebuilt world, then connect your agent to it.",
+      "Skip world setup: pick an environment the harness already built, then run your own copy.",
     setupSubtitle:
-      "Prebuilt environments you can adapt in minutes. Pick one, then wire your agent.",
-    status: OPTION_STATUS.COMING_SOON,
+      "Ready-made environments shared by everyone. Pick one to get your own copy.",
+    status: OPTION_STATUS.LIVE,
   },
   {
     id: "web",
@@ -97,20 +97,13 @@ export const BRING_YOUR_AGENT_ORDER = [
   "local",
 ];
 
-export const HERO_TEMPLATES = [
-  "Customer Support Line",
-  "Coding",
-  "Browser",
-  "Airline Rebooking",
-];
 export const HERO_CLONES = ["Slack", "Notion", "Gmail", "Salesforce", "Linear"];
 
 export const HERO_COPY = {
   templates: {
     tag: "Fastest",
     description:
-      "Prebuilt worlds with seeded state, tools, and rules. Pick one, then wire your agent. You'll be running scenarios in under a minute.",
-    moreLabel: "+ 10 more",
+      "Ready-made environments the harness already generated and validated. Pick one, get your own copy, and run it in under a minute.",
   },
   web: {
     tag: "Live SaaS sandboxes",

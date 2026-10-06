@@ -100,7 +100,7 @@ def annotate_for_list(
 
 def environment_row(job: HostedHarnessJob) -> dict[str, Any]:
     """One list row. Safe to call on a job that has never finished building."""
-    contract = _contract_data(job)
+    contract = contract_data(job)
     runs_count = getattr(job, "simulation_run_count", None)
     if runs_count is None:
         runs_count = job.simulation_runs.filter(deleted=False).count()
@@ -175,7 +175,7 @@ def agent_type(job: HostedHarnessJob, contract: dict[str, Any] | None = None) ->
     if connector and connector != "auto":
         return AGENT_TYPE_CHAT
     if contract is None:
-        contract = _contract_data(job)
+        contract = contract_data(job)
     modality = str((contract or {}).get("modality") or "").strip().lower()
     return AGENT_TYPE_VOICE if modality == "voice" else AGENT_TYPE_CHAT
 
@@ -208,7 +208,7 @@ def _domain(job: HostedHarnessJob) -> str | None:
     return str(metadata.get("domain") or "").strip()[:255] or None
 
 
-def _contract_data(job: HostedHarnessJob) -> dict[str, Any]:
+def contract_data(job: HostedHarnessJob) -> dict[str, Any]:
     """The contract snapshot, preferring the verified copy over the live one."""
     data = _row_stage_output(job, "contract")
     return data if isinstance(data, dict) else {}
@@ -325,7 +325,7 @@ def environment_detail(job: HostedHarnessJob) -> dict[str, Any]:
     caller can tell "not built yet" from "built with nothing in it". Nothing is
     computed that ALK did not write; the contract is passed through whole.
     """
-    contract = _contract_data(job)
+    contract = contract_data(job)
     environment = _stage_output(job, "environment")
     scenario_docs = _stage_output(job, "scenarios")
     catalogue = _stage_output(job, "sub_goals")
@@ -353,6 +353,8 @@ def environment_detail(job: HostedHarnessJob) -> dict[str, Any]:
             "evaluations_count": len(selected),
             "run": _run_link(job),
             "agent": _agent(job),
+            # A shared template opened read-only; the first edit or run copies it.
+            "shared_template": job.organization_id is None,
         }
     )
     return {

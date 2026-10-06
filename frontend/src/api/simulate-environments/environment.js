@@ -16,7 +16,6 @@ import {
   buildStatusFor,
   jobStatusFor,
 } from "src/sections/simulate/environments/helpers/harnessJobToRow";
-import { usePrebuiltEnvironments } from "./prebuilt";
 import { conversationInFlight } from "./conversationProjection";
 
 // The §6 environment-detail endpoint is implemented on the backend branch but not
@@ -234,10 +233,11 @@ export function harnessJobToEnvironment(item) {
 
 // Header Run-simulation gating: a built harness job can run through the product
 // bridge as soon as it has a run-test id, even before the client canRun is met.
+// A shared template has none of its own: running it copies it first.
 export const canRunHeader = (source, env, canRun) =>
   source === "harness"
     ? env?.status === ENV_STATUS.READY &&
-      Boolean(env?.platform?.runTestId) &&
+      Boolean(env?.platform?.runTestId || env?.sharedTemplate) &&
       canRun
     : canRun;
 
@@ -253,14 +253,14 @@ const overlayDefined = (base, extra) => {
 };
 
 // Resolve an environment id to its record. Order: an adopted client env in the
-// store, then the harness backend, then the prebuilt template catalogue. An
-// unknown id whose harness fetch 404s (and that no template claims) is notFound.
+// store, then the harness backend. A template is never opened here: using one
+// copies it into the account first, and the copy is a harness environment. An
+// unknown id whose harness fetch 404s is notFound.
 export function useEnvironment(envId) {
   const clientEnv = useEnvironmentsStore((s) => s.workspaceEnvs[envId]);
-  const prebuilt = usePrebuiltEnvironments();
 
   // A client record only shadows the poll when it is genuinely client-only
-  // (template/fork, or a mockMode build). A real build-adopted record
+  // (a fork, or a mockMode build). A real build-adopted record
   // (origin:"harness") already holds the completed job's real snapshot, so the
   // client-first branch below serves it without a second fetch.
   const jobQuery = useQuery(harnessJobQuery(envId, { enabled: !clientEnv }));
@@ -297,11 +297,6 @@ export function useEnvironment(envId) {
   const harness = useMemo(
     () => (jobQuery.data ? harnessJobToEnvironment(jobQuery.data) : null),
     [jobQuery.data],
-  );
-
-  const templateEnv = useMemo(
-    () => prebuilt.data?.find((tpl) => tpl.id === envId) || null,
-    [prebuilt.data, envId],
   );
 
   if (clientEnv) {
@@ -352,31 +347,18 @@ export function useEnvironment(envId) {
     };
   }
 
-  if (templateEnv) {
-    return {
-      env: templateEnv,
-      source: "template",
-      bootstrapState: undefined,
-      notFound: false,
-      isLoading: false,
-    };
-  }
-
-  const notFound =
-    isJobNotFound(jobQuery.error) &&
-    prebuilt.isSuccess &&
-    !templateEnv;
+  const notFound = isJobNotFound(jobQuery.error);
 
   return {
     env: null,
     source: null,
     bootstrapState: undefined,
     notFound,
-    // A non-404 failure to resolve the id (the job fetch errored and no client or
-    // template record covers it). Surfaced so the workspace renders a recoverable
+    // A non-404 failure to resolve the id (the job fetch errored and no client
+    // record covers it). Surfaced so the workspace renders a recoverable
     // error state instead of an endless blank placeholder.
     error: notFound ? null : jobQuery.error || null,
     refetch: jobQuery.refetch,
-    isLoading: jobQuery.isPending || prebuilt.isPending,
+    isLoading: jobQuery.isPending,
   };
 }

@@ -8,10 +8,7 @@ import {
 import Iconify from "src/components/iconify";
 import { SegmentedTabs } from "src/components/tabs/tabs";
 import { paths } from "src/routes/paths";
-import { useAdoptTemplate } from "src/api/simulate-environments/environments";
-import { packStats } from "../helpers/packStats";
-import { useEnvironmentsStore } from "../store/useEnvironmentsStore";
-import { seedFromTemplate } from "../workspace/helpers/seedEnvState";
+import { usePrebuiltEnvironment } from "src/api/simulate-environments/prebuilt";
 import SectionCard from "../components/SectionCard";
 import LocalScaffoldCard from "./LocalScaffoldCard";
 import {
@@ -21,6 +18,7 @@ import {
   CLOUD_BULLETS,
   CLOUD_CARD,
   NOTHING_TOUCHES_PRODUCTION,
+  SCENARIOS_CARD,
   STATS_CARD,
   TEMPLATE_ADOPT_LABEL,
   TEMPLATE_SHAPE,
@@ -28,46 +26,32 @@ import {
 } from "../useTemplate.constants";
 
 /**
- * Build a prebuilt template — the "where to build it" panel.
+ * Use a template — the panel shown for one entry in the library.
  *
- * A template is a world that already exists (seeded state, tools, rules,
- * scenarios and a baseline agent), so there's nothing to derive. The only
- * decision is where to build it: here (cloud sandbox) or locally (CLI
- * scaffold). Rendered as the standalone Use-template page and inline as a
- * detail pane, so it takes a base `template` rather than owning a route.
+ * A template is an environment the harness already built and validated, shared
+ * by everyone, so there is nothing to derive. Opening it shows the shared
+ * environment read-only and creates nothing; the first edit or run there copies
+ * it into the account. Rendered as the standalone Use-template page and inline
+ * as a detail pane, so it takes a base `template` rather than owning a route.
  */
 export default function TemplateBuildPanel({ template, showName = false }) {
   const navigate = useNavigate();
   const [mode, setMode] = useState(BUILD_MODES.CLOUD);
-  const adopt = useAdoptTemplate();
-  const adoptEnvironment = useEnvironmentsStore((s) => s.adoptEnvironment);
-  const patchEnvState = useEnvironmentsStore((s) => s.patchEnvState);
+  const detail = usePrebuiltEnvironment(template?.id);
 
   if (!template) return null;
 
-  const rows = (template.seed?.tables || []).reduce((a, t) => a + (t.rows || 0), 0);
   const stats = [
-    { label: "World", value: `${rows.toLocaleString()} seeded rows` },
     { label: "Tools", value: `${template.tools?.length || 0} the world answers` },
     { label: "Hard rules", value: `${template.rules?.length || 0} graded on every run` },
-    { label: "Scenarios", value: `${packStats(template).scenarios} ready to run` },
-    { label: "Evals", value: `${template.evalPreset?.length || 0} suggested` },
+    { label: "Scenarios", value: `${template.scenarioCount || 0} ready to run` },
+    { label: "Evals", value: `${template.evalPreset?.length || 0} selected` },
     { label: "Agent", value: AGENT_STAT_VALUE },
   ];
+  const scenarios = detail.data?.scenarios ?? [];
 
-  // Adopting a template seeds the workspace directly: register the env record,
-  // seed its per-env state (baseline agent, generated scenarios, the preset as
-  // suggested evals, the template lock), then open the workspace. There is no
-  // build page or derivation stream for a prebuilt world.
-  const handleAdopt = () =>
-    adopt.mutate(template.id, {
-      onSuccess: ({ envId }) => {
-        const now = new Date().toISOString();
-        adoptEnvironment({ ...template, id: envId, templateId: template.id }, now);
-        patchEnvState(envId, seedFromTemplate(template, now));
-        navigate(paths.dashboard.simulate.environments.detail(envId));
-      },
-    });
+  const handleUse = () =>
+    navigate(paths.dashboard.simulate.environments.detail(template.environmentId));
 
   return (
     <Stack spacing={2}>
@@ -125,8 +109,7 @@ export default function TemplateBuildPanel({ template, showName = false }) {
             >
               <Button
                 variant="contained" color="primary"
-                onClick={handleAdopt}
-                disabled={adopt.isPending}
+                onClick={handleUse}
                 startIcon={<Iconify icon="solar:magic-stick-3-bold" width={16} />}
                 sx={{ typography: "s2", fontWeight: "fontWeightBold", whiteSpace: "nowrap" }}
               >
@@ -147,6 +130,23 @@ export default function TemplateBuildPanel({ template, showName = false }) {
               ))}
             </Stack>
           </SectionCard>
+
+          {scenarios.length > 0 && (
+            <SectionCard title={SCENARIOS_CARD.title} subtitle={SCENARIOS_CARD.subtitle}>
+              <Stack sx={{ px: 2.5, py: 2, maxHeight: 360, overflow: "auto" }} spacing={1.5}>
+                {scenarios.map((scenario) => (
+                  <Box key={scenario.scenario_key}>
+                    <Typography sx={{ typography: "s2", fontWeight: "fontWeightSemiBold" }}>
+                      {scenario.name || scenario.scenario_key}
+                    </Typography>
+                    <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+                      {[scenario.use_case, scenario.persona?.name].filter(Boolean).join(" · ")}
+                    </Typography>
+                  </Box>
+                ))}
+              </Stack>
+            </SectionCard>
+          )}
 
           <Box
             sx={{

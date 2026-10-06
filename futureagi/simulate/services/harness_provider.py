@@ -148,6 +148,8 @@ def scope_jobs(queryset, request):
 
 def _scoped_job(request, pk):
     """One job, or None, resolved under the caller's organization and workspace."""
+    if getattr(request, "template_workspace", None) is not None:
+        return request.template_workspace
     organization = request_organization(request)
     if organization is None:
         return None
@@ -2328,6 +2330,8 @@ class HostedHarnessProvider:
         }
 
     def _job(self, request, pk):
+        if getattr(request, "template_workspace", None) is not None:
+            return request.template_workspace
         organization = request_organization(request)
         return scope_jobs(
             HostedHarnessJob.no_workspace_objects.filter(

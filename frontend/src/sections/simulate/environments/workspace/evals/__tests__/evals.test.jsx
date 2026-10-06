@@ -138,6 +138,7 @@ describe("EvalsStep — tool-call evaluation on a backend-backed env", () => {
     agent: { typeId: "voice" },
   };
   const detail = (on) => ({
+    id: ENV.id,
     evaluations: { selected: [] },
     settings: { enable_tool_evaluation: on },
   });

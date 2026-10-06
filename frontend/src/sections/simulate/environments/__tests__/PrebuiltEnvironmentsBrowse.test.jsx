@@ -5,14 +5,49 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { render } from "src/utils/test-utils";
 
-const enqueueSnackbar = vi.fn();
 const navigate = vi.fn();
-
-vi.mock("notistack", () => ({ enqueueSnackbar: (...a) => enqueueSnackbar(...a) }));
 
 vi.mock("react-router-dom", async () => {
   const actual = await vi.importActual("react-router-dom");
   return { ...actual, useNavigate: () => navigate };
+});
+
+// What GET /harness-environment-templates/ returns, mapped by the real adapter.
+const SERVER_TEMPLATES = [
+  {
+    slug: "banking_support",
+    name: "Banking — Card, Fraud & Account Support",
+    description: "Retail-bank support with step-up auth.",
+    surface: "voice",
+    domain: "Fintech",
+    scenario_count: 12,
+    tools: [{ name: "lock_card", description: "Lock a card" }],
+    rules: ["Never move money"],
+    evaluations: [],
+  },
+  {
+    slug: "debt_collection",
+    name: "Collections — Payment Reminder",
+    description: "Outbound early-stage collections.",
+    surface: "voice",
+    domain: "Financial services",
+    scenario_count: 10,
+    tools: [],
+    rules: [],
+    evaluations: [],
+  },
+];
+
+vi.mock("src/api/simulate-environments/prebuilt", async () => {
+  const actual = await vi.importActual("src/api/simulate-environments/prebuilt");
+  return {
+    ...actual,
+    usePrebuiltEnvironments: () => ({
+      data: SERVER_TEMPLATES.map(actual.templateToCard),
+      isLoading: false,
+    }),
+    usePrebuiltEnvironment: () => ({ data: undefined }),
+  };
 });
 
 const { default: PrebuiltEnvironmentsBrowse } = await import(
@@ -31,10 +66,10 @@ const renderBrowse = () => {
 };
 
 const tile = (name) => screen.getByRole("button", { name: new RegExp(name) });
+const BANKING = "Banking — Card, Fraud & Account Support";
 
 describe("PrebuiltEnvironmentsBrowse", () => {
   beforeEach(() => {
-    enqueueSnackbar.mockReset();
     navigate.mockReset();
   });
 
@@ -42,106 +77,68 @@ describe("PrebuiltEnvironmentsBrowse", () => {
     vi.clearAllMocks();
   });
 
-  it("renders agent-type category headers and tiles from the fixture", async () => {
+  it("lists every template under its agent-type group with its real suite size", () => {
     renderBrowse();
 
-    expect(await screen.findByText("Customer Support Line")).toBeInTheDocument();
-    ["Voice & chat", "Computer use", "Code"].forEach((group) => {
-      expect(screen.getByText(group)).toBeInTheDocument();
-    });
-    ["Retail Banking Assistant", "Browser", "Coding", "Verilog"].forEach(
-      (name) => expect(screen.getByText(name)).toBeInTheDocument(),
-    );
+    expect(screen.getByText("Voice & chat")).toBeInTheDocument();
+    expect(screen.getByText(BANKING)).toBeInTheDocument();
+    expect(screen.getByText("Collections — Payment Reminder")).toBeInTheDocument();
+    expect(screen.getByText("12 scenarios · 1 tool")).toBeInTheDocument();
   });
 
-  it("reports the exact scenario count on a tile", async () => {
-    renderBrowse();
-    // Customer Support Line: 8 tools, 6 rules, 4 data-trap tables, Starter depth 3.
-    expect(await screen.findByText(/68 scenarios/)).toBeInTheDocument();
-  });
-
-  it("filters tiles by name as the user searches", async () => {
+  it("filters templates by name or domain as the user searches", async () => {
     const user = userEvent.setup();
     renderBrowse();
-    await screen.findByText("Customer Support Line");
 
-    await user.type(
-      screen.getByPlaceholderText("Search templates…"),
-      "Verilog",
-    );
+    await user.type(screen.getByPlaceholderText("Search templates…"), "fintech");
 
     await waitFor(() =>
-      expect(screen.queryByText("Customer Support Line")).not.toBeInTheDocument(),
+      expect(screen.queryByText("Collections — Payment Reminder")).not.toBeInTheDocument(),
     );
-    expect(screen.getByText("Verilog")).toBeInTheDocument();
-    expect(screen.queryByText("Voice & chat")).not.toBeInTheDocument();
-    expect(screen.getByText("Code")).toBeInTheDocument();
+    expect(screen.getByText(BANKING)).toBeInTheDocument();
   });
 
-  it("hides the build panel until a template is selected", async () => {
-    renderBrowse();
-    await screen.findByText("Customer Support Line");
-
-    expect(screen.queryByRole("tab", { name: /Build here/ })).not.toBeInTheDocument();
-  });
-
-  it("opens the inline build panel for the clicked row without navigating", async () => {
+  it("opens the panel for the picked template without leaving the page", async () => {
     const user = userEvent.setup();
     renderBrowse();
-    await screen.findByText("Customer Support Line");
+    expect(screen.queryByRole("button", { name: /Open template/ })).toBeNull();
 
-    await user.click(tile("Customer Support Line"));
+    await user.click(tile(BANKING));
 
-    expect(screen.getByRole("tab", { name: /Build here/ })).toBeInTheDocument();
-    expect(screen.getByText("Build in the cloud")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Open template/ })).toBeInTheDocument();
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it("selects a template from the keyboard (Enter)", async () => {
+    renderBrowse();
+
+    fireEvent.keyDown(tile(BANKING), { key: "Enter" });
+
     expect(
-      screen.getByRole("button", { name: /Build environment/ }),
+      await screen.findByRole("button", { name: /Open template/ }),
     ).toBeInTheDocument();
-    expect(navigate).not.toHaveBeenCalled();
-    expect(enqueueSnackbar).not.toHaveBeenCalled();
   });
 
-  it("selects a row from the keyboard (Enter)", async () => {
-    renderBrowse();
-    await screen.findByText("Customer Support Line");
-
-    const target = tile("Customer Support Line");
-    expect(target).toHaveAttribute("tabindex", "0");
-    fireEvent.keyDown(target, { key: "Enter" });
-
-    expect(await screen.findByRole("tab", { name: /Build here/ })).toBeInTheDocument();
-    expect(navigate).not.toHaveBeenCalled();
-  });
-
-  it("collapses the selection when search filters it out", async () => {
+  it("closes the panel when search filters its template out", async () => {
     const user = userEvent.setup();
     renderBrowse();
-    await screen.findByText("Customer Support Line");
+    await user.click(tile(BANKING));
 
-    await user.click(tile("Customer Support Line"));
-    expect(screen.getByRole("tab", { name: /Build here/ })).toBeInTheDocument();
-
-    await user.type(
-      screen.getByPlaceholderText("Search templates…"),
-      "Verilog",
-    );
+    await user.type(screen.getByPlaceholderText("Search templates…"), "collections");
 
     await waitFor(() =>
-      expect(screen.queryByRole("tab", { name: /Build here/ })).not.toBeInTheDocument(),
+      expect(screen.queryByRole("button", { name: /Open template/ })).toBeNull(),
     );
   });
 
   it("returns to the environments home from the back button", async () => {
     const user = userEvent.setup();
     renderBrowse();
-    await screen.findByText("Customer Support Line");
 
     await user.click(
       screen.getByRole("button", { name: /Back to how you want to start/ }),
     );
 
-    expect(navigate).toHaveBeenCalledWith(
-      "/dashboard/simulate/environments",
-    );
+    expect(navigate).toHaveBeenCalledWith("/dashboard/simulate/environments");
   });
 });

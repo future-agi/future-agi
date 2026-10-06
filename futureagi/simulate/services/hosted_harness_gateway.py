@@ -919,6 +919,12 @@ class HostedSourceAcquirer:
 class PlatformSecretResolver:
     def resolve(self, job: HostedHarnessJob) -> dict[str, str]:
         resolved: dict[str, str] = {}
+        # A copy of a system template runs its agent on Future AGI's own keys. The column,
+        # set only by the platform when it copies a template, decides that; a payload never can.
+        owner = job.environment if job.environment_id else job
+        platform_owned = (
+            platform_template_target_secrets() if owner.template_slug else {}
+        )
         for alias, reference in job.payload["agent"]["secret_refs"].items():
             if reference["manager"] != "platform-vault":
                 raise HostedHarnessError(
@@ -932,6 +938,9 @@ class PlatformSecretResolver:
                     f"secret {alias} is not a target_provider secret",
                     status_code=422,
                 )
+            if reference["key"] in platform_owned:
+                resolved[alias] = platform_owned[reference["key"]]
+                continue
             query = HostedHarnessSecret.no_workspace_objects.filter(
                 organization=job.organization,
                 name=reference["key"],
@@ -950,21 +959,20 @@ class PlatformSecretResolver:
         return resolved
 
 
-def resolve_platform_simulator_secrets() -> dict[str, str]:
-    """Resolve Future AGI-owned simulator credentials from process configuration.
+def _platform_config_values(
+    configured: Mapping[str, str], *, adc_alias: str
+) -> dict[str, str]:
+    """Read platform-owned values named by a settings map from process configuration.
 
-    This deliberately has no job/request argument: callers cannot select, replace, or observe
-    these values through the hosted API. The namespaced aliases prevent an agent's own provider
-    key from colliding with the simulator provider key for the same vendor.
+    An unset Google credentials alias falls back to the file GOOGLE_APPLICATION_CREDENTIALS
+    names, which is how deployments mount the Vertex service account.
     """
     resolved: dict[str, str] = {}
-    configured = getattr(settings, "ALK_HOSTED_SIMULATOR_SECRET_ENV", {})
     for alias, env_name in configured.items():
         value = str(os.getenv(str(env_name), "") or "")
         if value:
             resolved[str(alias)] = value
 
-    adc_alias = "SIMULATOR_GOOGLE_APPLICATION_CREDENTIALS_JSON"
     if adc_alias in configured and not resolved.get(adc_alias):
         adc_path = str(os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "") or "")
         if adc_path:
@@ -972,11 +980,32 @@ def resolve_platform_simulator_secrets() -> dict[str, str]:
                 resolved[adc_alias] = Path(adc_path).read_text(encoding="utf-8")
             except OSError as exc:
                 raise HostedHarnessError(
-                    "simulator_credentials_unavailable",
+                    "platform_credentials_unavailable",
                     "configured platform Google credentials cannot be read",
                     status_code=500,
                 ) from exc
     return resolved
+
+
+def resolve_platform_simulator_secrets() -> dict[str, str]:
+    """Resolve Future AGI-owned simulator credentials from process configuration.
+
+    This deliberately has no job/request argument: callers cannot select, replace, or observe
+    these values through the hosted API. The namespaced aliases prevent an agent's own provider
+    key from colliding with the simulator provider key for the same vendor.
+    """
+    return _platform_config_values(
+        getattr(settings, "ALK_HOSTED_SIMULATOR_SECRET_ENV", {}),
+        adc_alias="SIMULATOR_GOOGLE_APPLICATION_CREDENTIALS_JSON",
+    )
+
+
+def platform_template_target_secrets() -> dict[str, str]:
+    """Future AGI-owned keys a system template's own agent runs on, by secret name."""
+    return _platform_config_values(
+        getattr(settings, "ALK_HOSTED_TEMPLATE_TARGET_SECRET_ENV", {}),
+        adc_alias="GOOGLE_APPLICATION_CREDENTIALS_JSON",
+    )
 
 
 def platform_dialer_status() -> dict[str, Any]:
@@ -5219,7 +5248,6 @@ def store_source_archive(organization, files, paths, name: str) -> dict[str, Any
     `source_id` is used later as `source.archive_artifact_id` and resolved by
     `HostedSourceAcquirer` for `source.kind == "archive"`.
     """
-    source_id = str(uuid.uuid4())
     archive = io.BytesIO()
     total = 0
     seen: set[str] = set()
@@ -5240,6 +5268,17 @@ def store_source_archive(organization, files, paths, name: str) -> dict[str, Any
             info.mode = 0o755 if data[:2] == b"#!" else 0o644
             tar.addfile(info, io.BytesIO(data))
     body = archive.getvalue()
+    source_id = put_source_archive(organization.id, body)
+    return {
+        "source_id": source_id,
+        "name": (name or "uploaded-agent")[:255],
+        "file_count": len(files),
+        "total_bytes": total,
+    }
+
+
+def put_source_archive(organization_id, body: bytes) -> str:
+    """Store a `source/`-rooted tar.gz for an organization and return its `source_id`."""
     max_bytes = getattr(settings, "ALK_HOSTED_SOURCE_MAX_BYTES", 256 * 1024 * 1024)
     if len(body) > max_bytes:
         raise HostedHarnessError(
@@ -5247,21 +5286,17 @@ def store_source_archive(organization, files, paths, name: str) -> dict[str, Any
             "compressed source exceeds the hosted source limit",
             status_code=413,
         )
+    source_id = str(uuid.uuid4())
     client = get_storage_client()
     ensure_bucket(client, UPLOAD_BUCKET_NAME)
     client.put_object(
         bucket_name=UPLOAD_BUCKET_NAME,
-        object_name=_source_object_key(organization.id, source_id),
+        object_name=_source_object_key(organization_id, source_id),
         data=io.BytesIO(body),
         length=len(body),
         content_type="application/gzip",
     )
-    return {
-        "source_id": source_id,
-        "name": (name or "uploaded-agent")[:255],
-        "file_count": len(files),
-        "total_bytes": total,
-    }
+    return source_id
 
 
 def _load_source_archive(job: HostedHarnessJob) -> bytes:

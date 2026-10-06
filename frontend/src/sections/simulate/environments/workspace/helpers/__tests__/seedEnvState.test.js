@@ -3,41 +3,9 @@ import { generatedPool } from "src/api/simulate-environments/_fixtures/scenarioP
 import { MOCK_WORLD } from "src/api/simulate-environments/_fixtures/world";
 import { MOCK_READING } from "src/api/simulate-environments/_fixtures/mockReading";
 import { AGENT_TYPES } from "src/sections/agents/constants";
-import {
-  seedFromTemplate,
-  seedAgentBuilt,
-  envFromDraft,
-} from "../seedEnvState";
+import { seedAgentBuilt, envFromDraft } from "../seedEnvState";
 
 const NOW = "2026-09-17T10:00:00.000Z";
-const template = MOCK_WORLD;
-
-describe("seedFromTemplate", () => {
-  const state = seedFromTemplate(template, NOW);
-
-  it("seeds a template-baseline agent reached via seed", () => {
-    expect(state.agent.via).toBe("seed");
-    expect(state.agent.seeded).toBe(true);
-    expect(state.agent.name).toBe("Template baseline");
-  });
-
-  it("stamps the template sticker and starts with no added evals", () => {
-    expect(state.seededFromTemplate).toBe(true);
-    expect(state.evals).toEqual([]);
-  });
-
-  it("records v1 agent and env versions with the template notes", () => {
-    expect(state.envVersions[0].note).toBe("First build from the template.");
-    expect(state.agentVersions[0].note).toBe("Shipped with the template.");
-    expect(state.envVersions[0].label).toBe("v1");
-  });
-
-  it("primes the full generated scenario pool from the templates source", () => {
-    expect(state.scenarios.length).toBe(generatedPool(template).length);
-    expect(state.scenarioSource).toBe("templates");
-  });
-});
-
 describe("seedAgentBuilt", () => {
   const draft = { kind: "repo", value: "github.com/acme/support-agent" };
   const state = seedAgentBuilt(draft, null, NOW);

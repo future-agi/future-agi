@@ -10,6 +10,7 @@ import {
   amendScenarios,
   scenarioCoverage,
 } from "src/api/simulate-environments/scenarios";
+import { useOwnEnvironmentId } from "src/api/simulate-environments/ownEnvironment";
 
 /**
  * The scenarios list read path, mirroring useMyEnvironments: 0-indexed page in
@@ -109,9 +110,10 @@ export function useScenarioCoverage(
 // the suite and the counts.
 export function useAmendScenarios(jobId) {
   const queryClient = useQueryClient();
+  const ownEnvironmentId = useOwnEnvironmentId();
   return useMutation({
     meta: { errorHandled: true },
-    mutationFn: (body) => amendScenarios(jobId, body),
+    mutationFn: async (body) => amendScenarios(await ownEnvironmentId(jobId), body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: harnessScenariosListKey(jobId) });
     },

@@ -883,7 +883,13 @@ def _derive_agent_name_from_job(job: HostedHarnessJob) -> str:
 def provision_scenarios(
     attempt: HostedHarnessAttempt, payload: dict[str, Any]
 ) -> dict[str, Any]:
-    job = attempt.job
+    return provision_job_scenarios(attempt.job, payload)
+
+
+def provision_job_scenarios(
+    job: HostedHarnessJob, payload: dict[str, Any]
+) -> dict[str, Any]:
+    """Register an authored suite on the platform: run test, dataset rows and evals."""
     # Enforce exactly scenario_count unique personas.
     persona_keys = [p["scenario_key"] for p in payload["personas"]]
     if len(persona_keys) != len(set(persona_keys)):

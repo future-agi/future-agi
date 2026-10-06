@@ -11,6 +11,7 @@ from simulate.models import AgentDefinition, HostedHarnessJob
 from simulate.serializers.harness_environment import (
     HarnessEnvironmentAddEvaluationSerializer,
     HarnessEnvironmentAvailableEvalsSerializer,
+    HarnessEnvironmentCopyResponseSerializer,
     HarnessEnvironmentDetailSerializer,
     HarnessEnvironmentListQuerySerializer,
     HarnessEnvironmentListResponseSerializer,
@@ -31,10 +32,13 @@ from simulate.services.harness_environment import (
 from simulate.services.harness_provider import (
     get_harness_provider,
     request_organization,
+    request_workspace,
     scope_jobs,
 )
 from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_serializers import EmptyRequestSerializer
 from tfc.utils.pagination import ExtendedPageNumberPagination
+from simulate.views.template_workspace import TemplateWorkspaceMixin, shared_template
 
 
 def _touch_content(job):
@@ -85,7 +89,7 @@ def _uuid_or_none(value):
         return None
 
 
-class HarnessEnvironmentViewSet(viewsets.ViewSet):
+class HarnessEnvironmentViewSet(TemplateWorkspaceMixin, viewsets.ViewSet):
     """The environments surface: list, delete, and start a simulation.
 
     An environment is the job that built it (the world itself lives in object
@@ -115,6 +119,8 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         )
 
     def _job(self, request, pk):
+        if getattr(request, "template_workspace", None) is not None:
+            return request.template_workspace
         identifier = _uuid_or_none(pk)
         if identifier is None:
             return None
@@ -148,7 +154,14 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
                 {"detail": "Environment not found"},
                 status=status.HTTP_404_NOT_FOUND,
             )
-        return Response(environment_detail(job))
+        detail = environment_detail(job)
+        if job.organization_id is None:
+            from simulate.services.harness_templates import template_evaluations
+
+            detail["evaluations"]["selected"] = template_evaluations(
+                job, request_organization(request), request_workspace(request)
+            )["selected"]
+        return Response(detail)
 
     @validated_request(
         request_serializer=HarnessEnvironmentRenameSerializer,
@@ -207,6 +220,55 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         """Create one new Run for the selected scenarios and trial count."""
         return get_harness_provider().run(request, pk)
 
+    @validated_request(
+        request_serializer=EmptyRequestSerializer,
+        responses={
+            200: HarnessEnvironmentCopyResponseSerializer,
+            201: HarnessEnvironmentCopyResponseSerializer,
+        },
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"])
+    def copy(self, request, pk=None):
+        """Give the caller's organization its own copy of a shared template.
+
+        A template is read by everyone and changed by nobody, so editing or running one
+        acts on this copy. A retry with the same Idempotency-Key returns the same copy.
+        """
+        from simulate.services.harness_templates import copy_template
+        from simulate.services.hosted_harness import HostedHarnessError
+
+        template = shared_template(pk)
+        if template is None:
+            return Response(
+                {"detail": "Template not found"}, status=status.HTTP_404_NOT_FOUND
+            )
+        organization = request_organization(request)
+        if organization is None:
+            return Response(
+                {"detail": "an organization is required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        idempotency_key = request.headers.get("Idempotency-Key", "").strip()
+        if not idempotency_key:
+            return Response(
+                {"detail": "Idempotency-Key header is required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            environment, created = copy_template(
+                template,
+                organization=organization,
+                workspace=request_workspace(request),
+                idempotency_key=idempotency_key,
+            )
+        except HostedHarnessError as exc:
+            return Response(exc.as_dict(), status=exc.status_code)
+        return Response(
+            {"environment_id": str(environment.id)},
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
     def _run_test_job(self, request, pk):
         """The environment and its run test, or the response that refuses the call.
 
@@ -240,6 +302,17 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         """
         from simulate.services.harness_evals import addable_evals
 
+        job = self._job(request, pk)
+        if job is not None and job.organization_id is None:
+            from simulate.services.harness_templates import template_evaluations
+
+            return Response(
+                {
+                    "evaluations": template_evaluations(
+                        job, request_organization(request), request_workspace(request)
+                    )["available"]
+                }
+            )
         job, refusal = self._run_test_job(request, pk)
         if refusal is not None:
             return refusal

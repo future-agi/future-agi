@@ -50503,6 +50503,66 @@
             },
             "parameters": []
         },
+        "/simulate/api/harness-environment-templates/": {
+            "get": {
+                "operationId": "simulate_api_harness-environment-templates_list",
+                "summary": "The shared template library.",
+                "description": "Every user reads the same system templates and opens one read-only at ``environment_id``.\nNothing is created by looking: editing or running one first asks for the caller's own copy\n(``harness-environments/{id}/copy/``).",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessEnvironmentTemplateListResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ]
+            },
+            "parameters": []
+        },
+        "/simulate/api/harness-environment-templates/{slug}/": {
+            "get": {
+                "operationId": "simulate_api_harness-environment-templates_read",
+                "summary": "The shared template library.",
+                "description": "Every user reads the same system templates and opens one read-only at ``environment_id``.\nNothing is created by looking: editing or running one first asks for the caller's own copy\n(``harness-environments/{id}/copy/``).",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessEnvironmentTemplateDetail"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ]
+            },
+            "parameters": [
+                {
+                    "name": "slug",
+                    "in": "path",
+                    "required": true,
+                    "type": "string",
+                    "pattern": "[-a-zA-Z0-9_]+"
+                }
+            ]
+        },
         "/simulate/api/harness-environments/": {
             "get": {
                 "operationId": "simulate_api_harness-environments_list",
@@ -50624,6 +50684,56 @@
                 "tags": [
                     "simulate"
                 ]
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness-environments/{id}/copy/": {
+            "post": {
+                "operationId": "simulate_api_harness-environments_copy",
+                "summary": "Give the caller's organization its own copy of a shared template.",
+                "description": "A template is read by everyone and changed by nobody, so editing or running one\nacts on this copy. A retry with the same Idempotency-Key returns the same copy.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/EmptyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessEnvironmentCopyResponse"
+                        }
+                    },
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessEnvironmentCopyResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
             },
             "parameters": [
                 {
@@ -122257,6 +122367,265 @@
                 }
             }
         },
+        "HarnessEnvironmentTemplateTool": {
+            "required": [
+                "name",
+                "description"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string"
+                }
+            }
+        },
+        "HarnessEnvironmentTemplate": {
+            "required": [
+                "slug",
+                "environment_id",
+                "name",
+                "description",
+                "surface",
+                "direction",
+                "languages",
+                "domain",
+                "scenario_count",
+                "tools",
+                "rules",
+                "evaluations",
+                "updated_at"
+            ],
+            "type": "object",
+            "properties": {
+                "slug": {
+                    "title": "Slug",
+                    "type": "string",
+                    "format": "slug",
+                    "pattern": "^[-a-zA-Z0-9_]+$",
+                    "minLength": 1
+                },
+                "environment_id": {
+                    "title": "Environment id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string"
+                },
+                "surface": {
+                    "title": "Surface",
+                    "type": "string"
+                },
+                "direction": {
+                    "title": "Direction",
+                    "type": "string"
+                },
+                "languages": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "domain": {
+                    "title": "Domain",
+                    "type": "string"
+                },
+                "scenario_count": {
+                    "title": "Scenario count",
+                    "type": "integer"
+                },
+                "tools": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessEnvironmentTemplateTool"
+                    }
+                },
+                "rules": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "evaluations": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "updated_at": {
+                    "title": "Updated at",
+                    "type": "string",
+                    "format": "date-time"
+                }
+            }
+        },
+        "HarnessEnvironmentTemplateListResponse": {
+            "required": [
+                "results"
+            ],
+            "type": "object",
+            "properties": {
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessEnvironmentTemplate"
+                    }
+                }
+            }
+        },
+        "HarnessEnvironmentTemplateScenario": {
+            "required": [
+                "scenario_key",
+                "name",
+                "use_case",
+                "situation",
+                "outcome",
+                "persona"
+            ],
+            "type": "object",
+            "properties": {
+                "scenario_key": {
+                    "title": "Scenario key",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string"
+                },
+                "use_case": {
+                    "title": "Use case",
+                    "type": "string"
+                },
+                "situation": {
+                    "title": "Situation",
+                    "type": "string"
+                },
+                "outcome": {
+                    "title": "Outcome",
+                    "type": "string"
+                },
+                "persona": {
+                    "title": "Persona",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    }
+                }
+            }
+        },
+        "HarnessEnvironmentTemplateDetail": {
+            "required": [
+                "slug",
+                "environment_id",
+                "name",
+                "description",
+                "surface",
+                "direction",
+                "languages",
+                "domain",
+                "scenario_count",
+                "tools",
+                "rules",
+                "evaluations",
+                "updated_at",
+                "scenarios"
+            ],
+            "type": "object",
+            "properties": {
+                "slug": {
+                    "title": "Slug",
+                    "type": "string",
+                    "format": "slug",
+                    "pattern": "^[-a-zA-Z0-9_]+$",
+                    "minLength": 1
+                },
+                "environment_id": {
+                    "title": "Environment id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string"
+                },
+                "surface": {
+                    "title": "Surface",
+                    "type": "string"
+                },
+                "direction": {
+                    "title": "Direction",
+                    "type": "string"
+                },
+                "languages": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "domain": {
+                    "title": "Domain",
+                    "type": "string"
+                },
+                "scenario_count": {
+                    "title": "Scenario count",
+                    "type": "integer"
+                },
+                "tools": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessEnvironmentTemplateTool"
+                    }
+                },
+                "rules": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "evaluations": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "updated_at": {
+                    "title": "Updated at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "scenarios": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessEnvironmentTemplateScenario"
+                    }
+                }
+            }
+        },
         "HarnessEnvironment": {
             "required": [
                 "id",
@@ -122489,7 +122858,8 @@
                 "personas_count",
                 "evaluations_count",
                 "run",
-                "agent"
+                "agent",
+                "shared_template"
             ],
             "type": "object",
             "properties": {
@@ -122596,6 +122966,10 @@
                 },
                 "agent": {
                     "$ref": "#/definitions/HarnessEnvironmentAgent"
+                },
+                "shared_template": {
+                    "title": "Shared template",
+                    "type": "boolean"
                 }
             }
         },
@@ -123500,6 +123874,19 @@
                     "type": "string",
                     "maxLength": 255,
                     "minLength": 1
+                }
+            }
+        },
+        "HarnessEnvironmentCopyResponse": {
+            "required": [
+                "environment_id"
+            ],
+            "type": "object",
+            "properties": {
+                "environment_id": {
+                    "title": "Environment id",
+                    "type": "string",
+                    "format": "uuid"
                 }
             }
         },

@@ -3,38 +3,28 @@ import { render, screen, fireEvent } from "src/utils/test-utils";
 import TemplateRow from "../TemplateRow";
 
 const TEMPLATE = {
-  id: "env-voice-support",
-  name: "Customer Support Line",
+  id: "banking_support",
+  name: "Banking — Card, Fraud & Account Support",
   surface: "voice",
-  tagline: "Inbound phone support for an online storefront",
-  difficulty: "Starter",
-  tools: [{ name: "lookup_order" }, { name: "issue_refund" }],
-  rules: ["Refunds need approval"],
-  seed: { tables: [{ name: "orders", rows: 500, note: "delayed" }] },
+  domain: "Fintech",
+  tagline: "Inbound card and fraud support",
+  scenarioCount: 12,
+  tools: [{ name: "verify_identity" }, { name: "lock_card" }],
+  rules: ["Never move money"],
 };
 
 describe("TemplateRow", () => {
-  it("renders the surface, name, tagline and stat line", () => {
+  it("renders the surface, domain, name, tagline and the generated suite size", () => {
     render(<TemplateRow template={TEMPLATE} />);
 
     // Surface is rendered lowercase, uppercased with CSS text-transform.
     expect(screen.getByText("voice")).toBeInTheDocument();
-    expect(screen.getByText("Customer Support Line")).toBeInTheDocument();
+    expect(screen.getByText("Fintech")).toBeInTheDocument();
     expect(
-      screen.getByText("Inbound phone support for an online storefront"),
+      screen.getByText("Banking — Card, Fraud & Account Support"),
     ).toBeInTheDocument();
-    // 2 tools*4 + 1 rule*3 + 1 trap*3 + Starter depth 3*2 = 20 scenarios.
-    expect(
-      screen.getByText("20 scenarios · 2 tools · 500 rows"),
-    ).toBeInTheDocument();
-  });
-
-  it("shows the POPULAR marker only when popular", () => {
-    const { rerender } = render(<TemplateRow template={TEMPLATE} />);
-    expect(screen.queryByText("Popular")).not.toBeInTheDocument();
-
-    rerender(<TemplateRow template={TEMPLATE} popular />);
-    expect(screen.getByText("Popular")).toBeInTheDocument();
+    expect(screen.getByText("Inbound card and fraud support")).toBeInTheDocument();
+    expect(screen.getByText("12 scenarios · 2 tools")).toBeInTheDocument();
   });
 
   it("fires onClick on click and Enter", () => {

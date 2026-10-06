@@ -17090,6 +17090,73 @@ export interface CallExecutionErrorResponseApi {
   details?: CallExecutionErrorResponseApiDetails;
 }
 
+export interface HarnessEnvironmentTemplateToolApi {
+  /** @minLength 1 */
+  name: string;
+  description: string;
+}
+
+export interface HarnessEnvironmentTemplateApi {
+  /**
+   * @minLength 1
+   * @pattern ^[-a-zA-Z0-9_]+$
+   */
+  slug: string;
+  environment_id: string;
+  /** @minLength 1 */
+  name: string;
+  description: string;
+  surface: string;
+  direction: string;
+  languages: string[];
+  domain: string;
+  scenario_count: number;
+  tools: HarnessEnvironmentTemplateToolApi[];
+  rules: string[];
+  evaluations: string[];
+  updated_at: string;
+}
+
+export interface HarnessEnvironmentTemplateListResponseApi {
+  results: HarnessEnvironmentTemplateApi[];
+}
+
+export type HarnessEnvironmentTemplateScenarioApiPersona = {
+  [key: string]: string;
+};
+
+export interface HarnessEnvironmentTemplateScenarioApi {
+  /** @minLength 1 */
+  scenario_key: string;
+  name: string;
+  use_case: string;
+  situation: string;
+  outcome: string;
+  persona: HarnessEnvironmentTemplateScenarioApiPersona;
+}
+
+export interface HarnessEnvironmentTemplateDetailApi {
+  /**
+   * @minLength 1
+   * @pattern ^[-a-zA-Z0-9_]+$
+   */
+  slug: string;
+  environment_id: string;
+  /** @minLength 1 */
+  name: string;
+  description: string;
+  surface: string;
+  direction: string;
+  languages: string[];
+  domain: string;
+  scenario_count: number;
+  tools: HarnessEnvironmentTemplateToolApi[];
+  rules: string[];
+  evaluations: string[];
+  updated_at: string;
+  scenarios: HarnessEnvironmentTemplateScenarioApi[];
+}
+
 export type HarnessEnvironmentApiAgentType =
   (typeof HarnessEnvironmentApiAgentType)[keyof typeof HarnessEnvironmentApiAgentType];
 
@@ -17203,6 +17270,7 @@ export interface HarnessEnvironmentOverviewApi {
   evaluations_count: number;
   run: HarnessEnvironmentRunLinkApi;
   agent: HarnessEnvironmentAgentApi;
+  shared_template: boolean;
 }
 
 export interface HarnessEnvironmentAmendmentApi {
@@ -17513,6 +17581,10 @@ export interface HarnessEnvironmentRenameApi {
    * @maxLength 255
    */
   name: string;
+}
+
+export interface HarnessEnvironmentCopyResponseApi {
+  environment_id: string;
 }
 
 export interface HarnessEnvironmentAddEvaluationApi {

@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1055,
+  endpointCount: 1058,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -28033,6 +28033,40 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/simulate/api/harness-environment-templates/": {
+      get: {
+        operationId: "simulate_api_harness-environment-templates_list",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessEnvironmentTemplateListResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environment-templates/{slug}/": {
+      get: {
+        operationId: "simulate_api_harness-environment-templates_read",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessEnvironmentTemplateDetail",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/simulate/api/harness-environments/": {
       get: {
         operationId: "simulate_api_harness-environments_list",
@@ -28106,6 +28140,28 @@ export const OPENAPI_CONTRACT = Object.freeze({
         requestBody: null,
         queryParameters: {},
         responses: {
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/copy/": {
+      post: {
+        operationId: "simulate_api_harness-environments_copy",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/EmptyRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessEnvironmentCopyResponse",
+          },
+          201: {
+            $ref: "#/definitions/HarnessEnvironmentCopyResponse",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -62382,6 +62438,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessEnvironmentCopyResponse: {
+      required: ["environment_id"],
+      type: "object",
+      properties: {
+        environment_id: {
+          title: "Environment id",
+          type: "string",
+          format: "uuid",
+        },
+      },
+    },
     HarnessEnvironmentDetail: {
       required: [
         "id",
@@ -62508,6 +62575,114 @@ export const OPENAPI_CONTRACT = Object.freeze({
         completed_calls: {
           title: "Completed calls",
           type: "integer",
+        },
+      },
+    },
+    HarnessEnvironmentTemplateDetail: {
+      required: [
+        "slug",
+        "environment_id",
+        "name",
+        "description",
+        "surface",
+        "direction",
+        "languages",
+        "domain",
+        "scenario_count",
+        "tools",
+        "rules",
+        "evaluations",
+        "updated_at",
+        "scenarios",
+      ],
+      type: "object",
+      properties: {
+        slug: {
+          title: "Slug",
+          type: "string",
+          format: "slug",
+          pattern: "^[-a-zA-Z0-9_]+$",
+          minLength: 1,
+        },
+        environment_id: {
+          title: "Environment id",
+          type: "string",
+          format: "uuid",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        description: {
+          title: "Description",
+          type: "string",
+        },
+        surface: {
+          title: "Surface",
+          type: "string",
+        },
+        direction: {
+          title: "Direction",
+          type: "string",
+        },
+        languages: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        domain: {
+          title: "Domain",
+          type: "string",
+        },
+        scenario_count: {
+          title: "Scenario count",
+          type: "integer",
+        },
+        tools: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessEnvironmentTemplateTool",
+          },
+        },
+        rules: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        evaluations: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        updated_at: {
+          title: "Updated at",
+          type: "string",
+          format: "date-time",
+        },
+        scenarios: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessEnvironmentTemplateScenario",
+          },
+        },
+      },
+    },
+    HarnessEnvironmentTemplateListResponse: {
+      required: ["results"],
+      type: "object",
+      properties: {
+        results: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessEnvironmentTemplate",
+          },
         },
       },
     },
@@ -91433,6 +91608,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "evaluations_count",
         "run",
         "agent",
+        "shared_template",
       ],
       type: "object",
       properties: {
@@ -91531,6 +91707,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         agent: {
           $ref: "#/definitions/HarnessEnvironmentAgent",
+        },
+        shared_template: {
+          title: "Shared template",
+          type: "boolean",
         },
       },
     },
@@ -91832,6 +92012,152 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         created_at: {
           title: "Created at",
+          type: "string",
+          format: "date-time",
+        },
+      },
+    },
+    HarnessEnvironmentTemplateScenario: {
+      required: [
+        "scenario_key",
+        "name",
+        "use_case",
+        "situation",
+        "outcome",
+        "persona",
+      ],
+      type: "object",
+      properties: {
+        scenario_key: {
+          title: "Scenario key",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+        },
+        use_case: {
+          title: "Use case",
+          type: "string",
+        },
+        situation: {
+          title: "Situation",
+          type: "string",
+        },
+        outcome: {
+          title: "Outcome",
+          type: "string",
+        },
+        persona: {
+          title: "Persona",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+      },
+    },
+    HarnessEnvironmentTemplateTool: {
+      required: ["name", "description"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        description: {
+          title: "Description",
+          type: "string",
+        },
+      },
+    },
+    HarnessEnvironmentTemplate: {
+      required: [
+        "slug",
+        "environment_id",
+        "name",
+        "description",
+        "surface",
+        "direction",
+        "languages",
+        "domain",
+        "scenario_count",
+        "tools",
+        "rules",
+        "evaluations",
+        "updated_at",
+      ],
+      type: "object",
+      properties: {
+        slug: {
+          title: "Slug",
+          type: "string",
+          format: "slug",
+          pattern: "^[-a-zA-Z0-9_]+$",
+          minLength: 1,
+        },
+        environment_id: {
+          title: "Environment id",
+          type: "string",
+          format: "uuid",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        description: {
+          title: "Description",
+          type: "string",
+        },
+        surface: {
+          title: "Surface",
+          type: "string",
+        },
+        direction: {
+          title: "Direction",
+          type: "string",
+        },
+        languages: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        domain: {
+          title: "Domain",
+          type: "string",
+        },
+        scenario_count: {
+          title: "Scenario count",
+          type: "integer",
+        },
+        tools: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessEnvironmentTemplateTool",
+          },
+        },
+        rules: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        evaluations: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        updated_at: {
+          title: "Updated at",
           type: "string",
           format: "date-time",
         },

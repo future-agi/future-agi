@@ -9,7 +9,7 @@ same order, so every install path prepares the datastores the same way:
   1. wait until Postgres, ClickHouse, Redis and Temporal accept connections
   2. createcachetable (a failure other than an authorization refusal is
      logged, not fatal, as in entrypoint.sh)
-  3. migrate, then seed_system_evals
+  3. migrate, then seed_system_evals and seed_environment_templates
   4. ClickHouse native schema (``oss_cdc_install --phase native --apply``)
   5. observed-attribute index: its ClickHouse database, users and grants
   6. the eval-task search attributes on the Temporal namespace
@@ -241,6 +241,7 @@ def migrate_and_seed(log: Callable[[str], None]) -> None:
         log(f"createcachetable failed (continuing): {exc}")
     call("migrate", log, interactive=False, verbosity=1)
     call("seed_system_evals", log)
+    call("seed_environment_templates", log)
 
 
 def clickhouse_native_schema(log: Callable[[str], None], timeout: int) -> None:

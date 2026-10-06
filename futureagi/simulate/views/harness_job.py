@@ -40,9 +40,10 @@ from simulate.services.harness_credentials import (
 from simulate.services.harness_provider import get_harness_provider
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
+from simulate.views.template_workspace import TemplateWorkspaceMixin
 
 
-class HarnessJobViewSet(viewsets.ViewSet):
+class HarnessJobViewSet(TemplateWorkspaceMixin, viewsets.ViewSet):
     """Provider-neutral control plane for hosted ALK harness jobs.
 
     Validates the v1.6 request contract and delegates execution to the public backend selected by

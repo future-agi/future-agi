@@ -49,13 +49,16 @@ OPERATOR_STARTUP_MUTATION_COMMANDS = frozenset(
         "migrate",
         "provision_grouping_features",
         "register_temporal_schedules",
+        "seed_environment_templates",
         "seed_system_evals",
     }
 )
 # Developer tools that only the explicit local mode (./bin/dev manage) may run:
-# makemigrations writes migration files into the checkout, and shell runs
-# arbitrary code. Hosted processes and operator jobs never get them.
-LOCAL_DEVELOPER_COMMANDS = frozenset({"makemigrations", "shell"})
+# makemigrations and export_environment_template write files into the checkout, and shell
+# runs arbitrary code. Hosted processes and operator jobs never get them.
+LOCAL_DEVELOPER_COMMANDS = frozenset(
+    {"export_environment_template", "makemigrations", "shell"}
+)
 OPERATOR_STARTUP_MUTATION_MODE = "operator"
 OPERATOR_STARTUP_SERVICE_TYPE = "bootstrap"
 

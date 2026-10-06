@@ -32,8 +32,8 @@ import { WORKSPACE_COPY } from "./workspace.constants";
 // name + Live pill + env-version pin, the primary "Run simulation" action, and
 // (for a regular, unlocked env) the Fork overflow. Run simulation is the
 // product's own navigation — a built env opens its execution detail, otherwise
-// the product's run entry. `locked` = template-seeded until forked: the pin is
-// read-only and the overflow is hidden (Fork lives on the Overview card there).
+// the product's run entry. `locked` = not editable yet (still building or failed):
+// the pin is read-only and the overflow is hidden.
 export default function WorkspaceHeader({
   env,
   // patch is still passed by the parent for the version pin; re-add it here when
@@ -65,10 +65,10 @@ export default function WorkspaceHeader({
   // Rename (§8) is live for a real backend-backed env. Its response is the §6
   // body, which the mutation writes back into the §6 cache; the workspace
   // overlays that name onto `env`, so the header reflects the new name at once.
-  // Gate on `backed` (like Delete) — a forked/template env has no row to PATCH.
+  // Gate on `backed` (like Delete) — a forked env has no row to PATCH.
   const canRename = backed && !locked;
   // Delete (§2) is live today, but only a real backend-backed env has a row to
-  // remove — a forked/template env has none, so it is offered only when backed.
+  // remove — a forked env has none, so it is offered only when backed.
   const canDelete = backed && !locked;
   const onDelete = () =>
     deleteEnv.mutate(env.id, {

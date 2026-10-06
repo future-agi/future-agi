@@ -51,7 +51,6 @@ export function forkEnvironment(env, envState, now) {
       ],
       envDerivedForAgent: "v1",
       activeAgentVersion: "v1",
-      seededFromTemplate: false,
       runs: [],
     },
   };

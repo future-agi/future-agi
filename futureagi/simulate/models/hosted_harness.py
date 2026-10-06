@@ -28,8 +28,13 @@ class HostedHarnessJob(BaseModel):
         CANCELED = "canceled", "Canceled"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    # Null only for a system template (see ``template_slug``), which is never launched.
     organization = models.ForeignKey(
-        Organization, on_delete=models.CASCADE, related_name="hosted_harness_jobs"
+        Organization,
+        on_delete=models.CASCADE,
+        related_name="hosted_harness_jobs",
+        null=True,
+        blank=True,
     )
     workspace = models.ForeignKey(
         Workspace,
@@ -92,6 +97,10 @@ class HostedHarnessJob(BaseModel):
         blank=True,
         related_name="hosted_harness_job",
     )
+    # A system template is a row with no organization and a template_slug, seeded into every
+    # deployment like system evals. A user's copy keeps the slug in its own organization; that
+    # column, never a payload claim, is what releases platform-owned target credentials to it.
+    template_slug = models.SlugField(max_length=64, blank=True, default="")
 
     class Meta:
         db_table = "simulate_hosted_harness_job"
@@ -105,6 +114,16 @@ class HostedHarnessJob(BaseModel):
                     scenario_count__gte=1, scenario_count__lte=MAX_SCENARIOS_PER_JOB
                 ),
                 name="harness_job_scenario_count_1_5000",
+            ),
+            models.UniqueConstraint(
+                fields=["template_slug"],
+                condition=models.Q(organization__isnull=True),
+                name="uniq_harness_system_template_slug",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(organization__isnull=False)
+                | ~models.Q(template_slug=""),
+                name="harness_job_orgless_is_template",
             ),
         ]
         indexes = [

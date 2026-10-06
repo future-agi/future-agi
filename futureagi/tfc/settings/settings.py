@@ -1019,6 +1019,19 @@ ALK_HOSTED_SIMULATOR_SECRET_ENV = {
     "SIMULATOR_TTS_PROVIDER": "SIMULATOR_TTS_PROVIDER",
     "SIMULATOR_TTS_MODEL": "SIMULATOR_TTS_MODEL",
 }
+# The only keys a copy of a system environment template may receive for its own agent, by
+# secret name. Platform configuration like the simulator's; a template's agents run on the
+# platform LiveKit, Vertex and Deepgram, so nothing a customer supplies is involved.
+ALK_HOSTED_TEMPLATE_TARGET_SECRET_ENV = {
+    "LIVEKIT_URL": "LIVEKIT_URL",
+    "LIVEKIT_API_KEY": "LIVEKIT_API_KEY",
+    "LIVEKIT_API_SECRET": "LIVEKIT_API_SECRET",
+    "DEEPGRAM_API_KEY": "DEEPGRAM_API_KEY",
+    "GOOGLE_APPLICATION_CREDENTIALS_JSON": "GOOGLE_APPLICATION_CREDENTIALS_JSON",
+    "GOOGLE_CLOUD_PROJECT": "GOOGLE_CLOUD_PROJECT",
+    "GOOGLE_CLOUD_LOCATION": "GOOGLE_CLOUD_LOCATION",
+    "GOOGLE_GENAI_USE_VERTEXAI": "GOOGLE_GENAI_USE_VERTEXAI",
+}
 # The platform's own outbound dialer: the LiveKit SIP trunk that places the PSTN call for a
 # phone target. Platform configuration, never customer input, so an empty value means no phone
 # run can be started and preflight says so rather than the run failing after authoring is paid for.

@@ -23,8 +23,6 @@ const envState = {
   agentVersions: [{ id: "agent-v1", label: "v1" }],
   scenarios: [{ id: "s1" }, { id: "s2" }],
   evals: [{ id: "task_success" }],
-  scenarioSource: "templates",
-  seededFromTemplate: true,
   runs: [{ id: "run-1" }],
 };
 
@@ -41,10 +39,6 @@ describe("forkEnvironment", () => {
 
   it("stamps adoptedAt with the passed time", () => {
     expect(fork.env.adoptedAt).toBe(NOW);
-  });
-
-  it("peels off the template sticker", () => {
-    expect(fork.envState.seededFromTemplate).toBe(false);
   });
 
   it("restarts the env version lineage at v1 noting the source", () => {

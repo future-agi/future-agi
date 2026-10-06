@@ -1,12 +1,10 @@
 import PropTypes from "prop-types";
-import { useMemo } from "react";
 import { alpha } from "@mui/material/styles";
 import { Box, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { activateOnKey } from "../helpers/activateOnKey";
-import { packStats } from "../helpers/packStats";
 import { formatCount } from "../helpers/formatCount";
-import { BROWSE_COPY, SURFACE_ICON } from "../prebuiltEnvironments.constants";
+import { SURFACE_ICON } from "../prebuiltEnvironments.constants";
 import { TEMPLATE_SHAPE } from "../useTemplate.constants";
 
 /**
@@ -16,18 +14,13 @@ import { TEMPLATE_SHAPE } from "../useTemplate.constants";
  * so a whole category fits in the left pane. Selecting it doesn't navigate; the
  * parent opens the build panel in the detail pane.
  */
-export default function TemplateRow({ template, popular = false, selected = false, onClick }) {
-  const stats = useMemo(() => packStats(template ?? {}), [template]);
-  const rows = useMemo(
-    () => (template?.seed?.tables || []).reduce((a, t) => a + (t.rows || 0), 0),
-    [template],
-  );
+export default function TemplateRow({ template, selected = false, onClick }) {
+  const scenarioCount = template?.scenarioCount || 0;
   const toolCount = template?.tools?.length || 0;
 
   const statLine = [
-    stats.scenarios > 0 && `${formatCount(stats.scenarios)} scenario${stats.scenarios === 1 ? "" : "s"}`,
+    scenarioCount > 0 && `${formatCount(scenarioCount)} scenario${scenarioCount === 1 ? "" : "s"}`,
     toolCount > 0 && `${toolCount} tool${toolCount === 1 ? "" : "s"}`,
-    rows > 0 && `${formatCount(rows)} row${rows === 1 ? "" : "s"}`,
   ].filter(Boolean).join(" · ");
 
   return (
@@ -69,7 +62,7 @@ export default function TemplateRow({ template, popular = false, selected = fals
         >
           {template?.surface}
         </Typography>
-        {popular && (
+        {template?.domain && (
           <>
             <Box sx={{ color: "text.disabled", fontSize: 10, lineHeight: 1 }}>·</Box>
             <Typography
@@ -78,7 +71,7 @@ export default function TemplateRow({ template, popular = false, selected = fals
                 letterSpacing: 0.5, textTransform: "uppercase",
               }}
             >
-              {BROWSE_COPY.popular}
+              {template.domain}
             </Typography>
           </>
         )}
@@ -107,7 +100,6 @@ export default function TemplateRow({ template, popular = false, selected = fals
 }
 TemplateRow.propTypes = {
   template: TEMPLATE_SHAPE,
-  popular: PropTypes.bool,
   selected: PropTypes.bool,
   onClick: PropTypes.func,
 };

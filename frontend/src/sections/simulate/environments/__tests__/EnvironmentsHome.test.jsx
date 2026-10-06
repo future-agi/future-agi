@@ -18,6 +18,10 @@ vi.mock("src/api/simulate-environments/harnessEnvironments", () => ({
   deleteHarnessEnvironment: vi.fn(),
 }));
 
+vi.mock("src/api/simulate-environments/prebuilt", () => ({
+  usePrebuiltEnvironments: () => ({ data: [] }),
+}));
+
 const { listHarnessEnvironments } = await import(
   "src/api/simulate-environments/harnessEnvironments"
 );
@@ -108,8 +112,7 @@ describe("EnvironmentsHome", () => {
     expect(screen.getByText("Source repository")).toBeInTheDocument();
     // 2 hero + 5 option cards; tabs are role="tab", not button.
     expect(screen.getAllByRole("button")).toHaveLength(7);
-    // "Customer Support Line" doubles as a Prebuilt hero chip, so assert a
-    // table-only harness-job name to prove the My Environments list is absent.
+    // A table-only harness-job name proves the My Environments list is absent.
     expect(screen.queryByText("Billing Chat Agent")).toBeNull();
   });
 

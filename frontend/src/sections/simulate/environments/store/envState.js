@@ -16,7 +16,6 @@ export const emptyEnvState = () => ({
   envVersions: [],
   activeEnvVersion: null,
   activeAgentVersion: null,
-  seededFromTemplate: false,
   gapsResolved: {},
   baselineRunId: null,
   // Per-tool read/write override keyed by tool name, set from the Contract

@@ -35184,6 +35184,98 @@ export const SimulateApiCallExecutionsListResponse = zod.array(
 );
 
 /**
+ * Every user reads the same system templates and opens one read-only at ``environment_id``.
+Nothing is created by looking: editing or running one first asks for the caller's own copy
+(``harness-environments/{id}/copy/``).
+ * @summary The shared template library.
+ */
+
+export const simulateApiHarnessEnvironmentTemplatesListResponseResultsItemSlugRegExp =
+  new RegExp("^[-a-zA-Z0-9_]+$");
+
+export const SimulateApiHarnessEnvironmentTemplatesListResponse = zod.object({
+  results: zod.array(
+    zod.object({
+      slug: zod
+        .string()
+        .min(1)
+        .regex(
+          simulateApiHarnessEnvironmentTemplatesListResponseResultsItemSlugRegExp,
+        ),
+      environment_id: zod.string().uuid(),
+      name: zod.string().min(1),
+      description: zod.string(),
+      surface: zod.string(),
+      direction: zod.string(),
+      languages: zod.array(zod.string().min(1)),
+      domain: zod.string(),
+      scenario_count: zod.number(),
+      tools: zod.array(
+        zod.object({
+          name: zod.string().min(1),
+          description: zod.string(),
+        }),
+      ),
+      rules: zod.array(zod.string().min(1)),
+      evaluations: zod.array(zod.string().min(1)),
+      updated_at: zod.string().datetime({ offset: true }),
+    }),
+  ),
+});
+
+/**
+ * Every user reads the same system templates and opens one read-only at ``environment_id``.
+Nothing is created by looking: editing or running one first asks for the caller's own copy
+(``harness-environments/{id}/copy/``).
+ * @summary The shared template library.
+ */
+export const simulateApiHarnessEnvironmentTemplatesReadPathSlugRegExp =
+  new RegExp("[-a-zA-Z0-9_]+");
+
+export const SimulateApiHarnessEnvironmentTemplatesReadParams = zod.object({
+  slug: zod
+    .string()
+    .regex(simulateApiHarnessEnvironmentTemplatesReadPathSlugRegExp),
+});
+
+export const simulateApiHarnessEnvironmentTemplatesReadResponseSlugRegExp =
+  new RegExp("^[-a-zA-Z0-9_]+$");
+
+export const SimulateApiHarnessEnvironmentTemplatesReadResponse = zod.object({
+  slug: zod
+    .string()
+    .min(1)
+    .regex(simulateApiHarnessEnvironmentTemplatesReadResponseSlugRegExp),
+  environment_id: zod.string().uuid(),
+  name: zod.string().min(1),
+  description: zod.string(),
+  surface: zod.string(),
+  direction: zod.string(),
+  languages: zod.array(zod.string().min(1)),
+  domain: zod.string(),
+  scenario_count: zod.number(),
+  tools: zod.array(
+    zod.object({
+      name: zod.string().min(1),
+      description: zod.string(),
+    }),
+  ),
+  rules: zod.array(zod.string().min(1)),
+  evaluations: zod.array(zod.string().min(1)),
+  updated_at: zod.string().datetime({ offset: true }),
+  scenarios: zod.array(
+    zod.object({
+      scenario_key: zod.string().min(1),
+      name: zod.string(),
+      use_case: zod.string(),
+      situation: zod.string(),
+      outcome: zod.string(),
+      persona: zod.record(zod.string(), zod.string()),
+    }),
+  ),
+});
+
+/**
  * An environment is the job that built it (the world itself lives in object
 storage, addressed from the job's metadata), so these endpoints project the
 same rows the harness-jobs API serves. They exist separately because the
@@ -35275,6 +35367,7 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
       versions_count: zod.number(),
       active_version: zod.string().min(1),
     }),
+    shared_template: zod.boolean(),
   }),
   contract: zod.object({
     agent: zod.string().optional(),
@@ -35483,6 +35576,7 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
       versions_count: zod.number(),
       active_version: zod.string().min(1),
     }),
+    shared_template: zod.boolean(),
   }),
   contract: zod.object({
     agent: zod.string().optional(),
@@ -35652,6 +35746,21 @@ export const SimulateApiHarnessEnvironmentsDeleteParams = zod.object({
 });
 
 /**
+ * A template is read by everyone and changed by nobody, so editing or running one
+acts on this copy. A retry with the same Idempotency-Key returns the same copy.
+ * @summary Give the caller's organization its own copy of a shared template.
+ */
+export const SimulateApiHarnessEnvironmentsCopyParams = zod.object({
+  id: zod.string(),
+});
+
+export const SimulateApiHarnessEnvironmentsCopyBody = zod.object({});
+
+export const SimulateApiHarnessEnvironmentsCopyResponse = zod.object({
+  environment_id: zod.string().uuid(),
+});
+
+/**
  * Applies to scenarios graded from here on. Calls that already ran keep
 the verdicts they were given, so adding an eval does not backfill a
 column onto past results.
@@ -35754,6 +35863,7 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespo
         versions_count: zod.number(),
         active_version: zod.string().min(1),
       }),
+      shared_template: zod.boolean(),
     }),
     contract: zod.object({
       agent: zod.string().optional(),

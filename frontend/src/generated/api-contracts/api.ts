@@ -585,10 +585,13 @@ import type {
   HarnessConversationWorkspaceResponseApi,
   HarnessEnvironmentAddEvaluationApi,
   HarnessEnvironmentAvailableEvalsApi,
+  HarnessEnvironmentCopyResponseApi,
   HarnessEnvironmentDetailApi,
   HarnessEnvironmentListResponseApi,
   HarnessEnvironmentRenameApi,
   HarnessEnvironmentRunEvaluationQueuedApi,
+  HarnessEnvironmentTemplateDetailApi,
+  HarnessEnvironmentTemplateListResponseApi,
   HarnessEnvironmentToolCallEvaluationApi,
   HarnessEventBatchApi,
   HarnessEventBatchResponseApi,
@@ -58404,6 +58407,99 @@ export const simulateApiCallExecutionsList = async (
   );
 };
 
+export type simulateApiHarnessEnvironmentTemplatesListResponse200 = {
+  data: HarnessEnvironmentTemplateListResponseApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentTemplatesListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentTemplatesListResponseSuccess =
+  simulateApiHarnessEnvironmentTemplatesListResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentTemplatesListResponseError =
+  simulateApiHarnessEnvironmentTemplatesListResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentTemplatesListResponse =
+  | simulateApiHarnessEnvironmentTemplatesListResponseSuccess
+  | simulateApiHarnessEnvironmentTemplatesListResponseError;
+
+export const getSimulateApiHarnessEnvironmentTemplatesListUrl = () => {
+  return `/simulate/api/harness-environment-templates/`;
+};
+
+/**
+ * Every user reads the same system templates and opens one read-only at ``environment_id``.
+Nothing is created by looking: editing or running one first asks for the caller's own copy
+(``harness-environments/{id}/copy/``).
+ * @summary The shared template library.
+ */
+export const simulateApiHarnessEnvironmentTemplatesList = async (
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentTemplatesListResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentTemplatesListResponse>(
+    getSimulateApiHarnessEnvironmentTemplatesListUrl(),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentTemplatesReadResponse200 = {
+  data: HarnessEnvironmentTemplateDetailApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentTemplatesReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentTemplatesReadResponseSuccess =
+  simulateApiHarnessEnvironmentTemplatesReadResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentTemplatesReadResponseError =
+  simulateApiHarnessEnvironmentTemplatesReadResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentTemplatesReadResponse =
+  | simulateApiHarnessEnvironmentTemplatesReadResponseSuccess
+  | simulateApiHarnessEnvironmentTemplatesReadResponseError;
+
+export const getSimulateApiHarnessEnvironmentTemplatesReadUrl = (
+  slug: string,
+) => {
+  return `/simulate/api/harness-environment-templates/${slug}/`;
+};
+
+/**
+ * Every user reads the same system templates and opens one read-only at ``environment_id``.
+Nothing is created by looking: editing or running one first asks for the caller's own copy
+(``harness-environments/{id}/copy/``).
+ * @summary The shared template library.
+ */
+export const simulateApiHarnessEnvironmentTemplatesRead = async (
+  slug: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentTemplatesReadResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentTemplatesReadResponse>(
+    getSimulateApiHarnessEnvironmentTemplatesReadUrl(slug),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
 export type simulateApiHarnessEnvironmentsListResponse200 = {
   data: HarnessEnvironmentListResponseApi;
   status: 200;
@@ -58614,6 +58710,61 @@ export const simulateApiHarnessEnvironmentsDelete = async (
     {
       ...options,
       method: "DELETE",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsCopyResponse200 = {
+  data: HarnessEnvironmentCopyResponseApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsCopyResponse201 = {
+  data: HarnessEnvironmentCopyResponseApi;
+  status: 201;
+};
+
+export type simulateApiHarnessEnvironmentsCopyResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 201>;
+};
+
+export type simulateApiHarnessEnvironmentsCopyResponseSuccess = (
+  | simulateApiHarnessEnvironmentsCopyResponse200
+  | simulateApiHarnessEnvironmentsCopyResponse201
+) & {
+  headers: Headers;
+};
+export type simulateApiHarnessEnvironmentsCopyResponseError =
+  simulateApiHarnessEnvironmentsCopyResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsCopyResponse =
+  | simulateApiHarnessEnvironmentsCopyResponseSuccess
+  | simulateApiHarnessEnvironmentsCopyResponseError;
+
+export const getSimulateApiHarnessEnvironmentsCopyUrl = (id: string) => {
+  return `/simulate/api/harness-environments/${id}/copy/`;
+};
+
+/**
+ * A template is read by everyone and changed by nobody, so editing or running one
+acts on this copy. A retry with the same Idempotency-Key returns the same copy.
+ * @summary Give the caller's organization its own copy of a shared template.
+ */
+export const simulateApiHarnessEnvironmentsCopy = async (
+  id: string,
+  emptyRequestApi: EmptyRequestApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsCopyResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsCopyResponse>(
+    getSimulateApiHarnessEnvironmentsCopyUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(emptyRequestApi),
     },
   );
 };
