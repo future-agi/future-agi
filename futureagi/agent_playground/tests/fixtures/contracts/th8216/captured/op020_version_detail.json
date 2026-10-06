@@ -1,0 +1,170 @@
+{
+  "body": {
+    "result": {
+      "commit_message": "th8216 draft",
+      "created_at": "2026-01-01T00:00:00Z",
+      "id": "00000000-0000-4000-8000-000000000001",
+      "node_connections": [
+        {
+          "id": "00000000-0000-4000-8000-000000000013",
+          "source_node_id": "00000000-0000-4000-8000-000000000009",
+          "target_node_id": "00000000-0000-4000-8000-000000000002"
+        }
+      ],
+      "nodes": [
+        {
+          "config": {},
+          "id": "00000000-0000-4000-8000-000000000002",
+          "input_mappings": null,
+          "name": "Second Node",
+          "node_connection": null,
+          "node_template_id": "00000000-0000-4000-8000-000000000003",
+          "ports": [
+            {
+              "data_schema": {
+                "type": "string"
+              },
+              "default_value": null,
+              "direction": "input",
+              "display_name": "input1",
+              "id": "00000000-0000-4000-8000-000000000004",
+              "key": "input1",
+              "metadata": {},
+              "ref_port_id": null,
+              "required": true
+            }
+          ],
+          "position": {
+            "x": 300,
+            "y": 100
+          },
+          "prompt_template": null,
+          "ref_graph_id": null,
+          "ref_graph_name": null,
+          "ref_graph_version_id": null,
+          "type": "atomic"
+        },
+        {
+          "config": {},
+          "id": "00000000-0000-4000-8000-000000000005",
+          "input_mappings": [
+            {
+              "key": "question",
+              "value": null
+            }
+          ],
+          "name": "Subgraph Node",
+          "node_connection": null,
+          "node_template_id": null,
+          "ports": [
+            {
+              "data_schema": {
+                "type": "string"
+              },
+              "default_value": "fallback question",
+              "direction": "input",
+              "display_name": "question",
+              "id": "00000000-0000-4000-8000-000000000008",
+              "key": "custom",
+              "metadata": {},
+              "ref_port_id": null,
+              "required": false
+            }
+          ],
+          "position": {
+            "x": 200,
+            "y": 100
+          },
+          "prompt_template": null,
+          "ref_graph_id": "00000000-0000-4000-8000-000000000007",
+          "ref_graph_name": "Test Referenced Graph",
+          "ref_graph_version_id": "00000000-0000-4000-8000-000000000006",
+          "type": "subgraph"
+        },
+        {
+          "config": {},
+          "id": "00000000-0000-4000-8000-000000000009",
+          "input_mappings": null,
+          "name": "Test Node",
+          "node_connection": null,
+          "node_template_id": "00000000-0000-4000-8000-000000000003",
+          "ports": [
+            {
+              "data_schema": {
+                "type": "string"
+              },
+              "default_value": null,
+              "direction": "output",
+              "display_name": "output1",
+              "id": "00000000-0000-4000-8000-000000000012",
+              "key": "output1",
+              "metadata": {},
+              "ref_port_id": null,
+              "required": true
+            }
+          ],
+          "position": {
+            "x": 100,
+            "y": 100
+          },
+          "prompt_template": {
+            "frequency_penalty": null,
+            "is_draft": false,
+            "max_tokens": null,
+            "messages": [
+              {
+                "content": [
+                  {
+                    "text": "Hi {{topic}}",
+                    "type": "text"
+                  }
+                ],
+                "role": "user"
+              }
+            ],
+            "metadata": {
+              "source": "th8216"
+            },
+            "model": "gpt-4o-mini",
+            "model_detail": {
+              "providers": "openai",
+              "type": "chat"
+            },
+            "output_format": null,
+            "presence_penalty": null,
+            "prompt_template_id": "00000000-0000-4000-8000-000000000010",
+            "prompt_version_id": "00000000-0000-4000-8000-000000000011",
+            "response_format": "text",
+            "response_schema": null,
+            "temperature": 0.3,
+            "template_format": "mustache",
+            "template_version": "v1",
+            "tool_choice": null,
+            "tools": null,
+            "top_p": null,
+            "variable_names": {
+              "topic": [
+                "contracts"
+              ]
+            }
+          },
+          "ref_graph_id": null,
+          "ref_graph_name": null,
+          "ref_graph_version_id": null,
+          "type": "atomic"
+        }
+      ],
+      "status": "draft",
+      "tags": [],
+      "version_number": 1
+    },
+    "status": true
+  },
+  "label": "captured",
+  "method": "GET",
+  "note": "",
+  "operation": "OP-020",
+  "path": "/agent-playground/graphs/{id}/versions/{version_id}/",
+  "request": {},
+  "status": 200
+}

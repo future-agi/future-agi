@@ -1,0 +1,18 @@
+{
+  "body": {
+    "code": "not_found",
+    "detail": "Version not found.",
+    "error": "Version not found.",
+    "message": "Version not found.",
+    "result": "Version not found.",
+    "status": false,
+    "type": "not_found"
+  },
+  "label": "captured",
+  "method": "GET",
+  "note": "",
+  "operation": "OP-020",
+  "path": "/agent-playground/graphs/{id}/versions/{version_id}/",
+  "request": {},
+  "status": 404
+}

@@ -87,10 +87,9 @@ import type {
   AgentPlaygroundGraphsExecutionsListParams,
   AgentPlaygroundGraphsList200,
   AgentPlaygroundGraphsListParams,
+  AgentPlaygroundGraphsVersionsListParams,
   AgentPlaygroundGraphsVersionsNodesPossibleEdgeMappings200,
   AgentPlaygroundGraphsVersionsNodesPossibleEdgeMappingsParams,
-  AgentPlaygroundGraphsVersionsRead200,
-  AgentPlaygroundGraphsVersionsReadParams,
   AgentPlaygroundNodeTemplatesList200,
   AgentPlaygroundNodeTemplatesListParams,
   AgentPromptOptimiserGraphResponseApi,
@@ -554,6 +553,8 @@ import type {
   GraphExecutionListResponseApi,
   GraphListApi,
   GraphUpdateApi,
+  GraphVersionDetailResponseApi,
+  GraphVersionListResponseApi,
   GroundTruthDataResponseApi,
   GroundTruthDeleteResponseApi,
   GroundTruthEmbedResponseApi,
@@ -833,7 +834,7 @@ import type {
   ModelHubTtsVoicesListParams,
   ModelParametersResponseApi,
   NodeExecutionDetailResponseApi,
-  NodeReadApi,
+  NodeReadResponseApi,
   NodeTemplateDetailApi,
   OTLPHealthResponseApi,
   ObservabilityProviderApi,
@@ -10121,52 +10122,51 @@ export const agentPlaygroundGraphsReferenceableGraphs = async (
   );
 };
 
-export type agentPlaygroundGraphsVersionsReadResponse200 = {
-  data: AgentPlaygroundGraphsVersionsRead200;
+export type agentPlaygroundGraphsVersionsListResponse200 = {
+  data: GraphVersionListResponseApi;
   status: 200;
 };
 
-export type agentPlaygroundGraphsVersionsReadResponse400 = {
+export type agentPlaygroundGraphsVersionsListResponse400 = {
   data: AgentPlaygroundErrorResponseApi;
   status: 400;
 };
 
-export type agentPlaygroundGraphsVersionsReadResponse404 = {
+export type agentPlaygroundGraphsVersionsListResponse404 = {
   data: AgentPlaygroundErrorResponseApi;
   status: 404;
 };
 
-export type agentPlaygroundGraphsVersionsReadResponse500 = {
+export type agentPlaygroundGraphsVersionsListResponse500 = {
   data: AgentPlaygroundErrorResponseApi;
   status: 500;
 };
 
-export type agentPlaygroundGraphsVersionsReadResponseDefault = {
+export type agentPlaygroundGraphsVersionsListResponseDefault = {
   data: ManagementAPIErrorResponseApi;
   status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 500>;
 };
 
-export type agentPlaygroundGraphsVersionsReadResponseSuccess =
-  agentPlaygroundGraphsVersionsReadResponse200 & {
+export type agentPlaygroundGraphsVersionsListResponseSuccess =
+  agentPlaygroundGraphsVersionsListResponse200 & {
     headers: Headers;
   };
-export type agentPlaygroundGraphsVersionsReadResponseError = (
-  | agentPlaygroundGraphsVersionsReadResponse400
-  | agentPlaygroundGraphsVersionsReadResponse404
-  | agentPlaygroundGraphsVersionsReadResponse500
-  | agentPlaygroundGraphsVersionsReadResponseDefault
+export type agentPlaygroundGraphsVersionsListResponseError = (
+  | agentPlaygroundGraphsVersionsListResponse400
+  | agentPlaygroundGraphsVersionsListResponse404
+  | agentPlaygroundGraphsVersionsListResponse500
+  | agentPlaygroundGraphsVersionsListResponseDefault
 ) & {
   headers: Headers;
 };
 
-export type agentPlaygroundGraphsVersionsReadResponse =
-  | agentPlaygroundGraphsVersionsReadResponseSuccess
-  | agentPlaygroundGraphsVersionsReadResponseError;
+export type agentPlaygroundGraphsVersionsListResponse =
+  | agentPlaygroundGraphsVersionsListResponseSuccess
+  | agentPlaygroundGraphsVersionsListResponseError;
 
-export const getAgentPlaygroundGraphsVersionsReadUrl = (
+export const getAgentPlaygroundGraphsVersionsListUrl = (
   id: string,
-  versionId: string,
-  params?: AgentPlaygroundGraphsVersionsReadParams,
+  params?: AgentPlaygroundGraphsVersionsListParams,
 ) => {
   const normalizedParams = new URLSearchParams();
 
@@ -10183,21 +10183,21 @@ export const getAgentPlaygroundGraphsVersionsReadUrl = (
   const stringifiedParams = normalizedParams.toString();
 
   return stringifiedParams.length > 0
-    ? `/agent-playground/graphs/${id}/versions/${versionId}/?${stringifiedParams}`
-    : `/agent-playground/graphs/${id}/versions/${versionId}/`;
+    ? `/agent-playground/graphs/${id}/versions/?${stringifiedParams}`
+    : `/agent-playground/graphs/${id}/versions/`;
 };
 
 /**
- * Get a specific version with full nested structure (nodes→ports, edges).
+ * Returns lightweight: id, version_number, status, commit_message, created_at.
+ * @summary List all versions for a graph.
  */
-export const agentPlaygroundGraphsVersionsRead = async (
+export const agentPlaygroundGraphsVersionsList = async (
   id: string,
-  versionId: string,
-  params?: AgentPlaygroundGraphsVersionsReadParams,
+  params?: AgentPlaygroundGraphsVersionsListParams,
   options?: RequestInit,
-): Promise<agentPlaygroundGraphsVersionsReadResponse> => {
-  return apiMutator<agentPlaygroundGraphsVersionsReadResponse>(
-    getAgentPlaygroundGraphsVersionsReadUrl(id, versionId, params),
+): Promise<agentPlaygroundGraphsVersionsListResponse> => {
+  return apiMutator<agentPlaygroundGraphsVersionsListResponse>(
+    getAgentPlaygroundGraphsVersionsListUrl(id, params),
     {
       ...options,
       method: "GET",
@@ -10266,6 +10266,72 @@ export const agentPlaygroundGraphsVersionsCreate = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(graphListApi),
+    },
+  );
+};
+
+export type agentPlaygroundGraphsVersionsReadResponse200 = {
+  data: GraphVersionDetailResponseApi;
+  status: 200;
+};
+
+export type agentPlaygroundGraphsVersionsReadResponse400 = {
+  data: AgentPlaygroundErrorResponseApi;
+  status: 400;
+};
+
+export type agentPlaygroundGraphsVersionsReadResponse404 = {
+  data: AgentPlaygroundErrorResponseApi;
+  status: 404;
+};
+
+export type agentPlaygroundGraphsVersionsReadResponse500 = {
+  data: AgentPlaygroundErrorResponseApi;
+  status: 500;
+};
+
+export type agentPlaygroundGraphsVersionsReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 500>;
+};
+
+export type agentPlaygroundGraphsVersionsReadResponseSuccess =
+  agentPlaygroundGraphsVersionsReadResponse200 & {
+    headers: Headers;
+  };
+export type agentPlaygroundGraphsVersionsReadResponseError = (
+  | agentPlaygroundGraphsVersionsReadResponse400
+  | agentPlaygroundGraphsVersionsReadResponse404
+  | agentPlaygroundGraphsVersionsReadResponse500
+  | agentPlaygroundGraphsVersionsReadResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type agentPlaygroundGraphsVersionsReadResponse =
+  | agentPlaygroundGraphsVersionsReadResponseSuccess
+  | agentPlaygroundGraphsVersionsReadResponseError;
+
+export const getAgentPlaygroundGraphsVersionsReadUrl = (
+  id: string,
+  versionId: string,
+) => {
+  return `/agent-playground/graphs/${id}/versions/${versionId}/`;
+};
+
+/**
+ * Get a specific version with full nested structure (nodes→ports, edges).
+ */
+export const agentPlaygroundGraphsVersionsRead = async (
+  id: string,
+  versionId: string,
+  options?: RequestInit,
+): Promise<agentPlaygroundGraphsVersionsReadResponse> => {
+  return apiMutator<agentPlaygroundGraphsVersionsReadResponse>(
+    getAgentPlaygroundGraphsVersionsReadUrl(id, versionId),
+    {
+      ...options,
+      method: "GET",
     },
   );
 };
@@ -10695,7 +10761,7 @@ export const agentPlaygroundGraphsVersionsNodeConnectionsDelete = async (
 };
 
 export type agentPlaygroundGraphsVersionsNodesCreateResponse201 = {
-  data: CreateNodeApi;
+  data: NodeReadResponseApi;
   status: 201;
 };
 
@@ -10764,7 +10830,7 @@ export const agentPlaygroundGraphsVersionsNodesCreate = async (
 };
 
 export type agentPlaygroundGraphsVersionsNodesReadResponse200 = {
-  data: NodeReadApi;
+  data: NodeReadResponseApi;
   status: 200;
 };
 

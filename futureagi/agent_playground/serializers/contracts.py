@@ -1,13 +1,13 @@
-from rest_framework import serializers
+from tfc.utils.api_serializers import ManagementAPIErrorResponseSerializer
 
 
-class AgentPlaygroundErrorResponseSerializer(serializers.Serializer):
-    """GeneralMethods-style error envelope for Agent Playground APIs."""
+class AgentPlaygroundErrorResponseSerializer(ManagementAPIErrorResponseSerializer):
+    """GeneralMethods-style error envelope for Agent Playground APIs.
 
-    status = serializers.BooleanField(default=False)
-    result = serializers.CharField(required=False, allow_blank=True, allow_null=True)
-    message = serializers.CharField(required=False, allow_blank=True, allow_null=True)
-    error = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    ``GeneralMethods`` builds every error with ``build_error_envelope``, so the
+    body carries the same type/code/detail/attr/details keys as the shared
+    management error envelope.
+    """
 
 
 AGENT_PLAYGROUND_ERROR_RESPONSES = {

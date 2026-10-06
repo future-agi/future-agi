@@ -2,6 +2,7 @@ from rest_framework import serializers
 
 from agent_playground.models.choices import RESERVED_NAME_RE, PortDirection
 from agent_playground.models.port import Port
+from tfc.utils.serializer_fields import JsonValueField
 
 
 class PortCreateSerializer(serializers.Serializer):
@@ -37,8 +38,9 @@ class PortReadSerializer(serializers.ModelSerializer):
     """Serializer for reading port data in responses."""
 
     ref_port_id = serializers.UUIDField(
-        source="ref_port.id", read_only=True, default=None
+        source="ref_port.id", read_only=True, default=None, allow_null=True
     )
+    default_value = JsonValueField(read_only=True, allow_null=True)
 
     class Meta:
         model = Port

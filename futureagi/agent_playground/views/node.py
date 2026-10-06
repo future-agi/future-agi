@@ -19,6 +19,9 @@ from agent_playground.serializers.node import (
     NodeReadSerializer,
     UpdateNodeSerializer,
 )
+from agent_playground.serializers.response_contracts import (
+    NodeReadResponseSerializer,
+)
 from agent_playground.services.dataset_bridge import sync_dataset_columns
 from agent_playground.services.node_crud import (
     cascade_soft_delete_node,
@@ -34,10 +37,17 @@ logger = structlog.get_logger(__name__)
 agent_playground_errors = swagger_auto_schema(
     responses=AGENT_PLAYGROUND_ERROR_RESPONSES
 )
+create_node_schema = swagger_auto_schema(
+    request_body=CreateNodeSerializer,
+    responses={201: NodeReadResponseSerializer, **AGENT_PLAYGROUND_ERROR_RESPONSES},
+)
+retrieve_node_schema = swagger_auto_schema(
+    responses={200: NodeReadResponseSerializer, **AGENT_PLAYGROUND_ERROR_RESPONSES}
+)
 
 
-@method_decorator(name="create", decorator=agent_playground_errors)
-@method_decorator(name="retrieve", decorator=agent_playground_errors)
+@method_decorator(name="create", decorator=create_node_schema)
+@method_decorator(name="retrieve", decorator=retrieve_node_schema)
 @method_decorator(name="partial_update", decorator=agent_playground_errors)
 @method_decorator(name="destroy", decorator=agent_playground_errors)
 @method_decorator(name="possible_edge_mappings", decorator=agent_playground_errors)

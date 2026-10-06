@@ -1,0 +1,20 @@
+{
+  "body": {
+    "code": "server_error",
+    "detail": "Failed to list versions.",
+    "error": "Failed to list versions.",
+    "message": "Failed to list versions.",
+    "result": "Failed to list versions.",
+    "status": false,
+    "type": "server_error"
+  },
+  "label": "captured",
+  "method": "GET",
+  "note": "legacy: non-numeric page_number is a 500, not a 400",
+  "operation": "OP-018",
+  "path": "/agent-playground/graphs/{id}/versions/",
+  "request": {
+    "page_number": "x"
+  },
+  "status": 500
+}

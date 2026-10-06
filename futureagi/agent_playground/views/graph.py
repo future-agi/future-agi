@@ -36,6 +36,11 @@ from agent_playground.serializers.graph_version import (
     VersionMetadataUpdateSerializer,
     prefetch_version_detail,
 )
+from agent_playground.serializers.response_contracts import (
+    GRAPH_VERSION_LIST_QUERY_PARAMETERS,
+    GraphVersionDetailResponseSerializer,
+    GraphVersionListResponseSerializer,
+)
 from agent_playground.services.dataset_bridge import activate_version_and_sync
 from agent_playground.utils.cascade_delete import (
     cascade_soft_delete_graph,
@@ -51,6 +56,7 @@ from agent_playground.utils.version_content import update_version_content
 from common.utils.pagination import paginate_queryset
 from model_hub.models.choices import DatasetSourceChoices
 from model_hub.models.develop_dataset import Dataset
+from tfc.utils.api_contracts import ExplicitQueryAutoSchema
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 
@@ -58,6 +64,22 @@ logger = structlog.get_logger(__name__)
 
 agent_playground_errors = swagger_auto_schema(
     responses=AGENT_PLAYGROUND_ERROR_RESPONSES
+)
+list_versions_schema = swagger_auto_schema(
+    operation_id="agent-playground_graphs_versions_list",
+    auto_schema=ExplicitQueryAutoSchema,
+    manual_parameters=GRAPH_VERSION_LIST_QUERY_PARAMETERS,
+    responses={
+        200: GraphVersionListResponseSerializer,
+        **AGENT_PLAYGROUND_ERROR_RESPONSES,
+    },
+)
+retrieve_version_schema = swagger_auto_schema(
+    auto_schema=ExplicitQueryAutoSchema,
+    responses={
+        200: GraphVersionDetailResponseSerializer,
+        **AGENT_PLAYGROUND_ERROR_RESPONSES,
+    },
 )
 
 
@@ -68,9 +90,9 @@ agent_playground_errors = swagger_auto_schema(
 @method_decorator(name="partial_update", decorator=agent_playground_errors)
 @method_decorator(name="destroy", decorator=agent_playground_errors)
 @method_decorator(name="bulk_delete", decorator=agent_playground_errors)
-@method_decorator(name="list_versions", decorator=agent_playground_errors)
+@method_decorator(name="list_versions", decorator=list_versions_schema)
 @method_decorator(name="create_version", decorator=agent_playground_errors)
-@method_decorator(name="retrieve_version", decorator=agent_playground_errors)
+@method_decorator(name="retrieve_version", decorator=retrieve_version_schema)
 @method_decorator(name="update_version", decorator=agent_playground_errors)
 @method_decorator(name="delete_version", decorator=agent_playground_errors)
 @method_decorator(name="activate_version", decorator=agent_playground_errors)

@@ -4198,49 +4198,33 @@ export const OPENAPI_CONTRACT = Object.freeze({
     },
     "/agent-playground/graphs/{id}/versions/": {
       get: {
-        operationId: "agent-playground_graphs_versions_read",
+        operationId: "agent-playground_graphs_versions_list",
         runtimeRequestValidation: false,
         runtimeResponseValidation: false,
         requestBody: null,
         queryParameters: {
-          page: {
+          page_number: {
             required: false,
             schema: {
               type: "integer",
             },
           },
-          limit: {
+          page_size: {
             required: false,
             schema: {
               type: "integer",
+            },
+          },
+          search: {
+            required: false,
+            schema: {
+              type: "string",
             },
           },
         },
         responses: {
           200: {
-            required: ["count", "results"],
-            type: "object",
-            properties: {
-              count: {
-                type: "integer",
-              },
-              next: {
-                type: "string",
-                format: "uri",
-                "x-nullable": true,
-              },
-              previous: {
-                type: "string",
-                format: "uri",
-                "x-nullable": true,
-              },
-              results: {
-                type: "array",
-                items: {
-                  $ref: "#/definitions/GraphList",
-                },
-              },
-            },
+            $ref: "#/definitions/GraphVersionListResponse",
           },
           400: {
             $ref: "#/definitions/AgentPlaygroundErrorResponse",
@@ -4289,45 +4273,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeRequestValidation: false,
         runtimeResponseValidation: false,
         requestBody: null,
-        queryParameters: {
-          page: {
-            required: false,
-            schema: {
-              type: "integer",
-            },
-          },
-          limit: {
-            required: false,
-            schema: {
-              type: "integer",
-            },
-          },
-        },
+        queryParameters: {},
         responses: {
           200: {
-            required: ["count", "results"],
-            type: "object",
-            properties: {
-              count: {
-                type: "integer",
-              },
-              next: {
-                type: "string",
-                format: "uri",
-                "x-nullable": true,
-              },
-              previous: {
-                type: "string",
-                format: "uri",
-                "x-nullable": true,
-              },
-              results: {
-                type: "array",
-                items: {
-                  $ref: "#/definitions/GraphList",
-                },
-              },
-            },
+            $ref: "#/definitions/GraphVersionDetailResponse",
           },
           400: {
             $ref: "#/definitions/AgentPlaygroundErrorResponse",
@@ -4509,7 +4458,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         queryParameters: {},
         responses: {
           201: {
-            $ref: "#/definitions/CreateNode",
+            $ref: "#/definitions/NodeReadResponse",
           },
           400: {
             $ref: "#/definitions/AgentPlaygroundErrorResponse",
@@ -4535,7 +4484,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         queryParameters: {},
         responses: {
           200: {
-            $ref: "#/definitions/NodeRead",
+            $ref: "#/definitions/NodeReadResponse",
           },
           400: {
             $ref: "#/definitions/AgentPlaygroundErrorResponse",
@@ -47578,6 +47527,36 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "boolean",
           default: false,
         },
+        type: {
+          title: "Type",
+          type: "string",
+          enum: [
+            "validation_error",
+            "authentication_error",
+            "payment_required",
+            "entitlement_error",
+            "permission_error",
+            "not_found",
+            "conflict",
+            "client_error",
+            "rate_limit",
+            "server_error",
+            "service_unavailable",
+            "timeout",
+            "api_error",
+          ],
+          "x-nullable": true,
+        },
+        code: {
+          title: "Code",
+          type: "string",
+          "x-nullable": true,
+        },
+        detail: {
+          title: "Detail",
+          type: "string",
+          "x-nullable": true,
+        },
         result: {
           title: "Result",
           type: "string",
@@ -47592,6 +47571,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Error",
           type: "string",
           "x-nullable": true,
+        },
+        attr: {
+          title: "Attr",
+          type: "string",
+          "x-nullable": true,
+        },
+        details: {
+          title: "Details",
+          type: "object",
+          additionalProperties: {
+            type: "array",
+            items: {
+              type: "string",
+              minLength: 1,
+            },
+          },
         },
       },
     },
@@ -61704,6 +61699,32 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    GraphVersionDetailResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/GraphVersionDetail",
+        },
+      },
+    },
+    GraphVersionListResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/GraphVersionListResult",
+        },
+      },
+    },
     GroundTruthDataResponse: {
       required: ["status", "result"],
       type: "object",
@@ -66641,19 +66662,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "x-nullable": true,
         },
         prompt_template: {
-          title: "Prompt template",
-          type: "string",
-          readOnly: true,
+          $ref: "#/definitions/LinkedPromptTemplateRead",
         },
         node_connection: {
-          title: "Node connection",
-          type: "string",
-          readOnly: true,
+          $ref: "#/definitions/NodeConnectionSummary",
         },
         input_mappings: {
-          title: "Input mappings",
-          type: "string",
+          description:
+            'Reconstruct input_mappings as list of key-value objects.\n\n        Returns a list like [\n            {"key": "context", "value": "DataLoader.output"},\n            {"key": "question", "value": None}\n        ] for subgraph nodes, or None for atomic nodes.\n\n        Uses prefetched ``ports`` and ``incoming_edges`` when available\n        (see ``prefetch_version_detail``) to avoid N+1 queries.\n',
+          type: "array",
+          items: {
+            $ref: "#/definitions/InputMappingRead",
+          },
           readOnly: true,
+          "x-nullable": true,
         },
         ports: {
           type: "array",
@@ -66661,6 +66683,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/PortRead",
           },
           readOnly: true,
+        },
+      },
+    },
+    NodeReadResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/NodeRead",
         },
       },
     },
@@ -91042,6 +91077,78 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    GraphVersionDetail: {
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        version_number: {
+          title: "Version number",
+          type: "integer",
+          readOnly: true,
+        },
+        status: {
+          title: "Status",
+          description: "Version status (inactive for historical versions)",
+          type: "string",
+          enum: ["draft", "active", "inactive"],
+          readOnly: true,
+        },
+        tags: {
+          title: "Tags",
+          type: "object",
+          readOnly: true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        commit_message: {
+          title: "Commit message",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+        nodes: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/NodeRead",
+          },
+          readOnly: true,
+        },
+        node_connections: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/NodeConnectionRead",
+          },
+          readOnly: true,
+        },
+      },
+    },
+    GraphVersionListResult: {
+      required: ["versions", "metadata"],
+      type: "object",
+      properties: {
+        versions: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/GraphVersionList",
+          },
+        },
+        metadata: {
+          $ref: "#/definitions/GraphVersionPageMetadata",
+        },
+      },
+    },
     GroundTruthDataResponseResult: {
       required: [
         "id",
@@ -95110,6 +95217,198 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    InputMappingRead: {
+      required: ["key", "value"],
+      type: "object",
+      properties: {
+        key: {
+          title: "Key",
+          type: "string",
+          minLength: 1,
+        },
+        value: {
+          title: "Value",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
+    },
+    LinkedPromptTemplateRead: {
+      description:
+        "Read from obj.prompt_template_node → PTV.prompt_config_snapshot.",
+      required: [
+        "prompt_template_id",
+        "prompt_version_id",
+        "messages",
+        "response_format",
+        "response_schema",
+        "model",
+        "temperature",
+        "max_tokens",
+        "top_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "output_format",
+        "tools",
+        "tool_choice",
+        "model_detail",
+        "template_format",
+        "variable_names",
+        "metadata",
+        "is_draft",
+        "template_version",
+      ],
+      type: "object",
+      properties: {
+        prompt_template_id: {
+          title: "Prompt template id",
+          type: "string",
+          format: "uuid",
+        },
+        prompt_version_id: {
+          title: "Prompt version id",
+          type: "string",
+          format: "uuid",
+        },
+        messages: {
+          type: "array",
+          items: {
+            type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
+          },
+        },
+        response_format: {
+          title: "Response format",
+          type: "object",
+          "x-nullable": true,
+          "x-string-or-object": true,
+          description: "String or JSON object.",
+        },
+        response_schema: {
+          title: "Response schema",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        model: {
+          title: "Model",
+          type: "object",
+          "x-nullable": true,
+          "x-string-or-object": true,
+          description: "String or JSON object.",
+        },
+        temperature: {
+          title: "Temperature",
+          type: "number",
+          "x-nullable": true,
+        },
+        max_tokens: {
+          title: "Max tokens",
+          type: "number",
+          "x-nullable": true,
+        },
+        top_p: {
+          title: "Top p",
+          type: "number",
+          "x-nullable": true,
+        },
+        frequency_penalty: {
+          title: "Frequency penalty",
+          type: "number",
+          "x-nullable": true,
+        },
+        presence_penalty: {
+          title: "Presence penalty",
+          type: "number",
+          "x-nullable": true,
+        },
+        output_format: {
+          title: "Output format",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        tools: {
+          title: "Tools",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        tool_choice: {
+          title: "Tool choice",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        model_detail: {
+          title: "Model detail",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        template_format: {
+          title: "Template format",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        variable_names: {
+          title: "Variable names",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        metadata: {
+          title: "Metadata",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        is_draft: {
+          title: "Is draft",
+          type: "boolean",
+        },
+        template_version: {
+          title: "Template version",
+          type: "string",
+          minLength: 1,
+        },
+      },
+      "x-nullable": true,
+    },
+    NodeConnectionSummary: {
+      description:
+        "Return NodeConnection context set by the view (create response only).",
+      required: ["id", "source_node_id", "target_node_id"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        source_node_id: {
+          title: "Source node id",
+          type: "string",
+          format: "uuid",
+        },
+        target_node_id: {
+          title: "Target node id",
+          type: "string",
+          format: "uuid",
+        },
+      },
+      "x-nullable": true,
+    },
     PortRead: {
       type: "object",
       properties: {
@@ -95155,6 +95454,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           readOnly: true,
           "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
         },
         metadata: {
           title: "Metadata",
@@ -95166,6 +95467,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "uuid",
           readOnly: true,
+          "x-nullable": true,
         },
       },
     },
@@ -109056,6 +109358,121 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         next_page: {
           title: "Next page",
+          type: "integer",
+          "x-nullable": true,
+        },
+      },
+    },
+    NodeConnectionRead: {
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        source_node_id: {
+          title: "Source node id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        target_node_id: {
+          title: "Target node id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+      },
+    },
+    GraphVersionList: {
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        version_number: {
+          title: "Version number",
+          type: "integer",
+          readOnly: true,
+        },
+        status: {
+          title: "Status",
+          description: "Version status (inactive for historical versions)",
+          type: "string",
+          enum: ["draft", "active", "inactive"],
+          readOnly: true,
+        },
+        tags: {
+          title: "Tags",
+          type: "object",
+          readOnly: true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        commit_message: {
+          title: "Commit message",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+        global_variables: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          readOnly: true,
+        },
+      },
+    },
+    GraphVersionPageMetadata: {
+      required: [
+        "total_count",
+        "page_number",
+        "page_size",
+        "total_pages",
+        "next_page",
+        "previous_page",
+      ],
+      type: "object",
+      properties: {
+        total_count: {
+          title: "Total count",
+          type: "integer",
+        },
+        page_number: {
+          title: "Page number",
+          description:
+            "Page actually returned; out-of-range requests get the last page.",
+          type: "integer",
+        },
+        page_size: {
+          title: "Page size",
+          type: "integer",
+        },
+        total_pages: {
+          title: "Total pages",
+          type: "integer",
+        },
+        next_page: {
+          title: "Next page",
+          type: "integer",
+          "x-nullable": true,
+        },
+        previous_page: {
+          title: "Previous page",
           type: "integer",
           "x-nullable": true,
         },

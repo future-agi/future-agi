@@ -1806,11 +1806,39 @@ export interface NodeExecutionDetailResponseApi {
   result: NodeExecutionDetailResultApi;
 }
 
+export type AgentPlaygroundErrorResponseApiType =
+  (typeof AgentPlaygroundErrorResponseApiType)[keyof typeof AgentPlaygroundErrorResponseApiType];
+
+export const AgentPlaygroundErrorResponseApiType = {
+  validation_error: "validation_error",
+  authentication_error: "authentication_error",
+  payment_required: "payment_required",
+  entitlement_error: "entitlement_error",
+  permission_error: "permission_error",
+  not_found: "not_found",
+  conflict: "conflict",
+  client_error: "client_error",
+  rate_limit: "rate_limit",
+  server_error: "server_error",
+  service_unavailable: "service_unavailable",
+  timeout: "timeout",
+  api_error: "api_error",
+} as const;
+
+export type AgentPlaygroundErrorResponseApiDetails = {
+  [key: string]: string[];
+};
+
 export interface AgentPlaygroundErrorResponseApi {
   status?: boolean;
+  type?: AgentPlaygroundErrorResponseApiType;
+  code?: string;
+  detail?: string;
   result?: string;
   message?: string;
   error?: string;
+  attr?: string;
+  details?: AgentPlaygroundErrorResponseApiDetails;
 }
 
 export interface UserBriefApi {
@@ -1977,6 +2005,303 @@ export interface GraphUpdateApi {
    */
   name?: string;
   description?: string;
+}
+
+/**
+ * Version status (inactive for historical versions)
+ */
+export type GraphVersionListApiStatus =
+  (typeof GraphVersionListApiStatus)[keyof typeof GraphVersionListApiStatus];
+
+export const GraphVersionListApiStatus = {
+  draft: "draft",
+  active: "active",
+  inactive: "inactive",
+} as const;
+
+/**
+ * Any valid JSON value.
+ */
+export type GraphVersionListApiTags = { [key: string]: unknown };
+
+export interface GraphVersionListApi {
+  readonly id?: string;
+  readonly version_number?: number;
+  /** Version status (inactive for historical versions) */
+  readonly status?: GraphVersionListApiStatus;
+  /** Any valid JSON value. */
+  readonly tags?: GraphVersionListApiTags;
+  /** @minLength 1 */
+  readonly commit_message?: string;
+  readonly created_at?: string;
+  readonly global_variables?: readonly string[];
+}
+
+export interface GraphVersionPageMetadataApi {
+  total_count: number;
+  /** Page actually returned; out-of-range requests get the last page. */
+  page_number: number;
+  page_size: number;
+  total_pages: number;
+  next_page: number;
+  previous_page: number;
+}
+
+export interface GraphVersionListResultApi {
+  versions: GraphVersionListApi[];
+  metadata: GraphVersionPageMetadataApi;
+}
+
+export interface GraphVersionListResponseApi {
+  status: boolean;
+  result: GraphVersionListResultApi;
+}
+
+/**
+ * Version status (inactive for historical versions)
+ */
+export type GraphVersionDetailApiStatus =
+  (typeof GraphVersionDetailApiStatus)[keyof typeof GraphVersionDetailApiStatus];
+
+export const GraphVersionDetailApiStatus = {
+  draft: "draft",
+  active: "active",
+  inactive: "inactive",
+} as const;
+
+/**
+ * 'subgraph' for subgraph nodes, 'atomic' for nodes using a NodeTemplate
+ */
+export type NodeReadApiType =
+  (typeof NodeReadApiType)[keyof typeof NodeReadApiType];
+
+export const NodeReadApiType = {
+  subgraph: "subgraph",
+  atomic: "atomic",
+} as const;
+
+/**
+ * Any valid JSON value.
+ */
+export type LinkedPromptTemplateReadApiMessagesItem = {
+  [key: string]: unknown;
+};
+
+/**
+ * String or JSON object.
+ */
+export type LinkedPromptTemplateReadApiResponseFormat =
+  | string
+  | { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type LinkedPromptTemplateReadApiResponseSchema = {
+  [key: string]: unknown;
+};
+
+/**
+ * String or JSON object.
+ */
+export type LinkedPromptTemplateReadApiModel =
+  | string
+  | { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type LinkedPromptTemplateReadApiTools = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type LinkedPromptTemplateReadApiToolChoice = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type LinkedPromptTemplateReadApiModelDetail = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type LinkedPromptTemplateReadApiVariableNames = {
+  [key: string]: unknown;
+};
+
+/**
+ * Any valid JSON value.
+ */
+export type LinkedPromptTemplateReadApiMetadata = { [key: string]: unknown };
+
+/**
+ * Read from obj.prompt_template_node → PTV.prompt_config_snapshot.
+ */
+export interface LinkedPromptTemplateReadApi {
+  prompt_template_id: string;
+  prompt_version_id: string;
+  messages: LinkedPromptTemplateReadApiMessagesItem[];
+  /** String or JSON object. */
+  response_format: LinkedPromptTemplateReadApiResponseFormat;
+  /** Any valid JSON value. */
+  response_schema: LinkedPromptTemplateReadApiResponseSchema;
+  /** String or JSON object. */
+  model: LinkedPromptTemplateReadApiModel;
+  temperature: number;
+  max_tokens: number;
+  top_p: number;
+  frequency_penalty: number;
+  presence_penalty: number;
+  /** @minLength 1 */
+  output_format: string;
+  /** Any valid JSON value. */
+  tools: LinkedPromptTemplateReadApiTools;
+  /** Any valid JSON value. */
+  tool_choice: LinkedPromptTemplateReadApiToolChoice;
+  /** Any valid JSON value. */
+  model_detail: LinkedPromptTemplateReadApiModelDetail;
+  /** @minLength 1 */
+  template_format: string;
+  /** Any valid JSON value. */
+  variable_names: LinkedPromptTemplateReadApiVariableNames;
+  /** Any valid JSON value. */
+  metadata: LinkedPromptTemplateReadApiMetadata;
+  is_draft: boolean;
+  /** @minLength 1 */
+  template_version: string;
+}
+
+/**
+ * Return NodeConnection context set by the view (create response only).
+ */
+export interface NodeConnectionSummaryApi {
+  id: string;
+  source_node_id: string;
+  target_node_id: string;
+}
+
+export interface InputMappingReadApi {
+  /** @minLength 1 */
+  key: string;
+  /** @minLength 1 */
+  value: string;
+}
+
+export type PortReadApiDirection =
+  (typeof PortReadApiDirection)[keyof typeof PortReadApiDirection];
+
+export const PortReadApiDirection = {
+  input: "input",
+  output: "output",
+} as const;
+
+/**
+ * JSON Schema for validation
+ */
+export type PortReadApiDataSchema = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type PortReadApiDefaultValue = { [key: string]: unknown };
+
+export type PortReadApiMetadata = { [key: string]: unknown };
+
+export interface PortReadApi {
+  readonly id?: string;
+  /**
+   * Identifier (e.g., 'prompt', 'result')
+   * @minLength 1
+   */
+  readonly key?: string;
+  /**
+   * User-facing name for the port
+   * @minLength 1
+   */
+  readonly display_name?: string;
+  readonly direction?: PortReadApiDirection;
+  /** JSON Schema for validation */
+  readonly data_schema?: PortReadApiDataSchema;
+  readonly required?: boolean;
+  /** Any valid JSON value. */
+  readonly default_value?: PortReadApiDefaultValue;
+  readonly metadata?: PortReadApiMetadata;
+  readonly ref_port_id?: string;
+}
+
+/**
+ * Node-specific configuration (validated against node_template.config_schema for atomic nodes)
+ */
+export type NodeReadApiConfig = { [key: string]: unknown };
+
+/**
+ * UI coordinates {"x": 0, "y": 0}
+ */
+export type NodeReadApiPosition = { [key: string]: unknown };
+
+export interface NodeReadApi {
+  readonly id?: string;
+  /** 'subgraph' for subgraph nodes, 'atomic' for nodes using a NodeTemplate */
+  readonly type?: NodeReadApiType;
+  /**
+   * Display name
+   * @minLength 1
+   */
+  readonly name?: string;
+  /** Node-specific configuration (validated against node_template.config_schema for atomic nodes) */
+  readonly config?: NodeReadApiConfig;
+  /** UI coordinates {"x": 0, "y": 0} */
+  readonly position?: NodeReadApiPosition;
+  readonly node_template_id?: string;
+  readonly ref_graph_version_id?: string;
+  /** @minLength 1 */
+  readonly ref_graph_name?: string;
+  readonly ref_graph_id?: string;
+  prompt_template?: LinkedPromptTemplateReadApi;
+  node_connection?: NodeConnectionSummaryApi;
+  /** Reconstruct input_mappings as list of key-value objects.
+
+          Returns a list like [
+              {"key": "context", "value": "DataLoader.output"},
+              {"key": "question", "value": None}
+          ] for subgraph nodes, or None for atomic nodes.
+
+          Uses prefetched ``ports`` and ``incoming_edges`` when available
+          (see ``prefetch_version_detail``) to avoid N+1 queries.
+   */
+  readonly input_mappings?: readonly InputMappingReadApi[];
+  readonly ports?: readonly PortReadApi[];
+}
+
+export interface NodeConnectionReadApi {
+  readonly id?: string;
+  readonly source_node_id?: string;
+  readonly target_node_id?: string;
+}
+
+/**
+ * Any valid JSON value.
+ */
+export type GraphVersionDetailApiTags = { [key: string]: unknown };
+
+export interface GraphVersionDetailApi {
+  readonly id?: string;
+  readonly version_number?: number;
+  /** Version status (inactive for historical versions) */
+  readonly status?: GraphVersionDetailApiStatus;
+  /** Any valid JSON value. */
+  readonly tags?: GraphVersionDetailApiTags;
+  /** @minLength 1 */
+  readonly commit_message?: string;
+  readonly created_at?: string;
+  readonly nodes?: readonly NodeReadApi[];
+  readonly node_connections?: readonly NodeConnectionReadApi[];
+}
+
+export interface GraphVersionDetailResponseApi {
+  status: boolean;
+  result: GraphVersionDetailApi;
 }
 
 export interface CreateNodeConnectionApi {
@@ -2164,87 +2489,9 @@ export interface CreateNodeApi {
   input_mappings?: InputMappingApi[];
 }
 
-/**
- * 'subgraph' for subgraph nodes, 'atomic' for nodes using a NodeTemplate
- */
-export type NodeReadApiType =
-  (typeof NodeReadApiType)[keyof typeof NodeReadApiType];
-
-export const NodeReadApiType = {
-  subgraph: "subgraph",
-  atomic: "atomic",
-} as const;
-
-/**
- * Node-specific configuration (validated against node_template.config_schema for atomic nodes)
- */
-export type NodeReadApiConfig = { [key: string]: unknown };
-
-/**
- * UI coordinates {"x": 0, "y": 0}
- */
-export type NodeReadApiPosition = { [key: string]: unknown };
-
-export type PortReadApiDirection =
-  (typeof PortReadApiDirection)[keyof typeof PortReadApiDirection];
-
-export const PortReadApiDirection = {
-  input: "input",
-  output: "output",
-} as const;
-
-/**
- * JSON Schema for validation
- */
-export type PortReadApiDataSchema = { [key: string]: unknown };
-
-export type PortReadApiDefaultValue = { [key: string]: unknown };
-
-export type PortReadApiMetadata = { [key: string]: unknown };
-
-export interface PortReadApi {
-  readonly id?: string;
-  /**
-   * Identifier (e.g., 'prompt', 'result')
-   * @minLength 1
-   */
-  readonly key?: string;
-  /**
-   * User-facing name for the port
-   * @minLength 1
-   */
-  readonly display_name?: string;
-  readonly direction?: PortReadApiDirection;
-  /** JSON Schema for validation */
-  readonly data_schema?: PortReadApiDataSchema;
-  readonly required?: boolean;
-  readonly default_value?: PortReadApiDefaultValue;
-  readonly metadata?: PortReadApiMetadata;
-  readonly ref_port_id?: string;
-}
-
-export interface NodeReadApi {
-  readonly id?: string;
-  /** 'subgraph' for subgraph nodes, 'atomic' for nodes using a NodeTemplate */
-  readonly type?: NodeReadApiType;
-  /**
-   * Display name
-   * @minLength 1
-   */
-  readonly name?: string;
-  /** Node-specific configuration (validated against node_template.config_schema for atomic nodes) */
-  readonly config?: NodeReadApiConfig;
-  /** UI coordinates {"x": 0, "y": 0} */
-  readonly position?: NodeReadApiPosition;
-  readonly node_template_id?: string;
-  readonly ref_graph_version_id?: string;
-  /** @minLength 1 */
-  readonly ref_graph_name?: string;
-  readonly ref_graph_id?: string;
-  readonly prompt_template?: string;
-  readonly node_connection?: string;
-  readonly input_mappings?: string;
-  readonly ports?: readonly PortReadApi[];
+export interface NodeReadResponseApi {
+  status: boolean;
+  result: NodeReadApi;
 }
 
 export type UpdateNodeApiPosition = { [key: string]: unknown };
@@ -32020,40 +32267,19 @@ export type AgentPlaygroundGraphsExecutionsListParams = {
   limit?: number;
 };
 
-export type AgentPlaygroundGraphsVersionsReadParams = {
+export type AgentPlaygroundGraphsVersionsListParams = {
   /**
-   * A page number within the paginated result set.
+   * 1-based page number (default 1).
    */
-  page?: number;
+  page_number?: number;
   /**
-   * Number of results to return per page.
+   * Versions per page (default 10).
    */
-  limit?: number;
-};
-
-export type AgentPlaygroundGraphsVersionsRead200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: GraphListApi[];
-};
-
-export type AgentPlaygroundGraphsVersionsReadParams = {
+  page_size?: number;
   /**
-   * A page number within the paginated result set.
+   * Version number filter: 'v3', 'V3' or '3'; other text is ignored.
    */
-  page?: number;
-  /**
-   * Number of results to return per page.
-   */
-  limit?: number;
-};
-
-export type AgentPlaygroundGraphsVersionsRead200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: GraphListApi[];
+  search?: string;
 };
 
 export type AgentPlaygroundGraphsVersionsNodesPossibleEdgeMappingsParams = {

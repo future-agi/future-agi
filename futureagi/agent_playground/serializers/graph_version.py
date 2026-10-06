@@ -1,4 +1,5 @@
 from django.db.models import Prefetch
+from drf_yasg.utils import swagger_serializer_method
 from rest_framework import serializers
 
 from agent_playground.models.choices import GraphVersionStatus
@@ -11,6 +12,7 @@ from agent_playground.serializers.node_connection import (
     NodeConnectionReadSerializer,
     NodeConnectionWriteSerializer,
 )
+from tfc.utils.serializer_fields import JsonValueField
 
 
 def prefetch_version_detail(version: GraphVersion) -> GraphVersion:
@@ -55,6 +57,7 @@ class GraphVersionListSerializer(serializers.ModelSerializer):
     """Lightweight serializer for listing graph versions."""
 
     global_variables = serializers.SerializerMethodField()
+    tags = JsonValueField(read_only=True)
 
     class Meta:
         model = GraphVersion
@@ -69,6 +72,9 @@ class GraphVersionListSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = fields
 
+    @swagger_serializer_method(
+        serializer_or_field=serializers.ListField(child=serializers.CharField())
+    )
     def get_global_variables(self, obj):
         return self.context.get("global_variables_map", {}).get(obj.id, [])
 
@@ -78,6 +84,7 @@ class GraphVersionDetailSerializer(serializers.ModelSerializer):
 
     nodes = NodeReadSerializer(many=True, read_only=True)
     node_connections = NodeConnectionReadSerializer(many=True, read_only=True)
+    tags = JsonValueField(read_only=True)
 
     class Meta:
         model = GraphVersion
