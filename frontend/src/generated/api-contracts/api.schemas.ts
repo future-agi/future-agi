@@ -20047,6 +20047,7 @@ export const CallExecutionDetailApiSimulationCallType = {
 } as const;
 
 export interface CallExecutionDetailApi {
+  readonly audio_metrics?: string;
   readonly id?: string;
   /** @minLength 1 */
   readonly service_provider_call_id?: string;
@@ -22288,6 +22289,7 @@ export interface SimulateRunV3FunctionCallApi {
 }
 
 export interface CallExecutionV3DetailResponseApi {
+  readonly audio_metrics?: string;
   readonly id?: string;
   /** @minLength 1 */
   readonly service_provider_call_id?: string;
