@@ -22,6 +22,7 @@ const ConfirmRunEvaluations = ({
   onConfirm,
   selectedUserEvalList,
   loading,
+  getNote,
 }) => {
   const theme = useTheme();
   const [evalsToRun, setEvalsToRun] = useState([]);
@@ -43,6 +44,8 @@ const ConfirmRunEvaluations = ({
   const handleConfirm = () => {
     onConfirm(evalsToRun);
   };
+  // Read from the current list, so removing an eval also drops its note.
+  const note = getNote ? getNote(evalsToRun) : null;
   return (
     <Dialog
       open={open}
@@ -77,6 +80,11 @@ const ConfirmRunEvaluations = ({
         <Typography variant="body2" color="text.secondary">
           This will overwrite previous evaluation results.
         </Typography>
+        {note && (
+          <Typography variant="body2" color="text.secondary">
+            {note}
+          </Typography>
+        )}
       </DialogTitle>
 
       <DialogContent
@@ -187,6 +195,7 @@ ConfirmRunEvaluations.propTypes = {
   onConfirm: PropTypes.func,
   selectedUserEvalList: PropTypes.array,
   loading: PropTypes.bool,
+  getNote: PropTypes.func,
 };
 
 export default ConfirmRunEvaluations;

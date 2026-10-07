@@ -109,6 +109,7 @@ from simulate.serializers.response.test_execution import (
 from simulate.serializers.run_test import (
     RunTestListSummarySerializer,
     RunTestSerializer,
+    harness_run_tests_context,
 )
 from simulate.serializers.test_execution import (
     AllActiveTestsSerializer,
@@ -138,6 +139,11 @@ from simulate.serializers.test_execution import (
 
 # Import Temporal activities (using @temporal_activity drop-in decorator)
 from simulate.services.agent_definition import resolve_api_key_for_version
+from simulate.services.harness_evals import (
+    is_harness_run_test,
+    is_regrading_a_finished_harness_run,
+    regrade_mapping,
+)
 from simulate.services.test_executor import (
     TestExecutor,
     _run_simulate_evaluations_task,
@@ -302,6 +308,19 @@ def _run_test_read_queryset(queryset):
             to_attr="_prefetched_versions",
         ),
     )
+
+
+def _run_test_response_data(run_test):
+    """A run test this request just wrote, serialized the way detail GET reads it.
+
+    Reloaded through ``_run_test_read_queryset`` so each eval's template comes
+    in with the rest instead of one query per eval per field that shows it.
+    The request has already found or created this row, so the reload is by id
+    alone.
+    """
+    return RunTestSerializer(
+        _run_test_read_queryset(RunTest.no_workspace_objects).get(id=run_test.id)
+    ).data
 
 
 def _run_test_summary_queryset(queryset):
@@ -574,10 +593,14 @@ class RunTestListView(APIView):
             result_page = paginator.paginate_queryset(run_tests, request)
 
             # Serialize the data
-            serializer_class = (
-                RunTestListSummarySerializer if summary else RunTestSerializer
-            )
-            serializer = serializer_class(result_page, many=True)
+            if summary:
+                serializer = RunTestListSummarySerializer(result_page, many=True)
+            else:
+                serializer = RunTestSerializer(
+                    result_page,
+                    many=True,
+                    context=harness_run_tests_context(result_page),
+                )
 
             # Return paginated response
             return paginator.get_paginated_response(serializer.data)
@@ -756,9 +779,8 @@ class CreateRunTestView(APIView):
                     )
 
                 # Serialize and return the created run test
-                response_serializer = RunTestSerializer(run_test)
                 return Response(
-                    response_serializer.data, status=status.HTTP_201_CREATED
+                    _run_test_response_data(run_test), status=status.HTTP_201_CREATED
                 )
         except ReplaySession.DoesNotExist:
             return self.gm.not_found(get_error_message("REPLAY_SESSION_NOT_FOUND"))
@@ -883,8 +905,9 @@ class RunTestDetailView(APIView):
                 run_test.save()
 
                 # Serialize and return the updated run test
-                response_serializer = RunTestSerializer(run_test)
-                return Response(response_serializer.data, status=status.HTTP_200_OK)
+                return Response(
+                    _run_test_response_data(run_test), status=status.HTTP_200_OK
+                )
 
         except (Http404, RunTest.DoesNotExist):
             return self.gm.not_found("Run test not found")
@@ -1330,6 +1353,7 @@ class TestExecutionCancelView(APIView):
             200: CancelTestExecutionResponseSerializer,
             400: ErrorResponseSerializer,
             404: ErrorResponseSerializer,
+            409: ErrorResponseSerializer,
             500: ErrorResponseSerializer,
         },
         reject_unknown_fields=True,
@@ -1369,6 +1393,12 @@ class TestExecutionCancelView(APIView):
             else:
                 return self.gm.bad_request(
                     "Either run_test_id or test_execution_id must be provided"
+                )
+
+            if is_regrading_a_finished_harness_run(test_execution):
+                return self.gm.custom_error_response(
+                    status.HTTP_409_CONFLICT,
+                    "Grading can't be stopped. It finishes on its own.",
                 )
 
             test_execution.status = TestExecution.ExecutionStatus.CANCELLING
@@ -1635,10 +1665,14 @@ class RunTestAPIView(APIView):
             result_page = paginator.paginate_queryset(run_tests, request)
 
             # Serialize the data
-            serializer_class = (
-                RunTestListSummarySerializer if summary else RunTestSerializer
-            )
-            serializer = serializer_class(result_page, many=True)
+            if summary:
+                serializer = RunTestListSummarySerializer(result_page, many=True)
+            else:
+                serializer = RunTestSerializer(
+                    result_page,
+                    many=True,
+                    context=harness_run_tests_context(result_page),
+                )
 
             # Return paginated response
             return paginator.get_paginated_response(serializer.data)
@@ -4744,8 +4778,9 @@ class RunTestComponentsUpdateView(APIView):
                 run_test.save()
 
                 # Serialize and return the updated run test
-                response_serializer = RunTestSerializer(run_test)
-                return Response(response_serializer.data, status=status.HTTP_200_OK)
+                return Response(
+                    _run_test_response_data(run_test), status=status.HTTP_200_OK
+                )
 
         except (Http404, RunTest.DoesNotExist):
             traceback.print_exc()
@@ -8138,6 +8173,7 @@ class RunNewEvalsOnTestExecutionView(APIView):
             400: EvalErrorResponseSerializer,
             401: "Unauthorized",
             404: EvalErrorResponseSerializer,
+            409: EvalErrorResponseSerializer,
             500: EvalErrorResponseSerializer,
         },
         reject_unknown_fields=True,
@@ -8171,14 +8207,6 @@ class RunNewEvalsOnTestExecutionView(APIView):
                 "enable_tool_evaluation"
             )
 
-            # Update run_test.enable_tool_evaluation if provided
-            if enable_tool_evaluation is not None:
-                run_test.enable_tool_evaluation = enable_tool_evaluation
-                run_test.save(update_fields=["enable_tool_evaluation"])
-                logger.info(
-                    f"Updated enable_tool_evaluation to {enable_tool_evaluation} for run test {run_test.id}"
-                )
-
             # Get test executions to run evaluations on
             if select_all:
                 # Get all test executions for this run test
@@ -8192,17 +8220,55 @@ class RunNewEvalsOnTestExecutionView(APIView):
                     id__in=test_execution_ids, run_test=run_test
                 )
 
-            if not test_executions.exists():
+            # Every check and write below reads these ids, so a run started
+            # while this request is answered is neither refused for, moved to
+            # EVALUATING, nor counted against the claim.
+            execution_ids = [
+                str(execution_id)
+                for execution_id in test_executions.values_list("id", flat=True)
+            ]
+            if not execution_ids:
                 return self._gm.bad_request(
                     "No test executions found to run evaluations on."
                 )
 
-            # Validate that all test executions have COMPLETED status
-            non_completed_executions = test_executions.exclude(
-                status=TestExecution.ExecutionStatus.COMPLETED
-            )
+            harness_run = is_harness_run_test(run_test.id)
+            # The execution turns COMPLETED at the last call's ingest, but
+            # teardown later writes the job's end state onto it, which would
+            # overwrite EVALUATING mid-grade. Teardown commits the job and the
+            # run together, so asking this before the status check means the
+            # status read sees whatever teardown wrote.
+            if (
+                harness_run
+                and HostedHarnessJob.no_workspace_objects.filter(
+                    test_execution__in=execution_ids
+                )
+                .exclude(
+                    state__in=(
+                        HostedHarnessJob.State.COMPLETED,
+                        HostedHarnessJob.State.FAILED,
+                        HostedHarnessJob.State.CANCELED,
+                    )
+                )
+                .exists()
+            ):
+                return self._gm.custom_error_response(
+                    status.HTTP_409_CONFLICT,
+                    "This run is still finishing. Try again in a moment.",
+                )
 
-            if non_completed_executions.exists():
+            # Read after the job check above, for the teardown reason it gives.
+            previous_test_execution_statuses = {
+                str(execution_id): execution_status
+                for execution_id, execution_status in TestExecution.objects.filter(
+                    id__in=execution_ids
+                ).values_list("id", "status")
+            }
+            execution_ids = list(previous_test_execution_statuses)
+            if any(
+                execution_status != TestExecution.ExecutionStatus.COMPLETED
+                for execution_status in previous_test_execution_statuses.values()
+            ):
                 return self._gm.bad_request(
                     "Only test executions with COMPLETED status can have new evaluations run on them."
                 )
@@ -8217,159 +8283,241 @@ class RunNewEvalsOnTestExecutionView(APIView):
                     "One or more eval configs not found or do not belong to this run test."
                 )
 
-            # Collect all call execution IDs from the selected test executions
-            # Also update test execution status and column order.
-            #
-            # Memory-bounded rewrite: stream test executions with
-            # ``.iterator(chunk_size=100)`` so the queryset is not fully
-            # materialized, fetch call-execution ids in one bulk query
-            # (joined via ``test_execution_id__in``) instead of per-row,
-            # and flush ``bulk_update`` in batches of 100 so the buffer
-            # itself stays bounded for large runs.
-            BATCH_SIZE = 100
-            call_execution_ids = []
-            test_execution_count = 0
-            updated_test_executions = []
-            previous_test_execution_statuses = {}
-            test_executions_to_update = []
-
-            # Precompute the eval-config columns once; they are identical
-            # for every test_execution so recomputing inside the loop is
-            # pure overhead.
-            eval_column_entries = [
-                {
-                    "column_name": eval_config.name,
-                    "id": str(eval_config.id),
-                    "eval_config": eval_config.eval_template.config,
-                    "visible": True,
-                    "type": "evaluation",
-                }
-                for eval_config in eval_configs
-            ]
-
-            def _flush_bulk_update(buffer):
-                if buffer:
-                    TestExecution.objects.bulk_update(
-                        buffer,
-                        [
-                            "status",
-                            "execution_metadata",
-                            "picked_up_by_executor",
-                        ],
-                    )
-                    buffer.clear()
-
-            # Bulk-fetch all matching CallExecution ids in a single query
-            # (subquery against test_executions) rather than one query per
-            # test execution (N+1). Using ``.values_list("id")`` as a
-            # subquery keeps the id materialization server-side.
-            ce_rows = CallExecution.objects.filter(
-                test_execution_id__in=test_executions.values_list("id", flat=True)
-            ).values_list("id", flat=True)
-            for ce_id in ce_rows.iterator(chunk_size=1000):
-                call_execution_ids.append(str(ce_id))
-
-            for test_execution in test_executions.iterator(chunk_size=BATCH_SIZE):
-                test_execution_count += 1
-                previous_test_execution_statuses[str(test_execution.id)] = (
-                    test_execution.status
-                )
-
-                # Update test execution status to EVALUATING
-                test_execution.status = TestExecution.ExecutionStatus.EVALUATING
-
-                # Update column_order to include new eval configs
-                if not test_execution.execution_metadata:
-                    test_execution.execution_metadata = {}
-                test_execution.execution_metadata.pop("eval_dispatch_failed", None)
-
-                column_order = test_execution.execution_metadata.get("column_order", [])
-                if not column_order:
-                    column_order = []
-
-                # Normalize legacy camelCase keys in stored column_order entries.
-                for _col in column_order:
-                    if (
-                        isinstance(_col, dict)
-                        and "columnName" in _col
-                        and "column_name" not in _col
-                    ):
-                        _col["column_name"] = _col.pop("columnName")
-
-                # Get existing eval config IDs in column order
-                existing_eval_ids = set()
-                for col in column_order:
-                    if col.get("type") == "evaluation":
-                        existing_eval_ids.add(col.get("id"))
-
-                # Add new eval configs to column order if they don't exist
-                for entry in eval_column_entries:
-                    if entry["id"] not in existing_eval_ids:
-                        column_order.append(dict(entry))
-                        logger.info(
-                            f"Added eval config {entry['column_name']} to column order "
-                            f"for test execution {test_execution.id}"
+            # On a harness run, a result column the platform can't grade
+            # would be marked pending and never scored, so the whole request
+            # is refused before anything is written. The grader works out a
+            # harness suite eval's inputs itself, so its config keeps its
+            # empty mapping and later harness runs treat it exactly as before.
+            if harness_run:
+                for eval_config in eval_configs.select_related("eval_template"):
+                    if regrade_mapping(eval_config) is None:
+                        return self._gm.bad_request(
+                            f"{eval_config.name or 'This evaluation'} is scored by "
+                            "the harness during the call. Only rerunning the call "
+                            "refreshes it."
                         )
 
-                test_execution.execution_metadata["column_order"] = column_order
-                test_execution.picked_up_by_executor = False
-                test_executions_to_update.append(test_execution)
-                updated_test_executions.append(str(test_execution.id))
-
-                if len(test_executions_to_update) >= BATCH_SIZE:
-                    _flush_bulk_update(test_executions_to_update)
-
-            # Flush remainder
-            _flush_bulk_update(test_executions_to_update)
-
+            # Bulk-fetch all matching CallExecution ids in a single query
+            # rather than one query per test execution (N+1).
+            call_execution_ids = [
+                str(ce_id)
+                for ce_id in CallExecution.objects.filter(
+                    test_execution_id__in=execution_ids
+                )
+                .values_list("id", flat=True)
+                .iterator(chunk_size=1000)
+            ]
             if not call_execution_ids:
                 return self._gm.bad_request(
                     "No call executions found in the selected test executions."
                 )
 
-            # Convert eval_config_ids to strings
-            eval_config_ids_str = [str(ec_id) for ec_id in eval_config_ids]
+            # A run returns to COMPLETED only once a completed call of it has
+            # been graded, so a run with none would stay EVALUATING for good.
+            executions_with_a_completed_call = {
+                str(execution_id)
+                for execution_id in CallExecution.objects.filter(
+                    test_execution_id__in=execution_ids,
+                    status=CallExecution.CallStatus.COMPLETED,
+                )
+                .order_by()
+                .values_list("test_execution_id", flat=True)
+                .distinct()
+            }
+            without_a_completed_call = [
+                execution_id
+                for execution_id in execution_ids
+                if execution_id not in executions_with_a_completed_call
+            ]
+            if without_a_completed_call:
+                if len(execution_ids) == 1:
+                    return self._gm.bad_request(
+                        "Nothing to grade again: no call in this run completed."
+                    )
+                missing = len(without_a_completed_call)
+                shown = ", ".join(without_a_completed_call[:3])
+                if missing > 3:
+                    shown += ", ..."
+                return self._gm.bad_request(
+                    f"{missing} of the {len(execution_ids)} selected runs "
+                    f"{'has' if missing == 1 else 'have'} no completed call: {shown}."
+                )
 
-            # Bulk update eval_started flag and initialize eval_outputs for all call executions before triggering tasks
-            call_executions_to_update = CallExecution.objects.filter(
-                id__in=call_execution_ids
-            )
-            call_executions_list = []
-            for call_execution in call_executions_to_update:
-                # Provider-agnostic eval flags live in call_metadata
-                call_execution.call_metadata = call_execution.call_metadata or {}
-                call_execution.call_metadata["eval_started"] = True
-                call_execution.call_metadata["eval_completed"] = False
+            # The claim, the column order and the placeholders commit together,
+            # so a failure part way leaves the run COMPLETED as it was, and the
+            # graders are dispatched only after the commit. The claim is
+            # conditional, so two requests racing past the status check above
+            # can't both dispatch graders: the second moves nothing and stops.
+            with transaction.atomic():
+                claimed = TestExecution.objects.filter(
+                    id__in=execution_ids,
+                    status=TestExecution.ExecutionStatus.COMPLETED,
+                ).update(
+                    status=TestExecution.ExecutionStatus.EVALUATING,
+                    picked_up_by_executor=False,
+                )
+                if claimed != len(execution_ids):
+                    transaction.set_rollback(True)
+                    return self._gm.custom_error_response(
+                        status.HTTP_409_CONFLICT,
+                        "Grading is already running on this run.",
+                    )
 
-                # Initialize eval_outputs for the new eval configs
-                if not call_execution.eval_outputs:
-                    call_execution.eval_outputs = {}
+                # Update run_test.enable_tool_evaluation if provided
+                if enable_tool_evaluation is not None:
+                    run_test.enable_tool_evaluation = enable_tool_evaluation
+                    run_test.save(update_fields=["enable_tool_evaluation"])
+                    logger.info(
+                        f"Updated enable_tool_evaluation to {enable_tool_evaluation} for run test {run_test.id}"
+                    )
 
-                # Set placeholder values for each eval config that will be run
-                for eval_config in eval_configs:
-                    call_execution.eval_outputs[str(eval_config.id)] = {
-                        "status": "pending"
+                # Update each test execution's column order.
+                #
+                # Memory-bounded rewrite: stream test executions with
+                # ``.iterator(chunk_size=100)`` so the queryset is not fully
+                # materialized, and flush ``bulk_update`` in batches of 100 so the
+                # buffer itself stays bounded for large runs.
+                BATCH_SIZE = 100
+                test_execution_count = 0
+                updated_test_executions = []
+                test_executions_to_update = []
+
+                # Precompute the eval-config columns once; they are identical
+                # for every test_execution so recomputing inside the loop is
+                # pure overhead.
+                eval_column_entries = [
+                    {
+                        "column_name": eval_config.name,
+                        "id": str(eval_config.id),
+                        "eval_config": eval_config.eval_template.config,
+                        "visible": True,
+                        "type": "evaluation",
+                    }
+                    for eval_config in eval_configs
+                ]
+
+                def _flush_bulk_update(buffer):
+                    if buffer:
+                        TestExecution.objects.bulk_update(
+                            buffer,
+                            [
+                                "execution_metadata",
+                                "picked_up_by_executor",
+                            ],
+                        )
+                        buffer.clear()
+
+                for test_execution in TestExecution.objects.filter(
+                    id__in=execution_ids
+                ).iterator(chunk_size=BATCH_SIZE):
+                    test_execution_count += 1
+
+                    # Update column_order to include new eval configs
+                    if not test_execution.execution_metadata:
+                        test_execution.execution_metadata = {}
+                    test_execution.execution_metadata.pop("eval_dispatch_failed", None)
+
+                    column_order = test_execution.execution_metadata.get("column_order", [])
+                    if not column_order:
+                        column_order = []
+
+                    # Normalize legacy camelCase keys in stored column_order entries.
+                    for _col in column_order:
+                        if (
+                            isinstance(_col, dict)
+                            and "columnName" in _col
+                            and "column_name" not in _col
+                        ):
+                            _col["column_name"] = _col.pop("columnName")
+
+                    # Get existing eval config IDs in column order
+                    existing_eval_ids = set()
+                    for col in column_order:
+                        if col.get("type") == "evaluation":
+                            existing_eval_ids.add(col.get("id"))
+
+                    # Add new eval configs to column order if they don't exist
+                    for entry in eval_column_entries:
+                        if entry["id"] not in existing_eval_ids:
+                            column_order.append(dict(entry))
+                            logger.info(
+                                f"Added eval config {entry['column_name']} to column order "
+                                f"for test execution {test_execution.id}"
+                            )
+
+                    test_execution.execution_metadata["column_order"] = column_order
+                    test_execution.picked_up_by_executor = False
+                    test_executions_to_update.append(test_execution)
+                    updated_test_executions.append(str(test_execution.id))
+
+                    if len(test_executions_to_update) >= BATCH_SIZE:
+                        _flush_bulk_update(test_executions_to_update)
+
+                # Flush remainder
+                _flush_bulk_update(test_executions_to_update)
+
+                # Convert eval_config_ids to strings
+                eval_config_ids_str = [str(ec_id) for ec_id in eval_config_ids]
+
+                # Bulk update eval_started flag and initialize eval_outputs for all call executions before triggering tasks
+                call_executions_to_update = CallExecution.objects.filter(
+                    id__in=call_execution_ids
+                )
+                call_executions_list = []
+                # What each call held for these evals before the placeholders, so
+                # a failed dispatch can put back a score (a harness one included)
+                # instead of leaving it pending until a retry succeeds.
+                no_output = object()
+                previous_outputs = {}
+                # And whether its own evaluations had finished: adding an eval to
+                # the run later queues only calls that say so.
+                previous_eval_completed = {}
+                for call_execution in call_executions_to_update:
+                    # Provider-agnostic eval flags live in call_metadata
+                    call_execution.call_metadata = call_execution.call_metadata or {}
+                    previous_eval_completed[call_execution.id] = (
+                        call_execution.call_metadata.get("eval_completed", no_output)
+                    )
+                    call_execution.call_metadata["eval_started"] = True
+                    call_execution.call_metadata["eval_completed"] = False
+
+                    # Initialize eval_outputs for the new eval configs
+                    if not call_execution.eval_outputs:
+                        call_execution.eval_outputs = {}
+
+                    previous_outputs[call_execution.id] = {
+                        str(eval_config.id): call_execution.eval_outputs.get(
+                            str(eval_config.id), no_output
+                        )
+                        for eval_config in eval_configs
                     }
 
-                call_executions_list.append(call_execution)
+                    # Set placeholder values for each eval config that will be run
+                    for eval_config in eval_configs:
+                        call_execution.eval_outputs[str(eval_config.id)] = {
+                            "status": "pending"
+                        }
 
-            if call_executions_list:
-                CallExecution.objects.bulk_update(
-                    call_executions_list, ["call_metadata", "eval_outputs"]
-                )
-                logger.info(
-                    f"Bulk updated eval_started flag and initialized eval_outputs for "
-                    f"{len(call_executions_list)} call executions with {len(eval_configs)} eval configs"
-                )
+                    call_executions_list.append(call_execution)
+
+                if call_executions_list:
+                    CallExecution.objects.bulk_update(
+                        call_executions_list, ["call_metadata", "eval_outputs"]
+                    )
+                    logger.info(
+                        f"Bulk updated eval_started flag and initialized eval_outputs for "
+                        f"{len(call_executions_list)} call executions with {len(eval_configs)} eval configs"
+                    )
 
             # Trigger the async task to run evaluations. If the local async
             # backend is unavailable, keep the persisted pending state and let
             # the caller retry instead of failing the API request after mutation.
             try:
                 task = run_new_evals_on_call_executions_task.apply_async(
-                    args=(call_execution_ids, eval_config_ids_str),
+                    args=(call_execution_ids, eval_config_ids_str)
                 )
                 task_id = task.id
+                dispatched = True
                 message = (
                     "New evaluations dispatched successfully. "
                     "Individual tasks will run in parallel."
@@ -8388,9 +8536,21 @@ class RunNewEvalsOnTestExecutionView(APIView):
                     call_execution.call_metadata["eval_dispatch_failed"] = str(
                         dispatch_error
                     )
+                    eval_completed = previous_eval_completed[call_execution.id]
+                    if eval_completed is no_output:
+                        call_execution.call_metadata.pop("eval_completed", None)
+                    else:
+                        call_execution.call_metadata["eval_completed"] = eval_completed
+                    for config_id, previous in previous_outputs[
+                        call_execution.id
+                    ].items():
+                        if previous is no_output:
+                            call_execution.eval_outputs.pop(config_id, None)
+                        else:
+                            call_execution.eval_outputs[config_id] = previous
                 if call_executions_list:
                     CallExecution.objects.bulk_update(
-                        call_executions_list, ["call_metadata"]
+                        call_executions_list, ["call_metadata", "eval_outputs"]
                     )
                 failed_test_executions = list(
                     TestExecution.objects.filter(id__in=updated_test_executions)
@@ -8412,9 +8572,10 @@ class RunNewEvalsOnTestExecutionView(APIView):
                         ["status", "picked_up_by_executor", "execution_metadata"],
                     )
                 message = (
-                    "New evaluations marked pending; async dispatch failed "
+                    "New evaluations may not have started; async dispatch failed "
                     "and can be retried."
                 )
+                dispatched = False
                 logger.exception(
                     "run_new_evals_dispatch_failed",
                     run_test_id=str(run_test_id),
@@ -8429,6 +8590,7 @@ class RunNewEvalsOnTestExecutionView(APIView):
                         "message": message,
                         "run_test_id": str(run_test_id),
                         "call_execution_count": len(call_execution_ids),
+                        "dispatched": dispatched,
                     }
                 ).data,
                 status=status.HTTP_200_OK,
