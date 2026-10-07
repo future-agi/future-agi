@@ -4972,7 +4972,23 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             user_query, user_params = "", {}
         else:
             user_query, user_params = builder.build_user_id_query(trace_ids)
-        eval_query, eval_params = builder.build_eval_replay_query(trace_ids)
+        eval_output_types = {
+            str(config.id): eval_output_type_for_config(config)
+            for config in eval_configs
+        }
+        eval_declared_choices = {
+            str(config.id): list(config.eval_template.choices or [])
+            for config in eval_configs
+            if getattr(config, "eval_template", None) is not None
+        }
+        eval_target_types: dict[str, str | None] = {}
+        eval_observed_choice_labels: dict[str, list[str]] = {}
+        # This is deliberately the count projection used only by the Observe
+        # session list. The ordinary trace and voice paths keep their average
+        # / percentage projection.
+        eval_query, eval_params = builder.build_eval_replay_query(
+            trace_ids, count_mode=True
+        )
 
         def _execute_enrichment(query, params):
             return analytics.execute_ch_query(
@@ -5275,11 +5291,32 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         eval_result = enrichment_results.get("evals")
         if eval_result is not None:
             try:
-                expanded_eval_rows = builder.expand_eval_replay_rows(eval_result.data)
+                expanded_eval_rows = builder.expand_eval_replay_rows(
+                    eval_result.data, count_mode=True
+                )
                 eval_map = builder.pivot_eval_results(
                     [(list(row.values())) for row in expanded_eval_rows],
                     (list(expanded_eval_rows[0].keys()) if expanded_eval_rows else []),
+                    count_mode=True,
+                    output_types=eval_output_types,
+                    declared_choices=eval_declared_choices,
                 )
+                for eval_row in expanded_eval_rows:
+                    config_id = str(eval_row.get("eval_config_id") or "")
+                    target_type = eval_row.get("target_type")
+                    if config_id and target_type in {"span", "trace"}:
+                        eval_target_types[config_id] = target_type
+                for trace_evals in eval_map.values():
+                    for config_id, cell in trace_evals.items():
+                        if eval_output_types.get(config_id) != EvalOutputType.CHOICES.value:
+                            continue
+                        if isinstance(cell, dict) and not cell.get("error") and not cell.get("status"):
+                            labels = eval_observed_choice_labels.setdefault(
+                                config_id, []
+                            )
+                            for label in cell:
+                                if label not in labels:
+                                    labels.append(label)
             except (TypeError, ValueError) as exc:
                 logger.warning(
                     "trace_list_eval_replay_invalid",
@@ -5413,7 +5450,11 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         # all standard columns (latency, tokens, cost, user_id, etc.)
         column_config = get_default_trace_config()
         column_config = update_column_config_based_on_eval_config(
-            column_config, eval_configs
+            column_config,
+            eval_configs,
+            skip_choices=True,
+            target_types=eval_target_types,
+            observed_choice_labels=eval_observed_choice_labels,
         )
         column_config = update_span_column_config_based_on_annotations(
             column_config, annotation_labels
@@ -5469,12 +5510,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 config_id = str(config.id)
                 if config_id not in trace_evals:
                     continue
-                flatten_eval_score_into_entry(
-                    entry,
-                    config_id,
-                    trace_evals[config_id],
-                    eval_output_type_for_config(config),
-                )
+                entry[config_id] = trace_evals[config_id]
 
             # Add annotations
             trace_annotations = annotation_map.get(

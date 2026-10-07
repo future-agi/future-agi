@@ -16,6 +16,7 @@ span IDs, grouped by ``(observation_span_id, label_id)``.
 The three result sets are merged in Python to produce the final response.
 """
 
+import math
 import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -2298,6 +2299,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         created_after: Any = None,
         *,
         span_entities: list[tuple[str, str]] | None = None,
+        count_mode: bool = False,
     ) -> tuple[str, dict[str, Any]]:
         """Build the Phase-2 eval-scores query for a page of span IDs.
 
@@ -2387,6 +2389,22 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         # ``output_str`` is Nullable(String); ClickHouse 3-valued logic makes
         # ``NULL != 'ERROR'`` NULL (not TRUE), so use ``ifNull(...)`` to keep
         # the comparison NULL-safe.
+        count_projection = ""
+        count_inner_projection = ""
+        if count_mode:
+            # Only the Observe span list opts into exact tile counts.  The
+            # non-Observe list continues to use its percentage pivot below.
+            count_projection = """
+            , countIf(
+                output_bool = 1 AND error = 0 AND ifNull(output_str, '') != 'ERROR' AND ifNull(status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
+            ) AS pass_count
+            , countIf(
+                output_bool = 0 AND error = 0 AND ifNull(output_str, '') != 'ERROR' AND ifNull(status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
+            ) AS fail_count
+            , argMax(target_type, created_at) AS target_type
+            """
+            count_inner_projection = ",\n                created_at,\n                target_type"
+
         query = f"""
         SELECT
             {trace_select}
@@ -2396,14 +2414,14 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             -- json.dumps(allow_nan=False) rejects. NULL serializes as null.
             ifNotFinite(avgIf(
                 output_float,
-                error = 0 AND ifNull(output_str, '') != 'ERROR' AND status NOT IN ('pending', 'running', 'skipped', 'errored')
+                error = 0 AND ifNull(output_str, '') != 'ERROR' AND ifNull(status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
             ), NULL) AS avg_score,
             ifNotFinite(avgIf(
                 CASE WHEN output_bool = 1 THEN 100.0 ELSE 0.0 END,
-                error = 0 AND ifNull(output_str, '') != 'ERROR' AND status NOT IN ('pending', 'running', 'skipped', 'errored')
+                error = 0 AND ifNull(output_str, '') != 'ERROR' AND ifNull(status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
             ), NULL) AS pass_rate,
             countIf(
-                error = 0 AND ifNull(output_str, '') != 'ERROR' AND status NOT IN ('pending', 'running', 'skipped', 'errored')
+                error = 0 AND ifNull(output_str, '') != 'ERROR' AND ifNull(status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
             ) AS success_count,
             countIf(
                 error = 1 OR ifNull(output_str, '') = 'ERROR' OR status = 'errored'
@@ -2415,8 +2433,9 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             count() AS eval_count,
             groupArrayIf(
                 output_str_list,
-                error = 0 AND ifNull(output_str, '') != 'ERROR' AND status NOT IN ('pending', 'running', 'skipped', 'errored')
+                error = 0 AND ifNull(output_str, '') != 'ERROR' AND ifNull(status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
             ) AS str_lists
+            {count_projection}
         -- Candidate-scoped latest replay. Live/tombstone predicates are
         -- intentionally outside LIMIT 1 BY id so a newest deletion marker
         -- cannot resurrect an older score.
@@ -2432,7 +2451,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                 error,
                 {status_projection},
                 {skipped_reason_projection},
-                {live_projection}
+                {live_projection}{count_inner_projection}
             FROM {eval_table}
             WHERE observation_span_id IN %(span_ids)s
               {entity_fragment}
@@ -2545,6 +2564,9 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         eval_rows: list[dict],
         *,
         key_by_trace: bool = False,
+        count_mode: bool = False,
+        output_types: dict[str, str | None] | None = None,
+        declared_choices: dict[str, list[str]] | None = None,
     ) -> dict[Any, dict[str, Any]]:
         """Pivot eval query results into a nested dict keyed by span_id.
 
@@ -2560,6 +2582,8 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         import json as _json
 
         result: dict[Any, dict[str, Any]] = {}
+        output_types = output_types or {}
+        declared_choices = declared_choices or {}
         for row in eval_rows:
             span_id = str(row.get("observation_span_id", ""))
             trace_id = str(row.get("trace_id") or "")
@@ -2579,6 +2603,54 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             # UI can render an error state (distinct from "no eval run").
             if success_count == 0 and error_count > 0:
                 result.setdefault(span_key, {})[config_id] = {"error": True}
+                continue
+
+            if count_mode:
+                output_type = (output_types.get(config_id) or "").replace(
+                    "/", "_"
+                ).replace(" ", "_").upper()
+                if success_count == 0:
+                    marker = non_terminal_eval_marker(row)
+                    if marker is not None:
+                        result.setdefault(span_key, {})[config_id] = marker
+                    continue
+
+                if output_type == "PASS_FAIL":
+                    result.setdefault(span_key, {})[config_id] = {
+                        "pass": row.get("pass_count", 0) or 0,
+                        "fail": row.get("fail_count", 0) or 0,
+                    }
+                    continue
+
+                if output_type == "CHOICES":
+                    counts = {
+                        str(choice): 0
+                        for choice in declared_choices.get(config_id, [])
+                        if choice not in (None, "")
+                    }
+                    for sl in str_lists:
+                        if isinstance(sl, str) and sl.startswith("["):
+                            try:
+                                sl = _json.loads(sl)
+                            except _json.JSONDecodeError:
+                                sl = []
+                        if not isinstance(sl, list):
+                            continue
+                        for choice in {str(value) for value in sl if value not in (None, "")}:
+                            counts[choice] = counts.get(choice, 0) + 1
+                    result.setdefault(span_key, {})[config_id] = counts
+                    continue
+
+                if (
+                    isinstance(avg_score, (int, float))
+                    and not isinstance(avg_score, bool)
+                    and math.isfinite(avg_score)
+                ):
+                    result.setdefault(span_key, {})[config_id] = round(
+                        avg_score * 100, 2
+                    )
+                else:
+                    result.setdefault(span_key, {})[config_id] = None
                 continue
 
             # CHOICES eval: compute per-choice percentage across all

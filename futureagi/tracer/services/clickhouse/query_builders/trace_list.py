@@ -5565,6 +5565,8 @@ class TraceListQueryBuilder(BaseQueryBuilder):
     def build_eval_query(
         self,
         trace_ids: list[str],
+        *,
+        count_mode: bool = False,
     ) -> tuple[str, dict[str, Any]]:
         """Build the Phase-2 eval-scores query for a page of trace IDs.
 
@@ -5628,6 +5630,23 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         # the comparison NULL-safe.
         # New per-status columns are appended after ``str_lists`` so the pivot's
         # positional column fallbacks (0..7) stay valid.
+        count_projection = ""
+        count_inner_projection = ""
+        if count_mode:
+            # Observe's tile cells need exact attempts, rather than the
+            # averaged / percentage projection used by the other trace lists.
+            # Keep this internal: no request parameter selects this branch.
+            count_projection = """
+            , countIf(
+                output_bool = 1 AND error = 0 AND ifNull(output_str, '') != 'ERROR' AND ifNull(status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
+            ) AS pass_count
+            , countIf(
+                output_bool = 0 AND error = 0 AND ifNull(output_str, '') != 'ERROR' AND ifNull(status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
+            ) AS fail_count
+            , argMax(target_type, created_at) AS target_type
+            """
+            count_inner_projection = ",\n                created_at,\n                target_type"
+
         query = f"""
         SELECT
             trace_id,
@@ -5636,14 +5655,14 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             -- json.dumps(allow_nan=False) rejects. NULL serializes as null.
             ifNotFinite(avgIf(
                 output_float,
-                error = 0 AND ifNull(output_str, '') != 'ERROR' AND status NOT IN ('pending', 'running', 'skipped', 'errored')
+                error = 0 AND ifNull(output_str, '') != 'ERROR' AND ifNull(status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
             ), NULL) AS avg_score,
             ifNotFinite(avgIf(
                 CASE WHEN output_bool = 1 THEN 100.0 ELSE 0.0 END,
-                error = 0 AND ifNull(output_str, '') != 'ERROR' AND status NOT IN ('pending', 'running', 'skipped', 'errored')
+                error = 0 AND ifNull(output_str, '') != 'ERROR' AND ifNull(status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
             ), NULL) AS pass_rate,
             countIf(
-                error = 0 AND ifNull(output_str, '') != 'ERROR' AND status NOT IN ('pending', 'running', 'skipped', 'errored')
+                error = 0 AND ifNull(output_str, '') != 'ERROR' AND ifNull(status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
             ) AS success_count,
             countIf(
                 error = 1 OR ifNull(output_str, '') = 'ERROR' OR status = 'errored'
@@ -5651,12 +5670,13 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             count() AS eval_count,
             groupArrayIf(
                 output_str_list,
-                error = 0 AND ifNull(output_str, '') != 'ERROR' AND status NOT IN ('pending', 'running', 'skipped', 'errored')
+                error = 0 AND ifNull(output_str, '') != 'ERROR' AND ifNull(status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
             ) AS str_lists,
             countIf(status = 'skipped') AS skipped_count,
             countIf(status = 'running') AS running_count,
             countIf(status = 'pending') AS pending_count,
             anyIf(skipped_reason, status = 'skipped') AS skipped_reason
+            {count_projection}
         -- Candidate-scoped latest replay: live/tombstone predicates belong
         -- outside LIMIT 1 BY id. Applying them in the inner scan resurrects an
         -- older score when its newest physical version is a deletion marker.
@@ -5671,7 +5691,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
                 error,
                 {status_projection},
                 {skipped_reason_projection},
-                {live_projection}
+                {live_projection}{count_inner_projection}
             FROM {eval_table}
             WHERE trace_id IN %(trace_ids)s
               AND custom_eval_config_id IN %(eval_config_ids)s
@@ -5686,6 +5706,8 @@ class TraceListQueryBuilder(BaseQueryBuilder):
     def build_eval_replay_query(
         self,
         trace_ids: list[str],
+        *,
+        count_mode: bool = False,
     ) -> tuple[str, dict[str, Any]]:
         """Pack exact page eval cells into at most one result row per trace.
 
@@ -5697,7 +5719,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         row count by the already-finite trace page.
         """
 
-        query, params = self.build_eval_query(trace_ids)
+        query, params = self.build_eval_query(trace_ids, count_mode=count_mode)
         if not query:
             return "", {}
         packed_query = f"""
@@ -5715,6 +5737,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
                 running_count,
                 pending_count,
                 skipped_reason
+                {", pass_count, fail_count, target_type" if count_mode else ""}
             )) AS eval_rows
         FROM (
             {query}
@@ -5726,6 +5749,8 @@ class TraceListQueryBuilder(BaseQueryBuilder):
     @staticmethod
     def expand_eval_replay_rows(
         eval_rows: list[dict[str, Any]],
+        *,
+        count_mode: bool = False,
     ) -> list[dict[str, Any]]:
         """Expand packed eval replay rows into the established pivot shape."""
 
@@ -5741,7 +5766,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             "running_count",
             "pending_count",
             "skipped_reason",
-        )
+        ) + (("pass_count", "fail_count", "target_type") if count_mode else ())
         expanded: list[dict[str, Any]] = []
         for row in eval_rows:
             packed_cells = row.get("eval_rows")
@@ -5934,6 +5959,10 @@ class TraceListQueryBuilder(BaseQueryBuilder):
     def pivot_eval_results(
         eval_rows: list[tuple],
         eval_columns: list[str],
+        *,
+        count_mode: bool = False,
+        output_types: dict[str, str | None] | None = None,
+        declared_choices: dict[str, list[str]] | None = None,
     ) -> dict[str, dict[str, Any]]:
         """Pivot eval query results into a nested dict keyed by trace_id.
 
@@ -5945,6 +5974,8 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             A dict of ``{trace_id: {eval_config_id: score_dict}}``.
         """
         result: dict[str, dict[str, Any]] = {}
+        output_types = output_types or {}
+        declared_choices = declared_choices or {}
         col_idx = {name: i for i, name in enumerate(eval_columns)}
 
         def _get(row, key, idx, default=None):
@@ -5971,6 +6002,63 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             # UI can render an error state (distinct from "no eval run").
             if success_count == 0 and error_count > 0:
                 result.setdefault(trace_id, {})[config_id] = {"error": True}
+                continue
+
+            if count_mode:
+                output_type = (output_types.get(config_id) or "").replace(
+                    "/", "_"
+                ).replace(" ", "_").upper()
+                if success_count == 0:
+                    marker = non_terminal_eval_marker(
+                        {
+                            "skipped_count": _get(row, "skipped_count", 8, 0) or 0,
+                            "running_count": _get(row, "running_count", 9, 0) or 0,
+                            "pending_count": _get(row, "pending_count", 10, 0) or 0,
+                            "skipped_reason": _get(row, "skipped_reason", 11, None),
+                        }
+                    )
+                    if marker is not None:
+                        result.setdefault(trace_id, {})[config_id] = marker
+                    continue
+
+                if output_type == "PASS_FAIL":
+                    result.setdefault(trace_id, {})[config_id] = {
+                        "pass": _get(row, "pass_count", 12, 0) or 0,
+                        "fail": _get(row, "fail_count", 13, 0) or 0,
+                    }
+                    continue
+
+                if output_type == "CHOICES":
+                    counts = {
+                        str(choice): 0
+                        for choice in declared_choices.get(config_id, [])
+                        if choice not in (None, "")
+                    }
+                    for sl in str_lists:
+                        if isinstance(sl, str) and sl.startswith("["):
+                            try:
+                                sl = _json.loads(sl)
+                            except _json.JSONDecodeError:
+                                sl = []
+                        if not isinstance(sl, list):
+                            continue
+                        for choice in {str(value) for value in sl if value not in (None, "")}:
+                            counts[choice] = counts.get(choice, 0) + 1
+                    result.setdefault(trace_id, {})[config_id] = counts
+                    continue
+
+                def _finite_count_value(value):
+                    return (
+                        isinstance(value, (int, float))
+                        and not isinstance(value, bool)
+                        and math.isfinite(value)
+                    )
+
+                result.setdefault(trace_id, {})[config_id] = (
+                    round(avg_score * 100, 2)
+                    if _finite_count_value(avg_score)
+                    else None
+                )
                 continue
 
             # CHOICES eval: compute per-choice percentage across all
