@@ -35,6 +35,8 @@ export const COLORS = [
   "#9a9fac",
 ];
 const OUTCOME_COLORS = {
+  queued: COLORS[5],
+  in_progress: COLORS[4],
   passed: COLORS[1],
   failed: COLORS[2],
   error: COLORS[3],
@@ -45,8 +47,7 @@ const OUTCOME_COLORS = {
   neutral: COLORS[5],
   negative: COLORS[2],
   unknown: COLORS[5],
-  successful: COLORS[0],
-  unsuccessful: COLORS[2],
+  "not reported": COLORS[5],
   escalated: COLORS[0],
 };
 export const number = (value, digits = 1) =>
@@ -154,17 +155,16 @@ const pieLabel = (label) =>
   ({
     true: "Successful",
     false: "Unsuccessful",
-    successful: "Successful",
-    unsuccessful: "Unsuccessful",
     escalated: "Escalated",
+    queued: "Queued",
+    in_progress: "In progress",
     passed: "Passed",
     failed: "Failed",
-    error: "Errored",
+    error: "Error",
     inconclusive: "Inconclusive",
     positive: "Positive",
     neutral: "Neutral",
     negative: "Negative",
-    unknown: "Unknown",
   })[label.toLowerCase()] || label;
 export function Donut({ data, onOpen }) {
   const theme = useTheme();
@@ -188,7 +188,7 @@ export function Donut({ data, onOpen }) {
                   ? (segment) =>
                       segment.count > 0 &&
                       segment.statuses?.length &&
-                      onOpen({ status: segment.statuses })
+                      onOpen({ goal_outcome: segment.statuses })
                   : undefined
               }
               style={{ cursor: onOpen ? "pointer" : "default" }}
@@ -239,7 +239,7 @@ export function Donut({ data, onOpen }) {
             disabled={onOpen ? !segment.count : undefined}
             onClick={
               onOpen && segment.statuses?.length
-                ? () => onOpen({ status: segment.statuses })
+                ? () => onOpen({ goal_outcome: segment.statuses })
                 : undefined
             }
             aria-label={

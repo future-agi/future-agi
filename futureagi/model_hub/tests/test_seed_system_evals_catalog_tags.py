@@ -33,6 +33,12 @@ SIX = {
     "customer_agent_task_completion": set(),
 }
 BASE = {"Agents", "Conversation", "Voice", "Chatbot behaviors"}
+CONVERSATION_AUDIT_EVALS = {
+    "customer_agent_task_completion",
+    "intake_field_accuracy",
+    "customer_agent_query_handling",
+    "conversation_hallucination",
+}
 
 
 def _one_system_template(name):
@@ -66,13 +72,17 @@ def test_the_six_have_their_tags():
         assert catalog[name]["required_keys"] == ["agent_prompt", "conversation"], name
 
 
-def test_the_six_prompts_match_the_legacy_yaml_verbatim():
+def test_conversation_prompts_match_the_legacy_yaml_verbatim():
     catalog = _catalog()
-    for name in SIX:
+    for name in set(SIX) | CONVERSATION_AUDIT_EVALS:
         legacy = yaml.safe_load(
             (Path(SYSTEM_EVALS_DIR) / "agent" / f"{name}.yaml").read_text()
         )
-        assert catalog[name]["rule_prompt"] == legacy["config"]["rule_prompt"], name
+        assert (
+            catalog[name]["rule_prompt"]
+            == legacy["config"]["rule_prompt"]
+            == legacy["criteria"]
+        ), name
         assert catalog[name]["description"] == legacy["description"], name
 
 
@@ -114,12 +124,17 @@ def test_the_version_gate_reopens_for_this_change():
     # The cache is process-wide, not rolled back with the test transaction:
     # restore whatever was there so no later test sees this test's value.
     previous = cache.get("system_evals_version")
-    cache.set("system_evals_version", 16)
+    assert SYSTEM_EVALS_VERSION > 20
+    cache.set("system_evals_version", 20)
     try:
         seed_evals()
         for name, extra in SIX.items():
             template = _one_system_template(name)
             assert set(template.eval_tags) == BASE | extra, name
+        for name in CONVERSATION_AUDIT_EVALS:
+            template = _one_system_template(name)
+            assert template.config["rule_prompt"] == _catalog()[name]["rule_prompt"], name
+        assert cache.get("system_evals_version") == SYSTEM_EVALS_VERSION
     finally:
         if previous is None:
             cache.delete("system_evals_version")
