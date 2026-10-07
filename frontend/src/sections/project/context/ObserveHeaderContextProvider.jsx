@@ -28,6 +28,15 @@ const ObserveHeaderProvider = ({ children }) => {
     return typeof fn === "function" ? fn() : null;
   }, []);
 
+  const getViewRevisionRef = useRef(null);
+  const registerGetViewRevision = useCallback((fn) => {
+    getViewRevisionRef.current = typeof fn === "function" ? fn : null;
+  }, []);
+  const getViewRevision = useCallback(() => {
+    const fn = getViewRevisionRef.current;
+    return typeof fn === "function" ? fn() : null;
+  }, []);
+
   return (
     <ObserveHeaderContext.Provider
       value={{
@@ -37,6 +46,8 @@ const ObserveHeaderProvider = ({ children }) => {
         setActiveViewConfig,
         registerGetViewConfig,
         getViewConfig,
+        registerGetViewRevision,
+        getViewRevision,
       }}
     >
       {children}

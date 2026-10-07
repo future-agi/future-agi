@@ -20,6 +20,8 @@ export const ObserveHeaderContext = createContext({
   // Pass null to unregister.
   registerGetViewConfig: () => {},
   getViewConfig: () => null,
+  registerGetViewRevision: () => {},
+  getViewRevision: () => null,
 });
 
 export const useObserveHeader = () => {

@@ -1115,6 +1115,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     activeViewConfig,
     setActiveViewConfig,
     registerGetViewConfig,
+    registerGetViewRevision,
   } = useObserveHeader();
 
   // keepPrevious: hold `source` across refetch so projectSource doesn't flicker
@@ -2831,6 +2832,11 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     registerGetViewConfig(buildViewConfig);
     return () => registerGetViewConfig(null);
   }, [registerGetViewConfig, buildViewConfig]);
+
+  useEffect(() => {
+    registerGetViewRevision(() => loadedViewRef.current?.revision ?? null);
+    return () => registerGetViewRevision(null);
+  }, [registerGetViewRevision]);
 
   // The save precondition belongs to the editor baseline, not a newer list response.
   const handleSaveView = useCallback(() => {

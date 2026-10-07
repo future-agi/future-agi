@@ -19,7 +19,7 @@ vi.mock("src/api/project/saved-views", async (original) => ({
   useDuplicateSavedView: () => ({ mutate: duplicate }),
 }));
 vi.mock("src/sections/project/context/ObserveHeaderContext", () => ({
-  useObserveHeader: () => ({ getViewConfig: () => ({ columns: [] }) }),
+  useObserveHeader: () => ({ getViewConfig: () => ({ columns: [] }), getViewRevision: () => 3 }),
 }));
 
 const own = { id: "view-1", name: "Errors", revision: 3, visibility: "personal", is_owner: true, can_edit: true, can_delete: true };

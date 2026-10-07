@@ -14,7 +14,7 @@ const TabContextMenu = ({ anchorPosition, view, projectId, projectName = "this p
   const [error, setError] = useState(null);
   const { mutate: updateView, isPending } = useUpdateSavedView(projectId);
   const { mutate: duplicateView } = useDuplicateSavedView(projectId);
-  const { getViewConfig } = useObserveHeader();
+  const { getViewConfig, getViewRevision } = useObserveHeader();
   if (!view || !anchorPosition) return null;
   const finish = () => {
     setDialog(null);
@@ -33,11 +33,12 @@ const TabContextMenu = ({ anchorPosition, view, projectId, projectName = "this p
   const saveThenShare = () => {
     if (!view.can_edit || isPending) return;
     const config = getViewConfig?.();
-    if (!config) {
+    const revision = getViewRevision?.() ?? view.revision;
+    if (!config || revision == null) {
       setError("Could not save the current changes. Please retry.");
       return;
     }
-    updateView({ id: view.id, expected_revision: view.revision, config }, {
+    updateView({ id: view.id, expected_revision: revision, config }, {
       onSuccess: (response) => {
         const revision = response?.data?.result?.revision;
         if (revision == null) {
