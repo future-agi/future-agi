@@ -52,12 +52,10 @@ vi.mock("src/api/project/saved-views", () => ({
   useRefreshSavedViews: () => vi.fn(),
   classifySavedViewError: () => ({ kind: "unavailable_record" }),
   resolveExpectedRevision: vi.fn(),
-
   SAVED_VIEWS_KEY: "saved-views",
   useGetSavedViews: () => ({ data: undefined }),
   useGetSavedView: () => mockViewDetail,
   savedViewsKey: (projectId) => ["saved-views", projectId],
-  classifySavedViewError: () => ({ kind: "unavailable_record" }),
   removeSavedViewFromCache: vi.fn(),
 }));
 
