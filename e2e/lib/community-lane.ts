@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 
 export type LaneLicence = 'enterprise' | 'expired' | 'removed';
 
-const BIN_E2E = fileURLToPath(new URL('../../bin/e2e', import.meta.url));
+const BIN_E2E = process.env.E2E_BIN || fileURLToPath(new URL('../../bin/e2e', import.meta.url));
 
 /** Fail fast when a lane flow is pointed at any other stack. */
 export function assertCommunityLane(): void {
