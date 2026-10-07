@@ -72,9 +72,9 @@ async def test_fetch_and_persist_saves_provenance_same_write(monkeypatch):
 
     from temporalio.testing import ActivityEnvironment
 
+    from ee.voice.services import voice_service_manager
     from ee.voice.services.audio_provenance import unsupported_provenance
     from ee.voice.services.types.voice import CostBreakdown, RecordingUrls
-    from ee.voice.services.voice_service_manager import VoiceServiceManager
     from ee.voice.temporal.activities.voice_large import fetch_and_persist_call_result
     from simulate.models.run_test import CreateCallExecution
     from simulate.models.test_execution import CallExecution
@@ -91,7 +91,12 @@ async def test_fetch_and_persist_saves_provenance_same_write(monkeypatch):
         )
     )
     manager.extract_costs = AsyncMock(return_value=CostBreakdown(total=None))
-    monkeypatch.setattr(VoiceServiceManager, "__new__", lambda cls, *a, **kw: manager)
+    # Replace the name the activity imports, not VoiceServiceManager.__new__:
+    # undoing a patched __new__ leaves the class rejecting constructor args,
+    # which broke every later VoiceServiceManager(...) in the same worker.
+    monkeypatch.setattr(
+        voice_service_manager, "VoiceServiceManager", Mock(return_value=manager)
+    )
     call = SimpleNamespace(ended_reason=None, test_execution=None, asave=AsyncMock())
     query = Mock()
     query.select_related.return_value = query
