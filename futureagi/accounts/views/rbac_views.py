@@ -416,12 +416,21 @@ class InviteResendAPIView(APIView):
                 return gm.forbidden_response(
                     get_error_message("INVITE_LEVEL_SET_FORBIDDEN")
                 )
-            invite.level = new_org_level
-            invite.save(update_fields=["level"])
 
-        invite.refresh_expiration()
-
-        send_invite_email(invite.target_email, organization, request.user)
+        try:
+            with transaction.atomic():
+                invite = OrganizationInvite.objects.select_for_update().get(
+                    id=request.validated_data["invite_id"],
+                    organization=organization,
+                    status=InviteStatus.PENDING,
+                )
+                if new_org_level is not None:
+                    invite.level = new_org_level
+                    invite.save(update_fields=["level"])
+                invite.refresh_expiration()
+                send_invite_email(invite.target_email, organization, request.user)
+        except OrganizationInvite.DoesNotExist:
+            return gm.bad_request(get_error_message("INVITE_NOT_FOUND"))
 
         log_audit(
             organization=organization,
@@ -467,8 +476,17 @@ class InviteCancelAPIView(APIView):
                     get_error_message("INVITE_CANCEL_WS_FORBIDDEN")
                 )
 
-        invite.status = InviteStatus.CANCELLED
-        invite.save(update_fields=["status"])
+        try:
+            with transaction.atomic():
+                invite = OrganizationInvite.objects.select_for_update().get(
+                    id=request.validated_data["invite_id"],
+                    organization=organization,
+                    status=InviteStatus.PENDING,
+                )
+                invite.status = InviteStatus.CANCELLED
+                invite.save(update_fields=["status"])
+        except OrganizationInvite.DoesNotExist:
+            return gm.bad_request(get_error_message("INVITE_NOT_FOUND"))
 
         # Clean up dual-write artifacts: soft-delete the OrganizationMembership
         # and WorkspaceMembership records created during invite for users who

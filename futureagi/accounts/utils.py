@@ -6,6 +6,7 @@ import secrets
 import string
 import threading
 import urllib.parse
+import uuid
 
 import requests
 import structlog
@@ -869,26 +870,31 @@ def _claim_invite_reporting_destination(user_id, destination):
                 and claimed_at
                 and timezone.now() - claimed_at < _INVITE_REPORT_CLAIM_LEASE
             ):
-                return None
+                return None, None, True
             current = "pending"
         if current in {"sent", "skipped"}:
-            return None
+            return None, None, False
+        claim_token = uuid.uuid4().hex
         state["destinations"][destination] = {
             "status": "claimed",
             "claimed_at": timezone.now().isoformat(),
+            "claim_token": claim_token,
         }
         state["status"] = "in_progress"
         config[INVITE_SIGNUP_REPORTING_KEY] = state
         user.config = config
         user.save(update_fields=["config"])
-        return user
+        return user, claim_token, False
 
 
-def _finish_invite_reporting_destination(user_id, destination, result):
+def _finish_invite_reporting_destination(user_id, destination, claim_token, result):
     with transaction.atomic():
         user = User.objects.select_for_update().get(id=user_id)
         config = dict(user.config) if isinstance(user.config, dict) else {}
         state = _invite_reporting_state(config)
+        current = state["destinations"].get(destination)
+        if not isinstance(current, dict) or current.get("claim_token") != claim_token:
+            return False
         state["destinations"][destination] = result
         if all(
             state["destinations"].get(name) in {"sent", "skipped"}
@@ -901,18 +907,23 @@ def _finish_invite_reporting_destination(user_id, destination, result):
         config[INVITE_SIGNUP_REPORTING_KEY] = state
         user.config = config
         user.save(update_fields=["config"])
+        return True
 
 
-def _release_invite_reporting_destination(user_id, destination):
+def _release_invite_reporting_destination(user_id, destination, claim_token):
     with transaction.atomic():
         user = User.objects.select_for_update().get(id=user_id)
         config = dict(user.config) if isinstance(user.config, dict) else {}
         state = _invite_reporting_state(config)
+        current = state["destinations"].get(destination)
+        if not isinstance(current, dict) or current.get("claim_token") != claim_token:
+            return False
         state["destinations"][destination] = "pending"
         state["status"] = "pending"
         config[INVITE_SIGNUP_REPORTING_KEY] = state
         user.config = config
         user.save(update_fields=["config"])
+        return True
 
 
 def mark_invite_acceptance_reporting_pending(user):
@@ -955,7 +966,7 @@ def schedule_invite_acceptance_reporting(user):
 def retry_pending_invite_acceptance_reporting(user):
     config = user.config if isinstance(user.config, dict) else {}
     state = _invite_reporting_state(config)
-    if state.get("status") != "pending":
+    if state.get("status") not in {"pending", "in_progress"}:
         return
     try:
         schedule_invite_acceptance_reporting(user)
@@ -986,8 +997,15 @@ def report_invite_acceptance(user_id):
         logger.info("invite_signup_report_already_sent", user_id=str(user_id))
         return
 
+    saw_active_claim = False
+    hubspot_updated = False
     for destination in _INVITE_REPORT_DESTINATIONS:
-        claimed_user = _claim_invite_reporting_destination(user_id, destination)
+        claimed_user, claim_token, active_claim = _claim_invite_reporting_destination(
+            user_id, destination
+        )
+        if active_claim:
+            saw_active_claim = True
+            continue
         if claimed_user is None:
             continue
         try:
@@ -998,11 +1016,14 @@ def report_invite_acceptance(user_id):
                     updated, err = send_hubspot_notification(claimed_user)
                     if not updated:
                         raise ReportingDeliveryError(err or "HubSpot delivery failed")
+                    hubspot_updated = True
                     result = "sent"
             elif destination == "slack":
                 if os.getenv("ENV_TYPE") == "local" or not slack_signup_webhook_is_configured():
                     result = "skipped"
-                elif not send_slack_notification(claimed_user, updated=True, err=None):
+                elif not send_slack_notification(
+                    claimed_user, updated=hubspot_updated, err=None
+                ):
                     raise ReportingDeliveryError("Slack delivery failed")
                 else:
                     result = "sent"
@@ -1018,9 +1039,16 @@ def report_invite_acceptance(user_id):
                 else:
                     result = "skipped"
         except Exception:
-            _release_invite_reporting_destination(user_id, destination)
+            _release_invite_reporting_destination(
+                user_id, destination, claim_token
+            )
             raise
-        _finish_invite_reporting_destination(user_id, destination, result)
+        _finish_invite_reporting_destination(
+            user_id, destination, claim_token, result
+        )
+
+    if saw_active_claim:
+        raise ReportingDeliveryError("Invite reporting destination is already running")
 
 
 # TODO: use async views to replace this code. its wrong
