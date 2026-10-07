@@ -10,7 +10,13 @@ import {
   NOT_EDITABLE_TOOLTIP,
 } from "./allEvaluationsDrawer.constants";
 
-const ICON_SX = { minWidth: 0, mr: 1 };
+// Set on the item, not the icon: MenuItem's own 36px icon slot outranks an
+// icon-level sx. 16px matches the Columns picker's checkbox-to-label gap.
+const ITEM_SX = {
+  typography: "s2",
+  alignItems: "flex-start",
+  "& .MuiListItemIcon-root": { minWidth: 0, mr: 2, mt: 0.25 },
+};
 
 /**
  * The menu behind an eval column header's ⋮ on a run's table: re-run that eval
@@ -74,9 +80,9 @@ export default function EvalColumnActions({
         onClose?.();
         onClick();
       }}
-      sx={{ typography: "s2", alignItems: "flex-start" }}
+      sx={ITEM_SX}
     >
-      <ListItemIcon sx={{ ...ICON_SX, mt: 0.25 }}>
+      <ListItemIcon>
         <Iconify icon={icon} width={16} />
       </ListItemIcon>
       {/* A disabled menu item can't take focus, so its reason is written
