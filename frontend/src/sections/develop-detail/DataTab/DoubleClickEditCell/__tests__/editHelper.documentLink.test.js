@@ -11,6 +11,7 @@ describe("isDocumentWebAddress", () => {
     expect(isDocumentWebAddress("sssss")).toBe(false);
     expect(isDocumentWebAddress("not a url")).toBe(false);
     expect(isDocumentWebAddress("ftp://example.com/a.pdf")).toBe(false);
+    // eslint-disable-next-line no-script-url -- the refused input under test
     expect(isDocumentWebAddress("javascript:alert(1)")).toBe(false);
     expect(isDocumentWebAddress("https://")).toBe(false);
     expect(isDocumentWebAddress("")).toBe(false);
