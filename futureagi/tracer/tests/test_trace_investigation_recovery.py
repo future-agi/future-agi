@@ -33,7 +33,11 @@ from tracer.services.trace_investigation import (
     requeue_unread_investigations,
     update_investigation_attempt,
 )
-from tracer.tests.test_simulation_investigation import _execution, _unreadable_result
+from tracer.tests.test_simulation_investigation import (
+    _execution,
+    _failure_result,
+    _unreadable_result,
+)
 from tracer.tests.test_trace_investigation_control import (
     _configure,
     _delivery,
@@ -98,8 +102,28 @@ def _fail(claim, error_message="gateway_upstream_error:http_502"):
     return _job(claim)
 
 
+def _complete(claim):
+    return _publish(
+        idempotency_key=str(claim["attempt_id"]),
+        lease_token=claim["lease_token"],
+        result=_result(claim),
+    )
+
+
 def _retry_wait(job):
     return round((job.not_before - timezone.now()).total_seconds() / 60)
+
+
+def _give_up(project, **delivery):
+    """Lose three leases in a row on one new notification; return the last claim."""
+    _notify(project, **delivery)
+    for _ in range(3):
+        claim = _claim()
+        _expire_lease(claim)
+        assert _claim() is None  # the claim poll writes the lease off
+        _make_due(claim)
+    assert _job(claim).state == CANCELLED
+    return claim
 
 
 def test_transient_failure_runs_again_with_backoff_until_its_attempts_run_out(
@@ -310,20 +334,79 @@ def test_renewing_an_expired_lease_requeues_the_job(observe_project):
     assert (job.state, job.generation) == (WAITING, 2)
 
 
-def test_report_published_after_its_lease_expired_requeues_the_job(observe_project):
+def test_completed_report_that_lands_after_its_lease_ran_out_is_used(
+    observe_project,
+):
     _configure(observe_project)
     _notify(observe_project)
     claim = _claim()
     _expire_lease(claim)
 
-    late = _publish(
-        idempotency_key=str(claim["attempt_id"]),
-        lease_token=claim["lease_token"],
-        result=_result(claim),
-    )
+    late = _complete(claim)
 
     job = _job(claim)
+    assert late["grouping_status"] == "pending"
+    assert (job.state, job.generation) == (COMPLETED, 1)
+    assert job.current_report_id == late["report_id"]
+    assert _claim() is None
+
+
+def test_late_report_is_used_when_the_lease_was_written_off_and_a_run_is_queued(
+    observe_project,
+):
+    _configure(observe_project)
+    _notify(observe_project)
+    claim = _claim()
+    _expire_lease(claim)
+    assert _claim() is None  # the claim poll writes the lease off and queues a run
+
+    late = _complete(claim)
+
+    job = _job(claim)
+    assert late["grouping_status"] == "pending"
+    # The queued run stays: it cannot be told apart from a newer notification.
+    assert (job.state, job.generation) == (WAITING, 2)
+    assert job.current_report_id == late["report_id"]
+    # The late attempt counts as a read, so the queued run gets a full backoff.
+    _make_due(claim)
+    job = _fail(_claim())
+    assert (job.state, job.generation, _retry_wait(job)) == (WAITING, 3, 1)
+
+
+def test_late_report_does_not_replace_the_report_of_a_later_attempt(observe_project):
+    _configure(observe_project)
+    _notify(observe_project)
+    first = _claim()
+    _expire_lease(first)
+    assert _claim() is None
+    _make_due(first)
+    current = _complete(_claim())["report_id"]
+
+    late = _complete(first)
+
+    job = _job(first)
     assert late["grouping_status"] == "stale"
+    assert (job.state, job.current_report_id) == (COMPLETED, current)
+
+
+def test_late_report_completes_a_job_that_had_given_up(observe_project):
+    _configure(observe_project)
+    claim = _give_up(observe_project)
+
+    late = _complete(claim)
+
+    job = _job(claim)
+    assert (job.state, job.current_report_id) == (COMPLETED, late["report_id"])
+
+
+def test_failed_report_that_lands_late_is_not_used(observe_project):
+    _configure(observe_project)
+    _notify(observe_project)
+    claim = _claim()
+    _expire_lease(claim)
+
+    job = _fail(claim)
+
     assert (job.state, job.generation, job.current_report_id) == (WAITING, 2, None)
 
 
@@ -468,14 +551,24 @@ def test_requeue_limit_applies_after_the_current_sampling_rate(observe_project):
     assert states == {dropped: COMPLETED, kept: WAITING, later: COMPLETED}
 
 
+def test_requeue_leaves_a_cancelled_job_that_still_holds_a_completed_report(
+    observe_project,
+):
+    _configure(observe_project)
+    trace_id = _notify(observe_project)
+    _complete(_claim())
+    job = _job(_give_up(observe_project, trace_id=trace_id, offset=2))
+    assert (job.state, job.current_report.execution_status) == (CANCELLED, "completed")
+
+    assert _requeue(observe_project)["unread"] == 0
+
+
 def test_requeue_rejects_a_limit_outside_its_bound(observe_project):
     with pytest.raises(CommandError, match="limit must be between"):
         _requeue(observe_project, "--limit", "0")
 
 
-def test_requeue_leaves_simulation_jobs_to_debug_analysis(
-    auth_client, organization, workspace
-):
+def _debug_analysis_call(auth_client, organization, workspace):
     scenario = Scenarios.objects.create(
         name="Refund",
         source="Refund policy",
@@ -486,6 +579,34 @@ def test_requeue_leaves_simulation_jobs_to_debug_analysis(
         organization, workspace, scenario, "run", CallExecution.CallStatus.COMPLETED
     )
     auth_client.post(f"/simulate/test-executions/{execution.id}/debug-analysis/")
+    return call
+
+
+def test_simulation_report_that_lands_late_stays_stale(
+    auth_client, organization, workspace
+):
+    call = _debug_analysis_call(auth_client, organization, workspace)
+    (claim,) = claim_due_investigations(
+        worker_id="test-worker", engine_version="omega-v1", limit=1
+    )["claims"]
+    _expire_lease(claim)
+    result = _failure_result(claim, call)
+
+    late = publish_investigation(
+        idempotency_key=str(claim["attempt_id"]),
+        lease_token=claim["lease_token"],
+        result=result,
+        wire_result_digest=result["result_digest"],
+    )
+
+    job = TraceInvestigationJob.no_workspace_objects.get(call_execution=call)
+    assert (late["grouping_status"], job.current_report_id) == ("stale", None)
+
+
+def test_requeue_leaves_simulation_jobs_to_debug_analysis(
+    auth_client, organization, workspace
+):
+    call = _debug_analysis_call(auth_client, organization, workspace)
     for _ in range(2):  # the first failure is read again once; the second is final
         (claim,) = claim_due_investigations(
             worker_id="test-worker", engine_version="omega-v1", limit=1

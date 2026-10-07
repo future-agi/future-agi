@@ -1165,12 +1165,30 @@ def publish_investigation(
             )
             return _publication_receipt(existing, duplicate=True)
         report_id = uuid.uuid4()
-        active = (
+        on_time = (
             job.generation == attempt.generation
             and job.state == TraceInvestigationJobState.RUNNING
             and attempt.status == TraceInvestigationAttemptStatus.CLAIMED
             and attempt.lease_expires_at > now
         )
+        # A completed trace report that lands after its lease ran out is still a
+        # full read, so it is used unless a later attempt of the job was claimed.
+        # Simulation reports keep the strict lease: debug analysis re-reads itself.
+        late = (
+            not on_time
+            and not simulation
+            and result["execution_status"] == "completed"
+            and attempt.lease_expires_at <= now
+            and attempt.status
+            in (
+                TraceInvestigationAttemptStatus.CLAIMED,
+                TraceInvestigationAttemptStatus.EXPIRED,
+            )
+            and not TraceInvestigationAttempt.no_workspace_objects.filter(
+                job=job, generation__gt=attempt.generation
+            ).exists()
+        )
+        active = on_time or late
         grouping_status = (
             TraceInvestigationGroupingStatus.STALE
             if not active
@@ -1244,10 +1262,10 @@ def publish_investigation(
         if active:
             job.current_report = report
 
-        if attempt.status == TraceInvestigationAttemptStatus.CLAIMED:
+        if late or attempt.status == TraceInvestigationAttemptStatus.CLAIMED:
             attempt.status = (
                 TraceInvestigationAttemptStatus.COMPLETED
-                if attempt.lease_expires_at > now
+                if active or attempt.lease_expires_at > now
                 else TraceInvestigationAttemptStatus.EXPIRED
             )
             attempt.completed_at = now
@@ -1257,17 +1275,25 @@ def publish_investigation(
             failure = "lease_expired"
         elif report.execution_status == "failed":
             failure = (report.error_message or "").partition(":")[0] or "unreported"
-        _settle_job(
-            job,
-            attempt,
-            now,
-            ended_as=(
-                TraceInvestigationJobState.COMPLETED
-                if active
-                else TraceInvestigationJobState.CANCELLED
-            ),
-            failure=failure,
-        )
+        if late and job.state != TraceInvestigationJobState.RUNNING:
+            # The lease was already written off. A job that gave up now has its
+            # report. A queued run stays queued: it may hold a newer notification,
+            # and its report supersedes this one.
+            if job.state == TraceInvestigationJobState.CANCELLED:
+                job.state = TraceInvestigationJobState.COMPLETED
+            job.save(update_fields=["state", "current_report", "updated_at"])
+        else:
+            _settle_job(
+                job,
+                attempt,
+                now,
+                ended_as=(
+                    TraceInvestigationJobState.COMPLETED
+                    if active
+                    else TraceInvestigationJobState.CANCELLED
+                ),
+                failure=failure,
+            )
         if simulation:
             from tracer.services.simulation_investigation import retry_unread_call_once
 
@@ -1285,11 +1311,10 @@ def publish_investigation(
 def requeue_unread_investigations(
     *, project_id: uuid.UUID, apply: bool = False, limit: int = 500
 ) -> dict[str, object]:
-    """Preview, or queue again, a project's trace jobs whose last run left no usable report.
+    """Preview, or queue again, a project's trace jobs that hold no usable report.
 
-    That is a job whose current report failed, and every cancelled job. A
-    cancelled job can still hold an older report: its newest notification was
-    never read, so it runs again and the new report supersedes the old one.
+    That is a finished or cancelled job whose current report failed or is
+    missing. A cancelled job that still holds a completed report is left alone.
 
     A queued job is claimed under the project's current scan config. Jobs the
     current sampling rate excludes are left alone, and a project with scanning
@@ -1308,11 +1333,8 @@ def requeue_unread_investigations(
         TraceInvestigationJobState.COMPLETED,
     )
     unread = TraceInvestigationJob.no_workspace_objects.filter(
-        Q(state=TraceInvestigationJobState.CANCELLED)
-        | Q(
-            state=TraceInvestigationJobState.COMPLETED,
-            current_report__execution_status="failed",
-        ),
+        Q(current_report__isnull=True) | Q(current_report__execution_status="failed"),
+        state__in=unread_states,
         project_id=project_id,
         workload_type=InvestigationWorkload.TRACE,
     )
