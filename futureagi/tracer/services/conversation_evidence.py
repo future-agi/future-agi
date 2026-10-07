@@ -30,6 +30,7 @@ _RECORDING_KEYS = ("conversation.recording.mono.combined", "gen_ai.voice.recordi
 _LATENCY_STATS = ("p50", "p90", "max", "num")
 # What the dossier leaves out, so the reader does not take silence for absence.
 _NOT_INCLUDED = ["provider_log", "recording_audio"]
+_CALL_NUMBER = "[number of a call participant]"
 
 
 def _seconds(value: object) -> float | None:
@@ -104,8 +105,21 @@ def _mapping(value: object) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
 
 
+def _without_call_numbers(variables: object, numbers: set[object]) -> dict[str, Any]:
+    """Variables with the caller's and the callee's own numbers masked.
+
+    A configured line or a transfer target stays: the investigator needs it to
+    judge what the agent said and where it sent the call.
+    """
+    return {
+        key: _CALL_NUMBER if isinstance(value, str) and value in numbers else value
+        for key, value in _mapping(variables).items()
+    }
+
+
 def _retell_dossier(raw_log: Mapping[str, Any]) -> dict[str, Any]:
     analysis = _mapping(raw_log.get("call_analysis"))
+    numbers = {raw_log.get("from_number"), raw_log.get("to_number")} - {None, ""}
     duration_ms = _seconds(raw_log.get("duration_ms"))
     return {
         "call": {
@@ -122,8 +136,12 @@ def _retell_dossier(raw_log: Mapping[str, Any]) -> dict[str, Any]:
             },
         },
         "variables": {
-            "configured": dict(_mapping(raw_log.get("retell_llm_dynamic_variables"))),
-            "collected": dict(_mapping(raw_log.get("collected_dynamic_variables"))),
+            "configured": _without_call_numbers(
+                raw_log.get("retell_llm_dynamic_variables"), numbers
+            ),
+            "collected": _without_call_numbers(
+                raw_log.get("collected_dynamic_variables"), numbers
+            ),
         },
         "analysis": {
             "summary": analysis.get("call_summary"),

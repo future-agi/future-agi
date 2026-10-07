@@ -39,6 +39,7 @@ RAW_LOG = {
     "retell_llm_dynamic_variables": {
         "greeting_line": "Hello, this is the scheduler.",
         "transfer_phone": "+15550199",
+        "callee_phone": "+15550101",
     },
     "collected_dynamic_variables": {"current_node": "voicemail"},
     "call_analysis": {
@@ -164,11 +165,13 @@ def test_dossier_keeps_the_call_once_with_timed_turns_and_tool_activity():
         "ended_reason": "agent_hangup",
         "agent": {"id": "agent_1", "version": 3, "name": "Scheduler"},
     }
-    # Configured variables pass through as the stored span holds them.
+    # A variable that holds the caller's or callee's own number is masked; a
+    # configured line and a transfer target pass through.
     assert dossier["variables"] == {
         "configured": {
             "greeting_line": "Hello, this is the scheduler.",
             "transfer_phone": "+15550199",
+            "callee_phone": "[number of a call participant]",
         },
         "collected": {"current_node": "voicemail"},
     }
@@ -234,7 +237,7 @@ def test_dossier_keeps_the_call_once_with_timed_turns_and_tool_activity():
         },
     ]
     assert dossier["not_included"] == ["provider_log", "recording_audio"]
-    # The call's own from and to numbers are left out.
+    # The call's own from and to numbers appear nowhere in the record.
     assert not {"+15550100", "+15550101"} & set(json.dumps(dossier).split('"'))
 
 
