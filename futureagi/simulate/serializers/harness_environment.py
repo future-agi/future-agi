@@ -2,6 +2,12 @@ from __future__ import annotations
 
 from rest_framework import serializers
 
+from simulate.serializers.harness_job import (
+    HarnessAgentSerializer,
+    HarnessPreflightCheckSerializer,
+    HarnessSecretValuesSerializer,
+    SecretReferenceSerializer,
+)
 from simulate.services.harness_environment import (
     AGENT_TYPE_CHAT,
     AGENT_TYPE_VOICE,
@@ -9,6 +15,10 @@ from simulate.services.harness_environment import (
     STATUS_COMPLETED,
     STATUS_FAILED,
     STATUS_RUNNING,
+)
+from simulate.services.harness_environment_config import (
+    CREDENTIAL_FILE_ALIASES,
+    EDITABLE_CONFIG_FIELDS,
 )
 
 
@@ -35,6 +45,70 @@ class HarnessEnvironmentRenameSerializer(serializers.Serializer):
     name = serializers.CharField(
         max_length=255, allow_blank=False, trim_whitespace=True
     )
+
+
+class HarnessEnvironmentConfigurationSerializer(serializers.Serializer):
+    environment_values = serializers.DictField(
+        child=serializers.CharField(max_length=65_536, trim_whitespace=False),
+        required=False,
+        default=dict,
+    )
+    config = serializers.JSONField(required=False, default=dict)
+    credential_files = serializers.DictField(
+        child=SecretReferenceSerializer(), required=False, default=dict
+    )
+
+    def validate_environment_values(self, values):
+        if not values:
+            return values
+        values = HarnessSecretValuesSerializer().validate_environment_values(values)
+        empty = sorted(alias for alias, value in values.items() if not value.strip())
+        if empty:
+            raise serializers.ValidationError(
+                f"keys cannot be removed, only replaced: {', '.join(empty)}"
+            )
+        HarnessAgentSerializer().validate_secret_refs(
+            {
+                alias: {"manager": "platform-vault", "purpose": "target_provider"}
+                for alias in values
+            }
+        )
+        return values
+
+    def validate_config(self, value):
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("config must be an object")
+        locked = sorted(set(value) - set(EDITABLE_CONFIG_FIELDS))
+        if locked:
+            raise serializers.ValidationError(
+                f"{', '.join(locked)} cannot be changed here; changing it needs a rebuild"
+            )
+        variables = value.get("dynamic_variables")
+        if "dynamic_variables" in value and not isinstance(variables, dict):
+            raise serializers.ValidationError("dynamic_variables must be an object")
+        return value
+
+    def validate_credential_files(self, value):
+        unsupported = sorted(set(value) - set(CREDENTIAL_FILE_ALIASES))
+        if unsupported:
+            raise serializers.ValidationError(
+                f"unsupported credential files: {', '.join(unsupported)}"
+            )
+        return value
+
+    def validate(self, attrs):
+        if not (
+            attrs.get("environment_values")
+            or attrs.get("config")
+            or attrs.get("credential_files")
+        ):
+            raise serializers.ValidationError("nothing to change")
+        return attrs
+
+
+class HarnessEnvironmentRebuildSerializer(HarnessEnvironmentConfigurationSerializer):
+    def validate(self, attrs):
+        return attrs
 
 
 class HarnessEnvironmentSerializer(serializers.Serializer):
@@ -402,8 +476,9 @@ class HarnessEnvironmentAgentSettingsSerializer(serializers.Serializer):
 class HarnessEnvironmentSettingsSerializer(serializers.Serializer):
     """How this environment runs: the request it was built from, plus one switch.
 
-    Everything but ``enable_tool_evaluation`` is a record of how the
-    environment was built and cannot be edited; secrets are names only.
+    Keys and connection settings change through ``PATCH configuration/``;
+    everything else but ``enable_tool_evaluation`` is a record of how the
+    environment was built. Secrets are names only.
     ``enable_tool_evaluation`` is the tool-call judge's switch, written by
     ``PUT evaluations/tool-call/``. Never null: an environment with no run
     test reads ``false``.
@@ -430,3 +505,32 @@ class HarnessEnvironmentDetailSerializer(serializers.Serializer):
     scenarios = HarnessEnvironmentScenarioSerializer(many=True)
     evaluations = HarnessEnvironmentEvaluationsSerializer()
     settings = HarnessEnvironmentSettingsSerializer()
+
+
+class HarnessEnvironmentCredentialCheckSerializer(serializers.Serializer):
+    aliases = serializers.ListField(child=serializers.CharField())
+    label = serializers.CharField()
+    status = serializers.ChoiceField(choices=("accepted", "rejected", "not_checked"))
+    message = serializers.CharField()
+
+
+class HarnessEnvironmentConfigurationResponseSerializer(serializers.Serializer):
+    environment = HarnessEnvironmentDetailSerializer()
+    checks = HarnessEnvironmentCredentialCheckSerializer(many=True)
+
+
+class HarnessEnvironmentConfigurationErrorSerializer(serializers.Serializer):
+    detail = serializers.CharField()
+    error = serializers.CharField(required=False)
+    checks = HarnessEnvironmentCredentialCheckSerializer(many=True, required=False)
+
+
+class HarnessEnvironmentRebuildResponseSerializer(serializers.Serializer):
+    environment = HarnessEnvironmentDetailSerializer()
+    checks = HarnessPreflightCheckSerializer(many=True)
+
+
+class HarnessEnvironmentRebuildErrorSerializer(serializers.Serializer):
+    detail = serializers.CharField()
+    error = serializers.CharField(required=False)
+    checks = HarnessPreflightCheckSerializer(many=True, required=False)

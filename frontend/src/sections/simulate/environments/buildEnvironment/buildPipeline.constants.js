@@ -216,6 +216,7 @@ export const jobToBuildProgress = (job) => {
       title: readable(failStage || "build"),
       detail: status.failure?.message || readable(failStage || ""),
       retryable: status.failure?.domain === "infrastructure",
+      inputNeeded: status.failure?.input_needed || null,
     };
   }
 

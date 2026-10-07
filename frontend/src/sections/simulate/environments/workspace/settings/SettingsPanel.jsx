@@ -8,6 +8,9 @@ import SectionCard from "../../components/SectionCard";
 import CopyField from "../../components/CopyField";
 import { validateEnvName, MAX_ENV_NAME } from "../renameEnvironment";
 import { envVarGroups } from "./envVarGroups";
+import { displayConfigValue } from "./configurationEdit";
+import EnvironmentVariablesEditor from "./EnvironmentVariablesEditor";
+import CredentialFilesEditor from "./CredentialFilesEditor";
 
 const MONO = "ui-monospace, SFMono-Regular, Menlo, monospace";
 
@@ -44,6 +47,8 @@ export default function SettingsPanel({ env, backed = false, locked = false }) {
   const [nameError, setNameError] = useState(null);
   const displayName = nameDraft ?? currentName;
   const canRename = backed && !locked;
+  const canEditVariables = canRename && detail?.overview?.status === "completed";
+  const connector = detail?.settings?.agent?.connector;
   const nameChanged = displayName.trim() !== currentName;
 
   const saveName = () => {
@@ -67,8 +72,9 @@ export default function SettingsPanel({ env, backed = false, locked = false }) {
       <Box sx={{ mb: 3 }}>
         <Typography sx={{ typography: "m2", fontWeight: 600 }}>Settings</Typography>
         <Typography sx={{ typography: "s1", color: "text.secondary", maxWidth: 760 }}>
-          How this environment was built. Everything here is fixed at build time.
-          Only the name can be changed.
+          {canEditVariables
+            ? "How this environment was built. Keys and connection settings can be changed; changing the agent itself needs a rebuild."
+            : "How this environment was built. Everything here is fixed at build time. Only the name can be changed."}
         </Typography>
       </Box>
 
@@ -140,16 +146,32 @@ export default function SettingsPanel({ env, backed = false, locked = false }) {
             </Stack>
           </SectionCard>
 
-          <SectionCard
-            title="Environment variables"
-            subtitle="Set when the environment was built. Read-only. Secret values are never shown."
-          >
-            <EnvVarsBody loading={detailQuery.isLoading} groups={groups} />
-          </SectionCard>
+          {canEditVariables ? (
+            <>
+              <EnvironmentVariablesEditor
+                envId={env.id}
+                groups={groups}
+                connector={connector}
+              />
+              <SectionCard
+                title="Credential files"
+                subtitle="Mounted into the environment by name. Contents and the original filename are not stored."
+              >
+                <CredentialFilesEditor envId={env.id} credentialFiles={groups.credentialFiles} />
+              </SectionCard>
+            </>
+          ) : (
+            <SectionCard
+              title="Environment variables"
+              subtitle="Set when the environment was built. Read-only. Secret values are never shown."
+            >
+              <EnvVarsBody loading={detailQuery.isLoading} groups={groups} />
+            </SectionCard>
+          )}
 
           {/* Credential files are mounted files, not env variables — a separate
               section (§11). Shown only when the environment has any. */}
-          {groups.credentialFiles.length > 0 && (
+          {!canEditVariables && groups.credentialFiles.length > 0 && (
             <SectionCard
               title="Credential files"
               subtitle="Mounted into the environment by name. Contents and the original filename are not stored."
@@ -227,7 +249,7 @@ function envVarRows(groups) {
     ...groups.secrets.map((name) => ({ key: name, kind: "Secret", masked: true })),
     ...Object.entries(groups.config).map(([key, value]) => ({
       key,
-      value: String(value),
+      value: displayConfigValue(value),
       kind: "Config",
       masked: false,
     })),

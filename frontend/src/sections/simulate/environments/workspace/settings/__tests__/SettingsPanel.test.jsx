@@ -10,6 +10,7 @@ import { harnessEnvironmentKey } from "src/api/simulate-environments/environment
 const mutate = vi.fn();
 vi.mock("src/api/simulate-environments/environments", () => ({
   useRenameEnvironment: () => ({ mutate, isPending: false }),
+  useUpdateEnvironmentConfiguration: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
 // §6 detail example (settings.agent has all three env-var groups).

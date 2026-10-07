@@ -1,5 +1,6 @@
 from uuid import UUID
 
+from django.conf import settings
 from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status, viewsets
@@ -11,9 +12,15 @@ from simulate.models import AgentDefinition, HostedHarnessJob
 from simulate.serializers.harness_environment import (
     HarnessEnvironmentAddEvaluationSerializer,
     HarnessEnvironmentAvailableEvalsSerializer,
+    HarnessEnvironmentConfigurationErrorSerializer,
+    HarnessEnvironmentConfigurationResponseSerializer,
+    HarnessEnvironmentConfigurationSerializer,
     HarnessEnvironmentDetailSerializer,
     HarnessEnvironmentListQuerySerializer,
     HarnessEnvironmentListResponseSerializer,
+    HarnessEnvironmentRebuildErrorSerializer,
+    HarnessEnvironmentRebuildResponseSerializer,
+    HarnessEnvironmentRebuildSerializer,
     HarnessEnvironmentRenameSerializer,
     HarnessEnvironmentRunEvaluationQueuedSerializer,
     HarnessEnvironmentToolCallEvaluationSerializer,
@@ -158,9 +165,8 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
     def partial_update(self, request, pk=None):
         """Rename an environment.
 
-        The name is the only editable field: everything else on an environment
-        records how it was built, and editing that would make the provenance the
-        contract tab shows a claim rather than a record.
+        Keys and connection settings change through ``configuration``; everything
+        else records how the environment was built.
         """
         job = self._job(request, pk)
         if job is None:
@@ -175,6 +181,124 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         job.content_updated_at = timezone.now()
         job.save(update_fields=["name", "content_updated_at", "updated_at"])
         return Response(environment_detail(job))
+
+    @validated_request(
+        request_serializer=HarnessEnvironmentConfigurationSerializer,
+        responses={
+            200: HarnessEnvironmentConfigurationResponseSerializer,
+            400: HarnessEnvironmentConfigurationErrorSerializer,
+            404: HarnessEnvironmentConfigurationErrorSerializer,
+            409: HarnessEnvironmentConfigurationErrorSerializer,
+        },
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["patch"], url_path="configuration")
+    def configuration(self, request, pk=None):
+        from simulate.services.harness_environment_config import (
+            CredentialCheckFailed,
+            update_environment_configuration,
+        )
+        from simulate.services.hosted_harness import HostedHarnessError
+
+        job = self._job(request, pk)
+        if job is None:
+            return Response(
+                {"detail": "Environment not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        data = request.validated_data
+        callback_url = (
+            getattr(settings, "HARNESS_PUBLIC_BASE_URL", "")
+            or request.build_absolute_uri("/")
+        ).rstrip("/")
+        try:
+            job, checks = update_environment_configuration(
+                job,
+                environment_values=data["environment_values"],
+                config=data["config"],
+                credential_files=data["credential_files"],
+                user=request.user,
+                callback_url=callback_url,
+            )
+        except CredentialCheckFailed as rejected:
+            return Response(
+                {
+                    "detail": "A provider rejected a changed key. Nothing was saved.",
+                    "error": "credential_rejected",
+                    "checks": rejected.checks,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except HostedHarnessError as refused:
+            return Response(
+                {"detail": refused.message, "error": refused.code},
+                status=refused.status_code,
+            )
+        return Response({"environment": environment_detail(job), "checks": checks})
+
+    @validated_request(
+        request_serializer=HarnessEnvironmentRebuildSerializer,
+        responses={
+            202: HarnessEnvironmentRebuildResponseSerializer,
+            400: HarnessEnvironmentRebuildErrorSerializer,
+            404: HarnessEnvironmentRebuildErrorSerializer,
+            409: HarnessEnvironmentRebuildErrorSerializer,
+            422: HarnessEnvironmentRebuildErrorSerializer,
+            503: HarnessEnvironmentRebuildErrorSerializer,
+        },
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"], url_path="rebuild")
+    def rebuild(self, request, pk=None):
+        """Fix a failed build's keys and build it again in place.
+
+        The same preflight a new environment runs is run again first; a
+        failed check saves nothing and starts nothing.
+        """
+        from simulate.services.harness_environment_config import (
+            PreflightFailed,
+            rebuild_failed_environment,
+        )
+        from simulate.services.hosted_harness import HostedHarnessError
+
+        job = self._job(request, pk)
+        if job is None:
+            return Response(
+                {"detail": "Environment not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        data = request.validated_data
+        callback_url = (
+            getattr(settings, "HARNESS_PUBLIC_BASE_URL", "")
+            or request.build_absolute_uri("/")
+        ).rstrip("/")
+        try:
+            job, checks = rebuild_failed_environment(
+                job,
+                request=request,
+                environment_values=data["environment_values"],
+                config=data["config"],
+                credential_files=data["credential_files"],
+                callback_url=callback_url,
+            )
+        except PreflightFailed as failed:
+            return Response(
+                {
+                    "detail": "Preflight failed. Nothing was saved and the build was not started.",
+                    "error": "preflight_failed",
+                    "checks": failed.checks,
+                },
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            )
+        except HostedHarnessError as refused:
+            return Response(
+                {"detail": refused.message, "error": refused.code},
+                status=refused.status_code,
+            )
+        return Response(
+            {"environment": environment_detail(job), "checks": checks},
+            status=status.HTTP_202_ACCEPTED,
+        )
 
     @swagger_auto_schema(responses={204: "Deleted"})
     def destroy(self, request, pk=None):

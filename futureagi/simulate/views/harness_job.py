@@ -36,6 +36,7 @@ from simulate.services.harness_credentials import (
     credential_file_ref,
     request_scope,
     store_credential_file,
+    store_secret_values,
 )
 from simulate.services.harness_provider import get_harness_provider
 from tfc.utils.api_contracts import validated_request
@@ -228,31 +229,15 @@ class HarnessJobViewSet(viewsets.ViewSet):
         Values are intentionally separate from platform/model-provider settings. They are scoped
         to the submitting organization and only resolved inside the selected hosted job.
         """
-        import uuid
-
-        from simulate.models import HostedHarnessSecret
-
         organization, _workspace = request_scope(request)
         if organization is None:
             return Response(
                 {"detail": "an organization is required"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        refs = {}
-        for alias, value in request.validated_data["environment_values"].items():
-            key = f"harness-{alias.lower()}-{uuid.uuid4().hex}"
-            HostedHarnessSecret.objects.create(
-                organization=organization,
-                name=key,
-                version="1",
-                encrypted_value=value,
-            )
-            refs[alias] = {
-                "manager": "platform-vault",
-                "key": key,
-                "version": "1",
-                "purpose": "target_provider",
-            }
+        refs = store_secret_values(
+            organization, request.validated_data["environment_values"]
+        )
         return Response({"secret_refs": refs}, status=status.HTTP_201_CREATED)
 
     @validated_request(

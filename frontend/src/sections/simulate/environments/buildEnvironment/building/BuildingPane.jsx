@@ -11,6 +11,7 @@ import { DERIVING_LABEL, BUILDING_TABS } from "../build.constants";
 import { pipelineStatus } from "../buildPipeline.constants";
 import DerivingAnimation from "./DerivingAnimation";
 import PipelineChecks from "./PipelineChecks";
+import RebuildPanel from "./RebuildPanel";
 
 // The deriving copy climbs a four-rung ladder off the builder's `done` set:
 // each milestone that has landed swaps the line for the next thing the engine
@@ -102,6 +103,9 @@ export default function BuildingPane({
           failed={!!failure}
         />
         <PipelineChecks pipeline={pipelineStatus(done, running, "setup", failure)} />
+        {failure && !failure.canceled && env?.id && (
+          <RebuildPanel envId={env.id} inputNeeded={failure.inputNeeded} />
+        )}
       </Box>
     </Stack>
   );
@@ -115,6 +119,8 @@ BuildingPane.propTypes = {
     title: PropTypes.string,
     detail: PropTypes.string,
     retryable: PropTypes.bool,
+    canceled: PropTypes.bool,
+    inputNeeded: PropTypes.object,
   }),
   env: ENV_SHAPE,
   envState: ENV_STATE_SHAPE,

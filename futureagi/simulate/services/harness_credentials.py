@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -20,6 +21,29 @@ def is_credential_file_ref(ref) -> bool:
     if ref.get("manager") == PLATFORM_FILE_MANAGER:
         return True
     return str(ref.get("key") or "").startswith(HOSTED_FILE_KEY_PREFIX)
+
+
+def store_secret_values(
+    organization, values: dict[str, str]
+) -> dict[str, dict[str, str]]:
+    from simulate.models import HostedHarnessSecret
+
+    refs = {}
+    for alias, value in values.items():
+        key = f"harness-{alias.lower()}-{uuid.uuid4().hex}"
+        HostedHarnessSecret.objects.create(
+            organization=organization,
+            name=key,
+            version="1",
+            encrypted_value=value,
+        )
+        refs[alias] = {
+            "manager": "platform-vault",
+            "key": key,
+            "version": "1",
+            "purpose": "target_provider",
+        }
+    return refs
 
 
 def request_scope(request) -> tuple[Any, Any]:

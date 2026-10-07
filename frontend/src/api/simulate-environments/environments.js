@@ -15,6 +15,8 @@ import {
   listHarnessEnvironments,
   deleteHarnessEnvironment,
   renameHarnessEnvironment,
+  updateHarnessEnvironmentConfiguration,
+  rebuildHarnessEnvironment,
   deleteAppliedEvaluation,
   addRunEvaluation,
 } from "src/api/simulate-environments/harnessEnvironments";
@@ -90,6 +92,36 @@ export function useRenameEnvironment() {
     mutationFn: ({ id, name }) => renameHarnessEnvironment(id, name),
     onSuccess: (detail, { id }) => {
       if (detail) queryClient.setQueryData(harnessEnvironmentKey(id), detail);
+      queryClient.invalidateQueries({ queryKey: myEnvironmentsListKey() });
+    },
+  });
+}
+
+export function useUpdateEnvironmentConfiguration() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    meta: { errorHandled: true },
+    mutationFn: ({ id, body }) =>
+      updateHarnessEnvironmentConfiguration(id, body),
+    onSuccess: (data, { id }) => {
+      if (data?.environment) {
+        queryClient.setQueryData(harnessEnvironmentKey(id), data.environment);
+      }
+      queryClient.invalidateQueries({ queryKey: myEnvironmentsListKey() });
+    },
+  });
+}
+
+export function useRebuildEnvironment() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    meta: { errorHandled: true },
+    mutationFn: ({ id, body }) => rebuildHarnessEnvironment(id, body),
+    onSuccess: (data, { id }) => {
+      if (data?.environment) {
+        queryClient.setQueryData(harnessEnvironmentKey(id), data.environment);
+      }
+      queryClient.invalidateQueries({ queryKey: ["harness-job", id] });
       queryClient.invalidateQueries({ queryKey: myEnvironmentsListKey() });
     },
   });

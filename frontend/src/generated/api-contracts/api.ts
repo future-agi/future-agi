@@ -585,8 +585,14 @@ import type {
   HarnessConversationWorkspaceResponseApi,
   HarnessEnvironmentAddEvaluationApi,
   HarnessEnvironmentAvailableEvalsApi,
+  HarnessEnvironmentConfigurationApi,
+  HarnessEnvironmentConfigurationErrorApi,
+  HarnessEnvironmentConfigurationResponseApi,
   HarnessEnvironmentDetailApi,
   HarnessEnvironmentListResponseApi,
+  HarnessEnvironmentRebuildApi,
+  HarnessEnvironmentRebuildErrorApi,
+  HarnessEnvironmentRebuildResponseApi,
   HarnessEnvironmentRenameApi,
   HarnessEnvironmentRunEvaluationQueuedApi,
   HarnessEnvironmentToolCallEvaluationApi,
@@ -58549,9 +58555,8 @@ export const getSimulateApiHarnessEnvironmentsPartialUpdateUrl = (
 };
 
 /**
- * The name is the only editable field: everything else on an environment
-records how it was built, and editing that would make the provenance the
-contract tab shows a claim rather than a record.
+ * Keys and connection settings change through ``configuration``; everything
+else records how the environment was built.
  * @summary Rename an environment.
  */
 export const simulateApiHarnessEnvironmentsPartialUpdate = async (
@@ -58614,6 +58619,82 @@ export const simulateApiHarnessEnvironmentsDelete = async (
     {
       ...options,
       method: "DELETE",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsConfigurationResponse200 = {
+  data: HarnessEnvironmentConfigurationResponseApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsConfigurationResponse400 = {
+  data: HarnessEnvironmentConfigurationErrorApi;
+  status: 400;
+};
+
+export type simulateApiHarnessEnvironmentsConfigurationResponse404 = {
+  data: HarnessEnvironmentConfigurationErrorApi;
+  status: 404;
+};
+
+export type simulateApiHarnessEnvironmentsConfigurationResponse409 = {
+  data: HarnessEnvironmentConfigurationErrorApi;
+  status: 409;
+};
+
+export type simulateApiHarnessEnvironmentsConfigurationResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 409>;
+};
+
+export type simulateApiHarnessEnvironmentsConfigurationResponseSuccess =
+  simulateApiHarnessEnvironmentsConfigurationResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsConfigurationResponseError = (
+  | simulateApiHarnessEnvironmentsConfigurationResponse400
+  | simulateApiHarnessEnvironmentsConfigurationResponse404
+  | simulateApiHarnessEnvironmentsConfigurationResponse409
+  | simulateApiHarnessEnvironmentsConfigurationResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type simulateApiHarnessEnvironmentsConfigurationResponse =
+  | simulateApiHarnessEnvironmentsConfigurationResponseSuccess
+  | simulateApiHarnessEnvironmentsConfigurationResponseError;
+
+export const getSimulateApiHarnessEnvironmentsConfigurationUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/configuration/`;
+};
+
+/**
+ * An environment is the job that built it (the world itself lives in object
+storage, addressed from the job's metadata), so these endpoints project the
+same rows the harness-jobs API serves. They exist separately because the
+list needs a row, not a run: the jobs list returns every event, receipt and
+stage-output payload for up to a hundred jobs, which is a detail document
+repeated a hundred times.
+
+Running and grading a simulation are deliberately not here. ``run`` starts
+one and returns 202; progress is read from the job.
+ * @summary The environments surface: list, delete, and start a simulation.
+ */
+export const simulateApiHarnessEnvironmentsConfiguration = async (
+  id: string,
+  harnessEnvironmentConfigurationApi: HarnessEnvironmentConfigurationApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsConfigurationResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsConfigurationResponse>(
+    getSimulateApiHarnessEnvironmentsConfigurationUrl(id),
+    {
+      ...options,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessEnvironmentConfigurationApi),
     },
   );
 };
@@ -58821,6 +58902,85 @@ export const simulateApiHarnessEnvironmentsRemoveEvaluation = async (
     {
       ...options,
       method: "DELETE",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsRebuildResponse202 = {
+  data: HarnessEnvironmentRebuildResponseApi;
+  status: 202;
+};
+
+export type simulateApiHarnessEnvironmentsRebuildResponse400 = {
+  data: HarnessEnvironmentRebuildErrorApi;
+  status: 400;
+};
+
+export type simulateApiHarnessEnvironmentsRebuildResponse404 = {
+  data: HarnessEnvironmentRebuildErrorApi;
+  status: 404;
+};
+
+export type simulateApiHarnessEnvironmentsRebuildResponse409 = {
+  data: HarnessEnvironmentRebuildErrorApi;
+  status: 409;
+};
+
+export type simulateApiHarnessEnvironmentsRebuildResponse422 = {
+  data: HarnessEnvironmentRebuildErrorApi;
+  status: 422;
+};
+
+export type simulateApiHarnessEnvironmentsRebuildResponse503 = {
+  data: HarnessEnvironmentRebuildErrorApi;
+  status: 503;
+};
+
+export type simulateApiHarnessEnvironmentsRebuildResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 202 | 400 | 404 | 409 | 422 | 503>;
+};
+
+export type simulateApiHarnessEnvironmentsRebuildResponseSuccess =
+  simulateApiHarnessEnvironmentsRebuildResponse202 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsRebuildResponseError = (
+  | simulateApiHarnessEnvironmentsRebuildResponse400
+  | simulateApiHarnessEnvironmentsRebuildResponse404
+  | simulateApiHarnessEnvironmentsRebuildResponse409
+  | simulateApiHarnessEnvironmentsRebuildResponse422
+  | simulateApiHarnessEnvironmentsRebuildResponse503
+  | simulateApiHarnessEnvironmentsRebuildResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type simulateApiHarnessEnvironmentsRebuildResponse =
+  | simulateApiHarnessEnvironmentsRebuildResponseSuccess
+  | simulateApiHarnessEnvironmentsRebuildResponseError;
+
+export const getSimulateApiHarnessEnvironmentsRebuildUrl = (id: string) => {
+  return `/simulate/api/harness-environments/${id}/rebuild/`;
+};
+
+/**
+ * The same preflight a new environment runs is run again first; a
+failed check saves nothing and starts nothing.
+ * @summary Fix a failed build's keys and build it again in place.
+ */
+export const simulateApiHarnessEnvironmentsRebuild = async (
+  id: string,
+  harnessEnvironmentRebuildApi: HarnessEnvironmentRebuildApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsRebuildResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsRebuildResponse>(
+    getSimulateApiHarnessEnvironmentsRebuildUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessEnvironmentRebuildApi),
     },
   );
 };
