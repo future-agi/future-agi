@@ -31,6 +31,7 @@ import uuid
 import pytest
 from django.db import DatabaseError
 
+from tracer.services.clickhouse.eval_expressions import eval_completed_result_predicate
 from tracer.services.clickhouse.eval_logger_table import (
     eval_logger_live_state_columns,
     eval_logger_source,
@@ -383,8 +384,12 @@ class TestEvalScoreCompilation:
             ClickHouseFilterBuilder, _eval_filter(eval_id, "is_not_null")
         )
         assert "output_float IS NOT NULL" in where
-        assert "trace_id IN (" in where
-        assert "NOT IN" not in where
+        assert where.startswith("trace_id IN (")
+        # Presence is a positive membership; only is_null negates it. The
+        # completed-result guard's status list is the only NOT IN inside.
+        assert "trace_id NOT IN" not in where
+        assert where.count("NOT IN") == 1
+        assert f"AND {eval_completed_result_predicate()} AND output_float" in where
 
 
 # ===========================================================================
@@ -467,8 +472,9 @@ class TestEvalChoiceCompilation:
         )
         assert " OR " in where
         # The combined membership block sits inside the AND-guarded subquery,
-        # so the guards precede a parenthesised OR group.
-        assert "AND error = 0 AND ((" in where
+        # so the guards (the tile's completed-result rule, TH-8106) precede a
+        # parenthesised OR group.
+        assert f"AND {eval_completed_result_predicate()} AND ((" in where
         # Three membership checks OR-joined.
         assert where.count("has(") == 3
 
