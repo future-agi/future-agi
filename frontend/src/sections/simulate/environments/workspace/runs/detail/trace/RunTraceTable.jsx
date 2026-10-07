@@ -266,10 +266,9 @@ export default function RunTraceTable({
     allMatching
       ? listMatchingScenarioKeys(executionId, serverFilters, selection.idList)
       : Promise.resolve(tickedKeys);
-  const rerun = (keys, trials) => {
-    onRerunScenarios(keys, trials);
-    selection.clear();
-  };
+  // The selection stays until the new run opens (the run page starts fresh
+  // there), so a refused start leaves the ticks in place to try again.
+  const rerun = (keys, trials) => onRerunScenarios(keys, trials);
   const banner = !hasSelection ? null : allMatching ? (
     <>
       <span>
@@ -283,7 +282,7 @@ export default function RunTraceTable({
         Clear selection
       </Button>
     </>
-  ) : pageChecked && count > pageIds.length ? (
+  ) : pageChecked && totalPages > 1 ? (
     <>
       <span>{`All ${pageIds.length} calls on this page are selected.`}</span>
       <Button

@@ -47,6 +47,7 @@ export default function RunDetail({
   testId,
   executionId,
   onStartRun,
+  runStarting = false,
   creditBanner = null,
 }) {
   const navigate = useNavigate();
@@ -307,7 +308,9 @@ export default function RunDetail({
               rerunDisabledReason={
                 live
                   ? "Wait for this run to finish before re-running calls"
-                  : null
+                  : runStarting
+                    ? "Starting the run…"
+                    : null
               }
             />
           )}
@@ -450,5 +453,7 @@ RunDetail.propTypes = {
   testId: PropTypes.string,
   executionId: PropTypes.string,
   onStartRun: PropTypes.func,
+  // A run start is in flight; the table's Re-run waits for it.
+  runStarting: PropTypes.bool,
   creditBanner: PropTypes.node,
 };

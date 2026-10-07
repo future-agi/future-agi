@@ -126,6 +126,7 @@ function RunTraceTableStub({
   activeCallId,
   activePage,
   initialFilters,
+  rerunDisabledReason,
 }) {
   useEffect(() => {
     onQueryChange?.(TABLE_QUERY);
@@ -135,6 +136,7 @@ function RunTraceTableStub({
     <div>
       run-trace-table:{JSON.stringify(initialFilters || {})}
       <span>{`active:${activeCallId ?? "-"}:${activePage ?? "-"}`}</span>
+      <span>{`rerun-off:${rerunDisabledReason ?? "-"}`}</span>
       <button
         type="button"
         onClick={() => onOpenCall({ id: "c1", simulationCallType: "voice" })}
@@ -150,6 +152,7 @@ RunTraceTableStub.propTypes = {
   onQueryChange: PropTypes.func,
   activeCallId: PropTypes.string,
   activePage: PropTypes.number,
+  rerunDisabledReason: PropTypes.string,
 };
 vi.mock("../trace/RunTraceTable", () => ({ default: RunTraceTableStub }));
 vi.mock("../CallDrawer", () => ({
@@ -587,6 +590,17 @@ describe("RunDetail", () => {
 
   // Re-running now starts from the calls ticked in the table, so the header
   // has no whole-run Run again.
+  it("keeps the table's Re-run off while a run is starting", () => {
+    useRunDetail.mockReturnValue({
+      identity: IDENTITY,
+      stats: STATS,
+      isLoading: false,
+    });
+    renderDetail({ onStartRun: vi.fn(), runStarting: true });
+
+    expect(screen.getByText("rerun-off:Starting the run…")).toBeInTheDocument();
+  });
+
   it("has no Run again button in the header", () => {
     useRunDetail.mockReturnValue({
       identity: IDENTITY,

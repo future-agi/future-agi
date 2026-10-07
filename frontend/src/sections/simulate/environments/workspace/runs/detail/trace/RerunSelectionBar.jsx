@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   Box,
   Button,
@@ -53,6 +53,9 @@ export default function RerunSelectionBar({
   const [keys, setKeys] = useState(null);
   const [failed, setFailed] = useState(false);
   const [trials, setTrials] = useState(runTrials);
+  // Each open reads the scenarios afresh; only the latest read may land, so a
+  // slow earlier one can't replace a newer count.
+  const readRef = useRef(0);
 
   const countLabel =
     allMatching || scenarioCount == null
@@ -66,10 +69,13 @@ export default function RerunSelectionBar({
     setTrials(runTrials);
     setKeys(null);
     setFailed(false);
+    readRef.current += 1;
+    const read = readRef.current;
     try {
-      setKeys(await resolveScenarioKeys());
+      const resolved = await resolveScenarioKeys();
+      if (read === readRef.current) setKeys(resolved);
     } catch {
-      setFailed(true);
+      if (read === readRef.current) setFailed(true);
     }
   };
   const closeMenu = () => setAnchor(null);

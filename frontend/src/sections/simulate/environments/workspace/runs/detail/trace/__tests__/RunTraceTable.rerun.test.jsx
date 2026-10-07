@@ -70,7 +70,7 @@ beforeEach(() => {
         ],
       },
       count: status ? tasks.length : total,
-      totalPages: 1,
+      totalPages: !status && total > tasks.length ? 3 : 1,
       isLoading: false,
     };
   });
@@ -203,6 +203,21 @@ describe("RunTraceTable — selecting calls to re-run", () => {
     expect(screen.getByText("119 calls selected")).toBeInTheDocument();
   });
 
+  it("offers every matching call only when another page holds more", async () => {
+    // One page: the untagged call makes the count larger than the page's
+    // selectable calls, but there is nothing more to select.
+    const user = userEvent.setup();
+    renderTable();
+    await openRows(user);
+
+    await user.click(pageBox());
+
+    expect(
+      screen.getByText("6 calls selected · 2 scenarios"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/matching calls/)).not.toBeInTheDocument();
+  });
+
   it("clears the selection when the status filter changes", async () => {
     const user = userEvent.setup();
     renderTable();
@@ -238,6 +253,52 @@ describe("RunTraceTable — re-running as a new simulation", () => {
       screen.getByRole("menuitem", { name: /Run as a new simulation/ }),
     );
     expect(onRerunScenarios).toHaveBeenCalledWith(["refund", "escalate"], 3);
+  });
+
+  it("keeps the selection after starting, so a refused start can be tried again", async () => {
+    const user = userEvent.setup();
+    const { onRerunScenarios } = renderTable();
+    await openRows(user);
+    await user.click(rowBox("refund · Trial 1"));
+    await openMenu(user);
+
+    await user.click(
+      screen.getByRole("menuitem", { name: /Run as a new simulation/ }),
+    );
+
+    expect(onRerunScenarios).toHaveBeenCalledTimes(1);
+    expect(rowBox("refund · Trial 1")).toBeChecked();
+    expect(screen.getByText("1 selected")).toBeInTheDocument();
+  });
+
+  it("shows the latest scenario count when the menu is reopened mid-count", async () => {
+    const user = userEvent.setup();
+    total = 120;
+    let finishFirst;
+    listMatchingScenarioKeys
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishFirst = resolve;
+          }),
+      )
+      .mockResolvedValueOnce(["refund", "escalate"]);
+    renderTable();
+    await openRows(user);
+    await user.click(pageBox());
+    await user.click(
+      screen.getByRole("button", { name: "Select all 120 matching calls" }),
+    );
+
+    await openMenu(user);
+    expect(screen.getByText("Counting scenarios…")).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    await openMenu(user);
+    expect(await screen.findByText("Re-run 2 scenarios")).toBeInTheDocument();
+
+    finishFirst(["refund", "escalate", "timeout"]);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.getByText("Re-run 2 scenarios")).toBeInTheDocument();
   });
 
   it("sends the trials picked in the menu", async () => {
