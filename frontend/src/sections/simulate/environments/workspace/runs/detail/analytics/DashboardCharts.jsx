@@ -35,6 +35,8 @@ export const COLORS = [
   "#9a9fac",
 ];
 const OUTCOME_COLORS = {
+  queued: COLORS[5],
+  in_progress: COLORS[4],
   passed: COLORS[1],
   failed: COLORS[2],
   error: COLORS[3],
@@ -45,8 +47,7 @@ const OUTCOME_COLORS = {
   neutral: COLORS[5],
   negative: COLORS[2],
   unknown: COLORS[5],
-  successful: COLORS[0],
-  unsuccessful: COLORS[2],
+  "not reported": COLORS[5],
   escalated: COLORS[0],
 };
 export const number = (value, digits = 1) =>
@@ -154,17 +155,16 @@ const pieLabel = (label) =>
   ({
     true: "Successful",
     false: "Unsuccessful",
-    successful: "Successful",
-    unsuccessful: "Unsuccessful",
     escalated: "Escalated",
+    queued: "Queued",
+    in_progress: "In progress",
     passed: "Passed",
     failed: "Failed",
-    error: "Errored",
+    error: "Error",
     inconclusive: "Inconclusive",
     positive: "Positive",
     neutral: "Neutral",
     negative: "Negative",
-    unknown: "Unknown",
   })[label.toLowerCase()] || label;
 export function Donut({ data, onOpen }) {
   const theme = useTheme();
@@ -188,7 +188,7 @@ export function Donut({ data, onOpen }) {
                   ? (segment) =>
                       segment.count > 0 &&
                       segment.statuses?.length &&
-                      onOpen({ status: segment.statuses })
+                      onOpen({ goal_outcome: segment.statuses })
                   : undefined
               }
               style={{ cursor: onOpen ? "pointer" : "default" }}
@@ -239,7 +239,7 @@ export function Donut({ data, onOpen }) {
             disabled={onOpen ? !segment.count : undefined}
             onClick={
               onOpen && segment.statuses?.length
-                ? () => onOpen({ status: segment.statuses })
+                ? () => onOpen({ goal_outcome: segment.statuses })
                 : undefined
             }
             aria-label={
@@ -467,6 +467,7 @@ export function TrendLine({
   rows = [],
   xKey,
   valueKey,
+  valueLabel,
   percentile = false,
   bucketed = false,
 }) {
@@ -495,14 +496,14 @@ export function TrendLine({
           />
           <YAxis
             tick={tick}
-            width={55}
-            tickFormatter={(value) => `${number(value / 1000)}s`}
+            width={64}
+            tickFormatter={(value) => format(value, "ms")}
             axisLine={false}
             tickLine={false}
           />
           <Tooltip
             {...chartTooltipProps(theme)}
-            formatter={(value) => [format(value, "ms"), "Task duration"]}
+            formatter={(value) => [format(value, "ms"), valueLabel]}
             labelFormatter={(label) =>
               percentile
                 ? `Percentile ${label}`
@@ -514,7 +515,7 @@ export function TrendLine({
             dataKey={valueKey}
             stroke={percentile ? COLORS[4] : COLORS[0]}
             strokeWidth={2}
-            dot={false}
+            dot={percentile ? false : { r: 2 }}
             isAnimationActive={false}
             connectNulls={false}
           />
@@ -537,6 +538,7 @@ TrendLine.propTypes = {
   rows: PropTypes.array,
   xKey: PropTypes.string,
   valueKey: PropTypes.string,
+  valueLabel: PropTypes.string.isRequired,
   percentile: PropTypes.bool,
   bucketed: PropTypes.bool,
 };

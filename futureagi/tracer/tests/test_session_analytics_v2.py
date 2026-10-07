@@ -202,6 +202,12 @@ def navigation_context_call():
             "build_session_navigation_query",
             side_effect=AssertionError("context cannot use legacy navigation"),
         ) as legacy,
+        # The reads are mocked, so the wall deadline must not see a slow runner.
+        mock.patch(
+            "tracer.services.clickhouse.read_budget.time",
+            SimpleNamespace(monotonic=lambda: 0.0),
+        ),
+        mock.patch("tracer.selectors.trace_filter_reads.monotonic", return_value=0.0),
     ):
         display_users.return_value.filter.return_value = display_users.return_value
         display_users.return_value.values.return_value.first.return_value = None

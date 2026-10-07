@@ -6,7 +6,7 @@ import CustomTooltip from "src/components/tooltip";
 import { interpolateColorBasedOnScore } from "src/utils/utils";
 
 import { BUILD_TONES } from "../../../../buildEnvironment/buildTones";
-import { isBad } from "./traceTable.constants";
+import { PENDING_EVAL_STATUS, isBad } from "./traceTable.constants";
 
 // The loading bar a cell shows in place of its value while the call runs: one
 // text line tall, the full width of the cell's content, sitting where the
@@ -93,7 +93,7 @@ Score.propTypes = { result: PropTypes.object };
 // can't tell a check that doesn't apply to this scenario from one not graded
 // yet.
 export function UnscoredEval({ result, callLive, callStatus }) {
-  if ((!result && callLive) || result?.status === "pending") {
+  if ((!result && callLive) || result?.status === PENDING_EVAL_STATUS) {
     // The metric cells' top padding, so the row's loading bars line up.
     return (
       <Box sx={{ px: 2, py: 1.5 }}>

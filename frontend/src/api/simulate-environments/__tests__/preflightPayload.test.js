@@ -59,7 +59,6 @@ describe("draftToPreflightPayload — repo", () => {
         level: "full",
         retention_days: 30,
         allow_bundle_download: false,
-        max_artifact_bytes: 1073741824,
       },
       metadata: { name: "support-bot", authoring_key: "support-bot" },
     });
@@ -182,6 +181,18 @@ describe("draftToPreflightPayload — platform", () => {
       prompt: "You are a helpful phone agent.",
       contact,
     });
+
+  it("preserves the complete Others system prompt", () => {
+    const prompt = `You are the complete phone agent.\n${"Keep this rule verbatim.\n".repeat(100)}`;
+    expect(prompt.length).toBeGreaterThan(310);
+
+    const { payload } = draftToPreflightPayload({
+      ...phoneDraft({ countryCode: "+1", number: "4155550100" }),
+      prompt,
+    });
+
+    expect(payload.agent.config.target_system_prompt).toBe(prompt.trim());
+  });
 
   it("prefixes a national number with the selected dial code", () => {
     // India +91 with a national number that happens to begin with 91 must not

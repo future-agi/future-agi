@@ -1561,10 +1561,13 @@ class Workflows(unittest.TestCase):
 
     def test_release_pins_the_simulation_runner_base(self):
         release = (WORKFLOWS / "release-images.yml").read_text(encoding="utf-8")
-        # The default (feature-complete) backend, by the digest its job published.
+        # The default (feature-complete) backend, by the digest its job
+        # published; on a rebuild of the runner alone, the digest the registry
+        # serves for that tag.
         self.assertIn(
             "BACKEND_IMAGE=docker.io/futureagi/future-agi:"
-            "${{ needs.guard.outputs.version }}@${{ needs.backend.outputs.digest }}",
+            "${{ needs.guard.outputs.version }}@"
+            "${{ needs.backend.outputs.digest || needs.resolve-sdk.outputs.backend_digest }}",
             release,
         )
         self.assertIn("tag-suffix: -gpu", release)
@@ -1587,12 +1590,316 @@ class Workflows(unittest.TestCase):
         self.assertEqual(slim["build-args"].split(), ["IMAGE_VARIANT=slim"])
         # futureagi/standalone is FROM the -slim digest; nothing else is.
         self.assertEqual(
-            jobs["standalone-inputs"]["needs"], ["guard", "build", "backend-slim"]
+            jobs["standalone-inputs"]["needs"],
+            ["guard", "approve", "build", "backend-slim"],
         )
         pin = jobs["standalone-inputs"]["steps"][-1]["run"]
         self.assertIn('pin BACKEND_IMAGE futureagi/future-agi "${VERSION}-slim"', pin)
         self.assertNotIn("backend-slim", jobs["simulation-runner"]["needs"])
         self.assertIn("backend-slim", jobs["size-report"]["needs"])
+
+    @unittest.skipUnless(HAVE_YAML, "PyYAML unavailable")
+    def test_release_asks_for_one_review(self):
+        import yaml
+
+        jobs = yaml_jobs(WORKFLOWS / "release-images.yml")
+        reviewed = {
+            n for n, job in jobs.items() if job.get("environment") == "production"
+        }
+        self.assertEqual(reviewed, {"approve"})
+        # Every other environment is the one without reviewers, on any event.
+        for name, job in jobs.items():
+            if name != "approve" and "environment" in job:
+                with self.subTest(job=name):
+                    self.assertEqual(job["environment"], "production-auto")
+        self.assertEqual(jobs["approve"]["needs"], "guard")
+        # What the guard checked may have changed while the review waited.
+        self.assertEqual(
+            jobs["approve"]["steps"][-1]["run"], jobs["guard"]["steps"][0]["run"]
+        )
+        self.assertEqual(jobs["approve"]["env"], jobs["guard"]["env"])
+
+        def needs(name):
+            listed = jobs[name].get("needs", [])
+            return [listed] if isinstance(listed, str) else listed
+
+        def gated(name):
+            return "approve" in needs(name) or any(gated(n) for n in needs(name))
+
+        # Nothing but the guard runs before the review.
+        for name in jobs:
+            if name not in ("guard", "approve"):
+                with self.subTest(job=name):
+                    self.assertTrue(gated(name))
+        # `needs` does not hold back a job that runs whatever its needs did: it
+        # has to check the review itself, or a job that did.
+        approved = "needs.approve.result == 'success'"
+        for name, job in jobs.items():
+            condition = " ".join(str(job.get("if", "")).split())
+            if "always()" not in condition:
+                continue
+            with self.subTest(job=name):
+                if name == "bump-deployment":
+                    self.assertIn("needs.release-worker.result == 'success'", condition)
+                else:
+                    self.assertIn(approved, condition)
+        self.assertIn(approved, " ".join(jobs["release-worker"]["if"].split()))
+        # The image builds do not ask again.
+        for name, job in jobs.items():
+            if str(job.get("uses", "")).endswith("build-image-multiarch.yml"):
+                with self.subTest(job=name):
+                    self.assertEqual(job["with"]["environment"], "production-auto")
+        reusable = yaml.safe_load(
+            (WORKFLOWS / "build-image-multiarch.yml").read_text(encoding="utf-8")
+        )
+        for name in ("build", "publish"):
+            with self.subTest(job=name):
+                self.assertEqual(
+                    reusable["jobs"][name]["environment"], "${{ inputs.environment }}"
+                )
+        # A single-image release-*.yml asks through the default. PyYAML reads
+        # the `on` key as True.
+        inputs = reusable[True]["workflow_call"]["inputs"]
+        self.assertEqual(inputs["environment"]["default"], "production")
+        self.assertIs(inputs["enabled"]["default"], True)
+        for wrapper in sorted(WORKFLOWS.glob("release-*.yml")):
+            if wrapper.name == "release-images.yml":
+                continue
+            for name, job in yaml_jobs(wrapper).items():
+                if str(job.get("uses", "")).endswith("build-image-multiarch.yml"):
+                    with self.subTest(workflow=wrapper.name, job=name):
+                        self.assertNotIn("environment", job["with"])
+
+    @unittest.skipUnless(HAVE_YAML, "PyYAML unavailable")
+    def test_every_release_component_can_run_alone(self):
+        jobs = yaml_jobs(WORKFLOWS / "release-images.yml")
+        guard = jobs["guard"]["steps"][0]["run"]
+        (names,) = re.findall(r'^all="([a-z -]+)"$', guard, re.MULTILINE)
+        components = names.split()
+
+        def selected_by(condition):
+            return set(re.findall(r"""'"([a-z-]+)"'""", str(condition)))
+
+        # A matrix image is selected by its matrix name.
+        legs = {leg["name"] for leg in jobs["build"]["strategy"]["matrix"]["include"]}
+        self.assertEqual(selected_by(jobs["build"]["if"]), legs)
+        self.assertEqual(
+            jobs["build"]["with"]["enabled"],
+            "${{ contains(needs.guard.outputs.components,"
+            " format('\"{0}\"', matrix.name)) }}",
+        )
+        reusable = yaml_jobs(WORKFLOWS / "build-image-multiarch.yml")
+        self.assertEqual(reusable["prepare"]["if"], "inputs.enabled")
+        component_of = {
+            "serving-gpu": "serving-gpu",
+            "code-executor-base-pin": "code-executor",
+            "code-executor-base": "code-executor",
+            "code-executor": "code-executor",
+            "backend": "backend",
+            "backend-slim": "backend-slim",
+            "standalone-inputs": "standalone",
+            "standalone": "standalone",
+            "resolve-sdk": "simulation-runner",
+            "simulation-runner": "simulation-runner",
+            "dispatch-ee": "ee",
+            "release-worker": "bump",
+            "dispatch-docs": "docs",
+            "helm-chart": "helm-chart",
+        }
+        for job, component in component_of.items():
+            with self.subTest(job=job):
+                self.assertEqual(selected_by(jobs[job]["if"]), {component})
+        self.assertEqual(legs | set(component_of.values()), set(components))
+        # A job that follows builds this run may not have asked for: a skipped
+        # one does not stop it, a failed one does.
+        for job in (
+            "standalone-inputs",
+            "standalone",
+            "simulation-runner",
+            "dispatch-ee",
+            "dispatch-docs",
+            "helm-chart",
+        ):
+            with self.subTest(job=job):
+                condition = " ".join(str(jobs[job]["if"]).split())
+                self.assertIn("!cancelled() && !failure()", condition)
+                self.assertNotIn("always()", condition)
+        # A tag push pins only what it built: a failed build stops the bump.
+        worker = " ".join(jobs["release-worker"]["if"].split())
+        for built in ("build", "backend", "code-executor"):
+            with self.subTest(job="release-worker", built=built):
+                self.assertIn(f"needs.{built}.result == 'success'", worker)
+        bump = " ".join(jobs["bump-deployment"]["if"].split())
+        for built in ("release-worker", "dispatch-ee", "simulation-runner"):
+            with self.subTest(job="bump-deployment", built=built):
+                self.assertIn(f"needs.{built}.result == 'success'", bump)
+        # The runner's base: the backend this run built, else the registry's.
+        (digest,) = [
+            s for s in jobs["resolve-sdk"]["steps"] if s.get("id") == "backend"
+        ]
+        self.assertEqual(
+            digest["if"],
+            "github.event_name == 'workflow_dispatch'"
+            " && !contains(needs.guard.outputs.components, '\"backend\"')",
+        )
+
+    def _release_guard(
+        self, event, ref, version="", components="", *, hub="404", tags="v9.9.9"
+    ):
+        """Run the guard with `git ls-remote` and Docker Hub stubbed: (exit code,
+        selected components, stdout, the Docker Hub URLs it asked for)."""
+        script = yaml_jobs(WORKFLOWS / "release-images.yml")["guard"]["steps"][0]["run"]
+        with tempfile.TemporaryDirectory() as tmp:
+            stubs = Path(tmp) / "bin"
+            stubs.mkdir()
+            listing = "".join(f"0000\trefs/tags/{tag}\n" for tag in tags.split())
+            (stubs / "git").write_text(f"#!/bin/sh\nprintf '%s' '{listing}'\n")
+            (stubs / "curl").write_text(
+                "#!/bin/sh\n"
+                'for last in "$@"; do :; done\n'
+                f'echo "$last" >> "{tmp}/urls"\n'
+                f"printf '%s' '{hub}'\n" + ("exit 7\n" if hub == "000" else "")
+            )
+            for stub in stubs.iterdir():
+                stub.chmod(0o755)
+            output = Path(tmp) / "output"
+            output.touch()
+            proc = subprocess.run(
+                ["bash", "-c", script],
+                env={
+                    "PATH": f"{stubs}{os.pathsep}{os.environ['PATH']}",
+                    "GITHUB_OUTPUT": str(output),
+                    "GITHUB_EVENT_NAME": event,
+                    "GITHUB_REF": ref,
+                    "GITHUB_REF_NAME": ref.rsplit("/", 1)[-1],
+                    "GITHUB_SERVER_URL": "https://github.com",
+                    "GITHUB_REPOSITORY": "future-agi/future-agi",
+                    "REQUESTED_VERSION": version,
+                    "REQUESTED_COMPONENTS": components,
+                },
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+            values = dict(
+                line.split("=", 1) for line in output.read_text().splitlines()
+            )
+            urls_file = Path(tmp) / "urls"
+            urls = urls_file.read_text().split() if urls_file.exists() else []
+        selected = json.loads(values["components"]) if proc.returncode == 0 else None
+        return proc.returncode, selected, proc.stdout, urls
+
+    @unittest.skipUnless(HAVE_YAML, "PyYAML unavailable")
+    @unittest.skipUnless(shutil.which("jq"), "jq unavailable")
+    def test_release_guard_selects_components(self):
+        guard = self._release_guard
+        code, selected, _, urls = guard("push", "refs/tags/v9.9.9")
+        self.assertEqual(code, 0)
+        self.assertEqual(selected[0], "frontend")
+        self.assertEqual(selected[-1], "bump")
+        self.assertEqual(len(selected), 14)
+        self.assertEqual(urls, [])
+        # A dispatch without a list is the deployment bump retry, from any ref
+        # and for any version.
+        for components in ("", "bump"):
+            with self.subTest(components=components):
+                self.assertEqual(
+                    guard(
+                        "workflow_dispatch",
+                        "refs/heads/main",
+                        "v9.9.8",
+                        components,
+                        tags="v9.9.8 v9.9.9",
+                    )[:2],
+                    (0, ["bump"]),
+                )
+        self.assertEqual(
+            guard("workflow_dispatch", "refs/heads/main", "v9.9.9", "ee, docs")[:2],
+            (0, ["ee", "docs"]),
+        )
+        refused = {
+            "frontned": "unknown component",
+            "frontend;id": "comma-separated list",
+            "frontend\nx=1": "comma-separated list",
+            # The bump would not wait for what the same run builds.
+            "ee,bump": "'bump' on its own",
+            "serving, bump": "'bump' on its own",
+            # An image is built from the tag it belongs to.
+            "frontend": "from the tag v9.9.9",
+            "serving-gpu": "from the tag v9.9.9",
+            "backend": "from the tag v9.9.9",
+            "standalone": "from the tag v9.9.9",
+            "simulation-runner": "from the tag v9.9.9",
+            "helm-chart": "from the tag v9.9.9",
+        }
+        for components, message in refused.items():
+            with self.subTest(components=components):
+                code, _, out, urls = guard(
+                    "workflow_dispatch", "refs/heads/main", "v9.9.9", components
+                )
+                self.assertEqual(code, 1)
+                self.assertIn(message, out)
+                self.assertEqual(urls, [])
+
+    @unittest.skipUnless(HAVE_YAML, "PyYAML unavailable")
+    @unittest.skipUnless(shutil.which("jq"), "jq unavailable")
+    def test_release_guard_builds_only_what_is_new(self):
+        guard = self._release_guard
+        tag = "refs/tags/v9.9.9"
+        hub = "https://hub.docker.com/v2/repositories/futureagi"
+        published = {
+            "frontend": f"{hub}/frontend/tags/v9.9.9",
+            "agentcc-gateway": f"{hub}/agentcc-gateway/tags/v9.9.9",
+            "serving": f"{hub}/serving/tags/v9.9.9",
+            "fi-collector": f"{hub}/fi-collector/tags/v9.9.9",
+            "serving-gpu": f"{hub}/serving/tags/v9.9.9-gpu",
+            "code-executor": f"{hub}/code-executor/tags/v9.9.9",
+            "backend": f"{hub}/future-agi/tags/v9.9.9",
+            "backend-slim": f"{hub}/future-agi/tags/v9.9.9-slim",
+            "standalone": f"{hub}/standalone/tags/v9.9.9",
+        }
+        for component, url in published.items():
+            with self.subTest(component=component):
+                self.assertEqual(
+                    guard("workflow_dispatch", tag, "v9.9.9", component),
+                    (0, [component], f'components: ["{component}"]\n', [url]),
+                )
+                # Published already, or Docker Hub did not say: no build.
+                for answer, message in {
+                    "200": "already exists",
+                    "429": "could not check",
+                    "000": "could not check",
+                }.items():
+                    code, _, out, _ = guard(
+                        "workflow_dispatch", tag, "v9.9.9", component, hub=answer
+                    )
+                    self.assertEqual(code, 1, answer)
+                    self.assertIn(message, out)
+        # resolve-sdk and helm-release.yml refuse a published runner and chart.
+        for component in ("simulation-runner", "helm-chart"):
+            with self.subTest(component=component):
+                self.assertEqual(
+                    guard("workflow_dispatch", tag, "v9.9.9", component)[::3],
+                    (0, []),
+                )
+        # A build moves `latest` and the minor alias, so only the newest
+        # release is built; 9.10 is newer than 9.9.
+        for component in ("serving", "ee", "helm-chart"):
+            with self.subTest(component=component):
+                code, _, out, urls = guard(
+                    "workflow_dispatch",
+                    tag,
+                    "v9.9.9",
+                    component,
+                    tags="v9.9.9 v9.10.0 v9.10.1-rc1",
+                )
+                self.assertEqual(code, 1)
+                self.assertIn("newest release (v9.10.0)", out)
+                self.assertEqual(urls, [])
+        code, _, out, _ = guard("workflow_dispatch", tag, "v9.9.9", "serving", tags="")
+        self.assertEqual(code, 1)
+        self.assertIn("could not read the release tags", out)
 
     @unittest.skipUnless(HAVE_YAML, "PyYAML unavailable")
     def test_standalone_ci_builds_the_slim_backend(self):
