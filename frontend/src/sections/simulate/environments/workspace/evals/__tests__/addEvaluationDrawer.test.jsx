@@ -649,7 +649,7 @@ describe("AddEvaluationDrawer — editing an eval", () => {
     expect(picker.props.requireInputs).toBe(true);
   });
 
-  it("saves through the environment's edit, without the locked name, and hands back the updated eval", async () => {
+  it("saves through the environment's edit, without the locked name or the template, and hands back the updated eval", async () => {
     const updated = { ...EDITING, mapping: EDITED.mapping, editable: true };
     updateAppliedEvaluation.mockResolvedValue(updated);
     const onEdited = vi.fn();
@@ -657,8 +657,16 @@ describe("AddEvaluationDrawer — editing an eval", () => {
     await screen.findByTestId("eval-picker");
     await act(() => picker.props.onEvalAdded(EDITED));
 
-    const { name: _name, ...body } = serializeEvalConfig(EDITED);
+    const {
+      name: _name,
+      template_id: _templateId,
+      ...body
+    } = serializeEvalConfig(EDITED);
     expect(updateAppliedEvaluation).toHaveBeenCalledWith("env-1", "c1", body);
+    // The environment's edit route refuses a template id as an unknown field.
+    expect(updateAppliedEvaluation.mock.calls[0][2]).not.toHaveProperty(
+      "template_id",
+    );
     expect(axios.post).not.toHaveBeenCalled();
     expect(enqueueSnackbar).toHaveBeenCalledWith("Evaluation updated", {
       variant: "success",
@@ -767,8 +775,15 @@ describe("AddEvaluationDrawer — editing an eval by id", () => {
     };
     await act(() => picker.props.onEvalAdded(edited));
 
-    const { name: _name, ...body } = serializeEvalConfig(edited);
+    const {
+      name: _name,
+      template_id: _templateId,
+      ...body
+    } = serializeEvalConfig(edited);
     expect(updateAppliedEvaluation).toHaveBeenCalledWith("env-1", "c1", body);
+    expect(updateAppliedEvaluation.mock.calls[0][2]).not.toHaveProperty(
+      "template_id",
+    );
     expect(onEdited).toHaveBeenCalledWith(CONFIGS[0]);
   });
 

@@ -177,9 +177,15 @@ export default function AddEvaluationDrawer({
 
   // The picker keeps its config step open when this rejects, so a refused edit
   // is re-thrown. The name is locked while editing, so it is never a change and
-  // is left out rather than sent back to the name-uniqueness check.
+  // is left out rather than sent back to the name-uniqueness check. The
+  // environment's edit route refuses a template id outright: switching
+  // templates is a remove and an add, not an edit.
   const saveEdit = async (config) => {
-    const { name: _name, ...body } = serializeEvalConfig(config);
+    const {
+      name: _name,
+      template_id: _templateId,
+      ...body
+    } = serializeEvalConfig(config);
     if (!Object.keys(body.mapping || {}).length) {
       enqueueSnackbar(NO_INPUTS, { variant: "error" });
       throw new Error(NO_INPUTS);
