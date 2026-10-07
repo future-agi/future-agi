@@ -90,13 +90,24 @@ describe("usePostLoginPath (AC-01)", () => {
     );
   });
 
-  it("reads the stored redirect once per mount", () => {
-    localStorage.setItem("redirectUrl", "/dashboard/observe");
-    const { result, rerender } = renderPath();
-    localStorage.removeItem("redirectUrl");
-    rerender();
-    expect(result.current).toBe("/dashboard/observe");
-  });
+  // R4: this used to pin a per-mount snapshot, which the persistent Router
+  // kept for the whole page load and replayed on "/". Consumers navigate with
+  // the value from their render and then remove it; the next render must
+  // see the removal.
+  it.each(["oss", "cloud"])(
+    "%s: does not replay a consumed redirect on a later render",
+    (mode) => {
+      h.mode = mode;
+      localStorage.setItem("redirectUrl", "/mcp/authorize?client_id=c");
+      const { result, rerender } = renderPath();
+      expect(result.current).toBe("/mcp/authorize?client_id=c");
+      localStorage.removeItem("redirectUrl");
+      rerender();
+      expect(result.current).toBe(
+        mode === "cloud" ? "/dashboard/falcon-ai" : "/dashboard/get-started",
+      );
+    },
+  );
 
   it("is unchanged on Cloud (AC-13)", () => {
     h.mode = "cloud";

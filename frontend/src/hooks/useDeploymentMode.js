@@ -8,7 +8,6 @@
  *   const { isOSS, isCloud, isEE } = useDeploymentMode();
  */
 
-import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { paths } from "src/routes/paths";
@@ -41,9 +40,10 @@ export function useDeploymentMode() {
 export function usePostLoginPath() {
   const { isOSS, isCloud, isSuccess } = useDeploymentMode();
   const queryClient = useQueryClient();
-  // Read once per mount: callers remove redirectUrl after they navigate, and
-  // the target must not change under them mid-flow (TH-8005).
-  const [returnTo] = useState(() => localStorage.getItem("redirectUrl"));
+  // One-shot (TH-8005): read on every render so a destination the auth flow
+  // has consumed (removed) is never replayed by the persistent Router. Each
+  // caller navigates with the value from its render, then removes it.
+  const returnTo = localStorage.getItem("redirectUrl");
 
   // Until the deployment is known, and on Cloud, as before.
   if (!isSuccess || isCloud) {
