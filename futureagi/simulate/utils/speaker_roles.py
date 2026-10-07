@@ -9,9 +9,11 @@ Provider raw shape:
   LiveKit  | both      | tested agent    | simulator
   Bland    | outbound  | tested agent    | simulator
   Retell   | outbound  | tested agent    | simulator
+  Twilio   | both      | tested agent    | simulator
 
 Direction is tested-agent-perspective: inbound = tested agent receives, outbound
 = tested agent dials out. LiveKit rows are pre-normalised at the agent worker.
+Twilio rows arrive provider-side, the same convention.
 """
 
 from __future__ import annotations
@@ -103,6 +105,17 @@ class SpeakerRoleResolver:
         "customer": "simulator",
     }
 
+    # Twilio payloads arrive provider-side like LiveKit's — same values, its own
+    # maps so a Twilio payload change is edited here, not through a shared alias.
+    _TWILIO_INBOUND: dict[str, str] = {
+        "bot": "tested_agent",
+        "assistant": "tested_agent",
+        "agent": "tested_agent",
+        "user": "simulator",
+        "customer": "simulator",
+    }
+    _TWILIO_OUTBOUND: dict[str, str] = _TWILIO_INBOUND
+
     @staticmethod
     def detect_provider(
         provider_call_data: dict[str, Any] | None,
@@ -123,6 +136,8 @@ class SpeakerRoleResolver:
             return ProviderChoices.BLAND
         if provider_call_data.get(ProviderChoices.RETELL.value):
             return ProviderChoices.RETELL
+        if provider_call_data.get(ProviderChoices.TWILIO.value):
+            return ProviderChoices.TWILIO
         logger.error(
             "speaker_role_resolver_unknown_provider",
             provider_call_data_keys=list(provider_call_data.keys()),
@@ -169,6 +184,8 @@ class SpeakerRoleResolver:
             return cls._BLAND_OUTBOUND if is_outbound else cls._BLAND_INBOUND
         if provider == ProviderChoices.RETELL:
             return cls._RETELL_OUTBOUND if is_outbound else cls._RETELL_INBOUND
+        if provider == ProviderChoices.TWILIO:
+            return cls._TWILIO_OUTBOUND if is_outbound else cls._TWILIO_INBOUND
         logger.error(
             "speaker_role_resolver_unsupported_provider",
             provider=str(provider),

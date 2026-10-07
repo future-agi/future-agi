@@ -29,6 +29,7 @@ SupportedProviders = {
     ProviderChoices.ELEVEN_LABS.value,
     ProviderChoices.LIVEKIT.value,
     ProviderChoices.BLAND.value,
+    ProviderChoices.TWILIO.value,
     ProviderChoices.OTHERS.value,
 }
 
