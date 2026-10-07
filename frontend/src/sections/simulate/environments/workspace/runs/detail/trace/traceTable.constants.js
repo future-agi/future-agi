@@ -8,8 +8,9 @@ import { STATUS_META } from "../../runs.constants";
 /*
   Column picker vocabulary. `defaultOn` is what shows on first load: the run's
   own outcome (Run details), the differentiating persona and the system metrics
-  read a run at a glance; the restated Scenario column starts hidden. `evals` is
-  a single toggle for the whole (data-driven) evaluation group.
+  read a run at a glance; the restated Scenario column starts hidden. The run's
+  evaluations aren't listed here: they come from the calls API, and the picker
+  offers each one on its own.
 */
 export const TRACE_COLUMNS = [
   {
@@ -17,13 +18,6 @@ export const TRACE_COLUMNS = [
     label: "Run details",
     defaultOn: true,
     width: 200,
-    group: "Run details",
-  },
-  {
-    key: "status",
-    label: "Status",
-    defaultOn: true,
-    width: 120,
     group: "Run details",
   },
   {
@@ -116,20 +110,7 @@ export const TRACE_COLUMNS = [
     defaultOn: false,
     group: "Sub-goal Results",
   },
-  { key: "evals", label: "Evaluations", defaultOn: true, group: "Evaluations" },
 ];
-
-// A call's lifecycle status (`execution_status`) as a chip: which STATUS_META
-// colour it takes and the label it reads. Separate from the pass/fail outcome
-// shown under Run details. Only the statuses a hosted run sets; anything else
-// renders as a dash.
-export const CALL_STATUS_CHIPS = {
-  pending: { chip: "queued", label: "Pending" },
-  ongoing: { chip: "running", label: "Running" },
-  completed: { chip: "finished", label: "Completed" },
-  failed: { chip: "failed", label: "Failed" },
-  cancelled: { chip: "cancelled", label: "Cancelled" },
-};
 
 // Columns a chat run has no data for: interruptions only happen on a voice call.
 export const VOICE_ONLY_COLUMNS = new Set(["aiInterruptions", "stopLatency"]);
@@ -179,10 +160,12 @@ export const GROUPINGS = [
 
 export const STATUS_CHIPS = [
   { id: "all", label: "All", tone: null },
-  { id: "failing", label: "Failing", tone: "red" },
-  { id: "errored", label: "Errored", tone: "amber" },
+  { id: "queued", label: "Queued", tone: null },
+  { id: "in_progress", label: "In progress", tone: "blue" },
+  { id: "failed", label: "Failed", tone: "red" },
+  { id: "error", label: "Error", tone: "amber" },
   { id: "inconclusive", label: "Inconclusive", tone: null },
-  { id: "passing", label: "Passing", tone: "green" },
+  { id: "passed", label: "Passed", tone: "green" },
 ];
 
 export const neutralCheckboxSx = {
@@ -190,6 +173,24 @@ export const neutralCheckboxSx = {
   "&.Mui-checked": { color: "text.primary" },
   "&.MuiCheckbox-indeterminate": { color: "text.primary" },
 };
+
+export const TOOLBAR_COMPACT = "@container (max-width: 1240px)";
+
+export const toolbarButtonSx = {
+  typography: "s2",
+  fontWeight: "fontWeightBold",
+  textTransform: "none",
+  height: 28,
+  minWidth: 0,
+  px: 1,
+  flexShrink: 0,
+  whiteSpace: "nowrap",
+  color: "text.primary",
+  borderColor: "divider",
+  "&:hover": { borderColor: "text.disabled", bgcolor: "transparent" },
+};
+
+export const compactHiddenSx = { [TOOLBAR_COMPACT]: { display: "none" } };
 
 // The head row stays pinned while the calls scroll and the group rows pin just
 // below it, so they need its height. Both measured in the browser.
@@ -251,13 +252,18 @@ export const bodyCellSx = {
   "&:not(:first-of-type)": { borderLeft: "1px solid", borderColor: "divider" },
 };
 
-// Outcome as colour + label so a failure is scannable at the row level. Reuses
-// the run status colours; the `error` label is normalised to "Errored" to match
-// the group/filter vocabulary.
+export const OUTCOME_LABELS = Object.fromEntries(
+  STATUS_CHIPS.filter((chip) => chip.id !== "all").map((chip) => [
+    chip.id,
+    chip.label,
+  ]),
+);
+
+// Call outcomes share their labels with the filters.
 export function runOutcome(status) {
   const meta = STATUS_META[status] || STATUS_META.unmeasured;
   return {
-    label: status === "error" ? "Errored" : meta.label,
+    label: OUTCOME_LABELS[status] || OUTCOME_LABELS.inconclusive,
     color: meta.color,
   };
 }
