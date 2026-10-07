@@ -259,6 +259,8 @@ class CompleteView(APIView):
         cookie_name = None
         claimed_attempt_id = None
         try:
+            if not settings.SAML_LOGIN_ENABLED:
+                raise SamlDenied("idp_unavailable")
             candidate = SamlResponseCandidate.objects.only("attempt_id").get(
                 candidate_key=candidate_key
             )

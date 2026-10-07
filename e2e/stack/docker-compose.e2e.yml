@@ -17,8 +17,6 @@ services:
     restart: "no"
     environment:
       BASE_URL: http://localhost:8100
-      # SAML login is off by default (kill switch). The @saml flows need it on.
-      SAML_LOGIN_ENABLED: "true"
       MODEL_SERVING_URL: http://mock-llm:8080
       FUTURE_AGI_TELEMETRY_DISABLED: "true"
       # Request logs reach Django over this shared secret; without it the

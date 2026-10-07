@@ -1062,16 +1062,16 @@ a Mixpanel token.
   [[part.section]]
   heading = "SAML sign-in boundaries"
   body = '''
-SAML is SP-initiated. The service refuses invalid values for these limits at
-startup. Begin with SAML disabled, deploy the backend and frontend, and only
-then enable it after the configured IdP metadata has been checked.
+SAML is SP-initiated: sign-in starts on the Future AGI login page, and an
+unsolicited (IdP-initiated) response is refused. The service refuses invalid
+values for these settings at startup. Deploy the backend and frontend together.
 '''
 
     [[part.section.row]]
     keys = ["SAML_LOGIN_ENABLED"]
-    default = "`false`"
+    default = "`true`"
     setups = ["S", "D", "H"]
-    text = "Kill switch for SAML initiation, ACS and completion. `false` denies new SAML logins generically; it does not relax validation of existing SAML sessions."
+    text = "Kill switch for SAML initiation, ACS and completion. On when unset or blank, so organizations that already use SAML keep it. `false` denies new SAML logins generically; it does not relax validation of existing SAML sessions. Any value other than true/false (or 1/0, yes/no, on/off) refuses to start."
 
     [[part.section.row]]
     keys = ["SAML_ATTEMPT_TTL_SECONDS"]

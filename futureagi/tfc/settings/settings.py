@@ -1295,12 +1295,25 @@ def _saml_setting(name: str, default: int, *, maximum: int | None = None) -> int
     return value
 
 
-SAML_LOGIN_ENABLED = os.getenv("SAML_LOGIN_ENABLED", "false").lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
+def _saml_login_enabled() -> bool:
+    """Read the SAML kill switch: on unless explicitly switched off.
+
+    Organizations already using SAML keep it after an upgrade; ``false``
+    turns every SAML step off. Anything unreadable refuses to start rather
+    than guessing which way a typo was meant.
+    """
+
+    from django.core.exceptions import ImproperlyConfigured
+
+    value = os.getenv("SAML_LOGIN_ENABLED", "").strip().lower()
+    if value in {"", "1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    raise ImproperlyConfigured("SAML_LOGIN_ENABLED must be true or false")
+
+
+SAML_LOGIN_ENABLED = _saml_login_enabled()
 SAML_ATTEMPT_TTL_SECONDS = _saml_setting("SAML_ATTEMPT_TTL_SECONDS", 600, maximum=600)
 SAML_CANDIDATE_TTL_SECONDS = _saml_setting(
     "SAML_CANDIDATE_TTL_SECONDS", 60, maximum=120
