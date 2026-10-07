@@ -31793,7 +31793,7 @@ export type AgentPlaygroundGraphsVersionsRead200 = {
   results: GraphListApi[];
 };
 
-export type AgentPlaygroundGraphsVersionsReadParams = {
+export type AgentPlaygroundGraphsVersionsReadByVersionIdParams = {
   /**
    * A page number within the paginated result set.
    */
@@ -31804,7 +31804,7 @@ export type AgentPlaygroundGraphsVersionsReadParams = {
   limit?: number;
 };
 
-export type AgentPlaygroundGraphsVersionsRead200 = {
+export type AgentPlaygroundGraphsVersionsReadByVersionId200 = {
   count: number;
   next?: string;
   previous?: string;
@@ -33090,7 +33090,7 @@ export type ModelHubExperimentsReadParams = {
   search?: string;
 };
 
-export type ModelHubExperimentsReadParams = {
+export type ModelHubExperimentsReadByRowIdParams = {
   /**
    * @minimum 1
    * @maximum 100
@@ -33226,7 +33226,7 @@ export type ModelHubKbListParams = {
   limit?: number;
 };
 
-export type ModelHubKbSupportedEmbeddingModelsParams = {
+export type ModelHubKbSupportedEmbeddingModelsSupportedEmbeddingModelsParams = {
   /**
    * A search term.
    */
