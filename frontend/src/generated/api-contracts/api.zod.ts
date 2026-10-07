@@ -71212,3 +71212,26 @@ export const V1SelfHostedActivationsCreateResponse = zod.object({
   allowed_models: zod.array(zod.string().min(1)),
   scope: zod.enum(["oss", "enterprise"]),
 });
+
+/**
+ * Resolve an old issue ID to its active redirect target.
+ */
+export const TracerFeedIssuesRedirectListParams = zod.object({
+  cluster_id: zod.string(),
+});
+
+export const TracerFeedIssuesRedirectListQueryParams = zod.object({
+  project_id: zod.string().uuid().optional(),
+});
+
+export const tracerFeedIssuesRedirectListResponseStatusDefault = true;
+
+export const TracerFeedIssuesRedirectListResponse = zod.object({
+  status: zod
+    .boolean()
+    .default(tracerFeedIssuesRedirectListResponseStatusDefault),
+  result: zod.object({
+    requested_cluster_id: zod.string().min(1),
+    resolved_cluster_id: zod.string().min(1),
+  }),
+});

@@ -31674,6 +31674,18 @@ export interface ActivationResponseApi {
   scope: ActivationResponseApiScope;
 }
 
+export interface FeedRedirectApi {
+  /** @minLength 1 */
+  requested_cluster_id: string;
+  /** @minLength 1 */
+  resolved_cluster_id: string;
+}
+
+export interface FeedRedirectApiResponseApi {
+  status?: boolean;
+  result: FeedRedirectApi;
+}
+
 export type AccountsAwsMarketplaceLaunchSoftwareCreateBody = {
   "x-amzn-marketplace-token": string;
   "x-amzn-marketplace-product-id"?: string;
@@ -36366,4 +36378,8 @@ export type UsageWorkspaceUsageSummaryListParams = {
    */
   month?: number;
   year?: number;
+};
+
+export type TracerFeedIssuesRedirectListParams = {
+  project_id?: string;
 };

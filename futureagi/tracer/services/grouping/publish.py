@@ -82,7 +82,7 @@ COMMAND_FIELDS = {
         "type",
         "source_issue_ids",
         "expected_revisions",
-        "temporary_id",
+        "survivor_issue_id",
         "mechanism",
         "prototype_occurrence_ids",
         "citations",
@@ -599,19 +599,7 @@ def _hard_safe(
         raise GroupingConflict("hard issue exclusion forbids membership")
 
 
-def _clear_rca(cluster: TraceErrorGroup) -> None:
-    cluster.rca_synthesis = None
-    cluster.rca_fix = None
-    cluster.rca_confidence = None
-    cluster.rca_evidence_trace_ids = []
-    cluster.rca_at = None
-    cluster.rca_failures_at_run = None
-    cluster.rca_trace = None
-
-
-def _recount(
-    state: TraceGroupingIssueState, *, preserve_reviewed: bool = False
-) -> None:
+def _recount(state: TraceGroupingIssueState) -> None:
     cluster = state.cluster
     memberships = ErrorClusterTraces.no_workspace_objects.filter(
         Q(
@@ -647,8 +635,6 @@ def _recount(
     cluster.error_ids = []
     cluster.first_seen = totals["first"]
     cluster.last_seen = totals["last"]
-    if not preserve_reviewed:
-        _clear_rca(cluster)
     cluster.save(
         update_fields=[
             "error_count",
@@ -657,13 +643,6 @@ def _recount(
             "error_ids",
             "first_seen",
             "last_seen",
-            "rca_synthesis",
-            "rca_fix",
-            "rca_confidence",
-            "rca_evidence_trace_ids",
-            "rca_at",
-            "rca_failures_at_run",
-            "rca_trace",
             "updated_at",
         ]
     )
@@ -675,8 +654,8 @@ def _new_issue(
     cluster_id = uuid.uuid4()
     for width in (8, 12, 16):
         display_id = f"S-{cluster_id.hex[:width].upper()}"
-        if not TraceErrorGroup.no_workspace_objects.filter(
-            project_id=scope.project_id, cluster_id=display_id, deleted=False
+        if not TraceErrorGroup.all_objects.filter(
+            project_id=scope.project_id, cluster_id=display_id
         ).exists():
             break
     else:
@@ -1121,6 +1100,7 @@ def publish_grouping(
         reopened_issues = []
         touched = set()
         new_ids = {}
+        redirects = {}
         if (
             any(
                 item.get("type") in {"create", "attach", "merge", "split", "remove"}
@@ -1155,15 +1135,14 @@ def publish_grouping(
                     _unassign(findings[item], scope, command["reason"])
                 deferred_pending.update(ids)
                 continue
-            if kind in {"create", "merge", "split"}:
-                if kind != "split":
-                    temporary_id = command["temporary_id"]
-                    if (
-                        not isinstance(temporary_id, str)
-                        or not temporary_id
-                        or temporary_id in states
-                    ):
-                        raise GroupingControlError("duplicate temporary issue ID")
+            if kind == "create":
+                temporary_id = command["temporary_id"]
+                if (
+                    not isinstance(temporary_id, str)
+                    or not temporary_id
+                    or temporary_id in states
+                ):
+                    raise GroupingControlError("duplicate temporary issue ID")
             if kind == "create":
                 ids = _ids(
                     command["occurrence_ids"], limit=100, label="new issue members"
@@ -1302,6 +1281,9 @@ def publish_grouping(
                     key not in states or states[key].retired for key in source_ids
                 ):
                     raise GroupingConflict("merge sources were not both offered")
+                survivor_id = command["survivor_issue_id"]
+                if survivor_id not in source_ids:
+                    raise GroupingControlError("merge survivor must be a source issue")
                 if not isinstance(command["expected_revisions"], dict) or set(
                     command["expected_revisions"]
                 ) != set(source_ids):
@@ -1389,10 +1371,34 @@ def publish_grouping(
                         "merge citations differ from stored reconciliation"
                     )
                 _validate_citations(command, set(reviewed_ids), snapshots, findings)
-                target = _new_issue(scope, _mechanism(command["mechanism"]), prototypes)
-                new_ids[command["temporary_id"]] = str(target.cluster_id)
-                states[command["temporary_id"]] = target
-                membership[command["temporary_id"]] = list(ids)
+                target = states[survivor_id]
+                target.mechanism = _mechanism(command["mechanism"])
+                target.prototype_occurrence_ids = prototypes
+                target.revision += 1
+                target.membership_revision += 1
+                target.save(
+                    update_fields=[
+                        "mechanism",
+                        "prototype_occurrence_ids",
+                        "revision",
+                        "membership_revision",
+                        "updated_at",
+                    ]
+                )
+                target.cluster.title = target.mechanism.get(
+                    "title", target.mechanism["mechanism"]
+                )[:1000]
+                target.cluster.error_type = target.mechanism["mechanism"][:200]
+                target.cluster.combined_description = target.mechanism["mechanism"]
+                target.cluster.save(
+                    update_fields=[
+                        "title",
+                        "error_type",
+                        "combined_description",
+                        "updated_at",
+                    ]
+                )
+                membership[survivor_id] = list(ids)
                 old_uuid = {state.cluster_id for state in sources}
                 if sampled:
                     _move_merge_members(
@@ -1402,6 +1408,9 @@ def publish_grouping(
                     for item in ids:
                         _move(findings[item], old_uuid, target, scope)
                 for state in sources:
+                    if state.cluster_id == target.cluster_id:
+                        continue
+                    redirects[state.cluster_id] = target.cluster_id
                     state.retired = True
                     state.revision += 1
                     state.membership_revision += 1
@@ -1493,8 +1502,11 @@ def publish_grouping(
                         "split citations differ from stored reconciliation"
                     )
                 _validate_citations(command, set(all_ids), snapshots, findings)
+                redirect_part = max(part_specs, key=lambda part: len(part[1]))[0]
                 for temp, ids, mechanism, prototypes in part_specs:
                     target = _new_issue(scope, mechanism, prototypes)
+                    if temp == redirect_part:
+                        redirects[state.cluster_id] = target.cluster_id
                     new_ids[temp] = str(target.cluster_id)
                     states[temp] = target
                     membership[temp] = list(ids)
@@ -1610,10 +1622,21 @@ def publish_grouping(
             state = TraceGroupingIssueState.no_workspace_objects.select_related(
                 "cluster"
             ).get(cluster_id=_uuid(key, "issue ID"))
-            _recount(state, preserve_reviewed=sampled and _protected(state))
+            _recount(state)
             from tracer.services.grouping.severity import enqueue_severity
 
             enqueue_severity(issue=state, attempt=attempt)
+        now = timezone.now()
+        for source_id, target_id in redirects.items():
+            TraceErrorGroup.no_workspace_objects.filter(pk=source_id).update(
+                redirect_to_id=target_id,
+                deleted=True,
+                deleted_at=now,
+                updated_at=now,
+            )
+            TraceGroupingIssueState.no_workspace_objects.filter(
+                cluster_id=source_id
+            ).update(deleted=True, deleted_at=now, updated_at=now)
         waiting_reports = set(
             TraceGroupingFindingState.no_workspace_objects.filter(
                 scope=scope,
