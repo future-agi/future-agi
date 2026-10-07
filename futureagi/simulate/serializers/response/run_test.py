@@ -38,6 +38,7 @@ class SimulateEvalConfigResponseSerializer(serializers.Serializer):
     template_id = serializers.UUIDField(read_only=True, allow_null=True)
     eval_type = serializers.CharField(read_only=True)
     regradable = serializers.BooleanField(read_only=True)
+    editable = serializers.BooleanField(read_only=True)
 
 
 class RunTestResponseSerializer(serializers.ModelSerializer):

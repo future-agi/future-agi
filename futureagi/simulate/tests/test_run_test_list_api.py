@@ -1083,6 +1083,7 @@ class TestRunTestRuntimeContracts:
                 "text": "transcript"
             },  # "text" is valid for word_count but not char_count
         )
+        updated_before = eval_config.updated_at
 
         response = auth_client.post(
             f"/simulate/run-tests/{run_test_with_v10_scenario.id}/eval-configs/"
@@ -1093,8 +1094,12 @@ class TestRunTestRuntimeContracts:
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST, response.content
         eval_config.refresh_from_db()
-        # Mapping should be preserved (unchanged) since the 400 response prevents save
+        # The whole row must be as it was: this route has no transaction, so
+        # a save made before the mapping check would stay in the database.
         assert eval_config.mapping == {"text": "transcript"}
+        assert eval_config.eval_template_id == word_count_eval_template.id
+        assert eval_config.config == {}
+        assert eval_config.updated_at == updated_before
 
     def test_update_preserves_valid_mapping_keys_when_template_changes(
         self,
@@ -1474,6 +1479,65 @@ class TestRunTestDetailView:
         # Same fields on the compatibility list.
         assert {i["id"]: i["regradable"] for i in body["evals_detail"]} == {
             k: v["regradable"] for k, v in items.items()
+        }
+
+    def test_get_run_test_detail_says_which_evals_can_be_edited(
+        self, auth_client, run_test_with_v10_scenario, word_count_eval_template
+    ):
+        suite_template = EvalTemplate.objects.create(
+            name="suite_editable_contract",
+            config={"required_keys": ["conversation"], "output": "Pass/Fail"},
+            owner="system",
+        )
+        mapped = SimulateEvalConfig.objects.create(
+            name="mapped",
+            eval_template=word_count_eval_template,
+            run_test=run_test_with_v10_scenario,
+            mapping={"text": "transcript"},
+        )
+        harness_filled = SimulateEvalConfig.objects.create(
+            name="harness_filled",
+            eval_template=suite_template,
+            run_test=run_test_with_v10_scenario,
+            mapping={},
+        )
+        not_a_dict = SimulateEvalConfig.objects.create(
+            name="not_a_dict",
+            eval_template=word_count_eval_template,
+            run_test=run_test_with_v10_scenario,
+            mapping=["text"],
+        )
+
+        url = f"/simulate/run-tests/{run_test_with_v10_scenario.id}/"
+
+        # Not a harness run: every eval is the person's to edit.
+        native = auth_client.get(url)
+        assert native.status_code == status.HTTP_200_OK, native.content
+        assert {
+            i["id"]: i["editable"]
+            for i in native.json()["simulate_eval_configs_detail"]
+        } == {
+            str(mapped.id): True,
+            str(harness_filled.id): True,
+            str(not_a_dict.id): True,
+        }
+
+        _link_harness_job(run_test_with_v10_scenario)
+
+        response = auth_client.get(url)
+        assert response.status_code == status.HTTP_200_OK, response.content
+        body = response.json()
+
+        items = {i["id"]: i for i in body["simulate_eval_configs_detail"]}
+        assert items[str(mapped.id)]["editable"] is True
+        # Re-grading a harness-filled row is allowed; editing it is not.
+        assert items[str(harness_filled.id)]["editable"] is False
+        assert items[str(harness_filled.id)]["regradable"] is True
+        assert items[str(not_a_dict.id)]["editable"] is False
+
+        # Same field on the compatibility list.
+        assert {i["id"]: i["editable"] for i in body["evals_detail"]} == {
+            k: v["editable"] for k, v in items.items()
         }
 
     def test_get_run_test_detail_unauthenticated_returns_401(

@@ -122,14 +122,14 @@ export default function AllEvaluationsDrawer({
   const handleConfirm = (list) => {
     const evalConfigIds = list.map((c) => c.id);
     runEvals.mutate(
-      { runTestId, executionId, evalConfigIds },
+      { id: env?.id, executionId, evalConfigIds },
       {
         onSuccess: (result) => {
           setConfirming(null);
           setTicked(new Set());
-          // A 200 can still mean grading never started and the old scores
-          // were put back. A server that predates the flag omits it, which
-          // reads as started.
+          // Only the run-test route sends this flag (false when grading never
+          // started and the old scores were put back). This route answers that
+          // with a 503 instead, so its bodies carry no flag and read as started.
           if (result?.dispatched === false) {
             enqueueSnackbar(RUN_FALLBACK, { variant: "warning" });
             return;
