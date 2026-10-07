@@ -461,11 +461,16 @@ class UserTimeSeriesQueryBuilderV2(V2RewriteMixin, UserTimeSeriesQueryBuilder):
                 for index in range(len(self.user_membership_plan.predicates))
             )
 
+        # Latency is the pooled mean of every live span of the bucket's user
+        # traces: each level carries a latency sum and a count, and only the
+        # bucket divides. No level averages another level's means, so a user
+        # with many spans weighs by its spans, not as one vote.
         user_bucket_rows = f"""
             SELECT
                 {bucket_fn}(min_start) AS time_bucket,
                 end_user_id,
-                avg(span_avg_latency) AS user_avg_latency,
+                sum(span_latency_sum) AS user_latency_sum,
+                sum(span_latency_count) AS user_latency_count,
                 sum(span_total_tokens) AS user_total_tokens,
                 sum(span_total_cost) AS user_total_cost,
                 sum(span_prompt_tokens) AS user_prompt_tokens,
@@ -477,7 +482,8 @@ class UserTimeSeriesQueryBuilderV2(V2RewriteMixin, UserTimeSeriesQueryBuilder):
                     {resolved_eu} AS end_user_id,
                     rs.trace_id AS trace_id,
                     min(rs.start_time) AS min_start,
-                    avg(rs.latency_ms) AS span_avg_latency,
+                    sum(rs.latency_ms) AS span_latency_sum,
+                    count(rs.latency_ms) AS span_latency_count,
                     sum(rs.total_tokens) AS span_total_tokens,
                     sum(rs.cost) AS span_total_cost,
                     sum(rs.prompt_tokens) AS span_prompt_tokens,
@@ -523,7 +529,7 @@ class UserTimeSeriesQueryBuilderV2(V2RewriteMixin, UserTimeSeriesQueryBuilder):
         eu_survivor_map AS ({eu_map})
         SELECT
             time_bucket,
-            avg(user_avg_latency) AS avg_latency,
+            sum(user_latency_sum) / greatest(sum(user_latency_count), 1) AS avg_latency,
             sum(user_total_tokens) AS total_tokens,
             avg(user_total_cost) AS avg_cost,
             count() AS traffic_count,

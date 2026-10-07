@@ -411,7 +411,7 @@ async def test_incomplete_sdk_runs_fail_instead_of_synthesizing_findings(
     import asyncio
     from types import SimpleNamespace
 
-    import claude_agent_sdk
+    claude_agent_sdk = pytest.importorskip("claude_agent_sdk")
 
     class Client:
         def __init__(self, options):

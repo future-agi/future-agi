@@ -49,6 +49,13 @@ def test_self_hosted_allows_its_own_hosts(url):
     assert not is_forbidden_vendor_endpoint(url)
 
 
+# Only a Future AGI Cloud region is Cloud; "false" is a self-hosted install.
+@pytest.mark.parametrize("deployment", ["false", "self-hosted"])
+def test_any_other_deployment_value_refuses_futureagi_hosts(deployment):
+    with override_settings(CLOUD_DEPLOYMENT=deployment):
+        assert is_forbidden_vendor_endpoint("https://api.futureagi.com/call-websocket/")
+
+
 @override_settings(CLOUD_DEPLOYMENT="US")
 def test_cloud_may_relay_to_its_own_api():
     assert not is_forbidden_vendor_endpoint("https://api.futureagi.com/call-websocket/")
@@ -97,6 +104,14 @@ def _settings_urls(**env):
 @pytest.mark.parametrize("env_type", ["local", "development", "production"])
 def test_self_hosted_defaults_to_its_own_api_whatever_the_env_type(env_type):
     assert _settings_urls(ENV_TYPE=env_type) == [
+        "http://localhost:8000",
+        "http://localhost:8000/call-websocket/",
+    ]
+
+
+@pytest.mark.parametrize("deployment", ["false", "self-hosted"])
+def test_any_other_deployment_value_defaults_to_its_own_api(deployment):
+    assert _settings_urls(ENV_TYPE="production", CLOUD_DEPLOYMENT=deployment) == [
         "http://localhost:8000",
         "http://localhost:8000/call-websocket/",
     ]

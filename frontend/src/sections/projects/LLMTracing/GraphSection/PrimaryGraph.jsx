@@ -42,17 +42,11 @@ import {
   PROPERTY_CATALOG_REQUEST_TIMEOUT_MS,
   usePropertyCatalog,
 } from "src/hooks/useDashboards";
-import {
-  format,
-  startOfToday,
-  startOfTomorrow,
-  startOfYesterday,
-  sub,
-} from "date-fns";
+import { format } from "date-fns";
 import _ from "lodash";
 import GraphSkeleton from "./GraphSkeleton";
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
-import { formatDate } from "src/utils/report-utils";
+import { observePresetDateFilter } from "../../timeWindowPresets";
 import { toBackendFilters } from "../common";
 import { combineGraphFilters } from "./graphFilterUtils";
 import {
@@ -417,47 +411,9 @@ const PrimaryGraph = ({
         setCustomDateOpen(true);
         return;
       }
-      let filter = null;
-      switch (option) {
-        case "Today":
-          filter = [formatDate(startOfToday()), formatDate(startOfTomorrow())];
-          break;
-        case "Yesterday":
-          filter = [formatDate(startOfYesterday()), formatDate(startOfToday())];
-          break;
-        case "7D":
-          filter = [
-            formatDate(sub(new Date(), { days: 7 })),
-            formatDate(startOfTomorrow()),
-          ];
-          break;
-        case "30D":
-          filter = [
-            formatDate(sub(new Date(), { days: 30 })),
-            formatDate(startOfTomorrow()),
-          ];
-          break;
-        case "3M":
-          filter = [
-            formatDate(sub(new Date(), { months: 3 })),
-            formatDate(startOfTomorrow()),
-          ];
-          break;
-        case "6M":
-          filter = [
-            formatDate(sub(new Date(), { months: 6 })),
-            formatDate(startOfTomorrow()),
-          ];
-          break;
-        case "12M":
-          filter = [
-            formatDate(sub(new Date(), { months: 12 })),
-            formatDate(startOfTomorrow()),
-          ];
-          break;
-        default:
-          break;
-      }
+      // One shared window per preset: hour-floored start, next-midnight end,
+      // identical to the default load (see observePresetDateFilter).
+      const filter = observePresetDateFilter(option);
       if (filter)
         setDateFilter((prev) => ({
           ...prev,
@@ -724,6 +680,10 @@ const PrimaryGraph = ({
     },
     enabled: !!effectiveObserveId && !!metricDef.id,
     staleTime: Infinity,
+    // Rolling presets now keep one window for an hour, so an in-app revisit
+    // has the same key. Ask the server anyway: it serves the cached exact
+    // snapshot at once and says whether a newer read of it is under way.
+    refetchOnMount: "always",
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     refetchInterval: (query) => {
@@ -858,6 +818,17 @@ const PrimaryGraph = ({
         updatedAt: completedAt,
       });
     }
+    const publishSnapshotAge = () => {
+      if (!completedAt) return;
+      window.dispatchEvent(
+        new CustomEvent("observe-aggregation-completed", {
+          detail: {
+            observeId: effectiveObserveId,
+            queryCompletedAt: completedAt.toISOString(),
+          },
+        }),
+      );
+    };
     if (
       isRefreshing &&
       !refreshFailed &&
@@ -865,6 +836,10 @@ const PrimaryGraph = ({
     ) {
       setRefreshUnavailable(graphReadState !== "complete");
       notifyAggregationRefresh(true);
+      // A cached exact snapshot served while its window is re-read (a
+      // revisit's background revalidation, or an explicit Reload) is shown
+      // now: publish its age so the header says how old it is.
+      if (graphReadState === "complete") publishSnapshotAge();
       return;
     }
     notifyAggregationRefresh(false);
@@ -877,16 +852,7 @@ const PrimaryGraph = ({
       return;
     }
     setRefreshUnavailable(false);
-    if (completedAt) {
-      window.dispatchEvent(
-        new CustomEvent("observe-aggregation-completed", {
-          detail: {
-            observeId: effectiveObserveId,
-            queryCompletedAt: completedAt.toISOString(),
-          },
-        }),
-      );
-    }
+    publishSnapshotAge();
   }, [
     effectiveObserveId,
     graphData,
@@ -974,8 +940,19 @@ const PrimaryGraph = ({
       ? "rgba(147, 130, 220, 0.30)"
       : "rgba(147, 160, 230, 0.25)");
 
-  const metricSeriesName = metricDef.unit
-    ? `${metricDef.label} (${metricDef.unit})`
+  // The server names the statistic of every system-metric series; latency is
+  // always the mean. Only the latency series is captioned, and only when the
+  // payload says "mean": one without the field (an older server) or with a
+  // retired or unknown statistic keeps the plain metric name rather than a
+  // guess. Cost is a mean too but has always been read as one.
+  const metricStatistic = (displayGraphData || graphData)?.metric_statistic;
+  const statisticLabel =
+    metricDef.id === "latency" && metricStatistic === "mean" ? "avg" : null;
+  const metricSeriesQualifiers = [statisticLabel, metricDef.unit].filter(
+    Boolean,
+  );
+  const metricSeriesName = metricSeriesQualifiers.length
+    ? `${metricDef.label} (${metricSeriesQualifiers.join(", ")})`
     : metricDef.label;
   const lineSeriesName = metricSeriesName;
   const trafficSeriesName = "Traffic";
@@ -1200,6 +1177,15 @@ const PrimaryGraph = ({
               sx={{ flexShrink: 0, color: "text.secondary" }}
             />
           </ButtonBase>
+          {statisticLabel && (
+            <Typography
+              data-testid="graph-metric-statistic"
+              noWrap
+              sx={{ fontSize: 12, color: "text.secondary" }}
+            >
+              ({statisticLabel})
+            </Typography>
+          )}
 
           {/* Metric picker popover */}
           <Popover

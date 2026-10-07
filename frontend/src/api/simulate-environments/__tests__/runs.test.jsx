@@ -16,8 +16,13 @@ const axios = axiosMod.default;
 const { endpoints } = axiosMod;
 const { paths } = await import("src/routes/paths");
 const { MOCK_RUNS } = await import("../_fixtures/runs");
-const { useEnvironmentRuns, executionToRun, runSimulationTarget } =
-  await import("../runs");
+const {
+  useEnvironmentRuns,
+  executionToRun,
+  runSimulationTarget,
+  refreshAfterRunStart,
+} = await import("../runs");
+const { harnessEnvironmentKey } = await import("../environment");
 
 // Raw executions payload (the product's `results[]` shape) — capitalised
 // product statuses, `success_rate` on the 0–100 scale, in the server's own
@@ -136,11 +141,12 @@ describe("executionToRun", () => {
     expect(state("Cancelled")).toBe("cancelled");
   });
 
-  it("marks only a pending, running or evaluating run as stoppable", () => {
+  it("marks only a pending or running run as stoppable", () => {
     const stoppable = (status) => executionToRun({ id: "x", status, total_chats: 1 }).stoppable;
     expect(stoppable("Pending")).toBe(true);
     expect(stoppable("Running")).toBe(true);
-    expect(stoppable("Evaluating")).toBe(true);
+    // Grading finishes on its own; the server refuses to stop it.
+    expect(stoppable("Evaluating")).toBe(false);
     // Already stopping, or finished — nothing left to stop.
     expect(stoppable("Cancelling")).toBe(false);
     expect(stoppable("Completed")).toBe(false);
@@ -217,6 +223,7 @@ describe("useEnvironmentRuns", () => {
     expect(axios.get).toHaveBeenCalledTimes(1);
     expect(axios.get).toHaveBeenCalledWith(
       endpoints.runTests.detailExecutions("rt1"),
+      { params: { page: 1, limit: 10 } },
     );
 
     const [first, second, third] = result.current.runs;
@@ -229,6 +236,35 @@ describe("useEnvironmentRuns", () => {
     // Newest (server-first) → highest ordinal label, from `count`.
     expect(first.label).toBe("Run 3");
     expect(third.label).toBe("Run 1");
+  });
+
+  it("exposes the run-test's total and covered-scenario count from the payload, not the page", async () => {
+    axios.get.mockResolvedValue({
+      data: {
+        count: 12,
+        covered_scenario_count: 7,
+        results: [
+          { id: "ex-12", status: "Completed", start_time: "2026-02-03T10:00:00.000Z", total_chats: 5, success_rate: 100 },
+          { id: "ex-11", status: "Failed", start_time: "2026-02-02T10:00:00.000Z", total_chats: 5, success_rate: 40 },
+        ],
+      },
+    });
+    const env = { id: "env-c", platform: { runTestId: "rt1", testExecutionId: "ex1" } };
+    const { result } = renderHook(() => useEnvironmentRuns(env, { runs: [] }), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.runs.length).toBe(2));
+    expect(result.current.count).toBe(12);
+    expect(result.current.coveredScenarioCount).toBe(7);
+  });
+
+  it("counts the local runs and leaves covered scenarios to the client without a run-test", () => {
+    const { result } = renderHook(() => useEnvironmentRuns({ id: "env-x" }, { runs: [] }), {
+      wrapper: makeWrapper(),
+    });
+    expect(result.current.count).toBe(0);
+    expect(result.current.coveredScenarioCount).toBeNull();
   });
 
   it("stamps the server ordinal from `count`, not the page length", async () => {
@@ -258,6 +294,46 @@ describe("useEnvironmentRuns", () => {
     expect(first.label).toBe("Run 12");
     expect(second.ordinal).toBe(11);
     expect(third.ordinal).toBe(10);
+  });
+
+  it("numbers a later page's runs from the total, past the earlier pages", async () => {
+    // Page 2 of a 12-run history at 10 a page holds the two oldest runs.
+    axios.get.mockResolvedValue({
+      data: {
+        count: 12,
+        results: [
+          { id: "ex-2", status: "Completed", start_time: "2026-01-02T10:00:00.000Z", total_chats: 5, success_rate: 100 },
+          { id: "ex-1", status: "Completed", start_time: "2026-01-01T10:00:00.000Z", total_chats: 5, success_rate: 100 },
+        ],
+      },
+    });
+    const env = { id: "env-p", platform: { runTestId: "rt1", testExecutionId: "ex1" } };
+    const { result } = renderHook(
+      () => useEnvironmentRuns(env, { runs: [] }, { page: 1, pageSize: 10 }),
+      { wrapper: makeWrapper() },
+    );
+
+    await waitFor(() => expect(result.current.runs.length).toBe(2));
+    expect(axios.get).toHaveBeenCalledWith(expect.any(String), {
+      params: { page: 2, limit: 10 },
+    });
+    expect(result.current.runs.map((run) => run.label)).toEqual(["Run 2", "Run 1"]);
+  });
+
+  it("keeps the current page on screen while the next one loads", async () => {
+    const env = { id: "env-k", platform: { runTestId: "rt1", testExecutionId: "ex1" } };
+    const { result, rerender } = renderHook(
+      ({ page }) => useEnvironmentRuns(env, { runs: [] }, { page, pageSize: 10 }),
+      { wrapper: makeWrapper(), initialProps: { page: 0 } },
+    );
+    await waitFor(() => expect(result.current.runs.length).toBeGreaterThan(0));
+    const firstPage = result.current.runs.map((run) => run.id);
+
+    axios.get.mockReturnValue(new Promise(() => {}));
+    rerender({ page: 1 });
+
+    expect(result.current.runs.map((run) => run.id)).toEqual(firstPage);
+    expect(result.current.isLoading).toBe(false);
   });
 
   it("keeps a pending newest run (null start_time) at the top ordinal", async () => {
@@ -304,6 +380,20 @@ describe("useEnvironmentRuns", () => {
 
     expect(axios.get).not.toHaveBeenCalled();
     expect(result.current.runs).toEqual(MOCK_RUNS);
+  });
+});
+
+describe("refreshAfterRunStart", () => {
+  it("refreshes the run's executions and the environment, whose run count just grew", () => {
+    const queryClient = new QueryClient();
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    refreshAfterRunStart(queryClient, "env-1", "rt-1");
+    expect(invalidate).toHaveBeenCalledWith({
+      queryKey: ["run-test-executions", "rt-1"],
+    });
+    expect(invalidate).toHaveBeenCalledWith({
+      queryKey: harnessEnvironmentKey("env-1"),
+    });
   });
 });
 

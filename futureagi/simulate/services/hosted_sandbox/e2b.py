@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import shlex
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import Any
 
 from django.conf import settings
@@ -17,6 +17,7 @@ from .base import (
     SandboxPreview,
     SandboxProviderConfigurationError,
     SandboxProviderError,
+    SandboxProviderUnavailableError,
     SandboxRuntimeProvider,
 )
 
@@ -59,6 +60,18 @@ class E2BFilesystem:
             user=self._os_user,
         )
         return bytes(body)
+
+    def download_file_stream(
+        self, path: str, timeout: int | None = None
+    ) -> Iterator[bytes]:
+        with _call(
+            self._sandbox.files.read,
+            path,
+            format="stream",
+            request_timeout=timeout,
+            user=self._os_user,
+        ) as reader:
+            yield from reader
 
 
 class E2BProcess:
@@ -237,6 +250,14 @@ class E2BSandboxRuntimeProvider(SandboxRuntimeProvider):
         _call(sandbox._sandbox.set_timeout, ttl_seconds)
 
     def __init__(self) -> None:
+        # Every method below imports `e2b` lazily; check it once here so a
+        # backend image without the optional `sandbox` extra fails with a
+        # typed, non-retryable error instead of a ModuleNotFoundError mid-job.
+        try:
+            import e2b  # noqa: F401
+        except ImportError as exc:
+            raise SandboxProviderUnavailableError("E2B", "e2b") from exc
+
         self.api_key = str(getattr(settings, "E2B_API_KEY", "") or "")
         self.runtime_name = str(
             getattr(settings, "ALK_E2B_TEMPLATE_REFERENCE", "") or ""

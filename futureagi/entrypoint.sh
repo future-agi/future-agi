@@ -395,14 +395,23 @@ case "$SERVICE_TYPE" in
     "backend")
         echo "Starting backend server..."
 
-        # Enhanced signal handling to cleanup gRPC process
+        # The runtime signals only this script (PID 1), and bash defers a trap
+        # while a foreground child runs, so Granian runs in the background.
+        # On TERM Granian finishes in-flight requests but closes idle
+        # keep-alive connections and leaves new ones unanswered, so the pod
+        # needs a preStop delay to leave the load balancer first. The gRPC
+        # server has no TERM handler and exits at once.
         cleanup() {
             echo "Shutting down services..."
+            if [ ! -z "$HTTP_PID" ]; then
+                echo "Stopping HTTP server (PID: $HTTP_PID)..."
+                kill -TERM $HTTP_PID 2>/dev/null || true
+            fi
             if [ ! -z "$GRPC_PID" ]; then
                 echo "Stopping gRPC server (PID: $GRPC_PID)..."
                 kill -TERM $GRPC_PID 2>/dev/null || true
-                wait $GRPC_PID 2>/dev/null || true
             fi
+            wait $HTTP_PID $GRPC_PID 2>/dev/null || true
             exit 0
         }
         trap cleanup TERM INT
@@ -436,7 +445,7 @@ case "$SERVICE_TYPE" in
                     --port 80 \
                     --log-level warning \
                     --access-log \
-                    --respawn-failed-workers
+                    --respawn-failed-workers &
             else
                 echo "Starting development backend server with Granian..."
                 # Use Granian's native --reload with ignore patterns for logs/media/static
@@ -456,8 +465,10 @@ case "$SERVICE_TYPE" in
                     --reload-ignore-patterns '^\..*' \
                     --reload-ignore-patterns '.*\.log$' \
                     --reload-ignore-patterns '.*\.pyc$' \
-                    --reload-ignore-patterns '.*\.core$'
+                    --reload-ignore-patterns '.*\.core$' &
             fi
+            HTTP_PID=$!
+            wait $HTTP_PID
         else
             echo "HTTP server disabled (ENABLE_HTTP=false)"
             # If gRPC is running, wait for it; otherwise nothing to do

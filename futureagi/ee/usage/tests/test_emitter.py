@@ -27,6 +27,12 @@ except Exception:
 skip_no_redis = pytest.mark.skipif(not REDIS_AVAILABLE, reason="Redis not available")
 
 
+@pytest.fixture(autouse=True)
+def _usage_events_on(settings):
+    """An install whose consumer drains the stream (Future AGI Cloud)."""
+    settings.USAGE_EVENTS_ENABLED = True
+
+
 @skip_no_redis
 class TestEmitter:
     def setup_method(self):
@@ -119,4 +125,56 @@ class TestEmitterErrorHandling:
             with patch("ee.usage.services.emitter.capture_message") as mock_capture:
                 emit(UsageEvent(org_id="org-1", event_type="test"))
                 mock_capture.assert_called_once()
-                assert mock_capture.call_args.kwargs["tags"]["alarm"] == "emit_failed_total"
+                assert (
+                    mock_capture.call_args.kwargs["tags"]["alarm"]
+                    == "emit_failed_total"
+                )
+
+
+class TestEmitterWithoutAConsumer:
+    """Only Future AGI Cloud drains usage:events. Anywhere else the stream would
+    only grow, until Redis is full and every request fails."""
+
+    def test_off_writes_nothing_and_starts_no_consumer(self, settings):
+        from ee.usage.services.emitter import emit
+
+        settings.USAGE_EVENTS_ENABLED = False
+        with (
+            patch("ee.usage.services.emitter.get_redis") as mock_redis,
+            patch("tfc.temporal.common.client.get_client_sync") as mock_client,
+        ):
+            emit(UsageEvent(org_id="org-1", event_type="test"))
+
+        mock_redis.assert_not_called()
+        mock_client.assert_not_called()
+
+    def test_default_follows_whether_the_consumer_ships(self, monkeypatch):
+        import importlib
+
+        from tfc.ee_loader import usage_event_consumer_available
+
+        if os.environ.get("USAGE_EVENTS_ENABLED"):
+            pytest.skip("USAGE_EVENTS_ENABLED is set in this environment")
+        # The settings module itself: the autouse fixture overrides the value.
+        loaded = importlib.import_module(os.environ["DJANGO_SETTINGS_MODULE"])
+        assert loaded.USAGE_EVENTS_ENABLED is usage_event_consumer_available()
+
+        import tfc.ee_loader as ee_loader
+
+        monkeypatch.setattr(ee_loader, "has_ee", lambda module: False)
+        assert ee_loader.usage_event_consumer_available() is False
+        monkeypatch.setattr(
+            ee_loader, "has_ee", lambda module: module == "ee.cloud.temporal"
+        )
+        assert ee_loader.usage_event_consumer_available() is True
+
+    def test_the_stream_is_capped(self, settings):
+        from ee.usage.services.emitter import STREAM_KEY, emit
+
+        settings.USAGE_EVENTS_MAX_LEN = 1234
+        with patch("ee.usage.services.emitter.get_redis") as mock_redis:
+            emit(UsageEvent(org_id="org-1", event_type="test"))
+
+        args, kwargs = mock_redis.return_value.xadd.call_args
+        assert args[0] == STREAM_KEY
+        assert kwargs["maxlen"] == 1234

@@ -34,7 +34,12 @@ const PATH_VIEW_MODE = {
  * a hidden container on non-transcript tabs) so seeking via click from
  * a path view keeps the audio player hydrated.
  */
-const VoiceLeftPanel = ({ data, scenarioId, embedded = false }) => {
+const VoiceLeftPanel = ({
+  data,
+  scenarioId,
+  embedded = false,
+  hidePathTabs = false,
+}) => {
   const isSimulate = data?.module === "simulate";
   const [currentTab, setCurrentTab] = useState(TABS.TRANSCRIPT);
 
@@ -51,8 +56,11 @@ const VoiceLeftPanel = ({ data, scenarioId, embedded = false }) => {
 
   const callExecutionId =
     data?.call_execution_id || (data?.id !== data?.trace_id ? data?.id : null);
+  // A host whose calls have no checklist/graph data yet can hide the tabs.
   const showPathTabs =
-    isSimulate && (!!callExecutionId || !!data?.scenario_graph?.nodes?.length);
+    !hidePathTabs &&
+    isSimulate &&
+    (!!callExecutionId || !!data?.scenario_graph?.nodes?.length);
 
   const tabs = useMemo(() => {
     const t = [
@@ -198,6 +206,7 @@ VoiceLeftPanel.propTypes = {
   data: PropTypes.object.isRequired,
   scenarioId: PropTypes.string,
   embedded: PropTypes.bool,
+  hidePathTabs: PropTypes.bool,
 };
 
 export default VoiceLeftPanel;

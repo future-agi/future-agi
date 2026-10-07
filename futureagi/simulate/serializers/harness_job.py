@@ -382,7 +382,9 @@ class HarnessArtifactSerializer(serializers.Serializer):
     )
     retention_days = serializers.IntegerField(default=30, min_value=1, max_value=3650)
     allow_bundle_download = serializers.BooleanField(default=False)
-    max_artifact_bytes = serializers.IntegerField(default=1_073_741_824, min_value=0)
+    max_artifact_bytes = serializers.IntegerField(
+        default=lambda: settings.HARNESS_MAX_ARTIFACT_BYTES, min_value=0
+    )
 
 
 class HarnessJobCreateSerializer(serializers.Serializer):

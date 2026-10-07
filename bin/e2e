@@ -1,23 +1,48 @@
 #!/usr/bin/env bash
+# shellcheck source-path=SCRIPTDIR
 # E2E stack + suite runner. See e2e/README.md.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# The Standalone images are built with ./bin/install --from-source's recipe,
+# which prints through these.
+DIM=""; RESET=""
+say() { printf '%s\n' "$*"; }
+ok() { printf '  %s\n' "$*"; }
+log_only() { :; }
+die() { printf '%s\n' "$*" >&2; exit 1; }
+# shellcheck source=lib/build-local.sh
+. "$ROOT/bin/lib/build-local.sh"
 ENV_FILE="$ROOT/e2e/stack/e2e.env"
 COMPOSE=(docker compose --env-file "$ENV_FILE"
-  -f "$ROOT/docker-compose.yml" -f "$ROOT/e2e/stack/docker-compose.e2e.yml"
+  -f "$ROOT/docker-compose.distributed.yml" -f "$ROOT/e2e/stack/docker-compose.e2e.yml"
   -p futureagi-e2e)
 # Trimmed profile: no serving/code-executor; general ALL_QUEUES worker plus a
 # dedicated exact-aggregation worker. PeerDB is included through the same
 # bootstrap graph as OSS. Completed one-shot dependencies gate the application;
 # the harness never recreates failed jobs.
 SERVICES=(frontend backend worker worker-exact-aggregation
-  postgres clickhouse redis rabbitmq minio
+  postgres clickhouse redis minio
   temporal agentcc-gateway fi-collector fi-property-catalog-consumer mock-llm
   peerdb-server peerdb-flow-worker peerdb-flow-snapshot-worker peerdb-minio)
+# E2E_STACK=standalone: the same suite against the Standalone setup
+# (docker-compose.yml: one `app` container plus Postgres and ClickHouse) on the
+# same host ports. See e2e/stack/docker-compose.standalone-e2e.yml.
+if [[ "${E2E_STACK:-distributed}" == standalone ]]; then
+  ENV_FILE="$ROOT/e2e/stack/standalone-e2e.env"
+  COMPOSE=(docker compose --env-file "$ENV_FILE"
+    -f "$ROOT/docker-compose.yml" -f "$ROOT/e2e/stack/docker-compose.standalone-e2e.yml"
+    -p futureagi-e2e-standalone)
+  SERVICES=(app postgres clickhouse mock-llm)
+fi
+
+BUILD_TARGETS="backend|frontend|collector|all|standalone|standalone-app"
 
 backend_port() { grep '^BACKEND_PORT=' "$ENV_FILE" | cut -d= -f2; }
 ch_port() { grep '^CH_HTTP_PORT=' "$ENV_FILE" | cut -d= -f2; }
+# As Compose resolves it: exported in the shell, else from the env file.
+ch_password() { printf '%s' "${CH_PASSWORD:-$(grep '^CH_PASSWORD=' "$ENV_FILE" | cut -d= -f2)}"; }
 frontend_port() { grep '^FRONTEND_PORT=' "$ENV_FILE" | cut -d= -f2; }
+standalone_tag() { grep '^FUTURE_AGI_VERSION=' "$ROOT/e2e/stack/standalone-e2e.env" | cut -d= -f2; }
 
 wait_ready() {
   # Measured cold boot 2026-08-25: first-run migrations take ~6.5 min before
@@ -31,10 +56,11 @@ wait_ready() {
   # The bootstrap graph has already qualified schema. Keep an independent
   # storage witness here; HTTP health by itself is not catalog readiness.
   echo "Checking ClickHouse schema ..."
-  curl -fsS -G "http://localhost:$(ch_port)/" --data-urlencode "query=SELECT count() FROM spans LIMIT 0" >/dev/null \
+  curl -fsS -G "http://localhost:$(ch_port)/" -u "default:$(ch_password)" \
+    --data-urlencode "query=SELECT count() FROM spans LIMIT 0" >/dev/null \
     || { echo "CH spans table missing — check clickhouse-native-bootstrap logs"; exit 1; }
   echo "Checking observed attribute indexes ..."
-  curl -fsS -G "http://localhost:$(ch_port)/" --data-urlencode \
+  curl -fsS -G "http://localhost:$(ch_port)/" -u "default:$(ch_password)" --data-urlencode \
     "query=SELECT throwIf(count() != 2, 'observed indexes missing') FROM system.tables WHERE database={database:String} AND name IN ('observed_attribute_keys', 'observed_attribute_values')" \
     --data-urlencode "param_database=${PROPERTY_CATALOG_DATABASE:-property_catalog}" >/dev/null \
     || { echo "Observed attribute indexes missing"; exit 1; }
@@ -56,7 +82,21 @@ build_target() {
                echo "built. run with: E2E_FI_COLLECTOR_VERSION=e2e-local bin/e2e up" ;;
     all)       build_target backend; build_target frontend; build_target collector
                echo "run with: FUTURE_AGI_VERSION=e2e-local FRONTEND_VERSION=e2e-local E2E_FI_COLLECTOR_VERSION=e2e-local bin/e2e up" ;;
-    *) echo "usage: bin/e2e build backend|frontend|collector|all"; exit 2 ;;
+    # The images e2e/stack/standalone-e2e.env runs, tagged with its
+    # FUTURE_AGI_VERSION: bin/lib/build-local.sh, the recipe of ./bin/install
+    # --from-source (the slim backend, frontend, fi-collector and
+    # agentcc-gateway, then deploy/standalone/Dockerfile on top of them).
+    # `standalone-app` is the last step alone, over component images already
+    # built with that tag (CI builds them with its layer cache).
+    standalone)
+      local tag; tag=$(standalone_tag)
+      (cd "$ROOT" && build_local_images standalone all "$tag")
+      echo "built futureagi/standalone:$tag. run with: E2E_STACK=standalone bin/e2e up" ;;
+    standalone-app)
+      local tag; tag=$(standalone_tag)
+      (cd "$ROOT" && build_local_standalone_app "$tag")
+      echo "built futureagi/standalone:$tag. run with: E2E_STACK=standalone bin/e2e up" ;;
+    *) echo "usage: bin/e2e build $BUILD_TARGETS"; exit 2 ;;
   esac
 }
 
@@ -66,7 +106,7 @@ case "$cmd" in
   # force-recreate/retry loop: failed or uncertain setup must be inspected.
   up)      "${COMPOSE[@]}" up -d --wait --wait-timeout 1200 "${SERVICES[@]}"; wait_ready ;;
   down)    "${COMPOSE[@]}" down "$@" ;;
-  build)   build_target "${1:?usage: bin/e2e build backend|frontend|collector|all}" ;;
+  build)   build_target "${1:?usage: bin/e2e build $BUILD_TARGETS}" ;;
   test)    (cd "$ROOT/e2e" && yarn playwright test "$@") ;;
   ui)      (cd "$ROOT/e2e" && yarn playwright test --ui "$@") ;;
   report)  (cd "$ROOT/e2e" && yarn playwright show-report) ;;

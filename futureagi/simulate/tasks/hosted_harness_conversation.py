@@ -48,6 +48,30 @@ def schedule_conversation_runtime(conversation_id: str, endpoint_base_url: str):
     )
 
 
+@temporal_activity(time_limit=600, max_retries=3, queue="default")
+def promote_hosted_harness_conversation_checkpoint(
+    conversation_id: str, turn_sequence: int
+) -> str:
+    """Publish a finished chat turn's workspace to its environment."""
+    from simulate.services.hosted_harness import HostedHarnessError
+    from simulate.services.hosted_harness_conversation import promote_turn_checkpoint
+
+    try:
+        environment = promote_turn_checkpoint(conversation_id, turn_sequence)
+    except HostedHarnessError as exc:
+        if exc.retryable:
+            raise
+        # A checkpoint that cannot be published stays unpublished; retrying cannot fix it.
+        logger.error(
+            "hosted_conversation_checkpoint_rejected",
+            conversation_id=conversation_id,
+            code=exc.code,
+            message=exc.message,
+        )
+        return ""
+    return str(environment.id) if environment is not None else ""
+
+
 @temporal_activity(time_limit=120, max_retries=0, queue="default")
 def recover_hosted_harness_conversations() -> dict[str, int]:
     """Restart chat runtimes that died holding messages; the next tick retries a failure."""

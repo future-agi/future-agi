@@ -32,7 +32,7 @@ import {
 } from "@tanstack/react-query";
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 import { BrowserAgent } from "@newrelic/browser-agent/loaders/browser-agent";
-import { devTracing, prodTracing } from "./newrelic";
+import { newRelicTracing } from "./newrelic";
 import {
   CURRENT_ENVIRONMENT,
   REACT_QUERY_DEVTOOLS_ENABLED,
@@ -75,9 +75,9 @@ const queryClient = new QueryClient({
   },
 });
 
-// Initialize the BrowserAgent
-if (CURRENT_ENVIRONMENT === "production") new BrowserAgent(prodTracing);
-if (CURRENT_ENVIRONMENT === "dev") new BrowserAgent(devTracing);
+// Initialize the BrowserAgent, only in a build with New Relic keys.
+const newRelic = newRelicTracing(CURRENT_ENVIRONMENT);
+if (newRelic) new BrowserAgent(newRelic);
 
 export default function App() {
   useScrollToTop();

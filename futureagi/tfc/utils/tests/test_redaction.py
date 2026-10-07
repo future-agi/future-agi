@@ -1,6 +1,6 @@
 import pytest
 
-from tfc.utils.redaction import redact_url_credentials
+from tfc.utils.redaction import redact_secret, redact_url_credentials
 
 
 @pytest.mark.parametrize(
@@ -40,3 +40,15 @@ def test_masks_the_password(raw, expected):
 )
 def test_leaves_urls_without_a_password_alone(raw):
     assert redact_url_credentials(raw) == raw
+
+
+def test_redact_secret_hides_the_raw_and_sql_escaped_forms():
+    secret = "p'a\\ss\"word"
+    escaped = "p\\'a\\\\ss\"word"  # inside a ClickHouse string literal
+    text = f"failed near PASSWORD '{escaped}' (raw {secret})"
+    redacted = redact_secret(text, secret)
+    assert redacted == "failed near PASSWORD '[HIDDEN]' (raw [HIDDEN])"
+
+
+def test_redact_secret_without_a_secret_changes_nothing():
+    assert redact_secret("PASSWORD ''", "") == "PASSWORD ''"

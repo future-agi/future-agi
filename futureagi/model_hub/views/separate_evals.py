@@ -27,6 +27,11 @@ from rest_framework.views import APIView
 
 from accounts.authentication import workspace_read_only
 from agentic_eval.core.embeddings.embedding_manager import EmbeddingManager
+from agentic_eval.core.embeddings.serving_client import (
+    SERVING_UNAVAILABLE_MESSAGE,
+    serving_available,
+)
+from agentic_eval.core_evals.fi_utils.exceptions import CodeEvalSetupError
 from model_hub.constants import (
     EVAL_PLAYGROUND_CURL_CODE,
     EVAL_PLAYGROUND_JS_CODE,
@@ -5734,6 +5739,9 @@ class GroundTruthTriggerEmbeddingView(APIView):
                     "variable to a ground truth column before embedding."
                 )
 
+            if not serving_available():
+                return self._gm.bad_request(SERVING_UNAVAILABLE_MESSAGE)
+
             # Reset status
             gt.embedding_status = EvalGroundTruth.EmbeddingStatus.PENDING
             gt.embedded_row_count = 0
@@ -7399,6 +7407,15 @@ class EvalPlayGroundAPIView(APIView):
                 return self._gm.success_response(
                     response if response else "Evaluation has been updated."
                 )
+            except CodeEvalSetupError as exc:
+                # This install cannot run the code eval (no executor, or no
+                # Node.js for JavaScript); the sandbox's message says how to
+                # fix that, e.g. by turning on the sandbox profile.
+                logger.warning(
+                    "eval_playground_code_eval_setup_error",
+                    error_type=type(exc).__name__,
+                )
+                return self._gm.bad_request(str(exc))
             except Exception as exc:
                 if UsageLimitExceeded is not None and isinstance(
                     exc, UsageLimitExceeded
@@ -8076,6 +8093,13 @@ class TestEvaluationTemplateAPIView(APIView):
 
             return self._gm.success_response(response)
 
+        except CodeEvalSetupError as exc:
+            # As in the eval playground: the sandbox's setup hint is safe to show.
+            logger.warning(
+                "evaluation_template_test_code_eval_setup_error",
+                error_type=type(exc).__name__,
+            )
+            return self._gm.bad_request(str(exc))
         except Exception as exc:
             logger.exception(
                 "evaluation_template_test_failed",

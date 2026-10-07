@@ -2,7 +2,7 @@
 
 End-to-end flows that drive the whole product as one running system: a Chromium browser against the
 production frontend image, the real Django API, the real fi-collector, the real agentcc-gateway, and
-the real datastores (Postgres, ClickHouse, Temporal, Redis, RabbitMQ, MinIO) plus the PeerDB CDC
+the real datastores (Postgres, ClickHouse, Temporal, Redis, MinIO) plus the PeerDB CDC
 mirrors that carry eval and annotation data from Postgres into ClickHouse. Every flow asserts what
 the user sees **and** the backend state that must exist behind it. The only fake in the stack is the
 LLM provider, mocked at the HTTP boundary _behind_ the real gateway, so routing, streaming and cost
@@ -21,7 +21,7 @@ Playwright config — and it imports nothing from `frontend/` or `futureagi/`.
 │                   └──────────────────────► Postgres   :25432                    │
 │                                                                                 │
 │  docker compose -p futureagi-e2e                                                │
-│    postgres · clickhouse · redis · rabbitmq · minio · temporal                   │
+│    postgres · clickhouse · redis · minio · temporal                              │
 │    backend · worker (ALL_QUEUES) · frontend · fi-collector · observation consumer                       │
 │    agentcc-gateway ──► mock-llm (OpenAI-compatible, deterministic, no host port) │
 │    peerdb (catalog · temporal · flow-api · flow-workers · server · minio · init) │
@@ -55,7 +55,7 @@ bin/e2e test flows/observe/  # or one area
 bin/e2e test --grep @smoke   # or one tag
 ```
 
-`bin/e2e up` composes the root `docker-compose.yml` with `e2e/stack/docker-compose.e2e.yml`, using
+`bin/e2e up` composes `docker-compose.distributed.yml` (the distributed topology) with `e2e/stack/docker-compose.e2e.yml`, using
 `e2e/stack/e2e.env` and the Compose project name `futureagi-e2e`. It starts an explicit service
 list — kept in `SERVICES` in `bin/e2e` so the trimmed set is visible in one place, with
 `COMPOSE_PROFILES=peerdb` in the env file making the profile-gated PeerDB services startable by
@@ -144,6 +144,7 @@ bin/e2e test flows/observe/trace-ingestion.spec.ts
 | `E2E_COLLECTOR_URL`        | `http://localhost:24318`                                     | OTLP trace seeding                        |
 | `E2E_GATEWAY_URL`          | `http://localhost:28090`                                     | the mock-LLM harness self-test            |
 | `E2E_CH_URL` / `E2E_CH_DB` | `http://localhost:28123` / `default`                         | storage-lane ClickHouse assertions        |
+| `E2E_CH_PASSWORD`          | `e2e-clickhouse-password`, the managed stacks' `CH_PASSWORD` | the same, as ClickHouse user `default`    |
 | `E2E_CATALOG_CH_URL`       | `E2E_CH_URL` (or its default above)                          | optional separate catalog ClickHouse host |
 | `E2E_CATALOG_CH_DB`        | `property_catalog`                                           | optional catalog database override        |
 | `E2E_PG_URL`               | `postgresql://futureagi:futureagi@localhost:25432/futureagi` | storage-lane Postgres assertions          |
@@ -204,13 +205,35 @@ The E2E overlay sets the collector and observation consumer image together throu
 - _Before pushing_: `bin/e2e build all`, then validate fresh installation and retained-data
   upgrade behavior. Only reset volumes belonging to your explicitly disposable test project.
 
-**Why not the dev overlay.** `docker-compose.dev.yml` looks like the obvious vehicle for local code
+**Why not the dev overlay.** `docker-compose.distributed.dev.yml` looks like the obvious vehicle for local code
 and is not one. It hardcodes `FAST_STARTUP: "true"` in `environment:`, which cannot be overridden
 from an env file and which _skips migrations_ — on fresh volumes the stack comes up unmigrated. It
 serves a Vite dev server instead of the nginx artifact the product ships, it shares the `:dev` image
 tags with any dev stack you are running, and its `--reload` watcher restarts the backend mid-test.
 Attach mode covers the hot-reload need without any of that. In CI none of this applies: the workflow
 builds `:e2e-ci` images from the PR's own code.
+
+### The Standalone stack (`E2E_STACK=standalone`)
+
+With `E2E_STACK=standalone`, every `bin/e2e` subcommand targets the Standalone setup instead:
+`docker-compose.yml` (one `app` container that runs the API, the workers, the gateway, the collector
+and the UI, next to Postgres and ClickHouse) plus `e2e/stack/docker-compose.standalone-e2e.yml`,
+with `e2e/stack/standalone-e2e.env`, as Compose project `futureagi-e2e-standalone`. The harness
+ports are the same, so run only one of the two stacks at a time. Its images are built from this
+checkout by `bin/lib/build-local.sh`, the recipe of `./bin/install --from-source`, tagged with
+that env file's `FUTURE_AGI_VERSION` (`e2esa`) instead of `local`:
+
+```bash
+bin/e2e build standalone             # slim backend, frontend, fi-collector, agentcc-gateway, then futureagi/standalone
+E2E_STACK=standalone bin/e2e up
+E2E_STACK=standalone bin/e2e test
+E2E_STACK=standalone bin/e2e down -v
+```
+
+`bin/e2e build standalone-app` is the last step on its own: it assembles `futureagi/standalone`
+from the four component images already built with that tag. The managed-mock inspection
+(`lib/managed-mock.ts`) checks the Standalone stack against its own spec
+(`lib/managed-mock-standalone.ts`). The Distributed-only background attestation is skipped there.
 
 ### The live observed-catalog backfill harness (`harness/catalog-backfill.spec.ts`)
 
@@ -518,6 +541,20 @@ released `:latest` — so a frontend-only PR does not rebuild the backend. The j
 catalog, boots the stack with `bin/e2e up`, runs `bin/e2e test`, and always uploads the Playwright
 HTML report (7-day retention); on failure it dumps `bin/e2e ps` and the last 200 log lines. The
 `E2E Tests Pass` gate fails closed unless every dependency succeeded or was legitimately skipped.
+
+The same job runs the suite against the Standalone stack as a nightly schedule and on demand (run
+the workflow by hand with `stack: standalone`). A pull request that carries the `e2e-standalone`
+label runs it next to the Distributed leg, and `E2E Tests Pass` waits for both. The label counts
+only if the PR has it when the run starts, so add it and then push: a re-run keeps the labels of
+the run it repeats. The Standalone leg builds the four component images with the layer cache,
+assembles the app image with `bin/e2e build standalone-app`, and boots with `E2E_STACK=standalone`.
+The `upgrade` job in `.github/workflows/standalone-ci.yml` runs weekly, on demand, and on a pull
+request labelled `upgrade-check` (the same rule: add the label, then push). It installs v1.41.1
+with its own `./bin/install` and sends a trace. Then it re-runs `./bin/install` at the head commit
+and checks four things: the install stays on the Distributed setup
+(`COMPOSE_FILE=docker-compose.distributed.yml` in `.env`), its backend, worker, frontend and gateway
+run the head commit's `:local` images, the first account still signs in, and the trace is still
+there.
 
 **Wall time in CI has not been measured yet** — the job has never run on a real PR. Record it on the
 first run and put the number here; the hard timeout is 90 minutes and the boot budgets above are the

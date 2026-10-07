@@ -438,6 +438,40 @@ def _open_ch_test_http_client(
     return client
 
 
+def _ch_test_apply_v2_schema(
+    database: str, *, environ: Mapping[str, str] = os.environ
+) -> None:
+    """Apply the repo's v2 schema to one owned test database, or fail the test."""
+
+    from tracer.services.clickhouse.v2 import apply_schema
+
+    _open_ch_test_http_client(database=database, environ=environ).close()
+    rc = apply_schema.main(
+        [
+            "--schema-dir",
+            str(
+                Path(__file__).parent
+                / "tracer"
+                / "services"
+                / "clickhouse"
+                / "v2"
+                / "schema"
+            ),
+            "--ch-host",
+            environ.get("CH25_HOST", "127.0.0.1"),
+            "--ch-http-port",
+            str(_ch_test_http_port(environ).port),
+            "--ch-user",
+            environ.get("CH25_USER") or environ.get("CH_USERNAME") or "default",
+            "--ch-password",
+            environ.get("CH25_PASSWORD") or environ.get("CH_PASSWORD") or "",
+            "--ch-database",
+            database,
+        ]
+    )
+    assert rc == 0, f"v2 schema apply failed with rc={rc}"
+
+
 def _apply_ch25_schema_for_tests():
     """Apply the CH 25.3 v2 schema to the test ClickHouse BEFORE
     Django app startup runs `model_hub.apps._ensure_analytics_schema`.
@@ -694,6 +728,7 @@ def _ensure_test_score_tenant_column():
     """
     try:
         import clickhouse_connect
+
         from tracer.services.clickhouse.schema import CDC_MODEL_HUB_SCORE
         from tracer.services.clickhouse.v2 import get_v2_config
 
@@ -954,6 +989,33 @@ def _structlog_capturable():
 
     configure_structlog(cache_logger_on_first_use=False)
     logging.disable(logging.NOTSET)
+
+
+@pytest.fixture(autouse=True)
+def _model_serving_reachable(monkeypatch):
+    """Report model serving as reachable unless a test asks otherwise.
+
+    No test run has a ``serving`` container, so every path gated on
+    ``serving_available()`` would take its fail-open branch and skip the
+    embedding mocks the test installed. Tests of that branch request
+    ``model_serving_down``. The probe cache is per-process, so it is cleared
+    both ways to keep one test's verdict out of the next.
+    """
+    from agentic_eval.core.embeddings import serving_client
+
+    monkeypatch.setattr(serving_client, "_probe", lambda base_url: True)
+    serving_client._probe_cache.clear()
+    yield
+    serving_client._probe_cache.clear()
+
+
+@pytest.fixture
+def model_serving_down(monkeypatch):
+    """Model serving is not running, as in the standalone install without ``ml``."""
+    from agentic_eval.core.embeddings import serving_client
+
+    monkeypatch.setattr(serving_client, "_probe", lambda base_url: False)
+    serving_client._probe_cache.clear()
 
 
 @pytest.fixture(autouse=True)

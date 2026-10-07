@@ -16,6 +16,7 @@ function liveEvalCell(col, data) {
     data.value && typeof data.value === "object" ? storedEvalCell(col, data) : null;
   return {
     id: col.id,
+    kind: col.kind ?? "evaluation",
     name: data.name || col.name || col.column_name || col.id,
     score: data.score ?? stored?.score ?? to01(data.value?.score) ?? null,
     passed: data.passed ?? stored?.passed ?? null,
@@ -53,6 +54,7 @@ function storedEvalCell(col, data) {
   }
   return {
     id: col.id,
+    kind: col.kind ?? "evaluation",
     name: data.name || col.column_name || col.name || col.id,
     score,
     passed,
@@ -98,7 +100,7 @@ export function mapCallRow(row, evalColumns = []) {
   return {
     id: row?.id,
     goal: row?.goal || row?.scenario || "Untitled goal",
-    subGoals: row?.sub_goals ?? [],
+    subGoalResults: row?.sub_goal_results ?? [],
     scenario: trialIndex
       ? `${scenarioName} · Trial ${trialIndex}`
       : scenarioName,
@@ -121,6 +123,8 @@ export function mapCallRow(row, evalColumns = []) {
     csat: row?.csat != null ? Math.round(row.csat * 10) / 10 : null,
     turns: row?.turn_count ?? null,
     latencyMs: row?.latency_ms ?? row?.avg_agent_latency ?? null,
+    stopLatencyMs: row?.avg_stop_time_after_interruption ?? null,
+    aiInterruptions: row?.ai_interruption_count ?? null,
     tokens: row?.tokens ?? row?.total_tokens ?? null,
     durationMs:
       row?.duration_seconds != null
@@ -173,21 +177,21 @@ export function taskFromCallDetail(detail) {
  * @returns {import("./runDetail").TraceColumn[]}
  */
 export function buildTraceColumns(columnOrder = []) {
-  const staticCols = TRACE_COLUMNS.filter((c) => c.key !== "evals").map(
-    (c) => ({
-      key: c.key,
-      label: c.label,
-      defaultOn: c.defaultOn,
-      width: c.width,
-      group: c.group,
-    }),
-  );
+  const staticCols = TRACE_COLUMNS.filter(
+    (c) => c.key !== "subGoalEvals",
+  ).map((c) => ({
+    key: c.key,
+    label: c.label,
+    defaultOn: c.defaultOn,
+    width: c.width,
+    group: c.group,
+  }));
   const evalCols = (columnOrder || []).map((c) => ({
     key: c.id,
     label: c.name || c.id,
     defaultOn: true,
     width: 150,
-    group: "Evaluations",
+    group: c.kind === "sub_goal" ? "Sub-goal Results" : "Evaluations",
   }));
   return [...staticCols, ...evalCols];
 }
@@ -295,6 +299,8 @@ export function useRunCalls(executionId, opts = {}) {
             csat: group.aggregates?.csat ?? null,
             turns: group.aggregates?.turns ?? null,
             latency: group.aggregates?.latency_ms ?? null,
+            stopLatency: group.aggregates?.avg_stop_time_after_interruption ?? null,
+            aiInterruptions: group.aggregates?.ai_interruptions ?? null,
             tokens: group.aggregates?.tokens ?? null,
             evals,
           },
@@ -319,6 +325,8 @@ export function useRunCalls(executionId, opts = {}) {
     facets,
     summary,
     totalPages,
+    agentType: data?.execution?.agent_type ?? null,
+    runActive: ACTIVE_EXECUTION_STATUSES.has(data?.execution?.status),
     isLoading: !!executionId && query.isPending,
     error: query.error,
   };

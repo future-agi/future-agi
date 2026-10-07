@@ -8,6 +8,8 @@ export const E2E = {
   gatewayUrl: process.env.E2E_GATEWAY_URL ?? 'http://localhost:28090',
   chUrl: process.env.E2E_CH_URL ?? 'http://localhost:28123',
   chDatabase: process.env.E2E_CH_DB ?? 'default',
+  // The managed stacks' CH_PASSWORD (e2e/stack/*.env), for user `default`.
+  chPassword: process.env.E2E_CH_PASSWORD ?? 'e2e-clickhouse-password',
   // Catalog storage may live on a separate server/database in attach mode.
   catalogChUrl: process.env.E2E_CATALOG_CH_URL ?? process.env.E2E_CH_URL ?? 'http://localhost:28123',
   catalogChDatabase: process.env.E2E_CATALOG_CH_DB ?? 'property_catalog',
