@@ -41,6 +41,22 @@ jobs:
         working-directory: futureagi/ee/workers/error-feed-node/telemetry
         run: npm ci --ignore-scripts --no-audit --no-fund
 
+      # observability.mjs resolves '@future-agi/error-feed-telemetry' by
+      # package name (not a relative path): pack telemetry/ the same way
+      # prepare-telemetry.mjs does for the Docker build, and install it
+      # under node_modules so plain `node --test` can find it too.
+      - name: Make the telemetry package resolvable for the tests
+        working-directory: futureagi/ee/workers/error-feed-node
+        run: |
+          set -eu
+          tarball=$(cd telemetry && npm pack --silent)
+          mkdir -p node_modules/@future-agi
+          tar -xzf "telemetry/$tarball" -C node_modules/@future-agi
+          rm "telemetry/$tarball"
+          mv node_modules/@future-agi/package node_modules/@future-agi/error-feed-telemetry
+          npm install --omit=dev --ignore-scripts --no-audit --no-fund \
+            --prefix node_modules/@future-agi/error-feed-telemetry
+
       - name: Fetch the pinned @future-agi/omega-runtime package
         id: fetch_runtime
         env:

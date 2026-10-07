@@ -721,10 +721,11 @@ jobs:
         run: python3 scripts/image_size_budget.py report --tag "$VERSION"
 
   bump-deployment:
-    needs: [guard, dispatch-ee, resolve-sdk, simulation-runner]
+    needs: [guard, approve, dispatch-ee, resolve-sdk, simulation-runner]
     if: >-
       always() &&
       needs.guard.result == 'success' &&
+      needs.approve.result == 'success' &&
       (
         github.event_name == 'workflow_dispatch' ||
         (needs.dispatch-ee.result == 'success' && needs.simulation-runner.result == 'success')
