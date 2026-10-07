@@ -284,6 +284,35 @@ describe("EnvironmentWorkspace route shell", () => {
     );
   });
 
+  it("keeps the collapsed chat's dot on while the builder waits on a question", async () => {
+    const question = {
+      state: "waiting_for_user",
+      runtime: { available: true },
+      blocking_input: { message_id: "q1", kind: "question_requested", prompt: "How strict?" },
+      messages: [{ message_id: "q1", role: "assistant", kind: "question", state: "completed", content: "How strict?", created_at: NOW, sequence: 1 }],
+      events: [],
+    };
+    window.localStorage.setItem("simEnv.chatPane.collapsed", "true");
+    try {
+      getHarnessJob.mockResolvedValue({ ...COMPLETED_JOB, conversation: question });
+      const first = renderWorkspace("/dashboard/simulate/environments/job-done");
+      expect(await screen.findByTestId("chat-split-busy")).toBeInTheDocument();
+      first.unmount();
+
+      // Same question, but the chat can't take an answer any more: no dot.
+      getHarnessJob.mockResolvedValue({
+        ...COMPLETED_JOB,
+        conversation: { ...question, runtime: { available: false } },
+      });
+      renderWorkspace("/dashboard/simulate/environments/job-done");
+      // The frozen chat says why it can't take messages; by then the state is in.
+      expect((await screen.findAllByText(/no saved workspace/i)).length).toBeGreaterThan(0);
+      expect(screen.queryByTestId("chat-split-busy")).not.toBeInTheDocument();
+    } finally {
+      window.localStorage.removeItem("simEnv.chatPane.collapsed");
+    }
+  });
+
   it("renders the run detail as its own full page, without the workspace chrome", async () => {
     getHarnessJob.mockResolvedValue(COMPLETED_JOB);
 

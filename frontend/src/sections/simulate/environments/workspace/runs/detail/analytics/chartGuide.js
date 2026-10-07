@@ -1,35 +1,37 @@
 // Product chart explanations, in dashboard order.
 export const CHART_GUIDE = {
-  call_success:
-    "The single-line answer: what share of tasks the agent actually completed. Everything else on this page tries to explain the delta between this number and 100%. Click either slice to jump straight to the passing or failing tasks.",
   goal_outcome:
-    "Splits the run four ways: passed, failed on evaluator, hard-errored (crash / timeout), or escalated to a human. A big amber wedge points at infra / tool problems; a big purple wedge means the agent bailed instead of trying. Both are different fixes than a normal failure.",
-  sentiment:
-    "How the simulated caller sounded by the end of the task. A big negative wedge, even on passing tasks, usually means the agent got the answer right the wrong way (too curt, too slow, too many clarifiers). Pair with disconnection reason to spot rude-but-successful patterns.",
+    "Splits the run into passed, failed on an eval, errored (crash / timeout / infrastructure), escalated to a human, and not evaluated. Only passed and failed calls judge the agent; errors are shown so infrastructure problems stay visible without lowering the pass rate. Click a slice to open those calls.",
   disconnection:
-    "How each task actually ended: completed, escalated to a human, ran out of turns, timed out, or errored. Big Timeout / Error slices are infrastructure smells; big Escalated is an over-cautious agent; big Incomplete is one that gave up mid-task.",
+    "How each call ended, with every provider's end reason mapped to one list: completed, caller hung up, agent ended, transferred, silence timeout, time or turn limit, voicemail, error. A reason the list doesn't recognise is shown as Unrecognised rather than guessed.",
+  provider_success:
+    "The voice provider's own successful / unsuccessful judgement, shown only when the provider reports it. It is a second opinion next to your evals, never a replacement for them.",
+  sentiment:
+    "The provider's own sentiment label for the caller, shown only when the provider reports it. The platform does not compute sentiment itself.",
+  reliability:
+    "Each scenario ran once per trial with nothing changed, so different results across trials are the agent's own variance. A scenario that flips is unreliable even when its average looks fine. The 95% range on the pass rate accounts for trials of one scenario not being independent, so more trials of the same scenarios narrow it less than more scenarios would.",
   evaluations:
-    "One row per evaluator with its own pass rate. The task's overall pass/fail is an AND across every grader, so a single grader in the red is often the actual bottleneck. Sort your fix work by the grader that's failing hardest.",
-  csat: "How many calls landed on each CSAT score from 0 to 10, the same per-call score as the Avg CSAT tile. Red scores (4 and below) are unhappy callers; a lump on the left means the agent is solving problems in a way callers don't like. The footer checks the provider's own success judgement against your evals, so you know how far to trust it.",
+    "One row per eval with its own pass rate over the calls it evaluated. A call passes only when every eval that ran on it passed, so the eval failing hardest is usually the bottleneck. Could not run means the evaluator itself failed; not applicable means the eval did not apply to that call's scenario. Neither counts as a fail.",
+  csat: "How many calls landed on each CSAT score from 0 to 10, the same per-call score as the Avg CSAT tile. Red scores (4 and below) are unhappy callers. A provider's 0/1 success flag is never mixed into this scale. The footer compares the provider's own success judgement with your evals when the provider reports one.",
   voice_slos:
-    "Latency broken down by the four voice-pipeline segments callers actually feel: Time-to-First-Word, model thinking, text-to-speech, speech-to-text. Any red p90 means callers heard silence past your SLO. That's the one to fix first.",
+    "Latency broken down by the voice-pipeline segments callers feel: model thinking, text-to-speech, and speech-to-text. Any red p90 means callers heard silence past your target. Time to first word is not recorded yet.",
   pipeline_cost:
     "Per-call spend, split by voice-pipeline stage. If LLM towers over everything, you're overspending on model tokens (shorter prompt, cheaper model, cache). If TTS or STT dominate, look at voice provider tier. Transport bloat usually means calls staying open too long.",
   task_latency:
-    "Each task's agent latency (the agent's average response time per turn in that task), in the order the tasks ran. Random spikes = flaky infra; a steady climb = something the agent is doing more of over time (retries, context growth); a step change = usually a new tool or model kicking in mid-run.",
+    "Each call's average agent response time in the order it ran. Random spikes point at flaky infrastructure; a steady climb means the agent is doing more of something over time (retries, context growth); a step change usually means a new tool or model kicked in mid-run.",
   percentiles:
-    "Every measured task's agent latency (the agent's average response time per turn in that task), sorted: read across to a percentile, up to the latency. p50 = typical; p90 = the slower 10% of tasks (the ones your SLO is really written for); p99 = your worst tail. A curve that bends sharply upward near the right edge means a small set of tasks is dragging the tail.",
+    "Every call's average agent response time, sorted: read across to a percentile, up to the wait. p50 is typical, p90 is the slower 10% of calls. These are per-call averages, so a single long pause inside an otherwise quick call does not show here.",
   response_time:
-    "Each call's average agent response time per turn (for voice, the gap between the caller finishing and the agent starting to speak), the same per-call figure as the agent latency tile. Red buckets are at or over the 550ms target, where callers start to notice silence. A second hump on the right usually means one tool or prompt path is consistently slow.",
+    "Each call's average time for the agent to start replying after the caller stops talking. Red buckets are at or over the target (1.5 s for voice, 3 s for chat), where callers start to notice silence. A second hump on the right usually means one tool or prompt path is consistently slow.",
   distribution:
     "One row per metric with the four numbers that describe its shape. p90 is the number to defend in a review; the max tells you how bad your worst tail actually got. A big gap between p50 and p99 means a few outliers are dragging the run and are worth investigating first.",
-  risk: "Ranks the tasks by the use case they exercise (refund, escalation, tool call, etc.) and shows the pass/fail split for each. The use case at the top is the one the agent struggles with most, usually a better fix target than picking off individual failing tasks.",
+  risk: "Scenarios ranked by pass rate, weakest first, with the pass/fail/errored split for each. Scenarios with fewer than 3 evaluated calls are ranked last because their rate is too noisy to act on.",
   tools_volume:
     "How many times the agent called each tool across the run. It shows which tools carry the conversation: a rarely-called tool may be one the agent doesn't know when to use, and a heavily-used one is where a single failure hurts most. Fixes here usually belong to the infra team, not the prompt team.",
   tools_failure:
     "The share of each tool's calls that failed, worst first, with failed / total calls on each bar. Anything past the 40% danger line is breaking the agent's flow. The agent can't reason its way around a broken tool, so route these to infra, not the prompt team.",
   slowest:
-    "The eight tasks that ran longest, by wall-clock duration. If the top ones share a persona or use case, you've found a pattern, not a one-off.",
+    "The eight longest calls. These drive the duration p90 and p99. If the top ones share a scenario, you've found a pattern, not a one-off.",
   expensive:
-    "The eight tasks that ate the most dollars this run. A handful of expensive tasks usually dominate the total. A shorter prompt on these often saves more than optimising every task. Cross-check with tokens: high cost + high tokens is prompt bloat, high cost + low tokens is a pricey model.",
+    "The eight calls that cost the most this run. A handful of expensive calls usually dominate the total. Cross-check with tokens: high cost with high tokens is prompt bloat; high cost with low tokens is a pricey model.",
 };

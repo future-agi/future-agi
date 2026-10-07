@@ -1,6 +1,7 @@
 """F6 Feed reads use current findings, not raw junction row cardinality."""
 
 import uuid
+from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -166,7 +167,10 @@ def test_f6_pages_distinct_traces_before_offset_and_keeps_missing_ch(omega_issue
 
     member = feed._members_with_occurrence_time().filter(cluster=cluster).first()
     assert member.occurrence_at == report.recorded_at
+    # The report's date is fixed, so the 14-day window must not follow the wall clock.
+    now = report.recorded_at + timedelta(days=1)
     with (
+        patch.object(feed.timezone, "now", return_value=now),
         patch.object(feed, "_avg_eval_score", return_value=None),
         patch.object(feed, "_users_affected_in_window", return_value=0),
     ):
