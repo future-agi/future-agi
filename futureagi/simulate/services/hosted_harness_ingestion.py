@@ -877,6 +877,7 @@ def _apply_receipt_to_call(
     scenario_key = getattr(allocation, "execution_key", None) or allocation.scenario_key
     call.status = _call_lifecycle_status(body)
     call_data = body.get("call")
+    call.ended_reason = (call_data or {}).get("stop_reason") or ""
     resolved_modality = _resolve_scenario_modality(job, body)
     if call_data and call_data.get("recording_artifacts"):
         # A persisted audio recording is definitive evidence of a voice call,
@@ -888,7 +889,6 @@ def _apply_receipt_to_call(
         call.ended_at = call_data["ended_at"]
         call.completed_at = call_data["ended_at"]
         call.duration_seconds = round(call_data["duration_ms"] / 1000)
-        call.ended_reason = call_data.get("stop_reason") or ""
     elif body["status"] == "skipped":
         call.completed_at = timezone.now()
     metadata = dict(call.call_metadata or {})
@@ -1059,6 +1059,16 @@ def _apply_receipt_to_call(
                     "duration_seconds",
                 ]
             )
+    _apply_target_metrics(call, (call_data or {}).get("target_metrics"))
+    update_fields.extend(
+        [
+            "customer_call_id",
+            "customer_cost_cents",
+            "customer_latency_metrics",
+            "conversation_metrics_data",
+            "ended_reason",
+        ]
+    )
     call.save(update_fields=list(dict.fromkeys(update_fields)))
     if resolved_modality == CallExecution.SimulationCallType.VOICE:
         _ensure_run_agent_is_voice(job)
@@ -1222,6 +1232,40 @@ def _read_hosted_tool_trace(
         if response is not None:
             response.close()
             response.release_conn()
+
+
+_TARGET_TOKEN_FIELDS = {
+    "prompt_tokens": "input_tokens",
+    "completion_tokens": "output_tokens",
+    "total_tokens": "total_tokens",
+}
+
+
+def _apply_target_metrics(call: CallExecution, target: dict[str, Any] | None) -> None:
+    """Store provider-reported identity, cost, latency and tokens.
+
+    These go in the customer fields the native Vapi flow fills, never in ``cost_cents`` (the
+    platform's own cost). A rerun reuses this row, so a receipt without them clears the last
+    attempt's provider ID, cost and latency instead of leaving them attached to another call.
+    """
+    target = target or {}
+    call.customer_call_id = target.get("provider_call_id")
+    call.customer_cost_cents = target.get("cost_cents")
+    latency = dict(target.get("latency") or {})
+    turns = latency.pop("turns", [])
+    call.customer_latency_metrics = (
+        {"systemMetrics": latency, "turnLatencies": turns}
+        if latency or turns
+        else None
+    )
+    usage = target.get("usage") or {}
+    metrics = dict(call.conversation_metrics_data or {})
+    for field in _TARGET_TOKEN_FIELDS.values():
+        metrics.pop(field, None)
+    for source, field in _TARGET_TOKEN_FIELDS.items():
+        if usage.get(source) is not None:
+            metrics[field] = usage[source]
+    call.conversation_metrics_data = metrics
 
 
 def _epoch_seconds(value: Any) -> float | None:
