@@ -59,7 +59,7 @@ describe("forkEnvironment", () => {
   it("carries none of the parent's platform run links", () => {
     // `platform` is how the Runs tab and the header's Run action find an
     // environment's executions. Copied over, a brand-new fork opens showing the
-    // parent's runs and "Run again" re-runs the parent.
+    // parent's runs and a re-run starts the parent.
     expect(fork.env.platform).toBeUndefined();
     expect(fork.env.buildProgress).toBeUndefined();
   });

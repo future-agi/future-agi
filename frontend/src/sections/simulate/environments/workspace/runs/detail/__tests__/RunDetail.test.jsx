@@ -426,7 +426,7 @@ describe("RunDetail", () => {
     renderDetail();
     expect(screen.getByText("Queued")).toBeInTheDocument();
     expect(screen.queryByText("Running")).toBeNull();
-    expect(screen.getByRole("button", { name: /Run again/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Debug failures/ })).toBeDisabled();
   });
 
   it("does not show a Failed verdict while the run is still loading", () => {
@@ -488,7 +488,7 @@ describe("RunDetail", () => {
       });
       renderDetail();
 
-      for (const name of [/Add evals/, /Export/, /Run again/, /Debug failures/]) {
+      for (const name of [/Add evals/, /Export/, /Debug failures/]) {
         expect(screen.getByRole("button", { name })).toBeDisabled();
       }
       // Stop stays available — it is the one action a live run needs.
@@ -508,7 +508,7 @@ describe("RunDetail", () => {
     });
     renderDetail();
 
-    for (const name of [/Add evals/, /Export/, /Run again/, /Debug failures/]) {
+    for (const name of [/Add evals/, /Export/, /Debug failures/]) {
       expect(screen.getByRole("button", { name })).toBeEnabled();
     }
   });
@@ -585,19 +585,17 @@ describe("RunDetail", () => {
     });
   });
 
-  it("submits the same immutable selection and trials on Run again", async () => {
+  // Re-running now starts from the calls ticked in the table, so the header
+  // has no whole-run Run again.
+  it("has no Run again button in the header", () => {
     useRunDetail.mockReturnValue({
       identity: IDENTITY,
       stats: STATS,
       isLoading: false,
     });
-    const user = userEvent.setup();
-    const onStartRun = vi.fn();
-    renderDetail({ onStartRun });
+    renderDetail({ onStartRun: vi.fn() });
 
-    await user.click(screen.getByRole("button", { name: "Run again" }));
-
-    expect(onStartRun).toHaveBeenCalledWith(["scenario-a", "scenario-b"], 3);
+    expect(screen.queryByRole("button", { name: /Run again/ })).toBeNull();
   });
 
   it("does not invent a critical-failure classification", () => {

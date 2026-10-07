@@ -232,26 +232,6 @@ export default function RunDetail({
           {exporting ? "Exporting…" : "Export"}
         </Button>
         <Button
-          variant="outlined"
-          size="small"
-          disabled={live}
-          startIcon={<Iconify icon="solar:refresh-linear" width={15} />}
-          onClick={() =>
-            onStartRun?.(
-              identity?.scenarioIds || undefined,
-              identity?.trials || 1,
-            )
-          }
-          sx={{
-            color: "text.primary",
-            borderColor: "divider",
-            typography: "s2",
-            fontWeight: 600,
-          }}
-        >
-          Run again
-        </Button>
-        <Button
           variant="contained"
           color="primary"
           size="small"
@@ -319,7 +299,7 @@ export default function RunDetail({
               activePage={openCall?.page ?? null}
               initialFilters={tableHandoff.filters}
               // Ticked calls re-run as a new simulation, through the same start
-              // as Run again: it opens the new run.
+              // as any run: it opens the new run.
               onRerunScenarios={
                 onStartRun ? (keys, trials) => onStartRun(keys, trials) : null
               }

@@ -3,6 +3,7 @@ import { useState } from "react";
 import {
   Box,
   Button,
+  Divider,
   Popover,
   Stack,
   TextField,
@@ -13,9 +14,19 @@ import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
 import { MAX_CALLS_PER_RUN } from "src/api/simulate-environments/rerunScenarios";
 
-import { toolbarButtonSx } from "./traceTable.constants";
-
 const TRIAL_OPTIONS = Array.from({ length: 20 }, (_, i) => i + 1);
+// The toolbar's height, without its outlined-button colours: a contained
+// button keeps its own text colour.
+const rerunButtonSx = {
+  typography: "s2",
+  fontWeight: "fontWeightBold",
+  textTransform: "none",
+  height: 28,
+  px: 1.25,
+  minWidth: 0,
+  flexShrink: 0,
+  whiteSpace: "nowrap",
+};
 const plural = (n, one, many = `${one}s`) =>
   `${n.toLocaleString()} ${n === 1 ? one : many}`;
 
@@ -77,6 +88,8 @@ export default function RerunSelectionBar({
 
   return (
     <Stack direction="row" alignItems="center" spacing={1} useFlexGap>
+      {/* Sets the selection apart from the table controls beside it. */}
+      <Divider orientation="vertical" flexItem sx={{ my: 0.5, mr: 0.5 }} />
       <Typography
         sx={{
           typography: "s2",
@@ -111,7 +124,7 @@ export default function RerunSelectionBar({
             aria-expanded={!!anchor}
             startIcon={<Iconify icon="solar:refresh-linear" width={15} />}
             endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={12} />}
-            sx={{ ...toolbarButtonSx, fontWeight: 700 }}
+            sx={rerunButtonSx}
           >
             {allMatching || scenarioCount == null
               ? "Re-run"
@@ -128,16 +141,16 @@ export default function RerunSelectionBar({
         transformOrigin={{ vertical: "top", horizontal: "right" }}
         slotProps={{
           paper: {
-            sx: { mt: 0.75, width: 400, maxWidth: "calc(100vw - 32px)" },
+            sx: { mt: 0.75, width: 340, maxWidth: "calc(100vw - 32px)" },
           },
         }}
       >
-        <Box role="menu" aria-label="Re-run options" sx={{ py: 1 }}>
+        <Box role="menu" aria-label="Re-run options" sx={{ py: 0.75 }}>
           <Typography
             sx={{
-              px: 2,
-              pt: 0.75,
-              pb: 1,
+              px: 1.5,
+              pt: 0.25,
+              pb: 0.25,
               typography: "s3",
               fontWeight: 700,
               color: "text.subtitle",
@@ -165,9 +178,9 @@ export default function RerunSelectionBar({
             }}
             sx={{
               display: "flex",
-              gap: 1.25,
-              px: 2,
-              py: 1.25,
+              gap: 1,
+              px: 1.5,
+              py: 0.75,
               cursor: blocked ? "not-allowed" : "pointer",
               opacity: blocked ? 0.6 : 1,
               "&:hover": blocked ? undefined : { bgcolor: "action.hover" },
@@ -195,21 +208,27 @@ export default function RerunSelectionBar({
 
           {/* Beside the option, not inside it, so changing Trials never starts
               the run. */}
-          <Stack spacing={0.75} sx={{ pl: 5.25, pr: 2, pb: 1 }}>
-            <Stack
-              direction="row"
-              alignItems="center"
-              spacing={1.25}
-              useFlexGap
-            >
+          <Stack spacing={0.5} sx={{ pl: "36px", pr: 1.5, pb: 0.5 }}>
+            <Stack direction="row" alignItems="center" spacing={1} useFlexGap>
+              <Typography
+                component="label"
+                htmlFor="rerun-trials"
+                sx={{ typography: "s3", color: "text.subtitle" }}
+              >
+                Trials
+              </Typography>
               <TextField
                 select
+                id="rerun-trials"
                 size="small"
-                label="Trials"
                 value={trials}
                 onChange={(e) => setTrials(Number(e.target.value))}
                 SelectProps={{ native: true }}
-                sx={{ width: 96 }}
+                sx={{
+                  width: 64,
+                  "& .MuiInputBase-root": { height: 26, typography: "s3" },
+                  "& .MuiNativeSelect-select": { py: 0, pl: 1 },
+                }}
               >
                 {TRIAL_OPTIONS.map((n) => (
                   <option key={n} value={n}>
