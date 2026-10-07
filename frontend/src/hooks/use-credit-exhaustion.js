@@ -33,8 +33,7 @@ export function isCreditExhaustionError(error) {
   if (!error) return false;
   if (isEnterpriseGateError(error)) return false;
   return (
-    error.statusCode === 402 ||
-    CREDIT_ERROR_CODES.includes(error.error_code)
+    error.statusCode === 402 || CREDIT_ERROR_CODES.includes(error.error_code)
   );
 }
 

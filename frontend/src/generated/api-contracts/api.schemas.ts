@@ -3840,6 +3840,7 @@ export const CapabilityFeatureApiReasonCode = {
   NETWORK_REQUIRED: "NETWORK_REQUIRED",
   USAGE_LIMIT_REACHED: "USAGE_LIMIT_REACHED",
   PLAN_FEATURE_MISSING: "PLAN_FEATURE_MISSING",
+  ENTERPRISE_FEATURE_REQUIRED: "ENTERPRISE_FEATURE_REQUIRED",
   LICENSE_VERSION_UNSUPPORTED: "LICENSE_VERSION_UNSUPPORTED",
 } as const;
 
@@ -3914,6 +3915,97 @@ export interface DeploymentInfoResultApi {
 export interface DeploymentInfoResponseApi {
   status?: boolean;
   result: DeploymentInfoResultApi;
+}
+
+export type EditionResponseApiEdition =
+  (typeof EditionResponseApiEdition)[keyof typeof EditionResponseApiEdition];
+
+export const EditionResponseApiEdition = {
+  community: "community",
+  enterprise: "enterprise",
+  cloud: "cloud",
+} as const;
+
+export type EditionResponseApiDeployment =
+  (typeof EditionResponseApiDeployment)[keyof typeof EditionResponseApiDeployment];
+
+export const EditionResponseApiDeployment = {
+  self_hosted: "self_hosted",
+  cloud: "cloud",
+} as const;
+
+export interface EditionLimitApi {
+  limit: number;
+  /** @minimum 0 */
+  current: number;
+}
+
+export interface EditionLimitsApi {
+  organizations: EditionLimitApi;
+  workspaces: EditionLimitApi;
+  members: EditionLimitApi;
+}
+
+export type EditionActivationApiMethod =
+  (typeof EditionActivationApiMethod)[keyof typeof EditionActivationApiMethod];
+
+export const EditionActivationApiMethod = {
+  env_restart: "env_restart",
+} as const;
+
+export interface EditionActivationApi {
+  method: EditionActivationApiMethod;
+}
+
+export type EditionLicenseApiState =
+  (typeof EditionLicenseApiState)[keyof typeof EditionLicenseApiState];
+
+export const EditionLicenseApiState = {
+  not_applicable: "not_applicable",
+  missing: "missing",
+  invalid: "invalid",
+  active: "active",
+  grace: "grace",
+  expired: "expired",
+  trial_active: "trial_active",
+  trial_expired: "trial_expired",
+} as const;
+
+export type EditionLicenseApiLicenseType =
+  (typeof EditionLicenseApiLicenseType)[keyof typeof EditionLicenseApiLicenseType];
+
+export const EditionLicenseApiLicenseType = {
+  production: "production",
+  trial: "trial",
+} as const;
+
+export interface EditionLicenseApi {
+  state: EditionLicenseApiState;
+  license_type: EditionLicenseApiLicenseType;
+  issued_to: string;
+  expires_at: string;
+  grace_ends_at: string;
+  /** @minLength 1 */
+  license_id_masked: string;
+  /** @minLength 1 */
+  key_fingerprint: string;
+}
+
+export interface EditionResponseApi {
+  edition: EditionResponseApiEdition;
+  deployment?: EditionResponseApiDeployment;
+  limits?: EditionLimitsApi;
+  over_limit?: boolean;
+  enterprise_features?: string[];
+  /** @minLength 1 */
+  contact?: string;
+  activation?: EditionActivationApi;
+  license?: EditionLicenseApi;
+}
+
+export interface EditionEnvelopeApi {
+  status: boolean;
+  result: EditionResponseApi;
 }
 
 export type ClickHouseHealthResponseApiStatus =

@@ -12,10 +12,10 @@ log_only() { :; }
 die() { printf '%s\n' "$*" >&2; exit 1; }
 # shellcheck source=lib/build-local.sh
 . "$ROOT/bin/lib/build-local.sh"
+STACK="${E2E_STACK:-distributed}"
 ENV_FILE="$ROOT/e2e/stack/e2e.env"
-COMPOSE=(docker compose --env-file "$ENV_FILE"
-  -f "$ROOT/docker-compose.distributed.yml" -f "$ROOT/e2e/stack/docker-compose.e2e.yml"
-  -p futureagi-e2e)
+PROJECT=futureagi-e2e
+COMPOSE_FILES=(-f "$ROOT/docker-compose.distributed.yml" -f "$ROOT/e2e/stack/docker-compose.e2e.yml")
 # Trimmed profile: no serving/code-executor; general ALL_QUEUES worker plus a
 # dedicated exact-aggregation worker. PeerDB is included through the same
 # bootstrap graph as OSS. Completed one-shot dependencies gate the application;
@@ -24,16 +24,40 @@ SERVICES=(frontend backend worker worker-exact-aggregation
   postgres clickhouse redis minio
   temporal agentcc-gateway fi-collector fi-property-catalog-consumer mock-llm
   peerdb-server peerdb-flow-worker peerdb-flow-snapshot-worker peerdb-minio)
+# The service whose start-up log carries the licence check (README "Licences
+# on the E2E stacks").
+LICENCE_SERVICE=backend
+# The licence every stack boots with. The shared stacks run licensed so each
+# Playwright worker keeps its own organization; the Community lane boots as
+# Community and its flows change the licence with `bin/e2e licence`.
+BOOT_LICENCE=enterprise
+PLAYWRIGHT_PROJECT=default
 # E2E_STACK=standalone: the same suite against the Standalone setup
 # (docker-compose.yml: one `app` container plus Postgres and ClickHouse) on the
 # same host ports. See e2e/stack/docker-compose.standalone-e2e.yml.
-if [[ "${E2E_STACK:-distributed}" == standalone ]]; then
+if [[ "$STACK" == standalone || "$STACK" == community ]]; then
   ENV_FILE="$ROOT/e2e/stack/standalone-e2e.env"
-  COMPOSE=(docker compose --env-file "$ENV_FILE"
-    -f "$ROOT/docker-compose.yml" -f "$ROOT/e2e/stack/docker-compose.standalone-e2e.yml"
-    -p futureagi-e2e-standalone)
+  PROJECT=futureagi-e2e-standalone
+  COMPOSE_FILES=(-f "$ROOT/docker-compose.yml" -f "$ROOT/e2e/stack/docker-compose.standalone-e2e.yml")
   SERVICES=(app postgres clickhouse mock-llm)
+  LICENCE_SERVICE=app
 fi
+# E2E_STACK=community: the Community edition lane, the Standalone setup again
+# as its own project on its own loopback ports and volumes, so it can run next
+# to the shared stacks. See e2e/stack/community-e2e.env.
+if [[ "$STACK" == community ]]; then
+  ENV_FILE="$ROOT/e2e/stack/community-e2e.env"
+  PROJECT=futureagi-e2e-community
+  COMPOSE_FILES+=(-f "$ROOT/e2e/stack/docker-compose.community-e2e.yml")
+  BOOT_LICENCE=removed
+  PLAYWRIGHT_PROJECT=community-edition
+fi
+# Throwaway key material lives outside the checkout, private to the user, one
+# directory per Compose project; `down -v` deletes it with the volumes.
+LICENCE_DIR="${E2E_LICENCE_DIR:-${TMPDIR:-/tmp}/futureagi-e2e-licence}/$PROJECT"
+LICENCE_ENV="$LICENCE_DIR/licence.env"
+COMPOSE=(docker compose --env-file "$ENV_FILE" --env-file "$LICENCE_ENV"
+  "${COMPOSE_FILES[@]}" -p "$PROJECT")
 
 BUILD_TARGETS="backend|frontend|collector|all|standalone|standalone-app"
 
@@ -42,7 +66,52 @@ ch_port() { grep '^CH_HTTP_PORT=' "$ENV_FILE" | cut -d= -f2; }
 # As Compose resolves it: exported in the shell, else from the env file.
 ch_password() { printf '%s' "${CH_PASSWORD:-$(grep '^CH_PASSWORD=' "$ENV_FILE" | cut -d= -f2)}"; }
 frontend_port() { grep '^FRONTEND_PORT=' "$ENV_FILE" | cut -d= -f2; }
+env_port() { grep "^$1=" "$ENV_FILE" | cut -d= -f2; }
 standalone_tag() { grep '^FUTURE_AGI_VERSION=' "$ROOT/e2e/stack/standalone-e2e.env" | cut -d= -f2; }
+
+# --- test licence (e2e/scripts/test-licence.mjs) -----------------------------
+licence_state() { sed -n 's/^E2E_LICENCE_STATE=//p' "$LICENCE_ENV" 2>/dev/null; }
+# Write the stack's licence env for STATE unless it already holds it; an
+# unchanged file keeps Compose from recreating containers on every command.
+ensure_licence() { # state
+  [[ -f "$LICENCE_ENV" && "$(licence_state)" == "$1" ]] && return 0
+  command -v node >/dev/null || die "bin/e2e needs node to sign the stack's test licence"
+  node "$ROOT/e2e/scripts/test-licence.mjs" write-env "$LICENCE_DIR" "$1" >/dev/null
+}
+# Every Compose command reads the licence env file; create it on first use.
+need_licence_env() { [[ -f "$LICENCE_ENV" ]] || ensure_licence "$BOOT_LICENCE"; }
+# The backend's own validator decides; read its start-up verdict
+# (futureagi/ee/licensing/startup.py) from the current container's log.
+check_licence() { # expected state
+  local want event log
+  case "$1" in
+    enterprise) want=license_startup_active ;;
+    expired)    want=license_startup_unusable ;;
+    removed)    want=license_startup_no_key_configured ;;
+  esac
+  log="$("${COMPOSE[@]}" logs --no-log-prefix "$LICENCE_SERVICE" 2>&1)"
+  for event in license_startup_active license_startup_unusable license_startup_invalid \
+      license_startup_no_key_configured; do
+    [[ "$event" == "$want" ]] && continue
+    if grep -q "$event" <<<"$log"; then
+      echo "test licence: expected $want, $LICENCE_SERVICE logged $event."
+      [[ "$event" == license_startup_invalid ]] && echo \
+        "A production key in futureagi/ee/licensing/keyring.py _BUNDLED_KEYS makes the backend ignore the test public key (fail closed); see e2e/README.md."
+      exit 1
+    fi
+  done
+  grep -q "$want" <<<"$log" || { echo "test licence: $LICENCE_SERVICE never logged $want"; exit 1; }
+  echo "test licence: $1 ($want)"
+}
+# Remove only the files test-licence.mjs writes, then the directory.
+delete_licence() {
+  local file
+  for file in licence.env signing-key.pem public-key.pem; do
+    [[ -f "$LICENCE_DIR/$file" ]] && rm -f -- "$LICENCE_DIR/$file"
+  done
+  [[ -d "$LICENCE_DIR" ]] && rmdir -- "$LICENCE_DIR"
+  return 0
+}
 
 wait_ready() {
   # Measured cold boot 2026-08-25: first-run migrations take ~6.5 min before
@@ -100,18 +169,46 @@ build_target() {
   esac
 }
 
+# The Community lane is attached by its own ports; the shared stacks use the
+# harness defaults (e2e/lib/env.ts).
+lane_env() {
+  [[ "$STACK" == community ]] || return 0
+  E2E_APP_URL="http://localhost:$(frontend_port)"
+  E2E_API_URL="http://localhost:$(backend_port)"
+  E2E_COLLECTOR_URL="http://localhost:$(env_port FI_COLLECTOR_OTLP_HTTP_PORT)"
+  E2E_GATEWAY_URL="http://localhost:$(env_port AGENTCC_GATEWAY_PORT)"
+  E2E_CH_URL="http://localhost:$(ch_port)"
+  E2E_CATALOG_CH_URL="$E2E_CH_URL"
+  E2E_CH_PASSWORD="$(ch_password)"
+  E2E_PG_URL="postgresql://futureagi:futureagi@localhost:$(env_port PG_PORT)/futureagi"
+  export E2E_APP_URL E2E_API_URL E2E_COLLECTOR_URL E2E_GATEWAY_URL E2E_CH_URL \
+    E2E_CATALOG_CH_URL E2E_CH_PASSWORD E2E_PG_URL E2E_STACK
+}
+
 cmd="${1:-}"; shift || true
 case "$cmd" in
   # PG migrations and initial snapshots precede backend readiness. No hidden
   # force-recreate/retry loop: failed or uncertain setup must be inspected.
-  up)      "${COMPOSE[@]}" up -d --wait --wait-timeout 1200 "${SERVICES[@]}"; wait_ready ;;
-  down)    "${COMPOSE[@]}" down "$@" ;;
+  up)      ensure_licence "$BOOT_LICENCE"
+           "${COMPOSE[@]}" up -d --wait --wait-timeout 1200 "${SERVICES[@]}"; wait_ready
+           check_licence "$BOOT_LICENCE" ;;
+  down)    need_licence_env; "${COMPOSE[@]}" down "$@"
+           for arg in "$@"; do [[ "$arg" == -v || "$arg" == --volumes ]] && delete_licence; done ;;
   build)   build_target "${1:?usage: bin/e2e build $BUILD_TARGETS}" ;;
-  test)    (cd "$ROOT/e2e" && yarn playwright test "$@") ;;
-  ui)      (cd "$ROOT/e2e" && yarn playwright test --ui "$@") ;;
+  test)    lane_env; (cd "$ROOT/e2e" && yarn playwright test --project="$PLAYWRIGHT_PROJECT" "$@") ;;
+  ui)      lane_env; (cd "$ROOT/e2e" && yarn playwright test --ui --project="$PLAYWRIGHT_PROJECT" "$@") ;;
   report)  (cd "$ROOT/e2e" && yarn playwright show-report) ;;
-  logs)    "${COMPOSE[@]}" logs "$@" ;;
-  ps)      "${COMPOSE[@]}" ps "$@" ;;
-  compose) "${COMPOSE[@]}" "$@" ;;
-  *) echo "usage: bin/e2e up|down [-v]|build <target>|test [pw args]|ui|report|logs|ps|compose <args>"; exit 2 ;;
+  logs)    need_licence_env; "${COMPOSE[@]}" logs "$@" ;;
+  ps)      need_licence_env; "${COMPOSE[@]}" ps "$@" ;;
+  compose) need_licence_env; "${COMPOSE[@]}" "$@" ;;
+  # The Community lane only: what an operator does to activate, let expire or
+  # remove a licence, i.e. change EE_LICENSE_KEY and restart. Recreates `app`
+  # alone; Postgres, ClickHouse and every volume are kept.
+  licence)
+    [[ "$STACK" == community ]] || die "bin/e2e licence runs on the Community lane only (E2E_STACK=community)"
+    state="${1:?usage: E2E_STACK=community bin/e2e licence enterprise|expired|removed}"
+    ensure_licence "$state"
+    "${COMPOSE[@]}" up -d --wait --wait-timeout 600 --no-deps app; wait_ready
+    check_licence "$state" ;;
+  *) echo "usage: bin/e2e up|down [-v]|build <target>|test [pw args]|ui|report|logs|ps|compose <args>|licence <state>"; exit 2 ;;
 esac

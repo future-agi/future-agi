@@ -5,8 +5,9 @@ vi.mock("notistack", () => ({ enqueueSnackbar: vi.fn() }));
 
 const { enqueueSnackbar } = await import("notistack");
 const { default: axiosInstance } = await import("../axios");
-const { ENTERPRISE_GATE_EVENT } =
-  await import("src/components/feature-gate/enterprise-gate");
+const { ENTERPRISE_GATE_EVENT } = await import(
+  "src/components/feature-gate/enterprise-gate"
+);
 const { handleError } = await import("../queryErrorHandler");
 
 const rejected = axiosInstance.interceptors.response.handlers.find(

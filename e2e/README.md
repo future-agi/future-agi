@@ -113,7 +113,39 @@ bin/e2e ps                   # compose ps for the futureagi-e2e project
 bin/e2e logs --tail 200      # compose logs (add a service name to narrow)
 bin/e2e compose <args>       # raw compose passthrough with the e2e env file/project
 bin/e2e down                 # stop the stack;  bin/e2e down -v  also wipes volumes
+E2E_STACK=community bin/e2e licence <state>   # the Community lane only, see below
 ```
+
+### Licences on the E2E stacks
+
+Self-hosted Community allows one organization, one workspace and three members. The suite needs
+more: every Playwright worker signs up its own organization (`lib/fixtures.ts`), and
+`lib/scope-actors.ts` adds a second organization and workspace. So the shared stacks (Distributed
+and Standalone) run with a **test-signed Enterprise licence**, checked by the product's own
+validator:
+
+- `bin/e2e` generates a throwaway RSA keypair per Compose project with
+  `e2e/scripts/test-licence.mjs` (Node built-ins only) and signs a licence with the validator's fixed
+  issuer, audience and type. It lives outside the checkout, private to you, in
+  `${E2E_LICENCE_DIR:-$TMPDIR/futureagi-e2e-licence}/<project>/` (directory 0700, files 0600), and
+  reaches Compose as a second `--env-file`: `EE_LICENSE_KEY` and `EE_LICENSE_PUBLIC_KEY` for the
+  backend and workers (the `app` container on Standalone). Nothing derived from either key is
+  printed; `bin/e2e down -v` deletes them with the volumes.
+- After `up`, `bin/e2e` reads the backend's start-up verdict (`ee/licensing/startup.py`) from its
+  log and fails unless it is `license_startup_active`.
+- The licence carries no product features, so Falcon AI, Turing Models, Protect and Error Feed stay
+  off exactly as before; it only lifts the Community rule. The licensed stacks also set
+  `FUTURE_AGI_ENTERPRISE_HEARTBEAT_DISABLED=true` and point `FUTURE_AGI_LICENSE_URL` at a closed
+  loopback port, so no test stack ever calls Future AGI's licence service.
+
+The backend trusts `EE_LICENSE_PUBLIC_KEY` only while `_BUNDLED_KEYS` in
+`futureagi/ee/licensing/keyring.py` is empty (the pre-GA trust path). Once a production key is
+bundled, environment keys are ignored, the test licence validates as `invalid`, and `bin/e2e up`
+stops with `expected license_startup_active, backend logged license_startup_invalid`; a run that
+got past it would see the second worker's sign-up refused with `ENTERPRISE_FEATURE_REQUIRED`. That
+is fail closed on purpose. The remedy is a test trust path designed with licence issuance, never a
+bypass flag or a test key in the bundled set. This is test setup, not the product's licensing
+boundary: it issues nothing and changes no trust root.
 
 ---
 
@@ -234,6 +266,40 @@ E2E_STACK=standalone bin/e2e down -v
 from the four component images already built with that tag. The managed-mock inspection
 (`lib/managed-mock.ts`) checks the Standalone stack against its own spec
 (`lib/managed-mock-standalone.ts`). The Distributed-only background attestation is skipped there.
+
+### The Community edition lane (`E2E_STACK=community`)
+
+Flows about the Community edition itself (its one organization, one workspace and three members,
+and activating a licence) need a fresh install whose first sign-up is theirs, which a shared stack
+cannot give them. They run on their own disposable stack: the Standalone setup again, as Compose
+project `futureagi-e2e-community`, with its own volumes and its own loopback-only ports from
+`e2e/stack/community-e2e.env`, so it runs next to the shared stacks and never touches their data.
+
+| Service         | Port            | Service                       | Port                    |
+| --------------- | --------------- | ----------------------------- | ----------------------- |
+| frontend        | 127.0.0.1:3300  | Postgres                      | 127.0.0.1:35432         |
+| backend         | 127.0.0.1:8300  | ClickHouse HTTP / native      | 127.0.0.1:38123 / 39000 |
+| agentcc-gateway | 127.0.0.1:38090 | fi-collector OTLP gRPC / HTTP | 127.0.0.1:34317 / 34318 |
+| MinIO API       | 127.0.0.1:39005 |                               |                         |
+
+```bash
+bin/e2e build standalone                  # images from this checkout (the Standalone tag, e2esa)
+E2E_STACK=community bin/e2e up            # a fresh Community install
+E2E_STACK=community bin/e2e test          # the community-edition Playwright project
+E2E_STACK=community bin/e2e down -v       # wipe it, key material included
+```
+
+`up` boots Community: no licence key, with the lane's test public key configured as an operator's
+would be. A lane flow activates, expires or removes the licence the way an operator does, by
+setting `EE_LICENSE_KEY` and restarting: `lib/community-lane.ts` `setLaneLicence(state)` runs
+`bin/e2e licence enterprise|expired|removed`, which rewrites the lane's licence env, recreates the
+`app` container alone, waits for readiness and checks the backend's start-up verdict for that state.
+Postgres, ClickHouse and every volume are kept. The command refuses to run on any other stack.
+
+`bin/e2e test` picks the Playwright project: `default` on the shared stacks, `community-edition` on
+the lane. Lane specs are listed in `COMMUNITY_LANE_SPECS` in `playwright.config.ts`; the default
+project ignores them, and they fail fast when pointed at anything but the lane. A lane flow uses up
+the install's one organization, so every run starts from `down -v` and `up`.
 
 ### The live observed-catalog backfill harness (`harness/catalog-backfill.spec.ts`)
 
