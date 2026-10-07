@@ -15,7 +15,6 @@ import {
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import EvalTypeBadge from "src/sections/evals/components/EvalTypeBadge";
-import ConfirmRunEvaluations from "src/sections/common/EvaluationDrawer/ConfirmRunEvaluations";
 import {
   useEnvironmentRunTest,
   useRemoveAppliedEvaluation,
@@ -27,16 +26,13 @@ import {
 } from "src/api/simulate-environments/runEvals";
 import SideDrawer from "../../../components/SideDrawer";
 import EmptyState from "../../../components/EmptyState";
-import AddEvaluationDrawer from "../../evals/AddEvaluationDrawer";
 import { refusalText } from "../../evals/refusalText";
 import {
   GRADING_TOOLTIP,
-  HARNESS_NOTE,
   HARNESS_ONLY_TOOLTIP,
   NOT_COMPLETED_TOOLTIP,
   NOT_EDITABLE_TOOLTIP,
 } from "./allEvaluationsDrawer.constants";
-import { useRegradeEvals } from "./useRegradeEvals";
 
 const REMOVE_FALLBACK = "Couldn’t remove the evaluation. Try again.";
 // A stable empty-array constant: `= []` as a hook default is a fresh
@@ -49,13 +45,11 @@ const NO_CONFIGS = [];
  *
  * Every eval bound to the run test is listed here, including the harness's
  * per-scenario checks — those can't be ticked or re-run, because only a call
- * rerun refreshes them, but they can still be removed. Ticking rows and the
- * footer both open the same confirm dialog as the rest of the product; a
- * single row's run icon opens it pre-filled with just that row.
- *
- * A row's edit icon opens the add flow on that eval's own settings; once it is
- * saved, the same confirm dialog opens for just that eval, so an edit is graded
- * again through the one run path here.
+ * rerun refreshes them, but they can still be removed. The footer runs the
+ * ticked rows and a row's run icon runs just that row; a row's edit icon edits
+ * that eval. Both go to the run page (`onRerun`, `onEdit`), whose one edit form
+ * and confirm dialog also serve the table's column menus, and this drawer
+ * closes once the grading it asked for is queued.
  */
 export default function AllEvaluationsDrawer({
   open,
@@ -65,23 +59,20 @@ export default function AllEvaluationsDrawer({
   executionId,
   canRun = false,
   grading = false,
+  rerunPending = false,
+  editOpen = false,
+  onRerun,
+  onEdit,
   onAddEvaluations,
 }) {
   const queryClient = useQueryClient();
   const [ticked, setTicked] = useState(() => new Set());
-  // Holds the configs the confirm dialog is about, or null while it's closed.
-  const [confirming, setConfirming] = useState(null);
-  // The eval whose settings are open for editing, or null.
-  const [editing, setEditing] = useState(null);
 
-  // The run page keeps this drawer mounted while it's closed, so ticks, an open
-  // edit or a pending confirm would otherwise still be there on reopening —
-  // including on a removed eval that came back under the same id.
+  // The run page keeps this drawer mounted while it's closed, so ticks would
+  // otherwise still be there on reopening — including on a removed eval that
+  // came back under the same id.
   useEffect(() => {
-    if (open) return;
-    setTicked(new Set());
-    setEditing(null);
-    setConfirming(null);
+    if (!open) setTicked(new Set());
   }, [open]);
 
   const {
@@ -93,7 +84,6 @@ export default function AllEvaluationsDrawer({
   } = useEnvironmentRunTest(runTestId, { enabled: open && Boolean(runTestId) });
   const configs = configsData ?? NO_CONFIGS;
 
-  const runEvals = useRegradeEvals({ envId: env?.id, executionId });
   const removeEval = useRemoveAppliedEvaluation();
 
   const runnableIds = useMemo(
@@ -128,14 +118,7 @@ export default function AllEvaluationsDrawer({
     });
   };
 
-  const handleConfirm = (list) =>
-    runEvals.regrade(list, {
-      onSuccess: (dispatched) => {
-        setConfirming(null);
-        setTicked(new Set());
-        if (dispatched) onClose();
-      },
-    });
+  const requestRerun = (list) => onRerun?.(list, { onSuccess: onClose });
 
   const handleRemove = (config) => {
     removeEval.mutate(
@@ -285,8 +268,8 @@ export default function AllEvaluationsDrawer({
                       <span>
                         <IconButton
                           aria-label={`Run ${config.name}`}
-                          disabled={!runnable || !canRun || runEvals.isPending}
-                          onClick={() => setConfirming([config])}
+                          disabled={!runnable || !canRun || rerunPending}
+                          onClick={() => requestRerun([config])}
                         >
                           <Iconify icon="solar:play-circle-linear" width={18} />
                         </IconButton>
@@ -296,10 +279,10 @@ export default function AllEvaluationsDrawer({
                       <span>
                         <IconButton
                           aria-label={`Edit ${config.name}`}
-                          disabled={
-                            !editable || grading || !canRun || Boolean(editing)
+                          disabled={!editable || grading || !canRun || editOpen}
+                          onClick={() =>
+                            onEdit?.(config, { onSuccess: onClose })
                           }
-                          onClick={() => setEditing(config)}
                         >
                           <Iconify icon="solar:pen-linear" width={18} />
                         </IconButton>
@@ -336,10 +319,8 @@ export default function AllEvaluationsDrawer({
                 fullWidth
                 variant="contained"
                 startIcon={<Iconify icon="solar:play-bold" width={16} />}
-                disabled={
-                  selectedIds.length === 0 || !canRun || runEvals.isPending
-                }
-                onClick={() => setConfirming(selectedConfigs)}
+                disabled={selectedIds.length === 0 || !canRun || rerunPending}
+                onClick={() => requestRerun(selectedConfigs)}
               >
                 {allTicked && runnableIds.length > 0
                   ? `Run All (${selectedIds.length})`
@@ -349,33 +330,6 @@ export default function AllEvaluationsDrawer({
           </Tooltip>
         </Box>
       </Box>
-
-      <AddEvaluationDrawer
-        open={Boolean(editing)}
-        env={env}
-        editingEval={editing}
-        onClose={() => setEditing(null)}
-        onEdited={(updated) => {
-          setEditing(null);
-          setConfirming(updated ? [updated] : null);
-        }}
-      />
-
-      <ConfirmRunEvaluations
-        open={Boolean(confirming)}
-        onClose={() => setConfirming(null)}
-        onConfirm={handleConfirm}
-        selectedUserEvalList={confirming || []}
-        loading={runEvals.isPending}
-        // Only runnable configs ever reach the dialog, so an empty mapping
-        // there means one of the harness's built-in suite evals; its score
-        // came from the harness and will be replaced by the platform's.
-        getNote={(list) =>
-          list.some((c) => Object.keys(c.mapping || {}).length === 0)
-            ? HARNESS_NOTE
-            : null
-        }
-      />
     </SideDrawer>
   );
 }
@@ -388,5 +342,11 @@ AllEvaluationsDrawer.propTypes = {
   executionId: PropTypes.string,
   canRun: PropTypes.bool,
   grading: PropTypes.bool,
+  // The run page's re-run is on its way, from here or from a column menu.
+  rerunPending: PropTypes.bool,
+  // The run page's edit form is open.
+  editOpen: PropTypes.bool,
+  onRerun: PropTypes.func,
+  onEdit: PropTypes.func,
   onAddEvaluations: PropTypes.func,
 };

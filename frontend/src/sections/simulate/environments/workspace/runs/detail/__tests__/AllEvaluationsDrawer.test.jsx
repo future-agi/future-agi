@@ -11,11 +11,8 @@ import {
   useEnvironmentRunTest,
   useRemoveAppliedEvaluation,
 } from "src/api/simulate-environments/environments";
-import { useRunNewEvals } from "src/api/simulate-environments/runEvals";
-import { enqueueSnackbar } from "notistack";
 import AllEvaluationsDrawer from "../AllEvaluationsDrawer";
 import {
-  HARNESS_NOTE,
   HARNESS_ONLY_TOOLTIP,
   NOT_EDITABLE_TOOLTIP,
 } from "../allEvaluationsDrawer.constants";
@@ -25,28 +22,9 @@ vi.mock("src/api/simulate-environments/environments", () => ({
   useEnvironmentRunTest: vi.fn(),
   useRemoveAppliedEvaluation: vi.fn(),
 }));
-// The edit form itself is covered by the add drawer's own tests; here it only
-// has to open for the right row and report a save back.
-const editor = vi.hoisted(() => ({ props: null, updated: null }));
-vi.mock("../../../evals/AddEvaluationDrawer", () => ({
-  default: (props) => {
-    editor.props = props;
-    if (!props.open) return null;
-    return (
-      <div data-testid="edit-drawer">
-        {`edit-drawer:${props.editingEval?.id}`}
-        <button type="button" onClick={() => props.onEdited(editor.updated)}>
-          save edit
-        </button>
-        <button type="button" onClick={props.onClose}>
-          close edit
-        </button>
-      </div>
-    );
-  },
-}));
+// The edit form, the confirm and the re-run itself belong to the run page
+// (`useRunEvalActions`, tested on its own); this drawer only asks for them.
 vi.mock("src/api/simulate-environments/runEvals", () => ({
-  useRunNewEvals: vi.fn(),
   runResultsKey: (id) => ["simulation-run-results-v3", id],
   runAnalyticsKey: (id) => ["simulation-run-analytics-v3", id],
   callDetailKeyPrefix: ["simulation-call-detail-v3"],
@@ -79,24 +57,17 @@ const CONFIGS = [
   },
 ];
 
-let runMutate;
 let removeMutate;
 
 beforeEach(() => {
-  editor.props = null;
-  editor.updated = null;
-  enqueueSnackbar.mockReset();
   useEnvironmentRunTest.mockReset();
   useRemoveAppliedEvaluation.mockReset();
-  useRunNewEvals.mockReset();
 
   useEnvironmentRunTest.mockReturnValue({
     data: CONFIGS,
     isPending: false,
     isError: false,
   });
-  runMutate = vi.fn();
-  useRunNewEvals.mockReturnValue({ mutate: runMutate, isPending: false });
   removeMutate = vi.fn();
   useRemoveAppliedEvaluation.mockReturnValue({
     mutate: removeMutate,
@@ -107,6 +78,8 @@ beforeEach(() => {
 const setup = (props = {}) => {
   const onClose = vi.fn();
   const onAddEvaluations = vi.fn();
+  const onRerun = vi.fn();
+  const onEdit = vi.fn();
   const client = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
@@ -123,6 +96,8 @@ const setup = (props = {}) => {
         canRun
         onClose={onClose}
         onAddEvaluations={onAddEvaluations}
+        onRerun={onRerun}
+        onEdit={onEdit}
         {...props}
         {...overrides}
       />
@@ -132,7 +107,15 @@ const setup = (props = {}) => {
   // Re-render the same, still-mounted drawer with some props changed, as
   // the run page does when it opens and closes it.
   const rerenderWith = (overrides) => utils.rerender(tree(overrides));
-  return { ...utils, client, rerenderWith, onClose, onAddEvaluations };
+  return {
+    ...utils,
+    client,
+    rerenderWith,
+    onClose,
+    onAddEvaluations,
+    onRerun,
+    onEdit,
+  };
 };
 
 // The props the run page derives from its execution status.
@@ -160,35 +143,48 @@ describe("AllEvaluationsDrawer", () => {
     });
   });
 
-  it("runs one eval from its row once confirmed", () => {
-    setup();
+  it("asks the run page to run one eval from its row", () => {
+    const { onRerun } = setup();
 
     fireEvent.click(screen.getByRole("button", { name: "Run no_misselling" }));
-    expect(
-      screen.getByText("This will overwrite previous evaluation results."),
-    ).toBeInTheDocument();
-    expect(screen.queryByText(HARNESS_NOTE)).toBeNull();
-
-    fireEvent.click(screen.getByText("Run Evaluations"));
-    expect(runMutate).toHaveBeenCalledWith(
-      { id: "env-1", executionId: "ex1", evalConfigIds: ["c1"] },
-      expect.any(Object),
-    );
-  });
-
-  it("warns that harness scores are replaced when a suite eval is chosen", () => {
-    setup();
+    expect(onRerun).toHaveBeenCalledWith([CONFIGS[0]], {
+      onSuccess: expect.any(Function),
+    });
 
     fireEvent.click(
       screen.getByRole("button", {
         name: "Run customer_agent_task_completion",
       }),
     );
-    expect(screen.getByText(HARNESS_NOTE)).toBeInTheDocument();
+    expect(onRerun).toHaveBeenLastCalledWith([CONFIGS[1]], {
+      onSuccess: expect.any(Function),
+    });
+  });
+
+  it("stays open until the run page says the grading it asked for is queued", () => {
+    const { onClose, onRerun } = setup();
+
+    fireEvent.click(screen.getByRole("button", { name: "Run no_misselling" }));
+    expect(onClose).not.toHaveBeenCalled();
+
+    act(() => onRerun.mock.calls[0][1].onSuccess());
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("holds every run while the run page's re-run is on its way", () => {
+    setup({ rerunPending: true });
+
+    expect(
+      screen.getByRole("button", { name: "Run no_misselling" }),
+    ).toBeDisabled();
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Select no_misselling" }),
+    );
+    expect(screen.getByRole("button", { name: "Run (1)" })).toBeDisabled();
   });
 
   it("runs the ticked evals from the footer and says Run All when every runnable one is ticked", () => {
-    setup();
+    const { onRerun, onClose } = setup();
 
     expect(screen.getByRole("button", { name: "Run (0)" })).toBeDisabled();
 
@@ -199,12 +195,12 @@ describe("AllEvaluationsDrawer", () => {
 
     fireEvent.click(screen.getByRole("checkbox", { name: "Evals (3)" }));
     fireEvent.click(screen.getByRole("button", { name: "Run All (2)" }));
-    fireEvent.click(screen.getByText("Run Evaluations"));
 
-    expect(runMutate).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "env-1", evalConfigIds: ["c1", "c2"] }),
-      expect.any(Object),
-    );
+    expect(onRerun).toHaveBeenCalledWith([CONFIGS[0], CONFIGS[1]], {
+      onSuccess: expect.any(Function),
+    });
+    act(() => onRerun.mock.calls[0][1].onSuccess());
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it("keeps a harness-only eval listed but unrunnable, and says why", async () => {
@@ -386,126 +382,11 @@ describe("AllEvaluationsDrawer", () => {
     ).toBeDisabled();
   });
 
-  it("shows the server's reason when a run is refused and keeps the dialog open", async () => {
-    const refusal =
-      "refund_issued_claim is scored by the harness during the call. Only rerunning the call refreshes it.";
-    runMutate.mockImplementation((_v, o) =>
-      o.onError({ statusCode: 400, message: refusal }),
-    );
-    const { onClose } = setup();
-
-    fireEvent.click(screen.getByRole("button", { name: "Run no_misselling" }));
-    fireEvent.click(screen.getByText("Run Evaluations"));
-
-    expect(enqueueSnackbar).toHaveBeenCalledWith(refusal, { variant: "error" });
-    // Outlast the dialog's exit transition, so a dialog that had closed would
-    // be gone by now rather than still fading out.
-    await act(() => new Promise((resolve) => setTimeout(resolve, 500)));
-    expect(
-      screen.getByText("This will overwrite previous evaluation results."),
-    ).toBeInTheDocument();
-    expect(onClose).not.toHaveBeenCalled();
-  });
-
   it("opens the add flow", () => {
     const { onAddEvaluations } = setup();
 
     fireEvent.click(screen.getByRole("button", { name: "Add Evaluations" }));
     expect(onAddEvaluations).toHaveBeenCalledTimes(1);
-  });
-
-  it("closes and reports once grading is dispatched, but not when the server says it was not", async () => {
-    runMutate.mockImplementation((_v, o) =>
-      o.onSuccess({
-        dispatched: true,
-        message: "New evaluations dispatched successfully.",
-      }),
-    );
-    const { onClose } = setup();
-
-    fireEvent.click(screen.getByRole("button", { name: "Run no_misselling" }));
-    fireEvent.click(screen.getByText("Run Evaluations"));
-
-    expect(onClose).toHaveBeenCalledTimes(1);
-    expect(enqueueSnackbar).toHaveBeenCalledWith(expect.any(String), {
-      variant: "success",
-    });
-
-    // Worded so that nothing but the flag can tell it apart from success.
-    runMutate.mockImplementation((_v, o) =>
-      o.onSuccess({
-        dispatched: false,
-        message: "Grading could not be started. The previous scores are back.",
-      }),
-    );
-    // The confirm dialog hides the drawer from assistive tech until its exit
-    // transition ends, so wait for the row's button to be reachable again.
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Run no_misselling" }),
-    );
-    fireEvent.click(screen.getByText("Run Evaluations"));
-
-    expect(enqueueSnackbar).toHaveBeenCalledWith(
-      "Grading may not have started. Try again.",
-      { variant: "warning" },
-    );
-    expect(enqueueSnackbar).toHaveBeenCalledTimes(2);
-    expect(onClose).toHaveBeenCalledTimes(1);
-  });
-
-  it("treats a response without the flag as dispatched", () => {
-    runMutate.mockImplementation((_v, o) =>
-      o.onSuccess({ message: "New evaluations dispatched successfully." }),
-    );
-    const { onClose } = setup();
-
-    fireEvent.click(screen.getByRole("button", { name: "Run no_misselling" }));
-    fireEvent.click(screen.getByText("Run Evaluations"));
-
-    expect(onClose).toHaveBeenCalledTimes(1);
-    expect(enqueueSnackbar).toHaveBeenCalledWith(expect.any(String), {
-      variant: "success",
-    });
-  });
-
-  it("closes and reports once grading is queued", () => {
-    runMutate.mockImplementation((_v, o) =>
-      o.onSuccess({ call_execution_count: 4 }),
-    );
-    const { onClose } = setup();
-
-    fireEvent.click(screen.getByRole("button", { name: "Run no_misselling" }));
-    fireEvent.click(screen.getByText("Run Evaluations"));
-
-    expect(onClose).toHaveBeenCalledTimes(1);
-    expect(enqueueSnackbar).toHaveBeenCalledWith(
-      "Grading 1 evaluation. This run updates when grading finishes.",
-      { variant: "success" },
-    );
-  });
-
-  it("shows the server's sentence and stays open when grading couldn't be queued", async () => {
-    const sentence = "Grading couldn't be started. Try again.";
-    runMutate.mockImplementation((_v, o) =>
-      o.onError({ statusCode: 503, detail: sentence }),
-    );
-    const { onClose } = setup();
-
-    fireEvent.click(screen.getByRole("button", { name: "Run no_misselling" }));
-    fireEvent.click(screen.getByText("Run Evaluations"));
-
-    expect(enqueueSnackbar).toHaveBeenCalledWith(sentence, {
-      variant: "error",
-    });
-    expect(enqueueSnackbar).not.toHaveBeenCalledWith(expect.any(String), {
-      variant: "success",
-    });
-    // Outlast the dialog's exit transition, as the refusal test above does.
-    await act(() => new Promise((resolve) => setTimeout(resolve, 500)));
-    expect(
-      screen.getByText("This will overwrite previous evaluation results."),
-    ).toBeInTheDocument();
-    expect(onClose).not.toHaveBeenCalled();
   });
 });
 
@@ -572,90 +453,25 @@ describe("AllEvaluationsDrawer — editing an eval", () => {
     ).toBeInTheDocument();
   });
 
-  it("opens the edit form for that eval and keeps this drawer open", () => {
-    setup();
+  it("asks the run page to edit that eval, and stays open until its re-run is queued", () => {
+    const { onEdit, onClose } = setup();
 
-    expect(screen.queryByTestId("edit-drawer")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Edit no_misselling" }));
-
-    expect(screen.getByText("edit-drawer:c1")).toBeInTheDocument();
-    expect(editor.props.env).toEqual({ id: "env-1" });
+    expect(onEdit).toHaveBeenCalledWith(CONFIGS[0], {
+      onSuccess: expect.any(Function),
+    });
+    expect(onClose).not.toHaveBeenCalled();
     expect(screen.getByText("All Evaluations")).toBeInTheDocument();
+
+    act(() => onEdit.mock.calls[0][1].onSuccess());
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("holds every edit while the run page's edit form is open", () => {
+    setup({ editOpen: true });
+
     expect(
       screen.getByRole("button", { name: "Edit no_misselling" }),
     ).toBeDisabled();
-  });
-
-  it("forgets an open edit once the drawer itself is closed", () => {
-    const { rerenderWith } = setup();
-
-    fireEvent.click(screen.getByRole("button", { name: "Edit no_misselling" }));
-    expect(screen.getByTestId("edit-drawer")).toBeInTheDocument();
-    act(() => rerenderWith({ open: false }));
-    act(() => rerenderWith({ open: true }));
-
-    expect(screen.queryByTestId("edit-drawer")).toBeNull();
-    expect(
-      screen.getByRole("button", { name: "Edit no_misselling" }),
-    ).toBeEnabled();
-  });
-
-  it("opens no confirm when the save hands back no eval", () => {
-    editor.updated = undefined;
-    setup();
-
-    fireEvent.click(screen.getByRole("button", { name: "Edit no_misselling" }));
-    fireEvent.click(screen.getByText("save edit"));
-
-    expect(screen.queryByTestId("edit-drawer")).toBeNull();
-    expect(
-      screen.queryByText("This will overwrite previous evaluation results."),
-    ).toBeNull();
-  });
-
-  it("grades nothing when the edit form is closed without saving", () => {
-    setup();
-
-    fireEvent.click(screen.getByRole("button", { name: "Edit no_misselling" }));
-    fireEvent.click(screen.getByText("close edit"));
-
-    expect(screen.queryByTestId("edit-drawer")).toBeNull();
-    expect(
-      screen.queryByText("This will overwrite previous evaluation results."),
-    ).toBeNull();
-    expect(runMutate).not.toHaveBeenCalled();
-  });
-
-  it("offers to grade the edited eval again once it is saved", () => {
-    editor.updated = {
-      ...CONFIGS[0],
-      mapping: { conversation: "call.transcript" },
-    };
-    setup();
-
-    fireEvent.click(screen.getByRole("button", { name: "Edit no_misselling" }));
-    fireEvent.click(screen.getByText("save edit"));
-
-    expect(screen.queryByTestId("edit-drawer")).toBeNull();
-    expect(
-      screen.getByText("This will overwrite previous evaluation results."),
-    ).toBeInTheDocument();
-    expect(screen.queryByText(HARNESS_NOTE)).toBeNull();
-
-    fireEvent.click(screen.getByText("Run Evaluations"));
-    expect(runMutate).toHaveBeenCalledWith(
-      expect.objectContaining({ evalConfigIds: ["c1"] }),
-      expect.any(Object),
-    );
-  });
-
-  it("warns that harness scores are replaced when the saved eval has no mapping of its own", () => {
-    editor.updated = { ...CONFIGS[0], mapping: {} };
-    setup();
-
-    fireEvent.click(screen.getByRole("button", { name: "Edit no_misselling" }));
-    fireEvent.click(screen.getByText("save edit"));
-
-    expect(screen.getByText(HARNESS_NOTE)).toBeInTheDocument();
   });
 });

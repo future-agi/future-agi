@@ -10,11 +10,17 @@ vi.mock("src/api/simulate-environments/runDetail", () => ({
 }));
 
 // The eval column menu owns its own data; here it only has to receive the
-// right column and run.
+// right column, and the run page's actions as they were handed in.
 vi.mock("../../EvalColumnActions", () => ({
-  default: ({ menuFor, executionId, runTestId }) => (
+  default: ({ menuFor, runTestId, rerunPending, onRerun, onEdit }) => (
     <div data-testid="eval-actions">
-      {`eval-actions:${menuFor?.evalId ?? "-"}:${executionId}:${runTestId}`}
+      {`eval-actions:${menuFor?.evalId ?? "-"}:${runTestId}:${rerunPending}`}
+      <button type="button" onClick={() => onRerun([{ id: "eval-1" }])}>
+        menu re-run
+      </button>
+      <button type="button" onClick={() => onEdit({ id: "eval-1" })}>
+        menu edit
+      </button>
     </div>
   ),
 }));
@@ -1346,21 +1352,32 @@ describe("RunTraceTable", () => {
     expect(screen.queryByTestId("eval-actions")).toBeNull();
   });
 
-  it("opens the eval column's menu for that column and this run", async () => {
+  it("opens the eval column's menu for that column, with the run page's actions", async () => {
     const user = userEvent.setup();
+    const onRerun = vi.fn();
+    const onEdit = vi.fn();
     renderTable({
       evalActions: {
-        env: { id: "env-1" },
         runTestId: "rt1",
         canRun: true,
         grading: false,
+        rerunPending: true,
+        onRerun,
+        onEdit,
       },
     });
-    expect(screen.getByText("eval-actions:-:ex1:rt1")).toBeInTheDocument();
+    expect(screen.getByText("eval-actions:-:rt1:true")).toBeInTheDocument();
 
     const button = screen.getByRole("button", { name: "Actions for Tone" });
     expect(button.closest("th")).toHaveTextContent("Tone");
     await user.click(button);
-    expect(screen.getByText("eval-actions:eval-1:ex1:rt1")).toBeInTheDocument();
+    expect(
+      screen.getByText("eval-actions:eval-1:rt1:true"),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "menu re-run" }));
+    expect(onRerun).toHaveBeenCalledWith([{ id: "eval-1" }]);
+    await user.click(screen.getByRole("button", { name: "menu edit" }));
+    expect(onEdit).toHaveBeenCalledWith({ id: "eval-1" });
   });
 });

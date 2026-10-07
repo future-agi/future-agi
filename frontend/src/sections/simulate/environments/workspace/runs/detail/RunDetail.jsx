@@ -28,6 +28,8 @@ import AddEvalsDrawer from "../../evals/AddEvalsDrawer";
 import RunTraceTable from "./trace/RunTraceTable";
 import CallDrawer from "./CallDrawer";
 import AllEvaluationsDrawer from "./AllEvaluationsDrawer";
+import RunEvalDialogs from "./RunEvalDialogs";
+import { useRunEvalActions } from "./useRunEvalActions";
 import FixMyAgentDrawer from "./fixmyagent/FixMyAgentDrawer";
 import OptimizationRunsList from "./fixmyagent/OptimizationRunsList";
 import LaunchOptimizationDrawer from "./fixmyagent/LaunchOptimizationDrawer";
@@ -89,6 +91,10 @@ export default function RunDetail({
     live: identity?.status === "running",
     onStep: showCall,
   });
+  // The All Evaluations drawer and the table's eval column menus share one
+  // edit form, one confirm and one re-run request, so a re-run sent from
+  // either holds both.
+  const evalRun = useRunEvalActions({ envId: env?.id, executionId });
 
   // The past self-improvement (optimization) runs for this execution — REAL,
   // scoped by test_execution_id. The Trials tab only appears once at least one
@@ -359,10 +365,12 @@ export default function RunDetail({
               evalActions={
                 backed
                   ? {
-                      env,
                       runTestId: testId,
                       canRun: executionStatus === "completed",
                       grading: executionStatus === "evaluating",
+                      rerunPending: evalRun.isPending,
+                      onRerun: evalRun.requestRerun,
+                      onEdit: evalRun.requestEdit,
                     }
                   : null
               }
@@ -423,9 +431,14 @@ export default function RunDetail({
           executionId={executionId}
           canRun={executionStatus === "completed"}
           grading={executionStatus === "evaluating"}
+          rerunPending={evalRun.isPending}
+          editOpen={evalRun.editOpen}
+          onRerun={evalRun.requestRerun}
+          onEdit={evalRun.requestEdit}
           onAddEvaluations={() => setAddingEvals(true)}
         />
       )}
+      {backed && <RunEvalDialogs env={env} {...evalRun.dialogProps} />}
 
       {/* The same picker the Evaluations tab opens. Adding from here binds
           the eval to the environment exactly as the tab's add does and then

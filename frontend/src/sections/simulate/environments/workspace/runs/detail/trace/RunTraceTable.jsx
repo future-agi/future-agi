@@ -608,7 +608,6 @@ export default function RunTraceTable({
       {evalActions && (
         <EvalColumnActions
           {...evalActions}
-          executionId={executionId}
           menuFor={evalMenuFor}
           onClose={() => setEvalMenuFor(null)}
         />
@@ -624,10 +623,14 @@ RunTraceTable.propTypes = {
   activeCallId: PropTypes.string,
   activePage: PropTypes.number,
   // Given, each eval column header gets a ⋮ menu to re-run or edit that eval.
+  // The run page answers `onRerun(configs)` and `onEdit(config)` with its one
+  // edit form and confirm dialog; `rerunPending` is that page's re-run.
   evalActions: PropTypes.shape({
-    env: PropTypes.shape({ id: PropTypes.string }),
     runTestId: PropTypes.string,
     canRun: PropTypes.bool,
     grading: PropTypes.bool,
+    rerunPending: PropTypes.bool,
+    onRerun: PropTypes.func,
+    onEdit: PropTypes.func,
   }),
 };
