@@ -25842,6 +25842,11 @@ export const InvestigationClaimApiWorkloadType = {
   simulation_test_execution: "simulation_test_execution",
 } as const;
 
+export interface InvestigationEvidenceWindowApi {
+  start: string;
+  end: string;
+}
+
 export interface InvestigationMemoryEntryApi {
   /**
    * @minLength 1
@@ -25912,6 +25917,7 @@ export interface InvestigationClaimApi {
   lease_token: string;
   lease_expires_at: string;
   read_cutoff: string;
+  evidence_window?: InvestigationEvidenceWindowApi;
   /**
    * @minLength 1
    * @maxLength 20

@@ -143813,6 +143813,25 @@
                 }
             }
         },
+        "InvestigationEvidenceWindow": {
+            "required": [
+                "start",
+                "end"
+            ],
+            "type": "object",
+            "properties": {
+                "start": {
+                    "title": "Start",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "end": {
+                    "title": "End",
+                    "type": "string",
+                    "format": "date-time"
+                }
+            }
+        },
         "InvestigationMemoryEntry": {
             "required": [
                 "id",
@@ -144019,6 +144038,9 @@
                     "title": "Read cutoff",
                     "type": "string",
                     "format": "date-time"
+                },
+                "evidence_window": {
+                    "$ref": "#/definitions/InvestigationEvidenceWindow"
                 },
                 "engine_version": {
                     "title": "Engine version",

@@ -55604,6 +55604,12 @@ export const TracerInternalErrorFeedV2ClaimsCreateResponse = zod.object({
       lease_token: zod.string().min(1),
       lease_expires_at: zod.string().datetime({ offset: true }),
       read_cutoff: zod.string().datetime({ offset: true }),
+      evidence_window: zod
+        .object({
+          start: zod.string().datetime({ offset: true }),
+          end: zod.string().datetime({ offset: true }),
+        })
+        .optional(),
       engine_version: zod
         .string()
         .min(1)

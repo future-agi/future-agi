@@ -85951,6 +85951,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "date-time",
         },
+        evidence_window: {
+          $ref: "#/definitions/InvestigationEvidenceWindow",
+        },
         engine_version: {
           title: "Engine version",
           type: "string",
@@ -104886,6 +104889,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Text",
           type: "string",
           minLength: 1,
+        },
+      },
+    },
+    InvestigationEvidenceWindow: {
+      required: ["start", "end"],
+      type: "object",
+      properties: {
+        start: {
+          title: "Start",
+          type: "string",
+          format: "date-time",
+        },
+        end: {
+          title: "End",
+          type: "string",
+          format: "date-time",
         },
       },
     },

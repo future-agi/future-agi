@@ -86,6 +86,11 @@ class InvestigationLimitsSerializer(serializers.Serializer):
     max_tool_result_bytes = serializers.IntegerField(min_value=1)
 
 
+class InvestigationEvidenceWindowSerializer(serializers.Serializer):
+    start = serializers.DateTimeField()
+    end = serializers.DateTimeField()
+
+
 class InvestigationClaimSerializer(serializers.Serializer):
     organization_id = serializers.UUIDField()
     organization_name = serializers.CharField(required=False)
@@ -103,6 +108,7 @@ class InvestigationClaimSerializer(serializers.Serializer):
     lease_token = serializers.CharField()
     lease_expires_at = serializers.DateTimeField()
     read_cutoff = serializers.DateTimeField()
+    evidence_window = InvestigationEvidenceWindowSerializer(required=False)
     engine_version = serializers.CharField(max_length=20)
     contract_version = serializers.CharField()
     memory = InvestigationMemorySerializer()
