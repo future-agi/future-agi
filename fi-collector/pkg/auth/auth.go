@@ -25,18 +25,34 @@ const (
 
 var (
 	ErrUnauthenticated = errors.New("invalid or missing API key")
+	// ErrKeyExpired wraps ErrUnauthenticated, so callers that only check for
+	// ErrUnauthenticated still refuse the request; callers that check for
+	// ErrKeyExpired first can answer with the distinct "expired" error.
+	ErrKeyExpired = fmt.Errorf("%w: API key has expired", ErrUnauthenticated)
+)
+
+// ExpiredKeyMessage and ExpiredKeyCode match the Django API's
+// api_key_expired error so every surface reports an expired key the same way.
+const (
+	ExpiredKeyMessage = "API key has expired"
+	ExpiredKeyCode    = "api_key_expired"
 )
 
 // Authenticator is the top-level auth facade. Safe for concurrent use.
 type Authenticator struct {
 	cfg      Config
 	pg       *PGResolver
+	keys     keyValidator
 	projects projectResolver
 	cache    *cache
 	rdb      *redis.Client
 	sfKey    singleflight.Group // dedup concurrent key lookups
 	sfProj   singleflight.Group // dedup concurrent project lookups
 	log      *slog.Logger
+}
+
+type keyValidator interface {
+	ValidateKey(context.Context, string, string) (*ResolveResult, error)
 }
 
 type projectResolver interface {
@@ -62,6 +78,7 @@ func New(ctx context.Context, cfg Config, rdb *redis.Client, log *slog.Logger) (
 	return &Authenticator{
 		cfg:      cfg,
 		pg:       pg,
+		keys:     pg,
 		projects: pg,
 		cache:    newCache(cfg.CacheTTL, cfg.WarmTTL),
 		rdb:      rdb,
@@ -119,7 +136,8 @@ func (a *Authenticator) Close() {
 
 // Authenticate validates an API key pair and returns the resolve result.
 // On cache hit, returns immediately. On miss, queries PG (deduplicated
-// by singleflight). Returns ErrUnauthenticated for invalid keys.
+// by singleflight). Returns ErrUnauthenticated for invalid keys and
+// ErrKeyExpired for a key whose expiry has passed.
 func (a *Authenticator) Authenticate(ctx context.Context, apiKey, secretKey string) (*ResolveResult, error) {
 	if a == nil {
 		return nil, nil // auth disabled
@@ -128,6 +146,10 @@ func (a *Authenticator) Authenticate(ctx context.Context, apiKey, secretKey stri
 	ck := CacheKey(apiKey, secretKey)
 
 	entry, status := a.cache.get(ck)
+	if entry != nil && entry.result.Expired(time.Now()) {
+		a.cache.m.Delete(ck)
+		return nil, ErrKeyExpired
+	}
 	switch status {
 	case "fresh":
 		return entry.result, nil
@@ -145,8 +167,12 @@ func (a *Authenticator) Authenticate(ctx context.Context, apiKey, secretKey stri
 	val, err, _ := a.sfKey.Do(ck, func() (any, error) {
 		sfCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()
-		return a.pg.ValidateKey(sfCtx, apiKey, secretKey)
+		return a.keyValidator().ValidateKey(sfCtx, apiKey, secretKey)
 	})
+	if errors.Is(err, ErrKeyExpired) {
+		// Not cached, for the same reason as invalid keys below.
+		return nil, ErrKeyExpired
+	}
 	if err != nil {
 		return nil, fmt.Errorf("auth resolve: %w", err)
 	}
@@ -232,15 +258,22 @@ func (a *Authenticator) refreshKey(ctx context.Context, apiKey, secretKey string
 
 	ck := CacheKey(apiKey, secretKey)
 
-	result, err := a.pg.ValidateKey(ctx, apiKey, secretKey)
-	if err != nil {
+	result, err := a.keyValidator().ValidateKey(ctx, apiKey, secretKey)
+	if err != nil && !errors.Is(err, ErrKeyExpired) {
 		a.log.Debug("background key refresh failed", "err", err)
 		return
 	}
 	if result == nil {
-		// Key was disabled since last cache — evict it
+		// Key was disabled or expired since last cache — evict it
 		a.cache.m.Delete(ck)
 		return
 	}
 	a.cache.putPositive(ck, result)
+}
+
+func (a *Authenticator) keyValidator() keyValidator {
+	if a.keys != nil {
+		return a.keys
+	}
+	return a.pg
 }

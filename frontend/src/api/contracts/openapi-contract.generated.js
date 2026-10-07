@@ -54502,6 +54502,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
           maxLength: 100,
           minLength: 1,
         },
+        expires_at: {
+          title: "Expires at",
+          description:
+            "Optional expiry. Omit or send null for a key that never expires.",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
       },
     },
     CurrentOrganizationResponse: {
@@ -100612,6 +100620,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "masked_api_key",
         "secret_key",
         "masked_secret_key",
+        "expires_at",
       ],
       type: "object",
       properties: {
@@ -100644,6 +100653,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Masked secret key",
           type: "string",
           minLength: 1,
+        },
+        expires_at: {
+          title: "Expires at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
         },
       },
     },
@@ -113102,6 +113117,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "created_at",
         "enabled",
         "type",
+        "expires_at",
+        "is_expired",
       ],
       type: "object",
       properties: {
@@ -113144,6 +113161,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Type",
           type: "string",
           minLength: 1,
+        },
+        expires_at: {
+          title: "Expires at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        is_expired: {
+          title: "Is expired",
+          type: "boolean",
         },
       },
     },

@@ -1,4 +1,4 @@
-import { Box, Chip, Avatar, Typography } from "@mui/material";
+import { Box, Avatar, Typography } from "@mui/material";
 import React, { useCallback, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
@@ -10,6 +10,7 @@ import Image from "src/components/image";
 import CreateApiKey from "./CreateApiKey";
 import ActionMenu from "./ActionMenu";
 import SecretKeyRenderer from "./SecretKeyRenderer";
+import KeyExpiryStatus, { KeyStatusChip } from "./KeyExpiryStatus";
 import stringAvatar from "src/utils/stringAvatar";
 
 export default function DevKeysView() {
@@ -84,20 +85,7 @@ export default function DevKeysView() {
             >
               {getValue()}
             </Typography>
-            {!row.original.enabled && (
-              <Chip
-                label="Disabled"
-                sx={{
-                  ml: 1,
-                  flexShrink: 0,
-                  height: 22,
-                  fontSize: 11,
-                  borderRadius: "4px",
-                  color: "text.primary",
-                  bgcolor: "background.neutral",
-                }}
-              />
-            )}
+            <KeyStatusChip row={row.original} />
           </Box>
         ),
       },
@@ -160,6 +148,13 @@ export default function DevKeysView() {
             </Typography>
           );
         },
+      },
+      {
+        id: "expires_at",
+        accessorKey: "expires_at",
+        header: "Expires",
+        meta: { flex: 1 },
+        cell: ({ row }) => <KeyExpiryStatus row={row.original} />,
       },
       {
         id: "actions",

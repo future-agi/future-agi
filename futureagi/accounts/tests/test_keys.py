@@ -612,6 +612,8 @@ class TestGetSecretKeysRowContent:
             "created_at",
             "enabled",
             "type",
+            "expires_at",
+            "is_expired",
         }
 
 
@@ -870,3 +872,177 @@ class TestGetKeysViewResponse:
         # Should have created a system key
         data = response.json()
         assert data.get("data") is not None
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestSecretKeyExpiry:
+    """Optional ``expires_at`` on key creation, in the list, and at auth time."""
+
+    def _create(self, auth_client, name, **extra):
+        return auth_client.post(
+            "/accounts/key/generate_secret_key/",
+            {"key_name": name, **extra},
+            format="json",
+        )
+
+    def _row(self, auth_client, key_id):
+        response = auth_client.get(SECRET_KEYS_URL)
+        assert response.status_code == status.HTTP_200_OK
+        return next(row for row in _rows(response) if str(row["id"]) == str(key_id))
+
+    def test_create_without_expiry_never_expires(self, auth_client):
+        from accounts.models.user import OrgApiKey
+
+        response = self._create(auth_client, "No Expiry Key")
+
+        assert response.status_code == status.HTTP_200_OK
+        result = response.json()["result"]
+        assert result["expires_at"] is None
+        assert OrgApiKey.objects.get(id=result["key_id"]).expires_at is None
+
+    def test_create_with_null_expiry_never_expires(self, auth_client):
+        response = self._create(auth_client, "Null Expiry Key", expires_at=None)
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["result"]["expires_at"] is None
+
+    def test_create_with_future_expiry_stores_it(self, auth_client):
+        from accounts.models.user import OrgApiKey
+
+        expires_at = (timezone.now() + timedelta(days=30)).replace(microsecond=0)
+
+        response = self._create(
+            auth_client, "Future Expiry Key", expires_at=expires_at.isoformat()
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        result = response.json()["result"]
+        assert result["expires_at"] is not None
+        assert OrgApiKey.objects.get(id=result["key_id"]).expires_at == expires_at
+
+    @pytest.mark.parametrize("offset", [timedelta(days=-1), timedelta(0)])
+    def test_create_rejects_expiry_not_in_future(self, auth_client, offset):
+        from accounts.models.user import OrgApiKey
+
+        expires_at = timezone.now() + offset
+
+        response = self._create(
+            auth_client, "Past Expiry Key", expires_at=expires_at.isoformat()
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "expires_at" in response.json()["details"]
+        assert not OrgApiKey.objects.filter(name="Past Expiry Key").exists()
+
+    def test_create_rejects_unparseable_expiry(self, auth_client):
+        response = self._create(auth_client, "Bad Expiry Key", expires_at="soon")
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "expires_at" in response.json()["details"]
+
+    def test_list_reports_expiry_state(self, auth_client, user, organization):
+        from accounts.models.user import OrgApiKey
+
+        future = timezone.now() + timedelta(days=7)
+        no_expiry = OrgApiKey.objects.create(
+            name="list-no-expiry", organization=organization, type="user", user=user
+        )
+        active = OrgApiKey.objects.create(
+            name="list-active",
+            organization=organization,
+            type="user",
+            user=user,
+            expires_at=future,
+        )
+        expired = OrgApiKey.objects.create(
+            name="list-expired",
+            organization=organization,
+            type="user",
+            user=user,
+            expires_at=timezone.now() - timedelta(days=1),
+        )
+
+        no_expiry_row = self._row(auth_client, no_expiry.id)
+        active_row = self._row(auth_client, active.id)
+        expired_row = self._row(auth_client, expired.id)
+
+        assert no_expiry_row["expires_at"] is None
+        assert no_expiry_row["is_expired"] is False
+        assert active_row["expires_at"] is not None
+        assert active_row["is_expired"] is False
+        assert expired_row["is_expired"] is True
+
+    def test_expired_key_is_rejected_with_distinct_code(
+        self, api_client, user, organization
+    ):
+        from accounts.models.user import OrgApiKey
+
+        key = OrgApiKey.objects.create(
+            name="auth-expired",
+            organization=organization,
+            type="user",
+            user=user,
+            expires_at=timezone.now() - timedelta(minutes=1),
+        )
+
+        response = api_client.get(
+            SECRET_KEYS_URL,
+            HTTP_X_API_KEY=key.api_key,
+            HTTP_X_SECRET_KEY=key.secret_key,
+        )
+
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        body = response.json()
+        assert body["code"] == "api_key_expired"
+        assert body["detail"] == "API key has expired"
+        key.refresh_from_db()
+        assert key.enabled is False
+
+        retry = api_client.get(
+            SECRET_KEYS_URL,
+            HTTP_X_API_KEY=key.api_key,
+            HTTP_X_SECRET_KEY=key.secret_key,
+        )
+        assert retry.status_code == status.HTTP_401_UNAUTHORIZED
+        assert retry.json()["code"] == "api_key_expired"
+
+    def test_enable_key_refuses_an_expired_key(self, auth_client, user, organization):
+        from accounts.models.user import OrgApiKey
+
+        key = OrgApiKey.objects.create(
+            name="enable-expired",
+            organization=organization,
+            type="user",
+            user=user,
+            enabled=False,
+            expires_at=timezone.now() - timedelta(days=1),
+        )
+
+        response = auth_client.post(
+            "/accounts/key/enable_key/", {"key_id": str(key.id)}, format="json"
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "expired" in response.json()["detail"]
+        key.refresh_from_db()
+        assert key.enabled is False
+
+    def test_unexpired_key_authenticates(self, api_client, user, organization):
+        from accounts.models.user import OrgApiKey
+
+        key = OrgApiKey.objects.create(
+            name="auth-not-expired",
+            organization=organization,
+            type="user",
+            user=user,
+            expires_at=timezone.now() + timedelta(days=1),
+        )
+
+        response = api_client.get(
+            SECRET_KEYS_URL,
+            HTTP_X_API_KEY=key.api_key,
+            HTTP_X_SECRET_KEY=key.secret_key,
+        )
+
+        assert response.status_code == status.HTTP_200_OK

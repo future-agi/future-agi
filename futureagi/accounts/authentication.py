@@ -35,10 +35,12 @@ from accounts.services.workspace_membership import create_workspace_membership
 from tfc.constants.roles import OrganizationRoles
 from tfc.ee_gating import is_oss
 from tfc.utils.api_errors import (
+    ApiErrorCode,
     build_error_envelope,
     error_details,
     exception_code,
 )
+from tfc.utils.error_codes import get_error_message
 
 logger = structlog.get_logger(__name__)
 
@@ -144,6 +146,25 @@ class APIKeyAuthentication(BaseAuthentication):
                 organization_id=str(user.organization.id)
             )
 
+    def _reject_if_expired(self, org_api_key):
+        """Raise and disable ``org_api_key`` if its expiry has passed.
+
+        ``expires_at=None`` means the key never expires (backward compatible
+        default for existing keys). Disabling on expiry gives admins
+        visibility in the keys list without needing a separate status field.
+        The key is only written while it is still enabled, so retries against
+        an expired key do not each cost an UPDATE. The ``api_key_expired``
+        code lets clients tell this apart from a wrong or disabled key.
+        """
+        if org_api_key.is_expired:
+            if org_api_key.enabled:
+                org_api_key.enabled = False
+                org_api_key.save(update_fields=["enabled"])
+            raise AuthenticationFailed(
+                get_error_message("API_KEY_EXPIRED"),
+                code=ApiErrorCode.API_KEY_EXPIRED,
+            )
+
     def authenticate(self, request):
         # Check for JWT token first
         auth_token = (
@@ -188,9 +209,10 @@ class APIKeyAuthentication(BaseAuthentication):
             ).get(
                 api_key=api_key,
                 secret_key=secret_key,
-                enabled=True,
                 deleted=False,
             )
+
+            self._reject_if_expired(org_api_key)
 
             # Validate that the API key has a valid organization
             if not org_api_key.organization:
@@ -607,14 +629,18 @@ class LangfuseBasicAuthentication(APIKeyAuthentication):
             ).get(
                 api_key=public_key,
                 secret_key=secret_key,
-                enabled=True,
                 deleted=False,
             )
         except OrgApiKey.DoesNotExist as e:
             raise AuthenticationFailed("Invalid API key or secret key") from e
 
+        self._reject_if_expired(org_api_key)
+
         if not org_api_key.organization:
             raise AuthenticationFailed("API key has no organization")
+
+        if not org_api_key.enabled:
+            raise AuthenticationFailed("API key is disabled")
 
         # Resolve user (same logic as parent class)
         if org_api_key.type == "system":

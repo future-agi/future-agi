@@ -6,6 +6,7 @@ from django.contrib.auth.models import (
     PermissionsMixin,
 )
 from django.db import models
+from django.utils import timezone
 
 from accounts.models.organization import Organization
 from accounts.models.organization_membership import OrganizationMembership
@@ -314,6 +315,11 @@ class OrgApiKey(BaseModel):
         choices=[("system", "System"), ("user", "User"), ("mcp", "MCP")],
     )
     enabled = models.BooleanField(default=True)
+    expires_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Optional expiry timestamp. Null means the key never expires.",
+    )
     user = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
@@ -343,6 +349,11 @@ class OrgApiKey(BaseModel):
         if self.organization.display_name:
             return f"{self.organization.display_name} API Key"
         return f"{self.organization.name} API Key"
+
+    @property
+    def is_expired(self):
+        """True once ``expires_at`` has passed; keys without one never expire."""
+        return self.expires_at is not None and self.expires_at <= timezone.now()
 
     def save(self, *args, **kwargs):
         if not self.api_key:

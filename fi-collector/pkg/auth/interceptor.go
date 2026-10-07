@@ -55,6 +55,10 @@ func (a *Authenticator) GRPCInterceptor() grpc.UnaryServerInterceptor {
 
 		result, err := a.Authenticate(ctx, apiKey, secretKey)
 		if err != nil {
+			if errors.Is(err, ErrKeyExpired) {
+				a.log.Warn("grpc auth failed", "err", err)
+				return nil, status.Error(codes.Unauthenticated, ExpiredKeyMessage)
+			}
 			if errors.Is(err, ErrUnauthenticated) {
 				a.log.Warn("grpc auth failed", "err", err)
 				return nil, status.Error(codes.Unauthenticated, "authentication failed")

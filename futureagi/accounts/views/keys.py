@@ -107,6 +107,8 @@ class SecretKeyAPIViewSet(ViewSet):
         "created_by": "user__name",
         "enabled": "enabled",
         "type": "type",
+        "expiresAt": "expires_at",
+        "expires_at": "expires_at",
     }
 
     @swagger_auto_schema(
@@ -176,6 +178,8 @@ class SecretKeyAPIViewSet(ViewSet):
                     "created_at": key.created_at,
                     "enabled": key.enabled,
                     "type": key.type,
+                    "expires_at": key.expires_at,
+                    "is_expired": key.is_expired,
                 }
                 for key in paginated_keys
             ]
@@ -218,6 +222,11 @@ class SecretKeyAPIViewSet(ViewSet):
                 )
                 if apikey.enabled:
                     return self._gm.bad_request(get_error_message("API_KEY_ENABLED"))
+                if apikey.is_expired:
+                    # Auth would disable it again on its next use.
+                    return self._gm.bad_request(
+                        get_error_message("API_KEY_EXPIRED_CANNOT_ENABLE")
+                    )
                 apikey.enabled = True
                 apikey.save(update_fields=["enabled"])
 
@@ -288,6 +297,7 @@ class SecretKeyAPIViewSet(ViewSet):
                 or request.user.organization,
                 type="user",
                 user=request.user,
+                expires_at=request.validated_data.get("expires_at"),
             )
             response = {
                 "key_id": org_key.id,
@@ -296,6 +306,7 @@ class SecretKeyAPIViewSet(ViewSet):
                 "masked_api_key": mask_key(org_key.api_key),
                 "secret_key": org_key.secret_key,
                 "masked_secret_key": mask_key(org_key.secret_key),
+                "expires_at": org_key.expires_at,
             }
             return self._gm.success_response(response)
         except Exception:

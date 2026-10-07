@@ -22,7 +22,7 @@ pytestmark = [pytest.mark.e2e, pytest.mark.django_db(transaction=True)]
 @pytest.fixture
 def protocol_client(user, workspace, monkeypatch):
     @asynccontextmanager
-    async def connect(key_workspace=None):
+    async def connect(key_workspace=None, expires_at=None):
         credentials = await sync_to_async(OrgApiKey.objects.create)(
             name="MCP transport test",
             api_key=f"mcp-transport-{uuid4().hex}",
@@ -31,6 +31,7 @@ def protocol_client(user, workspace, monkeypatch):
             workspace=key_workspace or workspace,
             user=user,
             type="mcp",
+            expires_at=expires_at,
         )
         monkeypatch.setattr(mcp_app, "_streamable_app", None)
         monkeypatch.setattr(mcp_app, "_session_manager", None)
@@ -99,7 +100,7 @@ def oauth_protocol_client(user, workspace, monkeypatch):
     return connect
 
 
-async def _post_initialize(authorization):
+async def _post_initialize(authorization, extra_headers=None):
     """POST an initialize request with a raw header, bypassing the MCP client.
 
     An unauthenticated request never reaches the MCP app, so the SDK client
@@ -109,6 +110,7 @@ async def _post_initialize(authorization):
     headers = {
         "Content-Type": "application/json",
         "Accept": "application/json, text/event-stream",
+        **(extra_headers or {}),
     }
     if authorization is not None:
         headers["Authorization"] = authorization
@@ -178,6 +180,84 @@ async def test_streamable_http_requires_credentials():
 
     assert response.status_code == 401
     assert response.json()["error_description"] == "Authentication required"
+
+
+@pytest.mark.parametrize(
+    "enabled",
+    [True, False],
+    ids=["still-enabled", "disabled-by-rest-auth"],
+)
+async def test_streamable_http_rejects_an_expired_api_key(user, workspace, enabled):
+    """An expired key gets the distinct api_key_expired error, not a generic
+    one, including after REST auth has auto-disabled it."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    credentials = await sync_to_async(OrgApiKey.objects.create)(
+        name="MCP expired key",
+        api_key=f"mcp-expired-{uuid4().hex}",
+        secret_key=uuid4().hex,
+        organization=user.organization,
+        workspace=workspace,
+        user=user,
+        type="mcp",
+        enabled=enabled,
+        expires_at=timezone.now() - timedelta(minutes=1),
+    )
+
+    response = await _post_initialize(
+        None,
+        extra_headers={
+            "X-Api-Key": credentials.api_key,
+            "X-Secret-Key": credentials.secret_key,
+        },
+    )
+
+    assert response.status_code == 401
+    assert "oauth-protected-resource" in response.headers["WWW-Authenticate"]
+    body = response.json()
+    assert body["error"] == "invalid_token"
+    assert body["code"] == "api_key_expired"
+    assert body["error_description"] == "API key has expired"
+
+
+async def test_streamable_http_still_rejects_a_disabled_api_key(user, workspace):
+    credentials = await sync_to_async(OrgApiKey.objects.create)(
+        name="MCP disabled key",
+        api_key=f"mcp-disabled-{uuid4().hex}",
+        secret_key=uuid4().hex,
+        organization=user.organization,
+        workspace=workspace,
+        user=user,
+        type="mcp",
+        enabled=False,
+    )
+
+    response = await _post_initialize(
+        None,
+        extra_headers={
+            "X-Api-Key": credentials.api_key,
+            "X-Secret-Key": credentials.secret_key,
+        },
+    )
+
+    assert response.status_code == 401
+    assert response.json()["error_description"] == "Invalid credentials"
+
+
+async def test_streamable_http_accepts_an_api_key_before_its_expiry(
+    protocol_client, user, workspace
+):
+    """A key with a future expiry authenticates exactly like one without."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    async with protocol_client(expires_at=timezone.now() + timedelta(days=1)) as client:
+        result = await client.call_tool("whoami", {})
+
+    assert result.isError is False
 
 
 async def test_bearer_transport_fails_closed_when_org_access_is_revoked(

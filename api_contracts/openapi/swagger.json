@@ -81197,6 +81197,13 @@
                     "type": "string",
                     "maxLength": 100,
                     "minLength": 1
+                },
+                "expires_at": {
+                    "title": "Expires at",
+                    "description": "Optional expiry. Omit or send null for a key that never expires.",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
                 }
             }
         },
@@ -81207,7 +81214,8 @@
                 "api_key",
                 "masked_api_key",
                 "secret_key",
-                "masked_secret_key"
+                "masked_secret_key",
+                "expires_at"
             ],
             "type": "object",
             "properties": {
@@ -81240,6 +81248,12 @@
                     "title": "Masked secret key",
                     "type": "string",
                     "minLength": 1
+                },
+                "expires_at": {
+                    "title": "Expires at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
                 }
             }
         },
@@ -81295,7 +81309,9 @@
                 "created_by",
                 "created_at",
                 "enabled",
-                "type"
+                "type",
+                "expires_at",
+                "is_expired"
             ],
             "type": "object",
             "properties": {
@@ -81338,6 +81354,16 @@
                     "title": "Type",
                     "type": "string",
                     "minLength": 1
+                },
+                "expires_at": {
+                    "title": "Expires at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "is_expired": {
+                    "title": "Is expired",
+                    "type": "boolean"
                 }
             }
         },
