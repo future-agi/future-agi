@@ -173,6 +173,7 @@ function normalizeGeneratedQueryParamSerialization() {
 }
 
 async function runGeneration(schemaPath) {
+  const generatedSchema = JSON.parse(fs.readFileSync(schemaPath, "utf8"));
   fs.rmSync(outputDir, { recursive: true, force: true });
   fs.mkdirSync(outputDir, { recursive: true });
 
@@ -317,7 +318,10 @@ async function runGeneration(schemaPath) {
 
   const interruptionNullableFields = {
     RunCallApi: ["avg_stop_time_after_interruption", "ai_interruption_count"],
-    GroupAggregatesApi: ["avg_stop_time_after_interruption", "ai_interruptions"],
+    GroupAggregatesApi: [
+      "avg_stop_time_after_interruption",
+      "ai_interruptions",
+    ],
   };
   const voiceCallDetailNullableFields = [
     "provider_call_id",
@@ -368,7 +372,9 @@ async function runGeneration(schemaPath) {
   if (fs.existsSync(schemasOutputPath)) {
     let schemas = fs.readFileSync(schemasOutputPath, "utf8");
 
-    for (const [typeName, fields] of Object.entries(interruptionNullableFields)) {
+    for (const [typeName, fields] of Object.entries(
+      interruptionNullableFields,
+    )) {
       for (const field of fields) {
         schemas = assertReplaceInNamedBlock(
           schemas,
@@ -400,7 +406,18 @@ async function runGeneration(schemaPath) {
       "x-string-or-object TS aliases → string | object",
     );
 
-    // Orval ignores x-json-value and narrows arbitrary JSON to object-only.
+    // Structured enterprise-gate errors are a deliberate string | typed-object
+    // union. Orval emits the typed object correctly from required properties, but
+    // it cannot see x-string-or-object; rewrite only this named alias so the
+    // generated client preserves both legacy strings and the validated object.
+    schemas = assertReplaceRegex(
+      schemas,
+      /\/\*\*\n \* String error message, or the structured capability denial\.\n \*\/\nexport type EnterpriseGateErrorResponseApiError = \{([\s\S]*?)\n\};/,
+      "/**\n * String error message, or the structured capability denial.\n */\nexport type EnterpriseGateErrorResponseApiError = string | { $1\n};",
+      "EnterpriseGateErrorResponseApiError TS string | typed object",
+    );
+
+    // x-json-value: Orval ignores custom extensions and narrows arbitrary JSON to object-only.
     // Define one recursive JSON type, then use it for every field carrying the
     // extension (including dynamic trace/span list row cells).
     schemas = assertReplace(
@@ -685,7 +702,9 @@ export type ${jsonAlias} = JsonValueApi;`,
   if (fs.existsSync(zodOutputPath)) {
     let zod = fs.readFileSync(zodOutputPath, "utf8");
 
-    for (const field of new Set(Object.values(interruptionNullableFields).flat())) {
+    for (const field of new Set(
+      Object.values(interruptionNullableFields).flat(),
+    )) {
       zod = assertReplaceInNamedBlock(
         zod,
         "export const SimulateV3TestExecutionCallsResponse =",
@@ -1272,6 +1291,36 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
         ` = ${getName};\n\n`,
         postName,
       );
+    }
+    const enterpriseGateError =
+      generatedSchema.definitions?.EnterpriseGateErrorResponse?.properties
+        ?.error;
+    if (
+      enterpriseGateError &&
+      !zod.includes("export const EnterpriseGateErrorResponseApiError =")
+    ) {
+      const features =
+        enterpriseGateError.properties?.detail?.properties?.feature?.enum || [];
+      zod += `
+
+/**
+ * String error message, or the structured capability denial.
+ * The management OpenAPI schema omits error responses from Orval's Zod output,
+ * so this named contract is emitted from the same schema as api.ts.
+ */
+export const EnterpriseGateErrorResponseApiErrorDetail = zod.object({
+  feature: zod.enum(${JSON.stringify(features)}),
+});
+
+export const EnterpriseGateErrorResponseApiError = zod.union([
+  zod.string(),
+  zod.object({
+    code: zod.string(),
+    message: zod.string(),
+    detail: EnterpriseGateErrorResponseApiErrorDetail,
+  }),
+]);
+`;
     }
     fs.writeFileSync(zodOutputPath, zod);
   }

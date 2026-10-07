@@ -46,9 +46,7 @@ describe("EnterpriseGateDialog (TH-8084 AC-08, AC-20)", () => {
       screen.getByText("Add more members with Enterprise"),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(
-        "Community includes up to 3 organization members. More members are an Enterprise feature.",
-      ),
+      screen.getByRole("dialog", { name: "Add more members with Enterprise" }),
     ).toBeInTheDocument();
     const text = document.body.textContent.toLowerCase();
     for (const banned of [

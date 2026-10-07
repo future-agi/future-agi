@@ -10,6 +10,7 @@ from accounts.models.organization import Organization
 from accounts.models.user import User
 from accounts.serializers.contracts import (
     ACCOUNTS_ERROR_RESPONSES,
+    ACCOUNTS_GATED_CREATE_ERROR_RESPONSES,
     AccountsPaginatedUserResponseSerializer,
     AccountsTokenPairResponseSerializer,
     AppsmithPasswordUpdateResponseSerializer,
@@ -65,7 +66,7 @@ class UserApiView(APIView):
         request_serializer=UserCreateSerializer,
         responses={
             201: AppsmithUserCreateResponseSerializer,
-            **ACCOUNTS_ERROR_RESPONSES,
+            **ACCOUNTS_GATED_CREATE_ERROR_RESPONSES,
         },
         reject_unknown_fields=True,
     )

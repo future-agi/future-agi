@@ -16,6 +16,7 @@ from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.workspace import Workspace, WorkspaceMembership
 from accounts.serializers.contracts import (
     ACCOUNTS_ERROR_RESPONSES,
+    ACCOUNTS_GATED_CREATE_ERROR_RESPONSES,
     WorkspaceCreateRequestSerializer,
     WorkspaceCreateResponseSerializer,
     WorkspaceDeleteResponseSerializer,
@@ -122,7 +123,10 @@ class WorkspaceManagementView(APIView):
 
     @validated_request(
         request_serializer=WorkspaceCreateRequestSerializer,
-        responses={201: WorkspaceCreateResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={
+            201: WorkspaceCreateResponseSerializer,
+            **ACCOUNTS_GATED_CREATE_ERROR_RESPONSES,
+        },
         reject_unknown_fields=True,
     )
     @transaction.atomic
@@ -664,7 +668,7 @@ class WorkspaceMembershipView(APIView):
         request_serializer=WorkspaceMembersRequestSerializer,
         responses={
             201: WorkspaceMembersAddResponseSerializer,
-            **ACCOUNTS_ERROR_RESPONSES,
+            **ACCOUNTS_GATED_CREATE_ERROR_RESPONSES,
         },
         reject_unknown_fields=True,
     )

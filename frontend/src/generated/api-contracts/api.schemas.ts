@@ -274,6 +274,118 @@ export interface AcceptInvitationRequestApi {
   repeat_password: string;
 }
 
+export type EnterpriseGateErrorResponseApiType =
+  (typeof EnterpriseGateErrorResponseApiType)[keyof typeof EnterpriseGateErrorResponseApiType];
+
+export const EnterpriseGateErrorResponseApiType = {
+  validation_error: "validation_error",
+  authentication_error: "authentication_error",
+  payment_required: "payment_required",
+  entitlement_error: "entitlement_error",
+  permission_error: "permission_error",
+  not_found: "not_found",
+  conflict: "conflict",
+  client_error: "client_error",
+  rate_limit: "rate_limit",
+  server_error: "server_error",
+  service_unavailable: "service_unavailable",
+  timeout: "timeout",
+  api_error: "api_error",
+} as const;
+
+export type EnterpriseGateErrorResponseApiErrorDetailFeature =
+  (typeof EnterpriseGateErrorResponseApiErrorDetailFeature)[keyof typeof EnterpriseGateErrorResponseApiErrorDetailFeature];
+
+export const EnterpriseGateErrorResponseApiErrorDetailFeature = {
+  organizations: "organizations",
+  workspaces: "workspaces",
+  members: "members",
+  error_feed: "error_feed",
+  falcon_ai: "falcon_ai",
+  protect: "protect",
+  turing_models: "turing_models",
+} as const;
+
+export type EnterpriseGateErrorResponseApiErrorDetail = {
+  feature: EnterpriseGateErrorResponseApiErrorDetailFeature;
+};
+
+/**
+ * String error message, or the structured capability denial.
+ */
+export type EnterpriseGateErrorResponseApiError =
+  | string
+  | {
+      code: string;
+      message: string;
+      detail: EnterpriseGateErrorResponseApiErrorDetail;
+    };
+
+export type EnterpriseGateErrorResponseApiDetails = { [key: string]: string[] };
+
+export type EnterpriseGateApiFeature =
+  (typeof EnterpriseGateApiFeature)[keyof typeof EnterpriseGateApiFeature];
+
+export const EnterpriseGateApiFeature = {
+  organizations: "organizations",
+  workspaces: "workspaces",
+  members: "members",
+  error_feed: "error_feed",
+  falcon_ai: "falcon_ai",
+  protect: "protect",
+  turing_models: "turing_models",
+} as const;
+
+export type EnterpriseGateApiEdition =
+  (typeof EnterpriseGateApiEdition)[keyof typeof EnterpriseGateApiEdition];
+
+export const EnterpriseGateApiEdition = {
+  community: "community",
+  enterprise: "enterprise",
+} as const;
+
+export type EnterpriseGateApiLicenseState =
+  (typeof EnterpriseGateApiLicenseState)[keyof typeof EnterpriseGateApiLicenseState];
+
+export const EnterpriseGateApiLicenseState = {
+  not_applicable: "not_applicable",
+  missing: "missing",
+  invalid: "invalid",
+  active: "active",
+  grace: "grace",
+  expired: "expired",
+  trial_active: "trial_active",
+  trial_expired: "trial_expired",
+} as const;
+
+export interface EnterpriseGateApi {
+  feature: EnterpriseGateApiFeature;
+  edition: EnterpriseGateApiEdition;
+  limit: number;
+  current: number;
+  requested: number;
+  license_state: EnterpriseGateApiLicenseState;
+  /** @minLength 1 */
+  contact: string;
+  /** @minLength 1 */
+  activation_route: string;
+}
+
+export interface EnterpriseGateErrorResponseApi {
+  status?: boolean;
+  type?: EnterpriseGateErrorResponseApiType;
+  code?: string;
+  detail?: string;
+  result?: string;
+  message?: string;
+  /** String error message, or the structured capability denial. */
+  error?: EnterpriseGateErrorResponseApiError;
+  attr?: string;
+  details?: EnterpriseGateErrorResponseApiDetails;
+  upgrade_required?: boolean;
+  enterprise_gate?: EnterpriseGateApi;
+}
+
 export interface AccountOrganizationDetailApi {
   id: string;
   created_at?: string;

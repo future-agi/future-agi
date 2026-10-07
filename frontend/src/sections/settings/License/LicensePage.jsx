@@ -54,6 +54,7 @@ const ENTERPRISE_ADDITIONS = [
 
 const ACTIVATION_STEPS = [
   `Get a license from ${SALES_EMAIL}.`,
+  "Set the matching authorized issuer PUBLIC key (EE_LICENSE_PUBLIC_KEY or EE_LICENSE_PUBLIC_KEYS) on every backend, worker and Temporal worker container when this release uses an external trust root. Never use a private signing key.",
   "Set EE_LICENSE_KEY on every backend, worker and Temporal worker container (.env for Docker Compose, the license Secret for Helm).",
   "Restart all of them: docker compose up -d, or helm upgrade and a rollout restart of the backend, worker and Temporal worker deployments.",
   "Finish restarting every service before creating more members, workspaces or organizations, then reload this page.",

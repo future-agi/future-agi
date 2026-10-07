@@ -34,6 +34,7 @@ from accounts.models.user import User
 from accounts.models.workspace import OrganizationRoles, Workspace, WorkspaceMembership
 from accounts.serializers.contracts import (
     ACCOUNTS_ERROR_RESPONSES,
+    ACCOUNTS_GATED_CREATE_ERROR_RESPONSES,
     DeactivateUserResponseSerializer,
     DeleteUserResponseSerializer,
     ResendInviteResponseSerializer,
@@ -308,7 +309,10 @@ class WorkspaceInviteAPIView(APIView):
 
     @validated_request(
         request_serializer=WorkspaceInviteSerializer,
-        responses={200: WorkspaceInviteResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={
+            200: WorkspaceInviteResponseSerializer,
+            **ACCOUNTS_GATED_CREATE_ERROR_RESPONSES,
+        },
         reject_unknown_fields=True,
     )
     @transaction.atomic
@@ -1945,7 +1949,10 @@ class ManageTeamView(APIView):
 
     @validated_request(
         request_serializer=TeamCreateRequestSerializer,
-        responses={201: TeamCreateResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={
+            201: TeamCreateResponseSerializer,
+            **ACCOUNTS_GATED_CREATE_ERROR_RESPONSES,
+        },
         reject_unknown_fields=True,
     )
     def post(self, request, *args, **kwargs):

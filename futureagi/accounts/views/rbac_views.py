@@ -15,7 +15,10 @@ from accounts.models.organization_invite import InviteStatus, OrganizationInvite
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import User
 from accounts.models.workspace import Workspace, WorkspaceMembership
-from accounts.serializers.contracts import ACCOUNTS_ERROR_RESPONSES
+from accounts.serializers.contracts import (
+    ACCOUNTS_ERROR_RESPONSES,
+    ACCOUNTS_GATED_CREATE_ERROR_RESPONSES,
+)
 from accounts.serializers.rbac import (
     InviteCancelSerializer,
     InviteCreateResponseSerializer,
@@ -100,7 +103,10 @@ class InviteCreateAPIView(APIView):
 
     @validated_request(
         request_serializer=InviteCreateSerializer,
-        responses={200: InviteCreateResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={
+            200: InviteCreateResponseSerializer,
+            **ACCOUNTS_GATED_CREATE_ERROR_RESPONSES,
+        },
         reject_unknown_fields=True,
     )
     def post(self, request):
@@ -393,7 +399,10 @@ class InviteResendAPIView(APIView):
 
     @validated_request(
         request_serializer=InviteResendSerializer,
-        responses={200: RBACMessageResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={
+            200: RBACMessageResponseSerializer,
+            **ACCOUNTS_GATED_CREATE_ERROR_RESPONSES,
+        },
         reject_unknown_fields=True,
     )
     def post(self, request):
@@ -556,9 +565,7 @@ class MemberListAPIView(APIView):
         # workspace_id is NOT used here (it's only for workspace-scoped endpoints).
 
         viewer_membership = get_org_membership(request.user)
-        viewer_org_level = (
-            viewer_membership.level_or_legacy if viewer_membership else 0
-        )
+        viewer_org_level = viewer_membership.level_or_legacy if viewer_membership else 0
 
         # Build pending/expired invites
         invites = self._get_invites(organization, viewer_org_level)
@@ -1044,7 +1051,7 @@ class MemberReactivateAPIView(APIView):
         request_serializer=MemberRemoveSerializer,
         responses={
             200: MemberUserMutationResponseSerializer,
-            **ACCOUNTS_ERROR_RESPONSES,
+            **ACCOUNTS_GATED_CREATE_ERROR_RESPONSES,
         },
         reject_unknown_fields=True,
     )

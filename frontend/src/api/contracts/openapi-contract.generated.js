@@ -415,6 +415,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         requestBody: null,
         queryParameters: {},
         responses: {
+          402: {
+            $ref: "#/definitions/EnterpriseGateErrorResponse",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -469,6 +472,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           401: {
             $ref: "#/definitions/AccountsErrorResponse",
+          },
+          402: {
+            $ref: "#/definitions/EnterpriseGateErrorResponse",
           },
           403: {
             $ref: "#/definitions/AccountsErrorResponse",
@@ -599,6 +605,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           401: {
             $ref: "#/definitions/AccountsErrorResponse",
+          },
+          402: {
+            $ref: "#/definitions/EnterpriseGateErrorResponse",
           },
           403: {
             $ref: "#/definitions/AccountsErrorResponse",
@@ -1414,6 +1423,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           401: {
             $ref: "#/definitions/AccountsErrorResponse",
           },
+          402: {
+            $ref: "#/definitions/EnterpriseGateErrorResponse",
+          },
           403: {
             $ref: "#/definitions/AccountsErrorResponse",
           },
@@ -1481,6 +1493,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           401: {
             $ref: "#/definitions/AccountsErrorResponse",
+          },
+          402: {
+            $ref: "#/definitions/EnterpriseGateErrorResponse",
           },
           403: {
             $ref: "#/definitions/AccountsErrorResponse",
@@ -1617,6 +1632,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           401: {
             $ref: "#/definitions/AccountsErrorResponse",
+          },
+          402: {
+            $ref: "#/definitions/EnterpriseGateErrorResponse",
           },
           403: {
             $ref: "#/definitions/AccountsErrorResponse",
@@ -1784,6 +1802,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           401: {
             $ref: "#/definitions/AccountsErrorResponse",
           },
+          402: {
+            $ref: "#/definitions/EnterpriseGateErrorResponse",
+          },
           403: {
             $ref: "#/definitions/AccountsErrorResponse",
           },
@@ -1849,6 +1870,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           401: {
             $ref: "#/definitions/AccountsErrorResponse",
+          },
+          402: {
+            $ref: "#/definitions/EnterpriseGateErrorResponse",
           },
           403: {
             $ref: "#/definitions/AccountsErrorResponse",
@@ -2355,6 +2379,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           401: {
             $ref: "#/definitions/AccountsErrorResponse",
           },
+          402: {
+            $ref: "#/definitions/EnterpriseGateErrorResponse",
+          },
           403: {
             $ref: "#/definitions/AccountsErrorResponse",
           },
@@ -2418,6 +2445,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           401: {
             $ref: "#/definitions/AccountsErrorResponse",
+          },
+          402: {
+            $ref: "#/definitions/EnterpriseGateErrorResponse",
           },
           403: {
             $ref: "#/definitions/AccountsErrorResponse",
@@ -2512,6 +2542,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           401: {
             $ref: "#/definitions/AccountsErrorResponse",
+          },
+          402: {
+            $ref: "#/definitions/EnterpriseGateErrorResponse",
           },
           403: {
             $ref: "#/definitions/AccountsErrorResponse",
@@ -2993,6 +3026,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           401: {
             $ref: "#/definitions/AccountsErrorResponse",
           },
+          402: {
+            $ref: "#/definitions/EnterpriseGateErrorResponse",
+          },
           403: {
             $ref: "#/definitions/AccountsErrorResponse",
           },
@@ -3325,6 +3361,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           401: {
             $ref: "#/definitions/AccountsErrorResponse",
           },
+          402: {
+            $ref: "#/definitions/EnterpriseGateErrorResponse",
+          },
           403: {
             $ref: "#/definitions/AccountsErrorResponse",
           },
@@ -3450,6 +3489,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           401: {
             $ref: "#/definitions/AccountsErrorResponse",
+          },
+          402: {
+            $ref: "#/definitions/EnterpriseGateErrorResponse",
           },
           403: {
             $ref: "#/definitions/AccountsErrorResponse",
@@ -3577,6 +3619,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           401: {
             $ref: "#/definitions/AccountsErrorResponse",
           },
+          402: {
+            $ref: "#/definitions/EnterpriseGateErrorResponse",
+          },
           403: {
             $ref: "#/definitions/AccountsErrorResponse",
           },
@@ -3670,6 +3715,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           401: {
             $ref: "#/definitions/AccountsErrorResponse",
+          },
+          402: {
+            $ref: "#/definitions/EnterpriseGateErrorResponse",
           },
           403: {
             $ref: "#/definitions/AccountsErrorResponse",
@@ -57179,6 +57227,116 @@ export const OPENAPI_CONTRACT = Object.freeze({
       properties: {},
       additionalProperties: false,
     },
+    EnterpriseGateErrorResponse: {
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: false,
+        },
+        type: {
+          title: "Type",
+          type: "string",
+          enum: [
+            "validation_error",
+            "authentication_error",
+            "payment_required",
+            "entitlement_error",
+            "permission_error",
+            "not_found",
+            "conflict",
+            "client_error",
+            "rate_limit",
+            "server_error",
+            "service_unavailable",
+            "timeout",
+            "api_error",
+          ],
+          "x-nullable": true,
+        },
+        code: {
+          title: "Code",
+          type: "string",
+          "x-nullable": true,
+        },
+        detail: {
+          title: "Detail",
+          type: "string",
+          "x-nullable": true,
+        },
+        result: {
+          title: "Result",
+          type: "string",
+          "x-nullable": true,
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          "x-nullable": true,
+        },
+        error: {
+          title: "Error",
+          type: "object",
+          "x-nullable": true,
+          description:
+            "String error message, or the structured capability denial.",
+          "x-string-or-object": true,
+          required: ["code", "message", "detail"],
+          additionalProperties: false,
+          properties: {
+            code: {
+              type: "string",
+            },
+            message: {
+              type: "string",
+            },
+            detail: {
+              type: "object",
+              required: ["feature"],
+              additionalProperties: false,
+              properties: {
+                feature: {
+                  type: "string",
+                  enum: [
+                    "organizations",
+                    "workspaces",
+                    "members",
+                    "error_feed",
+                    "falcon_ai",
+                    "protect",
+                    "turing_models",
+                  ],
+                },
+              },
+            },
+          },
+        },
+        attr: {
+          title: "Attr",
+          type: "string",
+          "x-nullable": true,
+        },
+        details: {
+          title: "Details",
+          type: "object",
+          additionalProperties: {
+            type: "array",
+            items: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+        },
+        upgrade_required: {
+          title: "Upgrade required",
+          type: "boolean",
+        },
+        enterprise_gate: {
+          $ref: "#/definitions/EnterpriseGate",
+        },
+      },
+    },
     EnterpriseHeartbeatResponse: {
       required: ["status"],
       type: "object",
@@ -88134,6 +88292,79 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         embedding: {
           $ref: "#/definitions/EmbeddingProvider",
+        },
+      },
+    },
+    EnterpriseGate: {
+      required: [
+        "feature",
+        "edition",
+        "limit",
+        "current",
+        "requested",
+        "license_state",
+        "contact",
+        "activation_route",
+      ],
+      type: "object",
+      properties: {
+        feature: {
+          title: "Feature",
+          type: "string",
+          enum: [
+            "organizations",
+            "workspaces",
+            "members",
+            "error_feed",
+            "falcon_ai",
+            "protect",
+            "turing_models",
+          ],
+        },
+        edition: {
+          title: "Edition",
+          type: "string",
+          enum: ["community", "enterprise"],
+        },
+        limit: {
+          title: "Limit",
+          type: "integer",
+          "x-nullable": true,
+        },
+        current: {
+          title: "Current",
+          type: "integer",
+          "x-nullable": true,
+        },
+        requested: {
+          title: "Requested",
+          type: "integer",
+          "x-nullable": true,
+        },
+        license_state: {
+          title: "License state",
+          type: "string",
+          enum: [
+            "not_applicable",
+            "missing",
+            "invalid",
+            "active",
+            "grace",
+            "expired",
+            "trial_active",
+            "trial_expired",
+          ],
+        },
+        contact: {
+          title: "Contact",
+          type: "string",
+          format: "email",
+          minLength: 1,
+        },
+        activation_route: {
+          title: "Activation route",
+          type: "string",
+          minLength: 1,
         },
       },
     },

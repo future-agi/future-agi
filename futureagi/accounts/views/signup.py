@@ -34,6 +34,7 @@ from accounts.models.auth_token import (
 from accounts.models.organization import Organization
 from accounts.serializers.contracts import (
     ACCOUNTS_ERROR_RESPONSES,
+    ACCOUNTS_GATED_CREATE_ERROR_RESPONSES,
     AcceptInvitationPreviewResponseSerializer,
     AcceptInvitationRequestSerializer,
     AccountsBulkUserMutationItemSerializer,
@@ -62,6 +63,7 @@ from analytics.utils import (
 )
 from saml2_auth.models import SAMLMetadataModel
 from tfc.capabilities import edition
+from tfc.capabilities.contracts import EnterpriseGateErrorResponseSerializer
 from tfc.capabilities.edition import EditionResource
 from tfc.capabilities.errors import EnterpriseFeatureRequired
 from tfc.constants.levels import Level
@@ -190,12 +192,12 @@ def _login_payload(user):
 @swagger_auto_schema(
     method="post",
     request_body=SignupRequestSerializer,
-    responses={200: SignupResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    responses={200: SignupResponseSerializer, **ACCOUNTS_GATED_CREATE_ERROR_RESPONSES},
 )
 @api_view(["POST"])
 @validated_api_request(
     request_serializer=SignupRequestSerializer,
-    responses={200: SignupResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    responses={200: SignupResponseSerializer, **ACCOUNTS_GATED_CREATE_ERROR_RESPONSES},
     document=False,
 )
 def user_signup(request):
@@ -346,6 +348,10 @@ def user_logout(request):
         return _gm.bad_request("Error in user logout.")
 
 
+@swagger_auto_schema(
+    method="get",
+    responses={402: EnterpriseGateErrorResponseSerializer},
+)
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def activate_account(request, uidb64, token):

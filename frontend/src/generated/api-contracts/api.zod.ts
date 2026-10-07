@@ -71031,3 +71031,29 @@ export const V1SelfHostedActivationsCreateResponse = zod.object({
   allowed_models: zod.array(zod.string().min(1)),
   scope: zod.enum(["oss", "enterprise"]),
 });
+
+/**
+ * String error message, or the structured capability denial.
+ * The management OpenAPI schema omits error responses from Orval's Zod output,
+ * so this named contract is emitted from the same schema as api.ts.
+ */
+export const EnterpriseGateErrorResponseApiErrorDetail = zod.object({
+  feature: zod.enum([
+    "organizations",
+    "workspaces",
+    "members",
+    "error_feed",
+    "falcon_ai",
+    "protect",
+    "turing_models",
+  ]),
+});
+
+export const EnterpriseGateErrorResponseApiError = zod.union([
+  zod.string(),
+  zod.object({
+    code: zod.string(),
+    message: zod.string(),
+    detail: EnterpriseGateErrorResponseApiErrorDetail,
+  }),
+]);

@@ -10,6 +10,7 @@ from accounts.models.user import OrgApiKey
 from accounts.models.workspace import Workspace, WorkspaceMembership
 from accounts.serializers.contracts import (
     ACCOUNTS_ERROR_RESPONSES,
+    ACCOUNTS_GATED_CREATE_ERROR_RESPONSES,
     AdditionalOrganizationCreateResponseSerializer,
     OrganizationCreateRequestSerializer,
     OrganizationCreateResponseSerializer,
@@ -44,7 +45,7 @@ class OrganizationCreateAPIView(APIView):
         request_serializer=OrganizationNameRequestSerializer,
         responses={
             201: OrganizationCreateResponseSerializer,
-            **ACCOUNTS_ERROR_RESPONSES,
+            **ACCOUNTS_GATED_CREATE_ERROR_RESPONSES,
         },
         reject_unknown_fields=True,
     )
@@ -225,7 +226,7 @@ class CreateAdditionalOrganizationView(APIView):
         request_serializer=OrganizationCreateRequestSerializer,
         responses={
             201: AdditionalOrganizationCreateResponseSerializer,
-            **ACCOUNTS_ERROR_RESPONSES,
+            **ACCOUNTS_GATED_CREATE_ERROR_RESPONSES,
         },
         reject_unknown_fields=True,
     )

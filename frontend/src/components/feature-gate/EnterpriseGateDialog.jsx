@@ -27,8 +27,10 @@ export default function EnterpriseGateDialog({ open, gate, onClose, note }) {
       onClose={onClose}
       maxWidth="sm"
       fullWidth
-      aria-label={title}
-      PaperProps={{ sx: { overflow: "hidden", position: "relative" } }}
+      PaperProps={{
+        "aria-label": title,
+        sx: { overflow: "hidden", position: "relative" },
+      }}
     >
       <Box sx={{ position: "absolute", top: 8, right: 8, zIndex: 2 }}>
         <IconButton size="small" aria-label="Close" onClick={onClose}>

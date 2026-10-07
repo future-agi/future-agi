@@ -1,5 +1,7 @@
 from rest_framework import serializers
 
+from tfc.capabilities.edition import EditionResource
+from tfc.capabilities.registry import OSS_LOCKED_FEATURES
 from tfc.licensing.types import (
     DenialReason,
     DeploymentFlavor,
@@ -7,6 +9,7 @@ from tfc.licensing.types import (
     LicenseState,
     LicenseType,
 )
+from tfc.utils.api_serializers import ManagementAPIErrorResponseSerializer
 
 
 class CapabilityFeatureSerializer(serializers.Serializer):
@@ -102,3 +105,100 @@ class EditionResponseSerializer(serializers.Serializer):
 class EditionEnvelopeSerializer(serializers.Serializer):
     status = serializers.BooleanField()
     result = EditionResponseSerializer()
+
+
+# ---------------------------------------------------------------------------
+# HTTP 402 ENTERPRISE_FEATURE_REQUIRED (accounts.authentication
+# custom_exception_handler). Swagger 2.0 has no oneOf, so ``error`` uses the
+# same ``x-string-or-object`` extension as the other string-or-object fields.
+# ---------------------------------------------------------------------------
+
+ENTERPRISE_GATE_FEATURES = [resource.value for resource in EditionResource] + sorted(
+    OSS_LOCKED_FEATURES
+)
+
+
+class _StrictEnterpriseGateSerializer(serializers.Serializer):
+    """Reject unknown keys in the structured 402 branch."""
+
+    def to_internal_value(self, data):
+        if hasattr(data, "keys"):
+            unknown = sorted(set(data.keys()) - set(self.fields.keys()))
+            if unknown:
+                raise serializers.ValidationError(
+                    {key: ["Unknown field."] for key in unknown}
+                )
+        return super().to_internal_value(data)
+
+
+class EnterpriseGateErrorDetailSerializer(_StrictEnterpriseGateSerializer):
+    feature = serializers.ChoiceField(choices=ENTERPRISE_GATE_FEATURES)
+
+
+class EnterpriseGateErrorObjectSerializer(_StrictEnterpriseGateSerializer):
+    code = serializers.CharField()
+    message = serializers.CharField()
+    detail = EnterpriseGateErrorDetailSerializer()
+
+
+ENTERPRISE_GATE_ERROR_SCHEMA = {
+    "type": "object",
+    "description": "String error message, or the structured capability denial.",
+    "x-string-or-object": True,
+    "required": ["code", "message", "detail"],
+    "additionalProperties": False,
+    "properties": {
+        "code": {"type": "string"},
+        "message": {"type": "string"},
+        "detail": {
+            "type": "object",
+            "required": ["feature"],
+            "additionalProperties": False,
+            "properties": {
+                "feature": {"type": "string", "enum": ENTERPRISE_GATE_FEATURES}
+            },
+        },
+    },
+}
+
+
+class EnterpriseGateSerializer(serializers.Serializer):
+    """The ``enterprise_gate`` block: what needs Enterprise and where to go."""
+
+    feature = serializers.ChoiceField(choices=ENTERPRISE_GATE_FEATURES)
+    edition = serializers.ChoiceField(choices=["community", "enterprise"])
+    limit = serializers.IntegerField(allow_null=True)
+    current = serializers.IntegerField(allow_null=True)
+    requested = serializers.IntegerField(allow_null=True)
+    license_state = serializers.ChoiceField(
+        choices=[state.value for state in LicenseState]
+    )
+    contact = serializers.EmailField()
+    activation_route = serializers.CharField()
+
+
+class EnterpriseGateErrorField(serializers.JSONField):
+    """The capability denial object; other management errors send a string."""
+
+    def to_internal_value(self, data):
+        if isinstance(data, str):
+            return data
+        if isinstance(data, dict):
+            serializer = EnterpriseGateErrorObjectSerializer(data=data)
+            serializer.is_valid(raise_exception=True)
+            return serializer.validated_data
+        raise serializers.ValidationError(
+            "Expected a string or a structured error object."
+        )
+
+    class Meta:
+        swagger_schema_fields = ENTERPRISE_GATE_ERROR_SCHEMA
+
+
+class EnterpriseGateErrorResponseSerializer(ManagementAPIErrorResponseSerializer):
+    """HTTP 402 when creating one more organization, workspace or member needs
+    an Enterprise licence. Adds the typed gate to the management error."""
+
+    error = EnterpriseGateErrorField(required=False, allow_null=True)
+    upgrade_required = serializers.BooleanField(required=False)
+    enterprise_gate = EnterpriseGateSerializer(required=False)

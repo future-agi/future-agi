@@ -114,6 +114,12 @@ describe("Plan & License (TH-8084 AC-01, AC-02)", () => {
       screen.getByText(/Set EE_LICENSE_KEY on every backend/),
     ).toBeInTheDocument();
     expect(
+      screen.getByText(/Set the matching authorized issuer PUBLIC key/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/EE_LICENSE_PUBLIC_KEY|EE_LICENSE_PUBLIC_KEYS/),
+    ).toBeInTheDocument();
+    expect(
       screen.getByText(/Finish restarting every service/),
     ).toBeInTheDocument();
   });
