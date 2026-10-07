@@ -1,3 +1,4 @@
+import copy
 import json
 import time
 import traceback
@@ -116,7 +117,8 @@ def run_eval_func(
                 is_only_eval = False
 
         # Run the evaluation and get the result
-        data_config = config.get("config") if config else {}
+        # The evaluator set-up writes its settings into the dict it is given.
+        data_config = copy.deepcopy(config.get("config")) if config else {}
         if not isinstance(data_config, dict):
             data_config = {}
         eval_id = kwargs.get("eval_id", None) or template.config.get("eval_type_id")
