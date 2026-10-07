@@ -938,8 +938,8 @@
 
 ### SET-E2E-002 — a Community admin meets the Enterprise gate and activates a licence without losing data
 
-**Goal:** An admin of a fresh self-hosted Community install sees its edition, uses its one organization, one workspace and three member seats, gets an actionable Enterprise gate at the next creation, and activates a test-signed licence without losing identities or data
-**Spec:** `flows/settings/community-edition.spec.ts:131`
+**Goal:** An admin of a fresh self-hosted Community install sees its edition, uses its one organization, one workspace and three member seats, gets an actionable Enterprise gate at the next creation, and activates a test-signed licence without losing identities or data  
+**Spec:** `flows/settings/community-edition.spec.ts:129`  
 **Tags:** —
 
 **User steps:**
