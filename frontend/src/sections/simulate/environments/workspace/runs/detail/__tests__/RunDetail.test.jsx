@@ -43,6 +43,12 @@ vi.mock("src/api/simulate-environments/runCalls", async (importOriginal) => {
   return { ...actual, useRunCalls: (...args) => useRunCalls(...args) };
 });
 
+const rerunCallEvals = vi.fn();
+vi.mock("src/api/simulate-environments/rerunScenarios", async (orig) => ({
+  ...(await orig()),
+  rerunCallEvals: (...args) => rerunCallEvals(...args),
+}));
+
 const enqueueSnackbar = vi.fn();
 vi.mock("notistack", async (importOriginal) => {
   const actual = await importOriginal();
@@ -156,6 +162,7 @@ function RunTraceTableStub({
   activePage,
   initialFilters,
   rerunDisabledReason,
+  onRerunEvals,
 }) {
   useEffect(() => {
     onQueryChange?.(TABLE_QUERY);
@@ -166,6 +173,12 @@ function RunTraceTableStub({
       run-trace-table:{JSON.stringify(initialFilters || {})}
       <span>{`active:${activeCallId ?? "-"}:${activePage ?? "-"}`}</span>
       <span>{`rerun-off:${rerunDisabledReason ?? "-"}`}</span>
+      <button
+        type="button"
+        onClick={() => onRerunEvals(["c1", "c2"]).catch(() => {})}
+      >
+        rerun evals
+      </button>
       <button
         type="button"
         onClick={() => onOpenCall({ id: "c1", simulationCallType: "voice" })}
@@ -182,6 +195,7 @@ RunTraceTableStub.propTypes = {
   activeCallId: PropTypes.string,
   activePage: PropTypes.number,
   rerunDisabledReason: PropTypes.string,
+  onRerunEvals: PropTypes.func,
 };
 vi.mock("../trace/RunTraceTable", () => ({ default: RunTraceTableStub }));
 vi.mock("../CallDrawer", () => ({
@@ -458,7 +472,9 @@ describe("RunDetail", () => {
     renderDetail();
     expect(screen.getByText("Queued")).toBeInTheDocument();
     expect(screen.queryByText("Running")).toBeNull();
-    expect(screen.getByRole("button", { name: /Debug failures/ })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: /Debug failures/ }),
+    ).toBeDisabled();
   });
 
   it("does not show a Failed verdict while the run is still loading", () => {
@@ -474,7 +490,12 @@ describe("RunDetail", () => {
 
   it("offers Stop simulation in the header only while the run can be stopped", () => {
     useRunDetail.mockReturnValue({
-      identity: { ...IDENTITY, runState: "running", status: "running", stoppable: true },
+      identity: {
+        ...IDENTITY,
+        runState: "running",
+        status: "running",
+        stoppable: true,
+      },
       stats: STATS,
       isLoading: false,
     });
@@ -497,7 +518,12 @@ describe("RunDetail", () => {
 
   it("shows Cancelling in the header while a stopped run winds down", () => {
     useRunDetail.mockReturnValue({
-      identity: { ...IDENTITY, runState: "cancelling", status: "cancelling", stoppable: false },
+      identity: {
+        ...IDENTITY,
+        runState: "cancelling",
+        status: "cancelling",
+        stoppable: false,
+      },
       stats: STATS,
       isLoading: false,
     });
@@ -514,7 +540,12 @@ describe("RunDetail", () => {
     "disables the header actions while the run is %s",
     (status) => {
       useRunDetail.mockReturnValue({
-        identity: { ...IDENTITY, runState: status, status, stoppable: status === "running" },
+        identity: {
+          ...IDENTITY,
+          runState: status,
+          status,
+          stoppable: status === "running",
+        },
         stats: STATS,
         isLoading: false,
       });
@@ -723,6 +754,67 @@ describe("RunDetail", () => {
     renderDetail({ onStartRun: vi.fn(), runStarting: true });
 
     expect(screen.getByText("rerun-off:Starting the run…")).toBeInTheDocument();
+  });
+
+  it("re-runs the ticked calls' evals on this run and refreshes it", async () => {
+    useRunDetail.mockReturnValue({
+      identity: IDENTITY,
+      stats: STATS,
+      isLoading: false,
+    });
+    let accept;
+    rerunCallEvals.mockReset().mockReturnValue(
+      new Promise((resolve) => {
+        accept = resolve;
+      }),
+    );
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const invalidateSpy = vi.spyOn(client, "invalidateQueries");
+    const user = userEvent.setup();
+    renderDetail({ client });
+
+    await user.click(screen.getByRole("button", { name: "rerun evals" }));
+    expect(rerunCallEvals).toHaveBeenCalledWith("ex1", ["c1", "c2"]);
+    expect(screen.getByText("rerun-off:Re-running evals…")).toBeInTheDocument();
+
+    accept({ success_count: 2 });
+    await waitFor(() =>
+      expect(enqueueSnackbar).toHaveBeenCalledWith(
+        "Re-running evals on 2 calls",
+        { variant: "success" },
+      ),
+    );
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: ["simulation-run-results-v3", "ex1"],
+    });
+    expect(screen.getByText("rerun-off:-")).toBeInTheDocument();
+  });
+
+  it("says why when the eval re-run is refused", async () => {
+    useRunDetail.mockReturnValue({
+      identity: IDENTITY,
+      stats: STATS,
+      isLoading: false,
+    });
+    // The axios client rejects with the error body itself.
+    rerunCallEvals.mockReset().mockRejectedValue({
+      detail: "No call executions found that can be rerun.",
+      statusCode: 400,
+    });
+    const user = userEvent.setup();
+    renderDetail();
+
+    await user.click(screen.getByRole("button", { name: "rerun evals" }));
+
+    await waitFor(() =>
+      expect(enqueueSnackbar).toHaveBeenCalledWith(
+        "No call executions found that can be rerun.",
+        { variant: "error" },
+      ),
+    );
+    expect(screen.getByText("rerun-off:-")).toBeInTheDocument();
   });
 
   it("has no Run again button in the header", () => {
@@ -1017,7 +1109,12 @@ describe("RunDetail", () => {
   it("tells the navigation a live run is live", async () => {
     const user = userEvent.setup();
     useRunDetail.mockReturnValue({
-      identity: { ...IDENTITY, runState: "running", status: "running", stoppable: true },
+      identity: {
+        ...IDENTITY,
+        runState: "running",
+        status: "running",
+        stoppable: true,
+      },
       stats: STATS,
       isLoading: false,
     });
