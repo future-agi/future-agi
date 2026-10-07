@@ -586,9 +586,12 @@ import type {
   HarnessEnvironmentAddEvaluationApi,
   HarnessEnvironmentAvailableEvalsApi,
   HarnessEnvironmentDetailApi,
+  HarnessEnvironmentEvalEditApi,
   HarnessEnvironmentListResponseApi,
   HarnessEnvironmentRenameApi,
   HarnessEnvironmentRunEvaluationQueuedApi,
+  HarnessEnvironmentRunEvaluationsApi,
+  HarnessEnvironmentRunEvaluationsQueuedApi,
   HarnessEnvironmentToolCallEvaluationApi,
   HarnessEventBatchApi,
   HarnessEventBatchResponseApi,
@@ -1139,6 +1142,7 @@ import type {
   SimulateApiPersonasWorkspacePersonasParams,
   SimulateApiRunTestsListParams,
   SimulateApiTestExecutionsListParams,
+  SimulateEvalConfigResponseApi,
   SimulateExportReadParams,
   SimulatePromptTemplatesSimulationsListParams,
   SimulateRunTestsEvalSummaryComparisonListParams,
@@ -58773,6 +58777,56 @@ export const simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluation =
     );
   };
 
+export type simulateApiHarnessEnvironmentsEditEvaluationResponse200 = {
+  data: SimulateEvalConfigResponseApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsEditEvaluationResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsEditEvaluationResponseSuccess =
+  simulateApiHarnessEnvironmentsEditEvaluationResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsEditEvaluationResponseError =
+  simulateApiHarnessEnvironmentsEditEvaluationResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsEditEvaluationResponse =
+  | simulateApiHarnessEnvironmentsEditEvaluationResponseSuccess
+  | simulateApiHarnessEnvironmentsEditEvaluationResponseError;
+
+export const getSimulateApiHarnessEnvironmentsEditEvaluationUrl = (
+  id: string,
+  evalConfigId: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/evaluations/${evalConfigId}/`;
+};
+
+/**
+ * Change one eval of this environment. Never grades anything; grade a run again afterwards to refresh its scores.
+ */
+export const simulateApiHarnessEnvironmentsEditEvaluation = async (
+  id: string,
+  evalConfigId: string,
+  harnessEnvironmentEvalEditApi: HarnessEnvironmentEvalEditApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsEditEvaluationResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsEditEvaluationResponse>(
+    getSimulateApiHarnessEnvironmentsEditEvaluationUrl(id, evalConfigId),
+    {
+      ...options,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessEnvironmentEvalEditApi),
+    },
+  );
+};
+
 export type simulateApiHarnessEnvironmentsRemoveEvaluationResponse204 = {
   data: void;
   status: 204;
@@ -58922,6 +58976,61 @@ export const simulateApiHarnessEnvironmentsRunsAddRunEvaluation = async (
     },
   );
 };
+
+export type simulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluationsResponse202 =
+  {
+    data: HarnessEnvironmentRunEvaluationsQueuedApi;
+    status: 202;
+  };
+
+export type simulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluationsResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 202>;
+  };
+
+export type simulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluationsResponseSuccess =
+  simulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluationsResponse202 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluationsResponseError =
+  simulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluationsResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluationsResponse =
+
+    | simulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluationsResponseSuccess
+    | simulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluationsResponseError;
+
+export const getSimulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluationsUrl =
+  (id: string, executionId: string) => {
+    return `/simulate/api/harness-environments/${id}/runs/${executionId}/evaluations/run/`;
+  };
+
+/**
+ * Grade this finished run's calls again with chosen evals of the environment, without rerunning the calls.
+ */
+export const simulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluations =
+  async (
+    id: string,
+    executionId: string,
+    harnessEnvironmentRunEvaluationsApi: HarnessEnvironmentRunEvaluationsApi,
+    options?: RequestInit,
+  ): Promise<simulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluationsResponse> => {
+    return apiMutator<simulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluationsResponse>(
+      getSimulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluationsUrl(
+        id,
+        executionId,
+      ),
+      {
+        ...options,
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...options?.headers },
+        body: JSON.stringify(harnessEnvironmentRunEvaluationsApi),
+      },
+    );
+  };
 
 export type simulateApiHarnessJobsListResponse200 = {
   data: HarnessJobReadApi[];

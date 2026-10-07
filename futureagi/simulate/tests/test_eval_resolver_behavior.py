@@ -1676,9 +1676,37 @@ class TestLegacyTranscriptRecordingResolution:
 
         assert transcript_data["voice_recording"] == call_execution.recording_url
         assert (
-            transcript_data["stereo_recording"]
-            == call_execution.stereo_recording_url
+            transcript_data["stereo_recording"] == call_execution.stereo_recording_url
         )
+
+    def test_eval_transcript_keeps_the_tested_agent_as_agent_without_direction(
+        self, call_execution
+    ):
+        from simulate.models.test_execution import CallTranscript
+
+        call_execution.provider_call_data = {}
+        call_execution.call_metadata = {"call_channel": "livekit"}
+        call_execution.save(update_fields=["provider_call_data", "call_metadata"])
+        CallTranscript.objects.create(
+            call_execution=call_execution,
+            speaker_role="assistant",
+            content="Hi, how can I help you?",
+            start_time_ms=0,
+            end_time_ms=1000,
+        )
+        CallTranscript.objects.create(
+            call_execution=call_execution,
+            speaker_role="user",
+            content="I need a ride.",
+            start_time_ms=1500,
+            end_time_ms=2500,
+        )
+        executor = TestExecutor(initialize_voice_service=False)
+
+        transcript_data = executor._get_call_transcript_data(call_execution)
+
+        assert "agent: Hi, how can I help you?" in transcript_data["transcript"]
+        assert "customer: I need a ride." in transcript_data["transcript"]
 
 
 # ---------------------------------------------------------------------------
@@ -2730,28 +2758,161 @@ class TestToolEvaluationGate:
         assert tool_calls[0]["result"] is not None
 
 
-@pytest.mark.django_db
-@patch("simulate.services.test_executor.close_old_connections", lambda: None)
-@patch("simulate.services.test_executor.run_eval_func")
-def test_a_one_off_mapping_grades_a_config_whose_own_mapping_is_empty(
-    mock_run, run_test, call_execution, transcript_data, eval_template
-):
-    mock_run.return_value = _SUCCESS_STUB
-    cfg = _make_eval({}, run_test, eval_template)
+# --- Grading a harness run's evals again ------------------------------------
 
-    TestExecutor()._run_single_simulate_evaluation(
-        cfg,
-        call_execution,
-        transcript_data,
-        mapping_override={"conversation": "transcript", "agent_prompt": "agent_prompt"},
+
+def _owned_by_a_harness_environment(run_test):
+    """Link the run test to a harness job, as registering an environment's
+    scenarios does; only then is it a harness run."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from simulate.models import HostedHarnessJob
+
+    HostedHarnessJob.no_workspace_objects.create(
+        organization=run_test.organization,
+        workspace=run_test.workspace,
+        run_id=uuid.uuid4(),
+        idempotency_key=f"regrade-{uuid.uuid4()}",
+        request_digest=f"sha256:{'0' * 64}",
+        schema_version="1.4",
+        payload={},
+        state=HostedHarnessJob.State.COMPLETED,
+        seed=1,
+        scenario_count=1,
+        artifact_level="standard",
+        max_artifact_bytes=1,
+        deadline_at=timezone.now() + timedelta(hours=1),
+        run_test=run_test,
     )
 
-    assert mock_run.call_args.kwargs["mappings"] == {
-        "conversation": "Hello. Yes, order 123 shipped.",
-        "agent_prompt": "You are a helpful agent.",
+
+def _template_asking_for(organization, required_keys, owner="system"):
+    return EvalTemplate.objects.create(
+        name=f"template_{uuid.uuid4().hex[:6]}",
+        config={"required_keys": list(required_keys), "prompt": "Grade it"},
+        owner=owner,
+        organization=organization,
+    )
+
+
+def _grade(call_execution, configs):
+    """Run the grader for this call and these configs, the way a re-grade does."""
+    TestExecutor(initialize_voice_service=False)._run_simulate_evaluations(
+        call_execution,
+        eval_config_ids=[str(config.id) for config in configs],
+        skip_existing=False,
+    )
+
+
+_HARNESS_REFRESH_REASON = (
+    "The harness scores this evaluation during the call. "
+    "Only rerunning the call refreshes it."
+)
+
+
+@pytest.mark.django_db
+@patch("simulate.services.test_executor.close_old_connections", lambda: None)
+@patch("simulate.services.test_executor.decide_processing_skip", lambda **_: _NoSkip)
+@patch.object(TestExecutor, "_get_call_transcript_data")
+@patch("simulate.services.test_executor.run_eval_func")
+@pytest.mark.parametrize(
+    ("required_keys", "expected"),
+    [
+        (["conversation"], {"conversation": "Hello. Yes, order 123 shipped."}),
+        (
+            ["conversation", "agent_prompt"],
+            {
+                "conversation": "Hello. Yes, order 123 shipped.",
+                "agent_prompt": "You are a helpful agent.",
+            },
+        ),
+    ],
+    ids=["transcript", "transcript-and-instructions"],
+)
+def test_a_suite_eval_on_a_harness_run_is_graded_with_the_harness_inputs(
+    mock_run,
+    mock_transcript,
+    required_keys,
+    expected,
+    run_test,
+    call_execution,
+    transcript_data,
+    organization,
+):
+    _no_tool_eval(run_test)
+    _owned_by_a_harness_environment(run_test)
+    mock_transcript.return_value = transcript_data
+    mock_run.return_value = _SUCCESS_STUB
+    suite = _make_eval({}, run_test, _template_asking_for(organization, required_keys))
+
+    _grade(call_execution, [suite])
+
+    assert mock_run.call_count == 1
+    assert mock_run.call_args.kwargs["mappings"] == expected
+    suite.refresh_from_db()
+    call_execution.refresh_from_db()
+    assert suite.mapping == {}
+    assert call_execution.eval_outputs[str(suite.id)]["output"] == "8"
+
+
+@pytest.mark.django_db
+@patch("simulate.services.test_executor.close_old_connections", lambda: None)
+@patch("simulate.services.test_executor.decide_processing_skip", lambda **_: _NoSkip)
+@patch.object(TestExecutor, "_get_call_transcript_data")
+@patch("simulate.services.test_executor.run_eval_func")
+def test_each_config_on_a_harness_run_is_graded_with_its_own_mapping(
+    mock_run,
+    mock_transcript,
+    run_test,
+    call_execution,
+    transcript_data,
+    organization,
+):
+    """A person's eval keeps its own mapping, a suite eval gets the harness
+    inputs, and a per-scenario claim, which only the harness can judge, is
+    left with the skipped payload instead of a pending placeholder."""
+    _no_tool_eval(run_test)
+    _owned_by_a_harness_environment(run_test)
+    mock_transcript.return_value = transcript_data
+    mock_run.return_value = _SUCCESS_STUB
+    suite = _make_eval(
+        {}, run_test, _template_asking_for(organization, ["conversation"])
+    )
+    mapped = _make_eval(
+        {"output": "transcript"},
+        run_test,
+        _template_asking_for(organization, ["output"], owner="user"),
+    )
+    claim = _make_eval(
+        {}, run_test, _template_asking_for(organization, ["conversation"], "user")
+    )
+    call_execution.eval_outputs = {
+        str(config.id): {"status": "pending"} for config in (suite, mapped, claim)
     }
-    cfg.refresh_from_db()
-    assert cfg.mapping == {}
+    call_execution.save(update_fields=["eval_outputs"])
+
+    _grade(call_execution, [suite, mapped, claim])
+
+    graded = sorted(
+        (call.kwargs["mappings"] for call in mock_run.call_args_list),
+        key=lambda mappings: sorted(mappings),
+    )
+    assert graded == [
+        {"conversation": "Hello. Yes, order 123 shipped."},
+        {"output": "Hello. Yes, order 123 shipped."},
+    ]
+    call_execution.refresh_from_db()
+    assert call_execution.eval_outputs[str(claim.id)] == _skipped_payload(
+        claim, _HARNESS_REFRESH_REASON
+    )
+    for config in (suite, mapped):
+        assert call_execution.eval_outputs[str(config.id)]["output"] == "8"
+    for config in (suite, mapped, claim):
+        config.refresh_from_db()
+    assert (suite.mapping, claim.mapping) == ({}, {})
+    assert mapped.mapping == {"output": "transcript"}
 
 
 @pytest.mark.django_db
@@ -2759,94 +2920,264 @@ def test_a_one_off_mapping_grades_a_config_whose_own_mapping_is_empty(
 @patch("simulate.services.test_executor.decide_processing_skip", lambda **_: _NoSkip)
 @patch.object(TestExecutor, "_get_call_transcript_data")
 @patch.object(TestExecutor, "_run_single_simulate_evaluation")
-def test_each_config_gets_only_its_own_override(
+@pytest.mark.parametrize(
+    ("mapping", "asks_who_owns_the_run"),
+    [({"conversation": "call.transcript"}, False), ({}, True)],
+    ids=["mapped", "empty-mapping"],
+)
+def test_a_native_run_grades_every_config_exactly_as_before(
     mock_single,
     mock_transcript,
+    mapping,
+    asks_who_owns_the_run,
     run_test,
+    call_execution,
+    transcript_data,
+    organization,
+):
+    _no_tool_eval(run_test)
+    mock_transcript.return_value = transcript_data
+    config = _make_eval(
+        mapping, run_test, _template_asking_for(organization, ["conversation"])
+    )
+
+    with patch(
+        "simulate.services.test_executor.is_harness_run_test", return_value=False
+    ) as harness_lookup:
+        _grade(call_execution, [config])
+
+    mock_single.assert_called_once_with(config, call_execution, transcript_data)
+    assert harness_lookup.called is asks_who_owns_the_run
+
+
+@pytest.mark.django_db
+@patch("simulate.services.test_executor.close_old_connections", lambda: None)
+def test_the_bulk_task_dispatches_ids_alone(run_test, call_execution, eval_template):
+    from simulate.services.test_executor import run_new_evals_on_call_executions_task
+
+    cfg = _make_eval({}, run_test, eval_template)
+
+    with patch(
+        "simulate.services.test_executor._run_simulate_evaluations_task.apply_async"
+    ) as spy:
+        run_new_evals_on_call_executions_task._original_func(
+            [str(call_execution.id)], [str(cfg.id)]
+        )
+
+    spy.assert_called_once_with(
+        args=(str(call_execution.id),),
+        kwargs={"eval_config_ids": [str(cfg.id)], "skip_existing": False},
+    )
+
+
+def test_the_eval_tasks_take_only_ids_and_flags():
+    """A job sent by a server older or newer than the worker binds the same
+    arguments, so nothing new may be added to what crosses the queue."""
+    from simulate.services.test_executor import run_new_evals_on_call_executions_task
+
+    assert list(
+        inspect.signature(_run_simulate_evaluations_task._original_func).parameters
+    ) == ["call_execution_id", "eval_config_ids", "skip_existing"]
+    assert list(
+        inspect.signature(
+            run_new_evals_on_call_executions_task._original_func
+        ).parameters
+    ) == ["call_execution_ids", "eval_config_ids"]
+
+
+# --- An eval removed while its grading was queued ----------------------------
+
+
+@pytest.mark.django_db
+@patch("simulate.services.test_executor.close_old_connections", lambda: None)
+@patch("simulate.services.test_executor.decide_processing_skip", lambda **_: _NoSkip)
+@patch.object(TestExecutor, "_get_call_transcript_data")
+@patch("simulate.services.test_executor.run_eval_func")
+@pytest.mark.parametrize(
+    ("removal", "stored"),
+    [
+        ("soft-deleted", {"status": "pending"}),
+        ("gone", {"status": "pending"}),
+        ("soft-deleted", {"output": "Passed", "status": "completed"}),
+    ],
+    ids=["removed-placeholder", "missing-placeholder", "removed-verdict-kept"],
+)
+def test_an_eval_removed_before_its_grader_ran_leaves_no_placeholder(
+    mock_run,
+    mock_transcript,
+    removal,
+    stored,
+    run_test,
+    test_execution,
     call_execution,
     transcript_data,
     eval_template,
 ):
     _no_tool_eval(run_test)
     mock_transcript.return_value = transcript_data
-    suite = _make_eval({}, run_test, eval_template)
-    mapped = _make_eval({"conversation": "call.transcript"}, run_test, eval_template)
-    override = {"conversation": "transcript"}
+    mock_run.return_value = _SUCCESS_STUB
+    kept = _make_eval({"x": "call.transcript"}, run_test, eval_template)
+    removed = _make_eval({"x": "call.transcript"}, run_test, eval_template)
+    removed_id = str(removed.id)
+    call_execution.eval_outputs = {
+        str(kept.id): {"status": "pending"},
+        removed_id: dict(stored),
+    }
+    call_execution.call_metadata = {"eval_started": True, "eval_completed": False}
+    call_execution.save(update_fields=["eval_outputs", "call_metadata"])
+    test_execution.status = TestExecution.ExecutionStatus.EVALUATING
+    test_execution.save(update_fields=["status"])
+    if removal == "soft-deleted":
+        SimulateEvalConfig.objects.filter(id=removed.id).update(deleted=True)
+    else:
+        SimulateEvalConfig.all_objects.filter(id=removed.id).delete()
 
-    TestExecutor()._run_simulate_evaluations(
-        call_execution,
-        eval_config_ids=[str(suite.id), str(mapped.id)],
-        mapping_overrides={str(suite.id): override},
-    )
-
-    calls = {c.args[0].id: c for c in mock_single.call_args_list}
-    assert calls[suite.id].kwargs == {"mapping_override": override}
-    assert calls[mapped.id].kwargs == {}
-
-
-@pytest.mark.parametrize(
-    ("mapping_overrides", "expected_kwargs"),
-    [
-        (None, {"eval_config_ids": ["cfg"], "skip_existing": False}),
-        (
-            {"cfg": {"conversation": "transcript"}},
-            {
-                "eval_config_ids": ["cfg"],
-                "skip_existing": False,
-                "mapping_overrides": {"cfg": {"conversation": "transcript"}},
-            },
-        ),
-    ],
-    ids=["old-shape", "with-override"],
-)
-def test_the_eval_task_forwards_mapping_overrides_only_when_set(
-    mapping_overrides, expected_kwargs
-):
-    call = SimpleNamespace(id="call-id")
-    task_kwargs = {"eval_config_ids": ["cfg"]}
-    if mapping_overrides is not None:
-        task_kwargs["mapping_overrides"] = mapping_overrides
-
-    with (
-        patch("simulate.services.test_executor.close_old_connections", lambda: None),
-        patch(
-            "simulate.services.test_executor.CallExecution.objects.select_related"
-        ) as selected,
-        patch("simulate.services.test_executor.TestExecutor") as executor_cls,
-    ):
-        selected.return_value.get.return_value = call
-
-        assert (
-            _run_simulate_evaluations_task._original_func("call-id", **task_kwargs)
-            is True
+    assert (
+        _run_simulate_evaluations_task._original_func(
+            str(call_execution.id),
+            eval_config_ids=[str(kept.id), removed_id],
+            skip_existing=False,
         )
-
-    executor_cls.return_value._run_simulate_evaluations.assert_called_once_with(
-        call, **expected_kwargs
+        is True
     )
+
+    call_execution.refresh_from_db()
+    test_execution.refresh_from_db()
+    assert mock_run.call_count == 1
+    assert call_execution.eval_outputs[str(kept.id)]["output"] == "8"
+    if stored.get("status") == "pending":
+        assert removed_id not in call_execution.eval_outputs
+    else:
+        assert call_execution.eval_outputs[removed_id] == stored
+    assert call_execution.call_metadata["eval_completed"] is True
+    assert test_execution.status == TestExecution.ExecutionStatus.COMPLETED
+
+
+def _awaiting_regrade(call_execution, test_execution, configs):
+    """The state the re-grade request leaves before the bulk task runs."""
+    call_execution.eval_outputs = {
+        **(call_execution.eval_outputs or {}),
+        **{str(config.id): {"status": "pending"} for config in configs},
+    }
+    call_execution.call_metadata = {"eval_started": True, "eval_completed": False}
+    call_execution.save(update_fields=["eval_outputs", "call_metadata"])
+    test_execution.status = TestExecution.ExecutionStatus.EVALUATING
+    test_execution.save(update_fields=["status"])
+
+
+def _grade_inline(*, args, kwargs):
+    _run_simulate_evaluations_task._original_func(*args, **kwargs)
+    return SimpleNamespace(id=f"inline-{args[0]}")
 
 
 @pytest.mark.django_db
 @patch("simulate.services.test_executor.close_old_connections", lambda: None)
-@pytest.mark.parametrize("with_override", [False, True])
-def test_the_bulk_task_forwards_mapping_overrides_only_when_set(
-    with_override, run_test, call_execution, eval_template
+@patch.object(TestExecutor, "_run_tool_evaluation")
+@pytest.mark.parametrize(
+    "tool_evaluation", [False, True], ids=["tools-off", "tools-on"]
+)
+@pytest.mark.parametrize("removal", ["soft-deleted", "gone"])
+def test_a_regrade_whose_every_eval_was_removed_still_finishes_the_run(
+    mock_tool_eval,
+    tool_evaluation,
+    removal,
+    run_test,
+    test_execution,
+    call_execution,
+    eval_template,
 ):
     from simulate.services.test_executor import run_new_evals_on_call_executions_task
 
-    cfg = _make_eval({}, run_test, eval_template)
-    overrides = {str(cfg.id): {"conversation": "transcript"}}
+    run_test.enable_tool_evaluation = tool_evaluation
+    run_test.save(update_fields=["enable_tool_evaluation"])
+    cfg = _make_eval({"x": "call.transcript"}, run_test, eval_template)
+    cfg_id = str(cfg.id)
+    _awaiting_regrade(call_execution, test_execution, [cfg])
+    if removal == "soft-deleted":
+        SimulateEvalConfig.objects.filter(id=cfg.id).update(deleted=True)
+    else:
+        SimulateEvalConfig.all_objects.filter(id=cfg.id).delete()
 
     with patch(
-        "simulate.services.test_executor._run_simulate_evaluations_task.apply_async"
-    ) as spy:
+        "simulate.services.test_executor._run_simulate_evaluations_task.apply_async",
+        side_effect=_grade_inline,
+    ):
         run_new_evals_on_call_executions_task._original_func(
-            [str(call_execution.id)],
-            [str(cfg.id)],
-            **({"mapping_overrides": overrides} if with_override else {}),
+            [str(call_execution.id)], [cfg_id]
         )
 
-    expected = {"eval_config_ids": [str(cfg.id)], "skip_existing": False}
-    if with_override:
-        expected["mapping_overrides"] = overrides
-    spy.assert_called_once_with(args=(str(call_execution.id),), kwargs=expected)
+    call_execution.refresh_from_db()
+    test_execution.refresh_from_db()
+    assert cfg_id not in call_execution.eval_outputs
+    assert call_execution.call_metadata["eval_completed"] is True
+    assert test_execution.status == TestExecution.ExecutionStatus.COMPLETED
+    mock_tool_eval.assert_not_called()
+
+
+@pytest.mark.django_db
+@patch("simulate.services.test_executor.close_old_connections", lambda: None)
+@patch("simulate.services.test_executor.decide_processing_skip", lambda **_: _NoSkip)
+@patch.object(TestExecutor, "_get_call_transcript_data")
+@patch("simulate.services.test_executor.run_eval_func")
+@pytest.mark.parametrize("failing", ["one-of-two", "every-call"])
+def test_a_call_whose_grader_could_not_be_started_does_not_hold_the_run(
+    mock_run,
+    mock_transcript,
+    failing,
+    run_test,
+    test_execution,
+    call_execution,
+    scenario,
+    agent_version,
+    transcript_data,
+    eval_template,
+):
+    from simulate.services.test_executor import run_new_evals_on_call_executions_task
+
+    _no_tool_eval(run_test)
+    mock_transcript.return_value = transcript_data
+    mock_run.return_value = _SUCCESS_STUB
+    cfg = _make_eval({"x": "call.transcript"}, run_test, eval_template)
+    cfg_id = str(cfg.id)
+    other_call = CallExecution.objects.create(
+        test_execution=test_execution,
+        scenario=scenario,
+        phone_number="+15551230001",
+        status=CallExecution.CallStatus.COMPLETED,
+        agent_version=agent_version,
+        duration_seconds=120,
+        simulation_call_type=CallExecution.SimulationCallType.VOICE,
+    )
+    for call in (call_execution, other_call):
+        _awaiting_regrade(call, test_execution, [cfg])
+    not_started = {str(other_call.id)}
+    if failing == "every-call":
+        not_started.add(str(call_execution.id))
+
+    def dispatch(*, args, kwargs):
+        if args[0] in not_started:
+            raise ConnectionError("temporal unavailable")
+        return _grade_inline(args=args, kwargs=kwargs)
+
+    with patch(
+        "simulate.services.test_executor._run_simulate_evaluations_task.apply_async",
+        side_effect=dispatch,
+    ):
+        run_new_evals_on_call_executions_task._original_func(
+            [str(call_execution.id), str(other_call.id)], [cfg_id]
+        )
+
+    test_execution.refresh_from_db()
+    for call in (call_execution, other_call):
+        call.refresh_from_db()
+        output = call.eval_outputs[cfg_id]
+        if str(call.id) in not_started:
+            assert output["status"] == StatusType.FAILED.value
+            assert output["reason"] == "Grading could not be started."
+            assert output["name"] == cfg.name
+        else:
+            assert output["status"] == StatusType.COMPLETED.value
+            assert output["output"] == "8"
+        assert call.call_metadata["eval_completed"] is True
+    assert mock_run.call_count == 2 - len(not_started)
+    assert test_execution.status == TestExecution.ExecutionStatus.COMPLETED

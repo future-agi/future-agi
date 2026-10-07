@@ -1,5 +1,18 @@
 import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 
+// Shared lifecycle mapping for the runs list and detail header.
+const RUN_STATE = {
+  pending: "queued",
+  running: "running",
+  evaluating: "running",
+  cancelling: "cancelling",
+  completed: "finished",
+  failed: "failed",
+  cancelled: "cancelled",
+};
+
+export const runStateFor = (status) => RUN_STATE[status?.toLowerCase()];
+
 // The statuses whose dot animates — a run in one of these phases is still
 // moving, so the chip breathes.
 export const LIVE_STATUSES = ["running", "booting", "grading", "cancelling"];
@@ -26,6 +39,8 @@ export const PULSING_DOT_CLASS = "sim-status-dot--pulse";
 // and an unmeasured run means nothing upstream of the agent worked, so there is
 // no verdict to blame the agent for.
 export const STATUS_META = {
+  in_progress: { color: BUILD_TONES.blue, label: "In progress" },
+  inconclusive: { color: BUILD_TONES.ash, label: "Inconclusive" },
   queued: { color: BUILD_TONES.zinc, label: "Queued" },
   booting: { color: BUILD_TONES.amber, label: "Provisioning" },
   running: { color: BUILD_TONES.blue, label: "Running" },
@@ -33,9 +48,10 @@ export const STATUS_META = {
   passed: { color: BUILD_TONES.green, label: "Passed" },
   flaky: { color: BUILD_TONES.amberBright, label: "Flaky" },
   unmeasured: { color: BUILD_TONES.ash, label: "Not measured" },
-  completed: { color: BUILD_TONES.zinc, label: "Completed" },
-  // The runs table's lifecycle "Completed" — green like the design. Kept apart from
-  // `completed` above, which the run header uses for "finished with findings".
+  // The run header's verdict for mixed results. Green, not grey: it tells the
+  // user the run did run; an all-failed run reads "Failed" instead.
+  completed: { color: BUILD_TONES.green, label: "Completed" },
+  // Shared lifecycle "Completed" for the runs list and detail header.
   finished: { color: BUILD_TONES.green, label: "Completed" },
   failed: { color: BUILD_TONES.red, label: "Failed" },
   error: { color: BUILD_TONES.orange, label: "Error" },

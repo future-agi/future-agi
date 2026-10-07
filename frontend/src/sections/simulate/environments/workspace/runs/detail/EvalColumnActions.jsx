@@ -6,18 +6,14 @@ import ConfirmRunEvaluations from "src/sections/common/EvaluationDrawer/ConfirmR
 import { useEnvironmentRunTest } from "src/api/simulate-environments/environments";
 import AddEvaluationDrawer from "../../evals/AddEvaluationDrawer";
 import {
+  EVAL_GONE_TOOLTIP,
   GRADING_TOOLTIP,
   HARNESS_NOTE,
   HARNESS_ONLY_TOOLTIP,
+  NOT_COMPLETED_TOOLTIP,
   NOT_EDITABLE_TOOLTIP,
-  NOT_FINISHED_TOOLTIP,
-} from "./AllEvaluationsDrawer";
+} from "./allEvaluationsDrawer.constants";
 import { useRegradeEvals } from "./useRegradeEvals";
-
-// A run's columns come from its stored results, so an eval removed from the
-// environment after the run keeps its column but has nothing to act on.
-export const EVAL_GONE_TOOLTIP =
-  "This evaluation isn't on this environment any more.";
 
 const ICON_SX = { minWidth: 0, mr: 1 };
 
@@ -47,7 +43,7 @@ export default function EvalColumnActions({
     runTestId,
     { enabled: Boolean(runTestId) },
   );
-  const runEvals = useRegradeEvals({ runTestId, executionId });
+  const runEvals = useRegradeEvals({ envId: env?.id, executionId });
 
   const config = menuFor
     ? (configs ?? []).find((c) => c.id === menuFor.evalId) ?? null
@@ -63,7 +59,7 @@ export default function EvalColumnActions({
       : config.regradable !== true
         ? HARNESS_ONLY_TOOLTIP
         : !canRun
-          ? NOT_FINISHED_TOOLTIP
+          ? NOT_COMPLETED_TOOLTIP
           : null;
   const rerunDisabled = !known || Boolean(rerunReason) || runEvals.isPending;
 
@@ -76,7 +72,7 @@ export default function EvalColumnActions({
         : grading
           ? GRADING_TOOLTIP
           : !canRun
-            ? NOT_FINISHED_TOOLTIP
+            ? NOT_COMPLETED_TOOLTIP
             : null;
   const editDisabled = !known || Boolean(editReason);
 

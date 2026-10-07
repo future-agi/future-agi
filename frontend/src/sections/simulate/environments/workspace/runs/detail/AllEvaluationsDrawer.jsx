@@ -20,26 +20,25 @@ import {
   useEnvironmentRunTest,
   useRemoveAppliedEvaluation,
 } from "src/api/simulate-environments/environments";
-import { runResultsKey } from "src/api/simulate-environments/runEvals";
+import {
+  runAnalyticsKey,
+  callDetailKeyPrefix,
+  runResultsKey,
+} from "src/api/simulate-environments/runEvals";
 import SideDrawer from "../../../components/SideDrawer";
 import EmptyState from "../../../components/EmptyState";
 import AddEvaluationDrawer from "../../evals/AddEvaluationDrawer";
-import { EVALS_COPY } from "../../evals/evals.constants";
 import { refusalText } from "../../evals/refusalText";
+import {
+  GRADING_TOOLTIP,
+  HARNESS_NOTE,
+  HARNESS_ONLY_TOOLTIP,
+  NOT_COMPLETED_TOOLTIP,
+  NOT_EDITABLE_TOOLTIP,
+} from "./allEvaluationsDrawer.constants";
 import { useRegradeEvals } from "./useRegradeEvals";
 
-// Only a harness call rerun can refresh a non-regradable row's score, so both
-// its checkbox and its run action are locked with the same explanation.
-export const HARNESS_ONLY_TOOLTIP = "Only a call rerun refreshes this";
-export const NOT_EDITABLE_TOOLTIP = EVALS_COPY.notEditable;
-// Shown when a ticked eval has no mapping of its own: on this page that is one
-// of the harness's suite evals, whose scores the platform will replace.
-export const HARNESS_NOTE =
-  "Scores the harness gave will be replaced by the platform's.";
-
 const REMOVE_FALLBACK = "Couldn’t remove the evaluation. Try again.";
-export const NOT_FINISHED_TOOLTIP = "Available once this run finishes.";
-export const GRADING_TOOLTIP = "Available once grading finishes.";
 // A stable empty-array constant: `= []` as a hook default is a fresh
 // reference on every render, which would re-run the memos below even when
 // the run test's configs have not changed.
@@ -94,7 +93,7 @@ export default function AllEvaluationsDrawer({
   } = useEnvironmentRunTest(runTestId, { enabled: open && Boolean(runTestId) });
   const configs = configsData ?? NO_CONFIGS;
 
-  const runEvals = useRegradeEvals({ runTestId, executionId });
+  const runEvals = useRegradeEvals({ envId: env?.id, executionId });
   const removeEval = useRemoveAppliedEvaluation();
 
   const runnableIds = useMemo(
@@ -142,10 +141,17 @@ export default function AllEvaluationsDrawer({
     removeEval.mutate(
       { id: env?.id, evalConfigId: config.id },
       {
-        onSuccess: () =>
+        onSuccess: () => {
           queryClient.invalidateQueries({
             queryKey: runResultsKey(executionId),
-          }),
+          });
+          queryClient.invalidateQueries({
+            queryKey: runAnalyticsKey(executionId),
+          });
+          // Call rows are built from the live catalog, and a drawer keeps
+          // its detail for minutes: reopened, it must not list the removed eval.
+          queryClient.invalidateQueries({ queryKey: callDetailKeyPrefix });
+        },
         onError: (e) =>
           enqueueSnackbar(refusalText(e, REMOVE_FALLBACK), {
             variant: "error",
@@ -153,6 +159,8 @@ export default function AllEvaluationsDrawer({
       },
     );
   };
+
+  const cannotRunTooltip = grading ? GRADING_TOOLTIP : NOT_COMPLETED_TOOLTIP;
 
   return (
     <SideDrawer open={open} onClose={onClose} width={520}>
@@ -234,12 +242,12 @@ export default function AllEvaluationsDrawer({
                   : grading
                     ? GRADING_TOOLTIP
                     : !canRun
-                      ? NOT_FINISHED_TOOLTIP
+                      ? NOT_COMPLETED_TOOLTIP
                       : "";
                 const runTooltip = !runnable
                   ? HARNESS_ONLY_TOOLTIP
                   : !canRun
-                    ? NOT_FINISHED_TOOLTIP
+                    ? cannotRunTooltip
                     : "";
                 return (
                   <Stack
@@ -297,8 +305,9 @@ export default function AllEvaluationsDrawer({
                         </IconButton>
                       </span>
                     </Tooltip>
-                    {/* A grader that has not started yet skips a removed eval,
-                        so its pending cell on this run would never clear. */}
+                    {/* The grader copes with a removal mid-run (it drops the
+                        pending cell), but the column would vanish from a table
+                        that is polling for its scores. Removal waits. */}
                     <Tooltip arrow title={grading ? GRADING_TOOLTIP : ""}>
                       <span>
                         <IconButton
@@ -321,7 +330,7 @@ export default function AllEvaluationsDrawer({
         </Box>
 
         <Box sx={{ p: 3, borderTop: "1px solid", borderColor: "divider" }}>
-          <Tooltip arrow title={!canRun ? NOT_FINISHED_TOOLTIP : ""}>
+          <Tooltip arrow title={!canRun ? cannotRunTooltip : ""}>
             <span style={{ display: "block" }}>
               <Button
                 fullWidth

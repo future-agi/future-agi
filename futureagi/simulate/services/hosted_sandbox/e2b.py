@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import shlex
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import Any
 
 from django.conf import settings
@@ -60,6 +60,18 @@ class E2BFilesystem:
             user=self._os_user,
         )
         return bytes(body)
+
+    def download_file_stream(
+        self, path: str, timeout: int | None = None
+    ) -> Iterator[bytes]:
+        with _call(
+            self._sandbox.files.read,
+            path,
+            format="stream",
+            request_timeout=timeout,
+            user=self._os_user,
+        ) as reader:
+            yield from reader
 
 
 class E2BProcess:

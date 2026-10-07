@@ -17,14 +17,14 @@ beforeEach(() => {
 });
 
 const setup = () =>
-  renderHook(() => useRegradeEvals({ runTestId: "rt1", executionId: "ex1" }));
+  renderHook(() => useRegradeEvals({ envId: "env-1", executionId: "ex1" }));
 
 describe("useRegradeEvals", () => {
   it("grades the given evals on this run", () => {
     const { result } = setup();
     result.current.regrade([{ id: "c1" }, { id: "c2" }]);
     expect(mutate).toHaveBeenCalledWith(
-      { runTestId: "rt1", executionId: "ex1", evalConfigIds: ["c1", "c2"] },
+      { id: "env-1", executionId: "ex1", evalConfigIds: ["c1", "c2"] },
       expect.any(Object),
     );
   });
@@ -46,7 +46,7 @@ describe("useRegradeEvals", () => {
     const onSuccess = vi.fn();
     const { result } = setup();
     result.current.regrade([{ id: "c1" }, { id: "c2" }], { onSuccess });
-    mutate.mock.calls[0][1].onSuccess({ message: "Evals dispatch failed" });
+    mutate.mock.calls[0][1].onSuccess({ dispatched: false });
 
     expect(enqueueSnackbar).toHaveBeenCalledWith(
       "Grading may not have started. Try again.",

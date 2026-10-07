@@ -3,14 +3,15 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { useEnvironmentRunTest } from "src/api/simulate-environments/environments";
 import { useRunNewEvals } from "src/api/simulate-environments/runEvals";
-import EvalColumnActions, { EVAL_GONE_TOOLTIP } from "../EvalColumnActions";
+import EvalColumnActions from "../EvalColumnActions";
 import {
+  EVAL_GONE_TOOLTIP,
   GRADING_TOOLTIP,
   HARNESS_NOTE,
   HARNESS_ONLY_TOOLTIP,
+  NOT_COMPLETED_TOOLTIP,
   NOT_EDITABLE_TOOLTIP,
-  NOT_FINISHED_TOOLTIP,
-} from "../AllEvaluationsDrawer";
+} from "../allEvaluationsDrawer.constants";
 
 vi.mock("notistack", () => ({ enqueueSnackbar: vi.fn() }));
 vi.mock("src/api/simulate-environments/environments", () => ({
@@ -131,7 +132,7 @@ describe("EvalColumnActions", () => {
     fireEvent.click(screen.getByText("Run Evaluations"));
     expect(mutate).toHaveBeenCalledWith(
       expect.objectContaining({
-        runTestId: "rt1",
+        id: "env-1",
         executionId: "ex1",
         evalConfigIds: ["c1"],
       }),
@@ -171,7 +172,7 @@ describe("EvalColumnActions", () => {
     setup({ canRun: false });
     expect(item("Re-run")).toHaveAttribute("aria-disabled", "true");
     expect(item("Edit")).toHaveAttribute("aria-disabled", "true");
-    expect(screen.getAllByText(NOT_FINISHED_TOOLTIP)).toHaveLength(2);
+    expect(screen.getAllByText(NOT_COMPLETED_TOOLTIP)).toHaveLength(2);
   });
 
   it("holds edits while the run is being graded", () => {

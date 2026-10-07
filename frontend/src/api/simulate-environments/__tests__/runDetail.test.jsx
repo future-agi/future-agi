@@ -771,6 +771,27 @@ describe("useRunDetail", () => {
     );
   });
 
+  it.each([
+    ["Pending", "queued"],
+    ["Running", "running"],
+    ["Evaluating", "running"],
+    ["Completed", "finished"],
+    ["Failed", "failed"],
+    ["Cancelling", "cancelling"],
+    ["Cancelled", "cancelled"],
+  ])("matches the runs list lifecycle for %s", async (status, expected) => {
+    axios.get.mockResolvedValueOnce({
+      data: { execution: { id: "ex-state", status: status.toLowerCase() } },
+    });
+    const { result } = renderHook(() => useRunDetail("rt1", "ex-state"), {
+      wrapper: makeWrapper(),
+    });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    const [listRow] = mapExecutions({ results: [{ id: "ex-state", status }], count: 1 });
+    expect(listRow.runState).toBe(expected);
+    expect(result.current.identity.runState).toBe(listRow.runState);
+  });
+
   it("keeps terminal Run failure when some calls already passed", async () => {
     axios.get.mockResolvedValueOnce({
       data: {

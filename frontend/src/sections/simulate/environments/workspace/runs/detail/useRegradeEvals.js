@@ -11,24 +11,26 @@ export const RUN_FALLBACK = "Grading may not have started. Try again.";
  * Every place that re-runs an eval on a run page goes through here, so the
  * request, its messages and its refusals live in one place.
  *
+ * `envId` is the environment the run belongs to; the re-grade route is under it.
+ *
  * `regrade(configs, { onSuccess })` calls `onSuccess(dispatched)` once the
  * server answers: `dispatched` is false when it accepted the request but
  * couldn't start the grading job. A refusal shows the server's sentence and
  * calls nothing, so a confirm dialog stays open for a retry.
  */
-export function useRegradeEvals({ runTestId, executionId }) {
+export function useRegradeEvals({ envId, executionId }) {
   const runEvals = useRunNewEvals();
 
   const regrade = (configs, { onSuccess } = {}) => {
     const evalConfigIds = configs.map((c) => c.id);
     runEvals.mutate(
-      { runTestId, executionId, evalConfigIds },
+      { id: envId, executionId, evalConfigIds },
       {
         onSuccess: (result) => {
-          // The endpoint answers 200 even when the async dispatch itself
-          // failed (nothing was graded and it can be retried), so that case
-          // is told apart by its own sentence, not the status code.
-          if (/dispatch failed/i.test(result?.message || "")) {
+          // Only the run-test route sends this flag (false when grading never
+          // started and the old scores were put back). This route answers that
+          // with a 503 instead, so its bodies carry no flag and read as started.
+          if (result?.dispatched === false) {
             enqueueSnackbar(RUN_FALLBACK, { variant: "warning" });
             onSuccess?.(false);
             return;
