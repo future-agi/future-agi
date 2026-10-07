@@ -12,7 +12,7 @@ criteria: "You are evaluating whether the agent follows its system prompt instru
   \ formal but drifts to casual language.\n\n## Anti-bias Rules\n\n- If the system prompt is vague or minimal, the agent has\
   \ more latitude; DO NOT penalize reasonable interpretations.\n- Evaluate ONLY the agent's turns, not the customer's behavior.\n\
   - A short conversation with consistent adherence scores higher than a long one with drift.\n\n## Scoring\n\nScore 0.0 if\
-  \ the agent consistently ignores its system prompt. Score 0.5 if it follows in some turns but deviates in others. Score\
+  \ the agent consistently ignores its system prompt. Score 0.5 if it follows in some turns but deviates in others. Score 0.0 if it breaks an explicit instruction of the system prompt for most of the conversation. Score\
   \ 1.0 if it fully adheres across all turns.\n\n## Inputs\n\n<system_prompt>{{system_prompt}}</system_prompt>\n\n<conversation>{{conversation}}</conversation>"
 eval_tags:
 - Agents
@@ -66,5 +66,5 @@ config:
     \ the agent has more latitude; DO NOT penalize reasonable interpretations.\n- Evaluate ONLY the agent's turns, not the\
     \ customer's behavior.\n- A short conversation with consistent adherence scores higher than a long one with drift.\n\n\
     ## Scoring\n\nScore 0.0 if the agent consistently ignores its system prompt. Score 0.5 if it follows in some turns but\
-    \ deviates in others. Score 1.0 if it fully adheres across all turns.\n\n## Inputs\n\n<system_prompt>{{system_prompt}}</system_prompt>\n\
+    \ deviates in others. Score 0.0 if it breaks an explicit instruction of the system prompt for most of the conversation. Score 1.0 if it fully adheres across all turns.\n\n## Inputs\n\n<system_prompt>{{system_prompt}}</system_prompt>\n\
     \n<conversation>{{conversation}}</conversation>"

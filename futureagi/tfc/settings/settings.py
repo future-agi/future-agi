@@ -983,6 +983,12 @@ ERROR_FEED_GROUPING_TENANT_BUDGET_USD = os.getenv(
     "ERROR_FEED_GROUPING_TENANT_BUDGET_USD", "0"
 )
 # Brief batching delay is for grouping only; occurrence embeddings enqueue now.
+# Additional hard ceiling for sampled merge reviews per durable work item.
+# Reservations count at their maximum, including unknown usage and retries.
+ERROR_FEED_GROUPING_MERGE_BUDGET_USD = os.getenv(
+    "ERROR_FEED_GROUPING_MERGE_BUDGET_USD", "1"
+)
+
 ERROR_FEED_GROUPING_DEBOUNCE_SECONDS = int(
     os.getenv("ERROR_FEED_GROUPING_DEBOUNCE_SECONDS", "5")
 )
