@@ -78,6 +78,11 @@ describe("RunsSummary", () => {
     expect(screen.getByText("12 runs · 7 scenarios")).toBeInTheDocument();
   });
 
+  it("says scenario, not scenarios, for one", () => {
+    renderSummary({}, RUNS, false, { count: 12, coveredScenarioCount: 1 });
+    expect(screen.getByText("12 runs · 1 scenario")).toBeInTheDocument();
+  });
+
   it("shows a real pass rate per run", () => {
     renderSummary();
     expect(screen.getByText("75%")).toBeInTheDocument(); // Run 2: 15/20

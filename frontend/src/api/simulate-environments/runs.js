@@ -6,7 +6,9 @@ import {
   STOPPABLE_STATUSES,
   TERMINAL_STATUSES,
 } from "src/sections/common/simulation/constants/statusStyles";
+import { runStateFor } from "src/sections/simulate/environments/workspace/runs/runs.constants";
 import { MOCK_RUNS } from "./_fixtures/runs";
+import { harnessEnvironmentKey } from "./environment";
 
 // The Runs tab's data source. For a real completed harness job the env carries
 // `platform.runTestId`, so the run history is the product's real executions
@@ -35,16 +37,6 @@ export function listRunTestExecutions(runTestId, { page, limit } = {}) {
 // and order (kept out of this pure mapper). `executionId` mirrors `id` so a row
 // click routes into the
 // reused product execution detail.
-const RUN_STATE = {
-  Pending: "queued",
-  Running: "running",
-  Evaluating: "running",
-  Cancelling: "cancelling",
-  Completed: "finished",
-  Failed: "failed",
-  Cancelled: "cancelled",
-};
-
 export function executionToRun(raw) {
   const total =
     raw?.total_calls ?? raw?.total_chats ?? raw?.calls_attempted ?? raw?.calls ?? 0;
@@ -76,7 +68,7 @@ export function executionToRun(raw) {
     status,
     // The run's lifecycle for the Status column — `status` above is a verdict
     // (passed/failed), this is where the run is (queued/running/completed).
-    runState: RUN_STATE[raw?.status] ?? status,
+    runState: runStateFor(raw?.status) ?? status,
     // Only a run that hasn't finished and isn't already stopping can be stopped.
     stoppable: STOPPABLE_STATUSES.includes(raw?.status),
     startedAt: raw?.start_time ?? null,
@@ -115,6 +107,15 @@ export function mapExecutions(payload, offset = 0) {
     const ordinal = count - offset - index;
     return { ...executionToRun(raw), ordinal, label: `Run ${ordinal}` };
   });
+}
+
+// A new run changes both the run-test's executions and the environment's run
+// count, which the Runs tab shows until the runs list loads.
+export function refreshAfterRunStart(queryClient, envId, runTestId) {
+  queryClient.invalidateQueries({
+    queryKey: ["run-test-executions", runTestId],
+  });
+  queryClient.invalidateQueries({ queryKey: harnessEnvironmentKey(envId) });
 }
 
 export function useEnvironmentRuns(
