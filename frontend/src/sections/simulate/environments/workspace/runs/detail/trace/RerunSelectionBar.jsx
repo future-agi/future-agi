@@ -64,9 +64,7 @@ export default function RerunSelectionBar({
         ? `${selectedCalls.toLocaleString()} selected`
         : `${plural(selectedCalls, "call")} selected · ${plural(scenarioCount, "scenario")}`;
 
-  const openMenu = async (event) => {
-    setAnchor(event.currentTarget);
-    setTrials(runTrials);
+  const readKeys = async () => {
     setKeys(null);
     setFailed(false);
     readRef.current += 1;
@@ -77,6 +75,11 @@ export default function RerunSelectionBar({
     } catch {
       if (read === readRef.current) setFailed(true);
     }
+  };
+  const openMenu = (event) => {
+    setAnchor(event.currentTarget);
+    setTrials(runTrials);
+    readKeys();
   };
   const closeMenu = () => setAnchor(null);
 
@@ -152,24 +155,43 @@ export default function RerunSelectionBar({
         }}
       >
         <Box role="menu" aria-label="Re-run options" sx={{ py: 0.75 }}>
-          <Typography
-            sx={{
-              px: 1.5,
-              pt: 0.25,
-              pb: 0.25,
-              typography: "s3",
-              fontWeight: 700,
-              color: "text.subtitle",
-              textTransform: "uppercase",
-              letterSpacing: 0.4,
-            }}
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={1}
+            sx={{ px: 1.5, pt: 0.25, pb: 0.25 }}
           >
-            {failed
-              ? "Couldn't read the selected scenarios"
-              : keys == null
-                ? "Counting scenarios…"
-                : `Re-run ${plural(scenarios, "scenario")}`}
-          </Typography>
+            <Typography
+              sx={{
+                typography: "s3",
+                fontWeight: 700,
+                color: "text.subtitle",
+                textTransform: "uppercase",
+                letterSpacing: 0.4,
+              }}
+            >
+              {failed
+                ? "Couldn't read the selected scenarios"
+                : keys == null
+                  ? "Counting scenarios…"
+                  : `Re-run ${plural(scenarios, "scenario")}`}
+            </Typography>
+            {failed && (
+              <Button
+                size="small"
+                onClick={readKeys}
+                sx={{
+                  typography: "s3",
+                  fontWeight: 600,
+                  minWidth: 0,
+                  px: 1,
+                  py: 0.25,
+                }}
+              >
+                Try again
+              </Button>
+            )}
+          </Stack>
 
           {/* Set first, then act: Repeats sits above the option, outside it,
               so changing it never starts the run. */}

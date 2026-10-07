@@ -301,6 +301,29 @@ describe("RunTraceTable — re-running as a new simulation", () => {
     expect(screen.getByText("Re-run 2 scenarios")).toBeInTheDocument();
   });
 
+  it("offers to try again when the scenarios can't be read", async () => {
+    const user = userEvent.setup();
+    total = 120;
+    listMatchingScenarioKeys
+      .mockRejectedValueOnce(new Error("Network Error"))
+      .mockResolvedValueOnce(["refund", "escalate"]);
+    renderTable();
+    await openRows(user);
+    await user.click(pageBox());
+    await user.click(
+      screen.getByRole("button", { name: "Select all 120 matching calls" }),
+    );
+
+    await openMenu(user);
+    expect(
+      await screen.findByText("Couldn't read the selected scenarios"),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+
+    expect(await screen.findByText("Re-run 2 scenarios")).toBeInTheDocument();
+    expect(listMatchingScenarioKeys).toHaveBeenCalledTimes(2);
+  });
+
   it("sends the trials picked in the menu", async () => {
     const user = userEvent.setup();
     const { onRerunScenarios } = renderTable();

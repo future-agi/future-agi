@@ -63,7 +63,9 @@ const bannerButtonSx = {
   typography: "s3",
   fontWeight: 600,
   minWidth: 0,
-  p: 0,
+  // Room around the label so the hover box doesn't sit tight on the text.
+  px: 1,
+  py: 0.25,
   color: "primary.main",
 };
 // Room left under the table box for the pager row and the page's bottom gutter.
@@ -284,7 +286,11 @@ export default function RunTraceTable({
     </>
   ) : pageChecked && totalPages > 1 ? (
     <>
-      <span>{`All ${pageIds.length} calls on this page are selected.`}</span>
+      <span>
+        {pageIds.length === 1
+          ? "The 1 call on this page is selected."
+          : `All ${pageIds.length} calls on this page are selected.`}
+      </span>
       <Button
         size="small"
         onClick={selection.selectAllMatching}
