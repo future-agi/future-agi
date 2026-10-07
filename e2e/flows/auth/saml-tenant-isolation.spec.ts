@@ -18,6 +18,7 @@ const RESULTS = path.join(
 );
 const SAML_PATHS = new Set(['/saml2_auth/acs/', '/saml2_auth/complete/', '/accounts/user-info/']);
 const receipts: RequestReceipt[] = [];
+const pendingReceipts: Promise<void>[] = [];
 
 interface RequestReceipt {
   flow: string;
@@ -39,23 +40,31 @@ function recordRequests(page: Page, flow: string): void {
   page.on('request', (request: Request) => {
     const url = new URL(request.url());
     if (!SAML_PATHS.has(url.pathname)) return;
-    const headers = request.headers();
-    const cookieNames = (headers.cookie ?? '')
-      .split(';')
-      .map(cookie => cookie.trim().split('=', 1)[0])
-      .filter(Boolean)
-      .sort();
-    const authorization = headers.authorization;
-    receipts.push({
-      flow,
-      method: request.method(),
-      path: url.pathname,
-      cookieNames,
-      authorizationPrefix: authorization ? authorization.split(' ', 1)[0] : null,
-      hasOrganizationHeader: 'x-organization-id' in headers,
-      hasWorkspaceHeader: 'x-workspace-id' in headers,
-    });
+    // headers() leaves out Cookie; allHeaders() has the cookies the browser
+    // actually sent, which is what the binder checks are about.
+    pendingReceipts.push(request.allHeaders().then(headers => {
+      const cookieNames = (headers.cookie ?? '')
+        .split(';')
+        .map(cookie => cookie.trim().split('=', 1)[0])
+        .filter(Boolean)
+        .sort();
+      const authorization = headers.authorization;
+      receipts.push({
+        flow,
+        method: request.method(),
+        path: url.pathname,
+        cookieNames,
+        authorizationPrefix: authorization ? authorization.split(' ', 1)[0] : null,
+        hasOrganizationHeader: 'x-organization-id' in headers,
+        hasWorkspaceHeader: 'x-workspace-id' in headers,
+      });
+    }));
   });
+}
+
+async function settledReceipts(): Promise<RequestReceipt[]> {
+  await Promise.allSettled(pendingReceipts);
+  return receipts;
 }
 
 async function uploadIdp(
@@ -137,7 +146,7 @@ test.describe('SAML tenant isolation', () => {
 
   test.afterAll(async () => {
     await mkdir(path.dirname(RESULTS), { recursive: true });
-    await writeFile(RESULTS, `${JSON.stringify(receipts, null, 2)}\n`);
+    await writeFile(RESULTS, `${JSON.stringify(await settledReceipts(), null, 2)}\n`);
   });
 
   test('SAML-E2E-001: signed login issues one organization-scoped session', {
@@ -230,7 +239,7 @@ test.describe('SAML tenant isolation', () => {
     try {
       recordRequests(page, 'SAML-E2E-003');
       await completeBrowserLogin(page, idp, actor.email);
-      const flowReceipts = receipts.filter(receipt => receipt.flow === 'SAML-E2E-003');
+      const flowReceipts = (await settledReceipts()).filter(receipt => receipt.flow === 'SAML-E2E-003');
       const acs = flowReceipts.find(receipt => receipt.path === '/saml2_auth/acs/');
       const completion = flowReceipts.find(receipt => receipt.path === '/saml2_auth/complete/');
       expect(acs?.cookieNames.filter(name => name.startsWith('fai_saml_b_'))).toEqual([]);
