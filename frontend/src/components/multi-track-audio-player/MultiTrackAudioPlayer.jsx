@@ -29,7 +29,9 @@ const MultiTrackAudioPlayer = ({
   const onInstanceRef = useRef(onInstance);
   const reportedInstanceRef = useRef(false);
   const [ready, setReady] = useState(0);
-  const isReady = ready === trackUrls.length;
+  const [audioError, setAudioError] = useState(false);
+  const isReady =
+    !audioError && trackUrls.length > 0 && ready === trackUrls.length;
 
   // Keep latest onInstance in a ref so the instance callback fires with the
   // freshest handler without re-running the WaveSurfer init effect.
@@ -39,14 +41,30 @@ const MultiTrackAudioPlayer = ({
 
   const [isPlaying, setIsPlaying] = useState(false);
   useEffect(() => {
-    if (!multiTrackAudioRef.current || trackUrls.length === 0) return;
+    if (!multiTrackAudioRef.current) return;
     setReady(0);
+    setAudioError(false);
+    setIsPlaying(false);
     reportedInstanceRef.current = false;
+    if (trackUrls.length === 0 || trackUrls.some(({ url }) => !url)) {
+      setAudioError(true);
+      return;
+    }
+
+    let active = true;
+    const media = trackUrls.map(() => new Audio());
+    const failAudio = () => {
+      if (!active) return;
+      setAudioError(true);
+      setIsPlaying(false);
+    };
+    media.forEach((audio) => audio.addEventListener("error", failAudio));
     const tracks = trackUrls.map(({ url, color, name, peaks }, index) => ({
       id: `track-${index}`,
       url,
       peaks: peaks ? [peaks] : undefined,
       options: {
+        media: media[index],
         waveColor: color || "#94A3B8",
         progressColor: darkenColor(color || "#94A3B8", 0.5, 0.5),
         height: height,
@@ -58,7 +76,7 @@ const MultiTrackAudioPlayer = ({
       name: `${name}`,
     }));
 
-    mtRef.current = new MultiTrack(tracks, {
+    const multitrack = new MultiTrack(tracks, {
       container: multiTrackAudioRef.current,
       cursorColor: isDark ? "#fafafa" : "#0F172A",
       cursorWidth: 2,
@@ -67,20 +85,25 @@ const MultiTrackAudioPlayer = ({
       rightButtonDrag: true,
       dragBounds: true,
     });
+    mtRef.current = multitrack;
 
-    mtRef.current.on("canplay", () => {
+    multitrack.once("canplay", () => {
+      if (!active) return;
       trackUrls.forEach((_, index) => {
-        const currentWave = mtRef.current?.wavesurfers?.[index];
-        currentWave?.on("ready", () => {
-          setReady((prev) => prev + 1);
+        const currentWave = multitrack.wavesurfers[index];
+        currentWave.on("error", failAudio);
+        currentWave.once("ready", () => {
+          if (active) setReady((prev) => prev + 1);
         });
       });
     });
 
-    mtRef.current.initAllAudios();
-
     return () => {
-      mtRef.current?.destroy();
+      active = false;
+      multitrack.destroy();
+      media.forEach((audio) => {
+        audio.removeEventListener("error", failAudio);
+      });
       mtRef.current = null;
     };
   }, [trackUrls, height, isDark]);
@@ -142,9 +165,11 @@ const MultiTrackAudioPlayer = ({
               gap: 1.5,
             }}
           >
-            <MemoizedBarsIcon />
+            {!audioError && <MemoizedBarsIcon />}
             <Typography typography="s1" fontWeight="fontWeightMedium">
-              Painting sound waves...
+              {audioError
+                ? "Unable to load audio recording."
+                : "Painting sound waves..."}
             </Typography>
           </Box>
         )}
