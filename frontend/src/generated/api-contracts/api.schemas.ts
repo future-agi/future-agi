@@ -26992,7 +26992,7 @@ export interface SpanListColumnConfigApi {
   choices_map?: SpanListColumnConfigApiChoicesMap;
   /** @minLength 1 */
   eval_template_id?: string | null;
-  target_type?: SpanListColumnConfigApiTargetType;
+  target_type?: SpanListColumnConfigApiTargetType | null;
   /** Any valid JSON value. */
   annotators?: SpanListColumnConfigApiAnnotators;
   /** @minLength 1 */
@@ -28807,7 +28807,7 @@ export interface TraceObserveColumnConfigApi {
   choices_map?: TraceObserveColumnConfigApiChoicesMap;
   /** @minLength 1 */
   eval_template_id?: string | null;
-  target_type?: TraceObserveColumnConfigApiTargetType;
+  target_type?: TraceObserveColumnConfigApiTargetType | null;
   /** Any valid JSON value. */
   annotators?: TraceObserveColumnConfigApiAnnotators;
   /** @minLength 1 */

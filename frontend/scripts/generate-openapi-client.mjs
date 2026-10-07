@@ -518,6 +518,14 @@ export type ${jsonAlias} = JsonValueApi;`,
           `${configType} nullable ${anchor}`,
         );
       }
+      // Non-eval columns serialize target_type as an explicit null.
+      schemas = assertReplaceInNamedBlock(
+        schemas,
+        `export interface ${configType} {`,
+        `target_type?: ${configType}TargetType;`,
+        `target_type?: ${configType}TargetType | null;`,
+        `${configType} nullable target_type`,
+      );
     }
 
     // Orval also drops Swagger 2.0 x-nullable for the exact continuation
@@ -1028,6 +1036,13 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
           `${exportName} nullable column config`,
         );
       }
+      zod = assertReplaceRegexInNamedBlock(
+        zod,
+        `export const ${exportName} = zod.object({`,
+        /("target_type": zod\.enum\(\[[^\]]*\]\))\.optional\(\)/,
+        "$1.nullish()",
+        `${exportName}.target_type nullable`,
+      );
     }
 
     for (const exportName of listResponseExports.slice(0, -1)) {

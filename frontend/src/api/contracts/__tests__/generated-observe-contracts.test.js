@@ -35,6 +35,8 @@ const column = {
   annotators: ["reviewer-1"],
   source_field: null,
   parent_eval_id: null,
+  // Non-eval columns serialize target_type as an explicit null.
+  target_type: null,
 };
 
 const metadata = {
@@ -99,6 +101,21 @@ describe("generated Observe response contracts", () => {
       expect(parsed.data.result.table[0]).toEqual(recursiveRow);
     },
   );
+
+  it.each([
+    ["Observe traces", TracerTraceListTracesOfSessionResponse],
+    ["Observe spans", TracerObservationSpanListSpansObserveResponse],
+  ])("keeps an eval column's target_type on %s", (_name, schema) => {
+    const evalColumn = { ...column, id: "eval-1", target_type: "trace" };
+    const parsed = schema.parse({
+      status: true,
+      result: { config: [column, evalColumn], metadata, table: [] },
+    });
+    expect(parsed.result.config.map((c) => c.target_type)).toEqual([
+      null,
+      "trace",
+    ]);
+  });
 
   it("preserves dynamic session cells and explicit-null typed cells", () => {
     const sessionRow = {

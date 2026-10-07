@@ -58313,7 +58313,7 @@ export const TracerObservationSpanListSpansResponse = zod.object({
           .optional()
           .describe("Any valid JSON value."),
         eval_template_id: zod.string().min(1).nullish(),
-        target_type: zod.enum(["span", "trace"]).optional(),
+        target_type: zod.enum(["span", "trace"]).nullish(),
         annotators: jsonValueSchema
           .optional()
           .describe("Any valid JSON value."),
@@ -58621,7 +58621,7 @@ export const TracerObservationSpanListSpansObserveResponse = zod.object({
           .optional()
           .describe("Any valid JSON value."),
         eval_template_id: zod.string().min(1).nullish(),
-        target_type: zod.enum(["span", "trace"]).optional(),
+        target_type: zod.enum(["span", "trace"]).nullish(),
         annotators: jsonValueSchema
           .optional()
           .describe("Any valid JSON value."),
@@ -63342,7 +63342,7 @@ export const TracerTraceSessionListSessionsResponse = zod.object({
           .optional()
           .describe("Any valid JSON value."),
         eval_template_id: zod.string().min(1).nullish(),
-        target_type: zod.enum(["span", "trace"]).optional(),
+        target_type: zod.enum(["span", "trace"]).nullish(),
         annotators: jsonValueSchema
           .optional()
           .describe("Any valid JSON value."),
@@ -64505,7 +64505,7 @@ export const TracerTraceListTracesResponse = zod.object({
           .optional()
           .describe("Any valid JSON value."),
         eval_template_id: zod.string().min(1).nullish(),
-        target_type: zod.enum(["span", "trace"]).optional(),
+        target_type: zod.enum(["span", "trace"]).nullish(),
         annotators: jsonValueSchema
           .optional()
           .describe("Any valid JSON value."),
@@ -64793,7 +64793,7 @@ export const TracerTraceListTracesOfSessionResponse = zod.object({
           .optional()
           .describe("Any valid JSON value."),
         eval_template_id: zod.string().min(1).nullish(),
-        target_type: zod.enum(["span", "trace"]).optional(),
+        target_type: zod.enum(["span", "trace"]).nullish(),
         annotators: jsonValueSchema
           .optional()
           .describe("Any valid JSON value."),
@@ -64981,7 +64981,7 @@ export const TracerTraceListVoiceCallsResponse = zod.object({
       settings: jsonValueSchema.optional().describe("Any valid JSON value."),
       choices_map: jsonValueSchema.optional().describe("Any valid JSON value."),
       eval_template_id: zod.string().min(1).nullish(),
-      target_type: zod.enum(["span", "trace"]).optional(),
+      target_type: zod.enum(["span", "trace"]).nullish(),
       annotators: jsonValueSchema.optional().describe("Any valid JSON value."),
       source_field: zod.string().min(1).nullish(),
       parent_eval_id: zod.string().min(1).nullish(),
