@@ -58313,6 +58313,7 @@ export const TracerObservationSpanListSpansResponse = zod.object({
           .optional()
           .describe("Any valid JSON value."),
         eval_template_id: zod.string().min(1).nullish(),
+        target_type: zod.enum(["span", "trace"]).optional(),
         annotators: jsonValueSchema
           .optional()
           .describe("Any valid JSON value."),
@@ -58620,6 +58621,7 @@ export const TracerObservationSpanListSpansObserveResponse = zod.object({
           .optional()
           .describe("Any valid JSON value."),
         eval_template_id: zod.string().min(1).nullish(),
+        target_type: zod.enum(["span", "trace"]).optional(),
         annotators: jsonValueSchema
           .optional()
           .describe("Any valid JSON value."),
@@ -63340,6 +63342,7 @@ export const TracerTraceSessionListSessionsResponse = zod.object({
           .optional()
           .describe("Any valid JSON value."),
         eval_template_id: zod.string().min(1).nullish(),
+        target_type: zod.enum(["span", "trace"]).optional(),
         annotators: jsonValueSchema
           .optional()
           .describe("Any valid JSON value."),
@@ -64502,6 +64505,7 @@ export const TracerTraceListTracesResponse = zod.object({
           .optional()
           .describe("Any valid JSON value."),
         eval_template_id: zod.string().min(1).nullish(),
+        target_type: zod.enum(["span", "trace"]).optional(),
         annotators: jsonValueSchema
           .optional()
           .describe("Any valid JSON value."),
@@ -64764,12 +64768,16 @@ export const TracerTraceListTracesOfSessionResponse = zod.object({
       query_exact: zod.boolean().optional(),
       ordering_exact: zod.boolean().optional(),
     }),
-    table: zod.array(
-      zod.record(
-        zod.string(),
-        jsonValueSchema.describe("Any valid JSON value."),
+    table: zod
+      .array(
+        zod.record(
+          zod.string(),
+          jsonValueSchema.describe("Any valid JSON value."),
+        ),
+      )
+      .describe(
+        "Observe eval bool and choice cells are counts of completed attempts; a detail eval_rollup separately selects the latest completed row per span.",
       ),
-    ),
     config: zod.array(
       zod.object({
         id: zod.string().min(1),
@@ -64785,6 +64793,7 @@ export const TracerTraceListTracesOfSessionResponse = zod.object({
           .optional()
           .describe("Any valid JSON value."),
         eval_template_id: zod.string().min(1).nullish(),
+        target_type: zod.enum(["span", "trace"]).optional(),
         annotators: jsonValueSchema
           .optional()
           .describe("Any valid JSON value."),
@@ -64972,6 +64981,7 @@ export const TracerTraceListVoiceCallsResponse = zod.object({
       settings: jsonValueSchema.optional().describe("Any valid JSON value."),
       choices_map: jsonValueSchema.optional().describe("Any valid JSON value."),
       eval_template_id: zod.string().min(1).nullish(),
+      target_type: zod.enum(["span", "trace"]).optional(),
       annotators: jsonValueSchema.optional().describe("Any valid JSON value."),
       source_field: zod.string().min(1).nullish(),
       parent_eval_id: zod.string().min(1).nullish(),
@@ -65221,7 +65231,59 @@ export const TracerTraceReadResponse = zod.object({
   status: zod.boolean().default(tracerTraceReadResponseStatusDefault),
   result: zod.object({
     trace: zod.object({}).passthrough(),
-    observation_spans: zod.array(zod.object({}).passthrough()),
+    observation_spans: zod.array(
+      zod.object({
+        observation_span: zod.object({}).passthrough(),
+        children: zod.array(zod.object({}).passthrough()).optional(),
+        eval_scores: zod
+          .array(zod.object({}).passthrough())
+          .optional()
+          .describe(
+            "Raw eval rows retained for backwards-compatible array consumers.",
+          ),
+        eval_rollup: zod
+          .object({
+            scope: zod.enum(["trace", "span"]),
+            evals: zod.array(
+              zod.object({
+                eval_config_id: zod.string().min(1),
+                eval_name: zod.string().min(1),
+                output_type: zod.string().min(1).optional(),
+                template_type: zod.string().min(1).optional(),
+                target_type: zod.enum(["span", "trace"]).optional(),
+                choices_map: zod
+                  .object({})
+                  .passthrough()
+                  .optional()
+                  .describe("Any valid JSON value."),
+                aggregate: zod
+                  .object({})
+                  .passthrough()
+                  .describe("Any valid JSON value."),
+                spans: zod.array(
+                  zod.object({
+                    span_id: zod.string().min(1),
+                    span_name: zod.string().optional(),
+                    value: zod
+                      .object({})
+                      .passthrough()
+                      .optional()
+                      .describe("Any valid JSON value."),
+                    explanation: zod.string().min(1).optional(),
+                    error: zod.boolean().optional(),
+                    status: zod.string().min(1).optional(),
+                    eval_config_id: zod.string().optional(),
+                  }),
+                ),
+                error: zod.boolean().optional(),
+              }),
+            ),
+            error: zod.boolean().optional(),
+          })
+          .optional(),
+        annotations: zod.array(zod.object({}).passthrough()).optional(),
+      }),
+    ),
     summary: zod.object({}).passthrough(),
     graph: zod.object({}).passthrough(),
   }),

@@ -102037,7 +102037,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         observation_spans: {
           type: "array",
           items: {
-            type: "object",
+            $ref: "#/definitions/TraceDetailSpan",
           },
         },
         summary: {
@@ -102242,6 +102242,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           $ref: "#/definitions/TraceObserveListMetadata",
         },
         table: {
+          description:
+            "Observe eval bool and choice cells are counts of completed attempts; a detail eval_rollup separately selects the latest completed row per span.",
           type: "array",
           items: {
             type: "object",
@@ -102745,6 +102747,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Eval template id",
           type: "string",
           minLength: 1,
+          "x-nullable": true,
+        },
+        target_type: {
+          title: "Target type",
+          type: "string",
+          enum: ["span", "trace"],
           "x-nullable": true,
         },
         annotators: {
@@ -113119,6 +113127,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minLength: 1,
           "x-nullable": true,
         },
+        target_type: {
+          title: "Target type",
+          type: "string",
+          enum: ["span", "trace"],
+          "x-nullable": true,
+        },
         annotators: {
           title: "Annotators",
           type: "object",
@@ -113688,6 +113702,39 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Member count",
           type: "integer",
           minimum: 0,
+        },
+      },
+    },
+    TraceDetailSpan: {
+      required: ["observation_span"],
+      type: "object",
+      properties: {
+        observation_span: {
+          title: "Observation span",
+          type: "object",
+        },
+        children: {
+          type: "array",
+          items: {
+            type: "object",
+          },
+        },
+        eval_scores: {
+          description:
+            "Raw eval rows retained for backwards-compatible array consumers.",
+          type: "array",
+          items: {
+            type: "object",
+          },
+        },
+        eval_rollup: {
+          $ref: "#/definitions/EvalRollup",
+        },
+        annotations: {
+          type: "array",
+          items: {
+            type: "object",
+          },
         },
       },
     },
@@ -116363,6 +116410,27 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    EvalRollup: {
+      required: ["scope", "evals"],
+      type: "object",
+      properties: {
+        scope: {
+          title: "Scope",
+          type: "string",
+          enum: ["trace", "span"],
+        },
+        evals: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/EvalRollupEval",
+          },
+        },
+        error: {
+          title: "Error",
+          type: "boolean",
+        },
+      },
+    },
     UsageNotificationAction: {
       required: ["label", "url"],
       type: "object",
@@ -116763,6 +116831,63 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    EvalRollupEval: {
+      required: ["eval_config_id", "eval_name", "aggregate", "spans"],
+      type: "object",
+      properties: {
+        eval_config_id: {
+          title: "Eval config id",
+          type: "string",
+          minLength: 1,
+        },
+        eval_name: {
+          title: "Eval name",
+          type: "string",
+          minLength: 1,
+        },
+        output_type: {
+          title: "Output type",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        template_type: {
+          title: "Template type",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        target_type: {
+          title: "Target type",
+          type: "string",
+          enum: ["span", "trace"],
+          "x-nullable": true,
+        },
+        choices_map: {
+          title: "Choices map",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        aggregate: {
+          title: "Aggregate",
+          type: "object",
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        spans: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/EvalRollupSpan",
+          },
+        },
+        error: {
+          title: "Error",
+          type: "boolean",
+        },
+      },
+    },
     AgentPromptOptimiserComponentEvalResult: {
       type: "object",
       properties: {
@@ -116775,6 +116900,48 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Reason",
           type: "string",
           "x-nullable": true,
+        },
+      },
+    },
+    EvalRollupSpan: {
+      required: ["span_id"],
+      type: "object",
+      properties: {
+        span_id: {
+          title: "Span id",
+          type: "string",
+          minLength: 1,
+        },
+        span_name: {
+          title: "Span name",
+          type: "string",
+        },
+        value: {
+          title: "Value",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        explanation: {
+          title: "Explanation",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        error: {
+          title: "Error",
+          type: "boolean",
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        eval_config_id: {
+          title: "Eval config id",
+          type: "string",
         },
       },
     },
