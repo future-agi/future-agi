@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { enqueueSnackbar } from "notistack";
 import { useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
@@ -17,6 +17,11 @@ import {
 import { exportRunResults } from "src/api/simulate-environments/runAnalytics";
 import { rerunCallEvals } from "src/api/simulate-environments/rerunScenarios";
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
+import {
+  callDetailKeyPrefix,
+  runAnalyticsKey,
+  runResultsKey,
+} from "src/api/simulate-environments/runEvals";
 
 import SectionCard from "../../../components/SectionCard";
 import StatusChip from "../StatusChip";
@@ -25,6 +30,7 @@ import AddEvaluationDrawer from "../../evals/AddEvaluationDrawer";
 import AddEvalsDrawer from "../../evals/AddEvalsDrawer";
 import RunTraceTable from "./trace/RunTraceTable";
 import CallDrawer from "./CallDrawer";
+import AllEvaluationsDrawer from "./AllEvaluationsDrawer";
 import FixMyAgentDrawer from "./fixmyagent/FixMyAgentDrawer";
 import OptimizationRunsList from "./fixmyagent/OptimizationRunsList";
 import LaunchOptimizationDrawer from "./fixmyagent/LaunchOptimizationDrawer";
@@ -63,6 +69,7 @@ export default function RunDetail({
     setTab("tasks");
   };
   const [addingEvals, setAddingEvals] = useState(false);
+  const [allEvalsOpen, setAllEvalsOpen] = useState(false);
   // The exact query the trace table reads, or null when it isn't mounted.
   const [tableQuery, setTableQuery] = useState(null);
   // The open call, where it was opened from ("table", "analytics" or "link")
@@ -99,6 +106,24 @@ export default function RunDetail({
   // the client throws on `this.#queryCache` in react-query v5.
   const queryClient = useQueryClient();
 
+  // Analytics and an open call drawer don't poll for grading, so both are
+  // refreshed once, when grading on this run finishes and the scores are
+  // final.
+  const executionStatus = identity?.executionStatus ?? null;
+  const previousStatus = useRef(executionStatus);
+  useEffect(() => {
+    const was = previousStatus.current;
+    previousStatus.current = executionStatus;
+    if (
+      was === "evaluating" &&
+      executionStatus &&
+      executionStatus !== "evaluating"
+    ) {
+      queryClient.invalidateQueries({ queryKey: runAnalyticsKey(executionId) });
+      queryClient.invalidateQueries({ queryKey: callDetailKeyPrefix });
+    }
+  }, [executionStatus, executionId, queryClient]);
+
   const openOptimization = (row) =>
     navigate(
       `${paths.dashboard.simulate.test}/${testId}/${executionId}/${row.id}`,
@@ -126,9 +151,7 @@ export default function RunDetail({
         { variant: "success" },
       );
       queryClient.invalidateQueries({ queryKey: ["run-test-executions"] });
-      queryClient.invalidateQueries({
-        queryKey: ["simulation-run-results-v3", executionId],
-      });
+      queryClient.invalidateQueries({ queryKey: runResultsKey(executionId) });
     } catch (error) {
       enqueueSnackbar(errorMessage(error), {
         variant: "error",
@@ -229,12 +252,25 @@ export default function RunDetail({
           </Typography>
         </Box>
 
+        {/* A backed run opens its evals, to grade again or add to; a
+            client-only env keeps its store picker. */}
         <Button
           variant="outlined"
           size="small"
-          onClick={() => setAddingEvals(true)}
-          disabled={live}
-          startIcon={<Iconify icon="solar:add-circle-linear" width={15} />}
+          onClick={() =>
+            backed ? setAllEvalsOpen(true) : setAddingEvals(true)
+          }
+          // A re-grade reads as running, but its evals stay reachable so the
+          // drawer can say why they are locked until grading finishes.
+          disabled={live && executionStatus !== "evaluating"}
+          startIcon={
+            <Iconify
+              icon={
+                backed ? "solar:play-circle-linear" : "solar:add-circle-linear"
+              }
+              width={15}
+            />
+          }
           sx={{
             color: "text.primary",
             borderColor: "divider",
@@ -242,7 +278,7 @@ export default function RunDetail({
             fontWeight: 600,
           }}
         >
-          Add evals
+          {backed ? "Run evals" : "Add evals"}
         </Button>
         <Button
           variant="outlined"
@@ -391,6 +427,19 @@ export default function RunDetail({
           )}
         </Box>
       </Box>
+
+      {backed && (
+        <AllEvaluationsDrawer
+          open={allEvalsOpen}
+          onClose={() => setAllEvalsOpen(false)}
+          env={env}
+          runTestId={testId}
+          executionId={executionId}
+          canRun={executionStatus === "completed"}
+          grading={executionStatus === "evaluating"}
+          onAddEvaluations={() => setAddingEvals(true)}
+        />
+      )}
 
       {/* The same picker the Evaluations tab opens. Adding from here binds
           the eval to the environment exactly as the tab's add does and then
