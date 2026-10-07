@@ -78,7 +78,9 @@
           }
         },
         "additionalProperties": false,
-        "required": ["workspace_id"]
+        "required": [
+          "workspace_id"
+        ]
       },
       "annotations": {
         "readOnlyHint": true,
@@ -90,7 +92,9 @@
         "method": "GET",
         "path": "/accounts/workspaces/{workspace_id}/",
         "parameters": {
-          "path": ["workspace_id"],
+          "path": [
+            "workspace_id"
+          ],
           "query": [],
           "body": []
         }
@@ -155,7 +159,12 @@
         "path": "/model-hub/develops/get-datasets/",
         "parameters": {
           "path": [],
-          "query": ["search_text", "page", "page_size", "sort"],
+          "query": [
+            "search_text",
+            "page",
+            "page_size",
+            "sort"
+          ],
           "body": []
         }
       },
@@ -218,7 +227,9 @@
           }
         },
         "additionalProperties": false,
-        "required": ["dataset_id"]
+        "required": [
+          "dataset_id"
+        ]
       },
       "annotations": {
         "readOnlyHint": true,
@@ -230,7 +241,9 @@
         "method": "GET",
         "path": "/model-hub/develops/{dataset_id}/get-dataset-table/",
         "parameters": {
-          "path": ["dataset_id"],
+          "path": [
+            "dataset_id"
+          ],
           "query": [
             "filters",
             "sort",
@@ -281,7 +294,9 @@
           }
         },
         "additionalProperties": false,
-        "required": ["new_dataset_name"]
+        "required": [
+          "new_dataset_name"
+        ]
       },
       "annotations": {
         "readOnlyHint": false,
@@ -295,7 +310,12 @@
         "parameters": {
           "path": [],
           "query": [],
-          "body": ["new_dataset_name", "model_type", "is_sdk", "row"]
+          "body": [
+            "new_dataset_name",
+            "model_type",
+            "is_sdk",
+            "row"
+          ]
         }
       },
       "response": {
@@ -323,10 +343,15 @@
           }
         },
         "additionalProperties": false,
-        "required": ["dataset_id", "rows"],
+        "required": [
+          "dataset_id",
+          "rows"
+        ],
         "definitions": {
           "DatasetRowCellRequest": {
-            "required": ["column_name"],
+            "required": [
+              "column_name"
+            ],
             "type": "object",
             "properties": {
               "column_name": {
@@ -369,9 +394,13 @@
         "method": "POST",
         "path": "/model-hub/develops/{dataset_id}/add_rows/",
         "parameters": {
-          "path": ["dataset_id"],
+          "path": [
+            "dataset_id"
+          ],
           "query": [],
-          "body": ["rows"]
+          "body": [
+            "rows"
+          ]
         }
       },
       "response": {
@@ -410,7 +439,10 @@
           }
         },
         "additionalProperties": false,
-        "required": ["dataset_id", "user_eval_ids"]
+        "required": [
+          "dataset_id",
+          "user_eval_ids"
+        ]
       },
       "annotations": {
         "readOnlyHint": false,
@@ -422,9 +454,15 @@
         "method": "POST",
         "path": "/model-hub/develops/{dataset_id}/start_evals_process/",
         "parameters": {
-          "path": ["dataset_id"],
+          "path": [
+            "dataset_id"
+          ],
           "query": [],
-          "body": ["user_eval_ids", "experiment_id", "failed_only"]
+          "body": [
+            "user_eval_ids",
+            "experiment_id",
+            "failed_only"
+          ]
         }
       },
       "response": {
@@ -460,7 +498,11 @@
           }
         },
         "additionalProperties": false,
-        "required": ["dataset_id", "new_column_name", "column_type"]
+        "required": [
+          "dataset_id",
+          "new_column_name",
+          "column_type"
+        ]
       },
       "annotations": {
         "readOnlyHint": false,
@@ -472,9 +514,15 @@
         "method": "POST",
         "path": "/model-hub/develops/{dataset_id}/add_static_column/",
         "parameters": {
-          "path": ["dataset_id"],
+          "path": [
+            "dataset_id"
+          ],
           "query": [],
-          "body": ["new_column_name", "column_type", "source"]
+          "body": [
+            "new_column_name",
+            "column_type",
+            "source"
+          ]
         }
       },
       "response": {
@@ -504,7 +552,11 @@
           }
         },
         "additionalProperties": false,
-        "required": ["dataset_id", "column_id", "new_column_name"]
+        "required": [
+          "dataset_id",
+          "column_id",
+          "new_column_name"
+        ]
       },
       "annotations": {
         "readOnlyHint": false,
@@ -516,9 +568,14 @@
         "method": "PUT",
         "path": "/model-hub/develops/{dataset_id}/update_column_name/{column_id}/",
         "parameters": {
-          "path": ["dataset_id", "column_id"],
+          "path": [
+            "dataset_id",
+            "column_id"
+          ],
           "query": [],
-          "body": ["new_column_name"]
+          "body": [
+            "new_column_name"
+          ]
         }
       },
       "response": {
@@ -601,7 +658,12 @@
           }
         },
         "additionalProperties": false,
-        "required": ["dataset_id", "name", "template_id", "config"]
+        "required": [
+          "dataset_id",
+          "name",
+          "template_id",
+          "config"
+        ]
       },
       "annotations": {
         "readOnlyHint": false,
@@ -613,7 +675,9 @@
         "method": "POST",
         "path": "/model-hub/develops/{dataset_id}/add_user_eval/",
         "parameters": {
-          "path": ["dataset_id"],
+          "path": [
+            "dataset_id"
+          ],
           "query": [],
           "body": [
             "name",
@@ -680,7 +744,9 @@
           }
         },
         "additionalProperties": false,
-        "required": ["dataset_id"]
+        "required": [
+          "dataset_id"
+        ]
       },
       "annotations": {
         "readOnlyHint": true,
@@ -692,7 +758,9 @@
         "method": "GET",
         "path": "/model-hub/develops/{dataset_id}/get_evals_list/",
         "parameters": {
-          "path": ["dataset_id"],
+          "path": [
+            "dataset_id"
+          ],
           "query": [
             "eval_type",
             "search_text",
@@ -734,7 +802,10 @@
           }
         },
         "additionalProperties": false,
-        "required": ["dataset_id", "name"],
+        "required": [
+          "dataset_id",
+          "name"
+        ],
         "definitions": {
           "PromptConfig": {
             "type": "object",
@@ -856,7 +927,11 @@
                     "title": "Tool choice",
                     "description": "Tool selection mode: 'auto' or 'required'.",
                     "type": "string",
-                    "enum": ["auto", "required", null]
+                    "enum": [
+                      "auto",
+                      "required",
+                      null
+                    ]
                   },
                   {
                     "type": "null"
@@ -942,7 +1017,11 @@
         "parameters": {
           "path": [],
           "query": [],
-          "body": ["dataset_id", "name", "config"]
+          "body": [
+            "dataset_id",
+            "name",
+            "config"
+          ]
         }
       },
       "response": {
@@ -986,7 +1065,10 @@
           }
         },
         "additionalProperties": false,
-        "required": ["dataset_id", "column_id"],
+        "required": [
+          "dataset_id",
+          "column_id"
+        ],
         "definitions": {
           "PromptConfig": {
             "type": "object",
@@ -1108,7 +1190,11 @@
                     "title": "Tool choice",
                     "description": "Tool selection mode: 'auto' or 'required'.",
                     "type": "string",
-                    "enum": ["auto", "required", null]
+                    "enum": [
+                      "auto",
+                      "required",
+                      null
+                    ]
                   },
                   {
                     "type": "null"
@@ -1194,7 +1280,12 @@
         "parameters": {
           "path": [],
           "query": [],
-          "body": ["dataset_id", "column_id", "name", "config"]
+          "body": [
+            "dataset_id",
+            "column_id",
+            "name",
+            "config"
+          ]
         }
       },
       "response": {
@@ -1233,7 +1324,9 @@
           }
         },
         "additionalProperties": false,
-        "required": ["run_prompt_ids"]
+        "required": [
+          "run_prompt_ids"
+        ]
       },
       "annotations": {
         "readOnlyHint": false,
@@ -1247,7 +1340,11 @@
         "parameters": {
           "path": [],
           "query": [],
-          "body": ["run_prompt_ids", "row_ids", "selected_all_rows"]
+          "body": [
+            "run_prompt_ids",
+            "row_ids",
+            "selected_all_rows"
+          ]
         }
       },
       "response": {
@@ -1269,7 +1366,9 @@
           }
         },
         "additionalProperties": false,
-        "required": ["dataset_id"]
+        "required": [
+          "dataset_id"
+        ]
       },
       "annotations": {
         "readOnlyHint": true,
@@ -1281,7 +1380,9 @@
         "method": "GET",
         "path": "/model-hub/dataset/{dataset_id}/run-prompt-stats/",
         "parameters": {
-          "path": ["dataset_id"],
+          "path": [
+            "dataset_id"
+          ],
           "query": [],
           "body": []
         }
@@ -1382,7 +1483,9 @@
           }
         },
         "additionalProperties": false,
-        "required": ["id"]
+        "required": [
+          "id"
+        ]
       },
       "annotations": {
         "readOnlyHint": false,
@@ -1394,7 +1497,9 @@
         "method": "GET",
         "path": "/model-hub/prompt-templates/{id}/",
         "parameters": {
-          "path": ["id"],
+          "path": [
+            "id"
+          ],
           "query": [],
           "body": []
         }
@@ -1429,7 +1534,9 @@
           }
         },
         "additionalProperties": false,
-        "required": ["id"]
+        "required": [
+          "id"
+        ]
       },
       "annotations": {
         "readOnlyHint": true,
@@ -1441,8 +1548,13 @@
         "method": "GET",
         "path": "/model-hub/prompt-templates/{id}/versions/",
         "parameters": {
-          "path": ["id"],
-          "query": ["page", "limit"],
+          "path": [
+            "id"
+          ],
+          "query": [
+            "page",
+            "limit"
+          ],
           "body": []
         }
       },
@@ -1513,7 +1625,9 @@
           }
         },
         "additionalProperties": false,
-        "required": ["name"]
+        "required": [
+          "name"
+        ]
       },
       "annotations": {
         "readOnlyHint": false,
@@ -1608,7 +1722,9 @@
           }
         },
         "additionalProperties": false,
-        "required": ["id"]
+        "required": [
+          "id"
+        ]
       },
       "annotations": {
         "readOnlyHint": false,
@@ -1620,7 +1736,9 @@
         "method": "PATCH",
         "path": "/model-hub/prompt-templates/{id}/",
         "parameters": {
-          "path": ["id"],
+          "path": [
+            "id"
+          ],
           "query": [],
           "body": [
             "name",
@@ -1710,10 +1828,15 @@
           }
         },
         "additionalProperties": false,
-        "required": ["id"],
+        "required": [
+          "id"
+        ],
         "definitions": {
           "MessageItem": {
-            "required": ["role", "content"],
+            "required": [
+              "role",
+              "content"
+            ],
             "type": "object",
             "properties": {
               "role": {
@@ -1945,7 +2068,9 @@
         "method": "POST",
         "path": "/model-hub/prompt-templates/{id}/run_template/",
         "parameters": {
-          "path": ["id"],
+          "path": [
+            "id"
+          ],
           "query": [],
           "body": [
             "name",
@@ -1985,7 +2110,9 @@
           }
         },
         "additionalProperties": false,
-        "required": ["id"]
+        "required": [
+          "id"
+        ]
       },
       "annotations": {
         "readOnlyHint": true,
@@ -1997,8 +2124,12 @@
         "method": "GET",
         "path": "/model-hub/prompt-templates/{id}/get-run-status/",
         "parameters": {
-          "path": ["id"],
-          "query": ["template_version"],
+          "path": [
+            "id"
+          ],
+          "query": [
+            "template_version"
+          ],
           "body": []
         }
       },
@@ -2043,7 +2174,11 @@
           "owner_filter": {
             "title": "Owner filter",
             "type": "string",
-            "enum": ["all", "user", "system"],
+            "enum": [
+              "all",
+              "user",
+              "system"
+            ],
             "default": "all"
           },
           "filters": {
@@ -2052,13 +2187,20 @@
           "sort_by": {
             "title": "Sort by",
             "type": "string",
-            "enum": ["name", "updated_at", "created_at"],
+            "enum": [
+              "name",
+              "updated_at",
+              "created_at"
+            ],
             "default": "updated_at"
           },
           "sort_order": {
             "title": "Sort order",
             "type": "string",
-            "enum": ["asc", "desc"],
+            "enum": [
+              "asc",
+              "desc"
+            ],
             "default": "desc"
           }
         },
@@ -2073,42 +2215,64 @@
                     "type": "array",
                     "items": {
                       "type": "string",
-                      "enum": ["llm", "code", "agent"]
+                      "enum": [
+                        "llm",
+                        "code",
+                        "agent"
+                      ]
                     }
                   },
                   "eval_type_not": {
                     "type": "array",
                     "items": {
                       "type": "string",
-                      "enum": ["llm", "code", "agent"]
+                      "enum": [
+                        "llm",
+                        "code",
+                        "agent"
+                      ]
                     }
                   },
                   "output_type": {
                     "type": "array",
                     "items": {
                       "type": "string",
-                      "enum": ["pass_fail", "percentage", "deterministic"]
+                      "enum": [
+                        "pass_fail",
+                        "percentage",
+                        "deterministic"
+                      ]
                     }
                   },
                   "output_type_not": {
                     "type": "array",
                     "items": {
                       "type": "string",
-                      "enum": ["pass_fail", "percentage", "deterministic"]
+                      "enum": [
+                        "pass_fail",
+                        "percentage",
+                        "deterministic"
+                      ]
                     }
                   },
                   "template_type": {
                     "type": "array",
                     "items": {
                       "type": "string",
-                      "enum": ["single", "composite"]
+                      "enum": [
+                        "single",
+                        "composite"
+                      ]
                     }
                   },
                   "template_type_not": {
                     "type": "array",
                     "items": {
                       "type": "string",
-                      "enum": ["single", "composite"]
+                      "enum": [
+                        "single",
+                        "composite"
+                      ]
                     }
                   },
                   "tags": {
@@ -2204,7 +2368,9 @@
           }
         },
         "additionalProperties": false,
-        "required": ["template_id"]
+        "required": [
+          "template_id"
+        ]
       },
       "annotations": {
         "readOnlyHint": true,
@@ -2216,7 +2382,9 @@
         "method": "GET",
         "path": "/model-hub/eval-templates/{template_id}/detail/",
         "parameters": {
-          "path": ["template_id"],
+          "path": [
+            "template_id"
+          ],
           "query": [],
           "body": []
         }
@@ -2248,7 +2416,11 @@
           "eval_type": {
             "title": "Eval type",
             "type": "string",
-            "enum": ["llm", "code", "agent"],
+            "enum": [
+              "llm",
+              "code",
+              "agent"
+            ],
             "default": "llm"
           },
           "instructions": {
@@ -2265,7 +2437,11 @@
           "output_type": {
             "title": "Output type",
             "type": "string",
-            "enum": ["pass_fail", "percentage", "deterministic"],
+            "enum": [
+              "pass_fail",
+              "percentage",
+              "deterministic"
+            ],
             "default": "pass_fail"
           },
           "pass_threshold": {
@@ -2326,7 +2502,10 @@
               {
                 "title": "Code language",
                 "type": "string",
-                "enum": ["python", "javascript"]
+                "enum": [
+                  "python",
+                  "javascript"
+                ]
               },
               {
                 "type": "null"
@@ -2364,7 +2543,11 @@
               {
                 "title": "Mode",
                 "type": "string",
-                "enum": ["auto", "agent", "quick"]
+                "enum": [
+                  "auto",
+                  "agent",
+                  "quick"
+                ]
               },
               {
                 "type": "null"
@@ -2426,7 +2609,10 @@
           "template_format": {
             "title": "Template format",
             "type": "string",
-            "enum": ["mustache", "jinja"],
+            "enum": [
+              "mustache",
+              "jinja"
+            ],
             "default": "mustache"
           }
         },
@@ -2505,7 +2691,11 @@
               {
                 "title": "Eval type",
                 "type": "string",
-                "enum": ["llm", "code", "agent"]
+                "enum": [
+                  "llm",
+                  "code",
+                  "agent"
+                ]
               },
               {
                 "type": "null"
@@ -2541,7 +2731,11 @@
               {
                 "title": "Output type",
                 "type": "string",
-                "enum": ["pass_fail", "percentage", "deterministic"]
+                "enum": [
+                  "pass_fail",
+                  "percentage",
+                  "deterministic"
+                ]
               },
               {
                 "type": "null"
@@ -2635,7 +2829,10 @@
               {
                 "title": "Code language",
                 "type": "string",
-                "enum": ["python", "javascript"]
+                "enum": [
+                  "python",
+                  "javascript"
+                ]
               },
               {
                 "type": "null"
@@ -2673,7 +2870,11 @@
               {
                 "title": "Mode",
                 "type": "string",
-                "enum": ["auto", "agent", "quick"]
+                "enum": [
+                  "auto",
+                  "agent",
+                  "quick"
+                ]
               },
               {
                 "type": "null"
@@ -2754,7 +2955,10 @@
               {
                 "title": "Template format",
                 "type": "string",
-                "enum": ["mustache", "jinja"]
+                "enum": [
+                  "mustache",
+                  "jinja"
+                ]
               },
               {
                 "type": "null"
@@ -2763,7 +2967,9 @@
           }
         },
         "additionalProperties": false,
-        "required": ["template_id"]
+        "required": [
+          "template_id"
+        ]
       },
       "annotations": {
         "readOnlyHint": false,
@@ -2775,7 +2981,9 @@
         "method": "PUT",
         "path": "/model-hub/eval-templates/{template_id}/update/",
         "parameters": {
-          "path": ["template_id"],
+          "path": [
+            "template_id"
+          ],
           "query": [],
           "body": [
             "name",
@@ -2846,7 +3054,11 @@
         "path": "/model-hub/eval-groups/",
         "parameters": {
           "path": [],
-          "query": ["name", "page_number", "page_size"],
+          "query": [
+            "name",
+            "page_number",
+            "page_size"
+          ],
           "body": []
         }
       },
@@ -2872,7 +3084,9 @@
           }
         },
         "additionalProperties": false,
-        "required": ["id"]
+        "required": [
+          "id"
+        ]
       },
       "annotations": {
         "readOnlyHint": true,
@@ -2884,8 +3098,12 @@
         "method": "GET",
         "path": "/model-hub/eval-groups/{id}/",
         "parameters": {
-          "path": ["id"],
-          "query": ["name"],
+          "path": [
+            "id"
+          ],
+          "query": [
+            "name"
+          ],
           "body": []
         }
       },
@@ -3117,7 +3335,11 @@
           }
         },
         "additionalProperties": false,
-        "required": ["config", "name", "output_type"]
+        "required": [
+          "config",
+          "name",
+          "output_type"
+        ]
       },
       "annotations": {
         "readOnlyHint": false,
@@ -3194,7 +3416,10 @@
           },
           "sort_direction": {
             "type": "string",
-            "enum": ["asc", "desc"],
+            "enum": [
+              "asc",
+              "desc"
+            ],
             "default": "desc"
           },
           "page_number": {
@@ -3254,7 +3479,9 @@
           }
         },
         "additionalProperties": false,
-        "required": ["id"]
+        "required": [
+          "id"
+        ]
       },
       "annotations": {
         "readOnlyHint": true,
@@ -3266,7 +3493,9 @@
         "method": "GET",
         "path": "/tracer/project/{id}/",
         "parameters": {
-          "path": ["id"],
+          "path": [
+            "id"
+          ],
           "query": [],
           "body": []
         }
@@ -3389,7 +3618,9 @@
           }
         },
         "additionalProperties": false,
-        "required": ["id"]
+        "required": [
+          "id"
+        ]
       },
       "annotations": {
         "readOnlyHint": true,
@@ -3401,8 +3632,12 @@
         "method": "GET",
         "path": "/tracer/trace/{id}/",
         "parameters": {
-          "path": ["id"],
-          "query": ["project_id"],
+          "path": [
+            "id"
+          ],
+          "query": [
+            "project_id"
+          ],
           "body": []
         }
       },
@@ -3537,7 +3772,9 @@
           }
         },
         "additionalProperties": false,
-        "required": ["id"]
+        "required": [
+          "id"
+        ]
       },
       "annotations": {
         "readOnlyHint": true,
@@ -3549,7 +3786,9 @@
         "method": "GET",
         "path": "/tracer/observation-span/{id}/",
         "parameters": {
-          "path": ["id"],
+          "path": [
+            "id"
+          ],
           "query": [
             "project_id",
             "trace_id",
@@ -3708,7 +3947,9 @@
           }
         },
         "additionalProperties": false,
-        "required": ["id"]
+        "required": [
+          "id"
+        ]
       },
       "annotations": {
         "readOnlyHint": true,
@@ -3720,7 +3961,9 @@
         "method": "GET",
         "path": "/tracer/trace-session/{id}/query/",
         "parameters": {
-          "path": ["id"],
+          "path": [
+            "id"
+          ],
           "query": [
             "navigation_context",
             "user_id",
@@ -3751,7 +3994,9 @@
           }
         },
         "additionalProperties": false,
-        "required": ["trace_id"]
+        "required": [
+          "trace_id"
+        ]
       },
       "annotations": {
         "readOnlyHint": true,
@@ -3763,7 +4008,9 @@
         "method": "GET",
         "path": "/tracer/trace-error-analysis/{trace_id}/",
         "parameters": {
-          "path": ["trace_id"],
+          "path": [
+            "trace_id"
+          ],
           "query": [],
           "body": []
         }
@@ -3854,7 +4101,9 @@
           }
         },
         "additionalProperties": false,
-        "required": ["id"]
+        "required": [
+          "id"
+        ]
       },
       "annotations": {
         "readOnlyHint": true,
@@ -3866,7 +4115,9 @@
         "method": "GET",
         "path": "/tracer/eval-task/{id}/",
         "parameters": {
-          "path": ["id"],
+          "path": [
+            "id"
+          ],
           "query": [],
           "body": []
         }
@@ -4020,7 +4271,11 @@
                                 "anyOf": [
                                   {
                                     "type": "string",
-                                    "enum": ["string", "number", "boolean"]
+                                    "enum": [
+                                      "string",
+                                      "number",
+                                      "boolean"
+                                    ]
                                   },
                                   {
                                     "type": "null"
@@ -4030,11 +4285,17 @@
                               "description": "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values."
                             }
                           },
-                          "required": ["filter_type", "filter_op"],
+                          "required": [
+                            "filter_type",
+                            "filter_op"
+                          ],
                           "additionalProperties": false
                         }
                       },
-                      "required": ["column_id", "filter_config"],
+                      "required": [
+                        "column_id",
+                        "filter_config"
+                      ],
                       "additionalProperties": false
                     }
                   },
@@ -4087,7 +4348,11 @@
                                 "anyOf": [
                                   {
                                     "type": "string",
-                                    "enum": ["string", "number", "boolean"]
+                                    "enum": [
+                                      "string",
+                                      "number",
+                                      "boolean"
+                                    ]
                                   },
                                   {
                                     "type": "null"
@@ -4097,11 +4362,17 @@
                               "description": "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values."
                             }
                           },
-                          "required": ["filter_type", "filter_op"],
+                          "required": [
+                            "filter_type",
+                            "filter_op"
+                          ],
                           "additionalProperties": false
                         }
                       },
-                      "required": ["column_id", "filter_config"],
+                      "required": [
+                        "column_id",
+                        "filter_config"
+                      ],
                       "additionalProperties": false
                     }
                   }
@@ -4147,12 +4418,20 @@
           "run_type": {
             "title": "Run type",
             "type": "string",
-            "enum": ["continuous", "historical"]
+            "enum": [
+              "continuous",
+              "historical"
+            ]
           },
           "row_type": {
             "title": "Row type",
             "type": "string",
-            "enum": ["spans", "traces", "sessions", "voiceCalls"],
+            "enum": [
+              "spans",
+              "traces",
+              "sessions",
+              "voiceCalls"
+            ],
             "default": "spans"
           },
           "status": {
@@ -4230,7 +4509,13 @@
           }
         },
         "additionalProperties": false,
-        "required": ["project", "name", "sampling_rate", "run_type", "evals"]
+        "required": [
+          "project",
+          "name",
+          "sampling_rate",
+          "run_type",
+          "evals"
+        ]
       },
       "annotations": {
         "readOnlyHint": false,
@@ -4405,7 +4690,11 @@
                                 "anyOf": [
                                   {
                                     "type": "string",
-                                    "enum": ["string", "number", "boolean"]
+                                    "enum": [
+                                      "string",
+                                      "number",
+                                      "boolean"
+                                    ]
                                   },
                                   {
                                     "type": "null"
@@ -4415,11 +4704,17 @@
                               "description": "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values."
                             }
                           },
-                          "required": ["filter_type", "filter_op"],
+                          "required": [
+                            "filter_type",
+                            "filter_op"
+                          ],
                           "additionalProperties": false
                         }
                       },
-                      "required": ["column_id", "filter_config"],
+                      "required": [
+                        "column_id",
+                        "filter_config"
+                      ],
                       "additionalProperties": false
                     }
                   },
@@ -4472,7 +4767,11 @@
                                 "anyOf": [
                                   {
                                     "type": "string",
-                                    "enum": ["string", "number", "boolean"]
+                                    "enum": [
+                                      "string",
+                                      "number",
+                                      "boolean"
+                                    ]
                                   },
                                   {
                                     "type": "null"
@@ -4482,11 +4781,17 @@
                               "description": "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values."
                             }
                           },
-                          "required": ["filter_type", "filter_op"],
+                          "required": [
+                            "filter_type",
+                            "filter_op"
+                          ],
                           "additionalProperties": false
                         }
                       },
-                      "required": ["column_id", "filter_config"],
+                      "required": [
+                        "column_id",
+                        "filter_config"
+                      ],
                       "additionalProperties": false
                     }
                   }
@@ -4527,12 +4832,20 @@
           "run_type": {
             "title": "Run type",
             "type": "string",
-            "enum": ["continuous", "historical"]
+            "enum": [
+              "continuous",
+              "historical"
+            ]
           },
           "row_type": {
             "title": "Row type",
             "type": "string",
-            "enum": ["spans", "traces", "sessions", "voiceCalls"]
+            "enum": [
+              "spans",
+              "traces",
+              "sessions",
+              "voiceCalls"
+            ]
           },
           "status": {
             "title": "Status",
@@ -4556,7 +4869,10 @@
           "edit_type": {
             "title": "Edit type",
             "type": "string",
-            "enum": ["edit_rerun", "fresh_run"]
+            "enum": [
+              "edit_rerun",
+              "fresh_run"
+            ]
           },
           "eval_task_id": {
             "title": "Eval task id",
@@ -4612,7 +4928,9 @@
           }
         },
         "additionalProperties": false,
-        "required": ["eval_task_id"]
+        "required": [
+          "eval_task_id"
+        ]
       },
       "annotations": {
         "readOnlyHint": false,
@@ -4625,7 +4943,9 @@
         "path": "/tracer/eval-task/pause_eval_task/",
         "parameters": {
           "path": [],
-          "query": ["eval_task_id"],
+          "query": [
+            "eval_task_id"
+          ],
           "body": []
         }
       },
@@ -4649,7 +4969,9 @@
           }
         },
         "additionalProperties": false,
-        "required": ["eval_task_id"]
+        "required": [
+          "eval_task_id"
+        ]
       },
       "annotations": {
         "readOnlyHint": false,
@@ -4662,7 +4984,9 @@
         "path": "/tracer/eval-task/unpause_eval_task/",
         "parameters": {
           "path": [],
-          "query": ["eval_task_id"],
+          "query": [
+            "eval_task_id"
+          ],
           "body": []
         }
       },
@@ -4689,18 +5013,31 @@
           },
           "status": {
             "type": "string",
-            "enum": ["escalating", "for_review", "acknowledged", "resolved"]
+            "enum": [
+              "escalating",
+              "for_review",
+              "acknowledged",
+              "resolved"
+            ]
           },
           "severity": {
             "type": "string",
-            "enum": ["critical", "high", "medium", "low"]
+            "enum": [
+              "critical",
+              "high",
+              "medium",
+              "low"
+            ]
           },
           "fix_layer": {
             "type": "string"
           },
           "source": {
             "type": "string",
-            "enum": ["scanner", "eval"]
+            "enum": [
+              "scanner",
+              "eval"
+            ]
           },
           "issue_group": {
             "type": "string"
@@ -4722,7 +5059,10 @@
           },
           "sort_dir": {
             "type": "string",
-            "enum": ["asc", "desc"],
+            "enum": [
+              "asc",
+              "desc"
+            ],
             "default": "desc"
           },
           "limit": {
@@ -4790,7 +5130,9 @@
           }
         },
         "additionalProperties": false,
-        "required": ["cluster_id"]
+        "required": [
+          "cluster_id"
+        ]
       },
       "annotations": {
         "readOnlyHint": true,
@@ -4802,8 +5144,12 @@
         "method": "GET",
         "path": "/tracer/feed/issues/{cluster_id}/",
         "parameters": {
-          "path": ["cluster_id"],
-          "query": ["project_id"],
+          "path": [
+            "cluster_id"
+          ],
+          "query": [
+            "project_id"
+          ],
           "body": []
         }
       },
@@ -4896,7 +5242,9 @@
           }
         },
         "additionalProperties": false,
-        "required": ["id"]
+        "required": [
+          "id"
+        ]
       },
       "annotations": {
         "readOnlyHint": true,
@@ -4908,7 +5256,9 @@
         "method": "GET",
         "path": "/model-hub/annotation-queues/{id}/",
         "parameters": {
-          "path": ["id"],
+          "path": [
+            "id"
+          ],
           "query": [],
           "body": []
         }
@@ -4962,11 +5312,16 @@
           },
           "ordering": {
             "type": "string",
-            "enum": ["created_at", "-created_at"]
+            "enum": [
+              "created_at",
+              "-created_at"
+            ]
           }
         },
         "additionalProperties": false,
-        "required": ["queue_id"]
+        "required": [
+          "queue_id"
+        ]
       },
       "annotations": {
         "readOnlyHint": true,
@@ -4978,7 +5333,9 @@
         "method": "GET",
         "path": "/model-hub/annotation-queues/{queue_id}/items/",
         "parameters": {
-          "path": ["queue_id"],
+          "path": [
+            "queue_id"
+          ],
           "query": [
             "page",
             "limit",
@@ -5037,10 +5394,17 @@
           }
         },
         "additionalProperties": false,
-        "required": ["queue_id", "id", "annotations"],
+        "required": [
+          "queue_id",
+          "id",
+          "annotations"
+        ],
         "definitions": {
           "SubmitAnnotationEntry": {
-            "required": ["label_id", "value"],
+            "required": [
+              "label_id",
+              "value"
+            ],
             "type": "object",
             "properties": {
               "label_id": {
@@ -5070,9 +5434,16 @@
         "method": "POST",
         "path": "/model-hub/annotation-queues/{queue_id}/items/{id}/annotations/submit/",
         "parameters": {
-          "path": ["queue_id", "id"],
+          "path": [
+            "queue_id",
+            "id"
+          ],
           "query": [],
-          "body": ["annotations", "notes", "item_notes"]
+          "body": [
+            "annotations",
+            "notes",
+            "item_notes"
+          ]
         }
       },
       "response": {
@@ -5161,7 +5532,9 @@
           }
         },
         "additionalProperties": false,
-        "required": ["experiment_id"]
+        "required": [
+          "experiment_id"
+        ]
       },
       "annotations": {
         "readOnlyHint": true,
@@ -5173,7 +5546,9 @@
         "method": "GET",
         "path": "/model-hub/experiments/v2/{experiment_id}/",
         "parameters": {
-          "path": ["experiment_id"],
+          "path": [
+            "experiment_id"
+          ],
           "query": [],
           "body": []
         }
@@ -5218,7 +5593,12 @@
           "experiment_type": {
             "title": "Experiment type",
             "type": "string",
-            "enum": ["llm", "tts", "stt", "image"],
+            "enum": [
+              "llm",
+              "tts",
+              "stt",
+              "image"
+            ],
             "default": "llm"
           },
           "prompt_config": {
@@ -5243,7 +5623,11 @@
         ],
         "definitions": {
           "EvalMetricEntry": {
-            "required": ["template_id", "name", "config"],
+            "required": [
+              "template_id",
+              "name",
+              "config"
+            ],
             "type": "object",
             "properties": {
               "id": {
@@ -5310,7 +5694,10 @@
             }
           },
           "MessageItem": {
-            "required": ["role", "content"],
+            "required": [
+              "role",
+              "content"
+            ],
             "type": "object",
             "properties": {
               "role": {
@@ -5612,7 +5999,13 @@
         "path": "/model-hub/dataset-optimization/",
         "parameters": {
           "path": [],
-          "query": ["dataset_id", "column_id", "develop_id", "page", "limit"],
+          "query": [
+            "dataset_id",
+            "column_id",
+            "develop_id",
+            "page",
+            "limit"
+          ],
           "body": []
         }
       },
@@ -5637,7 +6030,9 @@
           }
         },
         "additionalProperties": false,
-        "required": ["id"]
+        "required": [
+          "id"
+        ]
       },
       "annotations": {
         "readOnlyHint": true,
@@ -5649,7 +6044,9 @@
         "method": "GET",
         "path": "/model-hub/dataset-optimization/{id}/",
         "parameters": {
-          "path": ["id"],
+          "path": [
+            "id"
+          ],
           "query": [],
           "body": []
         }
@@ -5717,7 +6114,11 @@
           }
         },
         "additionalProperties": false,
-        "required": ["name", "column_id", "optimizer_algorithm"]
+        "required": [
+          "name",
+          "column_id",
+          "optimizer_algorithm"
+        ]
       },
       "annotations": {
         "readOnlyHint": false,
@@ -5763,7 +6164,10 @@
             "anyOf": [
               {
                 "type": "string",
-                "enum": ["voice", "text"]
+                "enum": [
+                  "voice",
+                  "text"
+                ]
               },
               {
                 "type": "null"
@@ -5834,7 +6238,9 @@
           }
         },
         "additionalProperties": false,
-        "required": ["agent_id"]
+        "required": [
+          "agent_id"
+        ]
       },
       "annotations": {
         "readOnlyHint": true,
@@ -5846,7 +6252,9 @@
         "method": "GET",
         "path": "/simulate/agent-definitions/{agent_id}/",
         "parameters": {
-          "path": ["agent_id"],
+          "path": [
+            "agent_id"
+          ],
           "query": [],
           "body": []
         }
@@ -5970,7 +6378,12 @@
         "path": "/simulate/api/test-executions/",
         "parameters": {
           "path": [],
-          "query": ["search", "status", "page", "limit"],
+          "query": [
+            "search",
+            "status",
+            "page",
+            "limit"
+          ],
           "body": []
         }
       },
@@ -6023,7 +6436,9 @@
           }
         },
         "additionalProperties": false,
-        "required": ["test_execution_id"]
+        "required": [
+          "test_execution_id"
+        ]
       },
       "annotations": {
         "readOnlyHint": true,
@@ -6035,7 +6450,9 @@
         "method": "GET",
         "path": "/simulate/test-executions/{test_execution_id}/",
         "parameters": {
-          "path": ["test_execution_id"],
+          "path": [
+            "test_execution_id"
+          ],
           "query": [
             "search",
             "filters",
@@ -6091,7 +6508,9 @@
           }
         },
         "additionalProperties": false,
-        "required": ["run_test_id"]
+        "required": [
+          "run_test_id"
+        ]
       },
       "annotations": {
         "readOnlyHint": false,
@@ -6103,9 +6522,15 @@
         "method": "POST",
         "path": "/simulate/run-tests/{run_test_id}/execute/",
         "parameters": {
-          "path": ["run_test_id"],
+          "path": [
+            "run_test_id"
+          ],
           "query": [],
-          "body": ["scenario_ids", "simulator_id", "select_all"]
+          "body": [
+            "scenario_ids",
+            "simulator_id",
+            "select_all"
+          ]
         }
       },
       "response": {
@@ -6127,7 +6552,9 @@
           }
         },
         "additionalProperties": false,
-        "required": ["scenario_id"]
+        "required": [
+          "scenario_id"
+        ]
       },
       "annotations": {
         "readOnlyHint": true,
@@ -6139,7 +6566,9 @@
         "method": "GET",
         "path": "/simulate/scenarios/{scenario_id}/",
         "parameters": {
-          "path": ["scenario_id"],
+          "path": [
+            "scenario_id"
+          ],
           "query": [],
           "body": []
         }
@@ -6163,7 +6592,9 @@
           }
         },
         "additionalProperties": false,
-        "required": ["test_execution_id"]
+        "required": [
+          "test_execution_id"
+        ]
       },
       "annotations": {
         "readOnlyHint": true,
@@ -6175,7 +6606,9 @@
         "method": "GET",
         "path": "/simulate/test-executions/{test_execution_id}/analytics/",
         "parameters": {
-          "path": ["test_execution_id"],
+          "path": [
+            "test_execution_id"
+          ],
           "query": [],
           "body": []
         }
@@ -6204,7 +6637,10 @@
             "title": "Agent type",
             "description": "The type of agent. One of: voice, text.",
             "type": "string",
-            "enum": ["voice", "text"]
+            "enum": [
+              "voice",
+              "text"
+            ]
           },
           "commit_message": {
             "title": "Commit message",
@@ -6270,7 +6706,9 @@
               {
                 "title": "Authentication method",
                 "type": "string",
-                "enum": ["api_key"]
+                "enum": [
+                  "api_key"
+                ]
               },
               {
                 "type": "null"
@@ -6458,7 +6896,11 @@
           }
         },
         "additionalProperties": false,
-        "required": ["agent_name", "agent_type", "commit_message"]
+        "required": [
+          "agent_name",
+          "agent_type",
+          "commit_message"
+        ]
       },
       "annotations": {
         "readOnlyHint": false,
@@ -6528,7 +6970,10 @@
           "agent_type": {
             "title": "Agent type",
             "type": "string",
-            "enum": ["voice", "text"]
+            "enum": [
+              "voice",
+              "text"
+            ]
           },
           "description": {
             "anyOf": [
@@ -6579,7 +7024,9 @@
               {
                 "title": "Authentication method",
                 "type": "string",
-                "enum": ["api_key"]
+                "enum": [
+                  "api_key"
+                ]
               },
               {
                 "type": "null"
@@ -6765,7 +7212,9 @@
           }
         },
         "additionalProperties": false,
-        "required": ["agent_id"]
+        "required": [
+          "agent_id"
+        ]
       },
       "annotations": {
         "readOnlyHint": false,
@@ -6777,7 +7226,9 @@
         "method": "PUT",
         "path": "/simulate/agent-definitions/{agent_id}/edit/",
         "parameters": {
-          "path": ["agent_id"],
+          "path": [
+            "agent_id"
+          ],
           "query": [],
           "body": [
             "agent_name",
@@ -6832,7 +7283,10 @@
           "agent_type": {
             "title": "Agent type",
             "type": "string",
-            "enum": ["voice", "text"]
+            "enum": [
+              "voice",
+              "text"
+            ]
           },
           "description": {
             "anyOf": [
@@ -6883,7 +7337,9 @@
               {
                 "title": "Authentication method",
                 "type": "string",
-                "enum": ["api_key"]
+                "enum": [
+                  "api_key"
+                ]
               },
               {
                 "type": "null"
@@ -7024,7 +7480,9 @@
           }
         },
         "additionalProperties": false,
-        "required": ["agent_id"]
+        "required": [
+          "agent_id"
+        ]
       },
       "annotations": {
         "readOnlyHint": false,
@@ -7036,7 +7494,9 @@
         "method": "POST",
         "path": "/simulate/agent-definitions/{agent_id}/versions/create/",
         "parameters": {
-          "path": ["agent_id"],
+          "path": [
+            "agent_id"
+          ],
           "query": [],
           "body": [
             "agent_name",
@@ -7097,7 +7557,11 @@
           "kind": {
             "title": "Kind",
             "type": "string",
-            "enum": ["graph", "script", "dataset"],
+            "enum": [
+              "graph",
+              "script",
+              "dataset"
+            ],
             "default": "dataset"
           },
           "script_url": {
@@ -7160,7 +7624,10 @@
           "source_type": {
             "title": "Source type",
             "type": "string",
-            "enum": ["agent_definition", "prompt"],
+            "enum": [
+              "agent_definition",
+              "prompt"
+            ],
             "default": "agent_definition"
           },
           "prompt_template_id": {
@@ -7273,10 +7740,16 @@
           }
         },
         "additionalProperties": false,
-        "required": ["name"],
+        "required": [
+          "name"
+        ],
         "definitions": {
           "ColumnDefinition": {
-            "required": ["name", "data_type", "description"],
+            "required": [
+              "name",
+              "data_type",
+              "description"
+            ],
             "type": "object",
             "properties": {
               "name": {
@@ -7402,7 +7875,9 @@
           }
         },
         "additionalProperties": false,
-        "required": ["scenario_id"]
+        "required": [
+          "scenario_id"
+        ]
       },
       "annotations": {
         "readOnlyHint": false,
@@ -7414,9 +7889,16 @@
         "method": "PUT",
         "path": "/simulate/scenarios/{scenario_id}/edit/",
         "parameters": {
-          "path": ["scenario_id"],
+          "path": [
+            "scenario_id"
+          ],
           "query": [],
-          "body": ["name", "description", "graph", "prompt"]
+          "body": [
+            "name",
+            "description",
+            "graph",
+            "prompt"
+          ]
         }
       },
       "response": {
@@ -7439,7 +7921,10 @@
           },
           "simulation_type": {
             "type": "string",
-            "enum": ["agent_definition", "prompt"],
+            "enum": [
+              "agent_definition",
+              "prompt"
+            ],
             "default": ""
           },
           "prompt_template_id": {
@@ -7513,7 +7998,9 @@
           }
         },
         "additionalProperties": false,
-        "required": ["run_test_id"]
+        "required": [
+          "run_test_id"
+        ]
       },
       "annotations": {
         "readOnlyHint": true,
@@ -7525,7 +8012,9 @@
         "method": "GET",
         "path": "/simulate/run-tests/{run_test_id}/",
         "parameters": {
-          "path": ["run_test_id"],
+          "path": [
+            "run_test_id"
+          ],
           "query": [],
           "body": []
         }
@@ -7624,10 +8113,16 @@
           }
         },
         "additionalProperties": false,
-        "required": ["name", "agent_definition_id", "scenario_ids"],
+        "required": [
+          "name",
+          "agent_definition_id",
+          "scenario_ids"
+        ],
         "definitions": {
           "EvalConfigDefinition": {
-            "required": ["template_id"],
+            "required": [
+              "template_id"
+            ],
             "type": "object",
             "properties": {
               "template_id": {
@@ -7705,7 +8200,11 @@
                             "anyOf": [
                               {
                                 "type": "string",
-                                "enum": ["string", "number", "boolean"]
+                                "enum": [
+                                  "string",
+                                  "number",
+                                  "boolean"
+                                ]
                               },
                               {
                                 "type": "null"
@@ -7715,11 +8214,17 @@
                           "description": "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values."
                         }
                       },
-                      "required": ["filter_type", "filter_op"],
+                      "required": [
+                        "filter_type",
+                        "filter_op"
+                      ],
                       "additionalProperties": false
                     }
                   },
-                  "required": ["column_id", "filter_config"],
+                  "required": [
+                    "column_id",
+                    "filter_config"
+                  ],
                   "additionalProperties": false
                 },
                 "default": []
@@ -7849,7 +8354,9 @@
           }
         },
         "additionalProperties": false,
-        "required": ["id"]
+        "required": [
+          "id"
+        ]
       },
       "annotations": {
         "readOnlyHint": true,
@@ -7861,7 +8368,9 @@
         "method": "GET",
         "path": "/agentcc/gateways/{id}/config/",
         "parameters": {
-          "path": ["id"],
+          "path": [
+            "id"
+          ],
           "query": [],
           "body": []
         }
@@ -8064,7 +8573,12 @@
         "path": "/agentcc/analytics/overview/",
         "parameters": {
           "path": [],
-          "query": ["start", "end", "granularity", "api_key_id"],
+          "query": [
+            "start",
+            "end",
+            "granularity",
+            "api_key_id"
+          ],
           "body": []
         }
       },
@@ -8110,7 +8624,11 @@
         "path": "/model-hub/kb/",
         "parameters": {
           "path": [],
-          "query": ["search", "page", "limit"],
+          "query": [
+            "search",
+            "page",
+            "limit"
+          ],
           "body": []
         }
       },
@@ -8135,7 +8653,9 @@
           }
         },
         "additionalProperties": false,
-        "required": ["id"]
+        "required": [
+          "id"
+        ]
       },
       "annotations": {
         "readOnlyHint": true,
@@ -8147,7 +8667,9 @@
         "method": "GET",
         "path": "/model-hub/kb/{id}/",
         "parameters": {
-          "path": ["id"],
+          "path": [
+            "id"
+          ],
           "query": [],
           "body": []
         }
@@ -8202,7 +8724,9 @@
           }
         },
         "additionalProperties": false,
-        "required": ["id"]
+        "required": [
+          "id"
+        ]
       },
       "annotations": {
         "readOnlyHint": true,
@@ -8214,7 +8738,9 @@
         "method": "GET",
         "path": "/tracer/dashboard/{id}/",
         "parameters": {
-          "path": ["id"],
+          "path": [
+            "id"
+          ],
           "query": [],
           "body": []
         }
@@ -8245,7 +8771,9 @@
           }
         },
         "additionalProperties": false,
-        "required": ["name"]
+        "required": [
+          "name"
+        ]
       },
       "annotations": {
         "readOnlyHint": false,
@@ -8259,7 +8787,10 @@
         "parameters": {
           "path": [],
           "query": [],
-          "body": ["name", "description"]
+          "body": [
+            "name",
+            "description"
+          ]
         }
       },
       "response": {
@@ -8291,7 +8822,9 @@
           }
         },
         "additionalProperties": false,
-        "required": ["id"]
+        "required": [
+          "id"
+        ]
       },
       "annotations": {
         "readOnlyHint": false,
@@ -8303,9 +8836,14 @@
         "method": "PATCH",
         "path": "/tracer/dashboard/{id}/",
         "parameters": {
-          "path": ["id"],
+          "path": [
+            "id"
+          ],
           "query": [],
-          "body": ["name", "description"]
+          "body": [
+            "name",
+            "description"
+          ]
         }
       },
       "response": {
@@ -8337,7 +8875,9 @@
           }
         },
         "additionalProperties": false,
-        "required": ["dashboard_pk"]
+        "required": [
+          "dashboard_pk"
+        ]
       },
       "annotations": {
         "readOnlyHint": true,
@@ -8349,8 +8889,13 @@
         "method": "GET",
         "path": "/tracer/dashboard/{dashboard_pk}/widgets/",
         "parameters": {
-          "path": ["dashboard_pk"],
-          "query": ["page", "limit"],
+          "path": [
+            "dashboard_pk"
+          ],
+          "query": [
+            "page",
+            "limit"
+          ],
           "body": []
         }
       },
@@ -8376,7 +8921,10 @@
           }
         },
         "additionalProperties": false,
-        "required": ["dashboard_pk", "id"]
+        "required": [
+          "dashboard_pk",
+          "id"
+        ]
       },
       "annotations": {
         "readOnlyHint": true,
@@ -8388,7 +8936,10 @@
         "method": "GET",
         "path": "/tracer/dashboard/{dashboard_pk}/widgets/{id}/",
         "parameters": {
-          "path": ["dashboard_pk", "id"],
+          "path": [
+            "dashboard_pk",
+            "id"
+          ],
           "query": [],
           "body": []
         }
@@ -8450,7 +9001,9 @@
           }
         },
         "additionalProperties": false,
-        "required": ["dashboard_pk"]
+        "required": [
+          "dashboard_pk"
+        ]
       },
       "annotations": {
         "readOnlyHint": false,
@@ -8462,7 +9015,9 @@
         "method": "POST",
         "path": "/tracer/dashboard/{dashboard_pk}/widgets/",
         "parameters": {
-          "path": ["dashboard_pk"],
+          "path": [
+            "dashboard_pk"
+          ],
           "query": [],
           "body": [
             "name",
@@ -8535,7 +9090,10 @@
           }
         },
         "additionalProperties": false,
-        "required": ["dashboard_pk", "id"]
+        "required": [
+          "dashboard_pk",
+          "id"
+        ]
       },
       "annotations": {
         "readOnlyHint": false,
@@ -8547,7 +9105,10 @@
         "method": "PATCH",
         "path": "/tracer/dashboard/{dashboard_pk}/widgets/{id}/",
         "parameters": {
-          "path": ["dashboard_pk", "id"],
+          "path": [
+            "dashboard_pk",
+            "id"
+          ],
           "query": [],
           "body": [
             "name",
@@ -8592,7 +9153,10 @@
           }
         },
         "additionalProperties": false,
-        "required": ["dashboard_pk", "id"]
+        "required": [
+          "dashboard_pk",
+          "id"
+        ]
       },
       "annotations": {
         "readOnlyHint": true,
@@ -8604,9 +9168,16 @@
         "method": "POST",
         "path": "/tracer/dashboard/{dashboard_pk}/widgets/{id}/query/",
         "parameters": {
-          "path": ["dashboard_pk", "id"],
-          "query": ["refresh"],
-          "body": ["allow_sampled"]
+          "path": [
+            "dashboard_pk",
+            "id"
+          ],
+          "query": [
+            "refresh"
+          ],
+          "body": [
+            "allow_sampled"
+          ]
         }
       },
       "response": {
@@ -8626,7 +9197,11 @@
           "workflow": {
             "title": "Workflow",
             "type": "string",
-            "enum": ["observability", "dataset", "simulation"],
+            "enum": [
+              "observability",
+              "dataset",
+              "simulation"
+            ],
             "default": "observability"
           },
           "project_ids": {
@@ -8643,7 +9218,13 @@
           "granularity": {
             "title": "Granularity",
             "type": "string",
-            "enum": ["minute", "hour", "day", "week", "month"],
+            "enum": [
+              "minute",
+              "hour",
+              "day",
+              "week",
+              "month"
+            ],
             "default": "day"
           },
           "metrics": {
@@ -8701,7 +9282,11 @@
                         "anyOf": [
                           {
                             "type": "string",
-                            "enum": ["string", "number", "boolean"]
+                            "enum": [
+                              "string",
+                              "number",
+                              "boolean"
+                            ]
                           },
                           {
                             "type": "null"
@@ -8711,11 +9296,17 @@
                       "description": "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values."
                     }
                   },
-                  "required": ["filter_type", "filter_op"],
+                  "required": [
+                    "filter_type",
+                    "filter_op"
+                  ],
                   "additionalProperties": false
                 }
               },
-              "required": ["column_id", "filter_config"],
+              "required": [
+                "column_id",
+                "filter_config"
+              ],
               "additionalProperties": false
             },
             "default": []
@@ -8739,10 +9330,15 @@
           }
         },
         "additionalProperties": false,
-        "required": ["time_range", "metrics"],
+        "required": [
+          "time_range",
+          "metrics"
+        ],
         "definitions": {
           "DashboardBreakdown": {
-            "required": ["name"],
+            "required": [
+              "name"
+            ],
             "type": "object",
             "properties": {
               "name": {
@@ -8774,7 +9370,13 @@
               "source": {
                 "title": "Source",
                 "type": "string",
-                "enum": ["traces", "datasets", "simulation", "both", "all"],
+                "enum": [
+                  "traces",
+                  "datasets",
+                  "simulation",
+                  "both",
+                  "all"
+                ],
                 "default": "traces"
               },
               "output_type": {
@@ -8835,7 +9437,10 @@
             "additionalProperties": false
           },
           "DashboardMetric": {
-            "required": ["name", "type"],
+            "required": [
+              "name",
+              "type"
+            ],
             "type": "object",
             "properties": {
               "id": {
@@ -8870,7 +9475,13 @@
               "source": {
                 "title": "Source",
                 "type": "string",
-                "enum": ["traces", "datasets", "simulation", "both", "all"],
+                "enum": [
+                  "traces",
+                  "datasets",
+                  "simulation",
+                  "both",
+                  "all"
+                ],
                 "default": "traces"
               },
               "aggregation": {
@@ -9004,7 +9615,11 @@
                             "anyOf": [
                               {
                                 "type": "string",
-                                "enum": ["string", "number", "boolean"]
+                                "enum": [
+                                  "string",
+                                  "number",
+                                  "boolean"
+                                ]
                               },
                               {
                                 "type": "null"
@@ -9014,11 +9629,17 @@
                           "description": "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values."
                         }
                       },
-                      "required": ["filter_type", "filter_op"],
+                      "required": [
+                        "filter_type",
+                        "filter_op"
+                      ],
                       "additionalProperties": false
                     }
                   },
-                  "required": ["column_id", "filter_config"],
+                  "required": [
+                    "column_id",
+                    "filter_config"
+                  ],
                   "additionalProperties": false
                 },
                 "default": []
@@ -9070,7 +9691,9 @@
         "path": "/tracer/dashboard/query/",
         "parameters": {
           "path": [],
-          "query": ["refresh"],
+          "query": [
+            "refresh"
+          ],
           "body": [
             "workflow",
             "project_ids",
@@ -9099,7 +9722,11 @@
         "properties": {
           "workflow": {
             "type": "string",
-            "enum": ["observability", "dataset", "simulation"]
+            "enum": [
+              "observability",
+              "dataset",
+              "simulation"
+            ]
           },
           "project_ids": {
             "type": "string",
@@ -9135,7 +9762,10 @@
           },
           "role": {
             "type": "string",
-            "enum": ["metric", "dimension"],
+            "enum": [
+              "metric",
+              "dimension"
+            ],
             "default": ""
           },
           "source": {
@@ -9280,7 +9910,14 @@
           },
           "attribute_type": {
             "type": "string",
-            "enum": ["string", "number", "boolean", "array", "map", "json"]
+            "enum": [
+              "string",
+              "number",
+              "boolean",
+              "array",
+              "map",
+              "json"
+            ]
           }
         },
         "additionalProperties": false
@@ -9353,7 +9990,11 @@
         "path": "/usage/v2/usage-overview/",
         "parameters": {
           "path": [],
-          "query": ["period", "period_end", "workspace_id"],
+          "query": [
+            "period",
+            "period_end",
+            "workspace_id"
+          ],
           "body": []
         }
       },
