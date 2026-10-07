@@ -1130,7 +1130,17 @@ export const formatStartTimeByRequiredFormat = (startTime, dateFormat) => {
  */
 export const normalizeRecordings = (recordings) => {
   if (!recordings)
-    return { stereo: "", assistant: "", customer: "", combined: "", mono: "" };
+    return {
+      stereo: "",
+      assistant: "",
+      customer: "",
+      combined: "",
+      mono: "",
+      stereoChannels: null,
+    };
+  // Which speaker each stereo channel carries, e.g. { left: "customer",
+  // right: "assistant" }, when the backend sends it.
+  const stereoChannels = recordings.stereo_channels ?? null;
 
   // Nested format: backend sends snake_case (stereo_url / mono.*_url);
   // keep camelCase fallback for the aliased/main response shape.
@@ -1146,6 +1156,7 @@ export const normalizeRecordings = (recordings) => {
       customer: mono.customer_url || mono.customerUrl || "",
       combined,
       mono: combined, // alias for AudioDownloadButton
+      stereoChannels,
     };
   }
 
@@ -1157,6 +1168,7 @@ export const normalizeRecordings = (recordings) => {
     customer: recordings.customer || "",
     combined,
     mono: combined, // alias for AudioDownloadButton
+    stereoChannels,
   };
 };
 

@@ -1,0 +1,11 @@
+# Dependency-only base image: bakes in `go mod download` so the app
+# Dockerfile's build stage only needs to COPY source and compile. Rebuild and
+# republish this (see .github/workflows/base-image-publish.yml) whenever
+# go.mod/go.sum change.
+FROM golang:1.24-alpine
+
+WORKDIR /src
+
+COPY go.mod ./
+COPY go.sum* ./
+RUN go mod download

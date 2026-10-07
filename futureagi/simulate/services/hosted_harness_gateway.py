@@ -14,6 +14,7 @@ import tarfile
 import tempfile
 import time
 import uuid
+import zlib
 from collections.abc import Callable, Iterable, Mapping
 from contextlib import contextmanager, nullcontext
 from datetime import timedelta
@@ -3299,13 +3300,6 @@ class HostedHarnessGateway:
         into ``evidence_undeliverable``.
         """
 
-        from simulate.services.hosted_harness_ingestion import (
-            ingest_artifact,
-            ingest_event_batch,
-            ingest_manifest,
-            ingest_result_receipt,
-        )
-
         sandbox = self.client.get(
             str(attempt.provider_ref), request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS
         )
@@ -3316,55 +3310,104 @@ class HostedHarnessGateway:
         )
         if packed.exit_code:
             return False
-        body = sandbox.fs.download_file("/tmp/offline-outbound.tar.gz", 180)
         max_bytes = int(attempt.job.max_artifact_bytes * 1.1) + 16 * 1024 * 1024
-        if len(body) > max_bytes:
-            raise HostedHarnessError(
-                "offline_delivery_too_large",
-                "offline outbound archive exceeds the job artifact budget",
-                status_code=413,
-                retryable=False,
+        # Recordings can make the spool many GiB: keep it on disk, never in worker memory.
+        # Inflate while downloading so replay can read members in any order; every backward
+        # seek in a gzip stream would re-inflate it from the first byte.
+        with tempfile.TemporaryFile() as tar:
+            chunks = sandbox.fs.download_file_stream(
+                "/tmp/offline-outbound.tar.gz", 180
             )
+            inflater = zlib.decompressobj(wbits=zlib.MAX_WBITS | 16)
+            received = 0
+            inflated = 0
+            try:
+                for chunk in chunks:
+                    received += len(chunk)
+                    if received > max_bytes:
+                        raise HostedHarnessError(
+                            "offline_delivery_too_large",
+                            "offline outbound archive exceeds the job artifact budget",
+                            status_code=413,
+                            retryable=False,
+                        )
+                    while chunk:
+                        block = inflater.decompress(chunk, 1024 * 1024)
+                        chunk = inflater.unconsumed_tail
+                        if inflater.unused_data:
+                            # `tar -czf` writes one gzip member; anything after it would
+                            # be dropped from replay and pile up in memory.
+                            raise ValueError(
+                                "offline outbound archive has data after its gzip stream"
+                            )
+                        inflated += len(block)
+                        if inflated > max_bytes:
+                            raise HostedHarnessError(
+                                "offline_delivery_too_large",
+                                "inflated offline outbound archive exceeds the job artifact budget",
+                                status_code=413,
+                                retryable=False,
+                            )
+                        tar.write(block)
+            finally:
+                close = getattr(chunks, "close", None)
+                if close is not None:
+                    close()
+            if not inflater.eof:
+                raise EOFError("offline outbound archive is truncated")
+            tar.seek(0)
+            with tarfile.open(fileobj=tar, mode="r:") as archive:
+                return self._replay_offline_spool(attempt, archive, max_bytes)
 
-        files: dict[str, bytes] = {}
+    def _replay_offline_spool(
+        self, attempt: HostedHarnessAttempt, archive: tarfile.TarFile, max_bytes: int
+    ) -> bool:
+        from simulate.services.hosted_harness_ingestion import (
+            ingest_artifact,
+            ingest_event_batch,
+            ingest_manifest,
+            ingest_result_receipt,
+        )
+
+        members: dict[str, tarfile.TarInfo] = {}
         expanded = 0
-        with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as archive:
-            for member in archive.getmembers():
-                path = Path(member.name)
-                if (
-                    not member.isfile()
-                    or path.is_absolute()
-                    or ".." in path.parts
-                    or not path.parts
-                    or path.parts[0] != "outbound-spool"
-                ):
-                    continue
-                expanded += member.size
-                if expanded > max_bytes:
-                    raise HostedHarnessError(
-                        "offline_delivery_too_large",
-                        "expanded offline outbound archive exceeds the job artifact budget",
-                        status_code=413,
-                        retryable=False,
-                    )
-                stream = archive.extractfile(member)
-                if stream is not None:
-                    files[path.as_posix()] = stream.read()
+        for member in archive.getmembers():
+            path = Path(member.name)
+            if (
+                not member.isfile()
+                or path.is_absolute()
+                or ".." in path.parts
+                or not path.parts
+                or path.parts[0] != "outbound-spool"
+            ):
+                continue
+            expanded += member.size
+            if expanded > max_bytes:
+                raise HostedHarnessError(
+                    "offline_delivery_too_large",
+                    "expanded offline outbound archive exceeds the job artifact budget",
+                    status_code=413,
+                    retryable=False,
+                )
+            members[path.as_posix()] = member
+
+        def read(name: str) -> bytes:
+            stream = archive.extractfile(members[name])
+            return stream.read() if stream is not None else b""
 
         def json_file(name: str) -> dict[str, Any]:
-            value = json.loads(files[name].decode("utf-8"))
+            value = json.loads(read(name).decode("utf-8"))
             if not isinstance(value, dict):
                 raise ValueError(f"{name} must contain an object")
             return value
 
         artifact_prefix = "outbound-spool/artifacts/"
         recovered_by_scenario: dict[str, list[str]] = {}
-        for name in sorted(files):
+        for name in sorted(members):
             if not name.startswith(artifact_prefix) or not name.endswith(".json"):
                 continue
             metadata = json_file(name)
             digest = str(metadata["digest"])
-            artifact_body = files[f"{artifact_prefix}{digest}.bin"]
             ingest_artifact(
                 attempt,
                 digest=digest,
@@ -3372,13 +3415,14 @@ class HostedHarnessGateway:
                 size=int(metadata["size"]),
                 content_type=str(metadata["content_type"]),
                 scenario_key=metadata.get("scenario_key"),
-                stream=io.BytesIO(artifact_body),
+                stream=archive.extractfile(members[f"{artifact_prefix}{digest}.bin"]),
             )
             recovered_by_scenario.setdefault(metadata.get("scenario_key"), []).append(
                 digest
             )
 
-        events_body = files.get("outbound-spool/events.spool.jsonl", b"")
+        events_name = "outbound-spool/events.spool.jsonl"
+        events_body = read(events_name) if events_name in members else b""
         events = [
             json.loads(line)
             for line in events_body.decode("utf-8").splitlines()
@@ -3388,20 +3432,24 @@ class HostedHarnessGateway:
             ingest_event_batch(attempt, events[offset : offset + 100])
 
         receipt_prefix = "outbound-spool/receipts/"
-        for name in sorted(files):
-            if name.startswith(receipt_prefix) and name.endswith(".json"):
-                receipt = json_file(name)
-                ingest_result_receipt(
-                    attempt,
-                    receipt,
-                    digest_body=receipt,
-                    recovered_artifact_ids=recovered_by_scenario.get(
-                        receipt.get("scenario_key"), []
-                    ),
-                )
+        receipts = [
+            name
+            for name in sorted(members)
+            if name.startswith(receipt_prefix) and name.endswith(".json")
+        ]
+        for name in receipts:
+            receipt = json_file(name)
+            ingest_result_receipt(
+                attempt,
+                receipt,
+                digest_body=receipt,
+                recovered_artifact_ids=recovered_by_scenario.get(
+                    receipt.get("scenario_key"), []
+                ),
+            )
 
         manifest_name = "outbound-spool/manifest.json"
-        if manifest_name not in files:
+        if manifest_name not in members:
             return False
         manifest = json_file(manifest_name)
         ingest_manifest(attempt, manifest, digest_body=manifest)
@@ -3409,13 +3457,10 @@ class HostedHarnessGateway:
             "recovered offline hosted delivery attempt=%s events=%s receipts=%s artifacts=%s",
             attempt.id,
             len(events),
-            sum(
-                name.startswith(receipt_prefix) and name.endswith(".json")
-                for name in files
-            ),
+            len(receipts),
             sum(
                 name.startswith(artifact_prefix) and name.endswith(".json")
-                for name in files
+                for name in members
             ),
         )
         return True

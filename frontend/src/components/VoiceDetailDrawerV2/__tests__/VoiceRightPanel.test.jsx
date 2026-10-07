@@ -191,6 +191,24 @@ describe("VoiceRightPanel", () => {
     });
   });
 
+  it("drops the Annotations tab, and its Add Label, when the host hides it", () => {
+    const call = {
+      id: "call-1",
+      module: "simulate",
+      status: "completed",
+      transcript: [],
+    };
+    const { unmount } = renderWithQueryClient(<VoiceRightPanel data={call} />);
+    expect(
+      screen.getByRole("tab", { name: "Annotations" }),
+    ).toBeInTheDocument();
+    unmount();
+
+    renderWithQueryClient(<VoiceRightPanel data={call} hideAnnotationTab />);
+    expect(screen.queryByRole("tab", { name: "Annotations" })).toBeNull();
+    expect(screen.queryByText("Add Label")).toBeNull();
+  });
+
   it("shows the Scenario tab for a call with a persona but no scenario columns", () => {
     renderWithQueryClient(
       <VoiceRightPanel
@@ -206,6 +224,43 @@ describe("VoiceRightPanel", () => {
       />,
     );
     expect(screen.getByRole("tab", { name: "Scenario" })).toBeInTheDocument();
+  });
+
+  describe("stop latency on Call Analytics", () => {
+    const renderCall = (extra) =>
+      renderWithQueryClient(
+        <VoiceRightPanel
+          data={{
+            id: "call-5",
+            module: "simulate",
+            status: "completed",
+            provider: "livekit",
+            transcript: [],
+            user_interruption_count: 1,
+            ai_interruption_count: 0,
+            ...extra,
+          }}
+        />,
+      );
+
+    it("shows the agent's stop time after the user interrupts, in ms", () => {
+      renderCall({ avg_stop_time_after_interruption: 640 });
+      expect(screen.getByText("Stop latency")).toBeInTheDocument();
+      expect(screen.getByText("640ms")).toBeInTheDocument();
+    });
+
+    it("keeps a measured zero", () => {
+      renderCall({ avg_stop_time_after_interruption: 0 });
+      expect(screen.getByText("Stop latency")).toBeInTheDocument();
+      expect(screen.getByText("0ms")).toBeInTheDocument();
+    });
+
+    it("shows a dash when the call has no stop time", () => {
+      renderCall({ avg_stop_time_after_interruption: null });
+      expect(screen.getByText("Stop latency").parentElement).toHaveTextContent(
+        "Stop latency—",
+      );
+    });
   });
 
   it("still has no Scenario tab when there is neither", () => {

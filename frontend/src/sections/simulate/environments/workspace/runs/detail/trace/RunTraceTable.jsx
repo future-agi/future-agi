@@ -1,24 +1,43 @@
 import PropTypes from "prop-types";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   Box,
   Stack,
   Button,
   Chip,
+  FormControlLabel,
   Pagination,
+  Switch,
   Typography,
 } from "@mui/material";
 
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
 import { FilterPanel } from "src/components/filter-panel";
 import { useRunCalls } from "src/api/simulate-environments/runDetail";
+import { AGENT_TYPES } from "src/sections/agents/constants";
 
 import SectionCard from "../../../../components/SectionCard";
 import EmptyState from "../../../../components/EmptyState";
 import TraceTable from "./TraceTable";
 import { TraceGroupByPicker, TraceColumnsPicker } from "./TracePickers";
 import StatusFilterChips from "./StatusFilterChips";
-import { defaultTraceColumns } from "./traceTable.constants";
+import {
+  CLOSED_GROUP_VIEW,
+  GROUPINGS,
+  OUTCOME_LABELS,
+  VOICE_ONLY_COLUMNS,
+  compactHiddenSx,
+  defaultTraceColumns,
+  toolbarButtonSx,
+} from "./traceTable.constants";
 
 const STATUS_CHIP_API = {
   failing: "failed",
@@ -31,16 +50,6 @@ const STATUS_LABELS = {
   failed: "Failed",
   error: "Errored",
   inconclusive: "Not measured",
-};
-
-const filterButtonSx = {
-  typography: "s2",
-  fontWeight: "fontWeightBold",
-  textTransform: "none",
-  height: 32,
-  color: "text.primary",
-  borderColor: "divider",
-  "&:hover": { borderColor: "text.disabled", bgcolor: "transparent" },
 };
 
 const PAGE_SIZE = 50;
@@ -65,7 +74,51 @@ export default function RunTraceTable({
   const [visibleColumns, setVisibleColumns] = useState(() =>
     defaultTraceColumns(),
   );
+  // The evaluations the user turned off, so one the run adds later shows.
+  const [hiddenEvals, setHiddenEvals] = useState(() => new Set());
   const [filterAnchor, setFilterAnchor] = useState(null);
+  // Which groups are open lives here, not in the table: a filter's loading
+  // and empty states unmount the table, and its own state would go with it,
+  // folding every group back up. Labels differ per axis, so each axis keeps
+  // its own opened set and a change under one never touches another; Expand
+  // all carries over. Calls handed over from a diagnosis issue start open: the
+  // user came to see those rows, not the groups folded over them.
+  const [groupState, setGroupState] = useState({
+    all: !!initialFilters.callExecutionId?.length,
+    expandedByAxis: {},
+  });
+  // Whether Expand all is still the hand-off's, so dismissing its chip may end
+  // it. Once the user works the toggle, Expand all is theirs.
+  const [handoffExpanded, setHandoffExpanded] = useState(
+    () => !!initialFilters.callExecutionId?.length,
+  );
+  const groupView = useMemo(
+    () => ({
+      all: groupState.all,
+      expanded:
+        groupState.expandedByAxis[groupBy] ?? CLOSED_GROUP_VIEW.expanded,
+    }),
+    [groupState, groupBy],
+  );
+  const setGroupView = useCallback(
+    (update) =>
+      setGroupState((prev) => {
+        const current = {
+          all: prev.all,
+          expanded: prev.expandedByAxis[groupBy] ?? CLOSED_GROUP_VIEW.expanded,
+        };
+        const next = typeof update === "function" ? update(current) : update;
+        // Collapse all closes every axis, not just the one on screen.
+        if (next === CLOSED_GROUP_VIEW)
+          return { all: false, expandedByAxis: {} };
+        return {
+          all: next.all,
+          expandedByAxis: { ...prev.expandedByAxis, [groupBy]: next.expanded },
+        };
+      }),
+    [groupBy],
+  );
+  const expandedForRef = useRef(null);
   const [filters, setFilters] = useState(initialFilters);
 
   const serverFilters = useMemo(() => {
@@ -75,6 +128,7 @@ export default function RunTraceTable({
     if (filters.goal?.length) next.goal = filters.goal;
     if (filters.subGoal?.length) next.sub_goal = filters.subGoal;
     if (filters.status?.length) next.status = filters.status;
+    if (filters.goal_outcome?.length) next.goal_outcome = filters.goal_outcome;
     if (statusChip !== "all") next.status = [STATUS_CHIP_API[statusChip]];
     return next;
   }, [filters, statusChip]);
@@ -132,16 +186,50 @@ export default function RunTraceTable({
     groups = [],
     facets = {},
     totalPages = 1,
+    agentType = null,
+    runActive = false,
     isLoading,
     error,
   } = useRunCalls(executionId, listQuery);
 
+  // A chat run has no voice metrics. Without the run's agent type, the calls
+  // decide.
+  const chatRun = agentType
+    ? agentType === AGENT_TYPES.CHAT
+    : tasks.length > 0 &&
+      tasks.every((t) => t.simulationCallType === AGENT_TYPES.CHAT);
+  const shownColumns = useMemo(
+    () =>
+      chatRun
+        ? new Set([...visibleColumns].filter((k) => !VOICE_ONLY_COLUMNS.has(k)))
+        : visibleColumns,
+    [chatRun, visibleColumns],
+  );
 
   // The eval columns to render come from the data-driven column descriptors.
   const evals = useMemo(
     () =>
       columns
         .filter((c) => c.group === "Evaluations")
+        .map((c) => ({ id: c.key, name: c.label })),
+    [columns],
+  );
+  const shownEvals = useMemo(
+    () => evals.filter((e) => !hiddenEvals.has(e.id)),
+    [evals, hiddenEvals],
+  );
+  // A query that's loading or failed has no columns; the picker keeps the last
+  // evals it had, so its entries and count don't flicker on every filter.
+  const lastEvalsRef = useRef(evals);
+  useEffect(() => {
+    if (evals.length) lastEvalsRef.current = evals;
+  }, [evals]);
+  const pickerEvals =
+    (isLoading || error) && !evals.length ? lastEvalsRef.current : evals;
+  const subGoalEvals = useMemo(
+    () =>
+      columns
+        .filter((c) => c.group === "Sub-goal Results")
         .map((c) => ({ id: c.key, name: c.label })),
     [columns],
   );
@@ -172,8 +260,8 @@ export default function RunTraceTable({
         value: "status",
         label: "Status",
         type: "enum",
-        choices: Object.keys(STATUS_LABELS),
-        choiceLabels: STATUS_LABELS,
+        choices: Object.keys(OUTCOME_LABELS),
+        choiceLabels: OUTCOME_LABELS,
       },
     ],
     [goalOptions, subGoalOptions],
@@ -192,11 +280,7 @@ export default function RunTraceTable({
     );
     return {
       all: Object.values(byStatus).reduce((sum, count) => sum + count, 0),
-      failing: byStatus.failed ?? 0,
-      errored: byStatus.error ?? 0,
-      mixed: 0,
-      inconclusive: byStatus.inconclusive ?? 0,
-      passing: byStatus.passed ?? 0,
+      ...byStatus,
     };
   }, [facets.status]);
 
@@ -228,60 +312,127 @@ export default function RunTraceTable({
     setStatusChip("all");
   };
 
+  // Like a "select all" box: on only while every group on screen is open,
+  // however they were opened.
+  const allOpen =
+    groups.length > 0 &&
+    groups.every((g) => groupView.all || groupView.expanded.has(g.label));
+
   const title = (
-    <Stack direction="row" alignItems="center" spacing={1.25}>
+    <Stack
+      direction="row"
+      alignItems="center"
+      flexWrap="wrap"
+      spacing={1.25}
+      useFlexGap
+    >
       <TraceGroupByPicker
         value={groupBy}
         onChange={(value) => {
           setGroupBy(value);
+          // The open call's group has to open again under the new axis.
+          expandedForRef.current = null;
           setPage(1);
         }}
       />
-      <Button
-        size="small"
-        variant="outlined"
-        onClick={(e) => setFilterAnchor(e.currentTarget)}
-        startIcon={
-          <Iconify
-            icon="mage:filter"
-            width={15}
-            sx={{ color: filterCount ? "primary.main" : "text.subtitle" }}
-          />
-        }
-        endIcon={
-          <Iconify
-            icon="solar:alt-arrow-down-linear"
-            width={12}
-            sx={{ color: "text.subtitle" }}
-          />
-        }
-        sx={filterButtonSx}
-      >
-        Filter
-        {filterCount - affectedCalls > 0 && (
-          <>
-            <Box
-              component="span"
-              sx={{
-                mx: 0.5,
-                color: "text.subtitle",
-                fontWeight: "fontWeightRegular",
+      {groupBy && (
+        <FormControlLabel
+          control={
+            <Switch
+              size="small"
+              checked={allOpen}
+              onChange={() => {
+                setHandoffExpanded(false);
+                setGroupView((prev) =>
+                  allOpen
+                    ? CLOSED_GROUP_VIEW
+                    : {
+                        all: true,
+                        expanded: new Set([
+                          ...prev.expanded,
+                          ...groups.map((g) => g.label),
+                        ]),
+                      },
+                );
               }}
-            >
-              ·
-            </Box>
-            <Box component="span" sx={{ color: "primary.main" }}>
-              {filterCount - affectedCalls}
-            </Box>
-          </>
-        )}
-      </Button>
+            />
+          }
+          label="Expand all"
+          sx={{
+            ml: 0.5,
+            mr: 0,
+            flexShrink: 0,
+            ".MuiFormControlLabel-label": {
+              typography: "s2",
+              whiteSpace: "nowrap",
+            },
+          }}
+        />
+      )}
+      <CustomTooltip
+        show
+        size="small"
+        arrow
+        title={
+          filterCount - affectedCalls > 0
+            ? `Filter · ${filterCount - affectedCalls}`
+            : "Filter"
+        }
+      >
+        <Button
+          size="small"
+          variant="outlined"
+          onClick={(e) => setFilterAnchor(e.currentTarget)}
+          startIcon={
+            <Iconify
+              icon="mage:filter"
+              width={15}
+              sx={{ color: filterCount ? "primary.main" : "text.subtitle" }}
+            />
+          }
+          endIcon={
+            <Iconify
+              icon="solar:alt-arrow-down-linear"
+              width={12}
+              sx={{ color: "text.subtitle" }}
+            />
+          }
+          sx={toolbarButtonSx}
+        >
+          <Box component="span" sx={compactHiddenSx}>
+            Filter
+          </Box>
+          {filterCount - affectedCalls > 0 && (
+            <>
+              <Box
+                component="span"
+                sx={{
+                  mx: 0.5,
+                  color: "text.subtitle",
+                  fontWeight: "fontWeightRegular",
+                  ...compactHiddenSx,
+                }}
+              >
+                ·
+              </Box>
+              <Box component="span" sx={{ color: "primary.main" }}>
+                {filterCount - affectedCalls}
+              </Box>
+            </>
+          )}
+        </Button>
+      </CustomTooltip>
       {affectedCalls > 0 && (
         <Chip
           size="small"
           label={`${affectedCalls} affected call${affectedCalls === 1 ? "" : "s"}`}
           onDelete={() => {
             setFilters(({ callExecutionId: _ids, ...rest }) => rest);
+            // The groups of those calls the user saw stay open; the rest of the
+            // run comes back closed, unless the user turned Expand all on.
+            if (handoffExpanded)
+              setGroupState((prev) => ({ ...prev, all: false }));
+            setHandoffExpanded(false);
             setPage(1);
           }}
           sx={{ typography: "s2", fontWeight: 600 }}
@@ -291,7 +442,14 @@ export default function RunTraceTable({
   );
 
   const action = (
-    <Stack direction="row" alignItems="center" spacing={1.5}>
+    <Stack
+      direction="row"
+      alignItems="center"
+      flexWrap="wrap"
+      spacing={1.5}
+      useFlexGap
+      sx={{ ml: "auto" }}
+    >
       <StatusFilterChips
         value={statusChip}
         counts={statusCounts}
@@ -305,7 +463,14 @@ export default function RunTraceTable({
           setPage(1);
         }}
       />
-      <TraceColumnsPicker value={visibleColumns} onChange={setVisibleColumns} />
+      <TraceColumnsPicker
+        value={visibleColumns}
+        onChange={setVisibleColumns}
+        hidden={chatRun ? VOICE_ONLY_COLUMNS : undefined}
+        evals={pickerEvals}
+        hiddenEvals={hiddenEvals}
+        onHiddenEvalsChange={setHiddenEvals}
+      />
     </Stack>
   );
   const showPager = !isLoading && count > 0 && totalPages > 1;
@@ -314,7 +479,12 @@ export default function RunTraceTable({
 
   return (
     <>
-      <SectionCard title={title} action={action}>
+      <SectionCard
+        title={title}
+        action={action}
+        wrap
+        sx={{ containerType: "inline-size" }}
+      >
         {/* A fixed-height box, like the Scenarios tab: the card keeps its size
             whatever the row count, and the pager below never moves. The table
             scrolls inside it, in its own box. */}
@@ -345,13 +515,23 @@ export default function RunTraceTable({
           ) : (
             <TraceTable
               key={groupBy}
-              columns={visibleColumns}
+              columns={shownColumns}
               groups={groups}
               rows={groupBy ? null : tasks}
-              evals={evals}
+              evals={shownEvals}
+              subGoalEvals={subGoalEvals}
+              groupView={groupView}
+              onGroupViewChange={setGroupView}
+              expandedForRef={expandedForRef}
+              firstColumnLabel={
+                groupBy
+                  ? GROUPINGS.find((g) => g.id === groupBy)?.label
+                  : undefined
+              }
               onOpen={onOpenCall}
               activeCallId={activeCallId}
               scrollRef={tableScrollRef}
+              runActive={runActive}
             />
           )}
         </Box>

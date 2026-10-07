@@ -170,13 +170,16 @@ class RunTestExecutionsResponseSerializer(serializers.Serializer):
     """Paginated envelope returned by GET /run-tests/{run_test_id}/executions/.
 
     Runtime shape comes from ``paginator.get_paginated_response(...)``:
-    ``{count, next, previous, results: [TestExecutionItem, ...]}``.
+    ``{count, next, previous, results: [TestExecutionItem, ...]}`` plus
+    ``covered_scenario_count``, the distinct scenarios every execution of the
+    run test has covered (not only this page).
     """
 
     count = serializers.IntegerField(read_only=True)
     next = serializers.CharField(read_only=True, allow_null=True)
     previous = serializers.CharField(read_only=True, allow_null=True)
     results = TestExecutionItemResponseSerializer(many=True, read_only=True)
+    covered_scenario_count = serializers.IntegerField(read_only=True)
 
 
 class RunTestScenarioItemResponseSerializer(serializers.Serializer):
