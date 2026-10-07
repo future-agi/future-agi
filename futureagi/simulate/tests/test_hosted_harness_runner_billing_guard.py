@@ -437,7 +437,9 @@ def test_offline_recovery_ingests_receipts_without_replaying_usage(monkeypatch):
             exec=lambda command, **kwargs: SimpleNamespace(exit_code=0)
         ),
         fs=SimpleNamespace(
-            download_file=lambda path, timeout=None: archive_body.getvalue()
+            download_file_stream=lambda path, timeout=None: iter(
+                [archive_body.getvalue()]
+            )
         ),
     )
     gateway = object.__new__(HostedHarnessGateway)

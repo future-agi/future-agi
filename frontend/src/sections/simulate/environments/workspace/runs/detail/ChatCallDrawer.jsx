@@ -111,7 +111,13 @@ export default function ChatCallDrawer({
   // hydrate from the call detail once it resolves.
   const turns = callDetail?.turns || [];
   const stats = callDetail?.stats || {};
-  const evalResults = callDetail?.evalResults ?? task.evalResults ?? [];
+  // Sub-goal checks are the scenario's, not evals: the tab leaves them out
+  // whichever source the row paints from.
+  const evalResults = (
+    callDetail?.evalResults ??
+    task.evalResults ??
+    []
+  ).filter((r) => r.kind !== "sub_goal");
   const failed = evalResults.filter((r) => r.passed === false);
   const drawerEvals = evalResults.map((result) => ({
     ...result,

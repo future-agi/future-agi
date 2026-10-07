@@ -18,17 +18,8 @@ import {
   defaultTraceColumns,
   GROUPINGS,
   neutralCheckboxSx,
+  toolbarButtonSx,
 } from "./traceTable.constants";
-
-const pickerButtonSx = {
-  typography: "s2",
-  fontWeight: "fontWeightBold",
-  textTransform: "none",
-  height: 32,
-  color: "text.primary",
-  borderColor: "divider",
-  "&:hover": { borderColor: "text.disabled", bgcolor: "transparent" },
-};
 
 // Group-by axis picker.
 export function TraceGroupByPicker({ value, onChange }) {
@@ -54,7 +45,7 @@ export function TraceGroupByPicker({ value, onChange }) {
             sx={{ color: "text.subtitle" }}
           />
         }
-        sx={pickerButtonSx}
+        sx={toolbarButtonSx}
       >
         Group by
         <Box
@@ -98,16 +89,19 @@ TraceGroupByPicker.propTypes = {
 };
 
 // Column-visibility picker. Bucketed into sections in declaration order.
-export function TraceColumnsPicker({ value, onChange }) {
+export function TraceColumnsPicker({ value, onChange, hidden }) {
+  const offered = hidden
+    ? TRACE_COLUMNS.filter((c) => !hidden.has(c.key))
+    : TRACE_COLUMNS;
   const [anchor, setAnchor] = useState(null);
-  const shownCount = TRACE_COLUMNS.filter((c) => value.has(c.key)).length;
+  const shownCount = offered.filter((c) => value.has(c.key)).length;
   const toggle = (key) => {
     const next = new Set(value);
     if (next.has(key)) next.delete(key);
     else next.add(key);
     onChange(next);
   };
-  const sections = TRACE_COLUMNS.reduce((acc, c) => {
+  const sections = offered.reduce((acc, c) => {
     const last = acc[acc.length - 1];
     if (last && last.name === c.group) last.items.push(c);
     else acc.push({ name: c.group, items: [c] });
@@ -133,7 +127,7 @@ export function TraceColumnsPicker({ value, onChange }) {
             sx={{ color: "text.subtitle" }}
           />
         }
-        sx={pickerButtonSx}
+        sx={toolbarButtonSx}
       >
         Columns
         <Box
@@ -147,7 +141,7 @@ export function TraceColumnsPicker({ value, onChange }) {
           ·
         </Box>
         <Box component="span" sx={{ color: "text.subtitle" }}>
-          {shownCount}/{TRACE_COLUMNS.length}
+          {shownCount}/{offered.length}
         </Box>
       </Button>
       <Menu
@@ -213,4 +207,5 @@ export function TraceColumnsPicker({ value, onChange }) {
 TraceColumnsPicker.propTypes = {
   value: PropTypes.instanceOf(Set).isRequired,
   onChange: PropTypes.func.isRequired,
+  hidden: PropTypes.instanceOf(Set),
 };

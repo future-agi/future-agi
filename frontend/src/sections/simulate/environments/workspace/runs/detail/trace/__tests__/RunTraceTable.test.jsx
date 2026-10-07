@@ -10,6 +10,9 @@ vi.mock("src/api/simulate-environments/runDetail", () => ({
 
 const { default: RunTraceTable } = await import("../RunTraceTable");
 const { default: TraceGroupHeaderRow } = await import("../TraceGroupHeaderRow");
+const { TRACE_COLUMNS, VOICE_ONLY_COLUMNS } = await import(
+  "../traceTable.constants"
+);
 
 const TASKS = [
   {
@@ -178,6 +181,109 @@ describe("RunTraceTable", () => {
     });
   });
 
+  describe("which groups are open", () => {
+    const persona = {
+      refund: () => screen.queryByText("The Hungry Customer in a Rush"),
+      escalate: () => screen.queryByText("Angry caller"),
+      timeout: () => screen.queryByText("Caller"),
+    };
+    const header = (label) => screen.getAllByText(label)[0];
+    const expandAll = () =>
+      screen.getByRole("checkbox", { name: /Expand all/ });
+
+    it("leaves the other groups closed after opening the only group a filter showed", async () => {
+      const user = userEvent.setup();
+      renderTable();
+      await user.click(screen.getByRole("button", { name: "Failing" }));
+      await user.click(header("Escalate to a human"));
+      await user.click(screen.getByRole("button", { name: /^All/ }));
+
+      expect(persona.escalate()).toBeInTheDocument();
+      expect(persona.refund()).toBeNull();
+      expect(persona.timeout()).toBeNull();
+    });
+
+    it("turns Expand all on only once every group is open", async () => {
+      const user = userEvent.setup();
+      renderTable();
+      expect(expandAll()).not.toBeChecked();
+      await user.click(header("Refund a double charge"));
+      await user.click(header("Escalate to a human"));
+      expect(expandAll()).not.toBeChecked();
+      await user.click(header("Handle a timeout"));
+      expect(expandAll()).toBeChecked();
+
+      await user.click(expandAll());
+      expect(persona.refund()).toBeNull();
+      expect(persona.escalate()).toBeNull();
+      expect(persona.timeout()).toBeNull();
+    });
+
+    it("keeps Expand all on through a Group by change", async () => {
+      const user = userEvent.setup();
+      renderTable();
+      await user.click(expandAll());
+      await user.click(screen.getByRole("button", { name: /Group by/ }));
+      await user.click(screen.getByRole("menuitem", { name: "Status" }));
+
+      expect(expandAll()).toBeChecked();
+      expect(persona.refund()).toBeInTheDocument();
+      expect(persona.escalate()).toBeInTheDocument();
+      expect(persona.timeout()).toBeInTheDocument();
+    });
+
+    it("keeps the open call's group closed once the user closes it, across a filter's loading", async () => {
+      const user = userEvent.setup();
+      let loading = false;
+      const base = useRunCalls.getMockImplementation();
+      useRunCalls.mockImplementation((...args) =>
+        loading
+          ? { ...base(...args), tasks: [], groups: [], isLoading: true }
+          : base(...args),
+      );
+      const { rerender } = renderTable({ activeCallId: "t2" });
+      expect(persona.escalate()).toBeInTheDocument();
+      await user.click(header("Escalate to a human"));
+      expect(persona.escalate()).toBeNull();
+
+      loading = true;
+      await user.click(screen.getByRole("button", { name: "Failing" }));
+      expect(screen.getByText("Loading calls…")).toBeInTheDocument();
+      loading = false;
+      rerender(
+        <RunTraceTable
+          executionId="ex1"
+          onOpenCall={vi.fn()}
+          activeCallId="t2"
+        />,
+      );
+
+      expect(persona.escalate()).toBeNull();
+    });
+  });
+
+  it("loads a group row while the run is going and the group's calls are on other pages", () => {
+    const group = {
+      label: "Refunds",
+      rows: [{ ...TASKS[0], executionStatus: "completed" }],
+      count: 3,
+      agg: {},
+    };
+    useRunCalls.mockReturnValue({
+      tasks: group.rows,
+      columns: COLUMNS,
+      groups: [group],
+      facets: FACETS,
+      count: 3,
+      totalPages: 2,
+      isLoading: false,
+      runActive: true,
+    });
+    renderTable();
+    const groupRow = screen.getByText("Refunds").closest("tr");
+    expect(groupRow.querySelector(".MuiSkeleton-root")).not.toBeNull();
+  });
+
   it("renders the real calls, grouped by scenario, with the eval column", async () => {
     const user = userEvent.setup();
     renderTable();
@@ -187,7 +293,7 @@ describe("RunTraceTable", () => {
     expect(screen.getByText("Tone")).toBeInTheDocument();
 
     // Groups start collapsed — expand to reveal the rows, then the persona cell.
-    await user.click(screen.getByRole("button", { name: /Expand all/ }));
+    await user.click(screen.getByRole("checkbox", { name: /Expand all/ }));
     expect(
       screen.getByText("The Hungry Customer in a Rush"),
     ).toBeInTheDocument();
@@ -201,7 +307,7 @@ describe("RunTraceTable", () => {
     const onOpenCall = vi.fn();
     renderTable({ onOpenCall });
 
-    await user.click(screen.getByRole("button", { name: /Expand all/ }));
+    await user.click(screen.getByRole("checkbox", { name: /Expand all/ }));
     await user.click(screen.getByText("The Hungry Customer in a Rush"));
 
     expect(onOpenCall).toHaveBeenCalledWith(
@@ -242,6 +348,14 @@ describe("RunTraceTable", () => {
 
     unmount();
     expect(onQueryChange).toHaveBeenLastCalledWith(null);
+  });
+
+  it("forwards chart goal-outcome filters to the server", () => {
+    renderTable({ initialFilters: { goal_outcome: ["escalated"] } });
+    expect(useRunCalls).toHaveBeenLastCalledWith(
+      "ex1",
+      expect.objectContaining({ filters: { goal_outcome: ["escalated"] } }),
+    );
   });
 
   it("follows the drawer: switches page, expands the call's group, highlights its row", () => {
@@ -300,6 +414,259 @@ describe("RunTraceTable", () => {
       "ex1",
       expect.objectContaining({ filters: { status: ["error"] } }),
     );
+  });
+
+  // A status chip the list hasn't fetched yet shows "Loading calls…" in the
+  // table's place, so the table unmounts. The groups the user opened must
+  // survive that. A row's persona name only shows while its group is open.
+  it("keeps a group the user expanded open while a filter loads", async () => {
+    const user = userEvent.setup();
+    let loading = false;
+    const base = useRunCalls.getMockImplementation();
+    useRunCalls.mockImplementation((...args) =>
+      loading
+        ? { ...base(...args), tasks: [], groups: [], isLoading: true }
+        : base(...args),
+    );
+    const { rerender } = renderTable();
+
+    await user.click(screen.getByText("Escalate to a human"));
+    expect(screen.getByText("Angry caller")).toBeInTheDocument();
+
+    loading = true;
+    await user.click(screen.getByRole("button", { name: "Failing" }));
+    expect(screen.getByText("Loading calls…")).toBeInTheDocument();
+
+    loading = false;
+    rerender(<RunTraceTable executionId="ex1" onOpenCall={vi.fn()} />);
+    expect(screen.getByText("Angry caller")).toBeInTheDocument();
+  });
+
+  it("keeps each group's own state through a filter with no matches", async () => {
+    const user = userEvent.setup();
+    // The chip's count says one call is inconclusive, but the list comes back
+    // empty (the count is from before a refetch), so the table gives way to
+    // the empty state.
+    const base = useRunCalls.getMockImplementation();
+    useRunCalls.mockImplementation((...args) => ({
+      ...base(...args),
+      facets: {
+        ...FACETS,
+        status: [...FACETS.status, { value: "inconclusive", count: 1 }],
+      },
+    }));
+    renderTable();
+
+    await user.click(screen.getByRole("checkbox", { name: /Expand all/ }));
+    // Expanded, the label shows in the group header and again in the row; the
+    // header comes first.
+    await user.click(screen.getAllByText("Refund a double charge")[0]);
+    expect(screen.queryByText("The Hungry Customer in a Rush")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: /Inconclusive/ }));
+    expect(screen.getByText("No calls match that filter")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^All/ }));
+
+    expect(screen.queryByText("The Hungry Customer in a Rush")).toBeNull();
+    expect(screen.getByText("Angry caller")).toBeInTheDocument();
+    expect(screen.getByText("Caller")).toBeInTheDocument();
+  });
+
+  it("keeps the open call's row visible after changing group-by", async () => {
+    const user = userEvent.setup();
+    renderTable({ activeCallId: "t2" });
+    expect(screen.getAllByRole("row", { selected: true })).toHaveLength(1);
+    await user.click(screen.getByRole("button", { name: /Group by/ }));
+    await user.click(screen.getByRole("menuitem", { name: "Status" }));
+    expect(screen.getAllByRole("row", { selected: true })).toHaveLength(1);
+  });
+
+  // A row's persona name only shows while its group is open: Refund holds
+  // "The Hungry Customer in a Rush", Escalate "Angry caller", Timeout "Caller".
+  describe("which groups stay open", () => {
+    const persona = {
+      refund: () => screen.queryByText("The Hungry Customer in a Rush"),
+      escalate: () => screen.queryByText("Angry caller"),
+      timeout: () => screen.queryByText("Caller"),
+    };
+    const header = (label) => screen.getAllByText(label)[0];
+    const chip = (name) => screen.getByRole("button", { name });
+    const expandAll = () =>
+      screen.getByRole("checkbox", { name: /Expand all/ });
+
+    it("leaves other groups closed after opening the only group a filter showed", async () => {
+      const user = userEvent.setup();
+      renderTable();
+      await user.click(chip("Failing"));
+      await user.click(header("Escalate to a human"));
+      await user.click(chip(/^All/));
+
+      expect(persona.escalate()).toBeInTheDocument();
+      expect(persona.refund()).toBeNull();
+      expect(persona.timeout()).toBeNull();
+    });
+
+    it("opens groups from another filter after Expand all", async () => {
+      const user = userEvent.setup();
+      renderTable();
+      await user.click(chip("Failing"));
+      await user.click(expandAll());
+      await user.click(chip(/^All/));
+
+      expect(persona.refund()).toBeInTheDocument();
+      expect(persona.escalate()).toBeInTheDocument();
+      expect(persona.timeout()).toBeInTheDocument();
+    });
+
+    it("keeps the rest open when one group is closed after Expand all", async () => {
+      const user = userEvent.setup();
+      renderTable();
+      await user.click(expandAll());
+      await user.click(header("Refund a double charge"));
+
+      expect(persona.refund()).toBeNull();
+      expect(persona.escalate()).toBeInTheDocument();
+      expect(persona.timeout()).toBeInTheDocument();
+      expect(expandAll()).not.toBeChecked();
+    });
+
+    it("keeps groups seen under Expand all open after one is closed elsewhere", async () => {
+      const user = userEvent.setup();
+      renderTable();
+      await user.click(chip("Failing"));
+      await user.click(expandAll());
+      await user.click(chip(/^All/));
+      await user.click(header("Refund a double charge"));
+
+      expect(persona.refund()).toBeNull();
+      expect(persona.escalate()).toBeInTheDocument();
+      expect(persona.timeout()).toBeInTheDocument();
+    });
+
+    it("reads Collapse all once every group is opened by hand, and closes them", async () => {
+      const user = userEvent.setup();
+      renderTable();
+      await user.click(header("Refund a double charge"));
+      expect(expandAll()).not.toBeChecked();
+      await user.click(header("Escalate to a human"));
+      await user.click(header("Handle a timeout"));
+      expect(expandAll()).toBeChecked();
+
+      await user.click(expandAll());
+      expect(persona.refund()).toBeNull();
+      expect(persona.escalate()).toBeNull();
+      expect(persona.timeout()).toBeNull();
+    });
+
+    it("keeps Expand all through a group-by change", async () => {
+      const user = userEvent.setup();
+      renderTable();
+      await user.click(expandAll());
+      await user.click(screen.getByRole("button", { name: /Group by/ }));
+      await user.click(screen.getByRole("menuitem", { name: "Status" }));
+
+      expect(persona.refund()).toBeInTheDocument();
+      expect(persona.escalate()).toBeInTheDocument();
+      expect(persona.timeout()).toBeInTheDocument();
+    });
+
+    const groupBy = async (user, name) => {
+      await user.click(screen.getByRole("button", { name: /Group by/ }));
+      await user.click(screen.getByRole("menuitem", { name }));
+    };
+
+    it("keeps the groups Expand all opened after a Group by round trip", async () => {
+      const user = userEvent.setup();
+      renderTable();
+      await user.click(expandAll());
+      await groupBy(user, "Status");
+      await user.click(header("Failed"));
+      await groupBy(user, "Use case");
+
+      expect(persona.refund()).toBeInTheDocument();
+      expect(persona.escalate()).toBeInTheDocument();
+      expect(persona.timeout()).toBeInTheDocument();
+    });
+
+    it("keeps a group opened by hand after touching another Group by", async () => {
+      const user = userEvent.setup();
+      renderTable();
+      await user.click(header("Refund a double charge"));
+      await groupBy(user, "Status");
+      await user.click(header("Failed"));
+      await groupBy(user, "Use case");
+
+      expect(persona.refund()).toBeInTheDocument();
+      expect(persona.escalate()).toBeNull();
+    });
+
+    it("closes groups under every Group by on Collapse all", async () => {
+      const user = userEvent.setup();
+      renderTable();
+      await user.click(header("Refund a double charge"));
+      await groupBy(user, "Status");
+      await user.click(expandAll());
+      await user.click(expandAll());
+      await groupBy(user, "Use case");
+
+      expect(persona.refund()).toBeNull();
+    });
+
+    it("keeps groups first seen under Expand all open after one closes on another filter", async () => {
+      const user = userEvent.setup();
+      renderTable();
+      await user.click(chip("Failing"));
+      await user.click(expandAll());
+      await user.click(chip(/^All/));
+      await user.click(chip(/^Errored/));
+      await user.click(header("Handle a timeout"));
+      await user.click(chip(/^All/));
+
+      expect(persona.refund()).toBeInTheDocument();
+      expect(persona.escalate()).toBeInTheDocument();
+      expect(persona.timeout()).toBeNull();
+    });
+
+    // The table unmounts while a filter loads; the parent keeps the "already
+    // opened for this call" marker so the remount doesn't reopen its group.
+    it("keeps the open call's group closed after the user closes it and a filter loads", async () => {
+      const user = userEvent.setup();
+      let loading = false;
+      const base = useRunCalls.getMockImplementation();
+      useRunCalls.mockImplementation((...args) =>
+        loading
+          ? { ...base(...args), tasks: [], groups: [], isLoading: true }
+          : base(...args),
+      );
+      const props = {
+        executionId: "ex1",
+        onOpenCall: vi.fn(),
+        activeCallId: "t2",
+      };
+      const { rerender } = render(<RunTraceTable {...props} />);
+      expect(persona.escalate()).toBeInTheDocument();
+
+      await user.click(header("Escalate to a human"));
+      expect(persona.escalate()).toBeNull();
+
+      loading = true;
+      await user.click(chip("Failing"));
+      expect(screen.getByText("Loading calls…")).toBeInTheDocument();
+
+      loading = false;
+      rerender(<RunTraceTable {...props} />);
+      expect(persona.escalate()).toBeNull();
+    });
+
+    it("starts other filters closed after Collapse all", async () => {
+      const user = userEvent.setup();
+      renderTable();
+      await user.click(expandAll());
+      await user.click(expandAll());
+      await user.click(chip("Failing"));
+
+      expect(persona.escalate()).toBeNull();
+    });
   });
 
   it("scopes to handed-over calls until the affected-calls chip is dismissed", async () => {
@@ -411,6 +778,64 @@ describe("RunTraceTable", () => {
     await user.click(screen.getByRole("menuitem", { name: "Latency" }));
 
     expect(screen.queryByRole("columnheader", { name: "Latency" })).toBeNull();
+  });
+
+  describe("voice-only metrics on a chat run", () => {
+    const withRun = (agentType, simulationCallType) => {
+      const impl = useRunCalls.getMockImplementation();
+      useRunCalls.mockImplementation((...args) => {
+        const result = impl(...args);
+        return {
+          ...result,
+          agentType,
+          tasks: result.tasks.map((t) => ({ ...t, simulationCallType })),
+          groups: result.groups.map((g) => ({
+            ...g,
+            rows: g.rows.map((t) => ({ ...t, simulationCallType })),
+          })),
+        };
+      });
+    };
+    const VOICE_ONLY = ["AI interruptions", "Stop latency"];
+    const headers = () =>
+      VOICE_ONLY.map((name) => screen.queryByRole("columnheader", { name }));
+    const pickerItems = async (user) => {
+      await user.click(screen.getByRole("button", { name: /Columns/ }));
+      return VOICE_ONLY.map((name) => screen.queryByRole("menuitem", { name }));
+    };
+
+    it("shows the columns and picker entries on a voice run", async () => {
+      const user = userEvent.setup();
+      withRun("voice", "voice");
+      renderTable();
+      headers().forEach((h) => expect(h).toBeInTheDocument());
+      (await pickerItems(user)).forEach((item) =>
+        expect(item).toBeInTheDocument(),
+      );
+    });
+
+    it("hides the columns and picker entries on a chat run", async () => {
+      const user = userEvent.setup();
+      withRun("text", "text");
+      renderTable();
+      headers().forEach((h) => expect(h).toBeNull());
+      expect(screen.getByRole("button", { name: /Columns/ })).toHaveTextContent(
+        `/${TRACE_COLUMNS.length - VOICE_ONLY_COLUMNS.size}`,
+      );
+      (await pickerItems(user)).forEach((item) => expect(item).toBeNull());
+    });
+
+    it("falls back to the calls when the run has no agent type", () => {
+      withRun(null, "text");
+      renderTable();
+      headers().forEach((h) => expect(h).toBeNull());
+    });
+
+    it("keeps the column when the run's type and calls are unknown", () => {
+      withRun(null, undefined);
+      renderTable();
+      headers().forEach((h) => expect(h).toBeInTheDocument());
+    });
   });
 
   it("re-buckets the rows when the group-by axis changes to Status", async () => {

@@ -22,7 +22,10 @@ import { useBuildProgress } from "src/api/simulate-environments/buildProgress";
 import { useWorkspaceChat } from "src/api/simulate-environments/workspaceChat";
 import { harnessIdempotencyKey } from "src/api/harness/harness";
 import { runHarnessEnvironment } from "src/api/simulate-environments/harnessEnvironments";
-import { runSimulationTarget } from "src/api/simulate-environments/runs";
+import {
+  refreshAfterRunStart,
+  runSimulationTarget,
+} from "src/api/simulate-environments/runs";
 import { listAllScenarioKeys } from "src/api/simulate-environments/scenarioSelection";
 import { CreditExhaustionBanner } from "src/components/CreditExhaustionBanner";
 import { useCreditExhaustion } from "src/hooks/use-credit-exhaustion";
@@ -130,9 +133,7 @@ export default function EnvironmentWorkspace() {
     },
     onSuccess: (run) => {
       pendingSubmission.current = null;
-      queryClient.invalidateQueries({
-        queryKey: ["run-test-executions", run.run_test_id],
-      });
+      refreshAfterRunStart(queryClient, env.id, run.run_test_id);
       navigate(
         paths.dashboard.simulate.environments.execution(
           env.id,

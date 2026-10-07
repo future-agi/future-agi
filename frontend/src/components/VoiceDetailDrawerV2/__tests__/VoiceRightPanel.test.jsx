@@ -190,4 +190,75 @@ describe("VoiceRightPanel", () => {
       expect(screen.queryByText("Fix with Falcon")).not.toBeInTheDocument();
     });
   });
+
+  it("shows the Scenario tab for a call with a persona but no scenario columns", () => {
+    renderWithQueryClient(
+      <VoiceRightPanel
+        data={{
+          id: "call-3",
+          module: "simulate",
+          status: "completed",
+          provider: "livekit",
+          transcript: [],
+          scenario_columns: {},
+          persona_details: { name: "Siddharth Nair", voice: null, age: null, traits: [] },
+        }}
+      />,
+    );
+    expect(screen.getByRole("tab", { name: "Scenario" })).toBeInTheDocument();
+  });
+
+  describe("stop latency on Call Analytics", () => {
+    const renderCall = (extra) =>
+      renderWithQueryClient(
+        <VoiceRightPanel
+          data={{
+            id: "call-5",
+            module: "simulate",
+            status: "completed",
+            provider: "livekit",
+            transcript: [],
+            user_interruption_count: 1,
+            ai_interruption_count: 0,
+            ...extra,
+          }}
+        />,
+      );
+
+    it("shows the agent's stop time after the user interrupts, in ms", () => {
+      renderCall({ avg_stop_time_after_interruption: 640 });
+      expect(screen.getByText("Stop latency")).toBeInTheDocument();
+      expect(screen.getByText("640ms")).toBeInTheDocument();
+    });
+
+    it("keeps a measured zero", () => {
+      renderCall({ avg_stop_time_after_interruption: 0 });
+      expect(screen.getByText("Stop latency")).toBeInTheDocument();
+      expect(screen.getByText("0ms")).toBeInTheDocument();
+    });
+
+    it("shows a dash when the call has no stop time", () => {
+      renderCall({ avg_stop_time_after_interruption: null });
+      expect(screen.getByText("Stop latency").parentElement).toHaveTextContent(
+        "Stop latency—",
+      );
+    });
+  });
+
+  it("still has no Scenario tab when there is neither", () => {
+    renderWithQueryClient(
+      <VoiceRightPanel
+        data={{
+          id: "call-4",
+          module: "simulate",
+          status: "completed",
+          provider: "livekit",
+          transcript: [],
+          scenario_columns: {},
+          persona_details: { name: null, voice: null, age: null, traits: [] },
+        }}
+      />,
+    );
+    expect(screen.queryByRole("tab", { name: "Scenario" })).not.toBeInTheDocument();
+  });
 });
