@@ -25806,6 +25806,61 @@ export interface InvestigationControlErrorApi {
   details?: InvestigationControlErrorApiDetails;
 }
 
+export interface ConversationEvidenceRequestApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  lease_token: string;
+}
+
+export type ConversationDossierApiCall = { [key: string]: string };
+
+export type ConversationDossierApiVariables = { [key: string]: string };
+
+export type ConversationDossierApiAnalysis = { [key: string]: string };
+
+export type ConversationDossierApiLatencyMs = { [key: string]: string };
+
+export type ConversationDossierApiTurnsItem = { [key: string]: string };
+
+export interface ConversationDossierApi {
+  /** @minLength 1 */
+  provider: string;
+  agent_instructions: string;
+  call: ConversationDossierApiCall;
+  variables: ConversationDossierApiVariables;
+  analysis: ConversationDossierApiAnalysis;
+  latency_ms: ConversationDossierApiLatencyMs;
+  turns: ConversationDossierApiTurnsItem[];
+  not_included: string[];
+}
+
+export type ConversationEvidenceRowApiAttrsString = { [key: string]: string };
+
+export interface ConversationEvidenceRowApi {
+  project_id: string;
+  trace_id: string;
+  org_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  id: string;
+  parent_span_id: string;
+  name: string;
+  /** @minLength 1 */
+  observation_type: string;
+  start_time: string;
+  end_time: string;
+  attrs_string: ConversationEvidenceRowApiAttrsString;
+  conversation: ConversationDossierApi;
+}
+
+export interface ConversationEvidenceResponseApi {
+  rows: ConversationEvidenceRowApi[];
+}
+
 export interface SimulationEvidenceRequestApi {
   /**
    * @minLength 1
@@ -25846,6 +25901,13 @@ export interface InvestigationEvidenceWindowApi {
   start: string;
   end: string;
 }
+
+export type InvestigationClaimApiEvidenceSource =
+  (typeof InvestigationClaimApiEvidenceSource)[keyof typeof InvestigationClaimApiEvidenceSource];
+
+export const InvestigationClaimApiEvidenceSource = {
+  conversation: "conversation",
+} as const;
 
 export interface InvestigationMemoryEntryApi {
   /**
@@ -25918,6 +25980,7 @@ export interface InvestigationClaimApi {
   lease_expires_at: string;
   read_cutoff: string;
   evidence_window?: InvestigationEvidenceWindowApi;
+  evidence_source?: InvestigationClaimApiEvidenceSource;
   /**
    * @minLength 1
    * @maxLength 20

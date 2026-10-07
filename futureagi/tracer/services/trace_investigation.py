@@ -14,6 +14,7 @@ from django.db import transaction
 from django.db.models import Count, Exists, F, Max, OuterRef, Q
 from django.utils import timezone
 
+from tracer.models.observability_provider import ObservabilityProvider
 from tracer.models.project import Project
 from tracer.models.trace_investigation import (
     InvestigationWorkload,
@@ -485,6 +486,13 @@ def _claim_payload(attempt: TraceInvestigationAttempt, token: str) -> dict[str, 
         )
         if job.root_end_time is not None:
             claim["evidence_window"] = _evidence_window(job.root_end_time)
+        # A project fed by a voice provider holds call logs. The worker asks the
+        # backend for their compact evidence first; other traces of the project
+        # get no rows there and are read from the span store as before.
+        if ObservabilityProvider.no_workspace_objects.filter(
+            project_id=job.project_id
+        ).exists():
+            claim["evidence_source"] = "conversation"
     return claim
 
 

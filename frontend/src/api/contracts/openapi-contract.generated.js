@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1056,
+  endpointCount: 1057,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -34706,6 +34706,30 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/tracer/internal/error-feed-v2/attempts/{attempt_id}/conversation-evidence/":
+      {
+        post: {
+          operationId:
+            "tracer_internal_error-feed-v2_attempts_conversation-evidence_create",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: {
+            $ref: "#/definitions/ConversationEvidenceRequest",
+          },
+          queryParameters: {},
+          responses: {
+            200: {
+              $ref: "#/definitions/ConversationEvidenceResponse",
+            },
+            409: {
+              $ref: "#/definitions/InvestigationControlError",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
     "/tracer/internal/error-feed-v2/attempts/{attempt_id}/simulation-evidence/":
       {
         post: {
@@ -53957,6 +53981,30 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         result: {
           $ref: "#/definitions/FalconConversationDetail",
+        },
+      },
+    },
+    ConversationEvidenceRequest: {
+      required: ["lease_token"],
+      type: "object",
+      properties: {
+        lease_token: {
+          title: "Lease token",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+      },
+    },
+    ConversationEvidenceResponse: {
+      required: ["rows"],
+      type: "object",
+      properties: {
+        rows: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/ConversationEvidenceRow",
+          },
         },
       },
     },
@@ -85954,6 +86002,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         evidence_window: {
           $ref: "#/definitions/InvestigationEvidenceWindow",
         },
+        evidence_source: {
+          title: "Evidence source",
+          type: "string",
+          enum: ["conversation"],
+        },
         engine_version: {
           title: "Engine version",
           type: "string",
@@ -86488,6 +86541,80 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "date-time",
           readOnly: true,
+        },
+      },
+    },
+    ConversationEvidenceRow: {
+      required: [
+        "project_id",
+        "trace_id",
+        "org_id",
+        "id",
+        "parent_span_id",
+        "name",
+        "observation_type",
+        "start_time",
+        "end_time",
+        "attrs_string",
+        "conversation",
+      ],
+      type: "object",
+      properties: {
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        trace_id: {
+          title: "Trace id",
+          type: "string",
+          format: "uuid",
+        },
+        org_id: {
+          title: "Org id",
+          type: "string",
+          format: "uuid",
+        },
+        id: {
+          title: "Id",
+          type: "string",
+          maxLength: 64,
+          minLength: 1,
+        },
+        parent_span_id: {
+          title: "Parent span id",
+          type: "string",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+        },
+        observation_type: {
+          title: "Observation type",
+          type: "string",
+          minLength: 1,
+        },
+        start_time: {
+          title: "Start time",
+          type: "string",
+          format: "date-time",
+        },
+        end_time: {
+          title: "End time",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        attrs_string: {
+          title: "Attrs string",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        conversation: {
+          $ref: "#/definitions/ConversationDossier",
         },
       },
     },
@@ -105225,6 +105352,80 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "date-time",
           readOnly: true,
+        },
+      },
+    },
+    ConversationDossier: {
+      required: [
+        "provider",
+        "agent_instructions",
+        "call",
+        "variables",
+        "analysis",
+        "latency_ms",
+        "turns",
+        "not_included",
+      ],
+      type: "object",
+      properties: {
+        provider: {
+          title: "Provider",
+          type: "string",
+          minLength: 1,
+        },
+        agent_instructions: {
+          title: "Agent instructions",
+          type: "string",
+          "x-nullable": true,
+        },
+        call: {
+          title: "Call",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+        variables: {
+          title: "Variables",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+        analysis: {
+          title: "Analysis",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+        latency_ms: {
+          title: "Latency ms",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+        turns: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              "x-nullable": true,
+            },
+          },
+        },
+        not_included: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
         },
       },
     },
