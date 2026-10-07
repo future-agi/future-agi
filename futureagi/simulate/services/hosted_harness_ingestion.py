@@ -1018,6 +1018,7 @@ def _apply_receipt_to_call(
         _tool_evaluation_on,
         runnable_eval_config_ids,
     )
+    from simulate.services.scoring_status import locked_call_metadata_update
 
     _apply_harness_evaluation_outputs(call)
     update_fields.append("eval_outputs")
@@ -1079,15 +1080,20 @@ def _apply_receipt_to_call(
             lambda: _dispatch_csat_once(CallExecution.objects.get(id=call_id))
         )
         # A hosted receipt never travels the SDK result path, so dispatch here, after commit.
+        lookup_failed = False
         try:
-            known = isinstance(run_test_id, (str, UUID))
-            selected = runnable_eval_config_ids(run_test_id) if known else []
-            tool_on = _tool_evaluation_on(run_test_id) if known else False
+            # A savepoint: a database error in these reads must not abort the
+            # receipt's own transaction, which still has to commit.
+            with transaction.atomic():
+                known = isinstance(run_test_id, (str, UUID))
+                selected = runnable_eval_config_ids(run_test_id) if known else []
+                tool_on = _tool_evaluation_on(run_test_id) if known else False
         except Exception:  # noqa: BLE001 - a receipt is never lost over scheduling
             logger.exception(
                 "harness_eval_selection_lookup_failed for call %s", call_id
             )
             selected, tool_on = [], False
+            lookup_failed = True
         # The tool-call judge switch is independent of the eval catalogue, so
         # it must still dispatch when this environment has no runnable eval selected.
         if selected or tool_on:
@@ -1096,6 +1102,22 @@ def _apply_receipt_to_call(
                     CallExecution.objects.get(id=call_id),
                     eval_config_ids=selected,  # [] stays [], never None
                 )
+            )
+        else:
+            # Nothing is dispatched, so the call must not hold its run as still
+            # scoring: close its eval side. After a failed lookup it stays open
+            # instead, so its evals read as pending and then time out visibly.
+            def _mark_eval_side(metadata: dict) -> bool:
+                if metadata.get("eval_started"):
+                    return False
+                metadata["eval_started"] = True
+                if not lookup_failed:
+                    metadata["eval_completed"] = True
+                return True
+
+            transaction.on_commit(
+                lambda: locked_call_metadata_update(call_id, _mark_eval_side),
+                robust=True,
             )
 
 
@@ -1254,9 +1276,7 @@ def _apply_target_metrics(call: CallExecution, target: dict[str, Any] | None) ->
     latency = dict(target.get("latency") or {})
     turns = latency.pop("turns", [])
     call.customer_latency_metrics = (
-        {"systemMetrics": latency, "turnLatencies": turns}
-        if latency or turns
-        else None
+        {"systemMetrics": latency, "turnLatencies": turns} if latency or turns else None
     )
     usage = target.get("usage") or {}
     metrics = dict(call.conversation_metrics_data or {})

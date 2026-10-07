@@ -7,9 +7,12 @@ import json
 import math
 import re
 from collections import defaultdict
+from collections.abc import Mapping
+from datetime import datetime
 from typing import Any
 
 from django.core.cache import cache
+from django.utils import timezone
 
 from model_hub.models.develop_dataset import Cell
 from simulate.models import (
@@ -19,11 +22,18 @@ from simulate.models import (
     SimulateEvalConfig,
     TestExecution,
 )
+from simulate.services.harness_evals import runnable_eval_config_ids
 from simulate.services.harness_scenarios import authored_scenarios_for_calls
 from simulate.services.run_results_v3_expressions import NUMERIC_JSON_PATTERN
 from simulate.services.run_results_v3_scoring import (
     judge_stored_eval,
     resolve_eval_scoring_spec,
+)
+from simulate.services.scoring_status import (
+    CallScoring,
+    derive_call_scoring,
+    normalize_eval_entry,
+    scoring_input_from_call,
 )
 from simulate.utils.eval_summary import iter_live_eval_outputs
 
@@ -117,9 +127,7 @@ def call_outcome(
         for eval_id, data in iter_live_eval_outputs(
             call.eval_outputs, set(live_eval_configs)
         )
-        if (
-            verdict := _eval_outcome(data, live_eval_configs.get(str(eval_id)))
-        )
+        if (verdict := _eval_outcome(data, live_eval_configs.get(str(eval_id))))
         is not None
     ]
     if harness_outcome in {"failed", "fail", "failure"} or "failed" in verdicts:
@@ -276,7 +284,11 @@ def _authored_branches(
 
 
 def eval_rows(
-    call: CallExecution, live_eval_configs: dict[str, SimulateEvalConfig]
+    call: CallExecution,
+    live_eval_configs: dict[str, SimulateEvalConfig],
+    *,
+    scoring: CallScoring | None = None,
+    names: Mapping[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     rows = []
     for eval_id, data in iter_live_eval_outputs(
@@ -308,6 +320,13 @@ def eval_rows(
                 score = 1.0 if verdict else 0.0
             elif numeric is not None and numeric > 1:
                 score = numeric / 100
+        status = data.get("status") or "completed"
+        reason = data.get("reason") or ""
+        if scoring is not None:
+            derived = scoring.evals.get(str(eval_id))
+            status = derived.status if derived else normalize_eval_entry(data)
+            if derived is not None and derived.reason is not None:
+                reason = derived.reason
         rows.append(
             {
                 "id": str(eval_id),
@@ -316,10 +335,27 @@ def eval_rows(
                 "value": value,
                 "score": round(score, 4) if score is not None else None,
                 "passed": verdict,
-                "reason": data.get("reason") or "",
-                "status": data.get("status") or "completed",
+                "reason": reason,
+                "status": status,
             }
         )
+    if scoring is not None:
+        # An expected eval with nothing stored yet is shown as its own entry,
+        # so a cell still being scored reads apart from one that has no data.
+        for eval_id in scoring.missing:
+            derived = scoring.evals[eval_id]
+            rows.append(
+                {
+                    "id": eval_id,
+                    "name": (names or {}).get(eval_id) or eval_id,
+                    "type": "",
+                    "value": None,
+                    "score": None,
+                    "passed": None,
+                    "reason": derived.reason or "",
+                    "status": derived.status,
+                }
+            )
     return rows
 
 
@@ -392,6 +428,9 @@ def build_call_rows(
     calls: list[CallExecution] | None = None,
     columns: list[dict[str, str]] | None = None,
     live_eval_ids: set[str] | None = None,
+    *,
+    runnable_ids: set[str] | None = None,
+    now: datetime | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
     if calls is None:
         calls = list(
@@ -403,6 +442,11 @@ def build_call_rows(
         catalog, catalog_live_ids = build_evaluation_catalog(execution)
         columns = catalog if columns is None else columns
         live_eval_ids = catalog_live_ids if live_eval_ids is None else live_eval_ids
+    if runnable_ids is None:
+        runnable_ids = set(runnable_eval_config_ids(execution.run_test_id))
+    if now is None:
+        now = timezone.now()
+    names = {column["id"]: column["name"] for column in columns}
     live_eval_configs = {
         str(config.id): config
         for config in SimulateEvalConfig.objects.filter(
@@ -502,7 +546,14 @@ def build_call_rows(
         turn_count = _number(metrics.get("turn_count"))
         if turn_count is None:
             turn_count = _number(metrics.get("bot_message_count"))
-        evaluations = eval_rows(call, live_eval_configs)
+        scoring = derive_call_scoring(
+            scoring_input_from_call(call),
+            visible_ids=live_eval_ids,
+            runnable_ids=runnable_ids,
+            run_status=execution.status,
+            now=now,
+        )
+        evaluations = eval_rows(call, live_eval_configs, scoring=scoring, names=names)
         receipt_sub_goals = receipt_sub_goal_names(metadata)
         for evaluation in evaluations:
             harness_columns[evaluation["id"]] = {
@@ -558,6 +609,9 @@ def build_call_rows(
                 "ended_reason": call.ended_reason,
                 "error_message": call.error_message,
                 "evaluations": evaluations,
+                "scoring_status": scoring.status,
+                "csat_status": scoring.csat_status,
+                "csat_reason": scoring.csat_reason,
             }
         )
     columns = list(columns)

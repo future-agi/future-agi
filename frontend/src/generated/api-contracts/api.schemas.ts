@@ -22228,6 +22228,29 @@ export const CallExecutionV3DetailResponseApiOutcome = {
   error: "error",
 } as const;
 
+export type CallExecutionV3DetailResponseApiScoringStatus =
+  (typeof CallExecutionV3DetailResponseApiScoringStatus)[keyof typeof CallExecutionV3DetailResponseApiScoringStatus];
+
+export const CallExecutionV3DetailResponseApiScoringStatus = {
+  not_applicable: "not_applicable",
+  pending: "pending",
+  succeeded: "succeeded",
+  failed: "failed",
+  timed_out: "timed_out",
+} as const;
+
+export type CallExecutionV3DetailResponseApiCsatStatus =
+  (typeof CallExecutionV3DetailResponseApiCsatStatus)[keyof typeof CallExecutionV3DetailResponseApiCsatStatus];
+
+export const CallExecutionV3DetailResponseApiCsatStatus = {
+  not_applicable: "not_applicable",
+  pending: "pending",
+  succeeded: "succeeded",
+  failed: "failed",
+  timed_out: "timed_out",
+  skipped: "skipped",
+} as const;
+
 export interface PersonaDetailsApi {
   /** @minLength 1 */
   name: string;
@@ -22252,6 +22275,17 @@ export interface CostBreakdownApi {
   customer: number;
 }
 
+export type SimulateRunV3EvaluationResultApiStatus =
+  (typeof SimulateRunV3EvaluationResultApiStatus)[keyof typeof SimulateRunV3EvaluationResultApiStatus];
+
+export const SimulateRunV3EvaluationResultApiStatus = {
+  pending: "pending",
+  succeeded: "succeeded",
+  failed: "failed",
+  timed_out: "timed_out",
+  skipped: "skipped",
+} as const;
+
 export type SimulateRunV3EvaluationResultApiValue = { [key: string]: unknown };
 
 export interface SimulateRunV3EvaluationResultApi {
@@ -22265,8 +22299,7 @@ export interface SimulateRunV3EvaluationResultApi {
   score: number;
   passed: boolean;
   reason: string;
-  /** @minLength 1 */
-  status: string;
+  status: SimulateRunV3EvaluationResultApiStatus;
 }
 
 export type SimulateRunV3FunctionCallApiArguments = { [key: string]: unknown };
@@ -22436,6 +22469,10 @@ export interface CallExecutionV3DetailResponseApi {
   cost_breakdown_cents: CostBreakdownApi;
   evaluations: SimulateRunV3EvaluationResultApi[];
   function_calls: SimulateRunV3FunctionCallApi[];
+  scoring_status: CallExecutionV3DetailResponseApiScoringStatus;
+  csat_status: CallExecutionV3DetailResponseApiCsatStatus;
+  /** @minLength 1 */
+  csat_reason: string;
 }
 
 export type RunDashboardMetricApiUnit =
@@ -22933,6 +22970,31 @@ export interface RunExecutionApi {
   summary: RunSummaryApi;
 }
 
+export interface SimulateRunV3ScoringCountsApi {
+  /** @minimum 0 */
+  not_applicable: number;
+  /** @minimum 0 */
+  pending: number;
+  /** @minimum 0 */
+  succeeded: number;
+  /** @minimum 0 */
+  failed: number;
+  /** @minimum 0 */
+  timed_out: number;
+}
+
+export interface SimulateRunV3CallsSummaryApi {
+  total: number;
+  outcomes: OutcomeCountsApi;
+  measured: number;
+  pass_rate: number;
+  duration: MetricStatsApi;
+  latency: MetricStatsApi;
+  tokens: TotalMetricStatsApi;
+  cost_cents: TotalMetricStatsApi;
+  scoring: SimulateRunV3ScoringCountsApi;
+}
+
 export type RunCallApiOutcome =
   (typeof RunCallApiOutcome)[keyof typeof RunCallApiOutcome];
 
@@ -22943,6 +23005,29 @@ export const RunCallApiOutcome = {
   failed: "failed",
   inconclusive: "inconclusive",
   error: "error",
+} as const;
+
+export type RunCallApiScoringStatus =
+  (typeof RunCallApiScoringStatus)[keyof typeof RunCallApiScoringStatus];
+
+export const RunCallApiScoringStatus = {
+  not_applicable: "not_applicable",
+  pending: "pending",
+  succeeded: "succeeded",
+  failed: "failed",
+  timed_out: "timed_out",
+} as const;
+
+export type RunCallApiCsatStatus =
+  (typeof RunCallApiCsatStatus)[keyof typeof RunCallApiCsatStatus];
+
+export const RunCallApiCsatStatus = {
+  not_applicable: "not_applicable",
+  pending: "pending",
+  succeeded: "succeeded",
+  failed: "failed",
+  timed_out: "timed_out",
+  skipped: "skipped",
 } as const;
 
 export interface RunCallApi {
@@ -22991,6 +23076,10 @@ export interface RunCallApi {
   /** @minLength 1 */
   error_message: string;
   evaluations: SimulateRunV3EvaluationResultApi[];
+  scoring_status: RunCallApiScoringStatus;
+  csat_status: RunCallApiCsatStatus;
+  /** @minLength 1 */
+  csat_reason: string;
 }
 
 export type GroupAggregatesApiEvaluations = { [key: string]: unknown };
@@ -23054,7 +23143,7 @@ export interface EvaluationColumnApi {
 
 export interface RunCallsV3ResponseApi {
   execution: RunExecutionApi;
-  summary: RunSummaryApi;
+  summary: SimulateRunV3CallsSummaryApi;
   count: number;
   page: number;
   page_size: number;

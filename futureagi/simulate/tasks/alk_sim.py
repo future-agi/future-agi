@@ -15,9 +15,15 @@ from __future__ import annotations
 
 import structlog
 from django.db import close_old_connections, transaction
+from django.utils import timezone
 
 from simulate.constants.csat_score_prompt import CSAT_SCORE_PROMPT
 from simulate.models import CallExecution
+from simulate.services.scoring_status import (
+    CSAT_STAMP_KEY,
+    REASON_CSAT_NO_EVIDENCE,
+    settle_run,
+)
 from tfc.temporal.drop_in import temporal_activity
 from tfc.utils.storage_client import server_reachable_url
 
@@ -50,6 +56,15 @@ def calculate_alk_voice_csat_score(call_execution_id: str) -> None:
     existing_csat = (call.conversation_metrics_data or {}).get("csat_score")
     if existing_csat is not None:
         _set_csat_state(call, "completed")
+        settle_run(call.test_execution_id)
+        return
+
+    # Nothing to score is an answer, not a failure: no retry and no generic
+    # error for a call with neither a recording nor a transcript.
+    if not call.recording_url and not _build_transcript_text(call):
+        _set_csat_state(call, "skipped", REASON_CSAT_NO_EVIDENCE)
+        logger.info("alk_csat_skipped_no_evidence", call_execution_id=str(call.id))
+        settle_run(call.test_execution_id)
         return
 
     _set_csat_state(call, "running")
@@ -62,6 +77,7 @@ def calculate_alk_voice_csat_score(call_execution_id: str) -> None:
     except Exception as exc:
         _set_csat_state(call, "failed", str(exc))
         logger.exception("alk_csat_failed", call_execution_id=str(call.id))
+        settle_run(call.test_execution_id)
         raise
 
     metrics = dict(call.conversation_metrics_data or {})
@@ -75,6 +91,7 @@ def calculate_alk_voice_csat_score(call_execution_id: str) -> None:
         update_fields.append("overall_score")
     call.save(update_fields=update_fields)
     _set_csat_state(call, "completed")
+    settle_run(call.test_execution_id)
     logger.info(
         "alk_csat_scored",
         call_execution_id=str(call.id),
@@ -185,6 +202,9 @@ def _set_csat_state(
         locked = CallExecution.objects.select_for_update().get(id=call.id)
         metadata = dict(locked.call_metadata or {})
         metadata["csat_status"] = status
+        if status == "running":
+            # The CSAT job clock runs from the start of this attempt.
+            metadata[CSAT_STAMP_KEY] = timezone.now().isoformat()
         if error:
             metadata["csat_error"] = error[:2000]
         else:

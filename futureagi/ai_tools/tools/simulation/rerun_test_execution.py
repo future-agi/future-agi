@@ -1,5 +1,4 @@
-from enum import Enum
-from typing import List, Optional
+from enum import StrEnum
 from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
@@ -13,7 +12,7 @@ from ai_tools.formatting import (
 from ai_tools.registry import register_tool
 
 
-class RerunType(str, Enum):
+class RerunType(StrEnum):
     EVAL_ONLY = "eval_only"
     CALL_AND_EVAL = "call_and_eval"
 
@@ -22,7 +21,7 @@ class RerunTestExecutionInput(PydanticBaseModel):
     run_test_id: UUID = Field(
         description="The UUID of the RunTest containing the test executions to rerun.",
     )
-    test_execution_ids: Optional[List[UUID]] = Field(
+    test_execution_ids: list[UUID] | None = Field(
         default=None,
         description="List of test execution IDs to rerun. If not provided, use select_all=True.",
     )
@@ -128,18 +127,25 @@ class RerunTestExecutionTool(BaseTool):
         """Rerun multiple test executions using the backend's bulk rerun logic."""
         import structlog
         from django.db import transaction
+        from django.utils import timezone
 
         from simulate.models.test_execution import (
             CallExecution,
             CallExecutionSnapshot,
             TestExecution,
         )
+        from simulate.services.harness_evals import runnable_eval_config_ids
+        from simulate.services.harness_run_evals import stamp_eval_queued
 
         logger = structlog.get_logger(__name__)
 
         results = []
         overall_success = 0
         overall_failure = 0
+        # An eval-only rerun grades every runnable config of the run test.
+        rerun_eval_ids = (
+            runnable_eval_config_ids(run_test.id) if rerun_type == "eval_only" else []
+        )
 
         for test_execution in test_executions:
             call_executions = CallExecution.objects.filter(
@@ -178,6 +184,13 @@ class RerunTestExecutionTool(BaseTool):
                             )
                             call_execution.call_metadata["eval_started"] = False
                             call_execution.call_metadata["eval_completed"] = False
+                            # Its scoring clock starts here, not at the call's
+                            # old completion.
+                            stamp_eval_queued(
+                                call_execution.call_metadata,
+                                rerun_eval_ids,
+                                now=timezone.now(),
+                            )
                             call_execution.save(
                                 update_fields=["eval_outputs", "call_metadata"]
                             )

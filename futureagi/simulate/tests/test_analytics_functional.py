@@ -783,9 +783,7 @@ class TestRunResultsV3Views:
         assert response.status_code == 200
         body = response.json()
         assert len(body["scenario_risk"]) == 2
-        assert {item["scenario"] for item in body["scenario_risk"]} == {
-            scenario.name
-        }
+        assert {item["scenario"] for item in body["scenario_risk"]} == {scenario.name}
         assert len({item["scenario_key"] for item in body["scenario_risk"]}) == 2
         assert len({item["scenario_key"] for item in body["reliability"]["rows"]}) == 2
 
@@ -1272,6 +1270,132 @@ class TestRunResultsV3Views:
         assert row["outcome"] == "error"
         assert row["harness_outcome_status"] == "error"
         assert row["execution_status"] == "completed"
+
+    def test_calls_rows_expose_scoring_states(
+        self, auth_client, test_execution, scenario
+    ):
+        """Each documented example row comes out of the stored state behind it:
+        still scoring, timed out, and nothing to score."""
+        from simulate.services.harness_run_evals import EVAL_QUEUED_KEY
+        from simulate.services.scoring_status import (
+            CSAT_STAMP_KEY,
+            REASON_CSAT_NO_EVIDENCE,
+            REASON_CSAT_TIMED_OUT_NOT_STARTED,
+            REASON_EVAL_TIMED_OUT_RUNNING,
+        )
+
+        template = EvalTemplate.objects.create(
+            name="Scoring states",
+            config={"output": "Pass/Fail"},
+            organization=test_execution.run_test.organization,
+        )
+        tone, resolution = (
+            SimulateEvalConfig.objects.create(
+                name=name,
+                eval_template=template,
+                run_test=test_execution.run_test,
+                mapping={"conversation": "transcript"},
+            )
+            for name in ("Tone", "Resolution")
+        )
+        now = timezone.now()
+        closed = {"eval_started": True, "eval_completed": True}
+
+        def _call(call_metadata, eval_outputs):
+            return CallExecution.objects.create(
+                test_execution=test_execution,
+                scenario=scenario,
+                status="completed",
+                completed_at=now,
+                call_metadata=call_metadata,
+                eval_outputs=eval_outputs,
+            )
+
+        scoring = _call(
+            {
+                "eval_started": True,
+                EVAL_QUEUED_KEY: {str(tone.id): now.isoformat()},
+                "csat_status": "pending",
+                CSAT_STAMP_KEY: now.isoformat(),
+            },
+            {},
+        )
+        timed_out = _call(
+            {
+                **closed,
+                "csat_status": "timed_out",
+                "csat_error": REASON_CSAT_TIMED_OUT_NOT_STARTED,
+            },
+            {
+                str(resolution.id): {
+                    "output": None,
+                    "reason": REASON_EVAL_TIMED_OUT_RUNNING,
+                    "output_type": None,
+                    "name": "Resolution",
+                    "status": "timed_out",
+                    "timestamp": now.isoformat(),
+                }
+            },
+        )
+        nothing = _call(
+            {**closed, "csat_status": "skipped", "csat_error": REASON_CSAT_NO_EVIDENCE},
+            {},
+        )
+
+        response = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/calls/"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        rows = {row["id"]: row for row in response.json()["results"]}
+
+        def _scoring(call):
+            row = rows[str(call.id)]
+            return {
+                key: row[key]
+                for key in (
+                    "scoring_status",
+                    "csat_status",
+                    "csat_reason",
+                    "evaluations",
+                )
+            }
+
+        empty = {"type": "", "value": None, "score": None, "passed": None}
+        assert _scoring(scoring) == {
+            "scoring_status": "pending",
+            "csat_status": "pending",
+            "csat_reason": None,
+            "evaluations": [
+                {
+                    "id": str(tone.id),
+                    "name": "Tone",
+                    **empty,
+                    "reason": "",
+                    "status": "pending",
+                }
+            ],
+        }
+        assert _scoring(timed_out) == {
+            "scoring_status": "timed_out",
+            "csat_status": "timed_out",
+            "csat_reason": REASON_CSAT_TIMED_OUT_NOT_STARTED,
+            "evaluations": [
+                {
+                    "id": str(resolution.id),
+                    "name": "Resolution",
+                    **empty,
+                    "reason": REASON_EVAL_TIMED_OUT_RUNNING,
+                    "status": "timed_out",
+                }
+            ],
+        }
+        assert _scoring(nothing) == {
+            "scoring_status": "not_applicable",
+            "csat_status": "skipped",
+            "csat_reason": REASON_CSAT_NO_EVIDENCE,
+            "evaluations": [],
+        }
 
     def test_persona_is_not_a_grouping_option(
         self, auth_client, test_execution, analytics_call_executions
@@ -1919,7 +2043,12 @@ class TestRunResultsV3Views:
         return template, config
 
     def test_an_eval_binding_edit_without_updated_at_refreshes_the_cached_page(
-        self, auth_client, organization, run_test, test_execution, analytics_call_executions
+        self,
+        auth_client,
+        organization,
+        run_test,
+        test_execution,
+        analytics_call_executions,
     ):
         _, config = self._threshold_eval(
             organization, run_test, analytics_call_executions
@@ -1935,7 +2064,12 @@ class TestRunResultsV3Views:
         assert (after["passed"], after["failed"]) == (0, 1)
 
     def test_an_eval_template_edit_refreshes_the_cached_page(
-        self, auth_client, organization, run_test, test_execution, analytics_call_executions
+        self,
+        auth_client,
+        organization,
+        run_test,
+        test_execution,
+        analytics_call_executions,
     ):
         template, _ = self._threshold_eval(
             organization, run_test, analytics_call_executions

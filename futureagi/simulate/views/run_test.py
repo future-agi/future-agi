@@ -138,6 +138,8 @@ from simulate.serializers.test_execution import (
 
 # Import Temporal activities (using @temporal_activity drop-in decorator)
 from simulate.services.agent_definition import resolve_api_key_for_version
+from simulate.services.harness_evals import runnable_eval_config_ids
+from simulate.services.harness_run_evals import stamp_eval_queued
 from simulate.services.test_executor import (
     TestExecutor,
     _run_simulate_evaluations_task,
@@ -2576,9 +2578,7 @@ class TestExecutionDetailView(APIView):
             # The live-only view. The list builds a fresh column order; the map
             # is only what grouping is handed, an argument it accepts and never
             # reads. Filters deliberately resolve against every config instead.
-            eval_configs = [
-                config for config in all_eval_configs if not config.deleted
-            ]
+            eval_configs = [config for config in all_eval_configs if not config.deleted]
             eval_configs_map = {str(config.id): config for config in eval_configs}
 
             # Get scenarios for dynamic columns
@@ -5491,11 +5491,19 @@ class UpdateEvalConfigView(APIView):
                     id__in=call_execution_ids
                 )
                 call_executions_list = []
+                stamped_at = timezone.now()
                 for call_execution in call_executions_to_update:
                     # Provider-agnostic eval flags live in call_metadata
                     call_execution.call_metadata = call_execution.call_metadata or {}
                     call_execution.call_metadata["eval_started"] = True
                     call_execution.call_metadata["eval_completed"] = False
+                    # The placeholder's scoring clock starts at this dispatch,
+                    # not at the call's own, possibly old, completion.
+                    stamp_eval_queued(
+                        call_execution.call_metadata,
+                        eval_config_ids_str,
+                        now=stamped_at,
+                    )
 
                     # Initialize eval_outputs for the updated eval config
                     if not call_execution.eval_outputs:
@@ -7238,6 +7246,12 @@ class CallExecutionRerunView(APIView):
             has_pending_calls = False
             has_pending_evals = False
             pre_rerun_status = test_execution.status
+            # An eval-only child grades every runnable config of the run.
+            rerun_eval_ids = (
+                runnable_eval_config_ids(test_execution.run_test_id)
+                if rerun_type == "eval_only"
+                else []
+            )
 
             for call_execution in call_executions:
                 try:
@@ -7253,6 +7267,13 @@ class CallExecutionRerunView(APIView):
                         )
                         call_execution.call_metadata["eval_started"] = False
                         call_execution.call_metadata["eval_completed"] = False
+                        # Its scoring clock starts here, not at the call's old
+                        # completion, so the coordinator's wait is not a timeout.
+                        stamp_eval_queued(
+                            call_execution.call_metadata,
+                            rerun_eval_ids,
+                            now=timezone.now(),
+                        )
                         call_execution.save()
 
                         # Evals will be handled by RerunCoordinatorWorkflow below
@@ -7608,6 +7629,8 @@ class TestExecutionRerunView(APIView):
         call_ids_to_delete_transcripts = []
 
         # First pass: prepare all objects in memory
+        rerun_eval_ids = {}
+        stamped_at = timezone.now()
         for call_execution in call_executions:
             try:
                 if rerun_type == "eval_only":
@@ -7623,10 +7646,23 @@ class TestExecutionRerunView(APIView):
                         )
                     )
                     # Prepare call execution updates
+                    if call_execution.test_execution_id not in rerun_eval_ids:
+                        rerun_eval_ids[call_execution.test_execution_id] = (
+                            runnable_eval_config_ids(
+                                call_execution.test_execution.run_test_id
+                            )
+                        )
                     call_execution.eval_outputs = {}
                     call_execution.call_metadata = call_execution.call_metadata or {}
                     call_execution.call_metadata["eval_started"] = False
                     call_execution.call_metadata["eval_completed"] = False
+                    # The rerun child grades every runnable config; its scoring
+                    # clock starts here, not at the call's old completion.
+                    stamp_eval_queued(
+                        call_execution.call_metadata,
+                        rerun_eval_ids[call_execution.test_execution_id],
+                        now=stamped_at,
+                    )
                     call_executions_to_update.append(call_execution)
                 else:
                     # call_and_eval: Capture transcript data before we delete them
@@ -8335,11 +8371,19 @@ class RunNewEvalsOnTestExecutionView(APIView):
                 id__in=call_execution_ids
             )
             call_executions_list = []
+            stamped_at = timezone.now()
             for call_execution in call_executions_to_update:
                 # Provider-agnostic eval flags live in call_metadata
                 call_execution.call_metadata = call_execution.call_metadata or {}
                 call_execution.call_metadata["eval_started"] = True
                 call_execution.call_metadata["eval_completed"] = False
+                # The placeholders' scoring clock starts at this dispatch, not
+                # at the call's own, possibly old, completion.
+                stamp_eval_queued(
+                    call_execution.call_metadata,
+                    eval_config_ids_str,
+                    now=stamped_at,
+                )
 
                 # Initialize eval_outputs for the new eval configs
                 if not call_execution.eval_outputs:

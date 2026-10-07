@@ -135,3 +135,32 @@ def test_usage_temporal_registration_does_not_hide_packaging_failure(
         register(*args)
 
     assert exc_info.value is import_error
+
+
+def test_scoring_sweeper_schedule_registered():
+    """The sweeper runs every minute on the small-task queue, as a registered
+    activity with its own time limit."""
+    from simulate.services.scoring_status import SCORING_SWEEP_TIME_LIMIT_SECONDS
+    from simulate.tasks.chat_sim import sweep_stuck_scoring
+    from tfc.temporal.drop_in.decorator import _ACTIVITY_WRAPPERS
+    from tfc.temporal.schedules import ALL_SCHEDULES
+    from tfc.temporal.schedules.manager import _build_schedule_for_config
+
+    (config,) = [
+        schedule
+        for schedule in ALL_SCHEDULES
+        if schedule.schedule_id == "sweep-stuck-scoring"
+    ]
+    assert config.activity_name == "sweep_stuck_scoring"
+    assert config.activity_name == sweep_stuck_scoring._activity_name
+    assert config.interval_seconds == 60
+    assert config.queue == "tasks_s"
+    assert sweep_stuck_scoring._metadata["queue"] == "tasks_s"
+    assert sweep_stuck_scoring._metadata["time_limit"] == (
+        SCORING_SWEEP_TIME_LIMIT_SECONDS
+    )
+    run_input = _build_schedule_for_config(config).action.args[0]
+    assert run_input.time_limit == SCORING_SWEEP_TIME_LIMIT_SECONDS == 300
+    assert "simulate.tasks.chat_sim" in registry.TEMPORAL_ACTIVITY_MODULES
+    activities = registry.get_activities_for_queue("tasks_s")
+    assert _ACTIVITY_WRAPPERS["sweep_stuck_scoring"] in activities
