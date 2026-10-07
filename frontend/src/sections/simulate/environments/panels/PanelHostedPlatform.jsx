@@ -9,7 +9,7 @@ import PlatformLogo from "../components/PlatformLogo";
 import { PLATFORM_LOGOS } from "../components/platformLogos";
 import { COUNTRY_BY_ISO } from "../components/countryCodes";
 import ContactInformation from "./ContactInformation";
-import { isValidPhoneNumber } from "../components/phoneNumber";
+import { isValidPhoneNumber, phoneNumberError } from "../components/phoneNumber";
 import ScenarioCount from "./ScenarioCount";
 import { DEFAULT_SCENARIOS, isValidScenarioCount } from "./scenarioCountRules";
 import RuntimePreflight from "./RuntimePreflight";
@@ -85,6 +85,10 @@ export default function PanelHostedPlatform() {
   const phoneRequired = agentType === AGENT_TYPES.VOICE && (isOther || simMode === "phone");
   const phoneOk =
     !phoneRequired || isValidPhoneNumber(COUNTRY_BY_ISO[countryIso]?.dial, contactNumber);
+  const phoneError = phoneRequired
+    ? phoneNumberError(COUNTRY_BY_ISO[countryIso]?.dial, contactNumber)
+    : null;
+  const preflightBlockedReason = phoneError ? `Contact number: ${phoneError}` : null;
   const credsOk = isOther ? !!otherPrompt.trim() : (!!id.trim() && !!key.trim());
   const canGo = !!chosen && credsOk && phoneOk;
 
@@ -179,6 +183,7 @@ export default function PanelHostedPlatform() {
                 required
                 placeholder={chosen.idPlaceholder}
                 value={id} onChange={set("id")}
+                autoComplete="new-password"
                 mono
               />
               <Field
@@ -187,7 +192,7 @@ export default function PanelHostedPlatform() {
                 placeholder="sk-…"
                 value={key} onChange={set("key")}
                 type="password"
-                autoComplete="off"
+                autoComplete="new-password"
                 mono
                 helper="Stored encrypted; used only to invoke the agent on your behalf."
               />
@@ -223,6 +228,7 @@ export default function PanelHostedPlatform() {
       <RuntimePreflight
         status={build.status}
         canRun={canGo}
+        blockedReason={preflightBlockedReason}
         onRun={() => build.runPreflight(buildSource())}
         result={build.result}
         error={build.error}

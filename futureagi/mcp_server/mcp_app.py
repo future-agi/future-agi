@@ -337,12 +337,8 @@ def get_mcp_oauth_app():
         from mcp_server.oauth_provider import FutureAGIOAuthProvider
 
         base_url = os.environ.get("MCP_SERVER_BASE_URL", "http://localhost:8000")
-        frontend_url = os.environ.get(
-            "FRONTEND_URL",
-            f"http://{os.environ.get('APP_URL', 'localhost:3031')}",
-        )
 
-        provider = FutureAGIOAuthProvider(frontend_url=frontend_url)
+        provider = FutureAGIOAuthProvider()
 
         auth_routes = create_auth_routes(
             provider=provider,

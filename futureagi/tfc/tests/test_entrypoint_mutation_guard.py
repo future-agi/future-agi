@@ -1,5 +1,7 @@
 import os
+import signal
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -379,3 +381,42 @@ def test_schedule_registrar_startup_touches_no_database(guard):
 
     assert completed.returncode == 0
     assert "DB:" not in completed.stdout
+
+
+def test_backend_forwards_sigterm_so_granian_drains_in_flight_requests(tmp_path):
+    # The runtime signals only PID 1 (this script). A foreground granian never
+    # saw SIGTERM: bash defers its trap until the child exits, so the pod was
+    # SIGKILLed with requests in flight at the end of the grace period.
+    stub = tmp_path / "granian"
+    stub.write_text(
+        "#!/bin/bash\n"
+        "trap 'echo GRANIAN_TERM; exit 0' TERM\n"
+        "echo GRANIAN_UP\n"
+        "for _ in $(seq 1 50); do sleep 0.1; done\n"
+        "echo GRANIAN_EXITED_UNSIGNALLED\n"
+    )
+    stub.chmod(0o755)
+    source = ENTRYPOINT.read_text()
+    script = tmp_path / "backend.sh"
+    script.write_text(
+        "set -e\nSERVICE_TYPE=backend\nENV_TYPE=prod\nNO_STARTUP_DB_MUTATIONS=true\n"
+        "ENABLE_HTTP=true\nENABLE_GRPC=false\nGRANIAN_WORKERS=1\nGRANIAN_THREADS=1\n"
+        f"{source[source.index('should_register_temporal_schedules()') :]}"
+    )
+    env = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}"}
+    process = subprocess.Popen(
+        ["bash", str(script)], stdout=subprocess.PIPE, text=True, env=env
+    )
+    try:
+        for line in process.stdout:
+            if line.strip() == "GRANIAN_UP":
+                break
+        time.sleep(0.3)  # let the script reach its wait, as a pod would
+        process.send_signal(signal.SIGTERM)
+        output, _ = process.communicate(timeout=10)
+    finally:
+        process.kill()
+
+    assert "GRANIAN_TERM" in output
+    assert "GRANIAN_EXITED_UNSIGNALLED" not in output
+    assert process.returncode == 0

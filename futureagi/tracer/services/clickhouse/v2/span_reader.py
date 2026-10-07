@@ -224,6 +224,7 @@ _LEAN_SELECT_SQL = ", ".join(
 # ReplacingMergeTree(_version, is_deleted) engine already drops deleted rows under
 # FINAL, so the predicate is redundant and only arms the resurrection bug.
 _FINAL_SKIP_INDEX_SETTINGS = {"use_skip_indexes_if_final": 1}
+_FEED_TRACE_BATCH_SIZE = 1000
 
 # FINAL merges every part covering the queried key range, so its cost tracks the
 # project's span volume, not the number of ids asked for. On dev: a 500-id heavy
@@ -1471,18 +1472,10 @@ class CHSpanReader:
             "trace_id IN %(trace_ids)s",
             "(parent_span_id IS NULL OR parent_span_id = '')",
         ]
-        params: dict[str, Any] = {"trace_ids": tuple(trace_ids)}
+        params: dict[str, Any] = {}
         if project_ids:
             where.append("project_id IN %(project_ids)s")
             params["project_ids"] = tuple(project_ids)
-        rows = self._client.query(
-            f"SELECT toString(trace_id) AS trace_id, toString({resolved_ts}) AS tsid "
-            f"FROM spans FINAL {join} "
-            f"WHERE {' AND '.join(where)} "
-            "ORDER BY trace_id, start_time, id",
-            parameters=params,
-            settings=_FINAL_SKIP_INDEX_SETTINGS,
-        ).result_rows
 
         def _norm(v: Any) -> str | None:
             return (
@@ -1492,10 +1485,26 @@ class CHSpanReader:
             )
 
         result: dict[str, str | None] = {}
-        for tid, tsid in rows:
-            tid = str(tid)
-            if tid not in result:  # first root per trace wins
-                result[tid] = _norm(tsid)
+        # The driver expands trace_ids into SQL text. Keep each root lookup
+        # below ClickHouse's default max_query_size for large Feed clusters.
+        for start in range(0, len(trace_ids), _FEED_TRACE_BATCH_SIZE):
+            rows = self._client.query(
+                f"SELECT toString(trace_id) AS trace_id, toString({resolved_ts}) AS tsid "
+                f"FROM spans FINAL {join} "
+                f"WHERE {' AND '.join(where)} "
+                "ORDER BY trace_id, start_time, id",
+                parameters={
+                    **params,
+                    "trace_ids": tuple(
+                        trace_ids[start : start + _FEED_TRACE_BATCH_SIZE]
+                    ),
+                },
+                settings=_FINAL_SKIP_INDEX_SETTINGS,
+            ).result_rows
+            for tid, tsid in rows:
+                tid = str(tid)
+                if tid not in result:  # first root per trace wins
+                    result[tid] = _norm(tsid)
         return result
 
     # ─── Aggregations across many traces ──────────────────────────────────────
@@ -1814,26 +1823,33 @@ class CHSpanReader:
         resolved_eu = resolved_id_expr("rs.end_user_id")
         # No is_deleted predicate — see _FINAL_SKIP_INDEX_SETTINGS.
         inner_where = ["trace_id IN %(tids)s", "end_user_id IS NOT NULL"]
-        params: dict[str, Any] = {"tids": tuple(trace_ids)}
+        params: dict[str, Any] = {}
         if project_ids:
             inner_where.append("project_id IN %(pids)s")
             params["pids"] = tuple(project_ids)
-        rows = self._client.query(
-            "SELECT toString(trace_id) AS tid, "
-            f"toString({resolved_eu}) AS uid "
-            "FROM ("
-            "  SELECT trace_id, end_user_id FROM spans FINAL "
-            f"  WHERE {' AND '.join(inner_where)} "
-            ") AS rs "
-            f"{remap_join} "
-            f"GROUP BY toString(trace_id), toString({resolved_eu})",
-            parameters=params,
-            settings=_FINAL_SKIP_INDEX_SETTINGS,
-        ).result_rows
         out: dict[str, set[str]] = {tid: set() for tid in trace_ids}
-        for tid, uid in rows:
-            if uid and uid != "00000000-0000-0000-0000-000000000000":
-                out[tid].add(uid)
+        # clickhouse-connect renders tuple parameters into the SQL text. A
+        # large issue can have enough trace IDs to exceed CH's 256 KiB default
+        # max_query_size, even when the Feed page contains only one cluster.
+        for start in range(0, len(trace_ids), _FEED_TRACE_BATCH_SIZE):
+            rows = self._client.query(
+                "SELECT toString(trace_id) AS tid, "
+                f"toString({resolved_eu}) AS uid "
+                "FROM ("
+                "  SELECT trace_id, end_user_id FROM spans FINAL "
+                f"  WHERE {' AND '.join(inner_where)} "
+                ") AS rs "
+                f"{remap_join} "
+                f"GROUP BY toString(trace_id), toString({resolved_eu})",
+                parameters={
+                    **params,
+                    "tids": tuple(trace_ids[start : start + _FEED_TRACE_BATCH_SIZE]),
+                },
+                settings=_FINAL_SKIP_INDEX_SETTINGS,
+            ).result_rows
+            for tid, uid in rows:
+                if uid and uid != "00000000-0000-0000-0000-000000000000":
+                    out[tid].add(uid)
         return out
 
     # ─── End-user metrics (tasks/session.py user rollups) ─────────────────────

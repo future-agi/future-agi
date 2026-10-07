@@ -1,4 +1,4 @@
-"""Keep credentials that ride inside connection URLs out of log lines."""
+"""Keep credentials out of log lines: a known secret, or one inside a connection URL."""
 
 import re
 
@@ -22,3 +22,18 @@ def redact_url_credentials(text: str) -> str:
     """
     text = _URL_PASSWORD.sub(r"\g<head>:***@", text)
     return _QUERY_PASSWORD.sub(r"\g<head>***", text)
+
+
+def redact_secret(text: str, secret: str) -> str:
+    """Replace a known ``secret`` in ``text`` with ``[HIDDEN]``.
+
+    Also covers the secret as it appears inside a quoted SQL string literal
+    (backslashes, then single quotes, backslash-escaped, as ClickHouse
+    writes it), since a server error can quote the statement it rejected.
+    """
+    if not secret:
+        return text
+    escaped = secret.replace("\\", "\\\\").replace("'", "\\'")
+    for form in (escaped, secret):
+        text = text.replace(form, "[HIDDEN]")
+    return text

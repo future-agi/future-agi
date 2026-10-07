@@ -37,22 +37,36 @@ import urllib.error
 import urllib.request
 from django.conf import settings
 
+from tfc.ee_loader import is_cloud_env
+
 logger = structlog.get_logger(__name__)
 
 # Code executor service URL (nsjail-based sandbox container)
 CODE_EXECUTOR_URL = os.environ.get("CODE_EXECUTOR_URL", "http://code-executor:8060")
-
-# FutureAGI cloud deployments always run the code executor, so they never run
-# eval code in the worker, whatever CODE_EXECUTOR_LOCAL_FALLBACK says.
-CLOUD_DEPLOYMENTS = frozenset({"US", "EU", "DEV"})
 
 # Connection errors that mean the executor was never reached.
 _UNREACHABLE_ERRNOS = frozenset(
     {errno.ECONNREFUSED, errno.EHOSTUNREACH, errno.ENETUNREACH}
 )
 
+# Setup errors: this install cannot run the eval at all, and the message says
+# so. They are returned with "setup_error": True, but custom_code_eval shows
+# only these exact texts to users: the executor returns an eval script's own
+# result as is, so the script could set that flag on any text.
 EXECUTOR_UNAVAILABLE_MESSAGE = (
     "Code executor unavailable: the code-executor service could not be reached"
+)
+# code-executor/server.py's NO_NODE_MESSAGE, word for word
+# (tests/test_default_install_packaging.py compares the two).
+EXECUTOR_NO_NODE_MESSAGE = (
+    "JavaScript evals need Node.js, which this sandbox does not have. In "
+    "Standalone, set COMPOSE_PROFILES=sandbox in .env and run "
+    "docker compose up -d: the nsjail sandbox it adds runs them."
+)
+# The local JavaScript runner's (CODE_EXECUTOR_LOCAL_FALLBACK) without Node.js.
+LOCAL_NO_NODE_MESSAGE = "Node.js is not available for JavaScript execution"
+SETUP_ERROR_MESSAGES = frozenset(
+    {EXECUTOR_UNAVAILABLE_MESSAGE, EXECUTOR_NO_NODE_MESSAGE, LOCAL_NO_NODE_MESSAGE}
 )
 
 # ---------------------------------------------------------------------------
@@ -485,9 +499,19 @@ def _call_executor_service(code: str, input_data: dict, language: str, timeout: 
     """Call the nsjail code-executor service via HTTP.
 
     Returns None only when the executor cannot be reached (DNS failure,
-    connection refused, no route). Any answer from it, including an HTTP error,
-    a timeout or an unusable body, is returned as a result.
+    connection refused, no route) or none is configured (empty
+    CODE_EXECUTOR_URL). Any answer from it, including an HTTP error, a timeout
+    or an unusable body, is returned as a result.
     """
+    if not CODE_EXECUTOR_URL.strip():
+        # Not deployed (the Helm chart with codeExecutor.enabled=false): the
+        # same as an executor that cannot be reached.
+        logger.warning(
+            "code_executor_service_unavailable",
+            language=language,
+            error="CODE_EXECUTOR_URL is empty",
+        )
+        return None
     try:
         # default=str so non-JSON-native types coming through trace/span column
         # mapping (Decimal from clickhouse-driver, datetime, UUID) serialize
@@ -543,12 +567,13 @@ def _local_fallback_allowed(language: str) -> bool:
     """Whether eval code may run in this worker because the executor is unreachable.
 
     Only self-hosted installs that set CODE_EXECUTOR_LOCAL_FALLBACK get the
-    local runner; cloud deployments refuse it.
+    local runner. Future AGI Cloud always runs the code executor, so it
+    refuses it whatever CODE_EXECUTOR_LOCAL_FALLBACK says.
     """
     if not getattr(settings, "CODE_EXECUTOR_LOCAL_FALLBACK", False):
         return False
-    deployment = str(getattr(settings, "CLOUD_DEPLOYMENT", "") or "").strip().upper()
-    if deployment in CLOUD_DEPLOYMENTS:
+    deployment = str(getattr(settings, "CLOUD_DEPLOYMENT", "") or "")
+    if is_cloud_env(deployment):
         logger.warning(
             "code_executor_local_fallback_refused",
             language=language,
@@ -571,7 +596,7 @@ def execute_sandboxed_python(code: str, input_data: dict, timeout: int = DEFAULT
     if result is not None:
         return result
     if not _local_fallback_allowed("python"):
-        return {"status": "error", "data": EXECUTOR_UNAVAILABLE_MESSAGE}
+        return {"status": "error", "data": EXECUTOR_UNAVAILABLE_MESSAGE, "setup_error": True}
     script = _build_python_sandbox_script(code, input_data)
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, prefix="sandbox_") as f:
@@ -639,7 +664,7 @@ def execute_sandboxed_javascript(code: str, input_data: dict, timeout: int = DEF
     if result is not None:
         return result
     if not _local_fallback_allowed("javascript"):
-        return {"status": "error", "data": EXECUTOR_UNAVAILABLE_MESSAGE}
+        return {"status": "error", "data": EXECUTOR_UNAVAILABLE_MESSAGE, "setup_error": True}
 
     # Fallback: local sandbox
     """
@@ -652,7 +677,7 @@ def execute_sandboxed_javascript(code: str, input_data: dict, timeout: int = DEF
             break
 
     if not node_path:
-        return {"status": "error", "data": "Node.js is not available for JavaScript execution"}
+        return {"status": "error", "data": LOCAL_NO_NODE_MESSAGE, "setup_error": True}
 
     script = _build_js_sandbox_single_file(code, input_data)
 

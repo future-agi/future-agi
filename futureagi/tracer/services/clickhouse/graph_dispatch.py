@@ -39,6 +39,11 @@ from tracer.services.clickhouse.exact_graph_reads import (
     read_exact_eval_graph,
     read_exact_user_system_graph,
 )
+from tracer.services.clickhouse.graph_metric_statistic import (
+    publishes_latency,
+    snapshot_names_its_statistic,
+    stamps_metric_statistic,
+)
 from tracer.services.clickhouse.graph_read_cost import (
     estimate_raw_graph_scan_rows,
     estimate_raw_log_graph_scan,
@@ -75,6 +80,15 @@ GRAPH_RESULT_BYTES = settings.DASHBOARD_ROLLUP_MAX_RESULT_BYTES
 # prevents a rolling deploy from serving a 30-day cached payload produced by
 # the retired hierarchy-as-path projection.
 AGENT_GRAPH_PAYLOAD_VERSION = 5
+# The same, for the exact system-metric snapshots (observe-system-graph,
+# observe-session-system-graph, observe-user-system-graph). The version
+# rotates the identity, and with it the cache, alias, refresh-lock and
+# refresh-state keys, so no snapshot keyed without it (dev's, whose users
+# latency is a mean of per-user means) is ever read. Within a version, a
+# latency snapshot is served only when marked "mean"
+# (graph_metric_statistic.snapshot_names_its_statistic), which covers an
+# older worker taking a current-version job mid-deploy.
+OBSERVE_SYSTEM_GRAPH_PAYLOAD_VERSION = 2
 # A short-window selector may prove as many as 4,096 trace matches. Decoration
 # fans each trace set into child-span reads, so keep the same finite 40-trace
 # envelope used by the long-window sampler before any decoration query runs.
@@ -905,19 +919,33 @@ def _read_or_refresh_exact_graph(
     organization_id: str | None = None,
     workspace_id: str | None = None,
     schedule_on_miss: bool = True,
+    revalidate_open_window: bool = False,
 ) -> Any:
-    """Return immediately while a deduplicated exact refresh runs out of band."""
+    """Return immediately while a deduplicated exact refresh runs out of band.
+
+    ``revalidate_open_window`` lets an old open-window hit refresh its own
+    identity in the background (see ``read_or_schedule_exact_snapshot``). The
+    cache-only probes pass ``not refresh``: an explicit refresh re-calls with
+    ``refresh=True`` right after, and a probe claim would make that call find
+    its own claim and reconcile it against Temporal.
+    """
 
     if organization_id is not None:
         identity["organization_id"] = str(organization_id)
     if workspace_id is not None:
         identity["workspace_id"] = str(workspace_id)
+    metric_id = identity.get("metric_id")
     return read_or_schedule_exact_snapshot(
         namespace,
         identity,
         refresh=refresh,
         pending_payload=pending_payload,
         schedule_on_miss=schedule_on_miss,
+        revalidate_open_window=revalidate_open_window,
+        # A latency snapshot not marked as the mean is a miss.
+        accept_snapshot=lambda payload: snapshot_names_its_statistic(
+            namespace, metric_id, payload
+        ),
     )
 
 
@@ -1889,6 +1917,8 @@ def fetch_background_raw_system_metric_graph(
     )
 
 
+# Every call here is a system metric; a blank id publishes latency.
+@stamps_metric_statistic("trace", lambda call: call.get("metric_id") or "")
 def fetch_system_metric_graph_ch(
     *,
     analytics: Any,
@@ -1902,14 +1932,25 @@ def fetch_system_metric_graph_ch(
     organization_id: str | None = None,
     workspace_id: str | None = None,
 ) -> dict[str, Any]:
-    """Read an unfiltered rollup or an exact synchronous filtered graph."""
+    """Read an unfiltered rollup or an exact synchronous filtered graph.
+
+    An unfiltered LATENCY request is the exception to the rollup: it takes
+    the filtered path below with its empty filter set. The rollup reads
+    ``spans``'s hourly aggregate states, which hold latency only as t-digest
+    states over every physically inserted row; they carry no latency sum, so
+    they cannot publish the mean the filtered path publishes. On the exact
+    path a chart with no filter equals the same chart with a filter that
+    matches every span, and its Traffic bars come from the same statement.
+    Every other metric keeps the rollup (its Traffic series still counts
+    every physical version, a known over-count of re-versioned rows).
+    """
 
     project_id = _validated_project_id(project_id)
     filters = list(filters or [])
     normalized_observe_type = str(observe_type or "trace").strip().lower()
     if normalized_observe_type not in {"trace", "span"}:
         raise ValueError("observe_type must be trace or span")
-    if not _active_filters(filters):
+    if not _active_filters(filters) and not publishes_latency("trace", metric_id):
         if not bool(getattr(analytics, "supports_per_query_read_settings", True)):
             return degraded_graph_response(
                 str(metric_id or ""),
@@ -1951,6 +1992,7 @@ def fetch_system_metric_graph_ch(
         "interval": interval,
         "metric_id": str(metric_id or ""),
         "observe_type": normalized_observe_type,
+        "payload_version": OBSERVE_SYSTEM_GRAPH_PAYLOAD_VERSION,
     }
     pending_payload = _pending_graph_payload(str(metric_id or ""))
     cached = _read_or_refresh_exact_graph(
@@ -1961,6 +2003,7 @@ def fetch_system_metric_graph_ch(
         organization_id=organization_id,
         workspace_id=workspace_id,
         schedule_on_miss=False,
+        revalidate_open_window=not refresh,
     )
     if (
         isinstance(cached, dict)
@@ -2095,6 +2138,10 @@ def fetch_agent_graph_ch(
         },
         organization_id=organization_id,
         workspace_id=workspace_id,
+        # The toolbar window is hour-stable, so a revisit replays this
+        # identity: an old open-window hit is served and refreshed in the
+        # background. An explicit refresh already schedules.
+        revalidate_open_window=not refresh,
     )
 
 
@@ -2272,6 +2319,7 @@ def _affordable_raw_log_membership_read(
     return _GraphReadUnaffordable(estimated_rows, raw_log_marks)
 
 
+@stamps_metric_statistic("users", lambda call: call.get("metric_id") or "")
 def fetch_user_system_metric_graph_ch(
     *,
     analytics: Any,
@@ -2307,6 +2355,7 @@ def fetch_user_system_metric_graph_ch(
         "filters": filters,
         "interval": interval,
         "metric_id": normalized_metric_id,
+        "payload_version": OBSERVE_SYSTEM_GRAPH_PAYLOAD_VERSION,
     }
     pending_payload = _pending_graph_payload(normalized_metric_id)
     if organization_id:
@@ -2321,6 +2370,7 @@ def fetch_user_system_metric_graph_ch(
             organization_id=organization_id,
             workspace_id=workspace_id,
             schedule_on_miss=False,
+            revalidate_open_window=not refresh,
         )
         if (
             isinstance(cached, dict)

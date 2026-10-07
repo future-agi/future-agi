@@ -28,6 +28,7 @@ import AttributesTable from "./AttributesTable";
 import MessagesView from "./MessagesView";
 import CallDetailsBar from "./CallDetailsBar";
 import ScenarioView from "./ScenarioView";
+import { isEmptyPersona } from "./persona.utils";
 
 const TABS = {
   ANALYTICS: "analytics",
@@ -52,6 +53,7 @@ const VoiceRightPanel = ({
   onAction,
   hiddenActionIds = [],
   hideAnnotationTab,
+  showFixWithFalcon = true,
 }) => {
   const [currentTab, setCurrentTab] = useState(TABS.ANALYTICS);
   const isSimulate = data?.module === "simulate";
@@ -93,10 +95,13 @@ const VoiceRightPanel = ({
   const callLogs = getSpanAttributes(observationSpan)?.callLogs;
   const hasLogs = !!vapiId || !!callLogs || !!data?.id;
 
+  // A call can have a persona with no dataset row behind it (scenario_columns
+  // empty); the Scenario tab is where that persona shows, so keep it.
   const hasScenarioData =
     isSimulate &&
-    !!data?.scenario_columns &&
-    Object.keys(data.scenario_columns).length > 0;
+    ((!!data?.scenario_columns &&
+      Object.keys(data.scenario_columns).length > 0) ||
+      !isEmptyPersona(data?.persona_details));
 
   const tabs = useMemo(() => {
     // Icons match the trace drawer's SpanDetailPane TAB_CONFIG where they
@@ -160,6 +165,7 @@ const VoiceRightPanel = ({
       botWpm: data?.bot_wpm,
       userInterruptionCount: data?.user_interruption_count,
       aiInterruptionCount: data?.ai_interruption_count,
+      avgStopTimeAfterInterruptionMs: data?.avg_stop_time_after_interruption,
     };
 
     if (isSimulate) {
@@ -209,9 +215,12 @@ const VoiceRightPanel = ({
   // field so the trace drawer's traffic-light bucketing kicks in.
   const normalizedEvals = useMemo(() => {
     if (!evalRows) return [];
-    const rows = Array.isArray(evalRows)
-      ? evalRows.map((e, i) => [e?.id || `eval-${i}`, e])
-      : Object.entries(evalRows);
+    // A sub-goal check is the scenario's, not an eval; simulate tags it.
+    const rows = (
+      Array.isArray(evalRows)
+        ? evalRows.map((e, i) => [e?.id || `eval-${i}`, e])
+        : Object.entries(evalRows)
+    ).filter(([, e]) => e?.kind !== "sub_goal");
 
     return rows.map(([id, e], i) => {
       const rawValue = e?.score ?? e?.output ?? e?.value;
@@ -420,6 +429,8 @@ const VoiceRightPanel = ({
               evals={normalizedEvals}
               emptyMessage="No evaluations for this call"
               showSpanColumn={false}
+              // A host with no Falcon flow wired (environment runs) turns it off.
+              showFixWithFalcon={showFixWithFalcon}
               onFixWithFalcon={({ level, ev, failingEvals, allEvals }) => {
                 const projectId = data?.project_id;
                 const callId = data?.id;
@@ -532,6 +543,7 @@ VoiceRightPanel.propTypes = {
   onAction: PropTypes.func,
   hiddenActionIds: PropTypes.arrayOf(PropTypes.string),
   hideAnnotationTab: PropTypes.bool,
+  showFixWithFalcon: PropTypes.bool,
 };
 
 export default VoiceRightPanel;

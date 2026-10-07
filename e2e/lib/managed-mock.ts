@@ -6,17 +6,18 @@ import { parseDocument } from 'yaml';
 import { E2E } from './env';
 import type { TestActor } from './provisioning';
 import type { StateProbe } from './state-probe';
+import { standaloneMockStack } from './managed-mock-standalone';
 
-// docker-compose.yml backend-env; gateway.e2e.yaml providers.openai.
+// docker-compose.distributed.yml backend-env; gateway.e2e.yaml providers.openai.
 export const MOCK_MODEL = 'gpt-4o';
 export const MOCK_BASE = 'http://agentcc-gateway:8080/v1';
 export const MOCK_SERVING_BASE = 'http://mock-llm:8080';
-const MOCK_KEY = 'local-dev-only-shared-secret-replace-me';
+export const MOCK_KEY = 'local-dev-only-shared-secret-replace-me';
 const root = fileURLToPath(new URL('../../', import.meta.url));
-const gatewayFile = `${root}e2e/stack/gateway.e2e.yaml`;
-const mockFile = `${root}e2e/stack/mock-llm/server.mjs`;
+export const gatewayFile = `${root}e2e/stack/gateway.e2e.yaml`;
+export const mockFile = `${root}e2e/stack/mock-llm/server.mjs`;
 const hash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
-const requireSafe = (ok: unknown, reason: string): void => {
+export const requireSafe = (ok: unknown, reason: string): void => {
   if (!ok) throw new Error(`STOP: managed mock ${reason}`);
 };
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
@@ -50,59 +51,98 @@ export function validateMockRouting(source: string, evalBackground = false): voi
   requireSafe(!JSON.stringify(cfg).includes('$'), 'environment-dependent gateway configuration');
 }
 
-/** Required values are checked even when absent. Empty optional notification
- * keys mean disabled per settings.py; no license or generic-provider fallback.
- * Pure validation so offline tests never need Docker, API or SDK requests.
+/** Refused in every E2E container: a proxy or preload can reroute or rewrite any call. */
+const PROXY_OR_PRELOAD = /^(https?_proxy|all_proxy|node_options|ld_preload|pythonpath|pythonstartup)$/i;
+/** Licence, notification and credential settings, refused wherever the inspection
+ * is strict: the Distributed background opt-in, and always in Standalone. */
+const CREDENTIAL_OVERRIDE = /^(EE_LICENSE_KEY|SENTRY_DSN|SLACK_.*|DEPLOYMENT_TELEMETRY_SLACK_WEBHOOK|ERROR_LOGS_WEBHOOK|MIX_PANEL_TOKEN|MAILGUN_.*|SMTP_.*|SENDGRID_.*|RESEND_.*|AWS_SESSION_TOKEN|GOOGLE_APPLICATION_CREDENTIALS|DAYTONA_API_KEY|E2B_API_KEY)$/;
+
+/** Where the gateway, the API it syncs from and Temporal listen: their own
+ * services in Distributed, loopback inside Standalone's one `app` container. */
+export interface MockTopology { gateway: string; controlPlane: string; temporal: string }
+const DISTRIBUTED: MockTopology = { gateway: 'http://agentcc-gateway:8080', controlPlane: 'http://backend',
+  temporal: 'temporal:7233' };
+
+function gatewayValues({ gateway, controlPlane }: MockTopology) {
+  const allowed: Record<string, string> = { AGENTCC_INTERNAL_API_KEY: MOCK_KEY,
+    AGENTCC_ADMIN_TOKEN: 'local-dev-only-admin-token-replace-me',
+    AGENTCC_INTERNAL_URL: gateway, AGENTCC_GATEWAY_INTERNAL_URL: gateway };
+  // Control-plane wiring of the gateway, in both compose files: it pulls keys
+  // from the API and posts request logs back. No provider route,
+  // credential or network allowance: private provider URLs stay refused.
+  const wiring: Record<string, string> = { AGENTCC_CONTROL_PLANE_URL: controlPlane,
+    AGENTCC_CONTROL_PLANE_TOKEN: allowed.AGENTCC_ADMIN_TOKEN, AGENTCC_SYNC_ON_STARTUP: 'true',
+    AGENTCC_SYNC_INTERVAL: '60s', AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS: 'false' };
+  return { allowed, wiring };
+}
+
+/** The checks every variable of one container passes, in both stacks. `strict`
+ * adds the licence, notification and credential refusals and the local-mail and
+ * Sentry-off pins. Empty values mean unset: disabled per settings.py.
+ */
+export function validateEnvironmentEntries(service: string, env: Record<string, string>, topology: MockTopology,
+  strict: boolean, mounts: Container['Mounts'] = []): void {
+  const { allowed, wiring } = gatewayValues(topology);
+  for (const [key, value] of Object.entries(env)) {
+    if (!value) continue;
+    requireSafe(!PROXY_OR_PRELOAD.test(key), `${service} has a proxy/preload override`);
+    // The E2E backend enables webhook authentication; the worker may leave it
+    // unset. This dummy secret grants no provider route or credential override.
+    if (key.startsWith('AGENTCC_')) requireSafe(allowed[key] === value || wiring[key] === value ||
+      (key === 'AGENTCC_WEBHOOK_SECRET' && value === 'e2e-agentcc-webhook-secret'),
+    `${service} has an unsupported gateway override (${key})`);
+    if (/_API_KEY$/.test(key) || ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY'].includes(key)) {
+      requireSafe(value === MOCK_KEY || value === 'e2e-mock', `${service} has a non-mock provider key (${key})`);
+    }
+    if (!strict) continue;
+    if (service === 'agentcc-gateway' && key === 'GOOGLE_APPLICATION_CREDENTIALS' &&
+        value === '/app/Vertex_AI_Creds.json') {
+      validateBackgroundMockMounts(service, mounts);
+      continue; // Exact root-Compose /dev/null suppression, never a credential.
+    }
+    requireSafe(!CREDENTIAL_OVERRIDE.test(key), `${service} has a license, notification or credential override (${key})`);
+    if (key === 'EMAIL_BACKEND') requireSafe(value === 'django.core.mail.backends.console.EmailBackend', 'nonlocal email backend');
+    if (key === 'SENTRY_ENABLED') requireSafe(value === 'false', 'Sentry must be disabled');
+  }
+}
+
+/** Values the containers running the API and the workers must carry, checked
+ * even when absent: the gateway wiring and the telemetry opt-out, plus, with the
+ * background opt-in, the mock serving URL, the local Temporal and no licence or
+ * mail key. Distributed checks them with the opt-in only; Standalone always.
+ */
+export function requiredMockValues(topology: MockTopology, evalBackground: boolean): Record<string, string> {
+  const pins = { ...gatewayValues(topology).allowed, FUTURE_AGI_TELEMETRY_DISABLED: 'true' };
+  if (!evalBackground) return pins;
+  return { ...pins, MODEL_SERVING_URL: MOCK_SERVING_BASE, ENV_TYPE: 'local', EE_LICENSE_KEY: '',
+    NO_STARTUP_DB_MUTATIONS: 'true', OTEL_ENABLED: 'false', TEMPORAL_HOST: topology.temporal,
+    TEMPORAL_NAMESPACE: 'default', DJANGO_SETTINGS_MODULE: 'tfc.settings.settings', MAILGUN_API_KEY: '' };
+}
+
+/** Required values are checked even when absent. No license or generic-provider
+ * fallback. Pure validation so offline tests never need Docker, API or SDK requests.
  */
 export function validateMockEnvironment(service: string, env: Record<string, string>, evalBackground = false,
   mounts: Container['Mounts'] = []): void {
-  const allowed: Record<string, string> = { AGENTCC_INTERNAL_API_KEY: MOCK_KEY,
-    AGENTCC_ADMIN_TOKEN: 'local-dev-only-admin-token-replace-me',
-    AGENTCC_INTERNAL_URL: 'http://agentcc-gateway:8080',
-    AGENTCC_GATEWAY_INTERNAL_URL: 'http://agentcc-gateway:8080' };
-  for (const [key, value] of Object.entries(env)) {
-    if (!value) continue;
-    requireSafe(!/^(https?_proxy|all_proxy|node_options|ld_preload|pythonpath|pythonstartup)$/i.test(key),
-      `${service} has a proxy/preload override`);
-    // The E2E backend enables webhook authentication; the worker may leave it
-    // unset. This dummy secret grants no provider route or credential override.
-    if (key.startsWith('AGENTCC_')) requireSafe(allowed[key] === value ||
-      (key === 'AGENTCC_WEBHOOK_SECRET' && value === 'e2e-agentcc-webhook-secret'),
-    `${service} has an unsupported gateway override`);
-    if (/_API_KEY$/.test(key) || ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY'].includes(key)) {
-      requireSafe(value === MOCK_KEY || value === 'e2e-mock', `${service} has a non-mock provider key`);
-    }
-    if (evalBackground) {
-      if (service === 'agentcc-gateway' && key === 'GOOGLE_APPLICATION_CREDENTIALS' &&
-          value === '/app/Vertex_AI_Creds.json') {
-        validateBackgroundMockMounts(service, mounts);
-        continue; // Exact root-Compose /dev/null suppression, never a credential.
-      }
-      requireSafe(!/^(EE_LICENSE_KEY|SENTRY_DSN|SLACK_.*|DEPLOYMENT_TELEMETRY_SLACK_WEBHOOK|ERROR_LOGS_WEBHOOK|MIX_PANEL_TOKEN|MAILGUN_.*|SMTP_.*|SENDGRID_.*|RESEND_.*|AWS_SESSION_TOKEN|GOOGLE_APPLICATION_CREDENTIALS)$/.test(key),
-        `${service} has a license, notification or credential override`);
-      if (key === 'EMAIL_BACKEND') requireSafe(value === 'django.core.mail.backends.console.EmailBackend', 'nonlocal email backend');
-      if (key === 'SENTRY_ENABLED') requireSafe(value === 'false', 'Sentry must be disabled');
-    }
-  }
+  validateEnvironmentEntries(service, env, DISTRIBUTED, evalBackground, mounts);
   if (!evalBackground) return;
+  const { allowed } = gatewayValues(DISTRIBUTED);
   if (service === 'agentcc-gateway') {
     for (const key of ['AGENTCC_INTERNAL_API_KEY', 'AGENTCC_ADMIN_TOKEN']) {
       requireSafe(env[key] === allowed[key], `required ${service} ${key} mismatch`);
     }
   }
   if (!['backend', 'worker'].includes(service)) return;
-  const required = { ...allowed, MODEL_SERVING_URL: MOCK_SERVING_BASE, ENV_TYPE: 'local',
-    EE_LICENSE_KEY: '', NO_STARTUP_DB_MUTATIONS: 'true', OTEL_ENABLED: 'false',
-    FUTURE_AGI_TELEMETRY_DISABLED: 'true', TEMPORAL_HOST: 'temporal:7233', TEMPORAL_NAMESPACE: 'default',
-    DJANGO_SETTINGS_MODULE: 'tfc.settings.settings', MAILGUN_API_KEY: '' };
-  for (const [key, value] of Object.entries(required)) requireSafe(env[key] === value, `required ${service} ${key} mismatch`);
+  for (const [key, value] of Object.entries(requiredMockValues(DISTRIBUTED, true))) {
+    requireSafe(env[key] === value, `required ${service} ${key} mismatch`);
+  }
   if (service === 'worker') {
     requireSafe(env.TEMPORAL_ALL_QUEUES === 'true' && env.TEMPORAL_EXCLUDED_QUEUES === 'simulation_runner',
       'worker must include the native agent_compass queue');
   }
 }
 
-interface Container {
+export interface Container {
   Id: string; Image: string; State: { Running: boolean; StartedAt: string };
   Config: { Labels: Record<string, string>; Env: string[]; Cmd: string[]; Entrypoint: string[] };
   HostConfig: { ExtraHosts: string[] | null; Dns?: string[]; DnsSearch?: string[] };
@@ -145,11 +185,45 @@ export function managedMockInspectionError(error: unknown): Error {
   return new Error(`STOP: managed mock read-only Docker inspection failed (code=${code}, status=${status}, signal=${signal})`);
 }
 
+/** One E2E stack's shape for inspectMockStack, which checks what every stack
+ * shares: a local daemon, the managed project's services on its one bridge
+ * network, the published harness ports, the mock's read-only sources and the
+ * gateway routing. `check` adds the rest: entrypoints, mounts, environment.
+ */
+export interface MockStack {
+  /** The Compose project bin/e2e must resolve to, where the stack pins one. */
+  project?: string;
+  /** Compose SERVICE keys, never machine-specific/generated container names. */
+  services: string[];
+  /** Exact extra_hosts per service; every other service has none. */
+  extraHosts?: Record<string, string[]>;
+  /** [service, container port, the harness endpoint it must publish]. */
+  endpoints: [string, string, string][];
+  /** [service, mount destination, repo source, exact command]: read-only binds. */
+  sources: [string, string, string, string[]?][];
+  check(inspection: StackInspection): MockReceipt['background'];
+}
+export interface StackInspection {
+  context: string; network: string; selected: Record<string, Container>;
+  config: { services: Record<string, { image: string }> };
+  run(file: string, args: string[], input?: string): string;
+  docker(...args: string[]): string;
+}
+
+export const containerEnvironment = (c: Container): Record<string, string> =>
+  Object.fromEntries(c.Config.Env.map(s => { const i = s.indexOf('='); return [s.slice(0, i), s.slice(i + 1)]; }));
+
 /** Read-only Docker calls only. Never print compose config / inspect output: it
  * contains secrets. CI may use a verified local default daemon; local users must
  * select their context explicitly. An unattested attach target FAILS, never skips.
  */
 export function inspectManagedMock({ evalBackground = false }: { evalBackground?: boolean } = {}): MockReceipt {
+  // Standalone: one `app` container instead of backend/worker/gateway/frontend.
+  return inspectMockStack(process.env.E2E_STACK === 'standalone'
+    ? standaloneMockStack(evalBackground) : distributedMockStack(evalBackground), evalBackground);
+}
+
+function inspectMockStack(stack: MockStack, evalBackground: boolean): MockReceipt {
   for (const endpoint of [E2E.appUrl, E2E.apiUrl, E2E.gatewayUrl, E2E.pgUrl, E2E.chUrl]) {
     requireSafe(new URL(endpoint).hostname === 'localhost', 'requires localhost endpoints');
   }
@@ -169,97 +243,106 @@ export function inspectManagedMock({ evalBackground = false }: { evalBackground?
   requireSafe(daemon.Endpoints?.docker?.Host?.startsWith('unix://'), 'daemon is not local');
   const compose = (...args: string[]) => run(`${root}bin/e2e`, ['compose', ...args]);
   const config = JSON.parse(compose('config', '--format', 'json'));
-  // bin/e2e chooses the managed project; names below are Compose SERVICE keys,
-  // never machine-specific/generated container names.
-  const serviceNames = ['agentcc-gateway', 'mock-llm', 'backend', 'worker', 'frontend', 'postgres', 'clickhouse'];
-  if (evalBackground) serviceNames.push('temporal');
-  const ids = compose('ps', '-q', ...serviceNames).trim().split(/\s+/);
-  requireSafe(ids.length === serviceNames.length && ids.every(id => /^[a-f0-9]{64}$/.test(id)), 'services missing or ambiguous');
+  // bin/e2e chooses the managed project from E2E_STACK.
+  requireSafe(!stack.project || config.name === stack.project, `project is not ${stack.project}`);
+  const ids = compose('ps', '-q', ...stack.services).trim().split(/\s+/);
+  requireSafe(ids.length === stack.services.length && ids.every(id => /^[a-f0-9]{64}$/.test(id)), 'services missing or ambiguous');
   const containers: Container[] = JSON.parse(docker('inspect', ...ids));
   const selected: Record<string, Container> = {};
   const network = config.networks.default.name;
-  for (const service of serviceNames) {
+  for (const service of stack.services) {
     const matches = containers.filter(c => c.Config.Labels['com.docker.compose.service'] === service);
     requireSafe(matches.length === 1, `service ${service} is ambiguous`);
     const c = selected[service] = matches[0];
     requireSafe(c.State.Running && c.Config.Labels['com.docker.compose.project'] === config.name,
       `service ${service} is not running in the managed project`);
     requireSafe(same(Object.keys(c.NetworkSettings.Networks), [network]) &&
-      c.NetworkSettings.Networks[network].Aliases.includes(service) && !c.HostConfig.ExtraHosts?.length &&
+      c.NetworkSettings.Networks[network].Aliases.includes(service) &&
       !c.HostConfig.Dns?.length && !c.HostConfig.DnsSearch?.length,
     `service ${service} network or DNS override`);
+    requireSafe(same([...(c.HostConfig.ExtraHosts ?? [])].sort(), stack.extraHosts?.[service] ?? []),
+      `service ${service} extra_hosts override`);
   }
   const networkId = selected['mock-llm'].NetworkSettings.Networks[network].NetworkID;
   requireSafe(containers.every(c => c.NetworkSettings.Networks[network].NetworkID === networkId), 'network identity mismatch');
   const [net] = JSON.parse(docker('network', 'inspect', networkId));
   requireSafe(net.Driver === 'bridge' && net.Labels['com.docker.compose.project'] === config.name &&
     net.Labels['com.docker.compose.network'] === 'default', 'unmanaged network');
-  for (const [service, port, endpoint] of [
-    ['frontend', '80/tcp', E2E.appUrl], ['backend', '80/tcp', E2E.apiUrl],
-    ['agentcc-gateway', '8080/tcp', E2E.gatewayUrl], ['postgres', '5432/tcp', E2E.pgUrl],
-    ['clickhouse', '8123/tcp', E2E.chUrl],
-  ]) {
+  for (const [service, port, endpoint] of stack.endpoints) {
     requireSafe(selected[service].NetworkSettings.Ports[port]?.some(p =>
       p.HostPort === new URL(endpoint).port && ['127.0.0.1', '0.0.0.0', '::'].includes(p.HostIp)),
     `endpoint is not published by ${service}`);
   }
-  for (const [service, destination, source, command] of [
-    ['agentcc-gateway', '/app/config.yaml', gatewayFile, ['--config', '/app/config.yaml']],
-    ['mock-llm', '/srv/server.mjs', mockFile, ['node', '/srv/server.mjs']],
-  ] as const) {
+  for (const [service, destination, source, command] of stack.sources) {
     const c = selected[service];
     const mounts = c.Mounts.filter(m => m.Destination === destination);
     requireSafe(mounts.length === 1 && mounts[0].Type === 'bind' && !mounts[0].RW &&
       realpathSync(mounts[0].Source) === realpathSync(source), `unexpected ${service} source mount`);
-    if (evalBackground) validateBackgroundMockMounts(service, c.Mounts);
-    requireSafe(same(c.Config.Cmd, command), `unexpected ${service} command`);
+    if (command) requireSafe(same(c.Config.Cmd, command), `unexpected ${service} command`);
     requireSafe(statSync(source).mtimeMs <= Date.parse(c.State.StartedAt), `${service} source changed after startup`);
   }
-  requireSafe(same(selected['agentcc-gateway'].Config.Entrypoint, ['/app/agentcc-gateway']) &&
-    same(selected['mock-llm'].Config.Entrypoint, ['docker-entrypoint.sh']), 'unexpected gateway/mock entrypoint');
   validateMockRouting(readFileSync(gatewayFile, 'utf8'), evalBackground);
-  const environments: Record<string, Record<string, string>> = {};
-  for (const service of ['agentcc-gateway', 'mock-llm', 'backend', 'worker']) {
-    const env = Object.fromEntries(selected[service].Config.Env.map(s => {
-      const i = s.indexOf('='); return [s.slice(0, i), s.slice(i + 1)];
-    }));
-    environments[service] = env;
-    validateMockEnvironment(service, env, evalBackground, selected[service].Mounts);
-  }
-  let background: MockReceipt['background'];
-  if (evalBackground) {
-    // No tag resolution against a registry: local image inspect only. Main must
-    // supply the same version pins used to recreate the managed application.
-    for (const service of ['backend', 'worker', 'agentcc-gateway', 'mock-llm']) {
-      const [image] = JSON.parse(docker('image', 'inspect', config.services[service].image));
-      requireSafe(image.Id === selected[service].Image, `${service} configured image differs from running image`);
-    }
-    requireSafe(selected.backend.Image === selected.worker.Image, 'backend/worker image mismatch');
-    const paths = ['entrypoint.sh', 'tfc/settings/settings.py', 'tfc/logging/sentry.py', 'analytics/utils.py', 'analytics/mixpanel_util.py',
-      'tfc/management/commands/start_temporal_worker.py', 'tfc/temporal/__init__.py',
-      'tfc/temporal/common/client.py', 'tfc/temporal/common/registry.py', 'tfc/temporal/common/worker.py',
-      'tracer/tasks/eval_clustering.py', 'tracer/services/eval_tasks/run_entry.py', 'tracer/ee_boundary.py',
-      'tracer/queries/eval_clustering.py', 'tracer/utils/eval_clustering.py',
-      'ee/usage/services/gateway_llm_client.py', 'ee/agenthub/trace_scanner/eval_cluster_title.py',
-      'agentic_eval/core/embeddings/serving_client.py', 'agentic_eval/core/embeddings/embedding_manager.py',
-      'agentic_eval/core/utils/model_config.py'];
-    const sourceHashes = Object.fromEntries(paths.map(path => [path, hash(readFileSync(`${root}futureagi/${path}`))]));
-    const probeSource = readFileSync(`${root}e2e/lib/managed-mock-background.py`, 'utf8');
-    const addresses = Object.fromEntries(['temporal', 'mock-llm', 'agentcc-gateway'].map(service =>
-      [service, selected[service].NetworkSettings.Networks[network].IPAddress]));
-    const processes = ['backend', 'worker'].map(service => {
-      requireSafe(selected[service].Mounts.length === 0, `${service} has application mounts`);
-      // Read-only process/source/constructor/GET-health and Describe RPCs only;
-      // no Django setup, completion/embed call, registration or task submission.
-      return JSON.parse(run('docker', ['--context', context, 'exec', '-i', '-e', 'PYTHONDONTWRITEBYTECODE=1',
-        selected[service].Id, 'python', '-I', '-B', '-c', probeSource], JSON.stringify({ service, sourceHashes,
-        containerId: selected[service].Id, environment: environments[service], addresses })));
-    });
-    background = { capability: 'eval-clustering', sourceHashes, probeSha: hash(probeSource), processes };
-  }
+  const background = stack.check({ context, network, selected, config, run, docker });
   return { context, project: config.name, networkId, gatewaySha: hash(readFileSync(gatewayFile)),
-    mockSha: hash(readFileSync(mockFile)), ...(background ? { background } : {}), services: serviceNames.map(service => ({ service,
+    mockSha: hash(readFileSync(mockFile)), ...(background ? { background } : {}), services: stack.services.map(service => ({ service,
       id: selected[service].Id, image: selected[service].Image, startedAt: selected[service].State.StartedAt })) };
+}
+
+function distributedMockStack(evalBackground: boolean): MockStack {
+  return {
+    services: ['agentcc-gateway', 'mock-llm', 'backend', 'worker', 'frontend', 'postgres', 'clickhouse',
+      ...(evalBackground ? ['temporal'] : [])],
+    endpoints: [
+      ['frontend', '80/tcp', E2E.appUrl], ['backend', '80/tcp', E2E.apiUrl],
+      ['agentcc-gateway', '8080/tcp', E2E.gatewayUrl], ['postgres', '5432/tcp', E2E.pgUrl],
+      ['clickhouse', '8123/tcp', E2E.chUrl],
+    ],
+    sources: [
+      ['agentcc-gateway', '/app/config.yaml', gatewayFile, ['--config', '/app/config.yaml']],
+      ['mock-llm', '/srv/server.mjs', mockFile, ['node', '/srv/server.mjs']],
+    ],
+    check: ({ context, network, selected, config, run, docker }) => {
+      if (evalBackground) {
+        for (const service of ['agentcc-gateway', 'mock-llm']) validateBackgroundMockMounts(service, selected[service].Mounts);
+      }
+      requireSafe(same(selected['agentcc-gateway'].Config.Entrypoint, ['/app/agentcc-gateway']) &&
+        same(selected['mock-llm'].Config.Entrypoint, ['docker-entrypoint.sh']), 'unexpected gateway/mock entrypoint');
+      const environments: Record<string, Record<string, string>> = {};
+      for (const service of ['agentcc-gateway', 'mock-llm', 'backend', 'worker']) {
+        const env = environments[service] = containerEnvironment(selected[service]);
+        validateMockEnvironment(service, env, evalBackground, selected[service].Mounts);
+      }
+      if (!evalBackground) return undefined;
+      // No tag resolution against a registry: local image inspect only. Main must
+      // supply the same version pins used to recreate the managed application.
+      for (const service of ['backend', 'worker', 'agentcc-gateway', 'mock-llm']) {
+        const [image] = JSON.parse(docker('image', 'inspect', config.services[service].image));
+        requireSafe(image.Id === selected[service].Image, `${service} configured image differs from running image`);
+      }
+      requireSafe(selected.backend.Image === selected.worker.Image, 'backend/worker image mismatch');
+      const paths = ['entrypoint.sh', 'tfc/settings/settings.py', 'tfc/logging/sentry.py', 'analytics/utils.py', 'analytics/mixpanel_util.py',
+        'tfc/management/commands/start_temporal_worker.py', 'tfc/temporal/__init__.py',
+        'tfc/temporal/common/client.py', 'tfc/temporal/common/registry.py', 'tfc/temporal/common/worker.py',
+        'tracer/tasks/eval_clustering.py', 'tracer/services/eval_tasks/run_entry.py', 'tracer/ee_boundary.py',
+        'tracer/queries/eval_clustering.py', 'tracer/utils/eval_clustering.py',
+        'ee/usage/services/gateway_llm_client.py', 'ee/agenthub/trace_scanner/eval_cluster_title.py',
+        'agentic_eval/core/embeddings/serving_client.py', 'agentic_eval/core/embeddings/embedding_manager.py',
+        'agentic_eval/core/utils/model_config.py'];
+      const sourceHashes = Object.fromEntries(paths.map(path => [path, hash(readFileSync(`${root}futureagi/${path}`))]));
+      const probeSource = readFileSync(`${root}e2e/lib/managed-mock-background.py`, 'utf8');
+      const addresses = Object.fromEntries(['temporal', 'mock-llm', 'agentcc-gateway'].map(service =>
+        [service, selected[service].NetworkSettings.Networks[network].IPAddress]));
+      const processes = ['backend', 'worker'].map(service => {
+        requireSafe(selected[service].Mounts.length === 0, `${service} has application mounts`);
+        // Read-only process/source/constructor/GET-health and Describe RPCs only;
+        // no Django setup, completion/embed call, registration or task submission.
+        return JSON.parse(run('docker', ['--context', context, 'exec', '-i', '-e', 'PYTHONDONTWRITEBYTECODE=1',
+          selected[service].Id, 'python', '-I', '-B', '-c', probeSource], JSON.stringify({ service, sourceHashes,
+          containerId: selected[service].Id, environment: environments[service], addresses })));
+      });
+      return { capability: 'eval-clustering', sourceHashes, probeSha: hash(probeSource), processes };
+    },
+  };
 }
 
 /** custom_model.py:248 validates with a LIVE completion before storing the row.

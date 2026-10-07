@@ -4,24 +4,33 @@ import structlog
 from django.apps import AppConfig
 from django.db.models.signals import post_migrate
 
+from tfc.ee_loader import is_cloud_env
+
 logger = structlog.get_logger(__name__)
 
 STARTUP_SAFE_MANAGEMENT_COMMANDS = frozenset(
     {
         "check",
         "collectstatic",
-        # First-account bootstrap for self-hosted installs; AppConfig.ready
-        # stays mutation-free.
+        # First-account bootstrap and account recovery that self-hosted
+        # installs tell an operator to run ("Forgot password" without email
+        # names reset_password); each writes only the account it is given,
+        # and AppConfig.ready stays mutation-free.
+        "changepassword",
         "create_user",
+        "createsuperuser",
+        "reset_password",
         "generate_swagger",
         "grpcrunaioserver",
         "runserver",
+        # Read the migration table and the migration files; write nothing.
+        "showmigrations",
+        "sqlmigrate",
         "start_temporal_worker",
     }
 )
 
 HOSTED_ENV_TYPES = frozenset({"prod", "production", "staging"})
-HOSTED_DEPLOYMENTS = frozenset({"US", "EU", "DEV"})
 
 # Application processes are never schema/bootstrap runners. A one-shot operator
 # job may run one of these explicit management commands, but it does not enable
@@ -30,16 +39,25 @@ OPERATOR_STARTUP_MUTATION_COMMANDS = frozenset(
     {
         "ch25_apply_schema",
         "ch25_remove_pg",
+        "backfill_harness_agent_prompts",
         "backfill_legacy_scans",
         "backfill_score_tracer_project",
+        # Helm bootstrap Job: migrate, seeds, ClickHouse schema, CDC, schedules.
+        "bootstrap_install",
         "createcachetable",
         "drop_legacy_observation_span",
         "migrate",
         "provision_grouping_features",
+        "enable_sampled_grouping",
+        "requeue_budget_grouping",
         "register_temporal_schedules",
         "seed_system_evals",
     }
 )
+# Developer tools that only the explicit local mode (./bin/dev manage) may run:
+# makemigrations writes migration files into the checkout, and shell runs
+# arbitrary code. Hosted processes and operator jobs never get them.
+LOCAL_DEVELOPER_COMMANDS = frozenset({"makemigrations", "shell"})
 OPERATOR_STARTUP_MUTATION_MODE = "operator"
 OPERATOR_STARTUP_SERVICE_TYPE = "bootstrap"
 
@@ -75,8 +93,7 @@ def hosted_startup_environment() -> bool:
     """Return whether this process belongs to a hosted deployment."""
 
     return (
-        os.getenv("ENV_TYPE", "").strip().lower() in HOSTED_ENV_TYPES
-        or os.getenv("CLOUD_DEPLOYMENT", "").strip().upper() in HOSTED_DEPLOYMENTS
+        os.getenv("ENV_TYPE", "").strip().lower() in HOSTED_ENV_TYPES or is_cloud_env()
     )
 
 
@@ -144,20 +161,24 @@ def explicit_management_mutation_authorized(argv: list[str]) -> bool:
     Hosted deployments require the dedicated operator/bootstrap pair, except
     the schedule registrar's bare registration. Local and self-hosted
     entrypoints preserve their documented migration workflow only when they
-    explicitly export ``NO_STARTUP_DB_MUTATIONS=false``.
+    explicitly export ``NO_STARTUP_DB_MUTATIONS=false``; that explicit local
+    mode also runs the ``LOCAL_DEVELOPER_COMMANDS``.
     """
 
     command = _management_command(argv)
+    explicit_local_mode = (
+        os.getenv("NO_STARTUP_DB_MUTATIONS") == "false"
+        and not hosted_startup_environment()
+    )
+    if command in LOCAL_DEVELOPER_COMMANDS:
+        return explicit_local_mode
     if command not in OPERATOR_STARTUP_MUTATION_COMMANDS:
         return False
     if operator_startup_mutation_authorized(argv) or schedule_registration_authorized(
         argv
     ):
         return True
-    return (
-        os.getenv("NO_STARTUP_DB_MUTATIONS") == "false"
-        and not hosted_startup_environment()
-    )
+    return explicit_local_mode
 
 
 def guarded_management_command(argv: list[str]) -> str | None:
@@ -175,6 +196,13 @@ def guarded_management_command(argv: list[str]) -> str | None:
             "--noinput",
             "--no-input",
         }:
+            return None
+    if command == "makemigrations":
+        # The review check: it reports missing or conflicting migrations and
+        # writes no file. Only this closed form, as for migrate --check.
+        options = set(argv[argv.index(command) + 1 :])
+        required = {"--check", "--dry-run"}
+        if required <= options <= required | {"--noinput", "--no-input"}:
             return None
     return command
 
@@ -221,7 +249,9 @@ class ModelHubConfig(AppConfig):
                     f"Only {sorted(OPERATOR_STARTUP_MUTATION_COMMANDS)} may run "
                     "in a one-shot SERVICE_TYPE=bootstrap process with "
                     "STARTUP_DB_MUTATION_MODE=operator, or via the explicit "
-                    "local migration mode"
+                    "local migration mode (NO_STARTUP_DB_MUTATIONS=false outside "
+                    "a hosted deployment, as ./bin/dev manage runs), which also "
+                    f"allows {sorted(LOCAL_DEVELOPER_COMMANDS)}"
                 )
             if command == "migrate":
                 post_migrate.connect(

@@ -33,13 +33,16 @@ the inconsistent sample denominator in the printed reference. Tool failure rates
 only explicit invocation verdicts, independently of whether the enclosing call
 passed. Calls with messages or an available transcript count as connected.
 
-Agent/customer speaking share is derived from the recorded talk ratio. End-to-end
-latency uses task wall-clock duration, separately from agent response latency.
-Cost per pass requires complete run-cost coverage. Voice SLO percentiles describe
-recorded per-call pipeline timings, not an inferred per-turn timing distribution.
+Agent/customer speaking share is derived from the recorded talk ratio. The
+latency charts and the latency row of the distribution table use each call's
+agent latency: for voice, the average gap between the caller finishing and the
+agent starting to speak; for chat, the average time to return a reply. Calls
+with no recorded value or a negative one are left out. Cost per pass requires
+complete run-cost coverage. Voice SLO percentiles describe recorded per-call
+pipeline timings, not an inferred per-turn timing distribution.
 
 Runs with at most 100 calls show individual calls. Larger runs show up to 100
-server-generated time buckets (mean duration and summed component costs). Calls
+server-generated time buckets (mean agent latency and summed component costs). Calls
 without a start timestamp remain in summary metrics but cannot enter time buckets.
 Top-tool lists are limited to 20; performance tails to eight; risk to seven goals.
 CSAT uses recorded scores within 0–10, rounding fractional values to the nearest

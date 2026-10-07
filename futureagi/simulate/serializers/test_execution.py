@@ -221,6 +221,11 @@ class CallExecutionEvalMetricSerializer(serializers.Serializer):
     template_type = serializers.CharField(
         allow_blank=True, allow_null=True, required=False
     )
+    kind = serializers.ChoiceField(
+        choices=["evaluation", "sub_goal"],
+        required=False,
+        help_text="Set on the v3 call detail: a sub-goal check or an evaluation",
+    )
     visible = serializers.BooleanField(required=False)
     error = serializers.BooleanField(required=False)
     status = serializers.CharField(allow_blank=True, required=False)
@@ -491,7 +496,10 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
         return row_session_id_map.get(str(row_id)) if row_id else None
 
     def get_recordings(self, obj):
-        """Return combined/stereo/customer/assistant URLs; model fields first, provider_call_data fallback."""
+        """Return combined/stereo/customer/assistant URLs; model fields first, provider_call_data fallback.
+
+        With a stereo URL, ``stereo_channels`` names the role on each channel.
+        """
         if not self.context.get("detail_mode", True):
             return {}
 
@@ -519,7 +527,7 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                 shortcut = bucket["recording"]
                 break
 
-        recordings: dict[str, str] = {}
+        recordings: dict = {}
         # Model fields (FAGI-rehosted S3 URLs) win, then the provider shortcut.
         combined = obj.recording_url or shortcut.get("combined")
         if combined:
@@ -547,6 +555,8 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
             "customer": "recording_customer",
             "assistant": "recording_assistant",
         }
+        # Hosted per-speaker tracks are already labelled the way they are shown.
+        hosted_speaker_tracks = False
         for track, artifact_kind in hosted_track_kinds.items():
             artifact = hosted.get(artifact_kind)
             if (
@@ -555,6 +565,8 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                 and artifact.get("url")
             ):
                 recordings[track] = artifact["url"]
+                if track in ("customer", "assistant"):
+                    hosted_speaker_tracks = True
 
         if not recordings and isinstance(pcd.get(ProviderChoices.VAPI.value), dict):
             from simulate.utils.session_comparison import (
@@ -578,7 +590,7 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                 getattr(obj, "provider_call_data", None)
             )
             is_outbound = SpeakerRoleResolver.detect_is_outbound(obj)
-            if SpeakerRoleResolver.is_simulator(
+            if not hosted_speaker_tracks and SpeakerRoleResolver.is_simulator(
                 "assistant", provider=provider, is_outbound=is_outbound
             ):
                 recordings = {
@@ -586,6 +598,15 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                     "assistant": recordings.get("customer"),
                     "customer": recordings.get("assistant"),
                 }
+            if stereo_url := recordings.get("stereo"):
+                recordings["stereo_channels"] = (
+                    SpeakerRoleResolver.stereo_channel_roles(
+                        stereo_url,
+                        call_metadata,
+                        provider=provider,
+                        is_outbound=is_outbound,
+                    )
+                )
         return recordings or {}
 
     def get_provider(self, obj):

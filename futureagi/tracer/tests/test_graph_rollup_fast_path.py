@@ -179,7 +179,7 @@ def test_trace_primary_date_only_uses_one_interactive_rollup_query(
         project_id=PROJECT_ID,
         filters=filters,
         interval=interval,
-        metric_id="latency",
+        metric_id="tokens",
         observe_type="trace",
     )
 
@@ -231,7 +231,7 @@ def test_date_only_rollup_fails_closed_when_query_settings_are_locked(observe_ty
         project_id=PROJECT_ID,
         filters=[],
         interval="day",
-        metric_id="latency",
+        metric_id="tokens",
         observe_type=observe_type,
     )
 
@@ -253,7 +253,7 @@ def test_session_date_only_rollup_fails_closed_when_query_settings_are_locked():
         project_id=PROJECT_ID,
         filters=[],
         interval="day",
-        req_data_config={"type": "SYSTEM_METRIC", "id": "latency"},
+        req_data_config={"type": "SYSTEM_METRIC", "id": "tokens"},
     )
 
     analytics.execute_ch_query.assert_not_called()
@@ -1250,7 +1250,7 @@ def test_filtered_graph_poll_does_not_duplicate_running_background_read(monkeypa
         organization_id="33333333-3333-4333-8333-333333333333",
     )
 
-    assert response == pending
+    assert response == {**pending, "metric_statistic": "mean"}
     direct_read.assert_not_called()
     assert cache_probe.call_count == 1
     assert cache_probe.call_args.kwargs["schedule_on_miss"] is False
@@ -1300,7 +1300,7 @@ def test_filtered_graph_budget_failure_schedules_one_heavy_read(monkeypatch):
         workspace_id="44444444-4444-4444-8444-444444444444",
     )
 
-    assert response == pending
+    assert response == {**pending, "metric_statistic": "mean"}
     assert len(cache_calls) == 2
     assert cache_calls[0][1]["schedule_on_miss"] is False
     assert cache_calls[1][1]["schedule_on_miss"] is True
@@ -1353,7 +1353,7 @@ def test_filtered_graph_mid_response_eof_schedules_one_heavy_read(monkeypatch):
         workspace_id="44444444-4444-4444-8444-444444444444",
     )
 
-    assert response == pending
+    assert response == {**pending, "metric_statistic": "mean"}
     assert len(cache_calls) == 2
     assert cache_calls[0][1]["schedule_on_miss"] is False
     assert cache_calls[1][1]["schedule_on_miss"] is True
@@ -1430,7 +1430,7 @@ def test_trace_rollup_failure_propagates_without_exact_or_raw_fallback(monkeypat
                 )
             ],
             interval="day",
-            metric_id="latency",
+            metric_id="tokens",
         )
 
     assert raised.value is failure
@@ -1500,7 +1500,7 @@ def test_rollup_schema_drift_fails_closed_instead_of_publishing_zero(
                     )
                 ],
                 interval="day",
-                metric_id="latency",
+                metric_id="tokens",
             )
     else:
         monkeypatch.setattr(

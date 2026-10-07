@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { registerHooks } from "node:module";
 import test from "node:test";
 import ts from "typescript";
@@ -49,6 +50,7 @@ for (const [name, options, expectedHost, expectedDatabase] of [
       api: {},
       chUrl: source,
       chDatabase: "source_db",
+      chPassword: "attached-password",
       pgUrl: "postgresql://unused:unused@localhost:1/unused",
       ...options,
     });
@@ -75,7 +77,15 @@ for (const [name, options, expectedHost, expectedDatabase] of [
       calls[0].url.searchParams.get("param_p"),
       "project & unicode 日本",
     );
-    assert.deepEqual(calls[0].init, { method: "POST", body: sql });
+    assert.deepEqual(calls[0].init, {
+      method: "POST",
+      body: sql,
+      headers: {
+        "X-ClickHouse-User": "default",
+        "X-ClickHouse-Key": "attached-password",
+      },
+    });
+    assert.deepEqual(calls[1].init.headers, calls[0].init.headers);
     assert.equal(calls[1].url.origin, source);
     assert.equal(calls[1].url.searchParams.get("database"), "source_db");
   });
@@ -86,6 +96,7 @@ const keys = [
   "E2E_CH_DB",
   "E2E_CATALOG_CH_URL",
   "E2E_CATALOG_CH_DB",
+  "E2E_CH_PASSWORD",
 ];
 for (const [index, [name, overrides, host, db]] of [
   ["managed defaults", {}, "http://localhost:28123", "property_catalog"],
@@ -124,5 +135,29 @@ for (const [index, [name, overrides, host, db]] of [
     assert.equal(E2E.catalogChDatabase, db);
     assert.equal(E2E.chUrl, overrides.E2E_CH_URL ?? "http://localhost:28123");
     assert.equal(E2E.chDatabase, overrides.E2E_CH_DB ?? "default");
+    assert.equal(E2E.chPassword, "e2e-clickhouse-password");
+  });
+}
+
+test("env takes the ClickHouse password of an attached stack", async (t) => {
+  const before = process.env.E2E_CH_PASSWORD;
+  t.after(() => {
+    if (before === undefined) delete process.env.E2E_CH_PASSWORD;
+    else process.env.E2E_CH_PASSWORD = before;
+  });
+  process.env.E2E_CH_PASSWORD = "";
+  const { E2E } = await import("../lib/env.ts?case=password");
+  assert.equal(E2E.chPassword, "");
+});
+
+// Both managed stacks run ClickHouse with the password the probe sends.
+for (const file of ["e2e.env", "standalone-e2e.env"]) {
+  test(`${file} gives ClickHouse the probe's password`, () => {
+    const lines = readFileSync(new URL(`../stack/${file}`, import.meta.url), "utf8")
+      .split("\n");
+    assert.deepEqual(
+      lines.filter((line) => line.startsWith("CH_PASSWORD=")),
+      ["CH_PASSWORD=e2e-clickhouse-password"],
+    );
   });
 }

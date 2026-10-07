@@ -17,6 +17,7 @@ import tempfile
 
 import pytest
 
+from agentic_eval.core.embeddings.serving_client import SERVING_START_HINT
 from model_hub.utils.kb_indexer import (
     KB_EMBEDDINGS_UNAVAILABLE_ERROR,
     KB_INDEX_COL_NAME,
@@ -27,6 +28,9 @@ from model_hub.utils.kb_indexer import (
 )
 
 MODULE = "model_hub.utils.kb_indexer"
+# kb_indexer imports the PDF reader inside load_pdf() to keep pypdf off the
+# startup path, so patch it where that import resolves it.
+PDF_READER = "pypdf.PdfReader"
 
 
 @pytest.fixture
@@ -115,11 +119,13 @@ class TestFileReaders:
         assert "hello from rtf" in indexer.process_rtf(path)
 
     def test_process_pdf_cleans_extracted_pages(self, indexer, mocker):
-        page_one = mocker.MagicMock(page_content="page  one\x00")
-        page_two = mocker.MagicMock(page_content="page two(cid:7)")
+        page_one = mocker.MagicMock()
+        page_one.extract_text.return_value = "page  one\x00"
+        page_two = mocker.MagicMock()
+        page_two.extract_text.return_value = "page two(cid:7)"
         mocker.patch(
-            f"{MODULE}.PyPDFLoader",
-            return_value=mocker.MagicMock(load=lambda: [page_one, page_two]),
+            PDF_READER,
+            return_value=mocker.MagicMock(pages=[page_one, page_two]),
         )
 
         text = indexer.process_pdf("/tmp/whatever.pdf")
@@ -127,7 +133,7 @@ class TestFileReaders:
         assert text == "page one page two"
 
     def test_process_pdf_propagates_loader_failure(self, indexer, mocker):
-        mocker.patch(f"{MODULE}.PyPDFLoader", side_effect=RuntimeError("corrupt"))
+        mocker.patch(PDF_READER, side_effect=RuntimeError("corrupt"))
 
         with pytest.raises(RuntimeError):
             indexer.process_pdf("/tmp/broken.pdf")
@@ -251,12 +257,9 @@ class TestEmbeddingFailuresFailTheFile:
             indexer.process_content("word " * 500, "file-1", "kb-1", "org-1")
 
         assert str(exc_info.value) == KB_EMBEDDINGS_UNAVAILABLE_ERROR
-        # Cloud users see this text too, so the command is scoped to
-        # self-hosted installs; it is the one the pre-flight check gives.
-        assert (
-            "Self-hosted installs: start it with `docker compose up -d serving`"
-            in str(exc_info.value)
-        )
+        # The same per-setup way to turn serving on as every other feature
+        # that needs it (test_serving_optional pins what it says).
+        assert SERVING_START_HINT in str(exc_info.value)
         indexer._test_embedding_manager.parallel_process_metadata.assert_not_called()
         assert indexer.chunks == []
 

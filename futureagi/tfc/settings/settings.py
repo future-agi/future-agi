@@ -10,10 +10,12 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/4.2/ref/settings/
 """
 
+import ipaddress
 import json
 import os
 from datetime import timedelta
 from pathlib import Path
+from urllib.parse import urlsplit
 
 # Structured logging configuration
 from tfc.logging import configure_structlog, get_logging_config, init_sentry
@@ -48,10 +50,17 @@ _IS_LOCAL = ENV_TYPE in ("local", "test")
 # Exact analytics continue to use the existing XL queue unless a deployment
 # explicitly provisions the dedicated single-slot worker.  This keeps local,
 # development, EU, and self-hosted installs compatible while allowing the US
-# ClickHouse cluster to opt into strict refresh admission.
+# ClickHouse cluster to opt into strict refresh admission. The standalone install's
+# embedded Temporal worker (tfc/temporal/embedded.py) polls the dedicated queue
+# with one slot, so it defaults there.
 EXACT_AGGREGATION_TASK_QUEUE = os.getenv(
     "EXACT_AGGREGATION_TASK_QUEUE",
-    "tasks_xl",
+    (
+        "exact_aggregation"
+        if os.getenv("FI_EMBEDDED_TEMPORAL_WORKER", "").strip().lower()
+        in ("1", "true", "yes", "on")
+        else "tasks_xl"
+    ),
 )
 
 # Eval-usage API reads use ClickHouse in deployed environments. Keep the
@@ -267,7 +276,7 @@ INSTALLED_APPS = [
 # EE apps.
 #   - ee.usage: gated on presence only — it implements DeploymentMode.
 #   - ee feature modules: gated on presence AND deployment mode (EE/Cloud).
-from tfc.ee_loader import ee_feature_enabled, has_ee  # noqa: E402
+from tfc.ee_loader import ee_feature_enabled, has_ee, is_cloud_env  # noqa: E402
 
 if ee_feature_enabled("ee.falcon_ai"):
     INSTALLED_APPS.append("ee.falcon_ai.apps.FalconAIConfig")
@@ -275,11 +284,7 @@ if has_ee("ee.usage"):
     INSTALLED_APPS.append("ee.usage")
 if has_ee("ee.licensing"):
     INSTALLED_APPS.append("ee.licensing")
-if has_ee("ee.cloud.control_plane") and os.environ.get("CLOUD_DEPLOYMENT", "") in (
-    "US",
-    "EU",
-    "DEV",
-):
+if has_ee("ee.cloud.control_plane") and is_cloud_env():
     INSTALLED_APPS.append("ee.cloud.control_plane.apps.CloudControlPlaneConfig")
 
 # Site ID for django.contrib.sites
@@ -608,8 +613,22 @@ DEFAULT_FROM_EMAIL = os.getenv(
     "DEFAULT_FROM_EMAIL"
 )  # if you don't already have this in settings
 SERVER_EMAIL = os.getenv("SERVER_EMAIL")  # ditto (default from-email for Django errors)
+# Reply-To of app emails (tfc.utils.email). Empty: no Reply-To header, so a
+# reply goes to the sender. Future AGI Cloud falls back to its support inbox.
+DEFAULT_REPLY_TO_EMAIL = os.getenv("DEFAULT_REPLY_TO_EMAIL", "").strip()
 
-APP_URL = os.getenv("APP_URL")
+
+def _split_app_url(value):
+    """APP_URL as ``(scheme, host[:port])``. It is documented as a bare host
+    (app.example.com); one written with a scheme (https://app.example.com)
+    is accepted too, and the scheme is returned separately."""
+    scheme, _, host = (value or "").strip().rstrip("/").rpartition("://")
+    return scheme, host or None
+
+
+# APP_URL is the UI's host[:port], without a scheme: every setting built from
+# it below adds its own. A scheme written into it is kept for APP_BASE_URL.
+_APP_URL_SCHEME, APP_URL = _split_app_url(os.getenv("APP_URL"))
 
 # ── Billing ───────────────────────────────────────────────────
 # Ships only with the cloud overlay, which is the future-agi/ee repo checked
@@ -757,9 +776,11 @@ AVAILABLE_REGIONS = os.environ.get("AVAILABLE_REGIONS", "")
 
 # Celery Configuration Options
 
-CELERY_BROKER_URL = os.getenv(
-    "CELERY_BROKER_URL", "amqp://user:password@rabbitmq:5672//"
-)
+# Tasks run on Temporal (tfc.temporal.drop_in) and no compose file starts a
+# Celery worker. The in-process "memory://" default stops the app from resolving
+# a "rabbitmq" host that no longer ships; a legacy Celery worker needs
+# CELERY_BROKER_URL set explicitly. The Channels layer never reads it.
+CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "memory://")
 CELERY_RESULT_BACKEND = "django-db"  # If you want to use Django's ORM
 CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
@@ -860,12 +881,16 @@ LOGGING = get_logging_config(str(BASE_DIR))
 AIRBYTE_HOST = os.getenv("AIRBYTE_HOST")
 AIRBYTE_PORT = os.getenv("AIRBYTE_PORT")
 AIRBYTE_API_URL = f"http://{AIRBYTE_HOST}:{AIRBYTE_PORT}/api/v1"
-SLACK_WEBHOOK_CHANNEL = os.getenv("SLACK_WEBHOOK_CHANNEL", "")
+# ── Operator Slack webhooks (Future AGI Cloud; optional everywhere) ──
+# Empty means off: nothing is posted and nothing is logged above debug.
+# SLACK_WEBHOOK_CHANNEL — "new user joined" on email/SSO signup.
+# ERROR_LOGS_WEBHOOK    — internal alerts (analytics.utils.mixpanel_slack_notfy).
+SLACK_WEBHOOK_CHANNEL = os.getenv("SLACK_WEBHOOK_CHANNEL", "").strip()
 DEPLOYMENT_TELEMETRY_SLACK_WEBHOOK = os.getenv(
     "DEPLOYMENT_TELEMETRY_SLACK_WEBHOOK",
     SLACK_WEBHOOK_CHANNEL,
 )
-ERROR_LOGS_WEBHOOK = os.getenv("ERROR_LOGS_WEBHOOK", "")
+ERROR_LOGS_WEBHOOK = os.getenv("ERROR_LOGS_WEBHOOK", "").strip()
 
 AIRBYTE_HEADERS = {
     "Content-Type": "application/json",
@@ -894,11 +919,15 @@ AWS = {
 HUGGINGFACE_API_TOKEN = os.getenv("HUGGINGFACE_API_TOKEN", "")
 HUGGINGFACE_API_TOKEN_1 = os.getenv("HUGGINGFACE_API_TOKEN_1", "")
 HUGGINGFACE_API_TOKEN_2 = os.getenv("HUGGINGFACE_API_TOKEN_2", "")
+# ── HubSpot lead sync (Future AGI Cloud only) ──
+# Signup creates a HubSpot contact and login marks it logged in. Both run only
+# when HUBSPOT_API_TOKEN is set; self-hosted installs leave it empty and never
+# contact HubSpot (accounts.utils.hubspot_is_configured).
 HUBSPOT_URL = "https://api.hubapi.com/crm/v3/objects/contacts"
 HUBSPOT_UPDATE_URL = (
     "https://api.hubapi.com/crm/v3/objects/contacts/{}?idProperty=email"
 )
-HUBSPOT_API_TOKEN = os.getenv("HUBSPOT_API_TOKEN", "")
+HUBSPOT_API_TOKEN = os.getenv("HUBSPOT_API_TOKEN", "").strip()
 
 VAPI_INDIAN_PHONE_NUMBER_ID = os.getenv(
     "VAPI_INDIAN_PHONE_NUMBER_ID", "6fe53c53-99cc-4090-bf65-6ea4d8267a95"
@@ -944,6 +973,12 @@ ERROR_FEED_GROUPING_TENANT_BUDGET_USD = os.getenv(
     "ERROR_FEED_GROUPING_TENANT_BUDGET_USD", "0"
 )
 # Brief batching delay is for grouping only; occurrence embeddings enqueue now.
+# Additional hard ceiling for sampled merge reviews per durable work item.
+# Reservations count at their maximum, including unknown usage and retries.
+ERROR_FEED_GROUPING_MERGE_BUDGET_USD = os.getenv(
+    "ERROR_FEED_GROUPING_MERGE_BUDGET_USD", "1"
+)
+
 ERROR_FEED_GROUPING_DEBOUNCE_SECONDS = int(
     os.getenv("ERROR_FEED_GROUPING_DEBOUNCE_SECONDS", "5")
 )
@@ -952,6 +987,7 @@ ERROR_FEED_GROUPING_DEBOUNCE_SECONDS = int(
 # selects its infrastructure implementation independently through HOSTED_SANDBOX_PROVIDER.
 HARNESS_PUBLIC_BASE_URL = os.getenv("HARNESS_PUBLIC_BASE_URL", "")
 HARNESS_PROVIDER = os.getenv("HARNESS_PROVIDER", "hosted")
+HARNESS_MAX_ARTIFACT_BYTES = int(os.getenv("HARNESS_MAX_ARTIFACT_BYTES", "1073741824"))
 HOSTED_SANDBOX_PROVIDER = os.getenv("HOSTED_SANDBOX_PROVIDER", "daytona")
 ALK_HARNESS_SANDBOX_URL = os.getenv("ALK_HARNESS_SANDBOX_URL", "")
 ALK_HARNESS_SANDBOX_TOKEN = os.getenv("ALK_HARNESS_SANDBOX_TOKEN", "")
@@ -1067,6 +1103,8 @@ HARNESS_PARALLELISM_ENABLED = os.getenv("HARNESS_PARALLELISM_ENABLED", "").lower
     "yes",
 )
 HARNESS_MAX_WORLD_SLOTS = int(os.getenv("HARNESS_MAX_WORLD_SLOTS", "8"))
+# Most scenarios × trials one simulation Run may submit.
+HARNESS_MAX_EXECUTIONS_PER_RUN = int(os.getenv("HARNESS_MAX_EXECUTIONS_PER_RUN", "200"))
 # Each profile is an operator-certified size/connector/snapshot combination.
 HARNESS_RESOURCE_PROFILES = json.loads(os.getenv("HARNESS_RESOURCE_PROFILES", "[]"))
 # Comma-separated allowlist of provider runtime identifiers certified for W>1.
@@ -1152,11 +1190,18 @@ BASE_URL = os.getenv(
     "BASE_URL",
     (
         "https://api.futureagi.com"
-        if CLOUD_DEPLOYMENT and not _is_local
+        if is_cloud_env(CLOUD_DEPLOYMENT) and not _is_local
         else "http://localhost:8000"
     ),
 )
 WEBSOCKET_ENDPOINT = os.getenv("WEBSOCKET_ENDPOINT", f"{BASE_URL}/call-websocket/")
+# fi-collector's OTLP/HTTP endpoint as an SDK outside the stack reaches it. The
+# SDKs default FI_BASE_URL to Future AGI Cloud, so the in-app SDK snippet and
+# the setup screen hand this out on a self-hosted install. Compose and the Helm
+# chart set it; the default is the port both compose files publish.
+FI_COLLECTOR_PUBLIC_URL = (
+    os.getenv("FI_COLLECTOR_PUBLIC_URL", "").strip() or "http://localhost:4318"
+).rstrip("/")
 MINIO_URL = os.getenv(
     "MINIO_URL", f"{_ssl}localhost:9005" if _is_local else f"{_ssl}{APP_URL}:9005"
 )
@@ -1200,13 +1245,37 @@ AUTH0_CALLBACK_URL = f"{BASE_URL}/saml2_auth/auth/callback/"
 GITHUB_CALLBACK_URL = f"{BASE_URL}/saml2_auth/github/callback/"
 MICROSOFT_CALLBACK_URL = f"{BASE_URL}/saml2_auth/microsoft/callback/"
 get_assertion_url = f"{BASE_URL}/saml2_auth/acs/"
-default_next_url = f"{_ssl}{APP_URL}/dashboard/develop"
-get_started_url = f"{_ssl}{APP_URL}/dashboard/get-started"
-default_error_next_url = f"{_ssl}{APP_URL}/auth/jwt/login?denied=true"
-get_entity_id = f"{_ssl}{APP_URL}"
 
-# APP_URL is a bare host; each region is its own deployment with its own value.
-APP_BASE_URL = f"{_ssl}{APP_URL}" if APP_URL else ""
+
+def _app_base_url(host, scheme, default_scheme):
+    """APP_URL as an absolute URL, for links that leave the app: emails, invite
+    and reset links. A scheme written into APP_URL wins. Otherwise a loopback
+    host is http, since nothing holds a certificate for localhost (a Helm
+    install reached through a port-forward runs with ENV_TYPE=production), and
+    any other host takes ``default_scheme``."""
+    if not host:
+        return ""
+    if not scheme:
+        name = (urlsplit(f"//{host}").hostname or "").lower()
+        try:
+            loopback = ipaddress.ip_address(name).is_loopback
+        except ValueError:
+            loopback = name == "localhost" or name.endswith(".localhost")
+        scheme = "http" if loopback else default_scheme.split(":", 1)[0]
+    return f"{scheme}://{host}"
+
+
+# Each region is its own deployment with its own APP_URL.
+APP_BASE_URL = _app_base_url(APP_URL, _APP_URL_SCHEME, _ssl)
+# The UI that links leaving the app point at (emails, the MCP OAuth consent
+# page): FRONTEND_URL when set, else APP_BASE_URL. Empty when neither is set.
+FRONTEND_BASE_URL = (os.getenv("FRONTEND_URL", "").strip() or APP_BASE_URL).rstrip("/")
+
+# Where SSO sends the browser back to the UI.
+default_next_url = f"{APP_BASE_URL}/dashboard/develop"
+get_started_url = f"{APP_BASE_URL}/dashboard/get-started"
+default_error_next_url = f"{APP_BASE_URL}/auth/jwt/login?denied=true"
+get_entity_id = f"{_ssl}{APP_URL}"
 
 get_name_id_format = "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress"
 AUTH0_DOMAIN = "accounts.google.com/o/oauth2"
@@ -1217,11 +1286,29 @@ GOOGLE_USERINFO_API = "https://www.googleapis.com/oauth2/v1/userinfo"
 MICROSOFT_OAUTH_URL = "https://login.microsoftonline.com/common/oauth2/v2.0"
 MICROSOFT_GRAPH_API = "https://graph.microsoft.com/v1.0"
 
-RECAPTCHA_SECRET_KEY = os.getenv("RECAPTCHA_SECRET_KEY", "")
-RECAPTCHA_ENABLED = os.getenv(
-    "RECAPTCHA_ENABLED",
-    "false" if env_type in {"local", "development"} else "true",
-).lower() in ("true", "1", "yes")
+
+# reCAPTCHA on signup, login and token refresh. Future AGI Cloud verifies by
+# default (and fails closed without a secret). A self-hosted install verifies
+# only once RECAPTCHA_SECRET_KEY is set, so a fresh install never calls Google
+# and never rejects a login it has no key to check. A non-empty
+# RECAPTCHA_ENABLED wins either way.
+def _recaptcha_enabled(explicit, env_type, cloud, secret_key):
+    if (explicit or "").strip():
+        return explicit.strip().lower() in ("true", "1", "yes")
+    if env_type in {"local", "development"}:
+        return False
+    if cloud:
+        return True
+    return bool(secret_key)
+
+
+RECAPTCHA_SECRET_KEY = os.getenv("RECAPTCHA_SECRET_KEY", "").strip()
+RECAPTCHA_ENABLED = _recaptcha_enabled(
+    os.getenv("RECAPTCHA_ENABLED"),
+    env_type,
+    is_cloud_env(CLOUD_DEPLOYMENT),
+    RECAPTCHA_SECRET_KEY,
+)
 
 # Integration encryption key (Fernet) for storing external platform credentials
 INTEGRATION_ENCRYPTION_KEY = os.getenv("INTEGRATION_ENCRYPTION_KEY", "")
@@ -1237,20 +1324,35 @@ if not INTEGRATION_ENCRYPTION_KEY and env_type == "local":
     ).decode()
 ENABLE_INTEGRATIONS = os.getenv("ENABLE_INTEGRATIONS", "false").lower() == "true"
 
-CHANNEL_LAYERS = {
-    "default": {
-        "BACKEND": "channels_rabbitmq.core.RabbitmqChannelLayer",
-        "CONFIG": {
-            "host": CELERY_BROKER_URL,
-            "ssl_context": None,
-            "expiry": 300,
-            "local_capacity": 500,
-            "local_expiry": 300,
-            "remote_capacity": 500,
-        },
-    },
-}
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+
+# Billing usage events go to the Redis stream usage:events, which only the
+# UsageConsumerWorkflow of Future AGI Cloud (ee.cloud) drains. Without it the
+# stream only grows until Redis is full, so unset, events are on exactly when
+# that consumer ships with this code. fi-collector reads the same variables
+# and is on unless USAGE_EVENTS_ENABLED=false, which every self-hosted compose
+# file and the Helm chart set. The cap bounds the stream (~160 bytes an entry,
+# ~160 MB at the default) while its consumer is behind or stopped; XADD trims
+# unread events beyond it. A positive integer, as fi-collector requires.
+from tfc.ee_loader import usage_event_consumer_available  # noqa: E402
+from tfc.utils.env import env_int  # noqa: E402
+
+_usage_events = os.getenv("USAGE_EVENTS_ENABLED", "").strip().lower()
+USAGE_EVENTS_ENABLED = (
+    _usage_events in ("true", "1", "yes", "on")
+    if _usage_events
+    else usage_event_consumer_available()
+)
+USAGE_EVENTS_MAX_LEN = env_int("USAGE_EVENTS_MAX_LEN", 1_000_000, minimum=1)
+
+# Django Channels layer. CHANNEL_LAYER_BACKEND: auto (default) | memory | redis |
+# rabbitmq. With one web process the layer lives in memory and needs no broker;
+# tfc/channel_layers.py explains how auto chooses.
+from tfc.channel_layers import channel_layer_settings  # noqa: E402
+
+CHANNEL_LAYER_BACKEND, CHANNEL_LAYERS = channel_layer_settings(
+    os.environ, redis_url=REDIS_URL, cloud=is_cloud_env(CLOUD_DEPLOYMENT)
+)
 
 
 if os.getenv("DJANGO_CACHE_BACKEND") == "locmem":
@@ -1310,17 +1412,38 @@ WEBAUTHN_ORIGIN = os.getenv("WEBAUTHN_ORIGIN", "http://localhost:3031")
 TWO_FACTOR_CHALLENGE_TTL = 300  # 5 minutes
 WEBAUTHN_CHALLENGE_TTL = 120  # 2 minutes
 
+
+def _ch25_setting(env, name, fallback):
+    """``CH25_*`` when set to a non-empty value, else the single-cluster ``CH_*``
+    value, so one set of CH_* variables (all the Helm chart sets, CH_PASSWORD
+    included) configures the v2 client too. An empty CH25_PASSWORD used to win
+    over CH_PASSWORD and connect without one."""
+    value = env.get(name)
+    return value if value not in (None, "") else fallback
+
+
+def _clickhouse_v2_connection(env, legacy):
+    return {
+        "CH25_HOST": _ch25_setting(env, "CH25_HOST", legacy.get("CH_HOST")),
+        "CH25_HTTP_PORT": _ch25_setting(
+            env, "CH25_HTTP_PORT", env.get("CH_HTTP_PORT") or None
+        ),
+        "CH25_TCP_PORT": _ch25_setting(
+            env, "CH25_TCP_PORT", env.get("CH_PORT") or None
+        ),
+        "CH25_USER": _ch25_setting(env, "CH25_USER", legacy.get("CH_USERNAME")),
+        "CH25_PASSWORD": _ch25_setting(env, "CH25_PASSWORD", legacy.get("CH_PASSWORD")),
+        "CH25_DATABASE": _ch25_setting(env, "CH25_DATABASE", legacy.get("CH_DATABASE")),
+    }
+
+
 # ─── ClickHouse 25.3 (v2) span store ────────────────────────────────────────
 # The new spans cluster (typed Maps + typed JSON; PLAN_V2_NO_CDC). Falls back
 # to the legacy CLICKHOUSE dict above for connection details if not set
-# explicitly — see tracer/services/clickhouse/v2/__init__.py:get_v2_config().
+# explicitly (_clickhouse_v2_connection) — see
+# tracer/services/clickhouse/v2/__init__.py:get_v2_config().
 CLICKHOUSE_V2 = {
-    "CH25_HOST": os.getenv("CH25_HOST"),
-    "CH25_HTTP_PORT": os.getenv("CH25_HTTP_PORT"),
-    "CH25_TCP_PORT": os.getenv("CH25_TCP_PORT"),
-    "CH25_USER": os.getenv("CH25_USER"),
-    "CH25_PASSWORD": os.getenv("CH25_PASSWORD"),
-    "CH25_DATABASE": os.getenv("CH25_DATABASE"),
+    **_clickhouse_v2_connection(os.environ, CLICKHOUSE),
     # ``None`` means the v2-specific flag was not configured and lets
     # ``get_v2_config`` inherit the legacy single-cluster setting.  A concrete
     # False must be reserved for an explicit CH25 override; defaulting to False

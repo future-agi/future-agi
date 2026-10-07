@@ -882,10 +882,10 @@ def _discussion_thread_participant_user_ids(thread, *, exclude_comment_id=None):
 
 
 def _annotation_discussion_url(item):
-    app_url = (getattr(settings, "APP_URL", "") or "").rstrip("/")
+    # The same UI every other email links to, with its scheme (http for a
+    # loopback UI), unlike APP_URL.
+    app_url = settings.FRONTEND_BASE_URL
     path = f"/dashboard/annotations/queues/{item.queue_id}/annotate?itemId={item.id}"
-    if app_url and not app_url.startswith(("http://", "https://")):
-        app_url = f"{getattr(settings, 'ssl', 'https://')}{app_url}"
     return f"{app_url}{path}" if app_url else path
 
 

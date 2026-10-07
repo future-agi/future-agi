@@ -22,7 +22,10 @@ import { useBuildProgress } from "src/api/simulate-environments/buildProgress";
 import { useWorkspaceChat } from "src/api/simulate-environments/workspaceChat";
 import { harnessIdempotencyKey } from "src/api/harness/harness";
 import { runHarnessEnvironment } from "src/api/simulate-environments/harnessEnvironments";
-import { runSimulationTarget } from "src/api/simulate-environments/runs";
+import {
+  refreshAfterRunStart,
+  runSimulationTarget,
+} from "src/api/simulate-environments/runs";
 import { listAllScenarioKeys } from "src/api/simulate-environments/scenarioSelection";
 import { CreditExhaustionBanner } from "src/components/CreditExhaustionBanner";
 import { useCreditExhaustion } from "src/hooks/use-credit-exhaustion";
@@ -30,7 +33,7 @@ import { useCreditExhaustion } from "src/hooks/use-credit-exhaustion";
 import { useEnvironmentsStore } from "../store/useEnvironmentsStore";
 import { useEnvState } from "../store/envState";
 import { BUILD_STATUS } from "../myEnvironments.constants";
-import SectionCard from "../components/SectionCard";
+import ChatSplitPane from "../components/ChatSplitPane";
 import EmptyState from "../components/EmptyState";
 import BuilderConsole from "../buildEnvironment/console/BuilderConsole";
 import { CONSOLE_COPY } from "../buildEnvironment/build.constants";
@@ -130,9 +133,7 @@ export default function EnvironmentWorkspace() {
     },
     onSuccess: (run) => {
       pendingSubmission.current = null;
-      queryClient.invalidateQueries({
-        queryKey: ["run-test-executions", run.run_test_id],
-      });
+      refreshAfterRunStart(queryClient, env.id, run.run_test_id);
       navigate(
         paths.dashboard.simulate.environments.execution(
           env.id,
@@ -272,7 +273,7 @@ export default function EnvironmentWorkspace() {
           locked
         />
         {creditBanner}
-        <Box sx={{ flex: 1, minHeight: 0, overflow: "hidden", p: 2 }}>
+        <Box sx={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
           <BuildingStage
             progress={progress}
             chat={chat}
@@ -413,42 +414,23 @@ export default function EnvironmentWorkspace() {
           lock and offers the fork. */}
       {locked && <TemplateLockBanner onFork={onFork} />}
 
-      <Box
-        sx={{
-          flex: 1,
-          minHeight: 0,
-          display: "grid",
-          gap: 2,
-          p: 2,
-          gridTemplateColumns: { xs: "1fr", lg: "minmax(340px, 400px) 1fr" },
-        }}
-      >
-        <SectionCard
-          sx={{ height: "100%", minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}
-        >
-          <BuilderConsole
-            turns={chat.turns}
-            running={chat.running}
-            onSend={chat.send}
-            onStop={chat.stop}
-            canStop={chat.inFlight}
-            frozen={!envLive || chat.frozen}
-            frozenReason={!envLive ? CONSOLE_COPY.frozen : chat.frozenReason}
-          />
-        </SectionCard>
-
-        <Box
-          sx={{
-            height: "100%",
-            minHeight: 0,
-            display: "flex",
-            flexDirection: "column",
-            border: "1px solid",
-            borderColor: "divider",
-            borderRadius: 1.5,
-            bgcolor: "background.paper",
-            overflow: "hidden",
-          }}
+      <Box sx={{ flex: 1, minHeight: 0 }}>
+        <ChatSplitPane
+          busy={chat.running || chat.inFlight || chat.waiting}
+          chat={({ collapse, open, collapseRef }) => (
+            <BuilderConsole
+              turns={chat.turns}
+              running={chat.running}
+              onSend={chat.send}
+              onStop={chat.stop}
+              canStop={chat.inFlight}
+              frozen={!envLive || chat.frozen}
+              frozenReason={!envLive ? CONSOLE_COPY.frozen : chat.frozenReason}
+              onCollapse={collapse}
+              collapseRef={collapseRef}
+              active={open}
+            />
+          )}
         >
           <WorkspacePanels
             env={displayEnv}
@@ -468,7 +450,7 @@ export default function EnvironmentWorkspace() {
             onStartRun={startRun}
             canRun={runnable && !runMutation.isPending}
           />
-        </Box>
+        </ChatSplitPane>
       </Box>
     </Box>
   );

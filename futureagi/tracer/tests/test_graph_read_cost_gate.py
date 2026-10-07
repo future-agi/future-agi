@@ -1073,7 +1073,7 @@ def test_toggle_without_simulator_numbers_parses_no_raw_log(
     ],
 )
 def test_estimate_reducer_tells_zero_from_unknown(rows, columns, expected):
-    assert graph_read_cost._reduce_estimate(rows, columns) == expected
+    assert graph_read_cost.reduce_spans_estimate(rows, columns) == expected
 
 
 @pytest.mark.unit
@@ -1104,7 +1104,7 @@ def test_raw_log_granules_spend_the_wall_before_the_spans_do():
 
 @pytest.mark.unit
 def test_estimate_reducer_counts_granules_as_it_counts_spans():
-    reduce = graph_read_cost._reduce_estimate
+    reduce = graph_read_cost.reduce_spans_estimate
     rows = [
         {"table": "spans", "rows": 5, "marks": 2},
         {"table": "spans", "rows": 7, "marks": 3},
