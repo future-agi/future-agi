@@ -171,6 +171,43 @@ export default function RerunSelectionBar({
                 : `Re-run ${plural(scenarios, "scenario")}`}
           </Typography>
 
+          {/* Set first, then act: Repeats sits above the option, outside it,
+              so changing it never starts the run. */}
+          <Stack spacing={0.5} sx={{ px: 1.5, pt: 0.5, pb: 1 }}>
+            <Stack direction="row" alignItems="center" spacing={1} useFlexGap>
+              {/* The same Repeats picker as the environment header. */}
+              <TrialsPicker
+                trials={trials}
+                onChange={setTrials}
+                scenarioCount={scenarios}
+                size="xs"
+              />
+              {ready && (
+                <Typography
+                  component="output"
+                  sx={{
+                    typography: "s3",
+                    fontWeight: 600,
+                    fontVariantNumeric: "tabular-nums",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {`${plural(scenarios, "scenario")} × ${plural(trials, "repeat")} = ${plural(calls, "call")}`}
+                </Typography>
+              )}
+            </Stack>
+            {ready && overLimit && (
+              <Typography sx={{ typography: "s3", color: "warning.main" }}>
+                {`That is ${calls.toLocaleString()} calls; a run allows up to ${MAX_CALLS_PER_RUN}. Lower Repeats or select fewer scenarios.`}
+              </Typography>
+            )}
+            {keys != null && scenarios === 0 && (
+              <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+                None of the selected calls has a scenario to re-run.
+              </Typography>
+            )}
+          </Stack>
+          <Divider />
           <Box
             role="menuitem"
             tabIndex={0}
@@ -211,43 +248,6 @@ export default function RerunSelectionBar({
               </Typography>
             </Box>
           </Box>
-
-          {/* Beside the option, not inside it, so changing Repeats never starts
-              the run. */}
-          <Stack spacing={0.5} sx={{ pl: "36px", pr: 1.5, pb: 0.5 }}>
-            <Stack direction="row" alignItems="center" spacing={1} useFlexGap>
-              {/* The same Repeats picker as the environment header. */}
-              <TrialsPicker
-                trials={trials}
-                onChange={setTrials}
-                scenarioCount={scenarios}
-                size="xs"
-              />
-              {ready && (
-                <Typography
-                  component="output"
-                  sx={{
-                    typography: "s3",
-                    fontWeight: 600,
-                    fontVariantNumeric: "tabular-nums",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {`${plural(scenarios, "scenario")} × ${plural(trials, "repeat")} = ${plural(calls, "call")}`}
-                </Typography>
-              )}
-            </Stack>
-            {ready && overLimit && (
-              <Typography sx={{ typography: "s3", color: "warning.main" }}>
-                {`That is ${calls.toLocaleString()} calls; a run allows up to ${MAX_CALLS_PER_RUN}. Lower Repeats or select fewer scenarios.`}
-              </Typography>
-            )}
-            {keys != null && scenarios === 0 && (
-              <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-                None of the selected calls has a scenario to re-run.
-              </Typography>
-            )}
-          </Stack>
         </Box>
       </Popover>
     </Stack>
