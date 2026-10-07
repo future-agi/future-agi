@@ -318,6 +318,17 @@ export default function RunDetail({
               activeCallId={openCall?.task.id ?? null}
               activePage={openCall?.page ?? null}
               initialFilters={tableHandoff.filters}
+              // Ticked calls re-run as a new simulation, through the same start
+              // as Run again: it opens the new run.
+              onRerunScenarios={
+                onStartRun ? (keys, trials) => onStartRun(keys, trials) : null
+              }
+              runTrials={identity?.trials || 1}
+              rerunDisabledReason={
+                live
+                  ? "Wait for this run to finish before re-running calls"
+                  : null
+              }
             />
           )}
 

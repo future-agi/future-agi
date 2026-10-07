@@ -119,6 +119,18 @@ const payload = () => ({
 describe("mapCallRow", () => {
   const evalCols = columnOrder();
 
+  // A re-run takes scenario keys, so the row carries its key on its own, not
+  // only folded into the display name.
+  it("keeps the call's scenario key, or null when it has none", () => {
+    expect(
+      mapCallRow({ id: "c1", source_scenario_key: "refund-double-charge" }, [])
+        .sourceScenarioKey,
+    ).toBe("refund-double-charge");
+    expect(
+      mapCallRow({ id: "c2", scenario: "Legacy call" }, []).sourceScenarioKey,
+    ).toBeNull();
+  });
+
   it.each([0, null, undefined])(
     "preserves missing and zero interruption metrics: %s",
     (value) => {

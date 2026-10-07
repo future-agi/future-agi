@@ -41,6 +41,7 @@ export default function TraceGroupHeaderRow({
   evals,
   top = HEAD_ROW_PX,
   loading = false,
+  leadingCell = false,
 }) {
   // Pinned under the head row while its group's calls scroll past; the next
   // group's row slides over it. Opaque for that, so the hover tint layers over
@@ -178,6 +179,8 @@ export default function TraceGroupHeaderRow({
 
   return (
     <TableRow onClick={onToggle}>
+      {/* Keeps the grid aligned under the call rows' checkbox column. */}
+      {leadingCell && <TableCell sx={{ ...cellSx, px: 1, width: 44 }} />}
       {descColumns.length === 0 ? (
         <TableCell sx={{ ...cellSx, pl: 2, overflow: "hidden" }}>
           {label}
@@ -273,4 +276,5 @@ TraceGroupHeaderRow.propTypes = {
   evals: PropTypes.array,
   top: PropTypes.number,
   loading: PropTypes.bool,
+  leadingCell: PropTypes.bool,
 };
