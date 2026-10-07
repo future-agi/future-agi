@@ -1089,17 +1089,24 @@ def provision_scenarios(
 
 
 def _target_agent_prompt(job: HostedHarnessJob, payload: dict[str, Any]) -> str:
-    """The target agent's instructions: the guest's own prompt, else the contract excerpt."""
-    supplied = str(payload.get("agent_prompt") or "").strip()
-    if supplied:
-        return supplied
-    if str((job.payload.get("agent") or {}).get("connector") or "") == "phone":
-        return str(
+    """Resolve target instructions without reducing an Others prompt."""
+    connector = str((job.payload.get("agent") or {}).get("connector") or "")
+    if connector == "phone":
+        # "Others" is configured from a user-supplied system prompt.  Keep that
+        # complete prompt as the agent definition's source of truth: the hosted
+        # guest's ``agent_prompt`` may only be the short contract excerpt used
+        # during authoring and must not replace it.
+        configured = str(
             ((job.payload.get("agent") or {}).get("config") or {}).get(
                 "target_system_prompt"
             )
             or ""
         ).strip()
+        if configured:
+            return configured
+    supplied = str(payload.get("agent_prompt") or "").strip()
+    if supplied:
+        return supplied
     return str(_authored_contract_data(job).get("system_prompt_excerpt") or "").strip()
 
 
@@ -1169,7 +1176,7 @@ def _record_target_agent_facts(
         changed.append("target_speaks_first")
     if changed:
         agent_definition.save(update_fields=[*changed, "updated_at"])
-    if prompt and agent_definition.latest_version is None:
+    if prompt and (agent_definition.latest_version is None or "description" in changed):
         agent_definition.create_version(
             description=prompt,
             commit_message="hosted harness target agent prompt",
