@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "../../../utils/test-utils";
 import userEvent from "@testing-library/user-event";
+import { createTheme } from "@mui/material/styles";
+import { palette } from "src/theme/palette";
+import { customShadows } from "src/theme/custom-shadows";
+import { componentsOverrides } from "src/theme/overrides";
 import FallbacksSection from "./FallbacksSection";
 
 // ---------------------------------------------------------------------------
@@ -256,6 +260,36 @@ describe("FallbacksSection", () => {
 
   // ---- Save & Discard ----
   describe("save and discard", () => {
+    describe.each(["light", "dark"])("%s production theme", (mode) => {
+      const theme = createTheme({
+        palette: palette(mode),
+        customShadows: customShadows(mode),
+      });
+      theme.components = componentsOverrides(theme);
+
+      it.each([
+        ["inline banner", 0],
+        ["sticky bar", 1],
+      ])(
+        "uses primary colors for the %s save button",
+        async (_label, index) => {
+          render(<FallbacksSection />, { theme });
+          await userEvent.click(
+            screen.getByRole("button", { name: /Add Fallback Chain/i }),
+          );
+
+          const saveButtons = screen.getAllByRole("button", {
+            name: /Save & Apply/i,
+          });
+          expect(saveButtons).toHaveLength(2);
+          expect(saveButtons[index]).toHaveStyle({
+            "background-color": theme.palette.primary.main,
+            color: theme.palette.primary.contrastText,
+          });
+        },
+      );
+    });
+
     it("does not show save bar initially (no changes)", () => {
       render(<FallbacksSection />);
       expect(screen.queryByText("Save & Apply")).not.toBeInTheDocument();
