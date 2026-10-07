@@ -5,6 +5,7 @@ from django.db import transaction
 from django.db.models import Prefetch
 from django.utils import timezone
 
+from simulate.models import SimulateEvalConfig
 from simulate.models.test_execution import CallExecution, CallTranscript, TestExecution
 from simulate.services.harness_scenarios import authored_scenarios_for_calls
 from simulate.services.run_results_v3 import build_evaluation_catalog, eval_rows
@@ -410,6 +411,12 @@ def simulation_evidence_page(
     rows = list(calls_qs[cursor : cursor + 20])
     authored = _authored_goals(execution, rows)
     _, live_eval_ids = build_evaluation_catalog(execution)
+    live_eval_configs = {
+        str(config.id): config
+        for config in SimulateEvalConfig.objects.filter(
+            id__in=live_eval_ids, deleted=False
+        ).select_related("eval_template")
+    }
     calls = []
     for call in rows:
         calls.append(
@@ -441,7 +448,7 @@ def simulation_evidence_page(
                         "passed": row["passed"],
                         "reason": row["reason"],
                     }
-                    for row in eval_rows(call, live_eval_ids)
+                    for row in eval_rows(call, live_eval_configs)
                 ],
             }
         )
