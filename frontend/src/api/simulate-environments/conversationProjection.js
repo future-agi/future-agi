@@ -256,3 +256,15 @@ export function conversationInFlight(conversation) {
   const messages = Array.isArray(conversation.messages) ? conversation.messages : [];
   return messages.some((m) => IN_FLIGHT_MESSAGE_STATES.has(m.state));
 }
+
+// Whether the builder is waiting on the user — a question or confirmation that
+// no message answers yet. Not "in flight", so callers that signal activity
+// (the collapsed chat's rail dot) need this too, or they go quiet exactly when
+// the user has to act.
+export function conversationWaiting(conversation) {
+  if (!conversation) return false;
+  const blocking = conversation.blocking_input || null;
+  if (!blocking) return conversation.state === "waiting_for_user";
+  const messages = Array.isArray(conversation.messages) ? conversation.messages : [];
+  return !messages.some((m) => m.reply_to === blocking.message_id);
+}

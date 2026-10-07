@@ -18560,6 +18560,57 @@ export interface HarnessSubGoalApi {
   judged: boolean;
 }
 
+export type HarnessTargetMetricsApiProvider =
+  (typeof HarnessTargetMetricsApiProvider)[keyof typeof HarnessTargetMetricsApiProvider];
+
+export const HarnessTargetMetricsApiProvider = {
+  vapi: "vapi",
+  retell: "retell",
+  livekit: "livekit",
+} as const;
+
+export interface HarnessTargetUsageApi {
+  /** @minimum 0 */
+  prompt_tokens?: number;
+  /** @minimum 0 */
+  completion_tokens?: number;
+  /** @minimum 0 */
+  total_tokens?: number;
+}
+
+export interface HarnessTargetLatencyApi {
+  /** @minimum 0 */
+  turn?: number;
+  /** @minimum 0 */
+  model?: number;
+  /** @minimum 0 */
+  voice?: number;
+  /** @minimum 0 */
+  transcriber?: number;
+  /** @minimum 0 */
+  endpointing?: number;
+  /** @maxItems 1000 */
+  turns?: number[];
+}
+
+export interface HarnessTargetMetricsApi {
+  provider: HarnessTargetMetricsApiProvider;
+  usage?: HarnessTargetUsageApi;
+  /** @minimum 0 */
+  cost_cents?: number;
+  latency?: HarnessTargetLatencyApi;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  provider_call_id?: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  provider_end_reason?: string;
+}
+
 export interface HarnessCallApi {
   started_at: string;
   ended_at: string;
@@ -18578,6 +18629,8 @@ export interface HarnessCallApi {
    * @maxLength 128
    */
   stop_reason?: string;
+  script_completed?: boolean;
+  target_metrics?: HarnessTargetMetricsApi;
 }
 
 export type HarnessFailureApiDomain =
@@ -22223,10 +22276,12 @@ export type CallExecutionV3DetailResponseApiOutcome =
   (typeof CallExecutionV3DetailResponseApiOutcome)[keyof typeof CallExecutionV3DetailResponseApiOutcome];
 
 export const CallExecutionV3DetailResponseApiOutcome = {
+  queued: "queued",
+  in_progress: "in_progress",
   passed: "passed",
   failed: "failed",
-  error: "error",
   inconclusive: "inconclusive",
+  error: "error",
 } as const;
 
 export interface PersonaDetailsApi {
@@ -22237,6 +22292,12 @@ export interface PersonaDetailsApi {
   /** @minLength 1 */
   age: string;
   traits: string[];
+}
+
+export interface SubGoalResultApi {
+  /** @minLength 1 */
+  name: string;
+  passed: boolean | null;
 }
 
 export interface CostBreakdownApi {
@@ -22426,6 +22487,7 @@ export interface CallExecutionV3DetailResponseApi {
   persona: string;
   persona_details: PersonaDetailsApi;
   sub_goals: string[];
+  sub_goal_results: SubGoalResultApi[];
   outcome: CallExecutionV3DetailResponseApiOutcome;
   cost_breakdown_cents: CostBreakdownApi;
   evaluations: SimulateRunV3EvaluationResultApi[];
@@ -22549,6 +22611,8 @@ export interface RunDashboardCsatApi {
   bins: RunDashboardHistogramBinApi[];
   measured: number;
   total: number;
+  satisfied: number;
+  satisfied_percent: number;
   agreement: RunDashboardAgreementApi;
 }
 
@@ -22616,15 +22680,36 @@ export interface RunDashboardEvaluationSummaryApi {
   passed: number;
   measured: number;
   pass_rate: number;
+  errored_checks: number;
 }
 
 export interface RunDashboardRiskApi {
+  queued: number;
+  in_progress: number;
   /** @minLength 1 */
-  goal: string;
+  scenario: string;
   passed: number;
   failed: number;
   error: number;
   inconclusive: number;
+}
+
+export interface RunDashboardHealthApi {
+  show_banner: boolean;
+  attempted: number;
+  ran_cleanly: number;
+  connected: number;
+  errored: number;
+  not_evaluated: number;
+  eval_errors: number;
+}
+
+export interface RunDashboardComparisonApi {
+  available: boolean;
+  previous_execution_id: string;
+  shared_scenarios: number;
+  newly_passing: string[];
+  newly_failing: string[];
 }
 
 export interface RunDashboardV3Api {
@@ -22647,6 +22732,8 @@ export interface RunDashboardV3Api {
   unavailable_features: RunDashboardUnavailableApi[];
   evaluation_summary: RunDashboardEvaluationSummaryApi;
   use_case_risk: RunDashboardRiskApi[];
+  run_health: RunDashboardHealthApi;
+  comparison: RunDashboardComparisonApi;
   goal_count: number;
 }
 
@@ -22659,6 +22746,8 @@ export interface AnalyticsExecutionApi {
 }
 
 export interface OutcomeCountsApi {
+  queued: number;
+  in_progress: number;
   passed: number;
   failed: number;
   error: number;
@@ -22710,10 +22799,61 @@ export interface RiskApi {
   tokens: TotalMetricStatsApi;
   cost_cents: TotalMetricStatsApi;
   /** @minLength 1 */
-  goal: string;
+  scenario: string;
+  /** @minLength 1 */
+  scenario_key: string;
+}
+
+export interface ReliabilityIntervalApi {
+  low: number;
+  high: number;
+  effective_n: number;
+  evaluated: number;
+  clusters: number;
+}
+
+export type ReliabilityRowApiVerdict =
+  (typeof ReliabilityRowApiVerdict)[keyof typeof ReliabilityRowApiVerdict];
+
+export const ReliabilityRowApiVerdict = {
+  passed: "passed",
+  failed: "failed",
+  flaky: "flaky",
+  not_evaluated: "not_evaluated",
+} as const;
+
+export interface ReliabilityRowApi {
+  queued: number;
+  in_progress: number;
+  passed: number;
+  failed: number;
+  error: number;
+  inconclusive: number;
+  /** @minLength 1 */
+  scenario: string;
+  /** @minLength 1 */
+  scenario_key: string;
+  runs: number;
+  evaluated: number;
+  pass_rate: number;
+  verdict: ReliabilityRowApiVerdict;
+}
+
+export interface ReliabilityApi {
+  trials: number;
+  scenarios: number;
+  consistent_pass: number;
+  passed_at_least_once: number;
+  repeated: number;
+  flaky: number;
+  flip_rate: number;
+  pass_rate_interval: ReliabilityIntervalApi;
+  rows: ReliabilityRowApi[];
 }
 
 export interface TurnDistributionApi {
+  queued: number;
+  in_progress: number;
   passed: number;
   failed: number;
   error: number;
@@ -22729,6 +22869,7 @@ export interface EvaluationSummaryApi {
   passed: number;
   failed: number;
   measured: number;
+  errored: number;
   missing: number;
   pass_rate: number;
   average_score: number;
@@ -22806,6 +22947,7 @@ export interface RunAnalyticsV3ResponseApi {
   execution: AnalyticsExecutionApi;
   summary: AnalyticsSummaryApi;
   scenario_risk: RiskApi[];
+  reliability: ReliabilityApi;
   turn_distribution: TurnDistributionApi[];
   evaluations: EvaluationSummaryApi[];
   failure_breakdown: FailureBreakdownApi[];
@@ -22851,10 +22993,12 @@ export type RunCallApiOutcome =
   (typeof RunCallApiOutcome)[keyof typeof RunCallApiOutcome];
 
 export const RunCallApiOutcome = {
+  queued: "queued",
+  in_progress: "in_progress",
   passed: "passed",
   failed: "failed",
-  error: "error",
   inconclusive: "inconclusive",
+  error: "error",
 } as const;
 
 export interface RunCallApi {
@@ -22873,6 +23017,7 @@ export interface RunCallApi {
   persona: string;
   persona_details: PersonaDetailsApi;
   sub_goals: string[];
+  sub_goal_results: SubGoalResultApi[];
   /** @minLength 1 */
   harness_outcome_status: string;
   /** @minLength 1 */

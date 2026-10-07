@@ -3,6 +3,7 @@ import PropTypes from "prop-types";
 import { Box, Stack, Tab } from "@mui/material";
 import { CustomTabs } from "src/components/tabs/tabs";
 
+import { ENV_TABS_SX } from "../../environmentOptions";
 import { ENV_SHAPE, ENV_STATE_SHAPE } from "../../workspace/overview/overview.constants";
 import WorkspacePanels from "../../workspace/WorkspacePanels";
 import { gapsByTab, counts as countsFor } from "../../workspace/helpers/workspaceGaps";
@@ -80,16 +81,16 @@ export default function BuildingPane({
           onChange={() => {}}
           variant="scrollable"
           scrollButtons={false}
-          sx={{ minHeight: 42, px: 1, "& .MuiTab-root": { typography: "s2", minHeight: 42 } }}
+          sx={ENV_TABS_SX}
         >
           {BUILDING_TABS.map((t) => (
-            <Tab key={t.id} value={t.id} label={t.label} sx={{ minHeight: 42 }} />
+            <Tab key={t.id} value={t.id} label={t.label} />
           ))}
         </CustomTabs>
       </Box>
 
       {/* body */}
-      <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "auto" }}>
+      <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "auto", px: 2.5 }}>
         <DerivingAnimation
           label={
             failure
