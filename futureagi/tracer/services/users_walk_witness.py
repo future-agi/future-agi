@@ -27,7 +27,12 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from tracer.services.clickhouse.query_builders.user_list import (
+        MatchingActivityWitness,
+    )
 
 _NUMBER_OPERATORS = {
     "equals": "=",
@@ -58,11 +63,15 @@ def _finite_number(value: Any) -> float | None:
 
 
 def typed_walk_filter(
-    witness: tuple[str, str, str, dict[str, Any]], item: dict[str, Any]
+    witness: MatchingActivityWitness, item: dict[str, Any]
 ) -> WalkedTypedFilter | None:
-    """The walked typed filter for ``item``, or ``None`` when it must stay seeded."""
+    """The walked typed filter for ``item``, or ``None`` when it must stay seeded.
 
-    key, kind, witness_sql, witness_params = witness
+    ``witness`` is the raw ``MatchingActivityWitness`` the builder returned.
+    """
+
+    key, kind = witness.key, witness.kind
+    witness_sql, witness_params = witness.sql, witness.params
     if kind not in {"number", "boolean"}:
         return None
     config = item.get("filter_config") or item.get("filterConfig") or {}

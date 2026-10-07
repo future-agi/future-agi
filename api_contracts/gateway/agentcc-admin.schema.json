@@ -770,6 +770,42 @@
         "data": { "type": "array", "items": { "$ref": "#/$defs/KeyResponse" } }
       }
     },
+    "SyncedKey": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "key_hash"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "owner": { "type": "string" },
+        "key_hash": { "type": "string" },
+        "key_prefix": { "type": "string" },
+        "models": { "type": "array", "items": { "type": "string" } },
+        "providers": { "type": "array", "items": { "type": "string" } },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "expires_at": { "type": "string" }
+      }
+    },
+    "ImportKeysRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["keys"],
+      "properties": {
+        "keys": { "type": "array", "items": { "$ref": "#/$defs/SyncedKey" } }
+      }
+    },
+    "ImportKeysResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["received", "loaded"],
+      "properties": {
+        "received": { "type": "integer" },
+        "loaded": { "type": "integer" }
+      }
+    },
     "StatusResponse": {
       "type": "object",
       "additionalProperties": false,

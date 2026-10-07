@@ -89,6 +89,7 @@ from accounts.views.workspace_management import (
     WorkspaceInviteAPIView,
     WorkspaceListAPIView,
 )
+from tfc.ee_gating import is_oss
 
 router = DefaultRouter()
 router.register("key", SecretKeyAPIViewSet, basename="user-secret-keys")
@@ -326,6 +327,11 @@ gcp_marketplace_urls = [
     ),
 ]
 
+# AWS and GCP Marketplace sign-up is Future AGI Cloud's. The endpoints are
+# anonymous and call AWS and Google, so a self-hosted install does not mount
+# them (tfc.openapi_urls still documents them).
+marketplace_urls = aws_marketplace_urls + gcp_marketplace_urls
+
 config_urls = [
     path("config/", public_config, name="public-config"),
 ]
@@ -409,8 +415,7 @@ urlpatterns = (
     + rbac_urls
     + workspace_member_urls
     + organization_urls
-    + aws_marketplace_urls
-    + gcp_marketplace_urls
+    + ([] if is_oss() else marketplace_urls)
     + config_urls
     + two_factor_urls
     + passkey_urls

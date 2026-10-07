@@ -12,6 +12,7 @@ from django.db.models import F, Q
 from django.utils import timezone
 
 from tfc.ee_gating import is_oss
+from tracer.constants.grouping_versions import SAMPLED_GROUPING_POLICY_VERSION
 from tracer.models.trace_grouping import (
     GroupingAttemptState,
     GroupingFeatureState,
@@ -23,7 +24,13 @@ from tracer.models.trace_grouping import (
     TraceGroupingScope,
     TraceGroupingWork,
 )
-from tracer.models.trace_investigation import TraceInvestigationReport
+from tracer.models.trace_investigation import (
+    InvestigationWorkload,
+    TraceInvestigationFinding,
+    TraceInvestigationJob,
+    TraceInvestigationJobState,
+    TraceInvestigationReport,
+)
 from tracer.queries.grouping import (
     GroupingSnapshotError,
     canonical_snapshot_digest,
@@ -33,6 +40,9 @@ from tracer.queries.grouping import (
 FEATURE_LEASE_SECONDS = 120
 GROUPING_LEASE_SECONDS = 180
 MAX_ATTEMPTS = 5
+# How long a simulation run's grouping waits before checking again that the run
+# has finished; it also keeps waiting works out of the claim window's head.
+SIMULATION_SETTLE_SECONDS = 15
 # The grouping control client permits 8 MiB payloads. Keep 1 MiB for the
 # request envelope while allowing lossless multi-cohort receipts and Registry
 # history to remain durable across worker restarts.
@@ -58,7 +68,7 @@ def _token_hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
-def _eligible_project(project_id: uuid.UUID) -> bool:
+def _eligible_project(project_id: uuid.UUID, *, simulation: bool = False) -> bool:
     if is_oss() or not getattr(settings, "ERROR_FEED_GROUPING_ENABLED", False):
         return False
     if getattr(settings, "ERROR_FEED_GROUPING_BUDGET_ENFORCED", True):
@@ -75,9 +85,11 @@ def _eligible_project(project_id: uuid.UUID) -> bool:
                 return False
         except (InvalidOperation, ValueError):
             return False
-    return getattr(settings, "ERROR_FEED_GROUPING_ALL_PROJECTS", False) or str(
-        project_id
-    ) in getattr(settings, "ERROR_FEED_GROUPING_PROJECT_IDS", ())
+    return (
+        simulation
+        or getattr(settings, "ERROR_FEED_GROUPING_ALL_PROJECTS", False)
+        or str(project_id) in getattr(settings, "ERROR_FEED_GROUPING_PROJECT_IDS", ())
+    )
 
 
 def _live_report(report: TraceInvestigationReport) -> bool:
@@ -89,7 +101,10 @@ def _live_report(report: TraceInvestigationReport) -> bool:
         and report.source == "omega"
         and report.job_id is not None
         and report.job.current_report_id == report.id
-        and _eligible_project(report.project_id)
+        and _eligible_project(
+            report.project_id,
+            simulation=report.workload_type == "simulation_test_execution",
+        )
     )
 
 
@@ -317,6 +332,30 @@ def mark_feature_ready(
     }
 
 
+def _simulation_run_settling(report) -> bool:
+    """A simulation run is a closed batch: group it once every call is read.
+
+    Grouping a report the moment it lands shows discovery one call at a time,
+    so a failure shared across calls never meets its peers and is deferred for
+    good. Waiting for the run lets one cohort hold all of it.
+    """
+    return (
+        TraceInvestigationJob.no_workspace_objects.filter(
+            test_execution_id=report.test_execution_id,
+            workload_type=InvestigationWorkload.SIMULATION_TEST_EXECUTION,
+            state__in=[
+                TraceInvestigationJobState.WAITING,
+                TraceInvestigationJobState.RUNNING,
+            ],
+        ).exists()
+        or TraceGroupingFeatureJob.no_workspace_objects.filter(
+            report__test_execution_id=report.test_execution_id,
+            report__is_current=True,
+            state__in=[GroupingFeatureState.PENDING, GroupingFeatureState.RUNNING],
+        ).exists()
+    )
+
+
 def claim_grouping_work(*, worker_id: str, limit: int) -> dict:
     if not worker_id or not 1 <= limit <= 10:
         raise GroupingControlError("invalid grouping claim request")
@@ -361,6 +400,19 @@ def claim_grouping_work(*, worker_id: str, limit: int) -> dict:
                 work.state = GroupingWorkState.SUPERSEDED
                 work.save(update_fields=["state", "updated_at"])
                 continue
+            if (
+                work.report.workload_type
+                == InvestigationWorkload.SIMULATION_TEST_EXECUTION
+            ):
+                if _simulation_run_settling(work.report):
+                    work.not_before = now + timedelta(seconds=SIMULATION_SETTLE_SECONDS)
+                    work.save(update_fields=["not_before", "updated_at"])
+                    continue
+                # The run has settled, so all of its works are due: this claim
+                # takes them as one cohort, not whichever came due first.
+                TraceGroupingWork.no_workspace_objects.filter(
+                    scope=scope, state=GroupingWorkState.PENDING, not_before__gt=now
+                ).update(not_before=now)
             if TraceGroupingAttempt.no_workspace_objects.filter(
                 work__scope=scope,
                 state=GroupingAttemptState.CLAIMED,
@@ -374,6 +426,7 @@ def claim_grouping_work(*, worker_id: str, limit: int) -> dict:
             pending_snapshots = []
             peer_works = []
             pending_count = 0
+            pending_occurrence_ids = []
             previous = work.attempts.order_by("-attempt_number").first()
             try:
                 if previous and previous.claimed_work_ids:
@@ -432,7 +485,15 @@ def claim_grouping_work(*, worker_id: str, limit: int) -> dict:
                     ):
                         continue
                     candidate = export_grouping_snapshot(report=peer.report)
-                    count = len(candidate["occurrences"])
+                    ids = [item["occurrence_id"] for item in candidate["occurrences"]]
+                    if scope.policy_version == SAMPLED_GROUPING_POLICY_VERSION:
+                        ids = list(
+                            TraceInvestigationFinding.no_workspace_objects.filter(
+                                pk__in=ids, cluster__isnull=True
+                            ).values_list("id", flat=True)
+                        )
+                        ids = sorted(str(item) for item in ids)
+                    count = len(ids)
                     if not count or pending_count + count > 100:
                         if peer.id == work.id:
                             raise GroupingSnapshotError(
@@ -442,6 +503,7 @@ def claim_grouping_work(*, worker_id: str, limit: int) -> dict:
                     pending_snapshots.append(candidate)
                     peer_works.append(peer)
                     pending_count += count
+                    pending_occurrence_ids.extend(ids)
             except GroupingSnapshotError:
                 work.state = GroupingWorkState.FAILED
                 work.save(update_fields=["state", "updated_at"])
@@ -465,6 +527,13 @@ def claim_grouping_work(*, worker_id: str, limit: int) -> dict:
             scope.refresh_from_db(fields=["lease_fence"])
             work.attempt_number += 1
             for peer in peer_works:
+                if (
+                    scope.policy_version == SAMPLED_GROUPING_POLICY_VERSION
+                    and not peer.budget_work_id
+                    and peer.id != (work.budget_work_id or work.id)
+                ):
+                    peer.budget_work_id = work.budget_work_id or work.id
+                    peer.save(update_fields=["budget_work", "updated_at"])
                 peer.state = GroupingWorkState.RUNNING
                 if peer.id == work.id:
                     peer.attempt_number = work.attempt_number
@@ -481,6 +550,7 @@ def claim_grouping_work(*, worker_id: str, limit: int) -> dict:
                 snapshot_digest=cohort_digest,
                 registry_revision=scope.registry_revision,
                 claimed_work_ids=[str(item.id) for item in peer_works],
+                pending_occurrence_ids=pending_occurrence_ids,
                 checkpoint=previous.checkpoint if reusable_checkpoint else {},
                 checkpoint_revision=(
                     previous.checkpoint_revision if reusable_checkpoint else 0
@@ -523,11 +593,7 @@ def claim_grouping_work(*, worker_id: str, limit: int) -> dict:
                 "snapshot": snapshot,
                 "snapshot_digest": attempt.snapshot_digest,
                 "pending_snapshots": pending_snapshots,
-                "pending_ids": [
-                    item["occurrence_id"]
-                    for snap in pending_snapshots
-                    for item in snap["occurrences"]
-                ],
+                "pending_ids": attempt.pending_occurrence_ids,
                 "checkpoint": attempt.checkpoint,
                 "checkpoint_revision": attempt.checkpoint_revision,
                 "receipt_ids": [

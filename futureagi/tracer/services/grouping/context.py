@@ -7,6 +7,7 @@ from collections import defaultdict
 from django.db import transaction
 from django.db.models import F, Q
 
+from tracer.constants.grouping_versions import SAMPLED_GROUPING_POLICY_VERSION
 from tracer.models.trace_grouping import (
     TraceGroupingAttempt,
     TraceGroupingConstraint,
@@ -23,6 +24,10 @@ from tracer.services.grouping.control import GroupingConflict
 from tracer.services.grouping.feature_store import (
     GroupingFeatureStore,
     probe_bucket_keys,
+)
+from tracer.services.grouping.sampling import (
+    MAX_ISSUE_EVIDENCE_MEMBERS,
+    membership_binding,
 )
 
 MAX_CANDIDATE_ISSUES = 20
@@ -139,6 +144,11 @@ def build_claim_context(
         for snap in pending_snapshots
         for item in snap["occurrences"]
     }
+    if (
+        scope.policy_version == SAMPLED_GROUPING_POLICY_VERSION
+        and attempt.pending_occurrence_ids
+    ):
+        pending_ids = set(attempt.pending_occurrence_ids)
     pending_reports = {snap["report"]["id"]: snap for snap in pending_snapshots}
     receipts = list(
         TraceGroupingFeature.no_workspace_objects.filter(
@@ -319,6 +329,7 @@ def build_claim_context(
         (state for state in candidate_states if str(state.cluster_id) in issue_scores),
         key=lambda state: (-issue_scores[str(state.cluster_id)], str(state.cluster_id)),
     )
+    sampled = scope.policy_version == SAMPLED_GROUPING_POLICY_VERSION
     issues = []
     omitted = [
         {"issue_id": issue_id, "reason": "candidate_feature_not_current"}
@@ -339,17 +350,47 @@ def build_claim_context(
                 }
             )
             continue
-        from tracer.services.grouping.publish import _protected
-
-        members = list(
-            _live_findings(
-                TraceInvestigationFinding.no_workspace_objects.filter(
-                    cluster_id=state.cluster_id
-                )
-            )
-            .select_related("report")
-            .order_by("id")[: MAX_MEMBERS_PER_ISSUE + 1]
+        from tracer.services.grouping.publish import (
+            _issue_evidence,
+            _issue_members,
+            _protected,
         )
+
+        # Membership validation is independent of the model evidence budget.
+        # Only sample rows have their report snapshots/features transported.
+        if sampled:
+            # Reject candidates that cannot fit before scanning full membership.
+            available = MAX_CANDIDATE_MEMBERS - len(candidate_member_ids)
+            size = TraceInvestigationFinding.no_workspace_objects.filter(
+                cluster_id=state.cluster_id
+            ).count()
+            if min(size, MAX_ISSUE_EVIDENCE_MEMBERS) > available:
+                omitted.append(
+                    {
+                        "issue_id": str(state.cluster_id),
+                        "reason": "full_membership_bound",
+                    }
+                )
+                continue
+            full_ids, sample_ids = _issue_evidence(state, sampled=True)
+            members = list(
+                TraceInvestigationFinding.no_workspace_objects.filter(id__in=sample_ids)
+                .select_related("report")
+                .order_by("id")
+            )
+            if [str(item.id) for item in members] != sample_ids:
+                raise GroupingConflict("candidate evidence sample changed")
+        else:
+            members = list(
+                _live_findings(
+                    TraceInvestigationFinding.no_workspace_objects.filter(
+                        cluster_id=state.cluster_id
+                    )
+                )
+                .select_related("report")
+                .order_by("id")[: MAX_MEMBERS_PER_ISSUE + 1]
+            )
+            full_ids = [str(item.id) for item in members]
         if (
             len(members) > MAX_MEMBERS_PER_ISSUE
             or len(candidate_member_ids) + len(members) > MAX_CANDIDATE_MEMBERS
@@ -358,11 +399,7 @@ def build_claim_context(
                 {"issue_id": str(state.cluster_id), "reason": "full_membership_bound"}
             )
             continue
-        if not members:
-            raise GroupingConflict("candidate issue has no current members")
-        from tracer.services.grouping.publish import _issue_members
-
-        if _issue_members(state) != [str(item.id) for item in members]:
+        if not sampled and _issue_members(state) != full_ids:
             raise GroupingConflict("candidate issue full membership changed")
         issue_members = []
         for member in members:
@@ -371,7 +408,16 @@ def build_claim_context(
                 {
                     "occurrence_id": str(member.id),
                     "report_id": str(member.report_id),
-                    "trace_id": str(member.report.trace_id),
+                    "trace_id": (
+                        str(member.report.trace_id)
+                        if member.report.trace_id is not None
+                        else None
+                    ),
+                    **(
+                        {"test_execution_id": str(member.report.test_execution_id)}
+                        if member.report.test_execution_id
+                        else {}
+                    ),
                 }
             )
         issues.append(
@@ -382,7 +428,8 @@ def build_claim_context(
                 "mechanism": state.mechanism,
                 "prototype_occurrence_ids": state.prototype_occurrence_ids,
                 "members": issue_members,
-                "membership_complete": True,
+                "membership_complete": len(members) == len(full_ids),
+                **(membership_binding(state, full_ids) if sampled else {}),
             }
         )
     candidate_reports = {}
@@ -422,7 +469,7 @@ def build_claim_context(
             for item in candidate_receipts
             if item.view == "semantics"
         } != candidate_member_ids:
-            raise GroupingConflict("candidate full members lack semantic features")
+            raise GroupingConflict("candidate evidence sample lacks semantic features")
         for row in candidate_receipts:
             report_id = str(row.finding.report_id)
             if (
@@ -430,7 +477,7 @@ def build_claim_context(
                 or row.evidence_revision
                 != candidate_reports[report_id]["report"]["evidence_digest"]
             ):
-                raise GroupingConflict("candidate full member feature is stale")
+                raise GroupingConflict("candidate evidence sample feature is stale")
         receipt_rows.extend(candidate_receipts)
     receipt_map = {
         (str(row.finding_id), row.view): _receipt(row) for row in receipt_rows

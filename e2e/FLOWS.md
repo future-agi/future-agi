@@ -7,7 +7,7 @@
 ### ALERT-E2E-001 — a fired alert opens the traces from that fire’s own window
 
 **Goal:** An on-call engineer opens a fired alert and lands on the traces from that fire’s own time window  
-**Spec:** `flows/alerts/view-trace-scoping.spec.ts:44`  
+**Spec:** `flows/alerts/view-trace-scoping.spec.ts:45`  
 **Tags:** —
 
 **User steps:**
@@ -162,6 +162,28 @@
 - the unchanged bearer resolves no-workspace-header project reads to A2 after the UI switch
 - explicit A1 scope returns P1 without changing subsequent implicit A2 scope or persisted preferences
 - normal navigation and reload retain A2’s sidebar, exact project rows and unchanged bearer
+
+### AUTH-E2E-003 — first-run setup sends an existing owner to sign in
+
+**Goal:** An operator whose install already created the owner account runs the first-run checks at /setup and is sent to sign in with that account instead of signing up again  
+**Spec:** `flows/auth/first-run-existing-account.spec.ts:30`  
+**Tags:** —
+
+**User steps:**
+
+1. an owner account exists before the first visit (signed up over the API; ./bin/install runs create_user)
+2. open /setup in a fresh, signed-out browser
+3. choose Test flight and continue
+4. read the pre-flight checks and the next step, which says to sign in
+5. press Continue
+6. land on the sign-in page and sign in with the existing account
+
+**Backend state verified:**
+
+- the owner is an active accounts_user row in PG, which is what account_exists reads
+- the GET /api/setup-checks/?mode=experiment response the screen used reports account_exists: true
+- Continue routes to /auth/jwt/login, not /auth/jwt/register
+- signing in as the owner returns a token pair from POST /accounts/token/ and moves on to organization setup
 
 ## dashboards
 

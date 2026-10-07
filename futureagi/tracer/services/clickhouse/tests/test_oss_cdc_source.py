@@ -147,6 +147,7 @@ def test_exact_source_owned_shapes_three_selects_no_mutation(api):
         ("text", None, None, "String"),
         ("jsonb", None, None, "String"),
         ("bool", None, None, "Bool"),
+        ("int2", 16, 0, "Int16"),
         ("int4", 32, 0, "Int32"),
         ("int8", 64, 0, "Int64"),
         ("float8", 53, None, "Float64"),
@@ -322,7 +323,6 @@ def test_duplicate_columns_cannot_become_valid_inventory(api, mode):
 @pytest.mark.parametrize(
     "udt",
     [
-        "int2",
         "float4",
         "json",
         "timestamp",
@@ -340,6 +340,8 @@ def test_unknown_builtin_type_never_falls_back_to_string(api, udt):
     with pytest.raises(SourceError) as error:
         inspect(api)
     assert "unknown-secret" not in str(error.value)
+    # Name the validated column so a failed boot is diagnosable.
+    assert str(error.value).startswith("model_hub_score.value_history: unsupported")
 
 
 @pytest.mark.parametrize(
@@ -573,6 +575,8 @@ def test_direct_source_table_validates_complete_nonnullable_pk(pk):
     [
         "String",
         "Bool",
+        "Int16",
+        "Nullable(Int16)",
         "Int32",
         "Int64",
         "Float64",

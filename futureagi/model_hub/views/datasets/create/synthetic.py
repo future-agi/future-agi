@@ -25,11 +25,13 @@ from model_hub.tasks.develop_dataset import (
     generate_new_rows,
 )
 from model_hub.utils.synthetic_task_manager import SyntheticTaskManager
+from model_hub.views.utils.dataset_limit import dataset_add_refusal
 from model_hub.views.utils.synthetic_data import determine_data_type_syn_data
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_serializers import DatasetLimitCheckFailedErrorSerializer
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.parse_errors import parse_serialized_errors
@@ -87,6 +89,7 @@ class CreateSyntheticDataset(APIView):
         responses={
             200: SyntheticDatasetCreateStartedResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
+            503: DatasetLimitCheckFailedErrorSerializer,
         },
         reject_unknown_fields=True,
     )
@@ -143,14 +146,9 @@ class CreateSyntheticDataset(APIView):
                     api_call_type=APICallTypeChoices.DATASET_ADD.value,
                     workspace=request.workspace,
                 )
-                if (
-                    call_log_row_entry is None
-                    or call_log_row_entry.status
-                    == APICallStatusChoices.RESOURCE_LIMIT.value
-                ):
-                    return self._gm.too_many_requests(
-                        get_error_message("DATASET_CREATE_LIMIT_REACHED")
-                    )
+                refusal = dataset_add_refusal(call_log_row_entry)
+                if refusal is not None:
+                    return refusal
                 call_log_row_entry.status = APICallStatusChoices.SUCCESS.value
                 call_log_row_entry.save()
 

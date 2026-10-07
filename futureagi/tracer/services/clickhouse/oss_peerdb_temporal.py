@@ -106,7 +106,10 @@ class _Deadline:
         return remaining
 
     def rpc_timeout(self):
-        return timedelta(seconds=min(10, self.remaining()))
+        timeout = timedelta(seconds=min(10, self.remaining()))
+        if not timeout:
+            raise TimeoutError
+        return timeout
 
     async def pause(self):
         await asyncio.sleep(min(_POLL_INTERVAL, self.remaining()))
@@ -213,7 +216,7 @@ def main(argv=None):
     try:
         args = parser.parse_args(argv)
         result = asyncio.run(run(apply=args.apply, timeout=args.timeout))
-        print(json.dumps(result))
+        print(json.dumps(result), flush=True)
         return 0 if result["ready"] else 1
     except TemporalSetupError as error:
         print(str(error), file=sys.stderr)
@@ -223,4 +226,5 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    # A native SDK thread may still be delivering a reply; shutdown under it aborts.
+    os._exit(main())

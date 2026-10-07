@@ -16,10 +16,25 @@ type Config struct {
 	PGWrite     string        `yaml:"pg_write"`
 	PGRead      string        `yaml:"pg_read"`
 	RedisAddr   string        `yaml:"redis_addr"`
+	RedisPass   string        `yaml:"redis_password"`
 	CacheTTL    time.Duration `yaml:"cache_ttl"`
 	WarmTTL     time.Duration `yaml:"warm_ttl"`
 	PGPoolRead  int           `yaml:"pg_pool_read"`
 	PGPoolWrite int           `yaml:"pg_pool_write"`
+	// UsageEvents controls billing events on the usage:events Redis stream
+	// (USAGE_EVENTS_ENABLED). Unset means on, as before this setting existed.
+	// Only Future AGI Cloud runs their consumer, so self-hosted installs set
+	// it to false: without a consumer the stream only grows until Redis is
+	// full.
+	UsageEvents *bool `yaml:"usage_events"`
+	// UsageEventsMaxLen caps that stream (USAGE_EVENTS_MAX_LEN); 0 → default.
+	UsageEventsMaxLen int64 `yaml:"usage_events_max_len"`
+}
+
+// UsageEventsOn reports whether the collector writes usage events: unless
+// configured otherwise, it does.
+func (c Config) UsageEventsOn() bool {
+	return c.UsageEvents == nil || *c.UsageEvents
 }
 
 // EndpointFromEnv builds a PostgreSQL URL from separate endpoint fields. No

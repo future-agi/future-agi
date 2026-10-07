@@ -12,7 +12,10 @@ from tracer.models.eval_task import EvalTask, EvalTaskStatus, RowType, RunType
 from tracer.models.observation_span import ObservationSpan
 from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession
-from tracer.selectors.eval_tasks.row_resolver import iter_desired_rows
+from tracer.selectors.eval_tasks.row_resolver import (
+    iter_desired_rows,
+    resolve_desired_rows,
+)
 from tracer.tests._ch_seed import seed_ch_spans
 
 
@@ -223,6 +226,69 @@ class TestScopingAndFilters:
         spans = _make_spans(project, 5)
         task = _make_task(project, filters={"observation_type": []})
         assert set(_ids(task)) == {s.id for s in spans}
+
+
+def _pasted_ids_not_in_task(project, excluded_ids, *, run_type=RunType.HISTORICAL):
+    """Production task shape: one free-text member holding comma-joined ids."""
+    return _make_task(
+        project,
+        row_type=RowType.TRACES,
+        run_type=run_type,
+        # Trace filter witnesses bound the historical page count.
+        spans_limit=100,
+        filters={
+            "filters": [
+                {
+                    "column_id": "whatfix.ent_id",
+                    "filter_config": {
+                        "col_type": "SPAN_ATTRIBUTE",
+                        "filter_op": "not_in",
+                        "filter_type": "text",
+                        "filter_value": [", ".join(excluded_ids)],
+                    },
+                }
+            ]
+        },
+    )
+
+
+def _traces_by_ent_id(project, ent_ids):
+    trace_ids = {}
+    for index, ent_id in enumerate(ent_ids):
+        trace = Trace.objects.create(project=project, name=f"ent-{index}")
+        _make_spans(
+            project,
+            2,
+            shared_trace=trace,
+            span_attributes={"whatfix.ent_id": ent_id},
+            prefix=f"ent{index}",
+        )
+        trace_ids[ent_id] = str(trace.id)
+    return trace_ids
+
+
+@pytest.mark.integration
+@pytest.mark.django_db
+class TestCommaJoinedIdListFilters:
+    def test_not_in_pasted_ids_excludes_traces_carrying_any_of_them(self, project):
+        excluded = [str(uuid.uuid4()) for _ in range(4)]
+        kept = str(uuid.uuid4())
+        trace_ids = _traces_by_ent_id(project, [*excluded, kept])
+        task = _pasted_ids_not_in_task(project, excluded)
+
+        assert set(_ids(task)) == {trace_ids[kept]}
+
+    def test_continuous_not_in_pasted_ids_matches_only_other_traces(self, project):
+        excluded = [str(uuid.uuid4()) for _ in range(4)]
+        kept = str(uuid.uuid4())
+        trace_ids = _traces_by_ent_id(project, [*excluded, kept])
+        task = _pasted_ids_not_in_task(project, excluded, run_type=RunType.CONTINUOUS)
+        task.start_time = datetime.now(UTC) - timedelta(hours=1)
+
+        resolved = resolve_desired_rows(task, ceiling=datetime.now(UTC))
+
+        assert set(resolved.candidate_ids) == set(trace_ids.values())
+        assert set(resolved.matched_ids) == {trace_ids[kept]}
 
 
 def _builder_ids(builder):

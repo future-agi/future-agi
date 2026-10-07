@@ -69,7 +69,7 @@ PROPERTY_CATALOG_RUNTIME_SETTING_SPECS = {
         (
             ("MAX_PAGE_SIZE", 50, 1, 200),
             ("MAX_SEARCH_BYTES", 512, 1, 4096),
-            ("QUERY_WALL_MS", 10_000, 100, 30_000),
+            ("QUERY_WALL_MS", 10_000, 100, 60_000),
             ("READ_POOL_SIZE", 4, 1, 32),
             ("READ_MAX_THREADS", 2, 1, 16),
             ("READ_MAX_CONCURRENT_QUERIES_PER_USER", 4, 1, 16),
@@ -96,7 +96,7 @@ PROPERTY_CATALOG_RUNTIME_SETTING_SPECS = {
         prefix="PROPERTY_CATALOG_",
     ),
     **_specs(
-        (("READ_TRANSPORT_TIMEOUT_SECONDS", 10.0, 0.1, 30.0),),
+        (("READ_TRANSPORT_TIMEOUT_SECONDS", 10.0, 0.1, 60.0),),
         value_type=float,
         prefix="PROPERTY_CATALOG_",
     ),
@@ -180,11 +180,10 @@ EVAL_EXECUTION_SETTING_SPECS = {
                 LONGEST_RUNNING_ENTRY_SECONDS + 1,
                 86_400,
             ),
-            # 0 is the off switch. A Temporal pause is the immediate lever,
-            # but ``register_temporal_schedules`` runs on every backend
-            # container start and re-registers the schedule with
-            # ``ScheduleState`` rebuilt from config, so a manual pause does not
-            # survive the next deploy, restart or scale-up. A setting does.
+            # 0 is the off switch. A Temporal pause is the immediate lever and
+            # outlives every deploy's re-registration, which keeps an existing
+            # schedule's paused state; only this setting also holds if the
+            # schedule is deleted and re-created.
             ("SWEEP_MAX_TASKS", 25, 0, 500),
         ),
         prefix="EVAL_TASK_",
@@ -270,6 +269,7 @@ INTERACTIVE_READ_SETTING_SPECS = {
                 4 * 1024**3,
             ),
             ("EXACT_GRAPH_TRACE_CLASSIFIER_MAX_THREADS", 8, 1, 32),
+            ("EXACT_GRAPH_SESSION_READ_MAX_THREADS", 4, 1, 32),
             (
                 "INTERACTIVE_READ_DEFAULT_MAX_RESPONSE_UNITS",
                 2 * 1024**2,
@@ -352,6 +352,20 @@ INTERACTIVE_READ_SETTING_SPECS = {
             ("MONITOR_GRAPH_CH_TIMEOUT_CAP_MS", 6_000, 100, 60_000),
             ("MONITOR_GRAPH_METADATA_PG_TIMEOUT_CAP_MS", 1_000, 100, 10_000),
             ("GRAPH_BACKGROUND_WALL_MS", 180_000, 1_000, 180_000),
+            # Age after which a revisited Observe chart whose exact snapshot
+            # ran while its window was open refreshes that snapshot in the
+            # background (0 = off; values 1-59 are raised to 60 in code). The
+            # default's load bound is documented at
+            # _DEFAULT_REVALIDATE_AFTER_SECONDS in
+            # tracer/services/exact_aggregation_cache.py.
+            ("EXACT_AGGREGATION_REVALIDATE_AFTER_SECONDS", 300, 0, 86_400),
+            # A Sessions latency chart whose lean root read the index estimates
+            # at or below this many rows is computed inline on the interactive
+            # wall (one thread) instead of queueing on the exact worker; 0 turns
+            # inline off. Production root-row estimates: ~27k (small tenant,
+            # 7D), 1.2M (small tenant, 12M), 3.5M (largest tenant, 7D), 77M
+            # (largest tenant, 30D). See session_graph._inline_session_latency_graph.
+            ("SESSION_GRAPH_INLINE_MAX_ESTIMATED_ROWS", 2_000_000, 0, 50_000_000),
             ("GRAPH_EVENT_LIMIT", 2_000, 1, 100_000),
             ("GRAPH_TRACE_DECORATION_CANDIDATE_LIMIT", 40, 1, 4_096),
             ("GRAPH_SPAN_METRIC_BATCH_SIZE", 1_024, 1, 4_096),
@@ -376,6 +390,13 @@ INTERACTIVE_READ_SETTING_SPECS = {
             # unfiltered Users page does not read these.
             ("USER_LIST_PAGE_WALL_MS", 5_000, 100, 60_000),
             ("USER_LIST_WALK_MAX_STATEMENTS", 24, 1, 256),
+            # A walk that has published nothing is not ended by its statement
+            # count while its page wall lasts: the count grows one budget at a
+            # time, up to this many budgets. A dense witness whose users are
+            # all rejected spends 24 fast statements in a fraction of the
+            # wall; ending there returned empty pages for request after
+            # request. 1 keeps the plain budget.
+            ("USER_LIST_WALK_EMPTY_PAGE_BUDGETS", 4, 1, 16),
             ("USER_LIST_WALK_INITIAL_SLICE_SECONDS", 60 * 60, 1, 7 * 24 * 60 * 60),
             # A slice asks the server to stop it at half of what is left of
             # the request's analytics wall and is then retried a quarter as
@@ -402,7 +423,8 @@ INTERACTIVE_READ_SETTING_SPECS = {
             # After an empty slice whose tail does not fit the statement
             # budget at the slice cap, the walk asks EXPLAIN ESTIMATE how many
             # rows the blooms leave in the whole tail and issues the one
-            # existence statement only when that count fits here; otherwise
+            # existence statement, which reads all of them for the tail's
+            # newest witnessed row, only when that count fits here; otherwise
             # it keeps slicing at the cap. Rows, not bytes: neither the
             # estimate nor the transport's result carries bytes. Basis: on the
             # largest tenant an uncosted tail statement read 1.38M rows =
@@ -420,6 +442,17 @@ INTERACTIVE_READ_SETTING_SPECS = {
             # (95 parts, 16k marks; 3.2 s at one thread on a cold index), the
             # boolean-key estimate 114-117 ms (395 parts, 33k marks).
             ("USER_LIST_WALK_PROBE_WALL_MS", 1_000, 25, 60_000),
+            # How many eligible walk witnesses a first Users page costs
+            # before it walks the cheapest (users_matching_walk's
+            # _choose_witness states the rule). 1 turns the measurement off:
+            # the static rank's first witness.
+            ("USER_LIST_WALK_WITNESS_CANDIDATES", 3, 1, 8),
+            # What one estimated row of a raw span-attribute witness costs
+            # against one row of a native one. Basis, measured on the largest
+            # tenant: a raw text slice reads the attribute map, about 3.2 KB a
+            # row (7.69 GB / 2.38M rows); a native status slice about 32 B a
+            # row (0.1 MB / 3,154 rows).
+            ("USER_LIST_WALK_RAW_WITNESS_ROW_WEIGHT", 16, 1, 1_024),
             ("FILTER_VALUE_READ_MAX_THREADS", 2, 1, 16),
             ("FILTER_SELECTOR_QUERY_TIMEOUT_MS", 2_500, 25, 10_000),
             ("FILTER_SELECTOR_MAX_OPT_IN_QUERY_TIMEOUT_MS", 3_000, 25, 30_000),
@@ -920,6 +953,11 @@ def validate_interactive_read_settings(values: Mapping[str, Numeric]) -> None:
         values["EXACT_GRAPH_TRACE_CLASSIFIER_MAX_THREADS"],
         values["CLICKHOUSE_APPLICATION_READ_MAX_THREADS"],
         "exact-graph classifier threads cannot exceed the application maximum",
+    )
+    _require_at_most(
+        values["EXACT_GRAPH_SESSION_READ_MAX_THREADS"],
+        values["CLICKHOUSE_APPLICATION_READ_MAX_THREADS"],
+        "exact-graph session threads cannot exceed the application maximum",
     )
     _require_at_most(
         values["ANALYTICS_DEFAULT_LOOKBACK_DAYS"],

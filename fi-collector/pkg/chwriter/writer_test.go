@@ -356,6 +356,19 @@ func TestInsertEmptyBatchNoop(t *testing.T) {
 	}
 }
 
+// An unparseable URL must fail at startup, and the error must not echo the
+// URL: url.Error prints it verbatim, password included.
+func TestNewRejectsUnparseableURLWithoutEchoingIt(t *testing.T) {
+	const password = "s3cretChPassw0rd"
+	_, err := New(mkConfig(t, "http://default:"+password+"@clickhouse:8123/%zz"))
+	if err == nil {
+		t.Fatal("New accepted an unparseable URL")
+	}
+	if strings.Contains(err.Error(), password) {
+		t.Errorf("error echoes the password: %v", err)
+	}
+}
+
 func TestInsertBestEffort_TargetsNamedTable(t *testing.T) {
 	// InsertBestEffort must POST to a per-call table (the curated end_users /
 	// trace_sessions RMTs) — not the pinned spans table. Verify the query names

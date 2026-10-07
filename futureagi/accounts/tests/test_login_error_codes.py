@@ -15,14 +15,19 @@ Covers:
 
 import json
 import time
-from unittest.mock import ANY, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 from django.core.cache import cache
+from django.db import InterfaceError, OperationalError
 from django.http import HttpResponse
 from django.test import RequestFactory
+from django_redis.exceptions import ConnectionInterrupted
+from redis.exceptions import ConnectionError as RedisConnectionError
 from rest_framework import status
 from rest_framework.test import APIClient
+
+from tfc.utils.error_codes import LOGIN_ERROR_CODES
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -372,6 +377,101 @@ class TestUnexpectedErrorCode:
             resp = _login(api_client, user.email)
         result = _result(resp)
         assert "remaining_attempts" in result
+
+
+# ---------------------------------------------------------------------------
+# 6b. View — LOGIN_SERVICE_UNAVAILABLE (infrastructure, not credentials)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestInfrastructureErrorCode:
+    """Postgres/Redis failures return 503 and never count towards the lockout.
+
+    They used to take the generic except branch, which returned
+    LOGIN_UNEXPECTED_ERROR with remaining_attempts and incremented
+    login_attempts_<email>, so a slow database locked valid users out.
+    """
+
+    def _assert_service_unavailable(self, resp):
+        assert resp.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+        result = _result(resp)
+        assert result["error_code"] == "LOGIN_SERVICE_UNAVAILABLE"
+        assert "remaining_attempts" not in result
+        assert result["message"] == LOGIN_ERROR_CODES["LOGIN_SERVICE_UNAVAILABLE"][0]
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            OperationalError("connection to server failed"),
+            InterfaceError("connection already closed"),
+        ],
+        ids=["operational", "interface"],
+    )
+    def test_database_error_is_503_and_not_counted(self, api_client, user, error):
+        with patch(
+            "accounts.views.user.User.objects.select_related", side_effect=error
+        ):
+            resp = _login(api_client, user.email)
+
+        self._assert_service_unavailable(resp)
+        assert cache.get(f"login_attempts_{user.email}") is None
+
+    def test_database_error_at_the_threshold_does_not_lock_the_account(
+        self, api_client, user
+    ):
+        from django.conf import settings
+
+        max_attempts = settings.MAX_LOGIN_ATTEMPTS
+        cache.set(f"login_attempts_{user.email}", max_attempts - 1, 3600)
+
+        with patch(
+            "accounts.views.user.check_password",
+            side_effect=OperationalError("server closed the connection"),
+        ):
+            resp = _login(api_client, user.email)
+
+        self._assert_service_unavailable(resp)
+        assert cache.get(f"login_attempts_{user.email}") == max_attempts - 1
+        assert cache.get(f"user_blocked_{user.email}") is None
+
+        # Once the database is back, the right password still works.
+        resp = _login(api_client, user.email)
+        assert resp.status_code == status.HTTP_200_OK
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            ConnectionInterrupted(connection=None),
+            RedisConnectionError("Error 111 connecting to redis:6379"),
+        ],
+        ids=["django-redis", "redis"],
+    )
+    def test_cache_error_is_503_without_touching_the_cache(
+        self, api_client, user, error
+    ):
+        broken_cache = MagicMock()
+        broken_cache.get.side_effect = error
+
+        with patch("accounts.views.user.cache", broken_cache):
+            resp = _login(api_client, user.email)
+
+        self._assert_service_unavailable(resp)
+        broken_cache.set.assert_not_called()
+
+    def test_wrong_password_still_counts(self, api_client, user):
+        resp = _login(api_client, user.email, "absolutelywrong")
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert _result(resp)["error_code"] == "LOGIN_INVALID_CREDENTIALS"
+        assert cache.get(f"login_attempts_{user.email}") == 1
+
+    def test_503_is_declared_in_the_login_contract(self):
+        from accounts.views.user import CustomTokenObtainPairView
+
+        declared = CustomTokenObtainPairView.post._swagger_auto_schema["responses"]
+        assert 503 in declared
 
 
 # ---------------------------------------------------------------------------

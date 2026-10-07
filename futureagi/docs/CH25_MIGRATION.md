@@ -25,7 +25,7 @@ Read at module import by `tracer/services/clickhouse/schema.py` and at
 shell expand by `scripts/peerdb-setup-mirrors.sh`. Both sides honor the
 same set of truthy values: `1`, `true`, `yes`, `on` (case-insensitive).
 
-- **In docker compose:** the main `docker-compose.yml` sets it to `true`
+- **In docker compose:** both root compose files set it to `true`
   by default. fi-collector is the canonical writer for `spans`; the
   legacy chain is not created at all on a fresh boot.
 - **In prod:** unset (defaults to `false`). The legacy `spans_mv`
@@ -59,7 +59,8 @@ fi-collector is the OTLP gRPC receiver that writes spans directly to CH
 PG → PeerDB → CH spans CDC path.
 
 **Packaging:** ships as a top-level compose service in
-`docker-compose.yml`, started by default with the rest of the backend.
+`docker-compose.distributed.yml`, and inside the `app` container of the default
+`docker-compose.yml`; either way it starts with the rest of the backend.
 Builds from `./fi-collector/Dockerfile`; the standalone test rig at
 `fi-collector/docker-compose.standalone.yml` stays useful for collector-
 only testing without the rest of the stack.

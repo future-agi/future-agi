@@ -1,7 +1,7 @@
 """SSRF guard on tfc.utils.storage's URL-download helpers (TH-5648 follow-up)."""
 
 import io
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from PIL import Image
@@ -9,6 +9,7 @@ from PIL import Image
 from tfc.utils.ssrf_guard import SsrfBlocked, SsrfResponse, assert_url_host_public
 from tfc.utils.storage import (
     _ssrf_safe_get,
+    audio_bytes_from_url_or_base64,
     convert_image_from_url_to_base64,
     download_audio_from_url,
     download_document_from_url,
@@ -222,6 +223,57 @@ class TestIsOwnStorageUrl:
             "https://fi-customer-data.s3.attacker-amazonaws.com/x",
             "fi-customer-data",
         )
+
+    def test_matches_configured_internal_s3_endpoint(self):
+        with patch.dict("os.environ", {"S3_ENDPOINT_URL": "http://minio:9000"}):
+            assert is_own_storage_url(
+                "http://minio:9000/fi-customer-data/calls/recording.mp3",
+                "fi-customer-data",
+            )
+
+    def test_rejects_internal_endpoint_lookalike(self):
+        with patch.dict("os.environ", {"S3_ENDPOINT_URL": "http://minio:9000"}):
+            assert not is_own_storage_url(
+                "http://minio.attacker.test/fi-customer-data/calls/recording.mp3",
+                "fi-customer-data",
+            )
+
+
+def test_audio_from_own_storage_uses_client_instead_of_http_fetch():
+    response = MagicMock()
+    response.read.side_effect = [b"trusted-audio", b""]
+    client = MagicMock()
+    client.get_object.return_value = response
+    url = "http://minio:9000/fi-content-dev/calls/recording.mp3"
+
+    with patch.dict("os.environ", {"S3_ENDPOINT_URL": "http://minio:9000"}), patch(
+        "tfc.utils.storage.UPLOAD_BUCKET_NAME", "fi-content-dev"
+    ), patch(
+        "tfc.utils.storage.get_storage_client", return_value=client
+    ), patch(
+        "tfc.utils.storage._ssrf_safe_get"
+    ) as safe_get:
+        result = audio_bytes_from_url_or_base64(
+            url, min_duration_seconds=None, pad_silence=False
+        )
+
+    assert result == b"trusted-audio"
+    client.get_object.assert_called_once_with(
+        "fi-content-dev", "calls/recording.mp3"
+    )
+    response.close.assert_called_once_with()
+    response.release_conn.assert_called_once_with()
+    safe_get.assert_not_called()
+
+
+def test_audio_from_untrusted_private_url_still_uses_ssrf_guard():
+    with patch("tfc.utils.storage._ssrf_safe_get", side_effect=SsrfBlocked("private")):
+        with pytest.raises(ValueError):
+            audio_bytes_from_url_or_base64(
+                "http://10.0.0.5/audio.mp3",
+                min_duration_seconds=None,
+                pad_silence=False,
+            )
 
 
 # ---------------------------------------------------------------------------
