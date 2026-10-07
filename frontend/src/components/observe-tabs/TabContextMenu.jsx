@@ -73,6 +73,7 @@ const TabContextMenu = ({ anchorPosition, view, projectId, projectName = "this p
     finish();
   };
   const item = (label, icon, action) => <MenuItem onClick={action} dense><ListItemIcon><Iconify icon={icon} width={18} /></ListItemIcon><ListItemText>{label}</ListItemText></MenuItem>;
+  const dirtyForView = isDirty && activeTab === `view-${view?.id}`;
   return <>
     <Menu open={!dialog} onClose={finish} anchorReference="anchorPosition" anchorPosition={{ top: anchorPosition.y, left: anchorPosition.x }} PaperProps={{ sx: { minWidth: 210 } }}>
       {view.can_edit && item("Rename", "mdi:pencil-outline", () => { onClose(); onRename(view.id); })}
@@ -83,7 +84,7 @@ const TabContextMenu = ({ anchorPosition, view, projectId, projectName = "this p
       {view.can_delete && <Divider />}
       {view.can_delete && <MenuItem onClick={() => setDialog("delete")} dense sx={{ color: "error.main" }}><ListItemIcon sx={{ color: "inherit" }}><Iconify icon="mdi:delete-outline" width={18} /></ListItemIcon><ListItemText>Delete</ListItemText>{!view.is_owner && <Chip label="Admin" size="small" color="primary" variant="outlined" />}</MenuItem>}
     </Menu>
-    {dialog === "share" && <ShareViewDialog view={view} projectName={projectName} dirty={isDirty} pending={isPending} error={error} onClose={finish} onSaveFirst={saveThenShare} onConfirm={share} />}
+    {dialog === "share" && <ShareViewDialog view={view} projectName={projectName} dirty={dirtyForView} pending={isPending} error={error} onClose={finish} onSaveFirst={saveThenShare} onConfirm={share} />}
     {dialog === "delete" && <DeleteViewDialog view={view} projectId={projectId} projectName={projectName} onClose={finish} onDeleted={(id) => { if (activeTab === `view-${id}`) onTabChange("traces"); }} />}
   </>;
 };

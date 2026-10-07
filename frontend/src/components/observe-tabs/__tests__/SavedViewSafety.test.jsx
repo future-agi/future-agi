@@ -57,6 +57,14 @@ describe("saved view ownership and consent", () => {
     expect(update).toHaveBeenNthCalledWith(2, { id: "view-1", expected_revision: 4, visibility: "project" }, expect.any(Object));
   });
 
+  it("does not offer active-editor Save changes first for another target view", async () => {
+    menu({ ...own, id: "view-2", name: "Other" }, { isDirty: true, activeTab: "view-view-1" });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Share with project" }));
+    expect(screen.queryByRole("button", { name: "Save changes first" })).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "Share" }));
+    expect(update).toHaveBeenCalledWith({ id: "view-2", expected_revision: 3, visibility: "project" }, expect.any(Object));
+  });
+
   it("shares only the saved version with a revision when dirty", async () => {
     menu(own, { isDirty: true });
     fireEvent.click(screen.getByRole("menuitem", { name: "Share with project" }));
