@@ -1,7 +1,7 @@
 import PropTypes from "prop-types";
 import { Box, Stack, Typography } from "@mui/material";
 
-export default function SectionCard({ title, subtitle, action, children, sx, dense }) {
+export default function SectionCard({ title, subtitle, action, children, sx, dense, wrap }) {
   return (
     <Box
       sx={{
@@ -18,15 +18,16 @@ export default function SectionCard({ title, subtitle, action, children, sx, den
           direction="row"
           alignItems="center"
           justifyContent="space-between"
-          spacing={2}
+          spacing={wrap ? 0 : 2}
           sx={{
+            ...(wrap && { flexWrap: "wrap", columnGap: 2, rowGap: 1.25 }),
             px: dense ? 1.5 : 2.5,
             py: dense ? 1 : 1.75,
             borderBottom: "1px solid",
             borderColor: "divider",
           }}
         >
-          <Box minWidth={0}>
+          <Box minWidth={wrap ? "auto" : 0}>
             {/*
               component="div" so callers can pass a React element (a
               picker, a chip row, a compound layout) as title without
@@ -51,5 +52,5 @@ export default function SectionCard({ title, subtitle, action, children, sx, den
 }
 SectionCard.propTypes = {
   title: PropTypes.node, subtitle: PropTypes.node, action: PropTypes.node,
-  children: PropTypes.node, sx: PropTypes.object, dense: PropTypes.bool,
+  children: PropTypes.node, sx: PropTypes.object, dense: PropTypes.bool, wrap: PropTypes.bool,
 };

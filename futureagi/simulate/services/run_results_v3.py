@@ -19,12 +19,22 @@ from simulate.models import (
     SimulateEvalConfig,
     TestExecution,
 )
+from simulate.services.harness_scenarios import authored_scenarios_for_calls
 from simulate.services.run_results_v3_expressions import NUMERIC_JSON_PATTERN
 from simulate.services.run_results_v3_scoring import (
     judge_stored_eval,
     resolve_eval_scoring_spec,
 )
 from simulate.utils.eval_summary import iter_live_eval_outputs
+
+OUTCOME_LABELS = {
+    "queued": "Queued",
+    "in_progress": "In progress",
+    "passed": "Passed",
+    "failed": "Failed",
+    "inconclusive": "Inconclusive",
+    "error": "Error",
+}
 
 
 def _number(value: Any) -> float | None:
@@ -82,6 +92,16 @@ def call_outcome(
 ) -> str:
     metadata = call.call_metadata if isinstance(call.call_metadata, dict) else {}
     harness_outcome = str(metadata.get("harness_outcome_status") or "").lower()
+    if call.status in {
+        CallExecution.CallStatus.PENDING,
+        CallExecution.CallStatus.REGISTERED,
+    }:
+        return "queued"
+    if call.status in {
+        CallExecution.CallStatus.ONGOING,
+        CallExecution.CallStatus.ANALYZING,
+    }:
+        return "in_progress"
     if harness_outcome in {"error", "errored", "cancelled", "canceled"}:
         return "error"
     if call.status in {
@@ -228,11 +248,31 @@ def _row_dimensions(
     dimensions: dict[str, dict[str, Any]] = defaultdict(dict)
     cells = Cell.all_objects.filter(
         row_id__in=row_ids,
-        column__name__in=["persona", "use_case", "goal", "outcome", "situation"],
+        column__name__in=[
+            "persona",
+            "use_case",
+            "goal",
+            "outcome",
+            "situation",
+            "branch",
+            "conversation_branch",
+        ],
     ).select_related("column")
     for cell in cells:
         dimensions[str(cell.row_id)][cell.column.name] = cell.value
     return dimensions
+
+
+def _authored_branches(
+    execution: TestExecution, calls: list[CallExecution]
+) -> dict[str, str]:
+    scenarios = authored_scenarios_for_calls(
+        execution.run_test_id, calls, test_execution_id=execution.id
+    )
+    return {
+        str(call_id): scenario.branch if scenario is not None else ""
+        for call_id, scenario in scenarios.items()
+    }
 
 
 def eval_rows(
@@ -378,6 +418,7 @@ def build_call_rows(
             if scenario.dataset_row_id
         },
     )
+    authored_branches = _authored_branches(execution, calls)
     rows = []
     harness_columns: dict[str, dict[str, str]] = {}
     for call in calls:
@@ -422,11 +463,18 @@ def build_call_rows(
             or (harness_scenario.sub_goals if harness_scenario else None)
             or []
         )
-        sub_goals = [
-            str(item.get("name") if isinstance(item, dict) else item)
-            for item in raw_sub_goals
-            if (item.get("name") if isinstance(item, dict) else item)
-        ]
+        sub_goal_results = []
+        for item in raw_sub_goals:
+            name = item.get("name") if isinstance(item, dict) else item
+            if not name:
+                continue
+            held = item.get("held") if isinstance(item, dict) else None
+            sub_goal_results.append(
+                {
+                    "name": str(name),
+                    "passed": held if isinstance(held, bool) else None,
+                }
+            )
         ideal_outcome = (
             row_data.get("outcome")
             or scenario_dimensions.get("outcome")
@@ -438,8 +486,12 @@ def build_call_rows(
             or row_dimensions.get("situation")
         )
         conversation_branch = (
-            receipt.get("scenario_key")
+            authored_branches.get(str(call.id))
             or metadata.get("conversation_branch")
+            or row_data.get("conversation_branch")
+            or row_data.get("branch")
+            or row_dimensions.get("conversation_branch")
+            or row_dimensions.get("branch")
             or scenario_metadata.get("conversation_branch")
         )
         metrics = call.conversation_metrics_data or {}
@@ -474,7 +526,9 @@ def build_call_rows(
                 ),
                 "persona": persona,
                 "persona_details": persona_details,
-                "sub_goals": sub_goals,
+                # TODO: drop once clients read sub_goal_results.
+                "sub_goals": [goal["name"] for goal in sub_goal_results],
+                "sub_goal_results": sub_goal_results,
                 "outcome": call_outcome(call, live_eval_configs),
                 "execution_status": call.status,
                 "harness_outcome_status": metadata.get("harness_outcome_status"),
