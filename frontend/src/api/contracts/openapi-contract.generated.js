@@ -37659,7 +37659,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/tracer/saved-views/": {
       get: {
         operationId: "tracer_saved-views_list",
-        runtimeRequestValidation: false,
+        runtimeRequestValidation: true,
         runtimeResponseValidation: true,
         requestBody: null,
         queryParameters: {
@@ -37675,10 +37675,45 @@ export const OPENAPI_CONTRACT = Object.freeze({
               type: "integer",
             },
           },
+          project_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          tab_type: {
+            required: false,
+            schema: {
+              type: "string",
+              enum: [
+                "traces",
+                "spans",
+                "voice",
+                "imagine",
+                "users",
+                "user_detail",
+                "sessions",
+              ],
+            },
+          },
+          consistency: {
+            required: false,
+            schema: {
+              type: "string",
+              enum: ["primary"],
+            },
+          },
         },
         responses: {
           200: {
             $ref: "#/definitions/SavedViewListResponse",
+          },
+          400: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/SavedViewNotFoundResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -37687,15 +37722,21 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       post: {
         operationId: "tracer_saved-views_create",
-        runtimeRequestValidation: false,
+        runtimeRequestValidation: true,
         runtimeResponseValidation: true,
         requestBody: {
-          $ref: "#/definitions/SavedViewList",
+          $ref: "#/definitions/SavedViewCreate",
         },
         queryParameters: {},
         responses: {
           200: {
             $ref: "#/definitions/SavedViewDetailResponse",
+          },
+          400: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/SavedViewNotFoundResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -37706,15 +37747,30 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/tracer/saved-views/reorder/": {
       post: {
         operationId: "tracer_saved-views_reorder",
-        runtimeRequestValidation: false,
+        runtimeRequestValidation: true,
         runtimeResponseValidation: true,
         requestBody: {
-          $ref: "#/definitions/SavedViewList",
+          $ref: "#/definitions/SavedViewReorder",
         },
         queryParameters: {},
         responses: {
           200: {
-            $ref: "#/definitions/SavedViewMessageResponse",
+            $ref: "#/definitions/SavedViewReorderResponse",
+          },
+          400: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/SavedViewForbiddenResponse",
+          },
+          404: {
+            $ref: "#/definitions/SavedViewNotFoundResponse",
+          },
+          409: {
+            $ref: "#/definitions/SavedViewOrderConflictResponse",
+          },
+          428: {
+            $ref: "#/definitions/SavedViewPreconditionResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -37725,13 +37781,49 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/tracer/saved-views/{id}/": {
       get: {
         operationId: "tracer_saved-views_read",
-        runtimeRequestValidation: false,
+        runtimeRequestValidation: true,
         runtimeResponseValidation: true,
         requestBody: null,
-        queryParameters: {},
+        queryParameters: {
+          project_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          tab_type: {
+            required: false,
+            schema: {
+              type: "string",
+              enum: [
+                "traces",
+                "spans",
+                "voice",
+                "imagine",
+                "users",
+                "user_detail",
+                "sessions",
+              ],
+            },
+          },
+          consistency: {
+            required: false,
+            schema: {
+              type: "string",
+              enum: ["primary"],
+            },
+          },
+        },
         responses: {
           200: {
             $ref: "#/definitions/SavedViewDetailResponse",
+          },
+          400: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/SavedViewNotFoundResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -37740,15 +37832,30 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       put: {
         operationId: "tracer_saved-views_update",
-        runtimeRequestValidation: false,
+        runtimeRequestValidation: true,
         runtimeResponseValidation: true,
         requestBody: {
-          $ref: "#/definitions/SavedViewList",
+          $ref: "#/definitions/SavedViewUpdate",
         },
         queryParameters: {},
         responses: {
           200: {
             $ref: "#/definitions/SavedViewDetailResponse",
+          },
+          400: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/SavedViewForbiddenResponse",
+          },
+          404: {
+            $ref: "#/definitions/SavedViewNotFoundResponse",
+          },
+          409: {
+            $ref: "#/definitions/SavedViewConflictResponse",
+          },
+          428: {
+            $ref: "#/definitions/SavedViewPreconditionResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -37757,15 +37864,30 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       patch: {
         operationId: "tracer_saved-views_partial_update",
-        runtimeRequestValidation: false,
+        runtimeRequestValidation: true,
         runtimeResponseValidation: true,
         requestBody: {
-          $ref: "#/definitions/SavedViewList",
+          $ref: "#/definitions/SavedViewUpdate",
         },
         queryParameters: {},
         responses: {
           200: {
             $ref: "#/definitions/SavedViewDetailResponse",
+          },
+          400: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/SavedViewForbiddenResponse",
+          },
+          404: {
+            $ref: "#/definitions/SavedViewNotFoundResponse",
+          },
+          409: {
+            $ref: "#/definitions/SavedViewConflictResponse",
+          },
+          428: {
+            $ref: "#/definitions/SavedViewPreconditionResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -37777,10 +37899,40 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeRequestValidation: false,
         runtimeResponseValidation: true,
         requestBody: null,
-        queryParameters: {},
+        queryParameters: {
+          expected_revision: {
+            required: true,
+            schema: {
+              type: "integer",
+              minimum: 1,
+            },
+          },
+          project_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+        },
         responses: {
           200: {
             $ref: "#/definitions/SavedViewMessageResponse",
+          },
+          400: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/SavedViewForbiddenResponse",
+          },
+          404: {
+            $ref: "#/definitions/SavedViewNotFoundResponse",
+          },
+          409: {
+            $ref: "#/definitions/SavedViewConflictResponse",
+          },
+          428: {
+            $ref: "#/definitions/SavedViewPreconditionResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -37791,15 +37943,51 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/tracer/saved-views/{id}/duplicate/": {
       post: {
         operationId: "tracer_saved-views_duplicate",
-        runtimeRequestValidation: false,
+        runtimeRequestValidation: true,
         runtimeResponseValidation: true,
         requestBody: {
-          $ref: "#/definitions/SavedViewList",
+          $ref: "#/definitions/SavedViewDuplicate",
         },
-        queryParameters: {},
+        queryParameters: {
+          project_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          tab_type: {
+            required: false,
+            schema: {
+              type: "string",
+              enum: [
+                "traces",
+                "spans",
+                "voice",
+                "imagine",
+                "users",
+                "user_detail",
+                "sessions",
+              ],
+            },
+          },
+          consistency: {
+            required: false,
+            schema: {
+              type: "string",
+              enum: ["primary"],
+            },
+          },
+        },
         responses: {
           200: {
             $ref: "#/definitions/SavedViewDetailResponse",
+          },
+          400: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/SavedViewNotFoundResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -73838,29 +74026,86 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    SavedViewDetailResponse: {
+    SavedViewConflictResponse: {
       required: ["result"],
       type: "object",
       properties: {
         status: {
           title: "Status",
           type: "boolean",
-          default: true,
+          default: false,
+        },
+        type: {
+          title: "Type",
+          type: "string",
+          enum: [
+            "validation_error",
+            "authentication_error",
+            "payment_required",
+            "entitlement_error",
+            "permission_error",
+            "not_found",
+            "conflict",
+            "client_error",
+            "rate_limit",
+            "server_error",
+            "service_unavailable",
+            "timeout",
+            "api_error",
+          ],
+          "x-nullable": true,
+        },
+        code: {
+          title: "Code",
+          type: "string",
+          "x-nullable": true,
+        },
+        detail: {
+          title: "Detail",
+          type: "string",
+          "x-nullable": true,
         },
         result: {
-          $ref: "#/definitions/SavedViewDetail",
+          $ref: "#/definitions/SavedViewConflictResult",
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        error: {
+          title: "Error",
+          type: "string",
+          "x-nullable": true,
+        },
+        attr: {
+          title: "Attr",
+          type: "string",
+          "x-nullable": true,
+        },
+        details: {
+          title: "Details",
+          type: "object",
+          additionalProperties: {
+            type: "array",
+            items: {
+              type: "string",
+              minLength: 1,
+            },
+          },
         },
       },
     },
-    SavedViewList: {
+    SavedViewCreate: {
       required: ["name", "tab_type"],
       type: "object",
       properties: {
-        id: {
-          title: "Id",
+        project_id: {
+          title: "Project id",
           type: "string",
           format: "uuid",
-          readOnly: true,
+          "x-nullable": true,
         },
         name: {
           title: "Name",
@@ -73885,37 +74130,115 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Visibility",
           type: "string",
           enum: ["personal", "project"],
-        },
-        position: {
-          title: "Position",
-          type: "integer",
-          maximum: 2147483647,
-          minimum: -2147483648,
+          default: "personal",
         },
         icon: {
           title: "Icon",
           type: "string",
           maxLength: 50,
-          "x-nullable": true,
         },
         config: {
           title: "Config",
           type: "object",
+          default: {},
         },
-        created_by: {
-          $ref: "#/definitions/SavedViewCreator",
+      },
+    },
+    SavedViewDetailResponse: {
+      required: ["result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: true,
         },
-        created_at: {
-          title: "Created at",
+        result: {
+          $ref: "#/definitions/SavedViewDetail",
+        },
+      },
+    },
+    SavedViewDuplicate: {
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
           type: "string",
-          format: "date-time",
-          readOnly: true,
+          maxLength: 255,
+          minLength: 1,
         },
-        updated_at: {
-          title: "Updated at",
+      },
+    },
+    SavedViewForbiddenResponse: {
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: false,
+        },
+        type: {
+          title: "Type",
           type: "string",
-          format: "date-time",
-          readOnly: true,
+          enum: [
+            "validation_error",
+            "authentication_error",
+            "payment_required",
+            "entitlement_error",
+            "permission_error",
+            "not_found",
+            "conflict",
+            "client_error",
+            "rate_limit",
+            "server_error",
+            "service_unavailable",
+            "timeout",
+            "api_error",
+          ],
+          "x-nullable": true,
+        },
+        code: {
+          title: "Code",
+          type: "string",
+          "x-nullable": true,
+        },
+        detail: {
+          title: "Detail",
+          type: "string",
+          "x-nullable": true,
+        },
+        result: {
+          title: "Result",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        error: {
+          title: "Error",
+          type: "string",
+          "x-nullable": true,
+        },
+        attr: {
+          title: "Attr",
+          type: "string",
+          "x-nullable": true,
+        },
+        details: {
+          title: "Details",
+          type: "object",
+          additionalProperties: {
+            type: "array",
+            items: {
+              type: "string",
+              minLength: 1,
+            },
+          },
         },
       },
     },
@@ -73944,6 +74267,305 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         result: {
           $ref: "#/definitions/SavedViewMessageResult",
+        },
+      },
+    },
+    SavedViewNotFoundResponse: {
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: false,
+        },
+        type: {
+          title: "Type",
+          type: "string",
+          enum: [
+            "validation_error",
+            "authentication_error",
+            "payment_required",
+            "entitlement_error",
+            "permission_error",
+            "not_found",
+            "conflict",
+            "client_error",
+            "rate_limit",
+            "server_error",
+            "service_unavailable",
+            "timeout",
+            "api_error",
+          ],
+          "x-nullable": true,
+        },
+        code: {
+          title: "Code",
+          type: "string",
+          "x-nullable": true,
+        },
+        detail: {
+          title: "Detail",
+          type: "string",
+          "x-nullable": true,
+        },
+        result: {
+          title: "Result",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        error: {
+          title: "Error",
+          type: "string",
+          "x-nullable": true,
+        },
+        attr: {
+          title: "Attr",
+          type: "string",
+          "x-nullable": true,
+        },
+        details: {
+          title: "Details",
+          type: "object",
+          additionalProperties: {
+            type: "array",
+            items: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+        },
+      },
+    },
+    SavedViewOrderConflictResponse: {
+      required: ["result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: false,
+        },
+        type: {
+          title: "Type",
+          type: "string",
+          enum: [
+            "validation_error",
+            "authentication_error",
+            "payment_required",
+            "entitlement_error",
+            "permission_error",
+            "not_found",
+            "conflict",
+            "client_error",
+            "rate_limit",
+            "server_error",
+            "service_unavailable",
+            "timeout",
+            "api_error",
+          ],
+          "x-nullable": true,
+        },
+        code: {
+          title: "Code",
+          type: "string",
+          "x-nullable": true,
+        },
+        detail: {
+          title: "Detail",
+          type: "string",
+          "x-nullable": true,
+        },
+        result: {
+          $ref: "#/definitions/SavedViewOrderConflictResult",
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        error: {
+          title: "Error",
+          type: "string",
+          "x-nullable": true,
+        },
+        attr: {
+          title: "Attr",
+          type: "string",
+          "x-nullable": true,
+        },
+        details: {
+          title: "Details",
+          type: "object",
+          additionalProperties: {
+            type: "array",
+            items: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+        },
+      },
+    },
+    SavedViewPreconditionResponse: {
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: false,
+        },
+        type: {
+          title: "Type",
+          type: "string",
+          enum: [
+            "validation_error",
+            "authentication_error",
+            "payment_required",
+            "entitlement_error",
+            "permission_error",
+            "not_found",
+            "conflict",
+            "client_error",
+            "rate_limit",
+            "server_error",
+            "service_unavailable",
+            "timeout",
+            "api_error",
+          ],
+          "x-nullable": true,
+        },
+        code: {
+          title: "Code",
+          type: "string",
+          "x-nullable": true,
+        },
+        detail: {
+          title: "Detail",
+          type: "string",
+          "x-nullable": true,
+        },
+        result: {
+          title: "Result",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        error: {
+          title: "Error",
+          type: "string",
+          "x-nullable": true,
+        },
+        attr: {
+          title: "Attr",
+          type: "string",
+          "x-nullable": true,
+        },
+        details: {
+          title: "Details",
+          type: "object",
+          additionalProperties: {
+            type: "array",
+            items: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+        },
+      },
+    },
+    SavedViewReorder: {
+      required: ["expected_revision", "order"],
+      type: "object",
+      properties: {
+        expected_revision: {
+          title: "Expected revision",
+          type: "integer",
+          minimum: 0,
+        },
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        tab_type: {
+          title: "Tab type",
+          type: "string",
+          enum: [
+            "traces",
+            "spans",
+            "voice",
+            "imagine",
+            "users",
+            "user_detail",
+            "sessions",
+          ],
+        },
+        order: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/ReorderItem",
+          },
+        },
+      },
+    },
+    SavedViewReorderResponse: {
+      required: ["result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: true,
+        },
+        result: {
+          $ref: "#/definitions/SavedViewReorderResult",
+        },
+      },
+    },
+    SavedViewUpdate: {
+      required: ["expected_revision"],
+      type: "object",
+      properties: {
+        expected_revision: {
+          title: "Expected revision",
+          type: "integer",
+          minimum: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        visibility: {
+          title: "Visibility",
+          type: "string",
+          enum: ["personal", "project"],
+        },
+        icon: {
+          title: "Icon",
+          type: "string",
+          maxLength: 50,
+          "x-nullable": true,
+        },
+        config: {
+          title: "Config",
+          type: "object",
         },
       },
     },
@@ -99997,8 +100619,21 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    SavedViewConflictResult: {
+      required: ["message", "current"],
+      type: "object",
+      properties: {
+        message: {
+          title: "Message",
+          type: "string",
+          minLength: 1,
+        },
+        current: {
+          $ref: "#/definitions/SavedViewDetail",
+        },
+      },
+    },
     SavedViewDetail: {
-      required: ["name", "tab_type"],
       type: "object",
       properties: {
         id: {
@@ -100010,7 +100645,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         name: {
           title: "Name",
           type: "string",
-          maxLength: 255,
+          readOnly: true,
           minLength: 1,
         },
         tab_type: {
@@ -100025,39 +100660,32 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "user_detail",
             "sessions",
           ],
+          readOnly: true,
         },
         visibility: {
           title: "Visibility",
           type: "string",
           enum: ["personal", "project"],
+          readOnly: true,
         },
         position: {
           title: "Position",
           type: "integer",
-          maximum: 2147483647,
-          minimum: -2147483648,
+          readOnly: true,
         },
         icon: {
           title: "Icon",
           type: "string",
-          maxLength: 50,
+          readOnly: true,
+          minLength: 1,
           "x-nullable": true,
         },
         config: {
           title: "Config",
           type: "object",
-        },
-        project: {
-          title: "Project",
-          type: "string",
-          format: "uuid",
           readOnly: true,
-          "x-nullable": true,
         },
         created_by: {
-          $ref: "#/definitions/SavedViewCreator",
-        },
-        updated_by: {
           $ref: "#/definitions/SavedViewCreator",
         },
         created_at: {
@@ -100072,34 +100700,40 @@ export const OPENAPI_CONTRACT = Object.freeze({
           format: "date-time",
           readOnly: true,
         },
-      },
-    },
-    SavedViewCreator: {
-      type: "object",
-      properties: {
-        id: {
-          title: "Id",
+        revision: {
+          title: "Revision",
+          type: "integer",
+          readOnly: true,
+        },
+        is_owner: {
+          title: "Is owner",
+          type: "string",
+          readOnly: true,
+        },
+        can_edit: {
+          title: "Can edit",
+          type: "string",
+          readOnly: true,
+        },
+        can_delete: {
+          title: "Can delete",
+          type: "string",
+          readOnly: true,
+        },
+        project: {
+          title: "Project",
           type: "string",
           format: "uuid",
           readOnly: true,
+          "x-nullable": true,
         },
-        name: {
-          title: "Name",
-          type: "string",
-          readOnly: true,
-          minLength: 1,
-        },
-        email: {
-          title: "Email",
-          type: "string",
-          format: "email",
-          readOnly: true,
-          minLength: 1,
+        updated_by: {
+          $ref: "#/definitions/SavedViewCreator",
         },
       },
     },
     SavedViewListResult: {
-      required: ["default_tabs", "custom_views"],
+      required: ["default_tabs", "custom_views", "tab_order"],
       type: "object",
       properties: {
         default_tabs: {
@@ -100114,6 +100748,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/SavedViewList",
           },
         },
+        tab_order: {
+          $ref: "#/definitions/SavedViewTabOrder",
+        },
       },
     },
     SavedViewMessageResult: {
@@ -100124,6 +100761,50 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Message",
           type: "string",
           minLength: 1,
+        },
+      },
+    },
+    SavedViewOrderConflictResult: {
+      required: ["message", "current"],
+      type: "object",
+      properties: {
+        message: {
+          title: "Message",
+          type: "string",
+          minLength: 1,
+        },
+        current: {
+          $ref: "#/definitions/SavedViewTabOrder",
+        },
+      },
+    },
+    ReorderItem: {
+      required: ["id", "position"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        position: {
+          title: "Position",
+          type: "integer",
+          minimum: 0,
+        },
+      },
+    },
+    SavedViewReorderResult: {
+      required: ["message", "tab_order"],
+      type: "object",
+      properties: {
+        message: {
+          title: "Message",
+          type: "string",
+          minLength: 1,
+        },
+        tab_order: {
+          $ref: "#/definitions/SavedViewTabOrder",
         },
       },
     },
@@ -112830,6 +113511,30 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    SavedViewCreator: {
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        email: {
+          title: "Email",
+          type: "string",
+          format: "email",
+          readOnly: true,
+          minLength: 1,
+        },
+      },
+    },
     SavedViewDefaultTab: {
       required: ["key", "label", "tab_type"],
       type: "object",
@@ -112848,6 +113553,113 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Tab type",
           type: "string",
           minLength: 1,
+        },
+      },
+    },
+    SavedViewList: {
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        tab_type: {
+          title: "Tab type",
+          type: "string",
+          enum: [
+            "traces",
+            "spans",
+            "voice",
+            "imagine",
+            "users",
+            "user_detail",
+            "sessions",
+          ],
+          readOnly: true,
+        },
+        visibility: {
+          title: "Visibility",
+          type: "string",
+          enum: ["personal", "project"],
+          readOnly: true,
+        },
+        position: {
+          title: "Position",
+          type: "integer",
+          readOnly: true,
+        },
+        icon: {
+          title: "Icon",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        config: {
+          title: "Config",
+          type: "object",
+          readOnly: true,
+        },
+        created_by: {
+          $ref: "#/definitions/SavedViewCreator",
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+        updated_at: {
+          title: "Updated at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+        revision: {
+          title: "Revision",
+          type: "integer",
+          readOnly: true,
+        },
+        is_owner: {
+          title: "Is owner",
+          type: "string",
+          readOnly: true,
+        },
+        can_edit: {
+          title: "Can edit",
+          type: "string",
+          readOnly: true,
+        },
+        can_delete: {
+          title: "Can delete",
+          type: "string",
+          readOnly: true,
+        },
+      },
+    },
+    SavedViewTabOrder: {
+      required: ["revision", "order"],
+      type: "object",
+      properties: {
+        revision: {
+          title: "Revision",
+          type: "integer",
+          minimum: 0,
+        },
+        order: {
+          type: "array",
+          items: {
+            type: "string",
+            format: "uuid",
+          },
         },
       },
     },

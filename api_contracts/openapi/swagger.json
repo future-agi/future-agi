@@ -66928,6 +66928,37 @@
                         "description": "Number of results to return per page.",
                         "required": false,
                         "type": "integer"
+                    },
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "tab_type",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "enum": [
+                            "traces",
+                            "spans",
+                            "voice",
+                            "imagine",
+                            "users",
+                            "user_detail",
+                            "sessions"
+                        ]
+                    },
+                    {
+                        "name": "consistency",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "enum": [
+                            "primary"
+                        ]
                     }
                 ],
                 "responses": {
@@ -66935,6 +66966,18 @@
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/SavedViewListResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SavedViewNotFoundResponse"
                         }
                     },
                     "default": {
@@ -66947,6 +66990,7 @@
                 "tags": [
                     "tracer"
                 ],
+                "x-runtime-request-validation": true,
                 "x-runtime-response-validation": true
             },
             "post": {
@@ -66958,7 +67002,7 @@
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/SavedViewList"
+                            "$ref": "#/definitions/SavedViewCreate"
                         }
                     }
                 ],
@@ -66967,6 +67011,18 @@
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/SavedViewDetailResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SavedViewNotFoundResponse"
                         }
                     },
                     "default": {
@@ -66979,6 +67035,7 @@
                 "tags": [
                     "tracer"
                 ],
+                "x-runtime-request-validation": true,
                 "x-runtime-response-validation": true
             },
             "parameters": []
@@ -66993,7 +67050,7 @@
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/SavedViewList"
+                            "$ref": "#/definitions/SavedViewReorder"
                         }
                     }
                 ],
@@ -67001,7 +67058,37 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/SavedViewMessageResponse"
+                            "$ref": "#/definitions/SavedViewReorderResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SavedViewNotFoundResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SavedViewForbiddenResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SavedViewOrderConflictResponse"
+                        }
+                    },
+                    "428": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SavedViewPreconditionResponse"
                         }
                     },
                     "default": {
@@ -67014,6 +67101,7 @@
                 "tags": [
                     "tracer"
                 ],
+                "x-runtime-request-validation": true,
                 "x-runtime-response-validation": true
             },
             "parameters": []
@@ -67022,12 +67110,56 @@
             "get": {
                 "operationId": "tracer_saved-views_read",
                 "description": "",
-                "parameters": [],
+                "parameters": [
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "tab_type",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "enum": [
+                            "traces",
+                            "spans",
+                            "voice",
+                            "imagine",
+                            "users",
+                            "user_detail",
+                            "sessions"
+                        ]
+                    },
+                    {
+                        "name": "consistency",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "enum": [
+                            "primary"
+                        ]
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/SavedViewDetailResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SavedViewNotFoundResponse"
                         }
                     },
                     "default": {
@@ -67040,6 +67172,7 @@
                 "tags": [
                     "tracer"
                 ],
+                "x-runtime-request-validation": true,
                 "x-runtime-response-validation": true
             },
             "put": {
@@ -67051,7 +67184,7 @@
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/SavedViewList"
+                            "$ref": "#/definitions/SavedViewUpdate"
                         }
                     }
                 ],
@@ -67060,6 +67193,36 @@
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/SavedViewDetailResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SavedViewNotFoundResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SavedViewForbiddenResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SavedViewConflictResponse"
+                        }
+                    },
+                    "428": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SavedViewPreconditionResponse"
                         }
                     },
                     "default": {
@@ -67072,6 +67235,7 @@
                 "tags": [
                     "tracer"
                 ],
+                "x-runtime-request-validation": true,
                 "x-runtime-response-validation": true
             },
             "patch": {
@@ -67083,7 +67247,7 @@
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/SavedViewList"
+                            "$ref": "#/definitions/SavedViewUpdate"
                         }
                     }
                 ],
@@ -67092,6 +67256,36 @@
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/SavedViewDetailResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SavedViewNotFoundResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SavedViewForbiddenResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SavedViewConflictResponse"
+                        }
+                    },
+                    "428": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SavedViewPreconditionResponse"
                         }
                     },
                     "default": {
@@ -67104,17 +67298,62 @@
                 "tags": [
                     "tracer"
                 ],
+                "x-runtime-request-validation": true,
                 "x-runtime-response-validation": true
             },
             "delete": {
                 "operationId": "tracer_saved-views_delete",
                 "description": "",
-                "parameters": [],
+                "parameters": [
+                    {
+                        "name": "expected_revision",
+                        "in": "query",
+                        "required": true,
+                        "type": "integer",
+                        "minimum": 1
+                    },
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/SavedViewMessageResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SavedViewNotFoundResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SavedViewForbiddenResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SavedViewConflictResponse"
+                        }
+                    },
+                    "428": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SavedViewPreconditionResponse"
                         }
                     },
                     "default": {
@@ -67148,8 +67387,39 @@
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/SavedViewList"
+                            "$ref": "#/definitions/SavedViewDuplicate"
                         }
+                    },
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "tab_type",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "enum": [
+                            "traces",
+                            "spans",
+                            "voice",
+                            "imagine",
+                            "users",
+                            "user_detail",
+                            "sessions"
+                        ]
+                    },
+                    {
+                        "name": "consistency",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "enum": [
+                            "primary"
+                        ]
                     }
                 ],
                 "responses": {
@@ -67157,6 +67427,18 @@
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/SavedViewDetailResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SavedViewNotFoundResponse"
                         }
                     },
                     "default": {
@@ -67169,6 +67451,7 @@
                 "tags": [
                     "tracer"
                 ],
+                "x-runtime-request-validation": true,
                 "x-runtime-response-validation": true
             },
             "parameters": [
@@ -147978,10 +148261,6 @@
             }
         },
         "SavedViewList": {
-            "required": [
-                "name",
-                "tab_type"
-            ],
             "type": "object",
             "properties": {
                 "id": {
@@ -147993,7 +148272,7 @@
                 "name": {
                     "title": "Name",
                     "type": "string",
-                    "maxLength": 255,
+                    "readOnly": true,
                     "minLength": 1
                 },
                 "tab_type": {
@@ -148007,7 +148286,8 @@
                         "users",
                         "user_detail",
                         "sessions"
-                    ]
+                    ],
+                    "readOnly": true
                 },
                 "visibility": {
                     "title": "Visibility",
@@ -148015,23 +148295,25 @@
                     "enum": [
                         "personal",
                         "project"
-                    ]
+                    ],
+                    "readOnly": true
                 },
                 "position": {
                     "title": "Position",
                     "type": "integer",
-                    "maximum": 2147483647,
-                    "minimum": -2147483648
+                    "readOnly": true
                 },
                 "icon": {
                     "title": "Icon",
                     "type": "string",
-                    "maxLength": 50,
+                    "readOnly": true,
+                    "minLength": 1,
                     "x-nullable": true
                 },
                 "config": {
                     "title": "Config",
-                    "type": "object"
+                    "type": "object",
+                    "readOnly": true
                 },
                 "created_by": {
                     "$ref": "#/definitions/SavedViewCreator"
@@ -148047,13 +148329,55 @@
                     "type": "string",
                     "format": "date-time",
                     "readOnly": true
+                },
+                "revision": {
+                    "title": "Revision",
+                    "type": "integer",
+                    "readOnly": true
+                },
+                "is_owner": {
+                    "title": "Is owner",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "can_edit": {
+                    "title": "Can edit",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "can_delete": {
+                    "title": "Can delete",
+                    "type": "string",
+                    "readOnly": true
+                }
+            }
+        },
+        "SavedViewTabOrder": {
+            "required": [
+                "revision",
+                "order"
+            ],
+            "type": "object",
+            "properties": {
+                "revision": {
+                    "title": "Revision",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "order": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "format": "uuid"
+                    }
                 }
             }
         },
         "SavedViewListResult": {
             "required": [
                 "default_tabs",
-                "custom_views"
+                "custom_views",
+                "tab_order"
             ],
             "type": "object",
             "properties": {
@@ -148068,6 +148392,9 @@
                     "items": {
                         "$ref": "#/definitions/SavedViewList"
                     }
+                },
+                "tab_order": {
+                    "$ref": "#/definitions/SavedViewTabOrder"
                 }
             }
         },
@@ -148087,18 +148414,91 @@
                 }
             }
         },
-        "SavedViewDetail": {
+        "SavedViewNotFoundResponse": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": false
+                },
+                "type": {
+                    "title": "Type",
+                    "type": "string",
+                    "enum": [
+                        "validation_error",
+                        "authentication_error",
+                        "payment_required",
+                        "entitlement_error",
+                        "permission_error",
+                        "not_found",
+                        "conflict",
+                        "client_error",
+                        "rate_limit",
+                        "server_error",
+                        "service_unavailable",
+                        "timeout",
+                        "api_error"
+                    ],
+                    "x-nullable": true
+                },
+                "code": {
+                    "title": "Code",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "detail": {
+                    "title": "Detail",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "result": {
+                    "title": "Result",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "attr": {
+                    "title": "Attr",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "details": {
+                    "title": "Details",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "minLength": 1
+                        }
+                    }
+                }
+            }
+        },
+        "SavedViewCreate": {
             "required": [
                 "name",
                 "tab_type"
             ],
             "type": "object",
             "properties": {
-                "id": {
-                    "title": "Id",
+                "project_id": {
+                    "title": "Project id",
                     "type": "string",
                     "format": "uuid",
-                    "readOnly": true
+                    "x-nullable": true
                 },
                 "name": {
                     "title": "Name",
@@ -148125,35 +148525,77 @@
                     "enum": [
                         "personal",
                         "project"
-                    ]
-                },
-                "position": {
-                    "title": "Position",
-                    "type": "integer",
-                    "maximum": 2147483647,
-                    "minimum": -2147483648
+                    ],
+                    "default": "personal"
                 },
                 "icon": {
                     "title": "Icon",
                     "type": "string",
-                    "maxLength": 50,
+                    "maxLength": 50
+                },
+                "config": {
+                    "title": "Config",
+                    "type": "object",
+                    "default": {}
+                }
+            }
+        },
+        "SavedViewDetail": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "tab_type": {
+                    "title": "Tab type",
+                    "type": "string",
+                    "enum": [
+                        "traces",
+                        "spans",
+                        "voice",
+                        "imagine",
+                        "users",
+                        "user_detail",
+                        "sessions"
+                    ],
+                    "readOnly": true
+                },
+                "visibility": {
+                    "title": "Visibility",
+                    "type": "string",
+                    "enum": [
+                        "personal",
+                        "project"
+                    ],
+                    "readOnly": true
+                },
+                "position": {
+                    "title": "Position",
+                    "type": "integer",
+                    "readOnly": true
+                },
+                "icon": {
+                    "title": "Icon",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
                     "x-nullable": true
                 },
                 "config": {
                     "title": "Config",
-                    "type": "object"
-                },
-                "project": {
-                    "title": "Project",
-                    "type": "string",
-                    "format": "uuid",
-                    "readOnly": true,
-                    "x-nullable": true
+                    "type": "object",
+                    "readOnly": true
                 },
                 "created_by": {
-                    "$ref": "#/definitions/SavedViewCreator"
-                },
-                "updated_by": {
                     "$ref": "#/definitions/SavedViewCreator"
                 },
                 "created_at": {
@@ -148167,6 +148609,36 @@
                     "type": "string",
                     "format": "date-time",
                     "readOnly": true
+                },
+                "revision": {
+                    "title": "Revision",
+                    "type": "integer",
+                    "readOnly": true
+                },
+                "is_owner": {
+                    "title": "Is owner",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "can_edit": {
+                    "title": "Can edit",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "can_delete": {
+                    "title": "Can delete",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "project": {
+                    "title": "Project",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "updated_by": {
+                    "$ref": "#/definitions/SavedViewCreator"
                 }
             }
         },
@@ -148183,6 +148655,460 @@
                 },
                 "result": {
                     "$ref": "#/definitions/SavedViewDetail"
+                }
+            }
+        },
+        "ReorderItem": {
+            "required": [
+                "id",
+                "position"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "position": {
+                    "title": "Position",
+                    "type": "integer",
+                    "minimum": 0
+                }
+            }
+        },
+        "SavedViewReorder": {
+            "required": [
+                "expected_revision",
+                "order"
+            ],
+            "type": "object",
+            "properties": {
+                "expected_revision": {
+                    "title": "Expected revision",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "tab_type": {
+                    "title": "Tab type",
+                    "type": "string",
+                    "enum": [
+                        "traces",
+                        "spans",
+                        "voice",
+                        "imagine",
+                        "users",
+                        "user_detail",
+                        "sessions"
+                    ]
+                },
+                "order": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/ReorderItem"
+                    }
+                }
+            }
+        },
+        "SavedViewReorderResult": {
+            "required": [
+                "message",
+                "tab_order"
+            ],
+            "type": "object",
+            "properties": {
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "tab_order": {
+                    "$ref": "#/definitions/SavedViewTabOrder"
+                }
+            }
+        },
+        "SavedViewReorderResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "$ref": "#/definitions/SavedViewReorderResult"
+                }
+            }
+        },
+        "SavedViewForbiddenResponse": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": false
+                },
+                "type": {
+                    "title": "Type",
+                    "type": "string",
+                    "enum": [
+                        "validation_error",
+                        "authentication_error",
+                        "payment_required",
+                        "entitlement_error",
+                        "permission_error",
+                        "not_found",
+                        "conflict",
+                        "client_error",
+                        "rate_limit",
+                        "server_error",
+                        "service_unavailable",
+                        "timeout",
+                        "api_error"
+                    ],
+                    "x-nullable": true
+                },
+                "code": {
+                    "title": "Code",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "detail": {
+                    "title": "Detail",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "result": {
+                    "title": "Result",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "attr": {
+                    "title": "Attr",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "details": {
+                    "title": "Details",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "minLength": 1
+                        }
+                    }
+                }
+            }
+        },
+        "SavedViewOrderConflictResult": {
+            "required": [
+                "message",
+                "current"
+            ],
+            "type": "object",
+            "properties": {
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "current": {
+                    "$ref": "#/definitions/SavedViewTabOrder"
+                }
+            }
+        },
+        "SavedViewOrderConflictResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": false
+                },
+                "type": {
+                    "title": "Type",
+                    "type": "string",
+                    "enum": [
+                        "validation_error",
+                        "authentication_error",
+                        "payment_required",
+                        "entitlement_error",
+                        "permission_error",
+                        "not_found",
+                        "conflict",
+                        "client_error",
+                        "rate_limit",
+                        "server_error",
+                        "service_unavailable",
+                        "timeout",
+                        "api_error"
+                    ],
+                    "x-nullable": true
+                },
+                "code": {
+                    "title": "Code",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "detail": {
+                    "title": "Detail",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "result": {
+                    "$ref": "#/definitions/SavedViewOrderConflictResult"
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "attr": {
+                    "title": "Attr",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "details": {
+                    "title": "Details",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "minLength": 1
+                        }
+                    }
+                }
+            }
+        },
+        "SavedViewPreconditionResponse": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": false
+                },
+                "type": {
+                    "title": "Type",
+                    "type": "string",
+                    "enum": [
+                        "validation_error",
+                        "authentication_error",
+                        "payment_required",
+                        "entitlement_error",
+                        "permission_error",
+                        "not_found",
+                        "conflict",
+                        "client_error",
+                        "rate_limit",
+                        "server_error",
+                        "service_unavailable",
+                        "timeout",
+                        "api_error"
+                    ],
+                    "x-nullable": true
+                },
+                "code": {
+                    "title": "Code",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "detail": {
+                    "title": "Detail",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "result": {
+                    "title": "Result",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "attr": {
+                    "title": "Attr",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "details": {
+                    "title": "Details",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "minLength": 1
+                        }
+                    }
+                }
+            }
+        },
+        "SavedViewUpdate": {
+            "required": [
+                "expected_revision"
+            ],
+            "type": "object",
+            "properties": {
+                "expected_revision": {
+                    "title": "Expected revision",
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "visibility": {
+                    "title": "Visibility",
+                    "type": "string",
+                    "enum": [
+                        "personal",
+                        "project"
+                    ]
+                },
+                "icon": {
+                    "title": "Icon",
+                    "type": "string",
+                    "maxLength": 50,
+                    "x-nullable": true
+                },
+                "config": {
+                    "title": "Config",
+                    "type": "object"
+                }
+            }
+        },
+        "SavedViewConflictResult": {
+            "required": [
+                "message",
+                "current"
+            ],
+            "type": "object",
+            "properties": {
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "current": {
+                    "$ref": "#/definitions/SavedViewDetail"
+                }
+            }
+        },
+        "SavedViewConflictResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": false
+                },
+                "type": {
+                    "title": "Type",
+                    "type": "string",
+                    "enum": [
+                        "validation_error",
+                        "authentication_error",
+                        "payment_required",
+                        "entitlement_error",
+                        "permission_error",
+                        "not_found",
+                        "conflict",
+                        "client_error",
+                        "rate_limit",
+                        "server_error",
+                        "service_unavailable",
+                        "timeout",
+                        "api_error"
+                    ],
+                    "x-nullable": true
+                },
+                "code": {
+                    "title": "Code",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "detail": {
+                    "title": "Detail",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "result": {
+                    "$ref": "#/definitions/SavedViewConflictResult"
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "attr": {
+                    "title": "Attr",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "details": {
+                    "title": "Details",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "minLength": 1
+                        }
+                    }
                 }
             }
         },
@@ -148212,6 +149138,17 @@
                 },
                 "result": {
                     "$ref": "#/definitions/SavedViewMessageResult"
+                }
+            }
+        },
+        "SavedViewDuplicate": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
                 }
             }
         },

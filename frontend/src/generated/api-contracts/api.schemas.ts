@@ -27904,34 +27904,110 @@ export type SavedViewListApiConfig = { [key: string]: unknown };
 
 export interface SavedViewListApi {
   readonly id?: string;
-  /**
-   * @minLength 1
-   * @maxLength 255
-   */
-  name: string;
-  tab_type: SavedViewListApiTabType;
-  visibility?: SavedViewListApiVisibility;
-  /**
-   * @minimum -2147483648
-   * @maximum 2147483647
-   */
-  position?: number;
-  /** @maxLength 50 */
-  icon?: string;
-  config?: SavedViewListApiConfig;
+  /** @minLength 1 */
+  readonly name?: string;
+  readonly tab_type?: SavedViewListApiTabType;
+  readonly visibility?: SavedViewListApiVisibility;
+  readonly position?: number;
+  /** @minLength 1 */
+  readonly icon?: string;
+  readonly config?: SavedViewListApiConfig;
   created_by?: SavedViewCreatorApi;
   readonly created_at?: string;
   readonly updated_at?: string;
+  readonly revision?: number;
+  readonly is_owner?: string;
+  readonly can_edit?: string;
+  readonly can_delete?: string;
+}
+
+export interface SavedViewTabOrderApi {
+  /** @minimum 0 */
+  revision: number;
+  order: string[];
 }
 
 export interface SavedViewListResultApi {
   default_tabs: SavedViewDefaultTabApi[];
   custom_views: SavedViewListApi[];
+  tab_order: SavedViewTabOrderApi;
 }
 
 export interface SavedViewListResponseApi {
   status?: boolean;
   result: SavedViewListResultApi;
+}
+
+export type SavedViewNotFoundResponseApiType =
+  (typeof SavedViewNotFoundResponseApiType)[keyof typeof SavedViewNotFoundResponseApiType];
+
+export const SavedViewNotFoundResponseApiType = {
+  validation_error: "validation_error",
+  authentication_error: "authentication_error",
+  payment_required: "payment_required",
+  entitlement_error: "entitlement_error",
+  permission_error: "permission_error",
+  not_found: "not_found",
+  conflict: "conflict",
+  client_error: "client_error",
+  rate_limit: "rate_limit",
+  server_error: "server_error",
+  service_unavailable: "service_unavailable",
+  timeout: "timeout",
+  api_error: "api_error",
+} as const;
+
+export type SavedViewNotFoundResponseApiDetails = { [key: string]: string[] };
+
+export interface SavedViewNotFoundResponseApi {
+  status?: boolean;
+  type?: SavedViewNotFoundResponseApiType;
+  code?: string;
+  detail?: string;
+  /** @minLength 1 */
+  result?: string;
+  /** @minLength 1 */
+  message?: string;
+  error?: string;
+  attr?: string;
+  details?: SavedViewNotFoundResponseApiDetails;
+}
+
+export type SavedViewCreateApiTabType =
+  (typeof SavedViewCreateApiTabType)[keyof typeof SavedViewCreateApiTabType];
+
+export const SavedViewCreateApiTabType = {
+  traces: "traces",
+  spans: "spans",
+  voice: "voice",
+  imagine: "imagine",
+  users: "users",
+  user_detail: "user_detail",
+  sessions: "sessions",
+} as const;
+
+export type SavedViewCreateApiVisibility =
+  (typeof SavedViewCreateApiVisibility)[keyof typeof SavedViewCreateApiVisibility];
+
+export const SavedViewCreateApiVisibility = {
+  personal: "personal",
+  project: "project",
+} as const;
+
+export type SavedViewCreateApiConfig = { [key: string]: unknown };
+
+export interface SavedViewCreateApi {
+  project_id?: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  name: string;
+  tab_type: SavedViewCreateApiTabType;
+  visibility?: SavedViewCreateApiVisibility;
+  /** @maxLength 50 */
+  icon?: string;
+  config?: SavedViewCreateApiConfig;
 }
 
 export type SavedViewDetailApiTabType =
@@ -27959,31 +28035,244 @@ export type SavedViewDetailApiConfig = { [key: string]: unknown };
 
 export interface SavedViewDetailApi {
   readonly id?: string;
-  /**
-   * @minLength 1
-   * @maxLength 255
-   */
-  name: string;
-  tab_type: SavedViewDetailApiTabType;
-  visibility?: SavedViewDetailApiVisibility;
-  /**
-   * @minimum -2147483648
-   * @maximum 2147483647
-   */
-  position?: number;
-  /** @maxLength 50 */
-  icon?: string;
-  config?: SavedViewDetailApiConfig;
-  readonly project?: string;
+  /** @minLength 1 */
+  readonly name?: string;
+  readonly tab_type?: SavedViewDetailApiTabType;
+  readonly visibility?: SavedViewDetailApiVisibility;
+  readonly position?: number;
+  /** @minLength 1 */
+  readonly icon?: string;
+  readonly config?: SavedViewDetailApiConfig;
   created_by?: SavedViewCreatorApi;
-  updated_by?: SavedViewCreatorApi;
   readonly created_at?: string;
   readonly updated_at?: string;
+  readonly revision?: number;
+  readonly is_owner?: string;
+  readonly can_edit?: string;
+  readonly can_delete?: string;
+  readonly project?: string;
+  updated_by?: SavedViewCreatorApi;
 }
 
 export interface SavedViewDetailResponseApi {
   status?: boolean;
   result: SavedViewDetailApi;
+}
+
+export type SavedViewReorderApiTabType =
+  (typeof SavedViewReorderApiTabType)[keyof typeof SavedViewReorderApiTabType];
+
+export const SavedViewReorderApiTabType = {
+  traces: "traces",
+  spans: "spans",
+  voice: "voice",
+  imagine: "imagine",
+  users: "users",
+  user_detail: "user_detail",
+  sessions: "sessions",
+} as const;
+
+export interface ReorderItemApi {
+  id: string;
+  /** @minimum 0 */
+  position: number;
+}
+
+export interface SavedViewReorderApi {
+  /** @minimum 0 */
+  expected_revision: number;
+  project_id?: string;
+  tab_type?: SavedViewReorderApiTabType;
+  order: ReorderItemApi[];
+}
+
+export interface SavedViewReorderResultApi {
+  /** @minLength 1 */
+  message: string;
+  tab_order: SavedViewTabOrderApi;
+}
+
+export interface SavedViewReorderResponseApi {
+  status?: boolean;
+  result: SavedViewReorderResultApi;
+}
+
+export type SavedViewForbiddenResponseApiType =
+  (typeof SavedViewForbiddenResponseApiType)[keyof typeof SavedViewForbiddenResponseApiType];
+
+export const SavedViewForbiddenResponseApiType = {
+  validation_error: "validation_error",
+  authentication_error: "authentication_error",
+  payment_required: "payment_required",
+  entitlement_error: "entitlement_error",
+  permission_error: "permission_error",
+  not_found: "not_found",
+  conflict: "conflict",
+  client_error: "client_error",
+  rate_limit: "rate_limit",
+  server_error: "server_error",
+  service_unavailable: "service_unavailable",
+  timeout: "timeout",
+  api_error: "api_error",
+} as const;
+
+export type SavedViewForbiddenResponseApiDetails = { [key: string]: string[] };
+
+export interface SavedViewForbiddenResponseApi {
+  status?: boolean;
+  type?: SavedViewForbiddenResponseApiType;
+  code?: string;
+  detail?: string;
+  /** @minLength 1 */
+  result?: string;
+  /** @minLength 1 */
+  message?: string;
+  error?: string;
+  attr?: string;
+  details?: SavedViewForbiddenResponseApiDetails;
+}
+
+export type SavedViewOrderConflictResponseApiType =
+  (typeof SavedViewOrderConflictResponseApiType)[keyof typeof SavedViewOrderConflictResponseApiType];
+
+export const SavedViewOrderConflictResponseApiType = {
+  validation_error: "validation_error",
+  authentication_error: "authentication_error",
+  payment_required: "payment_required",
+  entitlement_error: "entitlement_error",
+  permission_error: "permission_error",
+  not_found: "not_found",
+  conflict: "conflict",
+  client_error: "client_error",
+  rate_limit: "rate_limit",
+  server_error: "server_error",
+  service_unavailable: "service_unavailable",
+  timeout: "timeout",
+  api_error: "api_error",
+} as const;
+
+export type SavedViewOrderConflictResponseApiDetails = {
+  [key: string]: string[];
+};
+
+export interface SavedViewOrderConflictResultApi {
+  /** @minLength 1 */
+  message: string;
+  current: SavedViewTabOrderApi;
+}
+
+export interface SavedViewOrderConflictResponseApi {
+  status?: boolean;
+  type?: SavedViewOrderConflictResponseApiType;
+  code?: string;
+  detail?: string;
+  result: SavedViewOrderConflictResultApi;
+  /** @minLength 1 */
+  message?: string;
+  error?: string;
+  attr?: string;
+  details?: SavedViewOrderConflictResponseApiDetails;
+}
+
+export type SavedViewPreconditionResponseApiType =
+  (typeof SavedViewPreconditionResponseApiType)[keyof typeof SavedViewPreconditionResponseApiType];
+
+export const SavedViewPreconditionResponseApiType = {
+  validation_error: "validation_error",
+  authentication_error: "authentication_error",
+  payment_required: "payment_required",
+  entitlement_error: "entitlement_error",
+  permission_error: "permission_error",
+  not_found: "not_found",
+  conflict: "conflict",
+  client_error: "client_error",
+  rate_limit: "rate_limit",
+  server_error: "server_error",
+  service_unavailable: "service_unavailable",
+  timeout: "timeout",
+  api_error: "api_error",
+} as const;
+
+export type SavedViewPreconditionResponseApiDetails = {
+  [key: string]: string[];
+};
+
+export interface SavedViewPreconditionResponseApi {
+  status?: boolean;
+  type?: SavedViewPreconditionResponseApiType;
+  code?: string;
+  detail?: string;
+  /** @minLength 1 */
+  result?: string;
+  /** @minLength 1 */
+  message?: string;
+  error?: string;
+  attr?: string;
+  details?: SavedViewPreconditionResponseApiDetails;
+}
+
+export type SavedViewUpdateApiVisibility =
+  (typeof SavedViewUpdateApiVisibility)[keyof typeof SavedViewUpdateApiVisibility];
+
+export const SavedViewUpdateApiVisibility = {
+  personal: "personal",
+  project: "project",
+} as const;
+
+export type SavedViewUpdateApiConfig = { [key: string]: unknown };
+
+export interface SavedViewUpdateApi {
+  /** @minimum 1 */
+  expected_revision: number;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  name?: string;
+  visibility?: SavedViewUpdateApiVisibility;
+  /** @maxLength 50 */
+  icon?: string;
+  config?: SavedViewUpdateApiConfig;
+}
+
+export type SavedViewConflictResponseApiType =
+  (typeof SavedViewConflictResponseApiType)[keyof typeof SavedViewConflictResponseApiType];
+
+export const SavedViewConflictResponseApiType = {
+  validation_error: "validation_error",
+  authentication_error: "authentication_error",
+  payment_required: "payment_required",
+  entitlement_error: "entitlement_error",
+  permission_error: "permission_error",
+  not_found: "not_found",
+  conflict: "conflict",
+  client_error: "client_error",
+  rate_limit: "rate_limit",
+  server_error: "server_error",
+  service_unavailable: "service_unavailable",
+  timeout: "timeout",
+  api_error: "api_error",
+} as const;
+
+export type SavedViewConflictResponseApiDetails = { [key: string]: string[] };
+
+export interface SavedViewConflictResultApi {
+  /** @minLength 1 */
+  message: string;
+  current: SavedViewDetailApi;
+}
+
+export interface SavedViewConflictResponseApi {
+  status?: boolean;
+  type?: SavedViewConflictResponseApiType;
+  code?: string;
+  detail?: string;
+  result: SavedViewConflictResultApi;
+  /** @minLength 1 */
+  message?: string;
+  error?: string;
+  attr?: string;
+  details?: SavedViewConflictResponseApiDetails;
 }
 
 export interface SavedViewMessageResultApi {
@@ -27994,6 +28283,14 @@ export interface SavedViewMessageResultApi {
 export interface SavedViewMessageResponseApi {
   status?: boolean;
   result: SavedViewMessageResultApi;
+}
+
+export interface SavedViewDuplicateApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  name?: string;
 }
 
 export type SharedLinkListApiResourceType =
@@ -35580,7 +35877,90 @@ export type TracerSavedViewsListParams = {
    * Number of results to return per page.
    */
   limit?: number;
+  project_id?: string;
+  tab_type?: TracerSavedViewsListTabType;
+  consistency?: TracerSavedViewsListConsistency;
 };
+
+export type TracerSavedViewsListTabType =
+  (typeof TracerSavedViewsListTabType)[keyof typeof TracerSavedViewsListTabType];
+
+export const TracerSavedViewsListTabType = {
+  traces: "traces",
+  spans: "spans",
+  voice: "voice",
+  imagine: "imagine",
+  users: "users",
+  user_detail: "user_detail",
+  sessions: "sessions",
+} as const;
+
+export type TracerSavedViewsListConsistency =
+  (typeof TracerSavedViewsListConsistency)[keyof typeof TracerSavedViewsListConsistency];
+
+export const TracerSavedViewsListConsistency = {
+  primary: "primary",
+} as const;
+
+export type TracerSavedViewsReadParams = {
+  project_id?: string;
+  tab_type?: TracerSavedViewsReadTabType;
+  consistency?: TracerSavedViewsReadConsistency;
+};
+
+export type TracerSavedViewsReadTabType =
+  (typeof TracerSavedViewsReadTabType)[keyof typeof TracerSavedViewsReadTabType];
+
+export const TracerSavedViewsReadTabType = {
+  traces: "traces",
+  spans: "spans",
+  voice: "voice",
+  imagine: "imagine",
+  users: "users",
+  user_detail: "user_detail",
+  sessions: "sessions",
+} as const;
+
+export type TracerSavedViewsReadConsistency =
+  (typeof TracerSavedViewsReadConsistency)[keyof typeof TracerSavedViewsReadConsistency];
+
+export const TracerSavedViewsReadConsistency = {
+  primary: "primary",
+} as const;
+
+export type TracerSavedViewsDeleteParams = {
+  /**
+   * @minimum 1
+   */
+  expected_revision: number;
+  project_id?: string;
+};
+
+export type TracerSavedViewsDuplicateParams = {
+  project_id?: string;
+  tab_type?: TracerSavedViewsDuplicateTabType;
+  consistency?: TracerSavedViewsDuplicateConsistency;
+};
+
+export type TracerSavedViewsDuplicateTabType =
+  (typeof TracerSavedViewsDuplicateTabType)[keyof typeof TracerSavedViewsDuplicateTabType];
+
+export const TracerSavedViewsDuplicateTabType = {
+  traces: "traces",
+  spans: "spans",
+  voice: "voice",
+  imagine: "imagine",
+  users: "users",
+  user_detail: "user_detail",
+  sessions: "sessions",
+} as const;
+
+export type TracerSavedViewsDuplicateConsistency =
+  (typeof TracerSavedViewsDuplicateConsistency)[keyof typeof TracerSavedViewsDuplicateConsistency];
+
+export const TracerSavedViewsDuplicateConsistency = {
+  primary: "primary",
+} as const;
 
 export type TracerSharedLinksListParams = {
   /**
