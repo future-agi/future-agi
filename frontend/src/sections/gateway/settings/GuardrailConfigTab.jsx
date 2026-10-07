@@ -287,16 +287,28 @@ const MODEL_GUARDRAIL_CHECKS = [
         defaultValue: "https://api.lakera.ai/v2/guard",
       },
       {
+        key: "project_id",
+        label: "Project ID",
+        type: "text",
+        placeholder: "Optional Lakera project ID",
+        helperText:
+          "Screens with this project's policy. Empty uses Lakera's default policy.",
+      },
+      {
         key: "categories",
         label: "Categories",
         type: "multiselect",
-        options: [
-          "prompt_injection",
-          "jailbreak",
-          "harmful_content",
-          "unknown_links",
-        ],
-        defaultValue: ["prompt_injection", "jailbreak", "harmful_content"],
+        options: ["prompt_attack", "moderated_content", "pii", "unknown_links"],
+        defaultValue: ["prompt_attack", "moderated_content"],
+        // v1 names in checks saved before these options; the gateway maps them
+        // the same way (lakeraLegacyCategories).
+        aliases: {
+          prompt_injection: "prompt_attack",
+          jailbreak: "prompt_attack",
+          harmful_content: "moderated_content",
+        },
+        helperText:
+          "Only these Lakera detector groups can block. Clear all to enforce every detector in the project's policy.",
       },
     ],
   },
