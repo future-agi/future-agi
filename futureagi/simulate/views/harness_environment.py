@@ -341,6 +341,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             EvalSelectionFull,
             EvalSelectionRefused,
             add_selected_eval,
+            regrade_mapping,
         )
         from simulate.services.harness_run_evals import queue_eval_for_finished_calls
 
@@ -393,11 +394,13 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
                 eval_config = _bound_by_name(job.run_test, wanted) or add_selected_eval(
                     job.run_test, wanted, modality
                 )
-                if not eval_config.mapping:
+                if regrade_mapping(eval_config) is None:
                     # The bind above can return a row with an empty mapping
                     # -- a harness result column, or a person's eval with no
-                    # inputs -- which has nothing to grade. It gets its own
-                    # reason before anything is stamped.
+                    # inputs. A harness suite eval can still be graded, by
+                    # the same rule a re-grade uses; anything else has
+                    # nothing to grade and gets its own reason before
+                    # anything is stamped.
                     transaction.set_rollback(True)
                     return Response(
                         {
@@ -437,8 +440,9 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         Soft-delete only. The verdicts an eval already produced live on the call
         executions and in their receipts, not on this row, so a hard delete would
         leave past runs showing scores for something the environment no longer
-        lists. Removing it stops future scenarios being graded by it and leaves
-        the history it already wrote intact.
+        lists. Removing an eval someone added stops future scenarios being
+        graded by it and leaves the history it already wrote intact. An eval the
+        harness reported itself comes back the next time the harness grades it.
         """
         from simulate.models.eval_config import SimulateEvalConfig
 
