@@ -50,12 +50,14 @@ export default function AlertConfiguration({ dateFilter, setDateFilter }) {
   const [isFormDirty, setFormIsDirty] = useState(false);
   const [queryPayload, setQueryPayload] = useState(null);
   const [isQueryEnabled, setIsQueryEnabled] = useState(false);
+  const [previewAwaitingLabel, setPreviewAwaitingLabel] = useState(false);
   const thresholdTimeoutRef = useRef(null);
   const retainedGraphDataRef = useRef();
 
-  const handlePayloadChange = useCallback((payload, enabled) => {
+  const handlePayloadChange = useCallback((payload, enabled, awaitingLabel) => {
     setQueryPayload(payload);
     setIsQueryEnabled(enabled);
+    setPreviewAwaitingLabel(Boolean(awaitingLabel));
   }, []);
 
   const savedGraphQuery = useQuery({
@@ -84,6 +86,8 @@ export default function AlertConfiguration({ dateFilter, setDateFilter }) {
   });
 
   const useSavedGraph = Boolean(openSheetView && !isFormDirty);
+  // The saved graph already has its label; only a preview can be waiting.
+  const showAwaitingLabel = !useSavedGraph && previewAwaitingLabel;
   const activeGraphQuery = useSavedGraph ? savedGraphQuery : previewGraphQuery;
   const latestFetchedData = activeGraphQuery.data;
 
@@ -299,7 +303,12 @@ export default function AlertConfiguration({ dateFilter, setDateFilter }) {
           </Typography>
         </Button>
       </Stack>
-      {graphState.showError && (
+      {showAwaitingLabel && (
+        <Alert severity="info" sx={{ mb: 2 }} data-testid="preview-awaiting-label">
+          Pick a label to preview this alert.
+        </Alert>
+      )}
+      {!showAwaitingLabel && graphState.showError && (
         <Alert
           severity="error"
           sx={{ mb: 2 }}
@@ -317,7 +326,7 @@ export default function AlertConfiguration({ dateFilter, setDateFilter }) {
           {MONITOR_GRAPH_ERROR_MESSAGE}
         </Alert>
       )}
-      {graphState.showGraph && renderChart()}
+      {!showAwaitingLabel && graphState.showGraph && renderChart()}
       <Divider />
       <Box
         sx={{
