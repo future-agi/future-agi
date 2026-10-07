@@ -203,13 +203,15 @@ const MCPManagementSection = () => {
       {tab === 4 && (
         <MCPPromptsTab mcpPrompts={mcpPrompts} isLoading={promptsLoading} />
       )}
-      {tab === 5 && (
+      {/* Keep the draft mounted while navigating between MCP tabs. */}
+      <Box hidden={tab !== 5}>
         <MCPGuardrailsTab
+          key={gatewayId}
           config={config}
           mcpStatus={mcpStatus}
           gatewayId={gatewayId}
         />
-      )}
+      </Box>
       {tab === 6 && (
         <MCPPlaygroundTab mcpTools={mcpTools} gatewayId={gatewayId} />
       )}
