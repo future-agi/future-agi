@@ -6,7 +6,12 @@ import CustomTooltip from "src/components/tooltip";
 import { BUILD_TONES } from "../../../../buildEnvironment/buildTones";
 import { STATUS_CHIPS } from "./traceTable.constants";
 
-const TONE = { red: BUILD_TONES.red, amber: BUILD_TONES.amber, green: BUILD_TONES.green };
+const TONE = {
+  blue: BUILD_TONES.blue,
+  red: BUILD_TONES.red,
+  amber: BUILD_TONES.amber,
+  green: BUILD_TONES.green,
+};
 
 // Outcome quick-filter — one chip per status bucket plus All. The active chip is
 // filled in its status colour; each carries its count so the distribution is

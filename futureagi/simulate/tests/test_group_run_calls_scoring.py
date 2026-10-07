@@ -6,7 +6,16 @@ from model_hub.models.evals_metric import EvalTemplate
 from simulate.models import CallExecution, Scenarios, SimulateEvalConfig, TestExecution
 from simulate.models.run_test import RunTest
 from simulate.services.run_results_v3 import build_call_rows
-from simulate.services.run_results_v3_queries import group_run_calls, run_calls_queryset
+from simulate.services.run_results_v3_page import page_groups, run_calls_page
+from simulate.services.run_results_v3_queries import run_calls_queryset
+
+
+def _page_groups(execution, queryset, page, columns):
+    query = {"page": page, "page_size": 1, "group_by": "goal"}
+    calls_page = run_calls_page(execution, query, columns, lambda: queryset)
+    return calls_page["page_ids"], page_groups(
+        execution, calls_page, query, columns, lambda: queryset
+    )
 
 
 @pytest.fixture
@@ -96,16 +105,17 @@ def test_group_scores_match_configured_rows_across_pages(
         expected_scores, key=lambda score: score or 0
     )
     measured = [score for score in scores if score is not None]
-    for row in rows:
-        groups = group_run_calls(
-            queryset, "goal", [row], columns, execution=grouped_execution
-        )
+    paged_ids = []
+    for page in range(1, len(rows) + 1):
+        page_ids, groups = _page_groups(grouped_execution, queryset, page, columns)
+        paged_ids.extend(page_ids)
         assert len(groups) == 1
         assert groups[0]["total"] == len(outputs)
-        assert groups[0]["result_ids"] == [row["id"]]
+        assert groups[0]["result_ids"] == page_ids
         aggregate = groups[0]["aggregates"]["evaluations"][str(config.id)]
         assert aggregate["scored"] == len(measured)
         assert aggregate["score_sum"] == pytest.approx(sum(measured))
+    assert sorted(paged_ids) == sorted(row["id"] for row in rows)
 
 
 @pytest.mark.django_db
@@ -135,9 +145,7 @@ def test_native_group_scores_preserve_row_fallback(
     queryset = run_calls_queryset(grouped_execution)
     columns = [{"id": "native-check", "name": "Native check"}]
     rows, _ = build_call_rows(grouped_execution, list(queryset), columns, set())
-    groups = group_run_calls(
-        queryset, "goal", rows[:1], columns, execution=grouped_execution
-    )
+    _, groups = _page_groups(grouped_execution, queryset, 1, columns)
     aggregate = groups[0]["aggregates"]["evaluations"]["native-check"]
     assert aggregate["scored"] == 2
     assert aggregate["score_sum"] == pytest.approx(
