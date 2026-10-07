@@ -100,7 +100,7 @@ export function mapCallRow(row, evalColumns = []) {
   return {
     id: row?.id,
     goal: row?.goal || row?.scenario || "Untitled goal",
-    subGoals: row?.sub_goals ?? [],
+    subGoalResults: row?.sub_goal_results ?? [],
     scenario: trialIndex
       ? `${scenarioName} · Trial ${trialIndex}`
       : scenarioName,
@@ -178,7 +178,7 @@ export function taskFromCallDetail(detail) {
  */
 export function buildTraceColumns(columnOrder = []) {
   const staticCols = TRACE_COLUMNS.filter(
-    (c) => c.key !== "evals" && c.key !== "subGoalEvals",
+    (c) => c.key !== "subGoalEvals",
   ).map((c) => ({
     key: c.key,
     label: c.label,
