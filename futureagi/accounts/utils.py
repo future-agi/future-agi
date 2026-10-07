@@ -14,6 +14,7 @@ from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
 from django.db import close_old_connections, transaction
 from django.db.models.functions import Lower
+from django.utils import timezone
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 from rest_framework.exceptions import ValidationError as DRFValidationError
@@ -547,7 +548,7 @@ def send_slack_notification(user, updated=False, err=None):
             "signup_slack_notification_skipped",
             reason="SLACK_WEBHOOK_CHANNEL not set",
         )
-        return
+        return False
     try:
         org = get_user_organization(user)
         org_name = (org.display_name or org.name) if org else "Unknown"
@@ -559,8 +560,10 @@ def send_slack_notification(user, updated=False, err=None):
         webhook = WebhookClient(settings.SLACK_WEBHOOK_CHANNEL, timeout=10)
         webhook.send(text=data)
         logger.info("Slack notification sent successfully")
+        return True
     except Exception as e:
         logger.error(f"Failed to send Slack notification: {str(e)}")
+        return False
 
 
 def send_hubspot_notification(user):
@@ -805,21 +808,117 @@ def existing_member_access_will_change(
     return False
 
 
-INVITE_SIGNUP_REPORTED_KEY = "invite_signup_reported"
+INVITE_SIGNUP_REPORTING_KEY = "invite_signup_reporting"
+LEGACY_INVITE_SIGNUP_REPORTED_KEY = "invite_signup_reported"
+_INVITE_REPORT_DESTINATIONS = ("hubspot", "slack", "mixpanel")
+
+
+class ReportingDeliveryError(RuntimeError):
+    """A known destination failure that should make Temporal retry the task."""
+
+
+def _new_invite_reporting_state():
+    return {
+        "status": "pending",
+        "destinations": {name: "pending" for name in _INVITE_REPORT_DESTINATIONS},
+    }
+
+
+def _invite_reporting_state(config):
+    state = config.get(INVITE_SIGNUP_REPORTING_KEY)
+    if isinstance(state, dict):
+        state = dict(state)
+        destinations = dict(state.get("destinations") or {})
+        for name in _INVITE_REPORT_DESTINATIONS:
+            destinations.setdefault(name, "pending")
+        state["destinations"] = destinations
+        state.setdefault("status", "pending")
+        return state
+    if config.get(LEGACY_INVITE_SIGNUP_REPORTED_KEY) is True:
+        return {
+            "status": "complete",
+            "destinations": {
+                name: "sent" for name in _INVITE_REPORT_DESTINATIONS
+            },
+        }
+    return _new_invite_reporting_state()
+
+
+def _claim_invite_reporting_destination(user_id, destination):
+    """Atomically claim one destination; claimed work is never replayed blindly.
+
+    A Temporal retry can happen after an external provider accepted a request
+    but before our database write. Treating an existing claim as completed is
+    the at-most-once choice: it avoids duplicate Slack/Mixpanel events. Known
+    provider failures release the claim explicitly and remain retryable.
+    """
+    with transaction.atomic():
+        user = User.objects.select_for_update().get(id=user_id)
+        config = dict(user.config) if isinstance(user.config, dict) else {}
+        state = _invite_reporting_state(config)
+        current = state["destinations"].get(destination, "pending")
+        if current in {"sent", "skipped", "claimed"}:
+            return None
+        state["destinations"][destination] = "claimed"
+        state["status"] = "in_progress"
+        config[INVITE_SIGNUP_REPORTING_KEY] = state
+        user.config = config
+        user.save(update_fields=["config"])
+        return user
+
+
+def _finish_invite_reporting_destination(user_id, destination, result):
+    with transaction.atomic():
+        user = User.objects.select_for_update().get(id=user_id)
+        config = dict(user.config) if isinstance(user.config, dict) else {}
+        state = _invite_reporting_state(config)
+        state["destinations"][destination] = result
+        if all(
+            state["destinations"].get(name) in {"sent", "skipped"}
+            for name in _INVITE_REPORT_DESTINATIONS
+        ):
+            state["status"] = "complete"
+            config[LEGACY_INVITE_SIGNUP_REPORTED_KEY] = True
+        else:
+            state["status"] = "pending"
+        config[INVITE_SIGNUP_REPORTING_KEY] = state
+        user.config = config
+        user.save(update_fields=["config"])
+
+
+def _release_invite_reporting_destination(user_id, destination):
+    with transaction.atomic():
+        user = User.objects.select_for_update().get(id=user_id)
+        config = dict(user.config) if isinstance(user.config, dict) else {}
+        state = _invite_reporting_state(config)
+        state["destinations"][destination] = "pending"
+        state["status"] = "pending"
+        config[INVITE_SIGNUP_REPORTING_KEY] = state
+        user.config = config
+        user.save(update_fields=["config"])
 
 
 def schedule_invite_acceptance_reporting(user):
-    """Queue signup reporting for a newly accepted invitee.
+    """Persist a pending report, then queue it with a stable per-user id.
 
-    Stable workflow id per user so a retry or a second accept collapses onto
-    the in-flight run instead of posting a second signup. Does not send the
-    owner welcome email or seed demo data.
+    If Temporal is unavailable the pending state remains durable and can be
+    retried by a later authenticated login; acceptance itself stays committed.
     """
+    with transaction.atomic():
+        queued_user = User.objects.select_for_update().get(id=user.id)
+        config = dict(queued_user.config) if isinstance(queued_user.config, dict) else {}
+        state = _invite_reporting_state(config)
+        if state.get("status") == "complete":
+            return None
+        config[INVITE_SIGNUP_REPORTING_KEY] = state
+        queued_user.config = config
+        queued_user.save(update_fields=["config"])
+
     import tfc.temporal.background_tasks.activities  # noqa: F401
     from temporalio.common import WorkflowIDConflictPolicy
     from tfc.temporal.drop_in import start_activity
 
-    start_activity(
+    return start_activity(
         "run_invite_acceptance_reporting_activity",
         args=(str(user.id),),
         queue="default",
@@ -828,11 +927,26 @@ def schedule_invite_acceptance_reporting(user):
     )
 
 
-def report_invite_acceptance(user_id):
-    """Create/update HubSpot, Slack signup feed, and Mixpanel for one invitee.
+def retry_pending_invite_acceptance_reporting(user):
+    config = user.config if isinstance(user.config, dict) else {}
+    state = _invite_reporting_state(config)
+    if state.get("status") != "pending":
+        return
+    try:
+        schedule_invite_acceptance_reporting(user)
+    except Exception:
+        logger.exception(
+            "invite_signup_reporting_retry_schedule_failed", user_id=str(user.id)
+        )
 
-    Idempotent via ``user.config[invite_signup_reported]``. Never sends the
-    generated-password welcome mail or seeds an organization demo dataset.
+
+def report_invite_acceptance(user_id):
+    """Deliver each signup destination once, retrying only known failures.
+
+    The row lock makes claims mutually exclusive. A provider exception releases
+    only that destination; prior successful destinations stay complete. An
+    interrupted claimed call is intentionally not replayed blindly because
+    Slack and Mixpanel do not provide a shared idempotency-key API.
     """
     from analytics.utils import (
         MixpanelEvents,
@@ -842,22 +956,44 @@ def report_invite_acceptance(user_id):
 
     user = User.objects.select_related("organization").get(id=user_id)
     config = user.config if isinstance(user.config, dict) else {}
-    if config.get(INVITE_SIGNUP_REPORTED_KEY):
+    state = _invite_reporting_state(config)
+    if state.get("status") == "complete":
         logger.info("invite_signup_report_already_sent", user_id=str(user_id))
         return
 
-    if os.getenv("ENV_TYPE") not in ["local"]:
-        updated, err = send_hubspot_notification(user)
-        send_slack_notification(user, updated=updated, err=err)
-
-    properties = get_mixpanel_properties(user=user, mode="invite")
-    properties["signup_origin"] = "invite_acceptance"
-    track_mixpanel_event(MixpanelEvents.SIGNUP.value, properties)
-
-    config = dict(config)
-    config[INVITE_SIGNUP_REPORTED_KEY] = True
-    user.config = config
-    user.save(update_fields=["config"])
+    for destination in _INVITE_REPORT_DESTINATIONS:
+        claimed_user = _claim_invite_reporting_destination(user_id, destination)
+        if claimed_user is None:
+            continue
+        try:
+            if destination == "hubspot":
+                if os.getenv("ENV_TYPE") == "local" or not hubspot_is_configured():
+                    result = "skipped"
+                else:
+                    updated, err = send_hubspot_notification(claimed_user)
+                    if not updated:
+                        raise ReportingDeliveryError(err or "HubSpot delivery failed")
+                    result = "sent"
+            elif destination == "slack":
+                if os.getenv("ENV_TYPE") == "local" or not slack_signup_webhook_is_configured():
+                    result = "skipped"
+                elif not send_slack_notification(claimed_user, updated=True, err=None):
+                    raise ReportingDeliveryError("Slack delivery failed")
+                else:
+                    result = "sent"
+            else:
+                properties = get_mixpanel_properties(user=claimed_user, mode="invite")
+                properties["signup_origin"] = "invite_acceptance"
+                track_mixpanel_event(
+                    MixpanelEvents.SIGNUP.value,
+                    properties,
+                    raise_on_error=True,
+                )
+                result = "sent"
+        except Exception:
+            _release_invite_reporting_destination(user_id, destination)
+            raise
+        _finish_invite_reporting_destination(user_id, destination, result)
 
 
 # TODO: use async views to replace this code. its wrong

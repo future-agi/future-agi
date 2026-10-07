@@ -423,6 +423,9 @@ class CustomTokenObtainPairView(TokenObtainPairView):
             # No-op without HUBSPOT_API_TOKEN; otherwise runs off the request
             # path, so HubSpot can never slow down or fail a login.
             record_hubspot_login(user)
+            from accounts.utils import retry_pending_invite_acceptance_reporting
+
+            retry_pending_invite_acceptance_reporting(user)
             cache.delete(block_key)
             cache.delete(attempts_key)
 
