@@ -144,7 +144,7 @@ describe("AllEvaluationsDrawer", () => {
 
     fireEvent.click(screen.getByText("Run Evaluations"));
     expect(runMutate).toHaveBeenCalledWith(
-      { runTestId: "rt1", executionId: "ex1", evalConfigIds: ["c1"] },
+      { id: "env-1", executionId: "ex1", evalConfigIds: ["c1"] },
       expect.any(Object),
     );
   });
@@ -175,7 +175,7 @@ describe("AllEvaluationsDrawer", () => {
     fireEvent.click(screen.getByText("Run Evaluations"));
 
     expect(runMutate).toHaveBeenCalledWith(
-      expect.objectContaining({ evalConfigIds: ["c1", "c2"] }),
+      expect.objectContaining({ id: "env-1", evalConfigIds: ["c1", "c2"] }),
       expect.any(Object),
     );
   });
@@ -439,5 +439,45 @@ describe("AllEvaluationsDrawer", () => {
     expect(enqueueSnackbar).toHaveBeenCalledWith(expect.any(String), {
       variant: "success",
     });
+  });
+
+  it("closes and reports once grading is queued", () => {
+    runMutate.mockImplementation((_v, o) =>
+      o.onSuccess({ call_execution_count: 4 }),
+    );
+    const { onClose } = setup();
+
+    fireEvent.click(screen.getByRole("button", { name: "Run no_misselling" }));
+    fireEvent.click(screen.getByText("Run Evaluations"));
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(enqueueSnackbar).toHaveBeenCalledWith(
+      "Grading 1 evaluation. This run updates when grading finishes.",
+      { variant: "success" },
+    );
+  });
+
+  it("shows the server's sentence and stays open when grading couldn't be queued", async () => {
+    const sentence = "Grading couldn't be started. Try again.";
+    runMutate.mockImplementation((_v, o) =>
+      o.onError({ statusCode: 503, detail: sentence }),
+    );
+    const { onClose } = setup();
+
+    fireEvent.click(screen.getByRole("button", { name: "Run no_misselling" }));
+    fireEvent.click(screen.getByText("Run Evaluations"));
+
+    expect(enqueueSnackbar).toHaveBeenCalledWith(sentence, {
+      variant: "error",
+    });
+    expect(enqueueSnackbar).not.toHaveBeenCalledWith(expect.any(String), {
+      variant: "success",
+    });
+    // Outlast the dialog's exit transition, as the refusal test above does.
+    await act(() => new Promise((resolve) => setTimeout(resolve, 500)));
+    expect(
+      screen.getByText("This will overwrite previous evaluation results."),
+    ).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
   });
 });

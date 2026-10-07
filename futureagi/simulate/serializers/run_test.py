@@ -24,6 +24,7 @@ from simulate.serializers.response.agent_definition import (
 )
 from simulate.serializers.response.scenarios import ScenarioResponseSerializer
 from simulate.serializers.simulator_agent import SimulatorAgentSerializer
+from simulate.services.eval_config_edit import has_own_mapping
 from simulate.services.harness_evals import (
     harness_run_test_ids,
     is_harness_run_test,
@@ -60,6 +61,7 @@ class SimulateEvalConfigSimpleSerializer(serializers.ModelSerializer):
     # The run page tags each eval with the type the picker shows for it.
     eval_type = serializers.CharField(source="eval_template.eval_type", read_only=True)
     regradable = serializers.SerializerMethodField()
+    editable = serializers.SerializerMethodField()
 
     class Meta:
         model = SimulateEvalConfig
@@ -76,6 +78,7 @@ class SimulateEvalConfigSimpleSerializer(serializers.ModelSerializer):
             "template_id",
             "eval_type",
             "regradable",
+            "editable",
         ]
 
     def get_eval_group(self, obj):
@@ -98,6 +101,16 @@ class SimulateEvalConfigSimpleSerializer(serializers.ModelSerializer):
         if obj.run_test_id not in harness_runs:
             harness_runs[obj.run_test_id] = is_harness_run_test(obj.run_test_id)
         return not harness_runs[obj.run_test_id] or regrade_mapping(obj) is not None
+
+    # The rule the environment's eval edit refuses by. A row the harness fills
+    # is the harness's: later harness runs write into it by its fixed id, so
+    # changing it would change what they write into. Shares the lookup above.
+    @swagger_serializer_method(serializer_or_field=serializers.BooleanField())
+    def get_editable(self, obj) -> bool:
+        harness_runs = self.context.setdefault(HARNESS_RUN_TESTS_CONTEXT_KEY, {})
+        if obj.run_test_id not in harness_runs:
+            harness_runs[obj.run_test_id] = is_harness_run_test(obj.run_test_id)
+        return not harness_runs[obj.run_test_id] or has_own_mapping(obj)
 
 
 class RunTestListAgentSerializer(serializers.ModelSerializer):

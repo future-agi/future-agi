@@ -330,6 +330,7 @@ def test_selected_excludes_empty_mapping_rows(env_client, environment, workspace
     assert body["overview"]["evaluations_count"] == 1
     row = selected[0]
     assert row["runnable"] is True
+    assert row["editable"] is True
     assert row["id"]
     assert row["inputs"] == [
         {"key": "conversation", "source": "voice_recording", "label": "Call recording"}
