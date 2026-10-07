@@ -50,7 +50,20 @@ const SETTINGS = Object.freeze({
 
 export const F6_MINILM_POLICY = Object.freeze({...SETTINGS, digest: digest(SETTINGS)});
 
+const SAMPLED_SETTINGS = Object.freeze({...SETTINGS,
+  version: 'f6-minilm-sampled/v2', sampled_merge_reviews: true,
+  merge_sample_members_per_issue: 8, max_merge_reviews: 10,
+});
+export const SAMPLED_F6_MINILM_POLICY = Object.freeze({
+  ...SAMPLED_SETTINGS, digest: digest(SAMPLED_SETTINGS),
+});
+export function groupingPolicy(version) {
+  const policy = [F6_MINILM_POLICY, SAMPLED_F6_MINILM_POLICY].find(item => item.version === version);
+  assert.ok(policy, 'Unsupported grouping policy');
+  return policy;
+}
+
 export function validateF6Policy(policy) {
-  assert.deepEqual(policy, F6_MINILM_POLICY, 'Unapproved F6 + MiniLM policy');
+  assert.deepEqual(policy, groupingPolicy(policy?.version), 'Unapproved F6 + MiniLM policy');
   return policy;
 }

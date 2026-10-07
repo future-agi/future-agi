@@ -86,7 +86,7 @@ export async function runCrossServiceFixture({claim, receipt_ids_override: overr
     if(path.endsWith('/publish/')){
       assert.equal(publishBody,null,'Fixture published twice');
       publishBody=structuredClone(body);
-      return {published:true};
+      return {status:'completed',registry_revision:claim.registry_revision+1};
     }
     if(body?.action==='renew')return {state:'claimed'};
     throw new Error('Unexpected fixture control operation');

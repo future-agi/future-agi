@@ -4,7 +4,7 @@ import {adaptGroupingSnapshot} from './snapshot.mjs';
 import {buildFeatures, featureDigest, FEATURE_VERSION} from './features.mjs';
 import {createF6Planes, bucketRowsForFeature} from './lsh.mjs';
 import {runGrouping} from './engine.mjs';
-import {F6_MINILM_POLICY} from './policy.mjs';
+import {groupingPolicy} from './policy.mjs';
 import {createGroupingInvestigator} from './gateway.mjs';
 import {validateEmbeddingModel} from './embedding-client.mjs';
 import {assessSeverity} from './severity.mjs';
@@ -78,9 +78,12 @@ async function runFeatureClaim(claim, options) {
 export function engineInput(claim, configuredModel) {
   const pendingSnapshots = claim.pending_snapshots ?? [claim.snapshot];
   if (!Array.isArray(pendingSnapshots) || pendingSnapshots.length > 20) throw new Error('Invalid pending snapshot count');
-  const pendingRows = pendingSnapshots.flatMap(adaptGroupingSnapshot);
+  const snapshotRows = pendingSnapshots.flatMap(adaptGroupingSnapshot);
+  const selected = new Set(claim.pending_ids);
+  const pendingRows = claim.policy_version === 'f6-minilm-sampled/v2'
+    ? snapshotRows.filter(row=>selected.has(row.id)) : snapshotRows;
   const pendingIds = pendingRows.map(row=>row.id);
-  if (new Set(pendingIds).size !== pendingIds.length || !Array.isArray(claim.pending_ids)
+  if (!pendingIds.length || new Set(pendingIds).size !== pendingIds.length || !Array.isArray(claim.pending_ids)
       || featureDigest([...pendingIds].sort()) !== featureDigest([...claim.pending_ids].sort())) {
     throw new Error('Claimed pending membership mismatch');
   }
@@ -125,7 +128,7 @@ function checkpointStore(claim, control, signal) {
   return {
     read: async name => structuredClone(files[name] ?? null),
     save: async (name,value) => {
-      if (!['checkpoint.json','predictions.json','registry.json','prediction-receipt.json'].includes(name)) {
+      if (!['checkpoint.json','predictions.json','registry.json','prediction-receipt.json','publication.json'].includes(name)) {
         throw new Error('Unsupported grouping checkpoint file');
       }
       const next = {...files,[name]:structuredClone(value)};
@@ -172,23 +175,50 @@ async function runGroupingClaim(claim, options) {
   const {control, gatewayConfig, reserveUsd, createInvestigator = createGroupingInvestigator,
     engine = runGrouping} = options;
   if (!UUID.test(claim.attempt_id ?? '')) throw new Error('Invalid grouping attempt');
-  if (claim.policy_version !== F6_MINILM_POLICY.version) throw new Error('Unsupported grouping policy');
+  const policy = groupingPolicy(claim.policy_version);
   const path = `/grouping/attempts/${claim.attempt_id}/`;
   return withLease(claim,path,options,async signal => {
-    const input = engineInput(claim, options.model);
-    const gateway = await createInvestigator({claim,control,config:gatewayConfig,reserveUsd,signal});
-    const result = await engine({...input,investigate:gateway.investigate,
-      store:checkpointStore(claim,control,signal)});
-    if (result.status !== 'complete') throw new Error('Grouping paused with durable checkpoint; no Feed publication');
-    const commands = [...result.commands,...result.dispositions.filter(item=>item.state==='deferred')
-      .map(item=>({type:'defer',occurrence_ids:[item.occurrence_id],reason:item.reason}))];
-    const receiptIds=[...new Set([...(claim.receipt_ids ?? []),...gateway.receiptIds()])];
-    validateCommandProvenance(commands,receiptIds);
+    const store = checkpointStore(claim,control,signal);
+    const binding = {snapshot_digest:claim.snapshot_digest, candidate_digest:claim.candidate_digest,
+      registry_revision:claim.registry_revision, policy_version:claim.policy_version};
+    let publication = await store.read('publication.json');
+    if (publication && featureDigest(publication.binding) !== featureDigest(binding)) {
+      throw new Error('Saved publication belongs to a different read set');
+    }
+    if (!publication) {
+      const input = engineInput(claim, options.model);
+      const gateway = await createInvestigator({claim,control,config:gatewayConfig,reserveUsd,signal});
+      const result = await engine({...input,policy,investigate:gateway.investigate,store});
+      if (result.status !== 'complete') throw new Error('Grouping paused with durable checkpoint; no Feed publication');
+      const commands = [...result.commands,...result.dispositions.filter(item=>item.state==='deferred')
+        .map(item=>({type:'defer',occurrence_ids:[item.occurrence_id],reason:item.reason}))];
+      const receiptIds=[...new Set([...(claim.receipt_ids ?? []),...gateway.receiptIds()])].sort();
+      validateCommandProvenance(commands,receiptIds);
+      publication = {binding, body:{
+        idempotency_key:featureDigest({snapshot:claim.snapshot_digest,
+          candidate:claim.candidate_digest,registry_revision:claim.registry_revision,commands}),
+        snapshot_digest:claim.snapshot_digest,registry_revision:claim.registry_revision,
+        commands,receipt_ids:receiptIds}};
+      // Freeze commands AND receipt ordering before sending. A recovered claim
+      // must not rebuild a different payload under the same idempotency key.
+      await store.save('publication.json',publication);
+    }
     signal.throwIfAborted();
-    return control(path+'publish/',{lease_token:claim.lease_token,
-      idempotency_key:featureDigest({attempt:claim.attempt_id,commands}),
-      snapshot_digest:claim.snapshot_digest,registry_revision:claim.registry_revision,
-      commands,receipt_ids:receiptIds}, {signal});
+    let reply;
+    for (let send = 0; send < 2; send++) {
+      try {
+        reply = await control(path+'publish/',{...publication.body,lease_token:claim.lease_token},{signal});
+        break;
+      } catch (error) {
+        // Retry only ambiguous transport/server failures, with the identical
+        // request. Validation conflicts need a fresh claim, never a resend.
+        if (send || signal.aborted || error.status && error.status < 500) throw error;
+      }
+    }
+    if (reply?.status !== 'completed' || !Number.isSafeInteger(reply.registry_revision)) {
+      throw new Error('Backend did not acknowledge committed grouping publication');
+    }
+    return reply;
   });
 }
 
