@@ -2864,3 +2864,15 @@ def test_platform_simulator_material_carries_observe_credentials(monkeypatch):
     assert values["FI_SECRET_KEY"] == "observe-secret"
     assert values["FI_HARNESS_PROJECT"] == "hosted-harness"
     assert values["HARNESS_OBSERVABILITY"] == "on"
+
+
+def test_platform_simulator_prefers_public_callback_for_hosted_observability(
+    monkeypatch,
+):
+    monkeypatch.delenv("ALK_HOSTED_FI_BASE_URL", raising=False)
+    monkeypatch.setenv("HARNESS_PUBLIC_BASE_URL", "https://platform.example.test")
+    monkeypatch.setenv("FI_BASE_URL", "http://backend:80")
+
+    values, _credentials = _platform_simulator_material()
+
+    assert values["FI_BASE_URL"] == "https://platform.example.test"
