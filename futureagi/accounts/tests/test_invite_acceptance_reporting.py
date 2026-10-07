@@ -1,157 +1,177 @@
 """TH-5475: invited users must reach the same signup destinations as owners.
 
-First successful invite acceptance of a new user reports to HubSpot, the
-existing Slack signup feed, and Mixpanel. It must not reuse owner onboarding
-(generated-password email, demo dataset). Reporting is idempotent per user.
-
-These tests execute the real function bodies from accounts/utils.py. The
-accounts package import graph needs the full Django app, which this checkout
-cannot boot without its private dependency set, so the functions are loaded
-from source into a stub namespace. That is a unit seam, not an integration run.
+Accepting an invitation for a user that an invite created queues a dedicated
+reporting activity. The activity reports to HubSpot, the Slack signup feed and
+Mixpanel once per user, and never runs owner onboarding (generated-password
+email, demo dataset, demo traces).
 """
 
-import ast
-import os
-import sys
-import types
-from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import ANY, patch
 
 import pytest
+from django.contrib.auth.tokens import default_token_generator
+from django.utils.encoding import force_bytes
+from django.utils.http import urlsafe_base64_encode
+from rest_framework import status
+from rest_framework.test import APIClient
+from temporalio.common import WorkflowIDConflictPolicy
 
-UTILS = Path(__file__).resolve().parents[1] / "utils.py"
+import tfc.temporal.background_tasks.activities  # noqa: F401  (registers activities)
+from accounts.models.user import User
+from accounts.utils import INVITE_SIGNUP_REPORTED_KEY
+from analytics.utils import MixpanelEvents
+from tfc.constants.levels import Level
+from tfc.temporal.drop_in.decorator import _ACTIVITY_REGISTRY
+
+INVITE_URL = "/accounts/organization/invite/"
+ACTIVITY = "run_invite_acceptance_reporting_activity"
+PASSWORD = "SecurePass123!"
 
 
-def _function_source(name):
-    tree = ast.parse(UTILS.read_text())
-    node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name)
-    return ast.get_source_segment(UTILS.read_text(), node)
-
-
-def _load_reporting():
-    tree = ast.parse(UTILS.read_text())
-    names = {
-        "INVITE_SIGNUP_REPORTED_KEY",
-        "schedule_invite_acceptance_reporting",
-        "report_invite_acceptance",
-    }
-    nodes = [
-        node
-        for node in tree.body
-        if (
-            isinstance(node, ast.Assign)
-            and any(getattr(t, "id", None) in names for t in node.targets)
-        )
-        or (isinstance(node, ast.FunctionDef) and node.name in names)
-    ]
-    if len(nodes) != 3:
-        raise AssertionError("invite reporting symbols missing from accounts/utils.py")
-    module = ast.Module(body=nodes, type_ignores=[])
-    ast.fix_missing_locations(module)
-    analytics = types.ModuleType("analytics.utils")
-    analytics.MixpanelEvents = types.SimpleNamespace(
-        SIGNUP=types.SimpleNamespace(value="Signup_details_submitted")
+def _invite(auth_client, workspace, email):
+    resp = auth_client.post(
+        INVITE_URL,
+        {
+            "emails": [email],
+            "org_level": Level.MEMBER,
+            "workspace_access": [
+                {"workspace_id": str(workspace.id), "level": Level.WORKSPACE_MEMBER}
+            ],
+        },
+        format="json",
     )
-    analytics.get_mixpanel_properties = MagicMock(return_value={"email": "x"})
-    analytics.track_mixpanel_event = MagicMock()
-    sys.modules["analytics"] = types.ModuleType("analytics")
-    sys.modules["analytics.utils"] = analytics
-    ns = {
-        "os": os,
-        "logger": MagicMock(),
-        "User": MagicMock(),
-        "send_hubspot_notification": MagicMock(return_value=(True, None)),
-        "send_slack_notification": MagicMock(),
-    }
-    exec(compile(module, str(UTILS), "exec"), ns)
-    ns["analytics"] = analytics
-    return ns
+    assert resp.status_code == status.HTTP_200_OK, resp.data
+    return User.objects.get(email=email)
 
 
-def _temporal_modules(start):
-    temporal = types.ModuleType("tfc.temporal.drop_in")
-    temporal.start_activity = start
-    common = types.ModuleType("temporalio.common")
-    common.WorkflowIDConflictPolicy = types.SimpleNamespace(USE_EXISTING="USE_EXISTING")
-    return {
-        "tfc.temporal.background_tasks.activities": types.ModuleType(
-            "tfc.temporal.background_tasks.activities"
-        ),
-        "tfc.temporal.drop_in": temporal,
-        "temporalio": types.ModuleType("temporalio"),
-        "temporalio.common": common,
-    }
+def _accept(invitee):
+    uid = urlsafe_base64_encode(force_bytes(invitee.pk))
+    token = default_token_generator.make_token(invitee)
+    return APIClient().post(
+        f"/accounts/accept-invitation/{uid}/{token}/",
+        {"new_password": PASSWORD, "repeat_password": PASSWORD},
+        format="json",
+    )
 
 
-@pytest.fixture
-def invitee():
-    user = MagicMock()
-    user.id = "invitee-1"
-    user.email = "invitee@example.invalid"
-    user.name = "Invited Person"
-    user.organization_role = "Member"
-    user.config = {}
-    user.save = MagicMock()
-    return user
+def _reporting_calls(start_activity):
+    return [
+        call
+        for call in start_activity.call_args_list
+        if call.args and call.args[0] == ACTIVITY
+    ]
 
 
-class TestInviteAcceptanceReportingDispatch:
-    def test_first_acceptance_schedules_dedicated_reporting(self, invitee, monkeypatch):
-        ns = _load_reporting()
-        start = MagicMock()
-        monkeypatch.setattr(sys, "modules", {**sys.modules, **_temporal_modules(start)})
-        ns["schedule_invite_acceptance_reporting"](invitee)
+@pytest.mark.django_db
+class TestInviteAcceptanceQueuesReporting:
+    def test_accepting_an_invite_queues_one_reporting_run_per_user(
+        self, auth_client, workspace, user
+    ):
+        invitee = _invite(auth_client, workspace, "reported-invitee@example.com")
+        assert invitee.invited_by_id == user.id
 
-        start.assert_called_once()
-        args, kwargs = start.call_args
-        assert args[0] == "run_invite_acceptance_reporting_activity"
-        assert kwargs["args"] == (str(invitee.id),)
-        assert kwargs["task_id"] == f"invite-signup-report-{invitee.id}"
-        assert kwargs["id_conflict_policy"] == "USE_EXISTING"
+        with patch("tfc.temporal.drop_in.start_activity") as start_activity:
+            resp = _accept(invitee)
 
-    def test_repeat_acceptance_uses_same_task_id(self, invitee, monkeypatch):
-        ns = _load_reporting()
-        start = MagicMock()
-        monkeypatch.setattr(sys, "modules", {**sys.modules, **_temporal_modules(start)})
-        ns["schedule_invite_acceptance_reporting"](invitee)
-        ns["schedule_invite_acceptance_reporting"](invitee)
+        assert resp.status_code == status.HTTP_200_OK
+        calls = _reporting_calls(start_activity)
+        assert len(calls) == 1
+        assert calls[0].kwargs == {
+            "args": (str(invitee.id),),
+            "queue": "default",
+            "task_id": f"invite-signup-report-{invitee.id}",
+            "id_conflict_policy": WorkflowIDConflictPolicy.USE_EXISTING,
+        }
 
-        assert start.call_count == 2
-        assert (
-            start.call_args_list[0].kwargs["task_id"]
-            == start.call_args_list[1].kwargs["task_id"]
-            == f"invite-signup-report-{invitee.id}"
+    def test_acceptance_completes_when_reporting_cannot_be_queued(
+        self, auth_client, workspace
+    ):
+        invitee = _invite(auth_client, workspace, "queue-down-invitee@example.com")
+
+        with patch(
+            "tfc.temporal.drop_in.start_activity",
+            side_effect=RuntimeError("temporal unavailable"),
+        ):
+            resp = _accept(invitee)
+
+        assert resp.status_code == status.HTTP_200_OK
+        invitee.refresh_from_db()
+        assert invitee.is_active is True
+
+    def test_user_not_created_by_an_invite_is_not_reported(
+        self, auth_client, workspace
+    ):
+        invitee = _invite(auth_client, workspace, "no-inviter@example.com")
+        User.objects.filter(pk=invitee.pk).update(invited_by=None)
+        invitee.refresh_from_db()
+
+        with patch("tfc.temporal.drop_in.start_activity") as start_activity:
+            resp = _accept(invitee)
+
+        assert resp.status_code == status.HTTP_200_OK
+        assert _reporting_calls(start_activity) == []
+
+
+@pytest.mark.django_db
+class TestInviteAcceptanceReportingActivity:
+    @pytest.fixture
+    def invitee(self, user, organization):
+        return User.objects.create_user(
+            email="accepted-invitee@example.com",
+            password=PASSWORD,
+            name="Accepted Invitee",
+            organization=organization,
+            invited_by=user,
+            is_active=True,
+            config={"currentOrganizationId": str(organization.id)},
         )
 
-
-class TestInviteAcceptanceReportingActivity:
-    def test_reports_hubspot_slack_and_mixpanel_without_owner_onboarding(
-        self, invitee, monkeypatch
-    ):
-        ns = _load_reporting()
-        ns["User"].objects.select_related.return_value.get.return_value = invitee
+    @pytest.fixture
+    def destinations(self, monkeypatch):
         monkeypatch.setenv("ENV_TYPE", "staging")
-        ns["report_invite_acceptance"](str(invitee.id))
+        with (
+            patch(
+                "accounts.utils.send_hubspot_notification", return_value=(True, None)
+            ) as hubspot,
+            patch("accounts.utils.send_slack_notification") as slack,
+            patch("analytics.utils.track_mixpanel_event") as mixpanel,
+            patch("accounts.utils.send_signup_email") as signup_email,
+            patch("accounts.user_onboard.upload_demo_dataset") as demo_dataset,
+            patch("accounts.user_onboard.create_demo_traces_and_spans") as demo_traces,
+        ):
+            yield {
+                "hubspot": hubspot,
+                "slack": slack,
+                "mixpanel": mixpanel,
+                "owner_onboarding": (signup_email, demo_dataset, demo_traces),
+            }
 
-        ns["send_hubspot_notification"].assert_called_once_with(invitee)
-        ns["send_slack_notification"].assert_called_once()
-        event, props = ns["analytics"].track_mixpanel_event.call_args.args
-        assert event == "Signup_details_submitted"
-        assert props["signup_origin"] == "invite_acceptance"
-        assert invitee.config["invite_signup_reported"] is True
-        source = _function_source("report_invite_acceptance")
-        assert "send_signup_email" not in source
-        assert "upload_demo_dataset" not in source
-        assert "create_demo_traces_and_spans" not in source
+    def test_activity_is_registered_on_the_default_queue(self):
+        assert _ACTIVITY_REGISTRY[ACTIVITY]["queue"] == "default"
 
-    def test_second_run_does_not_report_again(self, invitee):
-        ns = _load_reporting()
-        invitee.config = {"invite_signup_reported": True}
-        ns["User"].objects.select_related.return_value.get.return_value = invitee
+    def test_reports_hubspot_slack_and_mixpanel_once(self, invitee, destinations):
+        run = _ACTIVITY_REGISTRY[ACTIVITY]["func"]
 
-        ns["report_invite_acceptance"](str(invitee.id))
+        run(str(invitee.id))
 
-        ns["send_hubspot_notification"].assert_not_called()
-        ns["send_slack_notification"].assert_not_called()
-        ns["analytics"].track_mixpanel_event.assert_not_called()
-        invitee.save.assert_not_called()
+        destinations["hubspot"].assert_called_once()
+        assert destinations["hubspot"].call_args.args[0].id == invitee.id
+        destinations["slack"].assert_called_once_with(ANY, updated=True, err=None)
+        destinations["mixpanel"].assert_called_once()
+        event, properties = destinations["mixpanel"].call_args.args
+        assert event == MixpanelEvents.SIGNUP.value
+        assert properties["signup_origin"] == "invite_acceptance"
+        for onboarding_step in destinations["owner_onboarding"]:
+            onboarding_step.assert_not_called()
+
+        invitee.refresh_from_db()
+        assert invitee.config[INVITE_SIGNUP_REPORTED_KEY] is True
+        assert invitee.config["currentOrganizationId"] == str(
+            invitee.organization_id
+        )
+
+        run(str(invitee.id))
+
+        destinations["hubspot"].assert_called_once()
+        destinations["slack"].assert_called_once()
+        destinations["mixpanel"].assert_called_once()
