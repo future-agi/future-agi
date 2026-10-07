@@ -105420,6 +105420,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
             },
           },
         },
+        provider_log_issues: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              "x-nullable": true,
+            },
+          },
+        },
         not_included: {
           type: "array",
           items: {

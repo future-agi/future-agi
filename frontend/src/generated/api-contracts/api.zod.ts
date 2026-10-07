@@ -55570,6 +55570,9 @@ export const TracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponse
           analysis: zod.record(zod.string(), zod.string()),
           latency_ms: zod.record(zod.string(), zod.string()),
           turns: zod.array(zod.record(zod.string(), zod.string())),
+          provider_log_issues: zod
+            .array(zod.record(zod.string(), zod.string()))
+            .optional(),
           not_included: zod.array(zod.string().min(1)),
         }),
       }),

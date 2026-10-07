@@ -348,6 +348,9 @@ class ConversationDossierSerializer(serializers.Serializer):
     analysis = serializers.DictField()
     latency_ms = serializers.DictField()
     turns = serializers.ListField(child=serializers.DictField())
+    provider_log_issues = serializers.ListField(
+        child=serializers.DictField(), required=False
+    )
     not_included = serializers.ListField(child=serializers.CharField())
 
 

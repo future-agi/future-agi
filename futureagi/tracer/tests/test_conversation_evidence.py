@@ -241,6 +241,31 @@ def test_dossier_keeps_the_call_once_with_timed_turns_and_tool_activity():
     assert not {"+15550100", "+15550101"} & set(json.dumps(dossier).split('"'))
 
 
+def test_dossier_carries_the_provider_log_issues_when_the_log_was_read():
+    issues = [{"at": 12.5, "level": "error", "message": "model response timed out"}]
+    read = conversation_dossier(
+        _span(attrs={"conversation.provider_log.issues": json.dumps(issues)})
+    )
+    clean = conversation_dossier(
+        _span(attrs={"conversation.provider_log.issues": "[]"})
+    )
+    unreadable = conversation_dossier(
+        _span(attrs={"conversation.provider_log.issues": "{not json"})
+    )
+
+    assert (read["provider_log_issues"], read["not_included"]) == (
+        issues,
+        ["recording_audio"],
+    )
+    # A log that was read and had nothing to report is not the same as no log.
+    assert (clean["provider_log_issues"], clean["not_included"]) == (
+        [],
+        ["recording_audio"],
+    )
+    assert "provider_log_issues" not in unreadable
+    assert unreadable["not_included"] == ["provider_log", "recording_audio"]
+
+
 def test_agent_turn_without_word_timings_is_not_spoken():
     raw_log = {"transcript_with_tool_calls": [{"role": "agent", "content": "Hi"}]}
 
