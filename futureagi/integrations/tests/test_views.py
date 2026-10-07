@@ -24,6 +24,54 @@ def _result(response):
     return data.get("result", data)
 
 
+class _FakeTemporal:
+    """Stand-in for ``start_activity`` that applies Temporal's workflow-id rules.
+
+    Starting a workflow whose id is still running raises
+    ``WorkflowAlreadyStartedError`` (the FAIL conflict policy, also Temporal's
+    default) unless the caller asked for USE_EXISTING. Starts without a
+    ``task_id`` get a random id, exactly like the drop-in runner. Nothing ever
+    completes, so every started workflow stays "running" for the test.
+    """
+
+    def __init__(self, on_first_start=None):
+        self.running = set()
+        self.started = []
+        self._on_first_start = on_first_start
+
+    def __call__(
+        self,
+        activity_name,
+        args=(),
+        kwargs=None,
+        queue="default",
+        task_id=None,
+        id_conflict_policy=None,
+        **_options,
+    ):
+        from temporalio.common import WorkflowIDConflictPolicy
+        from temporalio.exceptions import WorkflowAlreadyStartedError
+
+        workflow_id = f"task-{task_id or f'{activity_name}-{uuid.uuid4().hex[:8]}'}"
+        if workflow_id in self.running:
+            if id_conflict_policy == WorkflowIDConflictPolicy.USE_EXISTING:
+                return workflow_id
+            raise WorkflowAlreadyStartedError(workflow_id, "TaskRunnerWorkflow")
+        self.running.add(workflow_id)
+        self.started.append(
+            {
+                "activity_name": activity_name,
+                "args": tuple(args),
+                "task_id": task_id,
+                "id_conflict_policy": id_conflict_policy,
+            }
+        )
+        if self._on_first_start is not None:
+            callback, self._on_first_start = self._on_first_start, None
+            callback()
+        return workflow_id
+
+
 # ---------------------------------------------------------------------------
 # Connection List
 # ---------------------------------------------------------------------------
@@ -281,6 +329,146 @@ class TestIntegrationConnectionCreateAPI:
             content_type="application/json",
         )
         assert resp.status_code == http_status.HTTP_400_BAD_REQUEST
+
+    @pytest.mark.parametrize(
+        "backfill",
+        [
+            {"backfill_option": "all"},
+            {
+                "backfill_option": "from_date",
+                "backfill_from_date": "2026-01-01T00:00:00Z",
+            },
+        ],
+    )
+    @patch("integrations.temporal.activities.start_backfill_workflow")
+    @patch("integrations.views.integration_connection.get_integration_service")
+    def test_backfill_start_failure_marks_connection_error(
+        self, mock_get_svc, mock_start_backfill, auth_client, backfill
+    ):
+        """A backfill that never started must not leave a BACKFILLING zombie.
+
+        The row (credentials, project mapping) is kept, but it is moved to
+        ERROR with a message the detail page shows, and the backfill stays
+        pending so a retry imports the full history.
+        """
+        mock_svc = MagicMock()
+        mock_svc.validate_credentials.return_value = {
+            "valid": True,
+            "projects": [],
+            "total_traces": 0,
+        }
+        mock_get_svc.return_value = mock_svc
+        mock_start_backfill.side_effect = RuntimeError("Temporal unavailable")
+
+        resp = auth_client.post(
+            self.URL,
+            data=json.dumps(self._payload(**backfill)),
+            content_type="application/json",
+        )
+
+        assert resp.status_code == http_status.HTTP_201_CREATED
+        result = _result(resp)
+        assert result["status"] == ConnectionStatus.ERROR
+        assert result["status_message"]
+        connection = IntegrationConnection.no_workspace_objects.get(id=result["id"])
+        assert connection.deleted is False
+        assert connection.status == ConnectionStatus.ERROR
+        assert connection.status_message == result["status_message"]
+        assert connection.backfill_completed is False
+
+    @patch("integrations.temporal.activities.start_backfill_workflow")
+    @patch("integrations.views.integration_connection.get_integration_service")
+    def test_backfill_start_failure_is_retried_by_sync_now(
+        self, mock_get_svc, mock_start_backfill, auth_client
+    ):
+        mock_svc = MagicMock()
+        mock_svc.validate_credentials.return_value = {
+            "valid": True,
+            "projects": [],
+            "total_traces": 0,
+        }
+        mock_get_svc.return_value = mock_svc
+        mock_start_backfill.side_effect = RuntimeError("Temporal unavailable")
+        created = auth_client.post(
+            self.URL,
+            data=json.dumps(self._payload(backfill_option="all")),
+            content_type="application/json",
+        )
+        connection_id = _result(created)["id"]
+
+        fake_temporal = _FakeTemporal()
+        with patch("tfc.temporal.drop_in.runner.start_activity", new=fake_temporal):
+            resp = auth_client.post(
+                f"/integrations/connections/{connection_id}/sync_now/"
+            )
+
+        assert resp.status_code == http_status.HTTP_200_OK
+        assert [s["args"] for s in fake_temporal.started] == [(connection_id,)]
+        connection = IntegrationConnection.no_workspace_objects.get(id=connection_id)
+        # SYNCING is a state the worker accepts, so the dispatched run imports
+        # the pending backfill instead of returning "not in syncable state".
+        assert connection.status == ConnectionStatus.SYNCING
+        assert connection.backfill_completed is False
+
+    @patch("integrations.services.posthog_service.requests.post")
+    def test_posthog_without_host_persists_the_validated_host(
+        self, mock_post, auth_client
+    ):
+        """The host PostHog credentials were validated against is the one saved.
+
+        Export reads ``connection.host_url``, so saving anything else (it used
+        to be ``https://posthog.com``) sends events to a host that was never
+        validated.
+        """
+        mock_post.return_value = MagicMock(status_code=200)
+
+        resp = auth_client.post(
+            self.URL,
+            data=json.dumps(
+                {
+                    "platform": "posthog",
+                    "credentials": {"api_key": "phc_test"},
+                    "external_project_name": "posthog",
+                    "backfill_option": "new_only",
+                }
+            ),
+            content_type="application/json",
+        )
+
+        assert resp.status_code == http_status.HTTP_201_CREATED
+        validated_url = mock_post.call_args.args[0]
+        connection = IntegrationConnection.no_workspace_objects.get(
+            id=_result(resp)["id"]
+        )
+        assert connection.host_url == "https://us.i.posthog.com"
+        assert validated_url == f"{connection.host_url}/decide/?v=3"
+
+    @patch("integrations.services.datadog_service.DatadogService.validate_credentials")
+    def test_missing_host_is_not_replaced_by_a_made_up_domain(
+        self, mock_validate, auth_client
+    ):
+        """Platforms without a default host must not get ``https://{platform}.com``."""
+        mock_validate.return_value = {"valid": True, "projects": [], "total_traces": 0}
+
+        resp = auth_client.post(
+            self.URL,
+            data=json.dumps(
+                {
+                    "platform": "datadog",
+                    "credentials": {"api_key": "dd-api", "site": "us1"},
+                    "external_project_name": "datadog",
+                    "backfill_option": "new_only",
+                }
+            ),
+            content_type="application/json",
+        )
+
+        assert resp.status_code == http_status.HTTP_201_CREATED
+        assert mock_validate.call_args.kwargs["host_url"] == ""
+        connection = IntegrationConnection.no_workspace_objects.get(
+            id=_result(resp)["id"]
+        )
+        assert connection.host_url == ""
 
     @patch("integrations.views.integration_connection.get_integration_service")
     def test_create_nonexistent_project_id_returns_400(self, mock_get_svc, auth_client):
@@ -547,11 +735,71 @@ class TestSyncNowAction:
     def _url(self, pk):
         return f"/integrations/connections/{pk}/sync_now/"
 
-    @patch("integrations.temporal.activities.sync_integration_connection")
-    def test_sync_now_dispatches(self, mock_sync, auth_client, integration_connection):
-        resp = auth_client.post(self._url(integration_connection.id))
+    def test_sync_now_dispatches(self, auth_client, integration_connection):
+        from temporalio.common import WorkflowIDConflictPolicy
+
+        fake_temporal = _FakeTemporal()
+        with patch("tfc.temporal.drop_in.runner.start_activity", new=fake_temporal):
+            resp = auth_client.post(self._url(integration_connection.id))
+
         assert resp.status_code == http_status.HTTP_200_OK
-        mock_sync.delay.assert_called_once()
+        connection_id = str(integration_connection.id)
+        assert fake_temporal.started == [
+            {
+                "activity_name": "sync_integration_connection",
+                "args": (connection_id,),
+                "task_id": f"integration-sync-{connection_id}",
+                "id_conflict_policy": WorkflowIDConflictPolicy.FAIL,
+            }
+        ]
+        integration_connection.refresh_from_db()
+        assert integration_connection.status == ConnectionStatus.SYNCING
+
+    def test_overlapping_sync_now_dispatches_once(
+        self, auth_client, integration_connection
+    ):
+        """A second request arriving while the first is dispatching gets 409.
+
+        The second request is issued from inside the first one's workflow
+        start, i.e. after the first passed the status check but before the
+        worker has picked anything up.
+        """
+        url = self._url(integration_connection.id)
+        overlapping = {}
+
+        def second_request():
+            overlapping["response"] = auth_client.post(url)
+
+        fake_temporal = _FakeTemporal(on_first_start=second_request)
+        with patch("tfc.temporal.drop_in.runner.start_activity", new=fake_temporal):
+            first = auth_client.post(url)
+
+        assert first.status_code == http_status.HTTP_200_OK
+        assert overlapping["response"].status_code == http_status.HTTP_409_CONFLICT
+        assert len(fake_temporal.started) == 1
+
+    def test_sync_now_rejected_while_scheduled_sync_in_flight(
+        self, auth_client, integration_connection
+    ):
+        """Manual and scheduled dispatch share one workflow id per connection.
+
+        The poller has started a sync that the worker has not picked up yet
+        (the row is still ACTIVE), so the manual request must be refused and
+        must not leave the row claimed as SYNCING.
+        """
+        from integrations.temporal.activities import poll_active_integrations
+
+        fake_temporal = _FakeTemporal()
+        with patch("tfc.temporal.drop_in.runner.start_activity", new=fake_temporal):
+            poll_active_integrations._original_func()
+            resp = auth_client.post(self._url(integration_connection.id))
+
+        assert resp.status_code == http_status.HTTP_409_CONFLICT
+        connection_id = str(integration_connection.id)
+        started = [s for s in fake_temporal.started if s["args"] == (connection_id,)]
+        assert len(started) == 1
+        integration_connection.refresh_from_db()
+        assert integration_connection.status == ConnectionStatus.ACTIVE
 
     def test_sync_now_rejects_body_fields(self, auth_client, integration_connection):
         resp = auth_client.post(
@@ -588,14 +836,16 @@ class TestSyncNowAction:
         resp = auth_client.post(self._url(backfilling_connection.id))
         assert resp.status_code == http_status.HTTP_409_CONFLICT
 
-    @patch("integrations.temporal.activities.sync_integration_connection")
+    @patch("tfc.temporal.drop_in.runner.start_activity")
     def test_sync_now_dispatch_failure_returns_400(
-        self, mock_sync, auth_client, integration_connection
+        self, mock_start_activity, auth_client, integration_connection
     ):
-        """If dispatch raises, return 400."""
-        mock_sync.delay.side_effect = RuntimeError("Temporal unavailable")
+        """If dispatch raises, return 400 and release the claim."""
+        mock_start_activity.side_effect = RuntimeError("Temporal unavailable")
         resp = auth_client.post(self._url(integration_connection.id))
         assert resp.status_code == http_status.HTTP_400_BAD_REQUEST
+        integration_connection.refresh_from_db()
+        assert integration_connection.status == ConnectionStatus.ACTIVE
 
     @patch("integrations.temporal.activities.sync_integration_connection")
     def test_sync_now_after_cooldown_succeeds(
@@ -610,14 +860,20 @@ class TestSyncNowAction:
         resp = auth_client.post(self._url(integration_connection.id))
         assert resp.status_code == http_status.HTTP_200_OK
 
-    @patch("integrations.temporal.activities.sync_integration_connection")
-    def test_sync_now_error_connection_dispatches(
-        self, mock_sync, auth_client, error_connection
-    ):
-        """ERROR connections can be manually synced (not blocked)."""
-        resp = auth_client.post(self._url(error_connection.id))
+    def test_sync_now_error_connection_dispatches(self, auth_client, error_connection):
+        """ERROR connections can be manually synced (not blocked).
+
+        The row is claimed as SYNCING before dispatch; the worker skips ERROR
+        rows, so dispatching without the claim would be a silent no-op.
+        """
+        fake_temporal = _FakeTemporal()
+        with patch("tfc.temporal.drop_in.runner.start_activity", new=fake_temporal):
+            resp = auth_client.post(self._url(error_connection.id))
+
         assert resp.status_code == http_status.HTTP_200_OK
-        mock_sync.delay.assert_called_once()
+        assert len(fake_temporal.started) == 1
+        error_connection.refresh_from_db()
+        assert error_connection.status == ConnectionStatus.SYNCING
 
 
 # ---------------------------------------------------------------------------

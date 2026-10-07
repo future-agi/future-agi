@@ -21,6 +21,7 @@ class PostHogService(BaseIntegrationService):
     """
 
     TIMEOUT = 15
+    default_host_url = DEFAULT_POSTHOG_HOST
 
     def validate_credentials(
         self,
