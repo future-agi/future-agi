@@ -1957,6 +1957,28 @@ class ManageTeamView(APIView):
         with edition.creation_lock():
             return self._create_team(request, *args, **kwargs)
 
+    def _after_team_commit(self, kind, callback):
+        # Keep Cloud/licensed delivery and its existing immediate error path.
+        if not edition.edition_rule_applies():
+            transaction.on_commit(callback)
+            return
+
+        def run_side_effect():
+            try:
+                callback()
+            except Exception as exc:
+                # The team has already committed. A delivery/analytics failure
+                # cannot roll it back and must not emit a misleading retryable
+                # HTTP 500 or stop later invitations. Pending invites retain
+                # the existing resend path. Do not log callback args or PII.
+                logger.error(
+                    "team_post_commit_side_effect_failed",
+                    side_effect=kind,
+                    error_type=type(exc).__name__,
+                )
+
+        transaction.on_commit(run_side_effect)
+
     def _create_team(self, request, *args, **kwargs):
         try:
             validated_data = request.validated_data
@@ -2011,13 +2033,14 @@ class ManageTeamView(APIView):
                 else:
                     subscription = None
                 # Only report the new name once it is committed.
-                transaction.on_commit(
+                self._after_team_commit(
+                    "organization_analytics",
                     partial(
                         mixpanel_tracker.update_org_details,
                         org_id=str(organization.id),
                         org_name=org_display_name,
                         subscription=subscription,
-                    )
+                    ),
                 )
             organization.is_new = False
             organization.save()
@@ -2319,7 +2342,8 @@ class ManageTeamView(APIView):
                         uidb64 = urlsafe_base64_encode(force_bytes(new_member.pk))
                         # Sent only once the whole request commits: a later
                         # refusal rolls this member back and no invite leaves.
-                        transaction.on_commit(
+                        self._after_team_commit(
+                            "invitation_email",
                             partial(
                                 email_helper,
                                 f"You are invited by {organization.display_name if organization.display_name else organization.name} - Future AGI",
@@ -2334,7 +2358,7 @@ class ManageTeamView(APIView):
                                     "ssl": ssl,
                                 },
                                 [member_data["email"]],
-                            )
+                            ),
                         )
                         created_members.append(UserSerializer(new_member).data)
 

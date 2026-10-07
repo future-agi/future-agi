@@ -232,9 +232,7 @@ def test_removed_admin_with_valid_token_gets_no_former_org_data(
     assert "license" not in body
 
 
-def test_removed_staff_operator_keeps_only_install_scope(
-    community, organization, user
-):
+def test_removed_staff_operator_keeps_only_install_scope(community, organization, user):
     """R1: is_staff still sees the install licence, never the former org's seats."""
     client = _removed_from_sole_org(organization, user, is_staff=True)
 

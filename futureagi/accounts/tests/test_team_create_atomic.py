@@ -280,3 +280,72 @@ def test_cloud_and_licensed_team_adds_take_no_edition_lock(
     assert not any("pg_advisory" in q["sql"] for q in queries.captured_queries)
     _assert_added(emails, organization)
     assert _recipients() == emails
+
+
+@pytest.mark.parametrize("failure_kind", ["email", "org_analytics"])
+def test_after_commit_delivery_failure_does_not_turn_committed_team_into_500(
+    failure_kind, community, monkeypatch, organization, user
+):
+    """An after-commit side effect cannot undo the already-persisted users.
+
+    Do not respond with a misleading retryable 500 or skip later invitations.
+    The pending invite remains available for the existing resend flow.
+    """
+    from accounts.views import workspace_management as team_views
+
+    client = _jwt_client(user.email)
+    client.raise_request_exception = False
+    emails = ["delivery-one@example.com", "delivery-two@example.com"]
+    attempts = []
+    if failure_kind == "email":
+        original_email_helper = team_views.email_helper
+
+        def sometimes_fails(*args, **kwargs):
+            attempts.append(args[3][0])
+            if len(attempts) == 1:
+                raise RuntimeError("controlled test mail failure")
+            return original_email_helper(*args, **kwargs)
+
+        monkeypatch.setattr(team_views, "email_helper", sometimes_fails)
+    else:
+
+        def fails_analytics(*args, **kwargs):
+            raise RuntimeError("controlled test analytics failure")
+
+        monkeypatch.setattr(
+            team_views.mixpanel_tracker, "update_org_details", fails_analytics
+        )
+
+    response = client.post(
+        TEAM_URL,
+        {"org_name": "Committed team name", "members": _members(*emails)},
+        format="json",
+    )
+    assert response.status_code == 201
+    _assert_added(emails, organization)
+    if failure_kind == "email":
+        assert attempts == emails
+        assert _recipients() == emails[1:]
+    else:
+        assert _recipients() == emails
+    organization.refresh_from_db()
+    assert organization.display_name == "Committed team name"
+
+
+def test_cloud_email_failure_keeps_existing_immediate_error_behavior(
+    monkeypatch, organization, user
+):
+    from accounts.views import workspace_management as team_views
+
+    monkeypatch.setattr(edition, "is_cloud", lambda: True)
+    monkeypatch.setattr(edition, "enterprise_license_usable", lambda: True)
+
+    def fails_email(*args, **kwargs):
+        raise RuntimeError("controlled test Cloud mail failure")
+
+    monkeypatch.setattr(team_views, "email_helper", fails_email)
+    client = _jwt_client(user.email)
+    email = "cloud-delivery@example.com"
+    response = client.post(TEAM_URL, {"members": _members(email)}, format="json")
+    assert response.status_code == 400
+    _assert_added([email], organization)
