@@ -22,6 +22,7 @@ os.environ.setdefault("EE_LICENSE_KEY", "test-license-key")
 # "Redis is not available" mid-test.
 os.environ.setdefault("REDIS_URL", "redis://localhost:16379/0")
 os.environ.setdefault("REDIS_LOCK_URL", "redis://localhost:16379/2")
+os.environ.setdefault("FUTURE_AGI_TELEMETRY_URL", "http://127.0.0.1:9")
 
 from .settings import *  # noqa: F403,E402
 from .settings import INSTALLED_APPS  # noqa: E402
