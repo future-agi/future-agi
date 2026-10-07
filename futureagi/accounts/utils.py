@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 import os
 import re
 import secrets
@@ -15,6 +17,7 @@ from django.core.validators import validate_email
 from django.db import close_old_connections, transaction
 from django.db.models.functions import Lower
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 from rest_framework.exceptions import ValidationError as DRFValidationError
@@ -811,6 +814,7 @@ def existing_member_access_will_change(
 INVITE_SIGNUP_REPORTING_KEY = "invite_signup_reporting"
 LEGACY_INVITE_SIGNUP_REPORTED_KEY = "invite_signup_reported"
 _INVITE_REPORT_DESTINATIONS = ("hubspot", "slack", "mixpanel")
+_INVITE_REPORT_CLAIM_LEASE = timedelta(minutes=15)
 
 
 class ReportingDeliveryError(RuntimeError):
@@ -845,21 +849,34 @@ def _invite_reporting_state(config):
 
 
 def _claim_invite_reporting_destination(user_id, destination):
-    """Atomically claim one destination; claimed work is never replayed blindly.
+    """Atomically claim one destination with a recoverable lease.
 
     A Temporal retry can happen after an external provider accepted a request
-    but before our database write. Treating an existing claim as completed is
-    the at-most-once choice: it avoids duplicate Slack/Mixpanel events. Known
-    provider failures release the claim explicitly and remain retryable.
+    but before our database write. A live claim is not replayed; a stale claim
+    past the bounded provider lease is reclaimed so a dead worker cannot strand
+    the report forever. Known provider failures release the claim immediately.
     """
     with transaction.atomic():
         user = User.objects.select_for_update().get(id=user_id)
         config = dict(user.config) if isinstance(user.config, dict) else {}
         state = _invite_reporting_state(config)
         current = state["destinations"].get(destination, "pending")
-        if current in {"sent", "skipped", "claimed"}:
+        if isinstance(current, dict):
+            current_status = current.get("status")
+            claimed_at = parse_datetime(current.get("claimed_at", ""))
+            if (
+                current_status == "claimed"
+                and claimed_at
+                and timezone.now() - claimed_at < _INVITE_REPORT_CLAIM_LEASE
+            ):
+                return None
+            current = "pending"
+        if current in {"sent", "skipped"}:
             return None
-        state["destinations"][destination] = "claimed"
+        state["destinations"][destination] = {
+            "status": "claimed",
+            "claimed_at": timezone.now().isoformat(),
+        }
         state["status"] = "in_progress"
         config[INVITE_SIGNUP_REPORTING_KEY] = state
         user.config = config
@@ -898,6 +915,17 @@ def _release_invite_reporting_destination(user_id, destination):
         user.save(update_fields=["config"])
 
 
+def mark_invite_acceptance_reporting_pending(user):
+    """Persist the outbox marker in the same transaction as acceptance."""
+    config = dict(user.config) if isinstance(user.config, dict) else {}
+    state = _invite_reporting_state(config)
+    if state.get("status") == "complete":
+        return
+    config[INVITE_SIGNUP_REPORTING_KEY] = state
+    user.config = config
+    user.save(update_fields=["config"])
+
+
 def schedule_invite_acceptance_reporting(user):
     """Persist a pending report, then queue it with a stable per-user id.
 
@@ -907,12 +935,9 @@ def schedule_invite_acceptance_reporting(user):
     with transaction.atomic():
         queued_user = User.objects.select_for_update().get(id=user.id)
         config = dict(queued_user.config) if isinstance(queued_user.config, dict) else {}
-        state = _invite_reporting_state(config)
-        if state.get("status") == "complete":
+        if _invite_reporting_state(config).get("status") == "complete":
             return None
-        config[INVITE_SIGNUP_REPORTING_KEY] = state
-        queued_user.config = config
-        queued_user.save(update_fields=["config"])
+        mark_invite_acceptance_reporting_pending(queued_user)
 
     import tfc.temporal.background_tasks.activities  # noqa: F401
     from temporalio.common import WorkflowIDConflictPolicy
@@ -984,12 +1009,14 @@ def report_invite_acceptance(user_id):
             else:
                 properties = get_mixpanel_properties(user=claimed_user, mode="invite")
                 properties["signup_origin"] = "invite_acceptance"
-                track_mixpanel_event(
+                if track_mixpanel_event(
                     MixpanelEvents.SIGNUP.value,
                     properties,
                     raise_on_error=True,
-                )
-                result = "sent"
+                ):
+                    result = "sent"
+                else:
+                    result = "skipped"
         except Exception:
             _release_invite_reporting_destination(user_id, destination)
             raise

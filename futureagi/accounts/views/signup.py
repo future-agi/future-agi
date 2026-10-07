@@ -57,6 +57,7 @@ from accounts.utils import (
     WorkEmailRequired,
     build_password_reset_link,
     first_signup,
+    mark_invite_acceptance_reporting_pending,
     retry_pending_invite_acceptance_reporting,
     schedule_invite_acceptance_reporting,
 )
@@ -711,8 +712,6 @@ def accept_invitation_mail(request, uidb64, token):
         if not invite:
             return _gm.bad_request("This invitation has been cancelled or expired.")
         if invite.is_expired:
-            invite.status = InviteStatus.EXPIRED
-            invite.save(update_fields=["status"])
             return _gm.bad_request("This invitation has been cancelled or expired.")
 
         # ------------------------------------------------------------------
@@ -785,6 +784,9 @@ def accept_invitation_mail(request, uidb64, token):
                 invite.status = InviteStatus.EXPIRED
                 invite.save(update_fields=["status"])
                 return _gm.bad_request("This invitation has been cancelled or expired.")
+
+            if is_new_invitee:
+                mark_invite_acceptance_reporting_pending(user)
 
             user.password = make_password(new_password)
             user.is_active = True
