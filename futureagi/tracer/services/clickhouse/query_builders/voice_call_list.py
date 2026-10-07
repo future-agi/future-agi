@@ -26,6 +26,9 @@ from tracer.services.clickhouse.eval_logger_table import eval_logger_source
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.filters import ClickHouseFilterBuilder
 from tracer.services.clickhouse.query_builders.trace_list import TraceListQueryBuilder
+from tracer.services.clickhouse.query_builders.voice_filter_expressions import (
+    voice_provider_expression,
+)
 from tracer.services.simulator_phones import SIMULATOR_PHONE_NUMBERS
 from tracer.utils.attribute_accessor import vapi_customer
 
@@ -92,13 +95,14 @@ def simulator_call_sql(
         )
         return f"coalesce({extracted})"
 
+    voice_provider = voice_provider_expression(provider, span_attr_str)
     return f"""(
                 (
-                    lowerUTF8({provider}) = 'vapi'
+                    ({voice_provider}) = 'vapi'
                     AND ({phone("customer", "number")}) IN %(simulator_phone_numbers)s
                 )
                 OR (
-                    lowerUTF8({provider}) = 'retell'
+                    ({voice_provider}) = 'retell'
                     AND ({phone("from_number")}) IN %(simulator_phone_numbers)s
                 )
             )"""
@@ -1199,7 +1203,8 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         """Return True if the call comes from a known simulator phone number.
 
         Called after Phase 1b as a defensive parity check, on the call's
-        payload as ``span_raw_log`` reads it.
+        payload as ``span_raw_log`` reads it and its voice provider as
+        ``ObservabilityService.resolve_voice_provider`` resolves it.
         """
         if provider == "vapi":
             phone = vapi_customer(raw_log).get("number", "")

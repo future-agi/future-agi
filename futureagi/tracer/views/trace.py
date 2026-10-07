@@ -3993,7 +3993,6 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             for span in detail.spans
             if span.get("parent_span_id") not in (None, "")
         ]
-        provider = row.get("provider") or "vapi"
 
         # Parse attributes_extra to get raw_log
         span_attrs_raw = row.get("span_attributes", "{}")
@@ -4015,6 +4014,10 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             span_attrs.setdefault(k, v)
         for k, v in (row.get("attrs_bool") or {}).items():
             span_attrs.setdefault(k, bool(v))
+        # gen_ai.system lives in attrs_string, so resolve after the union.
+        provider = ObservabilityService.resolve_voice_provider(
+            row.get("provider"), span_attrs
+        )
         # eval_attributes is not a top-level column on the CH `spans` table,
         # but the adapter merges it into `attributes_extra` under the key
         # "eval_attributes". Extract it so simulation_context can resolve
@@ -6194,13 +6197,15 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         for row in page_rows:
             trace_id = str(row.get("trace_id", ""))
             span_id = str(row.get("root_span_id") or row.get("span_id") or "")
-            provider = row.get("provider") or "vapi"
 
             # Get span_attributes from CH CDC table (Phase 1b)
             attr_identity = builder.bounded_filter_page_hydration_identity(row)
             attr_row = attrs_map.get(attr_identity, {})
             span_attrs = attr_row.get("span_attributes") or {}
-            provider = attr_row.get("provider") or provider
+            # The same voice provider the list's ClickHouse predicate resolves.
+            provider = ObservabilityService.resolve_voice_provider(
+                attr_row.get("provider") or row.get("provider"), span_attrs
+            )
 
             raw_log = span_raw_log(span_attrs, span_id=span_id)
             # Parity backstop: simulator_call_sql already dropped these in
