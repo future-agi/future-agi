@@ -106,9 +106,7 @@ const isGet = (path: string) => (r: Response) =>
   new URL(r.url()).pathname === path && r.request().method() === 'GET';
 
 async function gateDialog(page: Page, title: string, description: string) {
-  // EnterpriseGateDialog.jsx passes aria-label to MUI's Dialog root, not to the
-  // role="dialog" paper, so the dialog has no accessible name: match its title.
-  const dialog = page.getByRole('dialog').filter({ has: page.getByText(title, { exact: true }) });
+  const dialog = page.getByRole('dialog', { name: title });
   await expect(dialog).toBeVisible({ timeout: UI_READY });
   await expect(dialog.getByText(description, { exact: true })).toBeVisible({ timeout: UI_READY });
   await expect(dialog.getByRole('link', { name: 'Contact sales' })).toHaveAttribute('href', SALES_MAILTO);
