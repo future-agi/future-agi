@@ -21,7 +21,7 @@ import logger from "src/utils/logger";
 import DrawerHeader from "./DrawerHeader";
 import DrawerToolbar from "./DrawerToolbar";
 import TraceDisplayPanel, { DEFAULT_VIEW_CONFIG } from "./TraceDisplayPanel";
-import useTabStore from "src/sections/projects/LLMTracing/tabStore";
+import { useTabStore } from "src/sections/projects/LLMTracing/tabStore";
 import {
   useGetSavedViews,
   useCreateSavedView,
