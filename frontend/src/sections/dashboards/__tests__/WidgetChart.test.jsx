@@ -1502,9 +1502,11 @@ describe("WidgetChart — auto-scaled y-axis (TH-7680)", () => {
 
   // 100 sits below the series floor (219), so it clips nothing and survives
   // the Out of Bounds widening — this is the per-side mix, not the widening.
+  // The auto max is re-derived from the typed min, so the step stays round
+  // (100 / 1600 / 3100 ...) rather than 100 / 1580 / 3060 against a 7500 cap.
   it("mixes a typed min with an auto max, per side", () => {
     renderWith({ left_y: { min: "100" } });
-    expect(yaxisOf()).toMatchObject({ min: 100, max: 7500 });
+    expect(yaxisOf()).toMatchObject({ min: 100, max: 7600 });
   });
 
   it("ignores a non-numeric bound rather than passing NaN to the chart", () => {

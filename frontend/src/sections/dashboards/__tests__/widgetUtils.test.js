@@ -387,9 +387,7 @@ describe("getExactDashboardResult", () => {
 
 describe("getYAxisRangeWarning", () => {
   it("returns null when no min/max is configured", () => {
-    expect(
-      getYAxisRangeWarning(series([2, 7]), [0], leftAxis({})),
-    ).toBeNull();
+    expect(getYAxisRangeWarning(series([2, 7]), [0], leftAxis({}))).toBeNull();
     expect(
       getYAxisRangeWarning(series([2, 7]), [0], leftAxis({ min: "", max: "" })),
     ).toBeNull();
@@ -921,16 +919,29 @@ describe("getSeriesExtent", () => {
   it("skips an all-null stacked bucket instead of summing it to 0", () => {
     // currently min 0
     expect(
-      getSeriesExtent(
-        [{ data: pts(100, null) }, { data: pts(50, null) }],
-        { stacked: true },
-      ),
+      getSeriesExtent([{ data: pts(100, null) }, { data: pts(50, null) }], {
+        stacked: true,
+      }),
     ).toEqual({ min: 150, max: 150 });
   });
 
   it("returns null when there is still nothing to measure", () => {
     expect(getSeriesExtent([{ data: pts(null, null) }])).toBeNull();
     expect(getSeriesExtent([])).toBeNull();
+  });
+});
+
+describe("getSeriesExtent on a long range", () => {
+  // Spreading ~125k values into Math.min overflows the call stack; 13 series
+  // of 10,081 minute buckets is a realistic week.
+  it("measures 131k points without throwing", () => {
+    const series = Array.from({ length: 13 }, (_, s) => ({
+      data: Array.from({ length: 10081 }, (_, i) => ({
+        x: i,
+        y: (i + s) % 997,
+      })),
+    }));
+    expect(getSeriesExtent(series)).toEqual({ min: 0, max: 996 });
   });
 });
 
@@ -1101,6 +1112,32 @@ describe("resolveAxisBounds", () => {
     expect(one.max === undefined || one.max >= 500).toBe(true);
   });
 
+  // With one end typed, the other is re-derived from it so the ticks keep a
+  // round step instead of 100 / 1580 / 3060 / ...
+  it("keeps a round step when only the min is typed", () => {
+    expect(resolveAxisBounds(series, { min: "100" }, { fit: true })).toEqual({
+      min: 100,
+      max: 7600,
+    });
+  });
+
+  it("keeps a round step when only the max is typed on a fitted band", () => {
+    expect(
+      resolveAxisBounds(
+        [{ data: pts2(190, 250, 210) }],
+        { max: "300" },
+        { fit: true },
+      ),
+    ).toEqual({ min: 175, max: 300 });
+  });
+
+  it("keeps a zero floor when only the max is typed", () => {
+    expect(resolveAxisBounds(series, { max: "8000" }, { fit: true })).toEqual({
+      min: 0,
+      max: 8000,
+    });
+  });
+
   it("keeps a clipping max for a single bucket as a hard cap when hidden", () => {
     expect(
       resolveAxisBounds(
@@ -1242,8 +1279,7 @@ describe("resolveWidgetAxisPlan", () => {
 
   it("anchors a column chart at zero instead of fitting the band", () => {
     expect(
-      resolveWidgetAxisPlan(band, [0], {}, { chartType: "column" }).bounds
-        .left,
+      resolveWidgetAxisPlan(band, [0], {}, { chartType: "column" }).bounds.left,
     ).toEqual({ min: 0, max: 250 });
   });
 
@@ -1277,26 +1313,86 @@ describe("resolveWidgetAxisPlan", () => {
 
   it("still lets a typed bound win over the zero baseline", () => {
     expect(
-      resolveWidgetAxisPlan(band, [0], { leftY: { min: "100" } }, {
-        chartType: "column",
-      }).bounds.left,
+      resolveWidgetAxisPlan(
+        band,
+        [0],
+        { leftY: { min: "100" } },
+        {
+          chartType: "column",
+        },
+      ).bounds.left,
     ).toEqual({ min: 100, max: 250 });
   });
 
   it("anchors a single-point column at zero", () => {
     expect(
-      resolveWidgetAxisPlan([{ data: pts(500) }], [0], {}, {
-        chartType: "column",
-      }).bounds.left,
+      resolveWidgetAxisPlan(
+        [{ data: pts(500) }],
+        [0],
+        {},
+        {
+          chartType: "column",
+        },
+      ).bounds.left,
     ).toEqual({ min: 0, max: 500 });
   });
 
-  it("falls through to ApexCharts for a mixed-sign column", () => {
+  // A dual-axis side must always carry explicit bounds, or ApexCharts scales
+  // each of its series on its own; a negative value cannot be the exception.
+  it("gives a mixed-sign column zero-inclusive bounds on the step grid", () => {
     expect(
-      resolveWidgetAxisPlan([{ data: pts(-50, 100, 200) }], [0], {}, {
-        chartType: "column",
-      }).bounds.left,
-    ).toEqual({ min: undefined, max: undefined });
+      resolveWidgetAxisPlan(
+        [{ data: pts(-50, 100, 200) }],
+        [0],
+        {},
+        {
+          chartType: "column",
+        },
+      ).bounds.left,
+    ).toEqual({ min: -50, max: 200 });
+  });
+
+  it("gives an all-negative column bounds that end at zero", () => {
+    expect(
+      resolveWidgetAxisPlan(
+        [{ data: pts(-50, -30, -10) }],
+        [0],
+        {},
+        {
+          chartType: "column",
+        },
+      ).bounds.left,
+    ).toEqual({ min: -50, max: 0 });
+  });
+
+  it("keeps one shared scale on a dual-axis column side with a negative value", () => {
+    const plan = resolveWidgetAxisPlan(
+      [
+        { data: pts(20, 60, 100) },
+        { data: pts(-20, 10, 50) },
+        { data: pts(100, 450, 500) },
+      ],
+      [0, 1, 2],
+      {
+        leftY: {},
+        rightY: { visible: true },
+        seriesAxis: { 1: "right", 2: "right" },
+      },
+      { chartType: "column" },
+    );
+    expect(plan.bounds.right).toEqual({ min: -150, max: 600 });
+  });
+
+  it("anchors a stacked line at zero instead of fitting the stacked band", () => {
+    const layer = (...ys) => ({ data: pts(...ys) });
+    expect(
+      resolveWidgetAxisPlan(
+        [layer(100, 120, 110), layer(105, 100, 118), layer(110, 116, 101)],
+        [0, 1, 2],
+        {},
+        { stacked: true, chartType: "stacked_line" },
+      ).bounds.left,
+    ).toEqual({ min: 0, max: 400 });
   });
 });
 
@@ -1308,9 +1404,14 @@ describe("chartTypeFitsBand", () => {
     expect(chartTypeFitsBand("stacked_bar")).toBe(false);
   });
 
-  it("fits the band for line-shaped chart types", () => {
+  // A stacked line is an area chart: each layer is filled from zero, so a
+  // fitted floor clips the lower layers off the plot.
+  it("does not fit the band for a stacked line", () => {
+    expect(chartTypeFitsBand("stacked_line")).toBe(false);
+  });
+
+  it("fits the band for an unstacked line", () => {
     expect(chartTypeFitsBand("line")).toBe(true);
-    expect(chartTypeFitsBand("stacked_line")).toBe(true);
     expect(chartTypeFitsBand(undefined)).toBe(true);
   });
 });
