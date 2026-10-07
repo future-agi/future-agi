@@ -5060,10 +5060,7 @@ export interface IntegrationConnectionListApi {
    * @maxLength 255
    */
   display_name: string;
-  /**
-   * @minLength 1
-   * @maxLength 500
-   */
+  /** @maxLength 500 */
   host_url: string;
   status?: IntegrationConnectionListApiStatus;
   status_message?: string;
@@ -5249,10 +5246,7 @@ export interface IntegrationConnectionDetailApi {
    * @maxLength 255
    */
   display_name: string;
-  /**
-   * @minLength 1
-   * @maxLength 500
-   */
+  /** @maxLength 500 */
   host_url: string;
   status?: IntegrationConnectionDetailApiStatus;
   status_message?: string;

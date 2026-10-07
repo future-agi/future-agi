@@ -1,3 +1,8 @@
+import json
+from pathlib import Path
+
+import pytest
+
 from integrations.serializers.contracts import (
     IntegrationConnectionListQuerySerializer,
     IntegrationEmptyRequestSerializer,
@@ -5,6 +10,10 @@ from integrations.serializers.contracts import (
     IntegrationMessageResponseSerializer,
     IntegrationValidationResponseSerializer,
     SyncLogListQuerySerializer,
+)
+from integrations.serializers.integration_connection import (
+    IntegrationConnectionDetailSerializer,
+    IntegrationConnectionListSerializer,
 )
 from tfc.utils.api_errors import build_error_envelope
 
@@ -71,3 +80,34 @@ def test_integration_message_response_is_typed():
     )
 
     assert serializer.is_valid(), serializer.errors
+
+
+@pytest.mark.parametrize(
+    "serializer_class",
+    [IntegrationConnectionListSerializer, IntegrationConnectionDetailSerializer],
+)
+def test_connection_response_host_url_may_be_empty(serializer_class):
+    """Platforms without a host (Datadog, queues, storage) are saved with "".
+
+    The declared response field has to accept that, or the contract says
+    host_url is a non-empty URL while the API returns an empty string.
+    """
+    field = serializer_class().fields["host_url"]
+
+    assert field.run_validation("") == ""
+    assert field.run_validation("https://us.i.posthog.com") == (
+        "https://us.i.posthog.com"
+    )
+
+
+@pytest.mark.parametrize(
+    "definition", ["IntegrationConnectionList", "IntegrationConnectionDetail"]
+)
+def test_swagger_connection_host_url_allows_empty_string(definition):
+    swagger_path = (
+        Path(__file__).resolve().parents[3] / "api_contracts/openapi/swagger.json"
+    )
+    with swagger_path.open() as f:
+        host_url = json.load(f)["definitions"][definition]["properties"]["host_url"]
+
+    assert "minLength" not in host_url

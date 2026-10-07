@@ -110,6 +110,8 @@ class IntegrationConnectionListSerializer(serializers.ModelSerializer):
             "sync_interval_seconds",
             "created_at",
         ]
+        # Platforms without a host (and no default) are saved with "".
+        extra_kwargs = {"host_url": {"allow_blank": True}}
 
 
 class IntegrationConnectionDetailSerializer(serializers.ModelSerializer):
@@ -147,6 +149,7 @@ class IntegrationConnectionDetailSerializer(serializers.ModelSerializer):
             "updated_at",
             "created_by",
         ]
+        extra_kwargs = {"host_url": {"allow_blank": True}}
 
     def get_public_key_display(self, obj):
         try:

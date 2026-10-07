@@ -92,7 +92,7 @@ export default function StepSyncSettings({
     createConnection(payload, {
       onSuccess: (response) => {
         const result = unwrapResponse(response);
-        onSuccess(result?.id || null);
+        onSuccess(result?.id || null, result);
       },
     });
   };

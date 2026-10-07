@@ -92560,8 +92560,7 @@
                     "title": "Host url",
                     "type": "string",
                     "format": "uri",
-                    "maxLength": 500,
-                    "minLength": 1
+                    "maxLength": 500
                 },
                 "status": {
                     "title": "Status",
@@ -92886,8 +92885,7 @@
                     "title": "Host url",
                     "type": "string",
                     "format": "uri",
-                    "maxLength": 500,
-                    "minLength": 1
+                    "maxLength": 500
                 },
                 "status": {
                     "title": "Status",

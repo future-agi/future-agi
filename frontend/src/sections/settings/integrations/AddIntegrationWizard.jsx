@@ -2,6 +2,7 @@ import { useState } from "react";
 import PropTypes from "prop-types";
 import { useNavigate } from "react-router-dom";
 import {
+  Alert,
   Box,
   Button,
   Drawer,
@@ -34,6 +35,7 @@ function WizardContent({ onClose, initialPlatform }) {
   const navigate = useNavigate();
   const [activeStep, setActiveStep] = useState(initialPlatform ? 1 : 0);
   const [createdConnectionId, setCreatedConnectionId] = useState(null);
+  const [createdConnection, setCreatedConnection] = useState(null);
   const [wizardData, setWizardData] = useState({
     platform: initialPlatform || "",
     hostUrl: DEFAULT_LANGFUSE_HOST,
@@ -70,12 +72,16 @@ function WizardContent({ onClose, initialPlatform }) {
     setWizardData((prev) => ({ ...prev, ...updates }));
 
   const successStep = STEPS.length; // step after the last real step
-  const handleSuccess = (connectionId) => {
+  const handleSuccess = (connectionId, connection = null) => {
     setCreatedConnectionId(connectionId);
+    setCreatedConnection(connection);
     setActiveStep(successStep);
   };
 
   const isSuccess = activeStep === successStep;
+  // The connection is saved even when its initial sync could not be started;
+  // it then comes back in the error state with a message (as on the detail page).
+  const createdWithError = createdConnection?.status === "error";
 
   return (
     <Box
@@ -164,17 +170,26 @@ function WizardContent({ onClose, initialPlatform }) {
             >
               Integration Connected!
             </Typography>
-            <Typography
-              sx={{
-                typography: "s1",
-                color: "text.secondary",
-                mb: theme.spacing(3),
-              }}
-            >
-              {skipSyncSettings
-                ? "Your integration is now active."
-                : "Your integration is now active. Traces will begin syncing shortly."}
-            </Typography>
+            {createdWithError ? (
+              <Alert
+                severity="error"
+                sx={{ mb: theme.spacing(3), textAlign: "left" }}
+              >
+                {createdConnection.status_message}
+              </Alert>
+            ) : (
+              <Typography
+                sx={{
+                  typography: "s1",
+                  color: "text.secondary",
+                  mb: theme.spacing(3),
+                }}
+              >
+                {skipSyncSettings
+                  ? "Your integration is now active."
+                  : "Your integration is now active. Traces will begin syncing shortly."}
+              </Typography>
+            )}
             <Box display="flex" justifyContent="center" gap={theme.spacing(2)}>
               {createdConnectionId && !skipSyncSettings && (
                 <Button
