@@ -64,16 +64,20 @@ func NewEngine(cfg config.GuardrailsConfig, registry map[string]Guardrail) *Engi
 			timeout:   timeout,
 		}
 
-		switch rule.Stage {
-		case "pre":
-			e.preGuardrails = append(e.preGuardrails, resolved)
-		case "post":
-			e.postGuardrails = append(e.postGuardrails, resolved)
-		default:
+		stages := parseStages(rule.Stage)
+		if stages == nil {
 			slog.Warn("unknown guardrail stage, skipping",
 				"name", rule.Name,
 				"stage", rule.Stage,
 			)
+			continue
+		}
+		for _, stage := range stages {
+			if stage == StagePre {
+				e.preGuardrails = append(e.preGuardrails, resolved)
+			} else {
+				e.postGuardrails = append(e.postGuardrails, resolved)
+			}
 		}
 	}
 

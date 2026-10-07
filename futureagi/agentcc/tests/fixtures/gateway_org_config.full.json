@@ -24,6 +24,16 @@
         "config": {
           "redact": true
         }
+      },
+      "bedrock-output": {
+        "enabled": true,
+        "action": "block",
+        "stage": "post",
+        "config": {
+          "provider": "bedrock_guardrails",
+          "guardrail_id": "gr-test",
+          "guardrail_version": "DRAFT"
+        }
       }
     }
   },

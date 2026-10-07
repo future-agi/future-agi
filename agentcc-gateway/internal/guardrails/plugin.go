@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -84,6 +85,13 @@ func (p *GuardrailPlugin) ProcessRequest(ctx context.Context, rc *models.Request
 
 // ProcessResponse runs post-stage guardrails.
 func (p *GuardrailPlugin) ProcessResponse(ctx context.Context, rc *models.RequestContext) pipeline.PluginResult {
+	// The post pass also runs after a blocked request, a provider error or a
+	// timeout, with no response. There is no output to check, and checks that
+	// fall back to the request would scan the prompt (and bill a vendor) again.
+	if rc.Response == nil {
+		return pipeline.ResultContinue()
+	}
+
 	// 1. Run static engine rules.
 	if p.engine != nil && p.engine.PostCount() > 0 {
 		keyPolicy, reqPolicy, err := p.resolvePolicy(rc)
@@ -161,8 +169,7 @@ func (p *GuardrailPlugin) runOrgGuardrails(ctx context.Context, rc *models.Reque
 			continue
 		}
 
-		// Check stage matches.
-		if g.Stage() != stage {
+		if !runsAtStage(g, check.Stage, stage) {
 			continue
 		}
 
@@ -207,6 +214,10 @@ func (p *GuardrailPlugin) runOrgGuardrails(ctx context.Context, rc *models.Reque
 
 		switch action {
 		case ActionBlock:
+			// Unlike the static post path, a post block leaves rc.Response in
+			// place: the provider call is already paid for, and cost and
+			// credits skip a nil response. The returned error is what enforces
+			// the block once the pipeline propagates post-plugin errors.
 			result.Blocked = true
 			storeGuardrailResults(rc, result)
 			rc.Flags.GuardrailTriggered = true
@@ -235,6 +246,23 @@ func (p *GuardrailPlugin) runOrgGuardrails(ctx context.Context, rc *models.Reque
 	}
 
 	return pipeline.ResultContinue()
+}
+
+// runsAtStage reports whether an org check runs in the given stage. Its
+// configured stage counts only for a guardrail that supports every stage it
+// names; an empty, unknown or unsupported value keeps the guardrail's Stage().
+func runsAtStage(g Guardrail, configured string, stage Stage) bool {
+	stages := parseStages(configured)
+	sc, ok := g.(StageConfigurable)
+	if !ok || stages == nil {
+		return g.Stage() == stage
+	}
+	for _, s := range stages {
+		if !sc.SupportsStage(s) {
+			return g.Stage() == stage
+		}
+	}
+	return slices.Contains(stages, stage)
 }
 
 // getGuardrail resolves a guardrail implementation by name.

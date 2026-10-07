@@ -661,19 +661,36 @@ Chainable with our 18 built-in scanners in the same pipeline — same decision l
 ```yaml
 guardrails:
   enabled: true
-  on_request:
-    - type: external
-      provider: lakera
-      api_key: "${LAKERA_API_KEY}"
-    - type: external
-      provider: bedrock_guardrails
-      guardrail_id: "gr-abc123"
-      guardrail_version: "DRAFT"
-    - type: external
-      provider: presidio
-      endpoint: "http://presidio:8080/anonymize"
-    - type: pii            # built-in scanner alongside external
+  rules:
+    - name: lakera                # any name; config.provider picks the adapter
+      stage: pre                  # pre | post | both
+      action: block               # block | warn | log
+      config:
+        provider: lakera
+        api_key: "${LAKERA_API_KEY}"
+    - name: bedrock
+      stage: both                 # check the prompt and the model's response
+      action: block
+      config:
+        provider: bedrock_guardrails
+        guardrail_id: "gr-abc123"
+        guardrail_version: "DRAFT"
+    - name: pii-detection         # built-in scanner alongside external
+      stage: pre
+      action: block
 ```
+
+#### Stages
+
+A check runs at `pre` (the request, before the provider call), `post` (the model's response) or `both`.
+
+- **`config.yaml` rules** take `stage: pre | post | both`; `both` runs the rule in each pass.
+- **Org checks** pushed from the control plane (`guardrails.checks.<name>.stage`) honour the stage for external vendors and Future AGI evals, which can check either side; unset means `pre`. Every other guardrail keeps its fixed stage: `hallucination-detection` and `data-leakage-prevention` run post, the rest pre.
+- **Org post checks cannot stop a response yet**: a `block` in the post pass is recorded (the `x-agentcc-guardrail-triggered` header, `guardrail_results` in the request log), but the response is still returned.
+- **Model output is labelled as output** for these vendors: Bedrock `source: OUTPUT`, Aporia `validation_target: response`, Lasso `COMPLETION`, CrowdStrike `event_type: output`, Pangea `pangea_llm_response_guard`, DynamoAI `MODEL_RESPONSE`, and an assistant turn for Llama Guard and Gray Swan. Aporia, DynamoAI and Llama Guard also get the last user message as context (not the system prompt, so Aporia policies that judge a response against its instructions or retrieved context have less to go on). This applies to `config.yaml` post rules too, which used to send model output labelled as a prompt. The other vendors (Lakera, Azure, Presidio, HiddenLayer, Enkrypt, IBM, Zscaler) get the response text in the request they use for prompts.
+- **Post checks are skipped when there is no response**: a blocked or failed request, or a timeout. A response that carries only usage (pass-through and Responses API handlers, an uncaptured stream) still reaches post checks, but checks that read the model output find none there.
+- **Streaming**: with `guardrails.streaming.enabled`, `config.yaml` post rules check the stream as it is delivered. Org post checks on a stream see its text only when stream capture is on (`logging.request_logging.include_bodies`, or `otel.enabled` with `otel.include_bodies`). They run once after the content has been sent, cannot stop it, and the stream's final chunk and `[DONE]` wait until they finish.
+- **Cache hits** run post checks on the cached response, so a vendor post check is one call per hit.
 
 ### 🔧 Pipeline plugins — 16 processors
 

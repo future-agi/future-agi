@@ -42,6 +42,7 @@ import { useGatewayContext } from "../context/useGatewayContext";
 import EditGuardrailDialog from "./EditGuardrailDialog";
 import GuardrailAnalyticsTab from "./GuardrailAnalyticsTab";
 import FeedbackSummaryCard from "./FeedbackSummaryCard";
+import { GUARDRAIL_STAGE_LABELS, getGuardrailStage } from "./guardrailStage";
 import GuardrailConfigTab from "../settings/GuardrailConfigTab";
 
 // Tab slug <-> index mapping
@@ -99,6 +100,8 @@ function getModeColor(mode) {
 function getGuardrailAction(guardrail) {
   return guardrail?.action || "log";
 }
+
+const STAGE_CHIP_COLORS = { pre: "info", post: "secondary", both: "primary" };
 
 const GUARDRAIL_TYPE_MAP = {
   "pii-detector": "PII",
@@ -266,18 +269,10 @@ const OverviewTab = ({ guardrails, gatewayId }) => {
                   </TableCell>
                   <TableCell>
                     <Chip
-                      label={
-                        (g.phase || g.stage || "pre") === "pre"
-                          ? "Before LLM"
-                          : "After LLM"
-                      }
+                      label={GUARDRAIL_STAGE_LABELS[getGuardrailStage(g).stage]}
                       size="small"
                       variant="outlined"
-                      color={
-                        (g.phase || g.stage || "pre") === "pre"
-                          ? "info"
-                          : "secondary"
-                      }
+                      color={STAGE_CHIP_COLORS[getGuardrailStage(g).stage]}
                     />
                   </TableCell>
                   <TableCell align="right">
@@ -338,7 +333,7 @@ function checksToRules(guardrailObj) {
 
   const rules = Object.entries(checks).map(([catalogName, cfg]) => ({
     name: cfg._originalName || CATALOG_TO_RULE[catalogName] || catalogName,
-    stage: cfg.stage || cfg.phase || "pre",
+    stage: cfg.stage || "pre",
     mode: cfg.mode || "sync",
     action: cfg.action || "block",
     threshold: cfg.confidence_threshold ?? cfg.confidenceThreshold ?? 0.8,

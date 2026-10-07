@@ -15,7 +15,7 @@ type dynamoaiAdapter struct {
 	endpoint  string
 	policyIDs []string
 	modelID   string
-	textType  string // "MODEL_INPUT" or "MODEL_RESPONSE"
+	textType  string // for request text: "MODEL_INPUT" or "MODEL_RESPONSE"
 }
 
 // dynamoaiRequest matches the DynamoGuard /moderation/analyze endpoint.
@@ -69,11 +69,21 @@ func (a *dynamoaiAdapter) buildRequest(ctx context.Context, text string) (*http.
 	if textType == "" {
 		textType = "MODEL_INPUT"
 	}
+	return a.analyze(ctx, textType, dynamoaiMessage{Role: "user", Content: text})
+}
 
+// buildOutputRequest analyzes model output. textType MODEL_RESPONSE marks the
+// last message as the response; the prompt before it is context only.
+func (a *dynamoaiAdapter) buildOutputRequest(ctx context.Context, prompt, output string) (*http.Request, error) {
+	return a.analyze(ctx, "MODEL_RESPONSE",
+		dynamoaiMessage{Role: "user", Content: prompt},
+		dynamoaiMessage{Role: "assistant", Content: output},
+	)
+}
+
+func (a *dynamoaiAdapter) analyze(ctx context.Context, textType string, messages ...dynamoaiMessage) (*http.Request, error) {
 	payload := dynamoaiRequest{
-		Messages: []dynamoaiMessage{
-			{Role: "user", Content: text},
-		},
+		Messages:  messages,
 		TextType:  textType,
 		PolicyIDs: a.policyIDs,
 	}

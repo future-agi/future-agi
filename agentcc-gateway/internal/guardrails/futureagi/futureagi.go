@@ -148,8 +148,14 @@ func New(name string, cfg map[string]interface{}) *FutureAGIGuardrail {
 	return g
 }
 
-func (g *FutureAGIGuardrail) Name() string           { return g.name }
+func (g *FutureAGIGuardrail) Name() string            { return g.name }
 func (g *FutureAGIGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
+
+// SupportsStage reports that an eval can check the prompt or the model's
+// response, so an org check may run it at either stage or both.
+func (g *FutureAGIGuardrail) SupportsStage(s guardrails.Stage) bool {
+	return s == guardrails.StagePre || s == guardrails.StagePost
+}
 
 // Check evaluates text against the Future AGI evaluation API.
 func (g *FutureAGIGuardrail) Check(ctx context.Context, input *guardrails.CheckInput) *guardrails.CheckResult {

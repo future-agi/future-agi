@@ -25,6 +25,7 @@ type GuardrailCheck struct {
 	Action              *string                `json:"action,omitempty"`
 	ConfidenceThreshold *float64               `json:"confidence_threshold,omitempty"`
 	Config              map[string]interface{} `json:"config,omitempty"`
+	Stage               *string                `json:"stage,omitempty"`
 }
 
 type GuardrailConfig struct {
