@@ -213,6 +213,7 @@ const IDENTITY = {
   startedAt: "2026-09-10T09:00:00.000Z",
   finishedAt: null,
   status: "passed",
+  runState: "finished",
   scenarioIds: ["scenario-a", "scenario-b"],
   trials: 3,
 };
@@ -392,12 +393,40 @@ describe("RunDetail", () => {
     renderDetail();
 
     expect(screen.getByText(/Run 3 · agent v2/)).toBeInTheDocument();
-    // Some passed, some failed → the run reads "completed", not "Failed".
+    // The lifecycle remains Completed even when some calls fail.
     expect(screen.getByText("Completed")).toBeInTheDocument();
     expect(screen.getByText(/Refund Copilot · 12 tasks/)).toBeInTheDocument();
     expect(
       screen.getByRole("tab", { name: /Test runs \(12\)/ }),
     ).toBeInTheDocument();
+  });
+
+  it.each([
+    ["all passed", 12, 0],
+    ["all failed", 0, 12],
+    ["no conclusive outcomes", 0, 0],
+  ])("shows Completed for a completed run with %s", (_, passed, failed) => {
+    useRunDetail.mockReturnValue({
+      identity: IDENTITY,
+      stats: { ...STATS, passed, failed },
+      isLoading: false,
+    });
+    renderDetail();
+    expect(screen.getByText("Completed")).toBeInTheDocument();
+    expect(screen.queryByText("Passed")).toBeNull();
+    expect(screen.queryByText("Failed")).toBeNull();
+  });
+
+  it("shows Queued for a pending run", () => {
+    useRunDetail.mockReturnValue({
+      identity: { ...IDENTITY, runState: "queued", status: "running" },
+      stats: { ...STATS, passed: 0, failed: 0 },
+      isLoading: false,
+    });
+    renderDetail();
+    expect(screen.getByText("Queued")).toBeInTheDocument();
+    expect(screen.queryByText("Running")).toBeNull();
+    expect(screen.getByRole("button", { name: /Run again/ })).toBeDisabled();
   });
 
   it("does not show a Failed verdict while the run is still loading", () => {
@@ -413,7 +442,7 @@ describe("RunDetail", () => {
 
   it("offers Stop simulation in the header only while the run can be stopped", () => {
     useRunDetail.mockReturnValue({
-      identity: { ...IDENTITY, status: "running", stoppable: true },
+      identity: { ...IDENTITY, runState: "running", status: "running", stoppable: true },
       stats: STATS,
       isLoading: false,
     });
@@ -436,7 +465,7 @@ describe("RunDetail", () => {
 
   it("shows Cancelling in the header while a stopped run winds down", () => {
     useRunDetail.mockReturnValue({
-      identity: { ...IDENTITY, status: "cancelling", stoppable: false },
+      identity: { ...IDENTITY, runState: "cancelling", status: "cancelling", stoppable: false },
       stats: STATS,
       isLoading: false,
     });
@@ -453,7 +482,7 @@ describe("RunDetail", () => {
     "disables the header actions while the run is %s",
     (status) => {
       useRunDetail.mockReturnValue({
-        identity: { ...IDENTITY, status, stoppable: status === "running" },
+        identity: { ...IDENTITY, runState: status, status, stoppable: status === "running" },
         stats: STATS,
         isLoading: false,
       });
@@ -486,7 +515,7 @@ describe("RunDetail", () => {
 
   it("shows terminal execution failure despite partial call success", () => {
     useRunDetail.mockReturnValue({
-      identity: { ...IDENTITY, status: "failed" },
+      identity: { ...IDENTITY, runState: "failed", status: "failed" },
       stats: STATS,
       isLoading: false,
     });
@@ -852,7 +881,7 @@ describe("RunDetail", () => {
   it("tells the navigation a live run is live", async () => {
     const user = userEvent.setup();
     useRunDetail.mockReturnValue({
-      identity: { ...IDENTITY, status: "running", stoppable: true },
+      identity: { ...IDENTITY, runState: "running", status: "running", stoppable: true },
       stats: STATS,
       isLoading: false,
     });

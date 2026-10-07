@@ -2764,6 +2764,7 @@ SpanDetailPane.propTypes = {
     observationSpan: PropTypes.object,
     eval_scores: PropTypes.array,
     evalScores: PropTypes.array,
+    eval_rollup: PropTypes.object,
     annotations: PropTypes.array,
   }),
   allSpans: PropTypes.array,

@@ -37666,6 +37666,32 @@ export const simulateApiHarnessAttemptsResultsBodyCallRecordingArtifactsDefault 
   [];
 export const simulateApiHarnessAttemptsResultsBodyCallStopReasonMax = 128;
 
+export const simulateApiHarnessAttemptsResultsBodyCallTargetMetricsUsagePromptTokensMin = 0;
+
+export const simulateApiHarnessAttemptsResultsBodyCallTargetMetricsUsageCompletionTokensMin = 0;
+
+export const simulateApiHarnessAttemptsResultsBodyCallTargetMetricsUsageTotalTokensMin = 0;
+
+export const simulateApiHarnessAttemptsResultsBodyCallTargetMetricsCostCentsMin = 0;
+
+export const simulateApiHarnessAttemptsResultsBodyCallTargetMetricsLatencyTurnMin = 0;
+
+export const simulateApiHarnessAttemptsResultsBodyCallTargetMetricsLatencyModelMin = 0;
+
+export const simulateApiHarnessAttemptsResultsBodyCallTargetMetricsLatencyVoiceMin = 0;
+
+export const simulateApiHarnessAttemptsResultsBodyCallTargetMetricsLatencyTranscriberMin = 0;
+
+export const simulateApiHarnessAttemptsResultsBodyCallTargetMetricsLatencyEndpointingMin = 0;
+
+export const simulateApiHarnessAttemptsResultsBodyCallTargetMetricsLatencyTurnsItemMin = 0;
+
+export const simulateApiHarnessAttemptsResultsBodyCallTargetMetricsLatencyTurnsMax = 1000;
+
+export const simulateApiHarnessAttemptsResultsBodyCallTargetMetricsProviderCallIdMax = 255;
+
+export const simulateApiHarnessAttemptsResultsBodyCallTargetMetricsProviderEndReasonMax = 255;
+
 export const simulateApiHarnessAttemptsResultsBodyFailureStageMax = 64;
 
 export const simulateApiHarnessAttemptsResultsBodyFailureCodeMax = 128;
@@ -37735,6 +37761,100 @@ export const SimulateApiHarnessAttemptsResultsBody = zod.object({
       .string()
       .min(1)
       .max(simulateApiHarnessAttemptsResultsBodyCallStopReasonMax)
+      .optional(),
+    script_completed: zod.boolean().optional(),
+    target_metrics: zod
+      .object({
+        provider: zod.enum(["vapi", "retell", "livekit"]),
+        usage: zod
+          .object({
+            prompt_tokens: zod
+              .number()
+              .min(
+                simulateApiHarnessAttemptsResultsBodyCallTargetMetricsUsagePromptTokensMin,
+              )
+              .optional(),
+            completion_tokens: zod
+              .number()
+              .min(
+                simulateApiHarnessAttemptsResultsBodyCallTargetMetricsUsageCompletionTokensMin,
+              )
+              .optional(),
+            total_tokens: zod
+              .number()
+              .min(
+                simulateApiHarnessAttemptsResultsBodyCallTargetMetricsUsageTotalTokensMin,
+              )
+              .optional(),
+          })
+          .optional(),
+        cost_cents: zod
+          .number()
+          .min(
+            simulateApiHarnessAttemptsResultsBodyCallTargetMetricsCostCentsMin,
+          )
+          .optional(),
+        latency: zod
+          .object({
+            turn: zod
+              .number()
+              .min(
+                simulateApiHarnessAttemptsResultsBodyCallTargetMetricsLatencyTurnMin,
+              )
+              .optional(),
+            model: zod
+              .number()
+              .min(
+                simulateApiHarnessAttemptsResultsBodyCallTargetMetricsLatencyModelMin,
+              )
+              .optional(),
+            voice: zod
+              .number()
+              .min(
+                simulateApiHarnessAttemptsResultsBodyCallTargetMetricsLatencyVoiceMin,
+              )
+              .optional(),
+            transcriber: zod
+              .number()
+              .min(
+                simulateApiHarnessAttemptsResultsBodyCallTargetMetricsLatencyTranscriberMin,
+              )
+              .optional(),
+            endpointing: zod
+              .number()
+              .min(
+                simulateApiHarnessAttemptsResultsBodyCallTargetMetricsLatencyEndpointingMin,
+              )
+              .optional(),
+            turns: zod
+              .array(
+                zod
+                  .number()
+                  .min(
+                    simulateApiHarnessAttemptsResultsBodyCallTargetMetricsLatencyTurnsItemMin,
+                  ),
+              )
+              .max(
+                simulateApiHarnessAttemptsResultsBodyCallTargetMetricsLatencyTurnsMax,
+              )
+              .optional(),
+          })
+          .optional(),
+        provider_call_id: zod
+          .string()
+          .min(1)
+          .max(
+            simulateApiHarnessAttemptsResultsBodyCallTargetMetricsProviderCallIdMax,
+          )
+          .optional(),
+        provider_end_reason: zod
+          .string()
+          .min(1)
+          .max(
+            simulateApiHarnessAttemptsResultsBodyCallTargetMetricsProviderEndReasonMax,
+          )
+          .optional(),
+      })
       .optional(),
   }),
   failure: zod.object({
@@ -46653,7 +46773,20 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
     traits: zod.array(zod.string().min(1)),
   }),
   sub_goals: zod.array(zod.string().min(1)),
-  outcome: zod.enum(["passed", "failed", "error", "inconclusive"]),
+  sub_goal_results: zod.array(
+    zod.object({
+      name: zod.string().min(1),
+      passed: zod.boolean().nullable(),
+    }),
+  ),
+  outcome: zod.enum([
+    "queued",
+    "in_progress",
+    "passed",
+    "failed",
+    "inconclusive",
+    "error",
+  ]),
   cost_breakdown_cents: zod.object({
     stt: zod.number(),
     llm: zod.number(),
@@ -46798,6 +46931,8 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
       ),
       measured: zod.number(),
       total: zod.number(),
+      satisfied: zod.number(),
+      satisfied_percent: zod.number(),
       agreement: zod.object({
         compared: zod.number(),
         agreed: zod.number(),
@@ -46887,16 +47022,35 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
       passed: zod.number(),
       measured: zod.number(),
       pass_rate: zod.number(),
+      errored_checks: zod.number(),
     }),
     use_case_risk: zod.array(
       zod.object({
-        goal: zod.string().min(1),
+        queued: zod.number(),
+        in_progress: zod.number(),
+        scenario: zod.string().min(1),
         passed: zod.number(),
         failed: zod.number(),
         error: zod.number(),
         inconclusive: zod.number(),
       }),
     ),
+    run_health: zod.object({
+      show_banner: zod.boolean(),
+      attempted: zod.number(),
+      ran_cleanly: zod.number(),
+      connected: zod.number(),
+      errored: zod.number(),
+      not_evaluated: zod.number(),
+      eval_errors: zod.number(),
+    }),
+    comparison: zod.object({
+      available: zod.boolean(),
+      previous_execution_id: zod.string().uuid(),
+      shared_scenarios: zod.number(),
+      newly_passing: zod.array(zod.string().min(1)),
+      newly_failing: zod.array(zod.string().min(1)),
+    }),
     goal_count: zod.number(),
   }),
   execution: zod.object({
@@ -46908,6 +47062,8 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
   summary: zod.object({
     total: zod.number(),
     outcomes: zod.object({
+      queued: zod.number(),
+      in_progress: zod.number(),
       passed: zod.number(),
       failed: zod.number(),
       error: zod.number(),
@@ -46963,6 +47119,8 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
     zod.object({
       total: zod.number(),
       outcomes: zod.object({
+        queued: zod.number(),
+        in_progress: zod.number(),
         passed: zod.number(),
         failed: zod.number(),
         error: zod.number(),
@@ -47012,11 +47170,46 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
         total: zod.number(),
         total_value: zod.number(),
       }),
-      goal: zod.string().min(1),
+      scenario: zod.string().min(1),
+      scenario_key: zod.string().min(1),
     }),
   ),
+  reliability: zod.object({
+    trials: zod.number(),
+    scenarios: zod.number(),
+    consistent_pass: zod.number(),
+    passed_at_least_once: zod.number(),
+    repeated: zod.number(),
+    flaky: zod.number(),
+    flip_rate: zod.number(),
+    pass_rate_interval: zod.object({
+      low: zod.number(),
+      high: zod.number(),
+      effective_n: zod.number(),
+      evaluated: zod.number(),
+      clusters: zod.number(),
+    }),
+    rows: zod.array(
+      zod.object({
+        queued: zod.number(),
+        in_progress: zod.number(),
+        passed: zod.number(),
+        failed: zod.number(),
+        error: zod.number(),
+        inconclusive: zod.number(),
+        scenario: zod.string().min(1),
+        scenario_key: zod.string().min(1),
+        runs: zod.number(),
+        evaluated: zod.number(),
+        pass_rate: zod.number(),
+        verdict: zod.enum(["passed", "failed", "flaky", "not_evaluated"]),
+      }),
+    ),
+  }),
   turn_distribution: zod.array(
     zod.object({
+      queued: zod.number(),
+      in_progress: zod.number(),
       passed: zod.number(),
       failed: zod.number(),
       error: zod.number(),
@@ -47031,6 +47224,7 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
       passed: zod.number(),
       failed: zod.number(),
       measured: zod.number(),
+      errored: zod.number(),
       missing: zod.number(),
       pass_rate: zod.number(),
       average_score: zod.number(),
@@ -47118,6 +47312,8 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
     zod.object({
       total: zod.number(),
       outcomes: zod.object({
+        queued: zod.number(),
+        in_progress: zod.number(),
         passed: zod.number(),
         failed: zod.number(),
         error: zod.number(),
@@ -47174,6 +47370,8 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
     zod.object({
       total: zod.number(),
       outcomes: zod.object({
+        queued: zod.number(),
+        in_progress: zod.number(),
         passed: zod.number(),
         failed: zod.number(),
         error: zod.number(),
@@ -47230,6 +47428,8 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
     zod.object({
       total: zod.number(),
       outcomes: zod.object({
+        queued: zod.number(),
+        in_progress: zod.number(),
         passed: zod.number(),
         failed: zod.number(),
         error: zod.number(),
@@ -47368,6 +47568,8 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
     summary: zod.object({
       total: zod.number(),
       outcomes: zod.object({
+        queued: zod.number(),
+        in_progress: zod.number(),
         passed: zod.number(),
         failed: zod.number(),
         error: zod.number(),
@@ -47422,6 +47624,8 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
   summary: zod.object({
     total: zod.number(),
     outcomes: zod.object({
+      queued: zod.number(),
+      in_progress: zod.number(),
       passed: zod.number(),
       failed: zod.number(),
       error: zod.number(),
@@ -47492,10 +47696,23 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
         traits: zod.array(zod.string().min(1)),
       }),
       sub_goals: zod.array(zod.string().min(1)),
+      sub_goal_results: zod.array(
+        zod.object({
+          name: zod.string().min(1),
+          passed: zod.boolean().nullable(),
+        }),
+      ),
       harness_outcome_status: zod.string().min(1),
       source_scenario_key: zod.string().min(1),
       trial_index: zod.number(),
-      outcome: zod.enum(["passed", "failed", "error", "inconclusive"]),
+      outcome: zod.enum([
+        "queued",
+        "in_progress",
+        "passed",
+        "failed",
+        "inconclusive",
+        "error",
+      ]),
       execution_status: zod.string().min(1),
       modality: zod.string().min(1),
       provider: zod.string().min(1),
@@ -47541,6 +47758,8 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
     zod.object({
       total: zod.number(),
       outcomes: zod.object({
+        queued: zod.number(),
+        in_progress: zod.number(),
         passed: zod.number(),
         failed: zod.number(),
         error: zod.number(),
@@ -58094,6 +58313,7 @@ export const TracerObservationSpanListSpansResponse = zod.object({
           .optional()
           .describe("Any valid JSON value."),
         eval_template_id: zod.string().min(1).nullish(),
+        target_type: zod.enum(["span", "trace"]).optional(),
         annotators: jsonValueSchema
           .optional()
           .describe("Any valid JSON value."),
@@ -58401,6 +58621,7 @@ export const TracerObservationSpanListSpansObserveResponse = zod.object({
           .optional()
           .describe("Any valid JSON value."),
         eval_template_id: zod.string().min(1).nullish(),
+        target_type: zod.enum(["span", "trace"]).optional(),
         annotators: jsonValueSchema
           .optional()
           .describe("Any valid JSON value."),
@@ -63121,6 +63342,7 @@ export const TracerTraceSessionListSessionsResponse = zod.object({
           .optional()
           .describe("Any valid JSON value."),
         eval_template_id: zod.string().min(1).nullish(),
+        target_type: zod.enum(["span", "trace"]).optional(),
         annotators: jsonValueSchema
           .optional()
           .describe("Any valid JSON value."),
@@ -64283,6 +64505,7 @@ export const TracerTraceListTracesResponse = zod.object({
           .optional()
           .describe("Any valid JSON value."),
         eval_template_id: zod.string().min(1).nullish(),
+        target_type: zod.enum(["span", "trace"]).optional(),
         annotators: jsonValueSchema
           .optional()
           .describe("Any valid JSON value."),
@@ -64545,12 +64768,16 @@ export const TracerTraceListTracesOfSessionResponse = zod.object({
       query_exact: zod.boolean().optional(),
       ordering_exact: zod.boolean().optional(),
     }),
-    table: zod.array(
-      zod.record(
-        zod.string(),
-        jsonValueSchema.describe("Any valid JSON value."),
+    table: zod
+      .array(
+        zod.record(
+          zod.string(),
+          jsonValueSchema.describe("Any valid JSON value."),
+        ),
+      )
+      .describe(
+        "Observe eval bool and choice cells are counts of completed attempts; a detail eval_rollup separately selects the latest completed row per span.",
       ),
-    ),
     config: zod.array(
       zod.object({
         id: zod.string().min(1),
@@ -64566,6 +64793,7 @@ export const TracerTraceListTracesOfSessionResponse = zod.object({
           .optional()
           .describe("Any valid JSON value."),
         eval_template_id: zod.string().min(1).nullish(),
+        target_type: zod.enum(["span", "trace"]).optional(),
         annotators: jsonValueSchema
           .optional()
           .describe("Any valid JSON value."),
@@ -64753,6 +64981,7 @@ export const TracerTraceListVoiceCallsResponse = zod.object({
       settings: jsonValueSchema.optional().describe("Any valid JSON value."),
       choices_map: jsonValueSchema.optional().describe("Any valid JSON value."),
       eval_template_id: zod.string().min(1).nullish(),
+      target_type: zod.enum(["span", "trace"]).optional(),
       annotators: jsonValueSchema.optional().describe("Any valid JSON value."),
       source_field: zod.string().min(1).nullish(),
       parent_eval_id: zod.string().min(1).nullish(),
@@ -65002,7 +65231,59 @@ export const TracerTraceReadResponse = zod.object({
   status: zod.boolean().default(tracerTraceReadResponseStatusDefault),
   result: zod.object({
     trace: zod.object({}).passthrough(),
-    observation_spans: zod.array(zod.object({}).passthrough()),
+    observation_spans: zod.array(
+      zod.object({
+        observation_span: zod.object({}).passthrough(),
+        children: zod.array(zod.object({}).passthrough()).optional(),
+        eval_scores: zod
+          .array(zod.object({}).passthrough())
+          .optional()
+          .describe(
+            "Raw eval rows retained for backwards-compatible array consumers.",
+          ),
+        eval_rollup: zod
+          .object({
+            scope: zod.enum(["trace", "span"]),
+            evals: zod.array(
+              zod.object({
+                eval_config_id: zod.string().min(1),
+                eval_name: zod.string().min(1),
+                output_type: zod.string().min(1).optional(),
+                template_type: zod.string().min(1).optional(),
+                target_type: zod.enum(["span", "trace"]).optional(),
+                choices_map: zod
+                  .object({})
+                  .passthrough()
+                  .optional()
+                  .describe("Any valid JSON value."),
+                aggregate: zod
+                  .object({})
+                  .passthrough()
+                  .describe("Any valid JSON value."),
+                spans: zod.array(
+                  zod.object({
+                    span_id: zod.string().min(1),
+                    span_name: zod.string().optional(),
+                    value: zod
+                      .object({})
+                      .passthrough()
+                      .optional()
+                      .describe("Any valid JSON value."),
+                    explanation: zod.string().min(1).optional(),
+                    error: zod.boolean().optional(),
+                    status: zod.string().min(1).optional(),
+                    eval_config_id: zod.string().optional(),
+                  }),
+                ),
+                error: zod.boolean().optional(),
+              }),
+            ),
+            error: zod.boolean().optional(),
+          })
+          .optional(),
+        annotations: zod.array(zod.object({}).passthrough()).optional(),
+      }),
+    ),
     summary: zod.object({}).passthrough(),
     graph: zod.object({}).passthrough(),
   }),
