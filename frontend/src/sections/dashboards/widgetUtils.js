@@ -63,20 +63,233 @@ export const getDashboardMetricSeriesState = (metrics = []) => {
 };
 
 /**
- * A missing aggregate bucket is not a zero. For line charts, omit null points
- * so Apex connects the neighbouring observed points without mutating the exact
- * response used by table and non-line renderers.
+ * A missing aggregate bucket is not a zero, and nothing is drawn for it. Apex
+ * still emits a node per point it is handed, so a minute-granularity range
+ * spends thousands of nodes on buckets that render nothing (TH-7757) — a column
+ * chart over five days drew 7,201 paths for 36 observed values.
+ *
+ * How they are dropped depends on stacking, and the difference is not cosmetic:
+ *
+ * - Unstacked, each series is positioned by its own point's x, so each may drop
+ *   its own empty buckets. A line then connects across the gap, which is the
+ *   behaviour line and area charts have always had.
+ * - Stacked, ApexCharts sums BY ARRAY INDEX, not by x. The backend pads every
+ *   series over one shared bucket list precisely so index j is the same instant
+ *   everywhere. Filtering per series destroys that: a series would land on the
+ *   baseline and cover its neighbour instead of resting on it, and the stacked
+ *   totals Apex derives would be wrong. So only buckets that no series reported
+ *   are dropped, which keeps every series the same length and still collapses
+ *   the sparse case. A series that did not report a kept bucket is padded with
+ *   a zero, because a null in the stack baseline makes the next series render
+ *   above the grid, and the pad is marked `absent` so the tooltip can still
+ *   say the bucket had no data (`isAbsentChartPoint`).
+ *
+ * Either way the exact response is untouched for the table, the CSV export and
+ * the metric card, which all distinguish "no data" from zero.
  */
-export const getPlottedChartSeries = (series = [], isLineChart = false) =>
-  isLineChart
-    ? series.map((item) => ({
-        ...item,
-        data: (item?.data || []).filter((point) => point?.y != null),
-      }))
-    : series;
+export const getPlottedChartSeries = (
+  series = [],
+  { stacked = false } = {},
+) => {
+  const rows = Array.isArray(series) ? series : [];
 
-export const shouldConnectAcrossMissingBuckets = (apexType) =>
-  apexType === "line" || apexType === "area";
+  if (!stacked) {
+    return rows.map((item) => ({
+      ...item,
+      data: (item?.data || []).filter((point) => point?.y != null),
+    }));
+  }
+
+  const width = rows.reduce(
+    (widest, item) => Math.max(widest, item?.data?.length || 0),
+    0,
+  );
+  const kept = [];
+  for (let index = 0; index < width; index += 1) {
+    if (!rows.some((item) => item?.data?.[index]?.y != null)) continue;
+    // Carry the bucket's own x so a series missing this index can still be
+    // padded at the right instant rather than collapsing the row.
+    kept.push({
+      index,
+      x: rows.find((item) => item?.data?.[index])?.data?.[index]?.x,
+    });
+  }
+  return rows.map((item) => ({
+    ...item,
+    data: kept.map(({ index, x }) => {
+      const point = item?.data?.[index];
+      const y = point?.y;
+      const at = point ? point.x : x;
+      return Number.isFinite(y) ? { x: at, y } : { x: at, y: 0, absent: true };
+    }),
+  }));
+};
+
+/**
+ * Whether the stacked point Apex is asking about is a pad added by
+ * `getPlottedChartSeries` rather than a value the backend reported. `w` is the
+ * chart context Apex passes to its formatters.
+ */
+export const isAbsentChartPoint = (w, seriesIndex, dataPointIndex) =>
+  w?.config?.series?.[seriesIndex]?.data?.[dataPointIndex]?.absent === true;
+
+/**
+ * Past this many plotted points, ApexCharts' draw-in animation stops paying for
+ * itself: it re-serialises the entire SVG path on every frame, so its cost
+ * scales with the point count rather than with the amount of real data. A
+ * minute-granularity widget spanning days carries thousands of buckets and
+ * blocks the main thread for seconds per frame (TH-7757). Past the budget the
+ * chart is drawn in a single static pass, and its dense series lose their
+ * resting markers (`getChartMarkerSizes`).
+ */
+export const CHART_DENSE_POINT_BUDGET = 400;
+
+/**
+ * On a chart past the budget, a series with more points than this draws no
+ * resting markers. Apex emits a node per point for any series with a marker
+ * size, and past a few dozen dots across a widget they overlap into the line
+ * anyway. A sparser series keeps them: on a few points spread over a long
+ * range they are the only thing showing where observations sit, and without
+ * them the line reads as continuous data.
+ */
+export const CHART_MARKER_SERIES_LIMIT = 60;
+
+export const countPlottedPoints = (series = []) =>
+  (Array.isArray(series) ? series : []).reduce(
+    (total, item) => total + (item?.data?.length || 0),
+    0,
+  );
+
+export const isDenseChartSeries = (series = []) =>
+  countPlottedPoints(series) > CHART_DENSE_POINT_BUDGET;
+
+/**
+ * Apex `markers.size` for the plotted series: `size` for all of them within
+ * the budget, otherwise one size per series with 0 for each dense one. A
+ * per-series 0 is what actually keeps the nodes out: any `markers.discrete`
+ * entry makes Apex draw a node for every point of every series.
+ */
+export const getChartMarkerSizes = (series = [], size = 0) => {
+  if (!size || !isDenseChartSeries(series)) return size;
+  return series.map((item) =>
+    (item?.data?.length || 0) > CHART_MARKER_SERIES_LIMIT ? 0 : size,
+  );
+};
+
+/**
+ * Empty buckets are dropped before plotting, so the points alone describe only
+ * the stretch that reported values — left to infer the axis from them, Apex
+ * collapses a week-long widget onto the three days that happen to have data
+ * (TH-7757). The response states the window the backend actually queried,
+ * independently of which buckets survived, so pin the axis to that instead: an
+ * empty stretch then reads as empty rather than vanishing.
+ *
+ * Returns null when the response omits or malforms the window, leaving Apex to
+ * fall back to its own inference rather than rendering an inverted axis.
+ */
+export const getChartTimeWindow = (result) => {
+  const start = Date.parse(result?.time_range?.start ?? "");
+  const end = Date.parse(result?.time_range?.end ?? "");
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start)
+    return null;
+
+  // The window is the instant the query resolved to, but buckets snap to the
+  // start of their period, so the first bucket precedes it by up to a full
+  // granularity step. Pinning the axis at the raw instant puts that bucket
+  // outside the grid, where it is drawn off-canvas and silently lost.
+  let first = null;
+  let last = null;
+  for (const metric of result?.metrics || []) {
+    for (const item of metric?.series || []) {
+      const data = item?.data || [];
+      if (!data.length) continue;
+      const head = Date.parse(data[0]?.timestamp ?? "");
+      const tail = Date.parse(data[data.length - 1]?.timestamp ?? "");
+      if (Number.isFinite(head) && (first === null || head < first))
+        first = head;
+      if (Number.isFinite(tail) && (last === null || tail > last)) last = tail;
+    }
+  }
+
+  return {
+    min: first === null ? start : Math.min(start, first),
+    max: last === null ? end : Math.max(end, last),
+  };
+};
+
+/**
+ * A widget's table renders one cell per bucket per series, and a
+ * minute-granularity widget spanning days carries thousands of buckets
+ * (TH-7757).
+ *
+ * A table that already fits renders every bucket, empty ones included: a gap in
+ * a short range is information the reader wants. Only once the range is too
+ * long to read at all do empty buckets get dropped, which leaves the observed
+ * buckets adjacent instead of stranded in a wall of dashes; whatever survives is
+ * then capped so a dense series cannot render an unbounded table either. CSV
+ * export builds from the full response and is deliberately left alone.
+ */
+export const TABLE_BUCKET_LIMIT = 500;
+
+/**
+ * How a table should describe what it left out, or null when it left out
+ * nothing. Shared so the three tables cannot drift apart in wording: a capped
+ * table says which end it kept, one that only dropped empty buckets does not
+ * claim to have truncated.
+ */
+export const describeTableBuckets = ({
+  shown,
+  total,
+  omitted,
+  truncated,
+} = {}) => {
+  if (!omitted || omitted <= 0) return null;
+  const kept = Number(shown || 0).toLocaleString();
+  const all = Number(total || 0).toLocaleString();
+  return truncated
+    ? `latest ${kept} of ${all} buckets`
+    : `${kept} of ${all} buckets`;
+};
+
+export const getTableBucketPlan = (
+  series = [],
+  { limit = TABLE_BUCKET_LIMIT } = {},
+) => {
+  const rows = (Array.isArray(series) ? series : []).filter(Boolean);
+  const total = rows.reduce(
+    (widest, item) => Math.max(widest, item?.data?.length || 0),
+    0,
+  );
+
+  const everyBucket = Array.from({ length: total }, (_, index) => index);
+  if (total <= limit) {
+    return {
+      indices: everyBucket,
+      total,
+      shown: total,
+      omitted: 0,
+      truncated: false,
+    };
+  }
+
+  const observed = everyBucket.filter((index) =>
+    rows.some((item) => item?.data?.[index]?.y != null),
+  );
+  // With nothing observed anywhere, keep a window of buckets so the table still
+  // shows a time axis instead of collapsing to a bare header row.
+  const candidates = observed.length > 0 ? observed : everyBucket;
+  // The tail, not the head: a dashboard reader wants the most recent buckets,
+  // and slicing from the front silently discarded the newest days.
+  const indices = candidates.slice(-limit);
+
+  return {
+    indices,
+    total,
+    shown: indices.length,
+    omitted: total - indices.length,
+    truncated: candidates.length > limit,
+  };
+};
 
 /**
  * Dashboard responses are all-or-nothing aggregates. A single sampled,
@@ -191,8 +404,11 @@ export const getSeriesScalar = (points = [], aggregation = "avg") => {
   if (ADDITIVE_AGGREGATIONS.has(aggregation)) {
     return values.reduce((a, b) => a + b, 0);
   }
-  if (aggregation === "min") return Math.min(...values);
-  if (aggregation === "max") return Math.max(...values);
+  // Folded rather than spread into Math.min/max: a spread is an argument list,
+  // and a minute-granularity quarter carries ~132k values, well past the
+  // engine's limit. Spreading here crashed the whole page (TH-7757).
+  if (aggregation === "min") return values.reduce((a, b) => (b < a ? b : a));
+  if (aggregation === "max") return values.reduce((a, b) => (b > a ? b : a));
   return values.reduce((a, b) => a + b, 0) / values.length;
 };
 

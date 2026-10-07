@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1055,
+  endpointCount: 1056,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -28170,6 +28170,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     "/simulate/api/harness-environments/{id}/evaluations/{eval_config_id}/": {
+      patch: {
+        operationId: "simulate_api_harness-environments_edit_evaluation",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessEnvironmentEvalEdit",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/SimulateEvalConfigResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
       delete: {
         operationId: "simulate_api_harness-environments_remove_evaluation",
         runtimeRequestValidation: false,
@@ -28216,6 +28233,27 @@ export const OPENAPI_CONTRACT = Object.freeze({
           responses: {
             202: {
               $ref: "#/definitions/HarnessEnvironmentRunEvaluationQueued",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
+    "/simulate/api/harness-environments/{id}/runs/{execution_id}/evaluations/run/":
+      {
+        post: {
+          operationId:
+            "simulate_api_harness-environments_runs_evaluations_run_evaluations",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: {
+            $ref: "#/definitions/HarnessEnvironmentRunEvaluations",
+          },
+          queryParameters: {},
+          responses: {
+            202: {
+              $ref: "#/definitions/HarnessEnvironmentRunEvaluationsQueued",
             },
             default: {
               $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -30900,6 +30938,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           404: {
             $ref: "#/definitions/EvalErrorResponse",
           },
+          409: {
+            $ref: "#/definitions/EvalErrorResponse",
+          },
           500: {
             $ref: "#/definitions/EvalErrorResponse",
           },
@@ -31508,6 +31549,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/ErrorResponse",
           },
           404: {
+            $ref: "#/definitions/ErrorResponse",
+          },
+          409: {
             $ref: "#/definitions/ErrorResponse",
           },
           500: {
@@ -62422,6 +62466,125 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessEnvironmentEvalEdit: {
+      type: "object",
+      properties: {
+        config: {
+          title: "Config",
+          description: "Updated evaluation configuration parameters.",
+          type: "object",
+          "x-nullable": true,
+          additionalProperties: true,
+        },
+        mapping: {
+          title: "Mapping",
+          description:
+            "Updated field mapping between test data and evaluation inputs.",
+          type: "object",
+          "x-nullable": true,
+          additionalProperties: true,
+        },
+        model: {
+          title: "Model",
+          description: "Model to use for evaluations.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        error_localizer: {
+          title: "Error localizer",
+          description:
+            "Enable granular error localization in evaluation results.",
+          type: "boolean",
+        },
+        kb_id: {
+          title: "Kb id",
+          description:
+            "UUID of a knowledge base to use for grounding. Pass null to clear. Switching template_id without providing an explicit kb_id will clear the KB association.",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        filters: {
+          description:
+            "Updated canonical filter list to restrict which test results are evaluated.",
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              column_id: {
+                type: "string",
+                description: "Column or attribute id to filter on.",
+              },
+              property_id: {
+                type: "string",
+                description:
+                  "Optional stable namespaced Property Registry identity.",
+              },
+              display_name: {
+                type: "string",
+                description: "Optional UI label for chips and saved views.",
+              },
+              source: {
+                type: "string",
+                description:
+                  "Optional source surface for mixed-source filters, for example traces, datasets, or simulation.",
+              },
+              output_type: {
+                type: "string",
+                description:
+                  "Optional metric output type metadata used by eval and annotation filters.",
+              },
+              filter_config: {
+                type: "object",
+                properties: {
+                  filter_type: {
+                    type: "string",
+                    description:
+                      "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map.",
+                  },
+                  filter_op: {
+                    type: "string",
+                    description:
+                      "Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null.",
+                  },
+                  filter_value: {
+                    description:
+                      "Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type.",
+                  },
+                  col_type: {
+                    type: "string",
+                    description:
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                  },
+                  attribute_value_types: {
+                    type: "array",
+                    items: {
+                      type: "string",
+                      enum: ["string", "number", "boolean"],
+                      "x-nullable": true,
+                    },
+                    description:
+                      "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values.",
+                  },
+                },
+                required: ["filter_type", "filter_op"],
+                additionalProperties: false,
+              },
+            },
+            required: ["column_id", "filter_config"],
+            additionalProperties: false,
+          },
+          "x-nullable": true,
+        },
+        name: {
+          title: "Name",
+          description: "Updated name for the evaluation configuration.",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
     HarnessEnvironmentListResponse: {
       required: [
         "count",
@@ -62507,6 +62670,38 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         completed_calls: {
           title: "Completed calls",
+          type: "integer",
+        },
+      },
+    },
+    HarnessEnvironmentRunEvaluations: {
+      required: ["eval_config_ids"],
+      type: "object",
+      properties: {
+        eval_config_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            format: "uuid",
+          },
+          minItems: 1,
+        },
+        enable_tool_evaluation: {
+          title: "Enable tool evaluation",
+          description:
+            "Saved on the environment before grading starts; left as it is when absent.",
+          type: "boolean",
+          "x-nullable": true,
+        },
+      },
+    },
+    HarnessEnvironmentRunEvaluationsQueued: {
+      required: ["call_execution_count"],
+      type: "object",
+      properties: {
+        call_execution_count: {
+          title: "Call execution count",
+          description: "How many of the run's calls were queued for grading.",
           type: "integer",
         },
       },
@@ -72636,7 +72831,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     RunNewEvalsResponse: {
-      required: ["message", "run_test_id", "call_execution_count"],
+      required: [
+        "message",
+        "run_test_id",
+        "call_execution_count",
+        "dispatched",
+      ],
       type: "object",
       properties: {
         message: {
@@ -72652,6 +72852,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         call_execution_count: {
           title: "Call execution count",
           type: "integer",
+        },
+        dispatched: {
+          title: "Dispatched",
+          type: "boolean",
         },
       },
     },
@@ -75316,6 +75520,158 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         result: {
           $ref: "#/definitions/SignupResult",
+        },
+      },
+    },
+    SimulateEvalConfigResponse: {
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        config: {
+          title: "Config",
+          type: "object",
+          readOnly: true,
+          "x-nullable": true,
+          additionalProperties: true,
+        },
+        mapping: {
+          title: "Mapping",
+          type: "object",
+          readOnly: true,
+          "x-nullable": true,
+          additionalProperties: true,
+        },
+        filters: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              column_id: {
+                type: "string",
+                description: "Column or attribute id to filter on.",
+              },
+              property_id: {
+                type: "string",
+                description:
+                  "Optional stable namespaced Property Registry identity.",
+              },
+              display_name: {
+                type: "string",
+                description: "Optional UI label for chips and saved views.",
+              },
+              source: {
+                type: "string",
+                description:
+                  "Optional source surface for mixed-source filters, for example traces, datasets, or simulation.",
+              },
+              output_type: {
+                type: "string",
+                description:
+                  "Optional metric output type metadata used by eval and annotation filters.",
+              },
+              filter_config: {
+                type: "object",
+                properties: {
+                  filter_type: {
+                    type: "string",
+                    description:
+                      "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map.",
+                  },
+                  filter_op: {
+                    type: "string",
+                    description:
+                      "Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null.",
+                  },
+                  filter_value: {
+                    description:
+                      "Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type.",
+                  },
+                  col_type: {
+                    type: "string",
+                    description:
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                  },
+                  attribute_value_types: {
+                    type: "array",
+                    items: {
+                      type: "string",
+                      enum: ["string", "number", "boolean"],
+                      "x-nullable": true,
+                    },
+                    description:
+                      "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values.",
+                  },
+                },
+                required: ["filter_type", "filter_op"],
+                additionalProperties: false,
+              },
+            },
+            required: ["column_id", "filter_config"],
+            additionalProperties: false,
+          },
+          readOnly: true,
+          default: [],
+        },
+        error_localizer: {
+          title: "Error localizer",
+          type: "boolean",
+          readOnly: true,
+        },
+        model: {
+          title: "Model",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        eval_group: {
+          title: "Eval group",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        template_id: {
+          title: "Template id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        eval_type: {
+          title: "Eval type",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        regradable: {
+          title: "Regradable",
+          type: "boolean",
+          readOnly: true,
+        },
+        editable: {
+          title: "Editable",
+          type: "boolean",
+          readOnly: true,
         },
       },
     },
@@ -83099,6 +83455,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Template id",
           type: "string",
           format: "uuid",
+          readOnly: true,
+        },
+        eval_type: {
+          title: "Eval type",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        regradable: {
+          title: "Regradable",
+          type: "boolean",
+          readOnly: true,
+        },
+        editable: {
+          title: "Editable",
+          type: "boolean",
           readOnly: true,
         },
       },
@@ -99305,142 +99677,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    SimulateEvalConfigResponse: {
-      type: "object",
-      properties: {
-        id: {
-          title: "Id",
-          type: "string",
-          format: "uuid",
-          readOnly: true,
-        },
-        name: {
-          title: "Name",
-          type: "string",
-          readOnly: true,
-          minLength: 1,
-          "x-nullable": true,
-        },
-        config: {
-          title: "Config",
-          type: "object",
-          readOnly: true,
-          "x-nullable": true,
-          additionalProperties: true,
-        },
-        mapping: {
-          title: "Mapping",
-          type: "object",
-          readOnly: true,
-          "x-nullable": true,
-          additionalProperties: true,
-        },
-        filters: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: {
-              column_id: {
-                type: "string",
-                description: "Column or attribute id to filter on.",
-              },
-              property_id: {
-                type: "string",
-                description:
-                  "Optional stable namespaced Property Registry identity.",
-              },
-              display_name: {
-                type: "string",
-                description: "Optional UI label for chips and saved views.",
-              },
-              source: {
-                type: "string",
-                description:
-                  "Optional source surface for mixed-source filters, for example traces, datasets, or simulation.",
-              },
-              output_type: {
-                type: "string",
-                description:
-                  "Optional metric output type metadata used by eval and annotation filters.",
-              },
-              filter_config: {
-                type: "object",
-                properties: {
-                  filter_type: {
-                    type: "string",
-                    description:
-                      "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map.",
-                  },
-                  filter_op: {
-                    type: "string",
-                    description:
-                      "Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null.",
-                  },
-                  filter_value: {
-                    description:
-                      "Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type.",
-                  },
-                  col_type: {
-                    type: "string",
-                    description:
-                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
-                  },
-                  attribute_value_types: {
-                    type: "array",
-                    items: {
-                      type: "string",
-                      enum: ["string", "number", "boolean"],
-                      "x-nullable": true,
-                    },
-                    description:
-                      "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values.",
-                  },
-                },
-                required: ["filter_type", "filter_op"],
-                additionalProperties: false,
-              },
-            },
-            required: ["column_id", "filter_config"],
-            additionalProperties: false,
-          },
-          readOnly: true,
-          default: [],
-        },
-        error_localizer: {
-          title: "Error localizer",
-          type: "boolean",
-          readOnly: true,
-        },
-        model: {
-          title: "Model",
-          type: "string",
-          readOnly: true,
-          minLength: 1,
-          "x-nullable": true,
-        },
-        status: {
-          title: "Status",
-          type: "string",
-          readOnly: true,
-          minLength: 1,
-          "x-nullable": true,
-        },
-        eval_group: {
-          title: "Eval group",
-          type: "string",
-          readOnly: true,
-          minLength: 1,
-          "x-nullable": true,
-        },
-        template_id: {
-          title: "Template id",
-          type: "string",
-          format: "uuid",
-          readOnly: true,
-          "x-nullable": true,
-        },
-      },
-    },
     SAMLIDPUploadDetailResult: {
       required: [
         "is_enabled",
@@ -108803,6 +109039,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "inputs",
         "id",
         "runnable",
+        "editable",
       ],
       type: "object",
       properties: {
@@ -108865,6 +109102,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         runnable: {
           title: "Runnable",
+          type: "boolean",
+        },
+        editable: {
+          title: "Editable",
           type: "boolean",
         },
       },
