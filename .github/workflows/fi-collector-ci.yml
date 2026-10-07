@@ -7,6 +7,9 @@ on:
       - "fi-collector/**"
       - "docker-compose*.yml"
       - "bin/install*"
+      - "bin/lib/**"
+      - "bin/uninstall"
+      - "bin/dev"
       - "bin/e2e"
       - "deploy/**"
       - "e2e/stack/**"
@@ -21,6 +24,9 @@ on:
       - "fi-collector/**"
       - "docker-compose*.yml"
       - "bin/install*"
+      - "bin/lib/**"
+      - "bin/uninstall"
+      - "bin/dev"
       - "bin/e2e"
       - "deploy/**"
       - "e2e/stack/**"
@@ -117,6 +123,7 @@ jobs:
               "TestPostgresOwnershipIsCurrentAndReadOnly",
               "TestBackfillCLIThroughKafkaWithResume",
               "TestObservedCatalogHTTPToLocalStack",
+              "TestClickHouseDirectObservedCatalogFromOTLPHTTP",
           }
           evidence = Path(os.environ["RUNNER_TEMP"]) / "observed-integration.jsonl"
           events = [json.loads(line) for line in evidence.read_text().splitlines()]
@@ -193,14 +200,18 @@ jobs:
         run: python -m unittest discover -s deploy/tests -p 'test_observed_catalog_*.py' -v
       - name: Shell syntax
         run: |
-          bash -n bin/install bin/e2e
+          for script in bin/install bin/uninstall bin/dev bin/e2e bin/lib/*.sh deploy/standalone/bin/start deploy/standalone/bin/after-bootstrap; do
+            bash -n "$script"
+          done
           sh -n futureagi/scripts/property_catalog_oss/bootstrap_clickhouse.sh
       - name: PowerShell installer syntax
         shell: pwsh
         run: |
-          $tokens = $null
-          $parseErrors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile(
-            "$PWD/bin/install.ps1", [ref]$tokens, [ref]$parseErrors
-          ) | Out-Null
-          if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
+          foreach ($file in @("$PWD/bin/install.ps1") + (Get-ChildItem "$PWD/bin/lib/*.ps1").FullName) {
+            $tokens = $null
+            $parseErrors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              $file, [ref]$tokens, [ref]$parseErrors
+            ) | Out-Null
+            if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
+          }

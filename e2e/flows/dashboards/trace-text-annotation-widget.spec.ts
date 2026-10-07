@@ -489,14 +489,16 @@ test('DASH-E2E-012: a saved trace annotation widget retains exact text membershi
           let list = await readNative<ListBody>(LIST, wire => wire.project_id === projectId && !wire.cursor, since, 'POST', owner,
             body => body?.result?.metadata?.query_complete === true);
           expect(list.input.cursor_mode).toBe(true); expect(list.input.page_number).toBe(0);
-          // dateRangeDefaults + useLLMTracingFilters: the default has one date predicate.
+          // dateRangeDefaults + useLLMTracingFilters: the default has one date predicate. Its start is
+          // floored to the UTC hour and its end is the next local midnight (observePresetDateFilter),
+          // so every visit in one hour sends the same window.
           const filters = JSON.parse(String(list.input.filters));
           expect(filters).toEqual([{ column_id: 'created_at', filter_config: {
             filter_type: 'datetime', filter_op: 'between', filter_value: [expect.any(String), expect.any(String)] } }]);
           const [from, to] = filters[0].filter_config.filter_value.map(Date.parse);
           const bounds = await surface.evaluate(([navigation, requested]) => {
-            const weekAgo = (ms: number) => { const day = new Date(ms); day.setDate(day.getDate() - 7); day.setMilliseconds(0); return day.getTime(); };
-            const end = new Date(requested); end.setHours(23, 59, 59, 0);
+            const weekAgo = (ms: number) => { const day = new Date(ms); day.setDate(day.getDate() - 7); return Math.floor(day.getTime() / 3_600_000) * 3_600_000; };
+            const end = new Date(requested); end.setHours(24, 0, 0, 0);
             return { earliest: weekAgo(navigation), latest: weekAgo(requested), end: end.getTime() };
           }, [since, list.startedAt]);
           expect(from).toBeGreaterThanOrEqual(bounds.earliest); expect(from).toBeLessThanOrEqual(bounds.latest);

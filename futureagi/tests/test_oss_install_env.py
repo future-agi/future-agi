@@ -14,7 +14,7 @@ SECRET = "SECRET_KEY=synthetic-do-not-print\n"
 def configure_env(tmp_path, *, mask="022", path=None):
     source = INSTALL.read_text()
     stage = source.split("# ---------------- .env ----------------", 1)[1].split(
-        "# Portable in-place sed", 1
+        "\n# ----------------", 1
     )[0]
     return subprocess.run(
         [

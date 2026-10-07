@@ -210,6 +210,7 @@ class TestSOSLoginAdminSession:
         self, sos_admin, sos_operator, user, settings
     ):
         settings.APP_URL = "app.futureagi.com"
+        settings.APP_BASE_URL = "https://app.futureagi.com"
         request = _request(
             RequestFactory().post, LOGIN_URL, sos_operator, {"user_id": str(user.id)}
         )
@@ -226,6 +227,7 @@ class TestSOSLoginAdminSession:
         self, sos_admin, sos_operator, user, settings
     ):
         settings.APP_URL = "app.futureagi.com"
+        settings.APP_BASE_URL = "https://app.futureagi.com"
         request = _request(
             RequestFactory().post, LOGIN_URL, sos_operator, {"user_id": str(user.id)}
         )
@@ -250,6 +252,7 @@ class TestSOSLoginAdminSession:
         self, sos_admin, sos_operator, user, settings
     ):
         settings.APP_URL = "app.futureagi.com"
+        settings.APP_BASE_URL = "https://app.futureagi.com"
         existing = AuthToken.objects.create(
             user=user, auth_type=AuthTokenType.REFRESH.value, is_active=True
         )
@@ -266,6 +269,7 @@ class TestSOSLoginAdminSession:
         self, sos_admin, sos_operator, settings
     ):
         settings.APP_URL = "app.futureagi.com"
+        settings.APP_BASE_URL = "https://app.futureagi.com"
         request = _request(
             RequestFactory().post,
             LOGIN_URL,
@@ -281,6 +285,7 @@ class TestSOSLoginAdminSession:
 
     def test_malformed_user_id_is_handled(self, sos_admin, sos_operator, settings):
         settings.APP_URL = "app.futureagi.com"
+        settings.APP_BASE_URL = "https://app.futureagi.com"
         request = _request(
             RequestFactory().post, LOGIN_URL, sos_operator, {"user_id": "not-a-uuid"}
         )
@@ -294,6 +299,7 @@ class TestSOSLoginAdminSession:
         self, sos_admin, sos_operator, organization, settings
     ):
         settings.APP_URL = "app.futureagi.com"
+        settings.APP_BASE_URL = "https://app.futureagi.com"
         inactive = User.objects.create(
             email=f"gone-{uuid.uuid4().hex[:8]}@futureagi.com",
             name="Gone",
@@ -316,6 +322,7 @@ class TestSOSLoginAdminSession:
         self, sos_admin, sos_operator, user, settings
     ):
         settings.APP_URL = None
+        settings.APP_BASE_URL = ""
         request = _request(
             RequestFactory().post, LOGIN_URL, sos_operator, {"user_id": str(user.id)}
         )
@@ -330,6 +337,7 @@ class TestSOSLoginAdminSession:
         self, sos_admin, sos_operator, settings
     ):
         settings.APP_URL = "app.futureagi.com"
+        settings.APP_BASE_URL = "https://app.futureagi.com"
         other_org = Organization.objects.create(name=f"Other {uuid.uuid4().hex[:6]}")
         target = User.objects.create(
             email=f"cust-{uuid.uuid4().hex[:8]}@futureagi.com",
@@ -354,6 +362,7 @@ class TestSOSCopyLink:
         self, sos_admin, sos_operator, user, settings
     ):
         settings.APP_URL = "app.futureagi.com"
+        settings.APP_BASE_URL = "https://app.futureagi.com"
         request = _request(
             RequestFactory().post,
             COPY_LINK_URL,
@@ -373,6 +382,7 @@ class TestSOSCopyLink:
         self, sos_admin, sos_operator, user, settings
     ):
         settings.APP_URL = "app.futureagi.com"
+        settings.APP_BASE_URL = "https://app.futureagi.com"
         request = _request(
             RequestFactory().post,
             COPY_LINK_URL,
@@ -402,6 +412,7 @@ class TestSOSCopyLink:
 
     def test_rejects_non_staff(self, sos_admin, non_staff_user, user, settings):
         settings.APP_URL = "app.futureagi.com"
+        settings.APP_BASE_URL = "https://app.futureagi.com"
         request = _request(
             RequestFactory().post,
             COPY_LINK_URL,
@@ -418,6 +429,7 @@ class TestSOSCopyLink:
         self, sos_admin, sos_operator, settings
     ):
         settings.APP_URL = "app.futureagi.com"
+        settings.APP_BASE_URL = "https://app.futureagi.com"
         request = _request(
             RequestFactory().post,
             COPY_LINK_URL,
@@ -435,6 +447,7 @@ class TestSOSCopyLink:
         self, sos_admin, sos_operator, user, settings
     ):
         settings.APP_URL = None
+        settings.APP_BASE_URL = ""
         request = _request(
             RequestFactory().post,
             COPY_LINK_URL,
@@ -451,6 +464,7 @@ class TestSOSCopyLink:
         self, sos_admin, sos_operator, user, settings
     ):
         settings.APP_URL = "app.futureagi.com"
+        settings.APP_BASE_URL = "https://app.futureagi.com"
         existing = AuthToken.objects.create(
             user=user, auth_type=AuthTokenType.REFRESH.value, is_active=True
         )
@@ -482,6 +496,7 @@ class TestSOSAuditLog:
         self, sos_admin, sos_operator, user, settings
     ):
         settings.APP_URL = "app.futureagi.com"
+        settings.APP_BASE_URL = "https://app.futureagi.com"
         request = _request(
             RequestFactory().post, LOGIN_URL, sos_operator, {"user_id": str(user.id)}
         )

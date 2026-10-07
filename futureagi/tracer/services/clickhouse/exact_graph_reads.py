@@ -421,9 +421,10 @@ def _metadata(
     started: float,
     query_count: int,
     rows_returned: int,
+    wall_ms: int | None = None,
 ) -> dict[str, Any]:
     elapsed_ms = max(monotonic() - started, 0.0) * 1000
-    if elapsed_ms >= EXACT_GRAPH_QUERY_TIMEOUT_MS:
+    if elapsed_ms >= (EXACT_GRAPH_QUERY_TIMEOUT_MS if wall_ms is None else wall_ms):
         raise ExactGraphReadError("exact graph refresh deadline exceeded")
     metadata = {
         "query_complete": True,
@@ -439,19 +440,23 @@ def _metadata(
 def _remaining_exact_graph_timeout_ms(
     started: float,
     statement_ceiling_ms: int | None = None,
+    *,
+    wall_ms: int | None = None,
 ) -> int:
     """Return the time left on one authoritative exact-refresh wall.
 
     Background readers do builder, relation, database, formatting, and
     publication work under one reviewed graph budget. A later statement may
     consume only the remaining portion; it never receives a fresh
-    per-statement grant.
+    per-statement grant. ``wall_ms`` replaces the background wall for a
+    reader run inline on an interactive wall (the Sessions graph).
     """
 
     elapsed_ms = max(monotonic() - started, 0.0) * 1000
+    wall = EXACT_GRAPH_QUERY_TIMEOUT_MS if wall_ms is None else int(wall_ms)
     # Floor the remaining duration, rather than subtracting a floored elapsed
     # duration, so rounding can never grant a statement time beyond the wall.
-    remaining_ms = int(EXACT_GRAPH_QUERY_TIMEOUT_MS - elapsed_ms)
+    remaining_ms = int(wall - elapsed_ms)
     if remaining_ms < settings.EXACT_GRAPH_MIN_REMAINING_MS:
         raise ExactGraphReadError("exact graph refresh bounded deadline exceeded")
     if statement_ceiling_ms is None:
@@ -468,21 +473,24 @@ def _execute_direct_exact_graph_query(
     params: dict[str, Any],
     started: float,
     settings: dict[str, Any],
+    wall_ms: int | None = None,
 ) -> Any:
     """Execute a direct publication read inside its refresh's remaining wall."""
 
     return analytics.execute_ch_query(
         query,
         params,
-        timeout_ms=_remaining_exact_graph_timeout_ms(started),
+        timeout_ms=_remaining_exact_graph_timeout_ms(started, wall_ms=wall_ms),
         settings=settings,
     )
 
 
-def _finalize_exact_graph_payload(payload: Any, *, started: float) -> Any:
+def _finalize_exact_graph_payload(
+    payload: Any, *, started: float, wall_ms: int | None = None
+) -> Any:
     """Fence publication after all formatting and result construction."""
 
-    _remaining_exact_graph_timeout_ms(started)
+    _remaining_exact_graph_timeout_ms(started, wall_ms=wall_ms)
     return payload
 
 
@@ -2871,6 +2879,18 @@ def _is_raw_attribute_filter(item: dict[str, Any]) -> bool:
     )
 
 
+def _session_filters_need_message_aggregates(filters: list[dict[str, Any]]) -> bool:
+    """Whether a first/last-message filter selects on ``argMin``/``argMax``
+    of the session's root inputs."""
+
+    return any(
+        not _is_raw_attribute_filter(item)
+        and (item.get("column_id") or item.get("columnId"))
+        in _SESSION_MESSAGE_FILTER_COLUMNS
+        for item in filters
+    )
+
+
 def _session_having_clause(
     filters: list[dict[str, Any]], params: dict[str, Any]
 ) -> str:
@@ -2959,6 +2979,7 @@ def _finite_survivor_map_ctes(
     candidate_column: str,
     prefix: str,
     map_name: str,
+    candidate_array: bool = False,
 ) -> str:
     """Materialize only remap groups touched by one finite candidate relation.
 
@@ -2969,6 +2990,13 @@ def _finite_survivor_map_ctes(
     resulting tiny map once as a scalar tuple array.  Candidate IDs themselves
     stay relational: ClickHouse does not accept a scalar array alias as the
     right-hand side of ``IN`` in ``PREWHERE``.
+
+    ``candidate_array`` reads the candidate relation ONCE, into a scalar
+    array, and exposes it relationally through ``arrayJoin``. Without it every
+    reference (the remap probe, the union, and any caller's own use of
+    ``<prefix>_candidate_ids``) re-executes the candidate source, which for a
+    Session source is a complete ``spans FINAL`` pass. The ids, and therefore
+    every lookup in the map, are the same either way.
     """
 
     identifiers = (
@@ -2983,13 +3011,26 @@ def _finite_survivor_map_ctes(
     candidate_ids_name = f"{prefix}_candidate_ids"
     target_relation = f"{prefix}_target_new_ids"
     pair_name = f"{prefix}_pairs"
-    return f"""
+    if candidate_array:
+        array_name = f"{prefix}_candidate_array"
+        candidate_ids_cte = f"""
+    (
+        SELECT groupUniqArray(assumeNotNull({candidate_column}))
+        FROM {candidate_relation}
+        WHERE isNotNull({candidate_column})
+    ) AS {array_name},
+    {candidate_ids_name} AS (
+        SELECT arrayJoin({array_name}) AS {candidate_column}
+    ),"""
+    else:
+        candidate_ids_cte = f"""
     {candidate_ids_name} AS (
         SELECT DISTINCT
             assumeNotNull({candidate_column}) AS {candidate_column}
         FROM {candidate_relation}
         WHERE isNotNull({candidate_column})
-    ),
+    ),"""
+    return f"""{candidate_ids_cte}
     {target_relation} AS (
         SELECT DISTINCT new_id
         FROM {remap_table} FINAL
@@ -3028,6 +3069,32 @@ def _finite_survivor_map_ctes(
         FROM (SELECT arrayJoin({pair_name}) AS pair)
     )
     """
+
+
+def _session_span_filters(filters: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The filters a Sessions statement compiles as span-level membership leaves.
+
+    Window, session-id, message and post-aggregate filters are applied by the
+    statement itself, not by membership.
+    """
+
+    return [
+        item
+        for item in filters
+        if _is_raw_attribute_filter(item)
+        or (item.get("column_id") or item.get("columnId"))
+        not in {
+            *_SESSION_POST_AGGREGATE_FILTERS,
+            *_SESSION_MESSAGE_FILTER_COLUMNS,
+            *SESSION_ID_FILTER_COLS,
+        }
+    ]
+
+
+def _membership_plan_is_lean(plan: _SessionMembershipPlan) -> bool:
+    """Whether a membership plan has no span-level leaf (the lean source)."""
+
+    return not (plan.scalar_predicates or plan.relational_predicates)
 
 
 def _session_membership_plan(
@@ -3292,6 +3359,7 @@ def _session_aggregate_source_sql(
     candidate_trace_ids_sql: str | None = None,
     candidate_trace_ids_param: str | None = None,
     use_scalar_witness: bool = False,
+    lean_graph_source: bool = False,
 ) -> tuple[str, dict[str, Any]]:
     """Build one full-window, remap-resolved per-session source.
 
@@ -3302,19 +3370,26 @@ def _session_aggregate_source_sql(
     ``snapshot_*`` parameters are deliberately distinct from an outer graph
     partition's dates so a session can never be split at an output-bucket
     boundary.
+
+    ``lean_graph_source`` (the Sessions graph statement) returns the same
+    rows with fewer ``spans FINAL`` passes. The candidate ids are read once,
+    into a scalar array, instead of once per reference. With no span-level
+    membership leaf, they come from a narrow non-FINAL read of root VERSIONS
+    in the anchor window: the latest live root of every exact candidate is
+    itself such a version, so this is a superset of the exact ids. A superset
+    changes no lookup the aggregate makes: every remap group containing an
+    exact id is touched either way, so its survivor is the same, and each
+    aggregate row's resolved id stays in ``selected_sessions``. A membership
+    leaf resolves spans whose session is NOT a candidate through the same
+    finite map, where a larger touched set can change the survivor of a remap
+    chain; filtered charts therefore keep the exact FINAL candidates (read
+    once). The aggregate itself always stays on ``spans FINAL``: the latest
+    version of a span decides whether it is a live root at all.
     """
 
-    span_filters = [
-        item
-        for item in filters
-        if _is_raw_attribute_filter(item)
-        or (item.get("column_id") or item.get("columnId"))
-        not in {
-            *_SESSION_POST_AGGREGATE_FILTERS,
-            *_SESSION_MESSAGE_FILTER_COLUMNS,
-            *SESSION_ID_FILTER_COLS,
-        }
-    ]
+    if lean_graph_source and not anchor_by_session_start:
+        raise ValueError("the lean Session graph source is anchored by session start")
+    span_filters = _session_span_filters(filters)
     membership_plan = _session_membership_plan(
         project_id=project_id,
         filters=span_filters,
@@ -3405,7 +3480,39 @@ def _session_aggregate_source_sql(
         candidate_column="physical_session_id",
         prefix="candidate_session_remap",
         map_name="ts_survivor_map",
+        candidate_array=lean_graph_source,
     )
+    candidate_physical_session_ids = f"""
+    candidate_physical_session_ids AS (
+        SELECT DISTINCT
+            candidate_rs.trace_session_id AS physical_session_id
+        FROM (
+            {session_root_rows}
+        ) AS candidate_rs
+        WHERE 1 = 1
+          {candidate_trace_clause}
+    )"""
+    if lean_graph_source and _membership_plan_is_lean(membership_plan):
+        # Root versions only, no FINAL: every exact candidate's latest live
+        # root is one of these rows (same session, same exact start_time).
+        # PREWHERE keeps to the immutable project/replacement-hour key, as the
+        # FINAL source does; the root/time/session tests read four narrow
+        # columns, and a non-FINAL read may use the parent-span bloom index.
+        candidate_physical_session_ids = """
+    candidate_physical_session_ids AS (
+        SELECT DISTINCT trace_session_id AS physical_session_id
+        FROM spans
+        PREWHERE project_id = toUUID(%(project_id)s)
+          AND toStartOfHour(start_time) >= %(snapshot_scan_start_date)s
+          AND toStartOfHour(start_time) < %(snapshot_scan_end_date)s
+        WHERE parent_span_id = ''
+          AND start_time >= fromUnixTimestamp64Micro(%(snapshot_start_date_us)s)
+          AND start_time < fromUnixTimestamp64Micro(%(snapshot_end_date_us)s)
+          AND start_time >= fromUnixTimestamp64Micro(%(start_date_us)s)
+          AND start_time < fromUnixTimestamp64Micro(%(end_date_us)s)
+          AND trace_session_id !=
+              toUUID('00000000-0000-0000-0000-000000000000')
+    )"""
     membership_ctes = ""
     if membership_plan.relational_ctes:
         membership_ctes = f""",
@@ -3567,12 +3674,7 @@ def _session_aggregate_source_sql(
     if having_clause:
         having_clauses.append(having_clause)
     having_fragment = "HAVING " + " AND ".join(having_clauses) if having_clauses else ""
-    needs_message_aggregates = any(
-        not _is_raw_attribute_filter(item)
-        and (item.get("column_id") or item.get("columnId"))
-        in _SESSION_MESSAGE_FILTER_COLUMNS
-        for item in filters
-    )
+    needs_message_aggregates = _session_filters_need_message_aggregates(filters)
     message_aggregate_select = (
         ",\n        argMin(rs.input, rs.start_time) AS first_message,"
         "\n        argMax(rs.input, rs.start_time) AS last_message"
@@ -3585,16 +3687,7 @@ def _session_aggregate_source_sql(
         else ""
     )
     source = f"""
-    WITH
-    candidate_physical_session_ids AS (
-        SELECT DISTINCT
-            candidate_rs.trace_session_id AS physical_session_id
-        FROM (
-            {session_root_rows}
-        ) AS candidate_rs
-        WHERE 1 = 1
-          {candidate_trace_clause}
-    ),
+    WITH{candidate_physical_session_ids},
     {session_map_ctes},
     candidate_sessions AS (
         SELECT DISTINCT
@@ -4775,6 +4868,106 @@ def _session_numeric_absence_probe_sql(
     )
 
 
+def _session_graph_read_settings() -> dict[str, Any]:
+    """The background exact-aggregation worker's settings for the Sessions
+    graph statement (an inline run keeps ``EXACT_GRAPH_READ_SETTINGS``).
+
+    It is the shared exact envelope with one change: the statement may use
+    ``EXACT_GRAPH_SESSION_READ_MAX_THREADS`` workers, which parallel FINAL
+    spreads over key ranges (ranges no fresh part overlaps skip the merge).
+    Per-partition FINAL (``do_not_merge_across_partitions_select_final``) is
+    deliberately not set: on a merged day part plus small fresh version parts
+    it sends every row through the merge and measured 2-3x more CPU. Block
+    sizes stay the shared ones; larger blocks multiplied memory ~5x. The
+    byte, memory, result and deadline ceilings stay the shared ones. Built per
+    call so a runtime or test override of the shared dict is honoured.
+    Interactive statements keep ``FILTER_SELECTOR_MAX_THREADS``.
+
+    A first/last-message chart does not use this: see
+    ``read_exact_session_system_graph``.
+    """
+
+    return {
+        **EXACT_GRAPH_READ_SETTINGS,
+        "max_threads": settings.EXACT_GRAPH_SESSION_READ_MAX_THREADS,
+    }
+
+
+def session_graph_reads_lean_roots(
+    *, project_id: str, filters: list[dict[str, Any]]
+) -> bool:
+    """Whether the Sessions graph statement for ``filters`` is the lean one.
+
+    That is the statement whose candidates come from one narrow read of root
+    versions (``_session_aggregate_source_sql``'s ``lean_graph_source`` with
+    no span-level membership leaf) and that runs alone: no scalar witness, no
+    absence probe, no first/last-message aggregate. Window, session-id and
+    post-aggregate (duration, cost, tokens, trace count) filters keep that
+    shape; span-level and message filters do not. Only this shape is costed by
+    ``session_graph_root_estimate_sql``: its work follows the live roots of
+    the window, which is what that estimate counts.
+
+    It runs on the request path, so it reads no metadata: ``has_annotation``
+    (whose plan reads the project's labels from PostgreSQL) is always a
+    span-level leaf, and a plan that cannot be built is not lean - the
+    background path owns that error and reports it as a failed refresh.
+    """
+
+    if _session_filters_need_message_aggregates(filters):
+        return False
+    span_filters = _session_span_filters(filters)
+    if any(
+        not _is_raw_attribute_filter(item)
+        and (item.get("column_id") or item.get("columnId")) == "has_annotation"
+        for item in span_filters
+    ):
+        return False
+    try:
+        plan = _session_membership_plan(project_id=project_id, filters=span_filters)
+    except Exception:
+        logger.warning("session_graph_lean_classification_failed", exc_info=True)
+        return False
+    return _membership_plan_is_lean(plan)
+
+
+def session_graph_root_estimate_sql(
+    *, project_id: str, filters: list[dict[str, Any]]
+) -> tuple[str, dict[str, Any]] | None:
+    """``EXPLAIN ESTIMATE`` of the lean Sessions statement's root read.
+
+    The rows are the live-root candidates of the window - project, window,
+    ``is_deleted = 0``, ``parent_span_id = ''``, a session - answered from part
+    metadata alone: the rows of the granules the primary key and skip indexes
+    (or ``proj_root_spans``, ordered by exactly these keys, when the optimizer
+    picks it) cannot exclude. It is therefore an upper bound rounded up to
+    whole granules of the rows present when it runs. ``None`` for an empty window:
+    the reader then sends no statement at all.
+    """
+
+    start_date, end_date, empty = _snapshot_window(filters)
+    if empty:
+        return None
+    return (
+        """
+        EXPLAIN ESTIMATE
+        SELECT trace_session_id
+        FROM spans
+        WHERE project_id = toUUID(%(project_id)s)
+          AND is_deleted = 0
+          AND parent_span_id = ''
+          AND start_time >= fromUnixTimestamp64Micro(%(start_date_us)s)
+          AND start_time < fromUnixTimestamp64Micro(%(end_date_us)s)
+          AND isNotNull(trace_session_id)
+          AND trace_session_id != toUUID('00000000-0000-0000-0000-000000000000')
+        """,
+        {
+            "project_id": project_id,
+            "start_date_us": _unix_microseconds(start_date),
+            "end_date_us": _unix_microseconds(end_date),
+        },
+    )
+
+
 def read_exact_session_system_graph(
     *,
     analytics: Any,
@@ -4782,7 +4975,18 @@ def read_exact_session_system_graph(
     filters: list[dict[str, Any]],
     interval: str,
     metric_id: str,
+    wall_ms: int | None = None,
 ) -> dict[str, Any]:
+    """The one statement behind every Sessions system chart.
+
+    The exact-aggregation worker runs it (no ``wall_ms``) on
+    ``GRAPH_BACKGROUND_WALL_MS`` with the session thread budget. A caller's
+    ``wall_ms`` runs the SAME statement (same SQL, same parameters, same
+    numbers) inline on that wall with the shared exact settings - one thread,
+    as other interactive reads - for a scope whose root estimate is
+    affordable (``session_graph``).
+    """
+
     started = monotonic()
     start_date, end_date, empty = _snapshot_window(filters)
     interval = _effective_graph_interval(interval, start_date, end_date)
@@ -4795,9 +4999,11 @@ def read_exact_session_system_graph(
                     started=started,
                     query_count=0,
                     rows_returned=0,
+                    wall_ms=wall_ms,
                 ),
             },
             started=started,
+            wall_ms=wall_ms,
         )
     bucket_fn = BaseQueryBuilder.time_bucket_expr(interval)
     session_value = {
@@ -4828,6 +5034,7 @@ def read_exact_session_system_graph(
             include_trace_ids=False,
             anchor_by_session_start=True,
             use_scalar_witness=use_scalar_witness,
+            lean_graph_source=True,
         )
         query_params = {
             **query_params,
@@ -4849,6 +5056,18 @@ def read_exact_session_system_graph(
     """
         return query, query_params
 
+    # On the background worker the statement may use the session thread
+    # budget; inline it keeps the shared single-thread exact settings. The
+    # absence probe below keeps the shared exact settings. A first/last-message
+    # filter selects on argMin/argMax(input, start_time), which has no
+    # tie-break: roots tied at one start_time resolve by read order, which is
+    # stable on one thread and not on several. Such a chart keeps dev's
+    # single-thread settings for the main, witness and fallback statements
+    # (the witness copies ``graph_settings``), so it selects dev's sessions.
+    if wall_ms is not None or _session_filters_need_message_aggregates(filters):
+        graph_settings = dict(EXACT_GRAPH_READ_SETTINGS)
+    else:
+        graph_settings = _session_graph_read_settings()
     query, query_params = build_query(use_scalar_witness=True)
     has_witness = "session_scalar_witness_ids AS (" in query
     query_count = 1
@@ -4866,6 +5085,7 @@ def read_exact_session_system_graph(
             params=probe[1],
             started=started,
             settings=EXACT_GRAPH_READ_SETTINGS,
+            wall_ms=wall_ms,
         )
         if probe_result.data:
             query_count += 1
@@ -4874,7 +5094,7 @@ def read_exact_session_system_graph(
         # Keep normal zero-filled graph formatting below, not the empty-window path.
         result = probe_result
     elif has_witness:
-        witness_settings = dict(EXACT_GRAPH_READ_SETTINGS)
+        witness_settings = dict(graph_settings)
         for name, ceiling in (
             ("max_bytes_to_read", _SESSION_SCALAR_WITNESS_MAX_BYTES),
             ("max_rows_in_set", _SESSION_SCALAR_WITNESS_MAX_SET_ROWS),
@@ -4889,7 +5109,7 @@ def read_exact_session_system_graph(
                 query,
                 query_params,
                 timeout_ms=_remaining_exact_graph_timeout_ms(
-                    started, _SESSION_SCALAR_WITNESS_TIMEOUT_MS
+                    started, _SESSION_SCALAR_WITNESS_TIMEOUT_MS, wall_ms=wall_ms
                 ),
                 settings=witness_settings,
             )
@@ -4905,7 +5125,8 @@ def read_exact_session_system_graph(
                 query=query,
                 params=query_params,
                 started=started,
-                settings=EXACT_GRAPH_READ_SETTINGS,
+                settings=graph_settings,
+                wall_ms=wall_ms,
             )
     else:
         result = _execute_direct_exact_graph_query(
@@ -4913,7 +5134,8 @@ def read_exact_session_system_graph(
             query=query,
             params=query_params,
             started=started,
-            settings=EXACT_GRAPH_READ_SETTINGS,
+            settings=graph_settings,
+            wall_ms=wall_ms,
         )
     rows = list(result.data or [])
     columns = list(result.columns or [])
@@ -4946,9 +5168,11 @@ def read_exact_session_system_graph(
                 started=started,
                 query_count=query_count,
                 rows_returned=len(rows),
+                wall_ms=wall_ms,
             ),
         },
         started=started,
+        wall_ms=wall_ms,
     )
 
 
@@ -4963,4 +5187,6 @@ __all__ = [
     "read_exact_session_system_graph",
     "read_exact_system_graph",
     "read_exact_user_system_graph",
+    "session_graph_reads_lean_roots",
+    "session_graph_root_estimate_sql",
 ]

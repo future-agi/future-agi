@@ -134,6 +134,7 @@ from simulate.models.simulator_agent import SimulatorAgent
 from simulate.models.test_execution import EvalExplanationSummaryStatus
 from simulate.pydantic_schemas.chat import SimulationCallType
 from simulate.services.branch_deviation_analyzer import BranchDeviationAnalyzer
+from simulate.services.harness_evals import is_harness_run_test, regrade_mapping
 try:
     from ee.voice.services.conversation_metrics import ConversationMetricsCalculator
     from ee.voice.services.phone_number_service import PhoneNumberService
@@ -4214,6 +4215,9 @@ class TestExecutor:
                 eval_configs = SimulateEvalConfig.objects.filter(
                     id__in=eval_config_ids, deleted=False
                 )
+                self._drop_placeholders_of_removed_evals(
+                    call_execution, eval_config_ids, eval_configs
+                )
             else:
                 eval_configs = SimulateEvalConfig.objects.filter(
                     run_test=run_test, deleted=False
@@ -4300,6 +4304,13 @@ class TestExecutor:
             test_execution = call_execution.test_execution
             test_execution.refresh_from_db(fields=["status"])
 
+            # Only a harness run holds result columns with no mapping of their
+            # own, so the lookup is made once per call and only when one is
+            # among the configs.
+            harness_run = any(
+                not eval_config.mapping for eval_config in eval_configs
+            ) and is_harness_run_test(run_test.id)
+
             # Run each evaluation
             for eval_config in eval_configs:
                 try:
@@ -4328,8 +4339,14 @@ class TestExecutor:
                         TestExecution.ExecutionStatus.CANCELLED,
                         TestExecution.ExecutionStatus.CANCELLING,
                     ]:
+                        if harness_run and regrade_mapping(eval_config) is None:
+                            self._mark_eval_left_to_the_harness(
+                                call_execution, eval_config
+                            )
+                            continue
+                        extra = {"harness_run": True} if harness_run else {}
                         self._run_single_simulate_evaluation(
-                            eval_config, call_execution, transcript_data
+                            eval_config, call_execution, transcript_data, **extra
                         )
                         logger.info(
                             f"Successfully ran evaluation {eval_config.name} ({eval_config.id}) "
@@ -4374,6 +4391,87 @@ class TestExecutor:
                 pass
             logger.error(f"Error in _run_simulate_evaluations: {str(e)}")
             traceback.print_exc()
+
+    def _drop_placeholders_of_removed_evals(
+        self, call_execution, eval_config_ids, eval_configs
+    ) -> None:
+        """Drop the pending placeholder of a requested eval removed before it ran.
+
+        Its grader never runs. The completion check skips a removed eval, but
+        ``bind_eval_config`` brings the eval back under the same id, and with
+        it a cell still pending that no grader will fill, which keeps the
+        call, and with it the run, from rolling up again.
+        """
+        outputs = call_execution.eval_outputs or {}
+        pending = {
+            str(config_id)
+            for config_id in eval_config_ids
+            if isinstance(outputs.get(str(config_id)), dict)
+            and outputs[str(config_id)].get("status") == "pending"
+        }
+        if not pending:
+            return
+        live = {
+            str(config_id) for config_id in eval_configs.values_list("id", flat=True)
+        }
+        removed = pending - live
+        if not removed:
+            return
+        for config_id in removed:
+            outputs.pop(config_id, None)
+        call_execution.eval_outputs = outputs
+        call_execution.save(update_fields=["eval_outputs"])
+
+    def _settle_grading_that_never_ran(
+        self, call_execution, eval_config_ids, eval_configs
+    ) -> None:
+        """Close the requested evals of a call whose grader was never started.
+
+        The run stays EVALUATING until every completed call has finished its
+        evaluations, so each placeholder left here must become a verdict.
+        """
+        self._drop_placeholders_of_removed_evals(
+            call_execution, eval_config_ids, eval_configs
+        )
+        outputs = call_execution.eval_outputs or {}
+        failed = False
+        for eval_config in eval_configs.select_related("eval_template"):
+            key = str(eval_config.id)
+            if not (
+                isinstance(outputs.get(key), dict)
+                and outputs[key].get("status") == "pending"
+            ):
+                continue
+            outputs[key] = {
+                "reason": "Grading could not be started.",
+                "error": "error",
+                "name": eval_config.name,
+                "timestamp": timezone.now().isoformat(),
+                "output": None,
+                "output_type": derive_kpi_output_type(eval_config.eval_template),
+                "status": StatusType.FAILED.value,
+            }
+            failed = True
+        if failed:
+            call_execution.eval_outputs = outputs
+            call_execution.save(update_fields=["eval_outputs"])
+        self._check_and_update_eval_completion(
+            call_execution, eval_config_ids=eval_config_ids
+        )
+
+    def _mark_eval_left_to_the_harness(self, call_execution, eval_config) -> None:
+        """Mark a harness result column the platform can't grade as skipped."""
+        call_execution.eval_outputs = call_execution.eval_outputs or {}
+        call_execution.eval_outputs[str(eval_config.id)] = (
+            build_skipped_eval_output_payload(
+                eval_name=eval_config.name,
+                reason=(
+                    "The harness scores this evaluation during the call. "
+                    "Only rerunning the call refreshes it."
+                ),
+            )
+        )
+        call_execution.save(update_fields=["eval_outputs"])
 
     def _mark_processing_skipped_for_eval_rerun(
         self,
@@ -4449,15 +4547,9 @@ class TestExecutor:
         has_agent_message = False
         has_customer_message = False
 
-        call_metadata = call_execution.call_metadata or {}
-        call_direction = str(call_metadata.get("call_direction") or "").strip().lower()
+        from simulate.utils.speaker_roles import SpeakerRoleResolver
 
-        call_type_lower = str(call_execution.call_type or "").strip().lower()
-        is_outbound = call_direction == "outbound"
-        if call_direction not in {"inbound", "outbound"}:
-            is_outbound = (
-                "outbound" in call_type_lower and "inbound" not in call_type_lower
-            )
+        is_outbound = SpeakerRoleResolver.detect_is_outbound(call_execution)
 
         if call_execution.simulation_call_type == CallExecution.SimulationCallType.TEXT:
             agent_roles = frozenset({ChatMessageModel.RoleChoices.ASSISTANT})
@@ -4476,8 +4568,6 @@ class TestExecutor:
                     if has_content and role_lower in customer_roles:
                         has_customer_message = True
         else:
-            from simulate.utils.speaker_roles import SpeakerRoleResolver
-
             provider = SpeakerRoleResolver.detect_provider(
                 call_execution.provider_call_data
             )
@@ -4610,11 +4700,8 @@ class TestExecutor:
                         eval_provider = SpeakerRoleResolver.detect_provider(
                             call_execution.provider_call_data
                         )
-                        eval_dir = (call_execution.call_metadata or {}).get(
-                            "call_direction", ""
-                        )
-                        eval_is_outbound = (
-                            str(eval_dir).strip().lower() == "outbound"
+                        eval_is_outbound = SpeakerRoleResolver.detect_is_outbound(
+                            call_execution
                         )
                         conversational_roles = (
                             SpeakerRoleResolver.get_conversational_roles()
@@ -4801,7 +4888,11 @@ class TestExecutor:
         return transcript_data
 
     def _run_single_simulate_evaluation(
-        self, eval_config, call_execution: CallExecution, transcript_data
+        self,
+        eval_config,
+        call_execution: CallExecution,
+        transcript_data,
+        harness_run=False,
     ):
         """
         Run a single SimulateEvalConfig evaluation
@@ -4810,6 +4901,9 @@ class TestExecutor:
             eval_config: SimulateEvalConfig instance
             call_execution: CallExecution instance
             transcript_data: dict with transcript and voice_recording data
+            harness_run: Whether a harness environment owns the run test; a
+                result column the harness fills is then graded with the
+                inputs the harness gives it, and the config is not changed.
         """
         try:
             close_old_connections()
@@ -4818,7 +4912,10 @@ class TestExecutor:
             eval_template = eval_config.eval_template
 
             # Prepare mapping with transcript and voice_recording data
-            mapping = eval_config.mapping.copy() if eval_config.mapping else {}
+            if harness_run:
+                mapping = regrade_mapping(eval_config) or {}
+            else:
+                mapping = eval_config.mapping.copy() if eval_config.mapping else {}
 
             # Replace mapping values with actual data
             updated_mapping = {}
@@ -5129,7 +5226,10 @@ class TestExecutor:
                         )
 
                 eval_config.status = StatusType.COMPLETED.value
-                eval_config.save()
+                # Only the status: this instance was loaded before grading
+                # began, so a full save would write back a removal or rename
+                # made while the eval was running.
+                eval_config.save(update_fields=["status", "updated_at"])
 
                 logger.info(f"Successfully completed evaluation {eval_config.id}")
             else:
@@ -5157,7 +5257,7 @@ class TestExecutor:
             call_execution.save(update_fields=["eval_outputs"])
 
             eval_config.status = StatusType.FAILED.value
-            eval_config.save()
+            eval_config.save(update_fields=["status", "updated_at"])
             raise
 
     def _aggregate_tool_columns_to_test_execution(self, test_execution):
@@ -5770,6 +5870,19 @@ def _run_simulate_evaluations_task(
         close_old_connections()
 
 
+def _settle_grading_that_never_ran(call_execution, eval_config_ids, eval_configs):
+    try:
+        TestExecutor(initialize_voice_service=False)._settle_grading_that_never_ran(
+            call_execution, eval_config_ids, eval_configs
+        )
+    except Exception:
+        logger.exception(
+            "run_new_evals_settle_failed",
+            call_execution_id=str(call_execution.id),
+            eval_config_count=len(eval_config_ids),
+        )
+
+
 @temporal_activity(
     time_limit=600,  # 10 minutes just to dispatch tasks
     max_retries=0,
@@ -5810,6 +5923,12 @@ def run_new_evals_on_call_executions_task(call_execution_ids, eval_config_ids):
 
         if not eval_configs.exists():
             logger.error(f"No eval configs found for IDs: {eval_config_ids}")
+            # The evals were removed after the request wrote their
+            # placeholders; with no grader to come, the calls settle here.
+            for call_execution in call_executions:
+                _settle_grading_that_never_ran(
+                    call_execution, eval_config_ids, eval_configs
+                )
             return results
 
         # Note: eval_started flag should be updated in bulk before calling this task (in the view)
@@ -5836,6 +5955,9 @@ def run_new_evals_on_call_executions_task(call_execution_ids, eval_config_ids):
                     f"Error dispatching task for call execution {call_execution.id}: {str(e)}"
                 )
                 traceback.print_exc()
+                _settle_grading_that_never_ran(
+                    call_execution, eval_config_ids, eval_configs
+                )
 
         logger.info(
             f"Dispatched {len(results['dispatched_tasks'])} evaluation tasks for "

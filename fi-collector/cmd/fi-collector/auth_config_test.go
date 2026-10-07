@@ -60,6 +60,62 @@ func TestAuthEnvExplicitURIsTakePrecedenceWithoutLosingTLS(t *testing.T) {
 	}
 }
 
+// Usage events stay on unless USAGE_EVENTS_ENABLED turns them off, so Future
+// AGI Cloud's collector needs no new setting; self-hosted installs set it to
+// false because nothing drains the stream there.
+func TestUsageEventsAreOnUnlessDisabled(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		want  bool
+	}{
+		{"", true}, {"false", false}, {"no", false}, {"0", false}, {"true", true}, {"TRUE", true}, {"1", true},
+	} {
+		clearCollectorEnv(t)
+		t.Setenv("USAGE_EVENTS_ENABLED", tc.value)
+		cfg := rootConfig{}
+		if err := applyEnvOverrides(slog.Default(), &cfg); err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Auth.UsageEventsOn() != tc.want {
+			t.Errorf("USAGE_EVENTS_ENABLED=%q: usage events %v, want %v", tc.value, cfg.Auth.UsageEventsOn(), tc.want)
+		}
+	}
+}
+
+func TestUsageEventsMaxLenMustBePositive(t *testing.T) {
+	clearCollectorEnv(t)
+	t.Setenv("USAGE_EVENTS_MAX_LEN", "250000")
+	cfg := rootConfig{}
+	if err := applyEnvOverrides(slog.Default(), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Auth.UsageEventsMaxLen != 250000 {
+		t.Fatalf("USAGE_EVENTS_MAX_LEN=250000 read as %d", cfg.Auth.UsageEventsMaxLen)
+	}
+	for _, bad := range []string{"0", "-1", "lots"} {
+		t.Setenv("USAGE_EVENTS_MAX_LEN", bad)
+		if err := applyEnvOverrides(slog.Default(), &rootConfig{}); err == nil {
+			t.Errorf("USAGE_EVENTS_MAX_LEN=%q must be rejected", bad)
+		}
+	}
+}
+
+// Blank means the default and surrounding spaces are ignored, as the Django
+// emitter reads it (tfc/utils/env.py).
+func TestUsageEventsMaxLenIgnoresSurroundingSpace(t *testing.T) {
+	for value, want := range map[string]int64{" ": 0, " 250000 ": 250000} {
+		clearCollectorEnv(t)
+		t.Setenv("USAGE_EVENTS_MAX_LEN", value)
+		cfg := rootConfig{}
+		if err := applyEnvOverrides(slog.Default(), &cfg); err != nil {
+			t.Fatalf("USAGE_EVENTS_MAX_LEN=%q: %v", value, err)
+		}
+		if cfg.Auth.UsageEventsMaxLen != want {
+			t.Errorf("USAGE_EVENTS_MAX_LEN=%q read as %d, want %d", value, cfg.Auth.UsageEventsMaxLen, want)
+		}
+	}
+}
+
 // Generate test-only credentials under t.TempDir, never use operator files or
 // contact a database. The leaf is suitable for both offline server trust checks
 // and proving that pgx loaded the configured client certificate/private key.

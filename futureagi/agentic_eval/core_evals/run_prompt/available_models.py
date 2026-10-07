@@ -5,8 +5,14 @@ additions are merged in at the bottom so the long-standing
 ``from agentic_eval.core_evals.run_prompt.available_models import AVAILABLE_MODELS``
 import keeps returning the full catalog. Standalone OSS installs fall back to
 the base list.
+
+Vertex AI models that litellm can only call through the ``vertexai`` SDK
+(google-cloud-aiplatform, the optional ``gcp`` extra) are left out of
+``AVAILABLE_MODELS`` when that SDK is not installed; see
+``vertex_model_requires_sdk``.
 """
 
+import importlib.util
 from copy import deepcopy
 
 OSS_AVAILABLE_MODELS = [
@@ -7511,3 +7517,80 @@ else:
         OSS_AVAILABLE_MODELS,
         EE_ONLY_AVAILABLE_MODELS,
     )
+
+
+VERTEX_SDK_MISSING_MESSAGE = (
+    "This Vertex AI model needs the Vertex AI SDK (google-cloud-aiplatform), "
+    "which this backend image does not include. Rebuild the backend image "
+    "with --build-arg EXTRAS=gcp (futureagi/Dockerfile.oss), or use a Gemini "
+    "model on Vertex AI, which works without it."
+)
+
+# Vertex AI "partner" models: the model-name prefixes litellm routes through
+# VertexAIPartnerModels (litellm/llms/vertex_ai/vertex_ai_partner_models/main.py,
+# PartnerModelPrefixes, litellm 1.81.11).
+_VERTEX_PARTNER_PREFIXES = (
+    "meta/",
+    "deepseek-ai",
+    "mistral",
+    "codestral",
+    "jamba",
+    "claude",
+    "qwen",
+    "openai/gpt-oss-",
+    "minimaxai/",
+    "moonshotai/",
+    "zai-org/",
+)
+
+
+def vertex_ai_sdk_available() -> bool:
+    """Whether the ``vertexai`` package (google-cloud-aiplatform) is installed."""
+    try:
+        return importlib.util.find_spec("vertexai") is not None
+    except (ImportError, ValueError):
+        return False
+
+
+def vertex_model_requires_sdk(model_name, provider=None, mode=None) -> bool:
+    """True for a Vertex AI chat/completion model litellm calls via ``vertexai``.
+
+    Mirrors litellm's get_vertex_ai_model_route()
+    (litellm/llms/vertex_ai/common_utils.py): the partner-model, Gemma, Model
+    Garden and legacy (PaLM/Codey, "non-Gemini") routes import ``vertexai``;
+    the Gemini route, Imagen, embeddings and TTS do not.
+    model_hub/tests/test_vertex_sdk_gating.py checks this against litellm.
+    """
+    name = str(model_name or "")
+    if not (name.startswith("vertex_ai/") or provider == "vertex_ai"):
+        return False
+    if mode not in (None, "chat", "completion"):
+        return False
+    model = name.removeprefix("vertex_ai/")
+    if "agent_engine/" in model:
+        return False
+    if model.startswith(_VERTEX_PARTNER_PREFIXES):
+        return True
+    if "bge" in model.lower():
+        return False
+    if "gemma/" in model or "openai" in model:
+        return True
+    return "gemini" not in model
+
+
+def without_vertex_sdk_models(models):
+    """The catalog minus the models vertex_model_requires_sdk() flags."""
+    return [
+        model
+        for model in models
+        if not vertex_model_requires_sdk(
+            model.get("model_name"), model.get("providers"), model.get("mode")
+        )
+    ]
+
+
+if not vertex_ai_sdk_available():
+    # The default backend image ships without the `gcp` extra: do not offer
+    # models that would fail at call time with litellm's "vertexai import
+    # failed" error.
+    AVAILABLE_MODELS = without_vertex_sdk_models(AVAILABLE_MODELS)

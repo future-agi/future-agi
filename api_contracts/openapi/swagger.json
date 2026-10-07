@@ -15566,7 +15566,7 @@
             "get": {
                 "operationId": "api_setup-checks_list",
                 "summary": "Public infrastructure probe for the OSS first-run setup screen.",
-                "description": "Returns ``{\"status\": \"ok\"|\"issues\", \"mode\": ..., \"checks\": [...]}``. No auth —\nit runs before any account exists. Self-hosted only: on cloud and EE the\nroute answers 404, so neither the internal service topology nor the outbound\nprobes it triggers are reachable by an anonymous caller.",
+                "description": "Returns ``{\"status\": \"ok\"|\"issues\", \"mode\": ..., \"setup\":\n\"standalone\"|\"distributed\"|\"helm\", \"collector_http_url\": ...,\n\"account_exists\": true|false, \"checks\": [...]}``. No auth — it runs\nbefore anyone can sign in. Self-hosted only:\non cloud and EE the route answers 404, so neither the internal service\ntopology nor the outbound probes it triggers are reachable by an\nanonymous caller.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -50755,10 +50755,43 @@
             ]
         },
         "/simulate/api/harness-environments/{id}/evaluations/{eval_config_id}/": {
+            "patch": {
+                "operationId": "simulate_api_harness-environments_edit_evaluation",
+                "description": "Change one eval of this environment. Never grades anything; grade a run again afterwards to refresh its scores.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessEnvironmentEvalEdit"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SimulateEvalConfigResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
             "delete": {
                 "operationId": "simulate_api_harness-environments_remove_evaluation",
                 "summary": "Stop running one eval against this environment.",
-                "description": "Soft-delete only. The verdicts an eval already produced live on the call\nexecutions and in their receipts, not on this row, so a hard delete would\nleave past runs showing scores for something the environment no longer\nlists. Removing it stops future scenarios being graded by it and leaves\nthe history it already wrote intact.",
+                "description": "Soft-delete only. The verdicts an eval already produced live on the call\nexecutions and in their receipts, not on this row, so a hard delete would\nleave past runs showing scores for something the environment no longer\nlists. Removing an eval someone added stops future scenarios being\ngraded by it and leaves the history it already wrote intact. An eval the\nharness reported itself comes back the next time the harness grades it.",
                 "parameters": [],
                 "responses": {
                     "204": {
@@ -50852,6 +50885,55 @@
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/HarnessEnvironmentRunEvaluationQueued"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "execution_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness-environments/{id}/runs/{execution_id}/evaluations/run/": {
+            "post": {
+                "operationId": "simulate_api_harness-environments_runs_evaluations_run_evaluations",
+                "description": "Grade this finished run's calls again with chosen evals of the environment, without rerunning the calls.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessEnvironmentRunEvaluations"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessEnvironmentRunEvaluationsQueued"
                         }
                     },
                     "default": {
@@ -55932,6 +56014,12 @@
                             "$ref": "#/definitions/EvalErrorResponse"
                         }
                     },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/EvalErrorResponse"
+                        }
+                    },
                     "500": {
                         "description": "",
                         "schema": {
@@ -57022,6 +57110,12 @@
                         }
                     },
                     "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "409": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ErrorResponse"
@@ -90450,6 +90544,9 @@
             "required": [
                 "status",
                 "mode",
+                "setup",
+                "collector_http_url",
+                "account_exists",
                 "checks"
             ],
             "type": "object",
@@ -90469,6 +90566,24 @@
                         "live",
                         "experiment"
                     ]
+                },
+                "setup": {
+                    "title": "Setup",
+                    "type": "string",
+                    "enum": [
+                        "standalone",
+                        "distributed",
+                        "helm"
+                    ]
+                },
+                "collector_http_url": {
+                    "title": "Collector http url",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "account_exists": {
+                    "title": "Account exists",
+                    "type": "boolean"
                 },
                 "checks": {
                     "type": "array",
@@ -123143,7 +123258,8 @@
                 "charges_judge_tokens",
                 "inputs",
                 "id",
-                "runnable"
+                "runnable",
+                "editable"
             ],
             "type": "object",
             "properties": {
@@ -123216,6 +123332,10 @@
                 },
                 "runnable": {
                     "title": "Runnable",
+                    "type": "boolean"
+                },
+                "editable": {
+                    "title": "Editable",
                     "type": "boolean"
                 }
             }
@@ -123601,6 +123721,277 @@
                 }
             }
         },
+        "HarnessEnvironmentEvalEdit": {
+            "type": "object",
+            "properties": {
+                "config": {
+                    "title": "Config",
+                    "description": "Updated evaluation configuration parameters.",
+                    "type": "object",
+                    "x-nullable": true,
+                    "additionalProperties": true
+                },
+                "mapping": {
+                    "title": "Mapping",
+                    "description": "Updated field mapping between test data and evaluation inputs.",
+                    "type": "object",
+                    "x-nullable": true,
+                    "additionalProperties": true
+                },
+                "model": {
+                    "title": "Model",
+                    "description": "Model to use for evaluations.",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "error_localizer": {
+                    "title": "Error localizer",
+                    "description": "Enable granular error localization in evaluation results.",
+                    "type": "boolean"
+                },
+                "kb_id": {
+                    "title": "Kb id",
+                    "description": "UUID of a knowledge base to use for grounding. Pass null to clear. Switching template_id without providing an explicit kb_id will clear the KB association.",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "filters": {
+                    "description": "Updated canonical filter list to restrict which test results are evaluated.",
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "column_id": {
+                                "type": "string",
+                                "description": "Column or attribute id to filter on."
+                            },
+                            "property_id": {
+                                "type": "string",
+                                "description": "Optional stable namespaced Property Registry identity."
+                            },
+                            "display_name": {
+                                "type": "string",
+                                "description": "Optional UI label for chips and saved views."
+                            },
+                            "source": {
+                                "type": "string",
+                                "description": "Optional source surface for mixed-source filters, for example traces, datasets, or simulation."
+                            },
+                            "output_type": {
+                                "type": "string",
+                                "description": "Optional metric output type metadata used by eval and annotation filters."
+                            },
+                            "filter_config": {
+                                "type": "object",
+                                "properties": {
+                                    "filter_type": {
+                                        "type": "string",
+                                        "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map."
+                                    },
+                                    "filter_op": {
+                                        "type": "string",
+                                        "description": "Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null."
+                                    },
+                                    "filter_value": {
+                                        "description": "Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type."
+                                    },
+                                    "col_type": {
+                                        "type": "string",
+                                        "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                                    },
+                                    "attribute_value_types": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "string",
+                                            "enum": [
+                                                "string",
+                                                "number",
+                                                "boolean"
+                                            ],
+                                            "x-nullable": true
+                                        },
+                                        "description": "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values."
+                                    }
+                                },
+                                "required": [
+                                    "filter_type",
+                                    "filter_op"
+                                ],
+                                "additionalProperties": false
+                            }
+                        },
+                        "required": [
+                            "column_id",
+                            "filter_config"
+                        ],
+                        "additionalProperties": false
+                    },
+                    "x-nullable": true
+                },
+                "name": {
+                    "title": "Name",
+                    "description": "Updated name for the evaluation configuration.",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "SimulateEvalConfigResponse": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "config": {
+                    "title": "Config",
+                    "type": "object",
+                    "readOnly": true,
+                    "x-nullable": true,
+                    "additionalProperties": true
+                },
+                "mapping": {
+                    "title": "Mapping",
+                    "type": "object",
+                    "readOnly": true,
+                    "x-nullable": true,
+                    "additionalProperties": true
+                },
+                "filters": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "column_id": {
+                                "type": "string",
+                                "description": "Column or attribute id to filter on."
+                            },
+                            "property_id": {
+                                "type": "string",
+                                "description": "Optional stable namespaced Property Registry identity."
+                            },
+                            "display_name": {
+                                "type": "string",
+                                "description": "Optional UI label for chips and saved views."
+                            },
+                            "source": {
+                                "type": "string",
+                                "description": "Optional source surface for mixed-source filters, for example traces, datasets, or simulation."
+                            },
+                            "output_type": {
+                                "type": "string",
+                                "description": "Optional metric output type metadata used by eval and annotation filters."
+                            },
+                            "filter_config": {
+                                "type": "object",
+                                "properties": {
+                                    "filter_type": {
+                                        "type": "string",
+                                        "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map."
+                                    },
+                                    "filter_op": {
+                                        "type": "string",
+                                        "description": "Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null."
+                                    },
+                                    "filter_value": {
+                                        "description": "Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type."
+                                    },
+                                    "col_type": {
+                                        "type": "string",
+                                        "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                                    },
+                                    "attribute_value_types": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "string",
+                                            "enum": [
+                                                "string",
+                                                "number",
+                                                "boolean"
+                                            ],
+                                            "x-nullable": true
+                                        },
+                                        "description": "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values."
+                                    }
+                                },
+                                "required": [
+                                    "filter_type",
+                                    "filter_op"
+                                ],
+                                "additionalProperties": false
+                            }
+                        },
+                        "required": [
+                            "column_id",
+                            "filter_config"
+                        ],
+                        "additionalProperties": false
+                    },
+                    "readOnly": true,
+                    "default": []
+                },
+                "error_localizer": {
+                    "title": "Error localizer",
+                    "type": "boolean",
+                    "readOnly": true
+                },
+                "model": {
+                    "title": "Model",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "eval_group": {
+                    "title": "Eval group",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "template_id": {
+                    "title": "Template id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "eval_type": {
+                    "title": "Eval type",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "regradable": {
+                    "title": "Regradable",
+                    "type": "boolean",
+                    "readOnly": true
+                },
+                "editable": {
+                    "title": "Editable",
+                    "type": "boolean",
+                    "readOnly": true
+                }
+            }
+        },
         "HarnessRunCreate": {
             "required": [
                 "scenario_ids"
@@ -123722,6 +124113,41 @@
                 },
                 "completed_calls": {
                     "title": "Completed calls",
+                    "type": "integer"
+                }
+            }
+        },
+        "HarnessEnvironmentRunEvaluations": {
+            "required": [
+                "eval_config_ids"
+            ],
+            "type": "object",
+            "properties": {
+                "eval_config_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    "minItems": 1
+                },
+                "enable_tool_evaluation": {
+                    "title": "Enable tool evaluation",
+                    "description": "Saved on the environment before grading starts; left as it is when absent.",
+                    "type": "boolean",
+                    "x-nullable": true
+                }
+            }
+        },
+        "HarnessEnvironmentRunEvaluationsQueued": {
+            "required": [
+                "call_execution_count"
+            ],
+            "type": "object",
+            "properties": {
+                "call_execution_count": {
+                    "title": "Call execution count",
+                    "description": "How many of the run's calls were queued for grading.",
                     "type": "integer"
                 }
             }
@@ -125654,6 +126080,105 @@
                 }
             }
         },
+        "HarnessTargetUsage": {
+            "type": "object",
+            "properties": {
+                "prompt_tokens": {
+                    "title": "Prompt tokens",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "completion_tokens": {
+                    "title": "Completion tokens",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "total_tokens": {
+                    "title": "Total tokens",
+                    "type": "integer",
+                    "minimum": 0
+                }
+            }
+        },
+        "HarnessTargetLatency": {
+            "type": "object",
+            "properties": {
+                "turn": {
+                    "title": "Turn",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "model": {
+                    "title": "Model",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "voice": {
+                    "title": "Voice",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "transcriber": {
+                    "title": "Transcriber",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "endpointing": {
+                    "title": "Endpointing",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "turns": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer",
+                        "minimum": 0
+                    },
+                    "maxItems": 1000
+                }
+            }
+        },
+        "HarnessTargetMetrics": {
+            "required": [
+                "provider"
+            ],
+            "type": "object",
+            "properties": {
+                "provider": {
+                    "title": "Provider",
+                    "type": "string",
+                    "enum": [
+                        "vapi",
+                        "retell",
+                        "livekit"
+                    ]
+                },
+                "usage": {
+                    "$ref": "#/definitions/HarnessTargetUsage"
+                },
+                "cost_cents": {
+                    "title": "Cost cents",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "latency": {
+                    "$ref": "#/definitions/HarnessTargetLatency"
+                },
+                "provider_call_id": {
+                    "title": "Provider call id",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "provider_end_reason": {
+                    "title": "Provider end reason",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                }
+            },
+            "x-nullable": true
+        },
         "HarnessCall": {
             "required": [
                 "started_at",
@@ -125705,6 +126230,13 @@
                     "maxLength": 128,
                     "minLength": 1,
                     "x-nullable": true
+                },
+                "script_completed": {
+                    "title": "Script completed",
+                    "type": "boolean"
+                },
+                "target_metrics": {
+                    "$ref": "#/definitions/HarnessTargetMetrics"
                 }
             },
             "x-nullable": true
@@ -127768,144 +128300,6 @@
                 }
             }
         },
-        "SimulateEvalConfigResponse": {
-            "type": "object",
-            "properties": {
-                "id": {
-                    "title": "Id",
-                    "type": "string",
-                    "format": "uuid",
-                    "readOnly": true
-                },
-                "name": {
-                    "title": "Name",
-                    "type": "string",
-                    "readOnly": true,
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "config": {
-                    "title": "Config",
-                    "type": "object",
-                    "readOnly": true,
-                    "x-nullable": true,
-                    "additionalProperties": true
-                },
-                "mapping": {
-                    "title": "Mapping",
-                    "type": "object",
-                    "readOnly": true,
-                    "x-nullable": true,
-                    "additionalProperties": true
-                },
-                "filters": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "column_id": {
-                                "type": "string",
-                                "description": "Column or attribute id to filter on."
-                            },
-                            "property_id": {
-                                "type": "string",
-                                "description": "Optional stable namespaced Property Registry identity."
-                            },
-                            "display_name": {
-                                "type": "string",
-                                "description": "Optional UI label for chips and saved views."
-                            },
-                            "source": {
-                                "type": "string",
-                                "description": "Optional source surface for mixed-source filters, for example traces, datasets, or simulation."
-                            },
-                            "output_type": {
-                                "type": "string",
-                                "description": "Optional metric output type metadata used by eval and annotation filters."
-                            },
-                            "filter_config": {
-                                "type": "object",
-                                "properties": {
-                                    "filter_type": {
-                                        "type": "string",
-                                        "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map."
-                                    },
-                                    "filter_op": {
-                                        "type": "string",
-                                        "description": "Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null."
-                                    },
-                                    "filter_value": {
-                                        "description": "Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type."
-                                    },
-                                    "col_type": {
-                                        "type": "string",
-                                        "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
-                                    },
-                                    "attribute_value_types": {
-                                        "type": "array",
-                                        "items": {
-                                            "type": "string",
-                                            "enum": [
-                                                "string",
-                                                "number",
-                                                "boolean"
-                                            ],
-                                            "x-nullable": true
-                                        },
-                                        "description": "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values."
-                                    }
-                                },
-                                "required": [
-                                    "filter_type",
-                                    "filter_op"
-                                ],
-                                "additionalProperties": false
-                            }
-                        },
-                        "required": [
-                            "column_id",
-                            "filter_config"
-                        ],
-                        "additionalProperties": false
-                    },
-                    "readOnly": true,
-                    "default": []
-                },
-                "error_localizer": {
-                    "title": "Error localizer",
-                    "type": "boolean",
-                    "readOnly": true
-                },
-                "model": {
-                    "title": "Model",
-                    "type": "string",
-                    "readOnly": true,
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "status": {
-                    "title": "Status",
-                    "type": "string",
-                    "readOnly": true,
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "eval_group": {
-                    "title": "Eval group",
-                    "type": "string",
-                    "readOnly": true,
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "template_id": {
-                    "title": "Template id",
-                    "type": "string",
-                    "format": "uuid",
-                    "readOnly": true,
-                    "x-nullable": true
-                }
-            }
-        },
         "RunTestResponse": {
             "type": "object",
             "properties": {
@@ -128366,6 +128760,15 @@
                     "title": "Template type",
                     "type": "string",
                     "x-nullable": true
+                },
+                "kind": {
+                    "title": "Kind",
+                    "description": "Set on the v3 call detail: a sub-goal check or an evaluation",
+                    "type": "string",
+                    "enum": [
+                        "evaluation",
+                        "sub_goal"
+                    ]
                 },
                 "visible": {
                     "title": "Visible",
@@ -130559,6 +130962,22 @@
                     "type": "string",
                     "format": "uuid",
                     "readOnly": true
+                },
+                "eval_type": {
+                    "title": "Eval type",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "regradable": {
+                    "title": "Regradable",
+                    "type": "boolean",
+                    "readOnly": true
+                },
+                "editable": {
+                    "title": "Editable",
+                    "type": "boolean",
+                    "readOnly": true
                 }
             }
         },
@@ -131265,6 +131684,11 @@
                         "$ref": "#/definitions/TestExecutionItemResponse"
                     },
                     "readOnly": true
+                },
+                "covered_scenario_count": {
+                    "title": "Covered scenario count",
+                    "type": "integer",
+                    "readOnly": true
                 }
             }
         },
@@ -131543,7 +131967,8 @@
             "required": [
                 "message",
                 "run_test_id",
-                "call_execution_count"
+                "call_execution_count",
+                "dispatched"
             ],
             "type": "object",
             "properties": {
@@ -131560,6 +131985,10 @@
                 "call_execution_count": {
                     "title": "Call execution count",
                     "type": "integer"
+                },
+                "dispatched": {
+                    "title": "Dispatched",
+                    "type": "boolean"
                 }
             }
         },
@@ -134104,6 +134533,25 @@
             },
             "x-nullable": true
         },
+        "SubGoalResult": {
+            "required": [
+                "name",
+                "passed"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "passed": {
+                    "title": "Passed",
+                    "type": "boolean",
+                    "x-nullable": true
+                }
+            }
+        },
         "CostBreakdown": {
             "required": [
                 "stt",
@@ -134223,6 +134671,10 @@
                 "duration_ms": {
                     "title": "Duration ms",
                     "type": "number"
+                },
+                "start_time_ms": {
+                    "title": "Start time ms",
+                    "type": "integer"
                 }
             }
         },
@@ -134235,6 +134687,7 @@
                 "persona",
                 "persona_details",
                 "sub_goals",
+                "sub_goal_results",
                 "outcome",
                 "cost_breakdown_cents",
                 "evaluations",
@@ -134676,14 +135129,22 @@
                         "minLength": 1
                     }
                 },
+                "sub_goal_results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SubGoalResult"
+                    }
+                },
                 "outcome": {
                     "title": "Outcome",
                     "type": "string",
                     "enum": [
+                        "queued",
+                        "in_progress",
                         "passed",
                         "failed",
-                        "error",
-                        "inconclusive"
+                        "inconclusive",
+                        "error"
                     ]
                 },
                 "cost_breakdown_cents": {
@@ -134905,6 +135366,7 @@
                 "label",
                 "started_at",
                 "calls",
+                "latency_ms",
                 "duration_ms",
                 "llm_cents",
                 "tts_cents",
@@ -134927,6 +135389,11 @@
                 "calls": {
                     "title": "Calls",
                     "type": "integer"
+                },
+                "latency_ms": {
+                    "title": "Latency ms",
+                    "type": "number",
+                    "x-nullable": true
                 },
                 "duration_ms": {
                     "title": "Duration ms",
@@ -135082,6 +135549,8 @@
                 "bins",
                 "measured",
                 "total",
+                "satisfied",
+                "satisfied_percent",
                 "agreement"
             ],
             "type": "object",
@@ -135099,6 +135568,15 @@
                 "total": {
                     "title": "Total",
                     "type": "integer"
+                },
+                "satisfied": {
+                    "title": "Satisfied",
+                    "type": "integer"
+                },
+                "satisfied_percent": {
+                    "title": "Satisfied percent",
+                    "type": "number",
+                    "x-nullable": true
                 },
                 "agreement": {
                     "$ref": "#/definitions/RunDashboardAgreement"
@@ -135332,7 +135810,8 @@
                 "graders",
                 "passed",
                 "measured",
-                "pass_rate"
+                "pass_rate",
+                "errored_checks"
             ],
             "type": "object",
             "properties": {
@@ -135352,12 +135831,18 @@
                     "title": "Pass rate",
                     "type": "number",
                     "x-nullable": true
+                },
+                "errored_checks": {
+                    "title": "Errored checks",
+                    "type": "integer"
                 }
             }
         },
         "RunDashboardRisk": {
             "required": [
-                "goal",
+                "queued",
+                "in_progress",
+                "scenario",
                 "passed",
                 "failed",
                 "error",
@@ -135365,8 +135850,16 @@
             ],
             "type": "object",
             "properties": {
-                "goal": {
-                    "title": "Goal",
+                "queued": {
+                    "title": "Queued",
+                    "type": "integer"
+                },
+                "in_progress": {
+                    "title": "In progress",
+                    "type": "integer"
+                },
+                "scenario": {
+                    "title": "Scenario",
                     "type": "string",
                     "minLength": 1
                 },
@@ -135388,6 +135881,88 @@
                 }
             }
         },
+        "RunDashboardHealth": {
+            "required": [
+                "show_banner",
+                "attempted",
+                "ran_cleanly",
+                "connected",
+                "errored",
+                "not_evaluated",
+                "eval_errors"
+            ],
+            "type": "object",
+            "properties": {
+                "show_banner": {
+                    "title": "Show banner",
+                    "type": "boolean"
+                },
+                "attempted": {
+                    "title": "Attempted",
+                    "type": "integer"
+                },
+                "ran_cleanly": {
+                    "title": "Ran cleanly",
+                    "type": "integer"
+                },
+                "connected": {
+                    "title": "Connected",
+                    "type": "integer"
+                },
+                "errored": {
+                    "title": "Errored",
+                    "type": "integer"
+                },
+                "not_evaluated": {
+                    "title": "Not evaluated",
+                    "type": "integer"
+                },
+                "eval_errors": {
+                    "title": "Eval errors",
+                    "type": "integer"
+                }
+            }
+        },
+        "RunDashboardComparison": {
+            "required": [
+                "available",
+                "previous_execution_id",
+                "shared_scenarios",
+                "newly_passing",
+                "newly_failing"
+            ],
+            "type": "object",
+            "properties": {
+                "available": {
+                    "title": "Available",
+                    "type": "boolean"
+                },
+                "previous_execution_id": {
+                    "title": "Previous execution id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "shared_scenarios": {
+                    "title": "Shared scenarios",
+                    "type": "integer"
+                },
+                "newly_passing": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "newly_failing": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                }
+            }
+        },
         "RunDashboardV3": {
             "required": [
                 "metrics",
@@ -135397,6 +135972,7 @@
                 "series",
                 "series_limit",
                 "series_mode",
+                "agent_latency_percentiles",
                 "latency_percentiles",
                 "distributions",
                 "csat",
@@ -135408,6 +135984,8 @@
                 "unavailable_features",
                 "evaluation_summary",
                 "use_case_risk",
+                "run_health",
+                "comparison",
                 "goal_count"
             ],
             "type": "object",
@@ -135450,6 +136028,12 @@
                         "calls",
                         "time_buckets"
                     ]
+                },
+                "agent_latency_percentiles": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/RunDashboardPercentile"
+                    }
                 },
                 "latency_percentiles": {
                     "type": "array",
@@ -135505,6 +136089,12 @@
                         "$ref": "#/definitions/RunDashboardRisk"
                     }
                 },
+                "run_health": {
+                    "$ref": "#/definitions/RunDashboardHealth"
+                },
+                "comparison": {
+                    "$ref": "#/definitions/RunDashboardComparison"
+                },
                 "goal_count": {
                     "title": "Goal count",
                     "type": "integer"
@@ -135546,6 +136136,8 @@
         },
         "OutcomeCounts": {
             "required": [
+                "queued",
+                "in_progress",
                 "passed",
                 "failed",
                 "error",
@@ -135553,6 +136145,14 @@
             ],
             "type": "object",
             "properties": {
+                "queued": {
+                    "title": "Queued",
+                    "type": "integer"
+                },
+                "in_progress": {
+                    "title": "In progress",
+                    "type": "integer"
+                },
                 "passed": {
                     "title": "Passed",
                     "type": "integer"
@@ -135741,7 +136341,8 @@
                 "latency",
                 "tokens",
                 "cost_cents",
-                "goal"
+                "scenario",
+                "scenario_key"
             ],
             "type": "object",
             "properties": {
@@ -135773,15 +136374,185 @@
                 "cost_cents": {
                     "$ref": "#/definitions/TotalMetricStats"
                 },
-                "goal": {
-                    "title": "Goal",
+                "scenario": {
+                    "title": "Scenario",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "scenario_key": {
+                    "title": "Scenario key",
                     "type": "string",
                     "minLength": 1
                 }
             }
         },
+        "ReliabilityInterval": {
+            "required": [
+                "low",
+                "high",
+                "effective_n",
+                "evaluated",
+                "clusters"
+            ],
+            "type": "object",
+            "properties": {
+                "low": {
+                    "title": "Low",
+                    "type": "number"
+                },
+                "high": {
+                    "title": "High",
+                    "type": "number"
+                },
+                "effective_n": {
+                    "title": "Effective n",
+                    "type": "number"
+                },
+                "evaluated": {
+                    "title": "Evaluated",
+                    "type": "integer"
+                },
+                "clusters": {
+                    "title": "Clusters",
+                    "type": "integer"
+                }
+            },
+            "x-nullable": true
+        },
+        "ReliabilityRow": {
+            "required": [
+                "queued",
+                "in_progress",
+                "passed",
+                "failed",
+                "error",
+                "inconclusive",
+                "scenario",
+                "scenario_key",
+                "runs",
+                "evaluated",
+                "pass_rate",
+                "verdict"
+            ],
+            "type": "object",
+            "properties": {
+                "queued": {
+                    "title": "Queued",
+                    "type": "integer"
+                },
+                "in_progress": {
+                    "title": "In progress",
+                    "type": "integer"
+                },
+                "passed": {
+                    "title": "Passed",
+                    "type": "integer"
+                },
+                "failed": {
+                    "title": "Failed",
+                    "type": "integer"
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "integer"
+                },
+                "inconclusive": {
+                    "title": "Inconclusive",
+                    "type": "integer"
+                },
+                "scenario": {
+                    "title": "Scenario",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "scenario_key": {
+                    "title": "Scenario key",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "runs": {
+                    "title": "Runs",
+                    "type": "integer"
+                },
+                "evaluated": {
+                    "title": "Evaluated",
+                    "type": "integer"
+                },
+                "pass_rate": {
+                    "title": "Pass rate",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "verdict": {
+                    "title": "Verdict",
+                    "type": "string",
+                    "enum": [
+                        "passed",
+                        "failed",
+                        "flaky",
+                        "not_evaluated"
+                    ]
+                }
+            }
+        },
+        "Reliability": {
+            "required": [
+                "trials",
+                "scenarios",
+                "consistent_pass",
+                "passed_at_least_once",
+                "repeated",
+                "flaky",
+                "flip_rate",
+                "pass_rate_interval",
+                "rows"
+            ],
+            "type": "object",
+            "properties": {
+                "trials": {
+                    "title": "Trials",
+                    "type": "integer"
+                },
+                "scenarios": {
+                    "title": "Scenarios",
+                    "type": "integer"
+                },
+                "consistent_pass": {
+                    "title": "Consistent pass",
+                    "type": "integer"
+                },
+                "passed_at_least_once": {
+                    "title": "Passed at least once",
+                    "type": "integer"
+                },
+                "repeated": {
+                    "title": "Repeated",
+                    "type": "integer"
+                },
+                "flaky": {
+                    "title": "Flaky",
+                    "type": "integer"
+                },
+                "flip_rate": {
+                    "title": "Flip rate",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "pass_rate_interval": {
+                    "$ref": "#/definitions/ReliabilityInterval"
+                },
+                "rows": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/ReliabilityRow"
+                    }
+                }
+            }
+        },
         "TurnDistribution": {
             "required": [
+                "queued",
+                "in_progress",
                 "passed",
                 "failed",
                 "error",
@@ -135790,6 +136561,14 @@
             ],
             "type": "object",
             "properties": {
+                "queued": {
+                    "title": "Queued",
+                    "type": "integer"
+                },
+                "in_progress": {
+                    "title": "In progress",
+                    "type": "integer"
+                },
                 "passed": {
                     "title": "Passed",
                     "type": "integer"
@@ -135819,6 +136598,7 @@
                 "passed",
                 "failed",
                 "measured",
+                "errored",
                 "missing",
                 "pass_rate",
                 "average_score"
@@ -135845,6 +136625,10 @@
                 },
                 "measured": {
                     "title": "Measured",
+                    "type": "integer"
+                },
+                "errored": {
+                    "title": "Errored",
                     "type": "integer"
                 },
                 "missing": {
@@ -136119,6 +136903,7 @@
                 "execution",
                 "summary",
                 "scenario_risk",
+                "reliability",
                 "turn_distribution",
                 "evaluations",
                 "failure_breakdown",
@@ -136144,6 +136929,9 @@
                     "items": {
                         "$ref": "#/definitions/Risk"
                     }
+                },
+                "reliability": {
+                    "$ref": "#/definitions/Reliability"
                 },
                 "turn_distribution": {
                     "type": "array",
@@ -136325,6 +137113,7 @@
                 "persona",
                 "persona_details",
                 "sub_goals",
+                "sub_goal_results",
                 "harness_outcome_status",
                 "source_scenario_key",
                 "trial_index",
@@ -136336,6 +137125,8 @@
                 "completed_at",
                 "duration_seconds",
                 "latency_ms",
+                "avg_stop_time_after_interruption",
+                "ai_interruption_count",
                 "turn_count",
                 "tokens",
                 "cost_cents",
@@ -136396,6 +137187,12 @@
                         "minLength": 1
                     }
                 },
+                "sub_goal_results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SubGoalResult"
+                    }
+                },
                 "harness_outcome_status": {
                     "title": "Harness outcome status",
                     "type": "string",
@@ -136417,10 +137214,12 @@
                     "title": "Outcome",
                     "type": "string",
                     "enum": [
+                        "queued",
+                        "in_progress",
                         "passed",
                         "failed",
-                        "error",
-                        "inconclusive"
+                        "inconclusive",
+                        "error"
                     ]
                 },
                 "execution_status": {
@@ -136459,6 +137258,17 @@
                 "latency_ms": {
                     "title": "Latency ms",
                     "type": "number",
+                    "x-nullable": true
+                },
+                "avg_stop_time_after_interruption": {
+                    "title": "Avg stop time after interruption",
+                    "description": "Average stop time after caller interruption in milliseconds.",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "ai_interruption_count": {
+                    "title": "Ai interruption count",
+                    "type": "integer",
                     "x-nullable": true
                 },
                 "turn_count": {
@@ -136509,6 +137319,8 @@
                 "csat",
                 "turns",
                 "latency_ms",
+                "avg_stop_time_after_interruption",
+                "ai_interruptions",
                 "tokens",
                 "evaluations"
             ],
@@ -136526,6 +137338,18 @@
                 },
                 "latency_ms": {
                     "title": "Latency ms",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "avg_stop_time_after_interruption": {
+                    "title": "Avg stop time after interruption",
+                    "description": "Mean call stop latency in milliseconds, excluding unmeasured calls.",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "ai_interruptions": {
+                    "title": "Ai interruptions",
+                    "description": "Mean AI interruption count per call, excluding unmeasured calls.",
                     "type": "number",
                     "x-nullable": true
                 },
@@ -136656,7 +137480,8 @@
         "EvaluationColumn": {
             "required": [
                 "id",
-                "name"
+                "name",
+                "kind"
             ],
             "type": "object",
             "properties": {
@@ -136669,6 +137494,14 @@
                     "title": "Name",
                     "type": "string",
                     "minLength": 1
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "enum": [
+                        "evaluation",
+                        "sub_goal"
+                    ]
                 }
             }
         },
@@ -137281,6 +138114,15 @@
                         "name": {
                             "type": "string"
                         },
+                        "metric_statistic": {
+                            "type": "string",
+                            "enum": [
+                                "count",
+                                "sum",
+                                "mean",
+                                "percentage"
+                            ]
+                        },
                         "data": {
                             "type": "array",
                             "items": {
@@ -137356,6 +138198,15 @@
                                 },
                                 "name": {
                                     "type": "string"
+                                },
+                                "metric_statistic": {
+                                    "type": "string",
+                                    "enum": [
+                                        "count",
+                                        "sum",
+                                        "mean",
+                                        "percentage"
+                                    ]
                                 },
                                 "data": {
                                     "type": "array",
@@ -137514,6 +138365,18 @@
                                         "additionalProperties": true
                                     }
                                 },
+                                "system_metric_statistics": {
+                                    "type": "object",
+                                    "additionalProperties": {
+                                        "type": "string",
+                                        "enum": [
+                                            "count",
+                                            "sum",
+                                            "mean",
+                                            "percentage"
+                                        ]
+                                    }
+                                },
                                 "query_complete": {
                                     "type": "boolean"
                                 },
@@ -137569,6 +138432,15 @@
                                     },
                                     "name": {
                                         "type": "string"
+                                    },
+                                    "metric_statistic": {
+                                        "type": "string",
+                                        "enum": [
+                                            "count",
+                                            "sum",
+                                            "mean",
+                                            "percentage"
+                                        ]
                                     },
                                     "data": {
                                         "type": "array",
@@ -145072,6 +145944,7 @@
                 },
                 "property": {
                     "title": "Property",
+                    "description": "Accepted for older clients and ignored for SYSTEM_METRIC graphs: each system metric has one statistic, named by the response's metric_statistic. Latency is always the mean (avg) span latency.",
                     "type": "string",
                     "default": "average"
                 },
@@ -145166,6 +146039,17 @@
                 "name": {
                     "title": "Name",
                     "type": "string"
+                },
+                "metric_statistic": {
+                    "title": "Metric statistic",
+                    "description": "Statistic of the published system-metric series per bucket. Latency is always the mean (avg) of span latency, filtered or not. Absent for eval and annotation series.",
+                    "type": "string",
+                    "enum": [
+                        "count",
+                        "sum",
+                        "mean",
+                        "percentage"
+                    ]
                 },
                 "data": {
                     "description": "Graph points. A sampled series is published only with complete declared stratum coverage; degraded reads never publish points.",
@@ -146195,6 +147079,20 @@
                     "type": "object",
                     "x-json-value": true,
                     "description": "Any valid JSON value."
+                },
+                "system_metric_statistics": {
+                    "title": "System metric statistics",
+                    "description": "Statistic of each ``system_metrics`` series per bucket, e.g. {\"latency\": \"mean\", \"tokens\": \"sum\", \"cost\": \"mean\", \"traffic\": \"count\"}. Latency is always the mean (avg) span latency.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "enum": [
+                            "count",
+                            "sum",
+                            "mean",
+                            "percentage"
+                        ]
+                    }
                 },
                 "evaluations": {
                     "title": "Evaluations",
@@ -148716,6 +149614,7 @@
                 },
                 "property": {
                     "title": "Property",
+                    "description": "Accepted for older clients and ignored for SYSTEM_METRIC graphs: each system metric has one statistic, named by the response's metric_statistic. Latency is always the mean (avg) span latency.",
                     "type": "string",
                     "default": "average"
                 },
@@ -148786,6 +149685,17 @@
                 "name": {
                     "title": "Name",
                     "type": "string"
+                },
+                "metric_statistic": {
+                    "title": "Metric statistic",
+                    "description": "Statistic of the published system-metric series per bucket. Latency is always the mean (avg) of span latency, filtered or not. Absent for eval and annotation series.",
+                    "type": "string",
+                    "enum": [
+                        "count",
+                        "sum",
+                        "mean",
+                        "percentage"
+                    ]
                 },
                 "data": {
                     "description": "Graph points. A sampled series is published only with complete declared stratum coverage; degraded reads never publish points.",
@@ -149983,6 +150893,7 @@
                 },
                 "property": {
                     "title": "Property",
+                    "description": "Accepted for older clients and ignored for SYSTEM_METRIC graphs: each system metric has one statistic, named by the response's metric_statistic. Latency is always the mean (avg) span latency.",
                     "type": "string",
                     "default": "average"
                 },

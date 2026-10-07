@@ -49,13 +49,19 @@ auth:
   warm_ttl: 1h
   # Redis for rate limiting + usage event emission. Empty disables both.
   redis_addr: ""
+  # Billing events on the usage:events stream (USAGE_EVENTS_ENABLED, on when
+  # unset). Only Future AGI Cloud drains it, so the self-hosted compose files
+  # and Helm chart set USAGE_EVENTS_ENABLED=false; anywhere else it only grows.
+  # usage_events: true
 
-# Observed attributes remain disabled for standalone use. Root Compose enables
-# Kafka publication with FI_OBSERVED_CATALOG_MODE=kafka and supplies
-# FI_OBSERVED_CATALOG_KAFKA_BROKERS and FI_OBSERVED_CATALOG_KAFKA_TOPIC.
-# No workspace activation is needed.
-# The separate consumer owns index writes; this producer needs no catalog DB
-# credentials. Keep the spool on a writable persistent volume owned by UID 65532.
+# Observed attributes remain disabled unless enabled. FI_OBSERVED_CATALOG_MODE=kafka
+# publishes them for the separate fi-property-catalog-consumer, which owns index
+# writes (docker-compose.distributed.yml supplies FI_OBSERVED_CATALOG_KAFKA_BROKERS
+# and FI_OBSERVED_CATALOG_KAFKA_TOPIC). FI_OBSERVED_CATALOG_MODE=direct writes the
+# index from this process instead, without Kafka (docker-compose.yml, the Helm
+# chart): it needs the index writer's FI_OBSERVED_CATALOG_CH_URL, _CH_DATABASE,
+# _CH_USERNAME and _CH_PASSWORD. No workspace activation is needed.
+# Keep the spool on a writable persistent volume owned by UID 65532.
 observed_catalog:
   mode: disabled
   kafka:

@@ -14,6 +14,11 @@ import os
 
 import structlog
 
+from agentic_eval.core.embeddings.serving_client import (
+    ServingUnavailableError,
+    require_serving,
+    serving_base_url,
+)
 from tfc.utils.ssrf_guard import safe_fetch
 
 logger = structlog.get_logger(__name__)
@@ -171,9 +176,26 @@ def preprocess_inputs(eval_name, inputs):
 
     try:
         return preprocessor(inputs)
+    except ServingUnavailableError:
+        # Fail the eval with the reason, not a score computed without data.
+        raise
     except Exception as e:
         logger.warning(f"Preprocessing failed for {eval_name}: {e}")
         return inputs
+
+
+@register_preprocessor("embedding_similarity")
+@register_preprocessor("semantic_list_contains")
+def _preprocess_serving_embeddings(inputs):
+    """Evals whose sandbox code calls model serving directly.
+
+    Fails fast when serving is not running, instead of letting the sandbox
+    time out on it and report a 0 score, and hands the sandbox the configured
+    ``MODEL_SERVING_URL`` in place of its built-in ``http://serving:8080``.
+    """
+    require_serving()
+    inputs["_model_serving_url"] = serving_base_url()
+    return inputs
 
 
 @register_preprocessor("clip_score")
@@ -191,6 +213,8 @@ def _preprocess_clip(inputs):
 
     if not images or not text:
         return inputs
+
+    require_serving()
 
     try:
         # Parse image inputs
@@ -474,14 +498,18 @@ def _preprocess_meteor(inputs):
         return inputs
     try:
         from nltk.translate.meteor_score import meteor_score as _meteor
+
+        from tfc.utils.nltk_data import ensure_nltk_data
+
+        ensure_nltk_data("wordnet")
         inputs["_meteor_precomputed_score"] = float(_meteor([ref_tokens], hyp_tokens))
     except LookupError as e:
-        # WordNet / punkt missing on the backend image. Tell the eval body
-        # exactly what to ask for — beats a silent zero score.
+        # WordNet missing on the backend image. Tell the eval body exactly
+        # what is missing — beats a silent zero score.
         logger.warning("meteor_preprocess_corpora_missing", error=str(e))
         inputs["_meteor_error"] = (
             "METEOR requires NLTK WordNet on the backend image. "
-            "Add `python -m nltk.downloader wordnet omw-1.4` to backend Dockerfile."
+            "bin/install_nltk_data.py installs it (corpora/wordnet)."
         )
     except Exception as e:
         logger.warning("meteor_preprocess_failed", error=str(e))

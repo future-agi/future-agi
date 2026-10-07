@@ -30,7 +30,7 @@ from simulate.services.hosted_harness_conversation import (
     ingest_conversation_events,
     load_provider_transcript,
     pending_commands,
-    prepare_conversation_rerun,
+    promote_latest_checkpoint,
     store_workspace_archive,
 )
 from tfc.utils.api_contracts import validated_request
@@ -132,7 +132,8 @@ class HostedHarnessConversationViewSet(viewsets.ViewSet):
     def rerun(self, request, pk=None):
         from simulate.services.harness_provider import get_harness_provider
 
-        job = prepare_conversation_rerun(self._conversation)
+        promote_latest_checkpoint(self._conversation)
+        job = self._conversation.job
         try:
             get_harness_provider().rerun_saved(
                 str(job.id),

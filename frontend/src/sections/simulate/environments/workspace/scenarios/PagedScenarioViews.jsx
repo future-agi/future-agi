@@ -19,7 +19,7 @@ import { SCENARIOS_COPY } from "./scenarios.constants";
  */
 export default function PagedScenarioViews({
   pageData, selection, env, view, hiddenGroupIds, onHideGroup, onEdit, onRemove,
-  page, onPageChange, query, filters, groupBy, showInspector, locked,
+  page, onPageChange, query, filters, groupBy, showInspector, locked, rowHeight,
 }) {
   const [inspect, setInspect] = useState(false);
   const { rows, total, pageCount, limit, pageGroups, pageIds, loading } = pageData;
@@ -88,6 +88,7 @@ export default function PagedScenarioViews({
             pageIds={pageIds}
             onTogglePage={onTogglePage}
             locked={locked}
+            rowHeight={rowHeight}
           />
         ) : (
           <GroupedScenarioList
@@ -172,4 +173,5 @@ PagedScenarioViews.propTypes = {
   groupBy: PropTypes.string,
   showInspector: PropTypes.bool,
   locked: PropTypes.bool,
+  rowHeight: PropTypes.string,
 };

@@ -25,6 +25,9 @@ from accounts.models.organization import Organization
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import User
 from accounts.models.workspace import Workspace, WorkspaceMembership
+from agentic_eval.core_evals.run_prompt.available_models import (
+    VERTEX_SDK_MISSING_MESSAGE,
+)
 from model_hub.models.ai_model import AIModel
 from model_hub.models.custom_models import CustomAIModel
 from model_hub.models.metric import Metric
@@ -630,6 +633,38 @@ class TestCustomModelsCreateView(CustomModelsAPITestCase):
         model_id = response.data["result"]["data"]["id"]
         model = CustomAIModel.objects.get(id=model_id)
         self.assertTrue(model.user_model_id.startswith("vertex_ai/"))
+
+    @patch("model_hub.views.custom_model.vertex_ai_sdk_available", return_value=False)
+    @patch("model_hub.views.custom_model.validate_model_working")
+    def test_create_vertex_partner_model_without_the_sdk_is_refused(
+        self, mock_validate, _sdk
+    ):
+        """An image without the gcp extra cannot call Vertex partner models."""
+        data = {
+            "model_provider": "vertex_ai",
+            # Prefixed with vertex_ai/ by the view before the check.
+            "model_name": "claude-3-5-sonnet-v2@20241022",
+            "input_token_cost": 0.003,
+            "output_token_cost": 0.015,
+            "config_json": {
+                "project_id": "my-gcp-project",
+                "location": "us-east5",
+                "credentials": {"type": "service_account"},
+            },
+        }
+
+        response = self.client.post(
+            f"{BASE_URL}/custom_models/create/", data, format="json"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data["result"], VERTEX_SDK_MISSING_MESSAGE)
+        mock_validate.assert_not_called()
+        self.assertFalse(
+            CustomAIModel.objects.filter(
+                user_model_id="vertex_ai/claude-3-5-sonnet-v2@20241022"
+            ).exists()
+        )
 
     @patch("model_hub.views.custom_model.validate_model_working")
     def test_create_vertex_ai_model_missing_config(self, mock_validate):
@@ -1398,6 +1433,46 @@ class TestEditCustomModelView(CustomModelsAPITestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    @patch("model_hub.views.custom_model.vertex_ai_sdk_available", return_value=False)
+    @patch("model_hub.views.custom_model.validate_model_working")
+    def test_patch_new_credentials_for_an_sdk_only_vertex_model_are_refused(
+        self, mock_validate, _sdk
+    ):
+        """New credentials are validated with a call the image cannot make."""
+        mock_validate.return_value = True
+        model = self.create_custom_model(
+            user_model_id="vertex_ai/meta/llama3-405b-instruct-maas",
+            provider="vertex_ai",
+            input_token_cost=0.01,
+        )
+
+        response = self.client.patch(
+            f"{BASE_URL}/custom_models/edit/",
+            {
+                "id": str(model.id),
+                "input_token_cost": 0.05,
+                "config_json": {"project_id": "my-gcp-project"},
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data["result"], VERTEX_SDK_MISSING_MESSAGE)
+        mock_validate.assert_not_called()
+        model.refresh_from_db()
+        self.assertEqual(model.input_token_cost, 0.01)
+
+        # Without new credentials there is nothing to call: costs still save.
+        response = self.client.patch(
+            f"{BASE_URL}/custom_models/edit/",
+            {"id": str(model.id), "input_token_cost": 0.05},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        model.refresh_from_db()
+        self.assertEqual(model.input_token_cost, 0.05)
 
     def test_patch_edit_model_not_found(self):
         """Test patching non-existent model."""

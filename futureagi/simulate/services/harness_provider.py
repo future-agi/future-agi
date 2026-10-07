@@ -1867,6 +1867,7 @@ class HostedHarnessProvider:
             AuthoringArchiveKept,
             push_scenarios_into_live_sandbox,
             rewrite_authoring_scenarios,
+            rewrite_conversation_scenarios,
         )
 
         changes = request.validated_data["changes"]
@@ -2095,6 +2096,7 @@ class HostedHarnessProvider:
                 # The archive a run replays changes first; if it cannot, nothing changes.
                 try:
                     rewrite_authoring_scenarios(job, suite)
+                    rewrite_conversation_scenarios(job, suite)
                 except AuthoringArchiveKept as kept:
                     return Response(
                         {

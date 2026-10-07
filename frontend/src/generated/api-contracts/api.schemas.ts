@@ -4074,6 +4074,15 @@ export const SetupChecksResultApiMode = {
   experiment: "experiment",
 } as const;
 
+export type SetupChecksResultApiSetup =
+  (typeof SetupChecksResultApiSetup)[keyof typeof SetupChecksResultApiSetup];
+
+export const SetupChecksResultApiSetup = {
+  standalone: "standalone",
+  distributed: "distributed",
+  helm: "helm",
+} as const;
+
 export type SetupCheckApiStatus =
   (typeof SetupCheckApiStatus)[keyof typeof SetupCheckApiStatus];
 
@@ -4099,6 +4108,10 @@ export interface SetupCheckApi {
 export interface SetupChecksResultApi {
   status: SetupChecksResultApiStatus;
   mode: SetupChecksResultApiMode;
+  setup: SetupChecksResultApiSetup;
+  /** @minLength 1 */
+  collector_http_url: string;
+  account_exists: boolean;
   checks: SetupCheckApi[];
 }
 
@@ -17418,6 +17431,7 @@ export interface HarnessEnvironmentSelectedEvalApi {
   inputs: HarnessEnvironmentEvalInputApi[];
   id: string;
   runnable: boolean;
+  editable: boolean;
 }
 
 export type HarnessEnvironmentResultApiEvaluationsItem = {
@@ -17557,6 +17571,138 @@ export interface HarnessEnvironmentToolCallEvaluationApi {
   enable_tool_evaluation: boolean;
 }
 
+/**
+ * Updated evaluation configuration parameters.
+ */
+export type HarnessEnvironmentEvalEditApiConfig = { [key: string]: unknown };
+
+/**
+ * Updated field mapping between test data and evaluation inputs.
+ */
+export type HarnessEnvironmentEvalEditApiMapping = { [key: string]: unknown };
+
+export type HarnessEnvironmentEvalEditApiFiltersItemFilterConfigAttributeValueTypesItem =
+  (typeof HarnessEnvironmentEvalEditApiFiltersItemFilterConfigAttributeValueTypesItem)[keyof typeof HarnessEnvironmentEvalEditApiFiltersItemFilterConfigAttributeValueTypesItem];
+
+export const HarnessEnvironmentEvalEditApiFiltersItemFilterConfigAttributeValueTypesItem =
+  {
+    string: "string",
+    number: "number",
+    boolean: "boolean",
+  } as const;
+
+export type HarnessEnvironmentEvalEditApiFiltersItemFilterConfig = {
+  /** Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map. */
+  filter_type: string;
+  /** Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null. */
+  filter_op: string;
+  /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
+  filter_value?: unknown;
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  col_type?: string;
+  /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
+  attribute_value_types?: HarnessEnvironmentEvalEditApiFiltersItemFilterConfigAttributeValueTypesItem[];
+};
+
+export type HarnessEnvironmentEvalEditApiFiltersItem = {
+  /** Column or attribute id to filter on. */
+  column_id: string;
+  /** Optional stable namespaced Property Registry identity. */
+  property_id?: string;
+  /** Optional UI label for chips and saved views. */
+  display_name?: string;
+  /** Optional source surface for mixed-source filters, for example traces, datasets, or simulation. */
+  source?: string;
+  /** Optional metric output type metadata used by eval and annotation filters. */
+  output_type?: string;
+  filter_config: HarnessEnvironmentEvalEditApiFiltersItemFilterConfig;
+};
+
+export interface HarnessEnvironmentEvalEditApi {
+  /** Updated evaluation configuration parameters. */
+  config?: HarnessEnvironmentEvalEditApiConfig;
+  /** Updated field mapping between test data and evaluation inputs. */
+  mapping?: HarnessEnvironmentEvalEditApiMapping;
+  /**
+   * Model to use for evaluations.
+   * @minLength 1
+   */
+  model?: string;
+  /** Enable granular error localization in evaluation results. */
+  error_localizer?: boolean;
+  /** UUID of a knowledge base to use for grounding. Pass null to clear. Switching template_id without providing an explicit kb_id will clear the KB association. */
+  kb_id?: string;
+  /** Updated canonical filter list to restrict which test results are evaluated. */
+  filters?: HarnessEnvironmentEvalEditApiFiltersItem[];
+  /**
+   * Updated name for the evaluation configuration.
+   * @minLength 1
+   */
+  name?: string;
+}
+
+export type SimulateEvalConfigResponseApiConfig = { [key: string]: unknown };
+
+export type SimulateEvalConfigResponseApiMapping = { [key: string]: unknown };
+
+export type SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem =
+  (typeof SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem)[keyof typeof SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem];
+
+export const SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem =
+  {
+    string: "string",
+    number: "number",
+    boolean: "boolean",
+  } as const;
+
+export type SimulateEvalConfigResponseApiFiltersItemFilterConfig = {
+  /** Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map. */
+  filter_type: string;
+  /** Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null. */
+  filter_op: string;
+  /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
+  filter_value?: unknown;
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  col_type?: string;
+  /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
+  attribute_value_types?: SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem[];
+};
+
+export type SimulateEvalConfigResponseApiFiltersItem = {
+  /** Column or attribute id to filter on. */
+  column_id: string;
+  /** Optional stable namespaced Property Registry identity. */
+  property_id?: string;
+  /** Optional UI label for chips and saved views. */
+  display_name?: string;
+  /** Optional source surface for mixed-source filters, for example traces, datasets, or simulation. */
+  source?: string;
+  /** Optional metric output type metadata used by eval and annotation filters. */
+  output_type?: string;
+  filter_config: SimulateEvalConfigResponseApiFiltersItemFilterConfig;
+};
+
+export interface SimulateEvalConfigResponseApi {
+  readonly id?: string;
+  /** @minLength 1 */
+  readonly name?: string;
+  readonly config?: SimulateEvalConfigResponseApiConfig;
+  readonly mapping?: SimulateEvalConfigResponseApiMapping;
+  readonly filters?: readonly SimulateEvalConfigResponseApiFiltersItem[];
+  readonly error_localizer?: boolean;
+  /** @minLength 1 */
+  readonly model?: string;
+  /** @minLength 1 */
+  readonly status?: string;
+  /** @minLength 1 */
+  readonly eval_group?: string;
+  readonly template_id?: string;
+  /** @minLength 1 */
+  readonly eval_type?: string;
+  readonly regradable?: boolean;
+  readonly editable?: boolean;
+}
+
 export interface HarnessRunCreateApi {
   /** @maxItems 1000 */
   scenario_ids: string[];
@@ -17595,6 +17741,18 @@ export interface HarnessEnvironmentRunEvaluationQueuedApi {
   skipped_in_flight: number;
   skipped_pending: number;
   completed_calls: number;
+}
+
+export interface HarnessEnvironmentRunEvaluationsApi {
+  /** @minItems 1 */
+  eval_config_ids: string[];
+  /** Saved on the environment before grading starts; left as it is when absent. */
+  enable_tool_evaluation?: boolean;
+}
+
+export interface HarnessEnvironmentRunEvaluationsQueuedApi {
+  /** How many of the run's calls were queued for grading. */
+  call_execution_count: number;
 }
 
 export type HarnessJobReadApiReceiptsItem = { [key: string]: unknown };
@@ -18491,6 +18649,57 @@ export interface HarnessSubGoalApi {
   judged: boolean;
 }
 
+export type HarnessTargetMetricsApiProvider =
+  (typeof HarnessTargetMetricsApiProvider)[keyof typeof HarnessTargetMetricsApiProvider];
+
+export const HarnessTargetMetricsApiProvider = {
+  vapi: "vapi",
+  retell: "retell",
+  livekit: "livekit",
+} as const;
+
+export interface HarnessTargetUsageApi {
+  /** @minimum 0 */
+  prompt_tokens?: number;
+  /** @minimum 0 */
+  completion_tokens?: number;
+  /** @minimum 0 */
+  total_tokens?: number;
+}
+
+export interface HarnessTargetLatencyApi {
+  /** @minimum 0 */
+  turn?: number;
+  /** @minimum 0 */
+  model?: number;
+  /** @minimum 0 */
+  voice?: number;
+  /** @minimum 0 */
+  transcriber?: number;
+  /** @minimum 0 */
+  endpointing?: number;
+  /** @maxItems 1000 */
+  turns?: number[];
+}
+
+export interface HarnessTargetMetricsApi {
+  provider: HarnessTargetMetricsApiProvider;
+  usage?: HarnessTargetUsageApi;
+  /** @minimum 0 */
+  cost_cents?: number;
+  latency?: HarnessTargetLatencyApi;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  provider_call_id?: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  provider_end_reason?: string;
+}
+
 export interface HarnessCallApi {
   started_at: string;
   ended_at: string;
@@ -18509,6 +18718,8 @@ export interface HarnessCallApi {
    * @maxLength 128
    */
   stop_reason?: string;
+  script_completed?: boolean;
+  target_metrics?: HarnessTargetMetricsApi;
 }
 
 export type HarnessFailureApiDomain =
@@ -19658,64 +19869,6 @@ export type RunTestResponseApiScenariosDetailItem = { [key: string]: unknown };
 
 export type RunTestResponseApiSimulatorAgentDetail = { [key: string]: unknown };
 
-export type SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem =
-  (typeof SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem)[keyof typeof SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem];
-
-export const SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem =
-  {
-    string: "string",
-    number: "number",
-    boolean: "boolean",
-  } as const;
-
-export type SimulateEvalConfigResponseApiConfig = { [key: string]: unknown };
-
-export type SimulateEvalConfigResponseApiMapping = { [key: string]: unknown };
-
-export type SimulateEvalConfigResponseApiFiltersItemFilterConfig = {
-  /** Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map. */
-  filter_type: string;
-  /** Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null. */
-  filter_op: string;
-  /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
-  filter_value?: unknown;
-  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
-  col_type?: string;
-  /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
-  attribute_value_types?: SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem[];
-};
-
-export type SimulateEvalConfigResponseApiFiltersItem = {
-  /** Column or attribute id to filter on. */
-  column_id: string;
-  /** Optional stable namespaced Property Registry identity. */
-  property_id?: string;
-  /** Optional UI label for chips and saved views. */
-  display_name?: string;
-  /** Optional source surface for mixed-source filters, for example traces, datasets, or simulation. */
-  source?: string;
-  /** Optional metric output type metadata used by eval and annotation filters. */
-  output_type?: string;
-  filter_config: SimulateEvalConfigResponseApiFiltersItemFilterConfig;
-};
-
-export interface SimulateEvalConfigResponseApi {
-  readonly id?: string;
-  /** @minLength 1 */
-  readonly name?: string;
-  readonly config?: SimulateEvalConfigResponseApiConfig;
-  readonly mapping?: SimulateEvalConfigResponseApiMapping;
-  readonly filters?: readonly SimulateEvalConfigResponseApiFiltersItem[];
-  readonly error_localizer?: boolean;
-  /** @minLength 1 */
-  readonly model?: string;
-  /** @minLength 1 */
-  readonly status?: string;
-  /** @minLength 1 */
-  readonly eval_group?: string;
-  readonly template_id?: string;
-}
-
 export interface RunTestResponseApi {
   readonly id?: string;
   /**
@@ -19895,6 +20048,17 @@ export const CallExecutionDetailApiStatus = {
 } as const;
 
 /**
+ * Set on the v3 call detail: a sub-goal check or an evaluation
+ */
+export type CallExecutionEvalMetricApiKind =
+  (typeof CallExecutionEvalMetricApiKind)[keyof typeof CallExecutionEvalMetricApiKind];
+
+export const CallExecutionEvalMetricApiKind = {
+  evaluation: "evaluation",
+  sub_goal: "sub_goal",
+} as const;
+
+/**
  * number | bool | string | list[string] | null
  */
 export type CallExecutionEvalMetricApiValue = { [key: string]: unknown };
@@ -19915,6 +20079,8 @@ export interface CallExecutionEvalMetricApi {
   reason?: string;
   type?: string;
   template_type?: string;
+  /** Set on the v3 call detail: a sub-goal check or an evaluation */
+  kind?: CallExecutionEvalMetricApiKind;
   visible?: boolean;
   error?: boolean;
   status?: string;
@@ -20769,6 +20935,10 @@ export interface EvalConfigResponseApi {
   status?: EvalConfigResponseApiStatus;
   readonly eval_group?: string;
   readonly template_id?: string;
+  /** @minLength 1 */
+  readonly eval_type?: string;
+  readonly regradable?: boolean;
+  readonly editable?: boolean;
 }
 
 export interface AddEvalConfigsResponseApi {
@@ -21008,6 +21178,7 @@ export interface RunTestExecutionsResponseApi {
   /** @minLength 1 */
   readonly previous?: string;
   readonly results?: readonly TestExecutionItemResponseApi[];
+  readonly covered_scenario_count?: number;
 }
 
 export interface SimulationPreviewItemApi {
@@ -21104,6 +21275,7 @@ export interface RunNewEvalsResponseApi {
   message: string;
   run_test_id: string;
   call_execution_count: number;
+  dispatched: boolean;
 }
 
 export interface RunTestScenarioItemResponseApi {
@@ -22140,10 +22312,12 @@ export type CallExecutionV3DetailResponseApiOutcome =
   (typeof CallExecutionV3DetailResponseApiOutcome)[keyof typeof CallExecutionV3DetailResponseApiOutcome];
 
 export const CallExecutionV3DetailResponseApiOutcome = {
+  queued: "queued",
+  in_progress: "in_progress",
   passed: "passed",
   failed: "failed",
-  error: "error",
   inconclusive: "inconclusive",
+  error: "error",
 } as const;
 
 export interface PersonaDetailsApi {
@@ -22154,6 +22328,12 @@ export interface PersonaDetailsApi {
   /** @minLength 1 */
   age: string;
   traits: string[];
+}
+
+export interface SubGoalResultApi {
+  /** @minLength 1 */
+  name: string;
+  passed: boolean | null;
 }
 
 export interface CostBreakdownApi {
@@ -22196,6 +22376,7 @@ export interface SimulateRunV3FunctionCallApi {
   result?: SimulateRunV3FunctionCallApiResult;
   output?: SimulateRunV3FunctionCallApiOutput;
   duration_ms?: number;
+  start_time_ms?: number;
 }
 
 export interface CallExecutionV3DetailResponseApi {
@@ -22342,6 +22523,7 @@ export interface CallExecutionV3DetailResponseApi {
   persona: string;
   persona_details: PersonaDetailsApi;
   sub_goals: string[];
+  sub_goal_results: SubGoalResultApi[];
   outcome: CallExecutionV3DetailResponseApiOutcome;
   cost_breakdown_cents: CostBreakdownApi;
   evaluations: SimulateRunV3EvaluationResultApi[];
@@ -22414,6 +22596,7 @@ export interface RunDashboardSeriesApi {
   label: string;
   started_at: string;
   calls: number;
+  latency_ms: number;
   duration_ms: number;
   llm_cents: number;
   tts_cents: number;
@@ -22464,6 +22647,8 @@ export interface RunDashboardCsatApi {
   bins: RunDashboardHistogramBinApi[];
   measured: number;
   total: number;
+  satisfied: number;
+  satisfied_percent: number;
   agreement: RunDashboardAgreementApi;
 }
 
@@ -22531,15 +22716,36 @@ export interface RunDashboardEvaluationSummaryApi {
   passed: number;
   measured: number;
   pass_rate: number;
+  errored_checks: number;
 }
 
 export interface RunDashboardRiskApi {
+  queued: number;
+  in_progress: number;
   /** @minLength 1 */
-  goal: string;
+  scenario: string;
   passed: number;
   failed: number;
   error: number;
   inconclusive: number;
+}
+
+export interface RunDashboardHealthApi {
+  show_banner: boolean;
+  attempted: number;
+  ran_cleanly: number;
+  connected: number;
+  errored: number;
+  not_evaluated: number;
+  eval_errors: number;
+}
+
+export interface RunDashboardComparisonApi {
+  available: boolean;
+  previous_execution_id: string;
+  shared_scenarios: number;
+  newly_passing: string[];
+  newly_failing: string[];
 }
 
 export interface RunDashboardV3Api {
@@ -22550,6 +22756,7 @@ export interface RunDashboardV3Api {
   series: RunDashboardSeriesApi[];
   series_limit: number;
   series_mode: RunDashboardV3ApiSeriesMode;
+  agent_latency_percentiles: RunDashboardPercentileApi[];
   latency_percentiles: RunDashboardPercentileApi[];
   distributions: RunDashboardDistributionApi[];
   csat: RunDashboardCsatApi;
@@ -22561,6 +22768,8 @@ export interface RunDashboardV3Api {
   unavailable_features: RunDashboardUnavailableApi[];
   evaluation_summary: RunDashboardEvaluationSummaryApi;
   use_case_risk: RunDashboardRiskApi[];
+  run_health: RunDashboardHealthApi;
+  comparison: RunDashboardComparisonApi;
   goal_count: number;
 }
 
@@ -22573,6 +22782,8 @@ export interface AnalyticsExecutionApi {
 }
 
 export interface OutcomeCountsApi {
+  queued: number;
+  in_progress: number;
   passed: number;
   failed: number;
   error: number;
@@ -22624,10 +22835,61 @@ export interface RiskApi {
   tokens: TotalMetricStatsApi;
   cost_cents: TotalMetricStatsApi;
   /** @minLength 1 */
-  goal: string;
+  scenario: string;
+  /** @minLength 1 */
+  scenario_key: string;
+}
+
+export interface ReliabilityIntervalApi {
+  low: number;
+  high: number;
+  effective_n: number;
+  evaluated: number;
+  clusters: number;
+}
+
+export type ReliabilityRowApiVerdict =
+  (typeof ReliabilityRowApiVerdict)[keyof typeof ReliabilityRowApiVerdict];
+
+export const ReliabilityRowApiVerdict = {
+  passed: "passed",
+  failed: "failed",
+  flaky: "flaky",
+  not_evaluated: "not_evaluated",
+} as const;
+
+export interface ReliabilityRowApi {
+  queued: number;
+  in_progress: number;
+  passed: number;
+  failed: number;
+  error: number;
+  inconclusive: number;
+  /** @minLength 1 */
+  scenario: string;
+  /** @minLength 1 */
+  scenario_key: string;
+  runs: number;
+  evaluated: number;
+  pass_rate: number;
+  verdict: ReliabilityRowApiVerdict;
+}
+
+export interface ReliabilityApi {
+  trials: number;
+  scenarios: number;
+  consistent_pass: number;
+  passed_at_least_once: number;
+  repeated: number;
+  flaky: number;
+  flip_rate: number;
+  pass_rate_interval: ReliabilityIntervalApi;
+  rows: ReliabilityRowApi[];
 }
 
 export interface TurnDistributionApi {
+  queued: number;
+  in_progress: number;
   passed: number;
   failed: number;
   error: number;
@@ -22643,6 +22905,7 @@ export interface EvaluationSummaryApi {
   passed: number;
   failed: number;
   measured: number;
+  errored: number;
   missing: number;
   pass_rate: number;
   average_score: number;
@@ -22720,6 +22983,7 @@ export interface RunAnalyticsV3ResponseApi {
   execution: AnalyticsExecutionApi;
   summary: AnalyticsSummaryApi;
   scenario_risk: RiskApi[];
+  reliability: ReliabilityApi;
   turn_distribution: TurnDistributionApi[];
   evaluations: EvaluationSummaryApi[];
   failure_breakdown: FailureBreakdownApi[];
@@ -22765,10 +23029,12 @@ export type RunCallApiOutcome =
   (typeof RunCallApiOutcome)[keyof typeof RunCallApiOutcome];
 
 export const RunCallApiOutcome = {
+  queued: "queued",
+  in_progress: "in_progress",
   passed: "passed",
   failed: "failed",
-  error: "error",
   inconclusive: "inconclusive",
+  error: "error",
 } as const;
 
 export interface RunCallApi {
@@ -22787,6 +23053,7 @@ export interface RunCallApi {
   persona: string;
   persona_details: PersonaDetailsApi;
   sub_goals: string[];
+  sub_goal_results: SubGoalResultApi[];
   /** @minLength 1 */
   harness_outcome_status: string;
   /** @minLength 1 */
@@ -22803,6 +23070,9 @@ export interface RunCallApi {
   completed_at: string;
   duration_seconds: number;
   latency_ms: number;
+  /** Average stop time after caller interruption in milliseconds. */
+  avg_stop_time_after_interruption: number | null;
+  ai_interruption_count: number | null;
   turn_count: number;
   tokens: number;
   cost_cents: number;
@@ -22821,6 +23091,10 @@ export interface GroupAggregatesApi {
   csat: number;
   turns: number;
   latency_ms: number;
+  /** Mean call stop latency in milliseconds, excluding unmeasured calls. */
+  avg_stop_time_after_interruption: number | null;
+  /** Mean AI interruption count per call, excluding unmeasured calls. */
+  ai_interruptions: number | null;
   tokens: number;
   evaluations: GroupAggregatesApiEvaluations;
 }
@@ -22854,11 +23128,20 @@ export interface RunFacetsApi {
   status: FacetValueApi[];
 }
 
+export type EvaluationColumnApiKind =
+  (typeof EvaluationColumnApiKind)[keyof typeof EvaluationColumnApiKind];
+
+export const EvaluationColumnApiKind = {
+  evaluation: "evaluation",
+  sub_goal: "sub_goal",
+} as const;
+
 export interface EvaluationColumnApi {
   /** @minLength 1 */
   id: string;
   /** @minLength 1 */
   name: string;
+  kind: EvaluationColumnApiKind;
 }
 
 export interface RunCallsV3ResponseApi {
@@ -23121,6 +23404,16 @@ export interface ApiErrorResponseApi {
   details?: ApiErrorResponseApiDetails;
 }
 
+export type FetchGraphResponseApiResultMetricStatistic =
+  (typeof FetchGraphResponseApiResultMetricStatistic)[keyof typeof FetchGraphResponseApiResultMetricStatistic];
+
+export const FetchGraphResponseApiResultMetricStatistic = {
+  count: "count",
+  sum: "sum",
+  mean: "mean",
+  percentage: "percentage",
+} as const;
+
 export type FetchGraphResponseApiResultDataItem = {
   timestamp: string;
   value: number;
@@ -23145,6 +23438,7 @@ export type FetchGraphResponseApiResult = {
   metric_name?: string;
   id?: string;
   name?: string;
+  metric_statistic?: FetchGraphResponseApiResultMetricStatistic;
   data: FetchGraphResponseApiResultDataItem[];
   query_complete: boolean;
   query_status: FetchGraphResponseApiResultQueryStatus;
@@ -26585,9 +26879,23 @@ export interface ObserveGraphDataRequestApi {
   /** On trace, span, session, graph, and eval-task bounded reads, created_at/start_time datetime filters support equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal, between, not_equals, not_between, is_null, and is_not_null. Missing bounds retain the finite default window: 30 days ago for the lower bound and request-time now for the upper bound. Between and not_between use half-open [start, end) ranges; not_equals excludes one DateTime64(6) microsecond. Because the physical created_at/start_time field is non-null, is_null returns an exact empty result without a ClickHouse read and is_not_null preserves the base window. Valid contradictions also return an exact empty result. */
   filters?: ObserveGraphDataRequestApiFiltersItem[];
   interval?: ObserveGraphDataRequestApiInterval;
+  /** Accepted for older clients and ignored for SYSTEM_METRIC graphs: each system metric has one statistic, named by the response's metric_statistic. Latency is always the mean (avg) span latency. */
   property?: string;
   req_data_config: ObserveGraphDataRequestApiReqDataConfig;
 }
+
+/**
+ * Statistic of the published system-metric series per bucket. Latency is always the mean (avg) of span latency, filtered or not. Absent for eval and annotation series.
+ */
+export type ObserveGraphDataResultApiMetricStatistic =
+  (typeof ObserveGraphDataResultApiMetricStatistic)[keyof typeof ObserveGraphDataResultApiMetricStatistic];
+
+export const ObserveGraphDataResultApiMetricStatistic = {
+  count: "count",
+  sum: "sum",
+  mean: "mean",
+  percentage: "percentage",
+} as const;
 
 /**
  * Graph points. A sampled series is published only with complete declared stratum coverage; degraded reads never publish points.
@@ -26646,6 +26954,8 @@ export const ObserveGraphDataResultApiQuerySamplingStrategy = {
 export interface ObserveGraphDataResultApi {
   metric_name: string;
   name?: string;
+  /** Statistic of the published system-metric series per bucket. Latency is always the mean (avg) of span latency, filtered or not. Absent for eval and annotation series. */
+  metric_statistic?: ObserveGraphDataResultApiMetricStatistic;
   /** Graph points. A sampled series is published only with complete declared stratum coverage; degraded reads never publish points. */
   data: ObserveGraphDataPointApi[];
   query_complete?: boolean;
@@ -27088,6 +27398,13 @@ export interface ProjectApi {
 export type ProjectGraphDataResultApiSystemMetrics = { [key: string]: unknown };
 
 /**
+ * Statistic of each ``system_metrics`` series per bucket, e.g. {"latency": "mean", "tokens": "sum", "cost": "mean", "traffic": "count"}. Latency is always the mean (avg) span latency.
+ */
+export type ProjectGraphDataResultApiSystemMetricStatistics = {
+  [key: string]: "count" | "sum" | "mean" | "percentage";
+};
+
+/**
  * Any valid JSON value.
  */
 export type ProjectGraphDataResultApiEvaluations = { [key: string]: unknown };
@@ -27095,6 +27412,8 @@ export type ProjectGraphDataResultApiEvaluations = { [key: string]: unknown };
 export interface ProjectGraphDataResultApi {
   /** Any valid JSON value. */
   system_metrics: ProjectGraphDataResultApiSystemMetrics;
+  /** Statistic of each ``system_metrics`` series per bucket, e.g. {"latency": "mean", "tokens": "sum", "cost": "mean", "traffic": "count"}. Latency is always the mean (avg) span latency. */
+  system_metric_statistics?: ProjectGraphDataResultApiSystemMetricStatistics;
   /** Any valid JSON value. */
   evaluations: ProjectGraphDataResultApiEvaluations;
 }
@@ -28290,6 +28609,7 @@ export interface TraceSessionGraphDataRequestApi {
   /** On trace, span, session, graph, and eval-task bounded reads, created_at/start_time datetime filters support equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal, between, not_equals, not_between, is_null, and is_not_null. Missing bounds retain the finite default window: 30 days ago for the lower bound and request-time now for the upper bound. Between and not_between use half-open [start, end) ranges; not_equals excludes one DateTime64(6) microsecond. Because the physical created_at/start_time field is non-null, is_null returns an exact empty result without a ClickHouse read and is_not_null preserves the base window. Valid contradictions also return an exact empty result. */
   filters?: TraceSessionGraphDataRequestApiFiltersItem[];
   interval?: TraceSessionGraphDataRequestApiInterval;
+  /** Accepted for older clients and ignored for SYSTEM_METRIC graphs: each system metric has one statistic, named by the response's metric_statistic. Latency is always the mean (avg) span latency. */
   property?: string;
   req_data_config: TraceSessionGraphDataRequestApiReqDataConfig;
 }
@@ -28316,6 +28636,19 @@ export const ObserveGraphDataErrorResponseApiType = {
 export type ObserveGraphDataErrorResponseApiDetails = {
   [key: string]: string[];
 };
+
+/**
+ * Statistic of the published system-metric series per bucket. Latency is always the mean (avg) of span latency, filtered or not. Absent for eval and annotation series.
+ */
+export type ObserveGraphDataErrorResultApiMetricStatistic =
+  (typeof ObserveGraphDataErrorResultApiMetricStatistic)[keyof typeof ObserveGraphDataErrorResultApiMetricStatistic];
+
+export const ObserveGraphDataErrorResultApiMetricStatistic = {
+  count: "count",
+  sum: "sum",
+  mean: "mean",
+  percentage: "percentage",
+} as const;
 
 export type ObserveGraphDataErrorResultApiQueryProvenance =
   (typeof ObserveGraphDataErrorResultApiQueryProvenance)[keyof typeof ObserveGraphDataErrorResultApiQueryProvenance];
@@ -28364,6 +28697,8 @@ export const ObserveGraphDataErrorResultApiQuerySamplingStrategy = {
 export interface ObserveGraphDataErrorResultApi {
   metric_name: string;
   name?: string;
+  /** Statistic of the published system-metric series per bucket. Latency is always the mean (avg) of span latency, filtered or not. Absent for eval and annotation series. */
+  metric_statistic?: ObserveGraphDataErrorResultApiMetricStatistic;
   /** Graph points. A sampled series is published only with complete declared stratum coverage; degraded reads never publish points. */
   data: ObserveGraphDataPointApi[];
   query_complete?: boolean;
@@ -28865,6 +29200,7 @@ export interface TraceGraphDataRequestApi {
   /** On trace, span, session, graph, and eval-task bounded reads, created_at/start_time datetime filters support equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal, between, not_equals, not_between, is_null, and is_not_null. Missing bounds retain the finite default window: 30 days ago for the lower bound and request-time now for the upper bound. Between and not_between use half-open [start, end) ranges; not_equals excludes one DateTime64(6) microsecond. Because the physical created_at/start_time field is non-null, is_null returns an exact empty result without a ClickHouse read and is_not_null preserves the base window. Valid contradictions also return an exact empty result. */
   filters?: TraceGraphDataRequestApiFiltersItem[];
   interval?: TraceGraphDataRequestApiInterval;
+  /** Accepted for older clients and ignored for SYSTEM_METRIC graphs: each system metric has one statistic, named by the response's metric_statistic. Latency is always the mean (avg) span latency. */
   property?: string;
   req_data_config: TraceGraphDataRequestApiReqDataConfig;
   /** Population the graph counts: every trace, or only voice calls (traces whose root span is a conversation), exactly as list_voice_calls selects them. */

@@ -226,3 +226,132 @@ class TestDeleteAgentDefinitionTool:
         )
 
         assert result.is_error
+
+
+# ===================================================================
+# CANCEL TOOL
+# ===================================================================
+
+
+def _execution_in(tool_context, status, *, hosted_job, job_runs_the_execution=True):
+    """A test execution in ``status``, optionally of a harness environment.
+
+    With ``hosted_job``, a hosted harness job owns the run test; it also ran
+    this execution unless ``job_runs_the_execution`` is off.
+    """
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from simulate.models import HostedHarnessJob
+    from simulate.models.run_test import RunTest
+    from simulate.models.test_execution import TestExecution
+
+    run_test = RunTest.objects.create(
+        name="Cancel Tool Run",
+        agent_definition=make_agent_definition(tool_context),
+        organization=tool_context.organization,
+        workspace=tool_context.workspace,
+    )
+    execution = TestExecution.objects.create(
+        run_test=run_test,
+        status=status,
+        total_scenarios=1,
+        total_calls=1,
+    )
+    if hosted_job:
+        HostedHarnessJob.no_workspace_objects.create(
+            organization=tool_context.organization,
+            workspace=tool_context.workspace,
+            run_id=uuid.uuid4(),
+            idempotency_key=f"cancel-tool-{uuid.uuid4()}",
+            request_digest=f"sha256:{'0' * 64}",
+            schema_version="1.4",
+            payload={},
+            state=(
+                HostedHarnessJob.State.COMPLETED
+                if status == TestExecution.ExecutionStatus.EVALUATING
+                else HostedHarnessJob.State.RUNNING
+            ),
+            seed=1,
+            scenario_count=1,
+            artifact_level="standard",
+            max_artifact_bytes=1,
+            deadline_at=timezone.now() + timedelta(hours=1),
+            run_test=run_test,
+            test_execution=execution if job_runs_the_execution else None,
+        )
+    return execution
+
+
+@pytest.fixture
+def cancel_dispatch():
+    """The Celery cancel path, with the executor mocked so nothing is sent."""
+    with (
+        patch("tfc.settings.settings.TEMPORAL_TEST_EXECUTION_ENABLED", False),
+        patch("simulate.services.test_executor.TestExecutor") as executor,
+    ):
+        executor.return_value.cancel_test.return_value = {"success": True}
+        yield executor
+
+
+class TestCancelTestExecutionTool:
+    @pytest.mark.parametrize(
+        "job_runs_the_execution",
+        [True, False],
+        ids=["job-ran-this-run", "job-owns-only-the-run-test"],
+    )
+    def test_refuses_to_stop_grading_on_a_finished_harness_run(
+        self, job_runs_the_execution, tool_context, cancel_dispatch
+    ):
+        from simulate.models.test_execution import TestExecution
+
+        execution = _execution_in(
+            tool_context,
+            TestExecution.ExecutionStatus.EVALUATING,
+            hosted_job=True,
+            job_runs_the_execution=job_runs_the_execution,
+        )
+
+        result = run_tool(
+            "cancel_test_execution",
+            {"test_execution_id": str(execution.id)},
+            tool_context,
+        )
+
+        assert result.is_error
+        assert result.error_code == "CONFLICT"
+        assert "Grading can't be stopped. It finishes on its own." in result.content
+        cancel_dispatch.assert_not_called()
+        execution.refresh_from_db()
+        assert execution.status == TestExecution.ExecutionStatus.EVALUATING
+
+    @pytest.mark.parametrize(
+        ("status", "hosted_job"),
+        [
+            ("running", True),
+            ("pending", True),
+            ("evaluating", False),
+        ],
+        ids=["running-hosted", "pending-hosted", "grading-a-run-test-no-job-owns"],
+    )
+    def test_cancels_a_run_that_is_not_being_graded_again(
+        self, status, hosted_job, tool_context, cancel_dispatch
+    ):
+        from simulate.models.test_execution import TestExecution
+
+        execution = _execution_in(tool_context, status, hosted_job=hosted_job)
+
+        result = run_tool(
+            "cancel_test_execution",
+            {"test_execution_id": str(execution.id)},
+            tool_context,
+        )
+
+        assert not result.is_error
+        cancel_dispatch.return_value.cancel_test.assert_called_once_with(
+            run_test_id=str(execution.run_test_id),
+            test_execution_id=str(execution.id),
+        )
+        execution.refresh_from_db()
+        assert execution.status == TestExecution.ExecutionStatus.CANCELLING

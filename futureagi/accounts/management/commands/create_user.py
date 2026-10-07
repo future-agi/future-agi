@@ -1,5 +1,6 @@
 import getpass
 
+from django.core.exceptions import ValidationError
 from django.core.management.base import BaseCommand, CommandError
 
 
@@ -16,22 +17,12 @@ class Command(BaseCommand):
         name = options["name"] or input("Full name: ").strip()
         password = options["password"] or getpass.getpass("Password: ")
 
-        if not email or not name or not password:
-            raise CommandError("Email, name, and password are all required.")
+        from accounts.utils import create_owner_account
 
-        if len(password) < 8:
-            raise CommandError("Password must be at least 8 characters.")
-
-        from accounts.utils import first_signup
-
-        user = first_signup(
-            {
-                "email": email,
-                "full_name": name,
-                "password": password,
-                "allow_email": True,
-            }
-        )
+        try:
+            user = create_owner_account(email, name, password)
+        except ValidationError as exc:
+            raise CommandError("\n".join(exc.messages)) from None
         self.stdout.write(
             self.style.SUCCESS(f"User '{user.email}' created successfully.")
         )

@@ -9,6 +9,7 @@ import pytest
 
 from simulate.models import HostedHarnessJob, HostedHarnessStageOutput
 from simulate.services.hosted_harness import (
+    HostedHarnessError,
     create_hosted_job,
     create_selected_harness_run,
     provision_scenarios,
@@ -420,14 +421,25 @@ def test_dropping_a_scenario_that_has_run_keeps_its_row_for_the_history(
 
     index_scenarios(environment, [{"name": NAMES[0]}], prune=True)
 
-    # A selected run's calls read their scenario through this row, so it stays.
+    # The historical row remains for the old Run, but it is hidden from the active suite
+    # and cannot be selected for another Run.
     visible = HostedHarnessScenario.no_workspace_objects.filter(job=environment)
-    assert sorted(row.scenario_key for row in visible) == sorted(
-        _key(name) for name in NAMES[:2]
+    assert list(visible.values_list("scenario_key", flat=True)) == [_key(NAMES[0])]
+    historical = HostedHarnessScenario.all_objects.get(
+        job=environment, scenario_key=_key(NAMES[1])
     )
+    assert historical.deleted is True
     assert HostedHarnessExecution.no_workspace_objects.filter(
-        source_scenario__scenario_key=_key(NAMES[1])
+        source_scenario=historical
     ).exists()
+    with pytest.raises(HostedHarnessError) as error:
+        create_selected_harness_run(
+            environment,
+            scenario_keys=[_key(NAMES[1])],
+            trials=1,
+            idempotency_key="dropped-again",
+        )
+    assert error.value.code == "scenario_selection_unknown"
 
     index_scenarios(environment, [{"name": NAMES[0]}, {"name": NAMES[1]}], prune=True)
 

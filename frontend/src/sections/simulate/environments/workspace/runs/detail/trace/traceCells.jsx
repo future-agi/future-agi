@@ -6,7 +6,7 @@ import CustomTooltip from "src/components/tooltip";
 import { interpolateColorBasedOnScore } from "src/utils/utils";
 
 import { BUILD_TONES } from "../../../../buildEnvironment/buildTones";
-import { isBad } from "./traceTable.constants";
+import { PENDING_EVAL_STATUS, isBad } from "./traceTable.constants";
 
 // The loading bar a cell shows in place of its value while the call runs: one
 // text line tall, the full width of the cell's content, sitting where the
@@ -93,7 +93,7 @@ Score.propTypes = { result: PropTypes.object };
 // can't tell a check that doesn't apply to this scenario from one not graded
 // yet.
 export function UnscoredEval({ result, callLive, callStatus }) {
-  if ((!result && callLive) || result?.status === "pending") {
+  if ((!result && callLive) || result?.status === PENDING_EVAL_STATUS) {
     // The metric cells' top padding, so the row's loading bars line up.
     return (
       <Box sx={{ px: 2, py: 1.5 }}>
@@ -133,13 +133,22 @@ UnscoredEval.propTypes = {
 export function Field({ icon, label, value }) {
   if (value == null || value === "") return null;
   return (
+    // The value wraps rather than truncating, so a long persona (traits) reads
+    // in full; the icon and label stay pinned to its first line.
     <Stack
-      direction="row" alignItems="center" spacing={0.75}
+      direction="row" alignItems="flex-start" spacing={0.75}
       sx={{ px: 1, py: 0.5, borderRadius: 0.75, bgcolor: "background.neutral" }}
     >
-      <Iconify icon={icon} width={13} sx={{ color: "text.subtitle", flexShrink: 0 }} />
-      <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>{label}:</Typography>
-      <Typography noWrap sx={{ typography: "s3", color: "text.primary", fontWeight: "fontWeightMedium" }}>{value}</Typography>
+      <Iconify icon={icon} width={13} sx={{ color: "text.subtitle", flexShrink: 0, mt: "3px" }} />
+      <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", flexShrink: 0 }}>{label}:</Typography>
+      <Typography
+        sx={{
+          typography: "s3", color: "text.primary", fontWeight: "fontWeightMedium",
+          minWidth: 0, overflowWrap: "anywhere",
+        }}
+      >
+        {value}
+      </Typography>
     </Stack>
   );
 }

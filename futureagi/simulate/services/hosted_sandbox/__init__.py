@@ -9,6 +9,7 @@ from .base import (
     SandboxPreview,
     SandboxProviderConfigurationError,
     SandboxProviderError,
+    SandboxProviderUnavailableError,
     SandboxRuntimeProvider,
 )
 from .daytona import DaytonaSandboxRuntimeProvider
@@ -34,6 +35,7 @@ __all__ = [
     "SandboxPreview",
     "SandboxNotFoundError",
     "SandboxProviderConfigurationError",
+    "SandboxProviderUnavailableError",
     "SandboxRuntimeProvider",
     "get_sandbox_provider",
     "sandbox_egress_domain_limit",

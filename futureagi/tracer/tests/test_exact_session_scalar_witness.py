@@ -42,7 +42,7 @@ def _filters(*leaves):
     ]
 
 
-def _source(filters=None, enabled=True):
+def _source(filters=None, enabled=True, lean=False):
     return graph._session_aggregate_source_sql(
         project_id=PROJECT,
         filters=filters or _filters(),
@@ -51,6 +51,7 @@ def _source(filters=None, enabled=True):
         include_trace_ids=False,
         anchor_by_session_start=True,
         use_scalar_witness=enabled,
+        lean_graph_source=lean,
     )
 
 
@@ -197,7 +198,11 @@ def test_success_is_one_complete_statement_and_caps_only_tighten(monkeypatch):
     assert settings["set_overflow_mode"] == "throw"
     assert settings["result_overflow_mode"] == "throw"
     assert settings["max_memory_usage"] == original["max_memory_usage"]
-    assert settings["max_threads"] == original["max_threads"]
+    # The Sessions graph runs only on the background worker, on its own
+    # thread budget; the shared interactive pin is untouched.
+    session_threads = graph.settings.EXACT_GRAPH_SESSION_READ_MAX_THREADS
+    assert settings["max_threads"] == session_threads
+    assert graph.EXACT_GRAPH_READ_SETTINGS["max_threads"] == original["max_threads"]
 
 
 @pytest.mark.parametrize(
@@ -215,14 +220,67 @@ def test_budget_failure_discards_witness_and_runs_original_exact_query(code):
     assert len(analytics.calls) == 2 and result["query_count"] == 2
     assert "session_scalar_witness_ids" in analytics.calls[0][0]
     fallback, params, _, settings = analytics.calls[1]
-    original_source, _ = _source(enabled=False)
+    # The graph reader's own (lean) source, without the witness.
+    original_source, _ = _source(enabled=False, lean=True)
     assert original_source in fallback
     assert "session_scalar_witness_ids" not in fallback
     assert params["snapshot_start_date"] == START
     assert params["snapshot_end_date"] == END
-    assert settings == graph.EXACT_GRAPH_READ_SETTINGS
+    assert settings == graph._session_graph_read_settings()
     assert result["query_complete"] is True
     assert any(point["value"] == 17 for point in result["data"])
+
+
+def _message_leaf(column="last_message", op="contains", value="omega", key="column_id"):
+    return {
+        key: column,
+        "filter_config": {
+            "col_type": "SYSTEM_METRIC",
+            "filter_type": "text",
+            "filter_op": op,
+            "filter_value": value,
+        },
+    }
+
+
+def _single_thread_settings():
+    return dict(graph.EXACT_GRAPH_READ_SETTINGS)
+
+
+@pytest.mark.parametrize("key", ["column_id", "columnId"])
+@pytest.mark.parametrize("column", ["first_message", "last_message"])
+def test_message_filtered_graph_keeps_devs_single_thread_statement(key, column):
+    """first/last message are argMin/argMax(input, start_time) with no
+    tie-break; only one thread resolves tied roots the way dev did."""
+
+    assert (
+        graph.settings.EXACT_GRAPH_SESSION_READ_MAX_THREADS
+        != graph.EXACT_GRAPH_READ_SETTINGS["max_threads"]
+    )
+    # Message leaf alone: one plain statement.
+    analytics = _Analytics()
+    _read(analytics, _filters(_message_leaf(column, key=key)))
+    assert len(analytics.calls) == 1
+    assert "argMin(rs.input, rs.start_time)" in analytics.calls[0][0]
+    assert analytics.calls[0][3] == _single_thread_settings()
+
+    # With a span leaf: the witness attempt and the fallback both stay on
+    # dev's thread count.
+    analytics = _Analytics([ServerException("witness", code=191)])
+    _read(analytics, _filters(_leaf(), _message_leaf(column, key=key)))
+    assert len(analytics.calls) == 2
+    witness, fallback = analytics.calls
+    assert "session_scalar_witness_ids" in witness[0]
+    assert witness[3]["max_threads"] == graph.EXACT_GRAPH_READ_SETTINGS["max_threads"]
+    assert fallback[3] == _single_thread_settings()
+
+
+def test_raw_attribute_named_like_a_message_keeps_session_threads():
+    leaf = _leaf(key="first_message", value=["x"])
+    analytics = _Analytics([ServerException("witness", code=191)])
+    _read(analytics, _filters(leaf))
+    assert "argMin(rs.input" not in analytics.calls[-1][0]
+    assert analytics.calls[-1][3] == graph._session_graph_read_settings()
 
 
 def test_fallback_does_not_receive_a_new_wall(monkeypatch):
