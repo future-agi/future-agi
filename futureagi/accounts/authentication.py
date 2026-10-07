@@ -35,10 +35,12 @@ from accounts.services.workspace_membership import create_workspace_membership
 from tfc.constants.roles import OrganizationRoles
 from tfc.ee_gating import is_oss
 from tfc.utils.api_errors import (
+    ApiErrorCode,
     build_error_envelope,
     error_details,
     exception_code,
 )
+from tfc.utils.error_codes import get_error_message
 
 logger = structlog.get_logger(__name__)
 
@@ -150,11 +152,18 @@ class APIKeyAuthentication(BaseAuthentication):
         ``expires_at=None`` means the key never expires (backward compatible
         default for existing keys). Disabling on expiry gives admins
         visibility in the keys list without needing a separate status field.
+        The key is only written while it is still enabled, so retries against
+        an expired key do not each cost an UPDATE. The ``api_key_expired``
+        code lets clients tell this apart from a wrong or disabled key.
         """
-        if org_api_key.expires_at and org_api_key.expires_at < timezone.now():
-            org_api_key.enabled = False
-            org_api_key.save(update_fields=["enabled"])
-            raise AuthenticationFailed("API key has expired")
+        if org_api_key.is_expired:
+            if org_api_key.enabled:
+                org_api_key.enabled = False
+                org_api_key.save(update_fields=["enabled"])
+            raise AuthenticationFailed(
+                get_error_message("API_KEY_EXPIRED"),
+                code=ApiErrorCode.API_KEY_EXPIRED,
+            )
 
     def authenticate(self, request):
         # Check for JWT token first

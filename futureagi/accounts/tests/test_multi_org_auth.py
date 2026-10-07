@@ -210,9 +210,10 @@ class TestAPIKeyAuthentication:
             }
         )
 
-        with pytest.raises(AuthenticationFailed, match="API key has expired"):
+        with pytest.raises(AuthenticationFailed, match="API key has expired") as exc:
             auth_instance.authenticate(request)
 
+        assert exc.value.get_codes() == "api_key_expired"
         key.refresh_from_db()
         assert key.enabled is False
 
@@ -230,9 +231,10 @@ class TestAPIKeyAuthentication:
         request = _make_request()
         request.META = {"HTTP_AUTHORIZATION": f"Basic {encoded}"}
 
-        with pytest.raises(AuthenticationFailed, match="API key has expired"):
+        with pytest.raises(AuthenticationFailed, match="API key has expired") as exc:
             LangfuseBasicAuthentication().authenticate(request)
 
+        assert exc.value.get_codes() == "api_key_expired"
         key.refresh_from_db()
         assert key.enabled is False
 
@@ -261,8 +263,72 @@ class TestAPIKeyAuthentication:
 
         # Second attempt, after auto-disable — still "expired", not
         # "Invalid API key or secret key".
-        with pytest.raises(AuthenticationFailed, match="API key has expired"):
+        with pytest.raises(AuthenticationFailed, match="API key has expired") as exc:
             auth_instance.authenticate(request)
+        assert exc.value.get_codes() == "api_key_expired"
+
+    def test_api_key_with_future_expiry_authenticates(
+        self, auth_instance, auth_user, org_primary
+    ):
+        key = OrgApiKey.no_workspace_objects.create(
+            name="Future expiry key",
+            organization=org_primary,
+            type="user",
+            user=auth_user,
+            expires_at=timezone.now() + timedelta(days=1),
+        )
+        request = _make_request(
+            headers={
+                "X-Api-Key": key.api_key,
+                "X-Secret-Key": key.secret_key,
+            }
+        )
+
+        user, _ = auth_instance.authenticate(request)
+
+        assert user == auth_user
+        assert request.org_api_key == key
+
+    def test_api_key_without_expiry_authenticates(
+        self, auth_instance, auth_user, org_primary
+    ):
+        key = OrgApiKey.no_workspace_objects.create(
+            name="No expiry key",
+            organization=org_primary,
+            type="user",
+            user=auth_user,
+        )
+        assert key.expires_at is None
+        request = _make_request(
+            headers={
+                "X-Api-Key": key.api_key,
+                "X-Secret-Key": key.secret_key,
+            }
+        )
+
+        user, _ = auth_instance.authenticate(request)
+
+        assert user == auth_user
+
+    def test_basic_api_key_with_future_expiry_authenticates(
+        self, auth_user, org_primary
+    ):
+        key = OrgApiKey.no_workspace_objects.create(
+            name="Future expiry basic key",
+            organization=org_primary,
+            type="user",
+            user=auth_user,
+            expires_at=timezone.now() + timedelta(days=1),
+        )
+        encoded = base64.b64encode(
+            f"{key.api_key}:{key.secret_key}".encode()
+        ).decode("ascii")
+        request = _make_request()
+        request.META = {"HTTP_AUTHORIZATION": f"Basic {encoded}"}
+
+        user, _ = LangfuseBasicAuthentication().authenticate(request)
+
+        assert user == auth_user
 
     def test_disabled_non_expired_api_key_is_rejected(
         self, auth_instance, auth_user, org_primary
@@ -356,6 +422,25 @@ class TestRejectIfExpired:
 
         key.refresh_from_db()
         assert key.enabled is False
+
+    def test_already_disabled_expired_key_is_not_written_again(
+        self, auth_instance, auth_user, org_primary
+    ):
+        """Retries against an expired key must not each cost an UPDATE."""
+        key = OrgApiKey.no_workspace_objects.create(
+            name="Expired and disabled key",
+            organization=org_primary,
+            type="user",
+            user=auth_user,
+            enabled=False,
+            expires_at=timezone.now() - timedelta(days=1),
+        )
+
+        with patch.object(OrgApiKey, "save") as save:
+            with pytest.raises(AuthenticationFailed, match="API key has expired"):
+                auth_instance._reject_if_expired(key)
+
+        save.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
