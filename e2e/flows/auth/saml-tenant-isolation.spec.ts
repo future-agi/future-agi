@@ -342,12 +342,18 @@ test.describe('SAML tenant isolation', () => {
       expect(firstUserInfo).toMatchObject({
         authorizationPrefix: 'Bearer', hasOrganizationHeader: false, hasWorkspaceHeader: false,
       });
-      expect(await page.evaluate(() => ({
+      const storage = await page.evaluate(() => ({
         refresh: localStorage.getItem('refreshToken'),
-        remember: localStorage.getItem('rememberMe'),
         organization: sessionStorage.getItem('organizationId'),
         workspace: sessionStorage.getItem('workspaceId'),
-      }))).toEqual({ refresh: null, remember: null, organization: null, workspace: null });
+      }));
+      // The SAML bootstrap clears all of this. The app then re-pins the
+      // organization (and remember_me) from the SAML user-info response, so
+      // what must hold is no refresh token and none of the password session's
+      // selectors.
+      expect(storage.refresh).toBeNull();
+      expect([null, samlActor.organizationId]).toContain(storage.organization);
+      expect(storage.workspace).not.toBe(passwordActor.workspaceId);
       const forced = await page.evaluate(async ({ apiUrl, accessToken, organizationId }) => {
         const response = await fetch(new URL('/accounts/user-info/', apiUrl), {
           headers: {
