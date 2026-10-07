@@ -1,15 +1,43 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createPublicKey, verify } from "node:crypto";
-import { mkdtempSync, readFileSync, statSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync as makeTempDir,
+  readFileSync,
+  rmdirSync,
+  statSync,
+  unlinkSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { licenceClaims, writeLicenceEnv } from "./test-licence.mjs";
 
 const SCRIPT = fileURLToPath(new URL("./test-licence.mjs", import.meta.url));
+
+// Throwaway keys must not outlive the run: delete exactly what the script
+// writes, then the directories.
+const created = [];
+const mkdtempSync = (prefix) => {
+  const dir = makeTempDir(prefix);
+  created.push(dir);
+  return dir;
+};
+after(() => {
+  for (const dir of created) {
+    for (const sub of ["stack", "."]) {
+      const target = path.join(dir, sub);
+      for (const file of ["licence.env", "signing-key.pem", "public-key.pem"]) {
+        if (existsSync(path.join(target, file)))
+          unlinkSync(path.join(target, file));
+      }
+      if (existsSync(target)) rmdirSync(target);
+    }
+  }
+});
 
 const readEnv = (file) =>
   Object.fromEntries(
