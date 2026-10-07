@@ -71,17 +71,18 @@ test('OBS-E2E-020: duplicate saved-view names are rejected', {
   });
 
   await test.step('API: renaming another view onto the taken name is rejected', async () => {
-    const second = await actor.api.post<{ result: { id: string } }>(
+    const second = await actor.api.post<{ result: { id: string; revision: number } }>(
       SAVED_VIEWS_PATH,
       { project_id: projectId, name: `Other ${suffix}`, tab_type: 'voice' },
     );
     secondViewId = second.result.id;
-    // The PATCH must carry project_id — get_object() scopes by the query param,
-    // so without it a project-scoped row 404s instead of hitting the rename guard.
+    // Saved-view writes require the loaded revision. The duplicate-name
+    // validation runs after the precondition, so send the current revision
+    // to exercise the intended 400 duplicate-name response.
     await expect(
       actor.api.patch(
         `${SAVED_VIEWS_PATH}${secondViewId}/?project_id=${projectId}`,
-        { name: viewName },
+        { name: viewName, expected_revision: second.result.revision },
       ),
     ).rejects.toMatchObject({ status: 400 });
   });
