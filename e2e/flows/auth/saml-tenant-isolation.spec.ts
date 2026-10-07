@@ -71,12 +71,13 @@ async function uploadIdp(
     },
     multipart: {
       file: { name: 'e2e-idp.xml', mimeType: 'application/xml', buffer: Buffer.from(metadata) },
-      name: 'E2E local IdP',
+      // sso_name_validator: a letter first, then letters, digits or hyphens.
+      name: 'e2e-local-idp',
       identity_type: '2',
       is_enabled: 'true',
     },
   });
-  expect(response.status()).toBe(200);
+  expect(response.status(), await response.text()).toBe(200);
 }
 
 async function setupSamlActor(
