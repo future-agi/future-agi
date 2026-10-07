@@ -14,10 +14,12 @@ Run with: pytest model_hub/tests/test_evaluation_api.py -v
 """
 
 import uuid
+from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APIClient
 
@@ -1989,6 +1991,50 @@ class TestSingleRowEvaluationView:
         assert eval_cell.status == CellStatus.RUNNING.value
         assert eval_cell.value is None
         assert eval_cell.value_infos == {}
+
+    def test_evaluate_single_row_stamps_the_metric_before_queuing(
+        self, auth_client, dataset, row, user_eval_metric
+    ):
+        """The metric must go Running (with a fresh ``updated_at``) at request
+        time, not when the worker later picks the job up: otherwise stale-work
+        recovery can see a Completed metric with a freshly reset cell and no
+        proof the rerun is anything but abandoned work, for as long as the job
+        sits queued."""
+        UserEvalMetric.objects.filter(id=user_eval_metric.id).update(
+            status=StatusType.COMPLETED.value,
+            updated_at=timezone.now() - timedelta(hours=30),
+        )
+        eval_column = Column.objects.create(
+            name="Eval Output",
+            dataset=dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.EVALUATION.value,
+            source_id=str(user_eval_metric.id),
+            status=StatusType.COMPLETED.value,
+        )
+        Cell.objects.create(
+            dataset=dataset,
+            column=eval_column,
+            row=row,
+            value="existing",
+            status=CellStatus.PASS.value,
+        )
+        payload = {
+            "row_ids": [str(row.id)],
+            "user_eval_metric_ids": [str(user_eval_metric.id)],
+        }
+
+        with patch(
+            "model_hub.views.develop_dataset.run_evaluation_task.apply_async"
+        ):
+            response = auth_client.post(
+                "/model-hub/evaluate-rows/", payload, format="json"
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        user_eval_metric.refresh_from_db()
+        assert user_eval_metric.status == StatusType.RUNNING.value
+        assert timezone.now() - user_eval_metric.updated_at < timedelta(minutes=1)
 
     def test_evaluate_single_row_rejects_row_outside_metric_dataset(
         self, auth_client, organization, workspace, user_eval_metric

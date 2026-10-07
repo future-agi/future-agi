@@ -271,7 +271,11 @@ def close_stale_usage_row(
     (``owes_refund``) and no others.
 
     The write is guarded on ``processing``: a run that closes the row in the
-    meantime keeps its outcome, and the row is not reported.
+    meantime keeps its outcome, and the row is not reported. An owed refund
+    that fails (the helper swallows its own errors and returns ``None``)
+    rolls the close back the same way: left ``processing``, the row is
+    retried whole on the next tick instead of staying ``error`` with its
+    refund lost for good.
     """
     reason = get_error_message("RUN_INTERRUPTED")
     closed = APICallLog.no_workspace_objects.filter(
@@ -283,11 +287,19 @@ def close_stale_usage_row(
     )
     if not closed:
         return None
-    refunded = (
-        owes_refund
-        and refund_cost_for_api_call(row, config={"reason": reason}) is not None
+    if not owes_refund:
+        return _recovered(row, refunded=False)
+    if refund_cost_for_api_call(row, config={"reason": reason}) is not None:
+        return _recovered(row, refunded=True)
+    rolled_back = APICallLog.no_workspace_objects.filter(
+        id=row.id, status=APICallStatusChoices.ERROR.value, updated_at=now
+    ).update(status=APICallStatusChoices.PROCESSING.value, config=row.config)
+    logger.warning(
+        "stale_usage_row_refund_failed",
+        usage_row_id=row.id,
+        rolled_back=bool(rolled_back),
     )
-    return _recovered(row, refunded=refunded)
+    return None
 
 
 def recover_stale_usage_rows(
