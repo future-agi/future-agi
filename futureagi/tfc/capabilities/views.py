@@ -152,9 +152,10 @@ class EditionView(APIView):
         if edition.is_cloud():
             return gm.success_response({"edition": "cloud"})
 
-        organization = getattr(request, "organization", None) or getattr(
-            request.user, "organization", None
-        )
+        # Only the organization authentication resolved. It is None for a user
+        # removed from their only organization; the legacy User.organization
+        # FK still points there and must not bring the member counts back.
+        organization = getattr(request, "organization", None)
         data = edition.usage_summary(organization)
         data["activation"] = {"method": "env_restart"}
         if _is_admin(request):
