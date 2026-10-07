@@ -17651,6 +17651,56 @@ export interface HarnessEnvironmentToolCallEvaluationApi {
   enable_tool_evaluation: boolean;
 }
 
+export type HarnessEnvironmentRebuildApiEnvironmentValues = {
+  [key: string]: string;
+};
+
+export type HarnessEnvironmentRebuildApiConfig = { [key: string]: unknown };
+
+export type HarnessEnvironmentRebuildApiCredentialFiles = {
+  [key: string]: SecretReferenceApi;
+};
+
+export interface HarnessEnvironmentRebuildApi {
+  environment_values?: HarnessEnvironmentRebuildApiEnvironmentValues;
+  config?: HarnessEnvironmentRebuildApiConfig;
+  credential_files?: HarnessEnvironmentRebuildApiCredentialFiles;
+}
+
+export type HarnessPreflightCheckApiStatus =
+  (typeof HarnessPreflightCheckApiStatus)[keyof typeof HarnessPreflightCheckApiStatus];
+
+export const HarnessPreflightCheckApiStatus = {
+  passed: "passed",
+  failed: "failed",
+  skipped: "skipped",
+} as const;
+
+export interface HarnessPreflightCheckApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  label: string;
+  status: HarnessPreflightCheckApiStatus;
+  detail: string;
+  missing: string[];
+  /** @minLength 1 */
+  fix: string;
+}
+
+export interface HarnessEnvironmentRebuildResponseApi {
+  environment: HarnessEnvironmentDetailApi;
+  checks: HarnessPreflightCheckApi[];
+}
+
+export interface HarnessEnvironmentRebuildErrorApi {
+  /** @minLength 1 */
+  detail: string;
+  /** @minLength 1 */
+  error?: string;
+  checks?: HarnessPreflightCheckApi[];
+}
+
 export interface HarnessRunCreateApi {
   /** @maxItems 1000 */
   scenario_ids: string[];
@@ -18200,27 +18250,6 @@ export type HarnessPreflightResponseApiResourceProfile = {
 };
 
 export type HarnessPreflightResponseApiSnapshot = { [key: string]: unknown };
-
-export type HarnessPreflightCheckApiStatus =
-  (typeof HarnessPreflightCheckApiStatus)[keyof typeof HarnessPreflightCheckApiStatus];
-
-export const HarnessPreflightCheckApiStatus = {
-  passed: "passed",
-  failed: "failed",
-  skipped: "skipped",
-} as const;
-
-export interface HarnessPreflightCheckApi {
-  /** @minLength 1 */
-  id: string;
-  /** @minLength 1 */
-  label: string;
-  status: HarnessPreflightCheckApiStatus;
-  detail: string;
-  missing: string[];
-  /** @minLength 1 */
-  fix: string;
-}
 
 export type HarnessPreflightCredentialsApiRequirementsItem = {
   [key: string]: unknown;

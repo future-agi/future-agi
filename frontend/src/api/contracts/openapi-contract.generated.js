@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1056,
+  endpointCount: 1057,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -28205,6 +28205,40 @@ export const OPENAPI_CONTRACT = Object.freeze({
         requestBody: null,
         queryParameters: {},
         responses: {
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/rebuild/": {
+      post: {
+        operationId: "simulate_api_harness-environments_rebuild",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessEnvironmentRebuild",
+        },
+        queryParameters: {},
+        responses: {
+          202: {
+            $ref: "#/definitions/HarnessEnvironmentRebuildResponse",
+          },
+          400: {
+            $ref: "#/definitions/HarnessEnvironmentRebuildError",
+          },
+          404: {
+            $ref: "#/definitions/HarnessEnvironmentRebuildError",
+          },
+          409: {
+            $ref: "#/definitions/HarnessEnvironmentRebuildError",
+          },
+          422: {
+            $ref: "#/definitions/HarnessEnvironmentRebuildError",
+          },
+          503: {
+            $ref: "#/definitions/HarnessEnvironmentRebuildError",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -62558,6 +62592,71 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessEnvironmentRebuild: {
+      type: "object",
+      properties: {
+        environment_values: {
+          title: "Environment values",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            maxLength: 65536,
+            minLength: 1,
+          },
+          default: {},
+        },
+        config: {
+          title: "Config",
+          type: "object",
+          default: {},
+        },
+        credential_files: {
+          title: "Credential files",
+          type: "object",
+          additionalProperties: {
+            $ref: "#/definitions/SecretReference",
+          },
+          default: {},
+        },
+      },
+    },
+    HarnessEnvironmentRebuildError: {
+      required: ["detail"],
+      type: "object",
+      properties: {
+        detail: {
+          title: "Detail",
+          type: "string",
+          minLength: 1,
+        },
+        error: {
+          title: "Error",
+          type: "string",
+          minLength: 1,
+        },
+        checks: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessPreflightCheck",
+          },
+        },
+      },
+    },
+    HarnessEnvironmentRebuildResponse: {
+      required: ["environment", "checks"],
+      type: "object",
+      properties: {
+        environment: {
+          $ref: "#/definitions/HarnessEnvironmentDetail",
+        },
+        checks: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessPreflightCheck",
+          },
+        },
+      },
+    },
     HarnessEnvironmentRename: {
       required: ["name"],
       type: "object",
@@ -91987,6 +92086,44 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessPreflightCheck: {
+      required: ["id", "label", "status", "detail", "missing", "fix"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          minLength: 1,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["passed", "failed", "skipped"],
+        },
+        detail: {
+          title: "Detail",
+          type: "string",
+        },
+        missing: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        fix: {
+          title: "Fix",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
     HarnessEvent: {
       required: [
         "event_id",
@@ -92713,44 +92850,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Scenario key",
           type: "string",
           maxLength: 255,
-          minLength: 1,
-          "x-nullable": true,
-        },
-      },
-    },
-    HarnessPreflightCheck: {
-      required: ["id", "label", "status", "detail", "missing", "fix"],
-      type: "object",
-      properties: {
-        id: {
-          title: "Id",
-          type: "string",
-          minLength: 1,
-        },
-        label: {
-          title: "Label",
-          type: "string",
-          minLength: 1,
-        },
-        status: {
-          title: "Status",
-          type: "string",
-          enum: ["passed", "failed", "skipped"],
-        },
-        detail: {
-          title: "Detail",
-          type: "string",
-        },
-        missing: {
-          type: "array",
-          items: {
-            type: "string",
-            minLength: 1,
-          },
-        },
-        fix: {
-          title: "Fix",
-          type: "string",
           minLength: 1,
           "x-nullable": true,
         },

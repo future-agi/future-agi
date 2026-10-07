@@ -36198,6 +36198,67 @@ export const SimulateApiHarnessEnvironmentsRemoveEvaluationParams = zod.object({
 });
 
 /**
+ * The same preflight a new environment runs is run again first; a
+failed check saves nothing and starts nothing.
+ * @summary Fix a failed build's keys and build it again in place.
+ */
+export const SimulateApiHarnessEnvironmentsRebuildParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiHarnessEnvironmentsRebuildBodyEnvironmentValuesMaxOne = 65536;
+
+export const simulateApiHarnessEnvironmentsRebuildBodyEnvironmentValuesDefault =
+  {};
+export const simulateApiHarnessEnvironmentsRebuildBodyConfigDefault = {};
+export const simulateApiHarnessEnvironmentsRebuildBodyCredentialFilesKeyMax = 255;
+
+export const simulateApiHarnessEnvironmentsRebuildBodyCredentialFilesVersionMax = 255;
+
+export const simulateApiHarnessEnvironmentsRebuildBodyCredentialFilesDefault =
+  {};
+
+export const SimulateApiHarnessEnvironmentsRebuildBody = zod.object({
+  environment_values: zod
+    .record(
+      zod.string(),
+      zod
+        .string()
+        .min(1)
+        .max(simulateApiHarnessEnvironmentsRebuildBodyEnvironmentValuesMaxOne),
+    )
+    .default(simulateApiHarnessEnvironmentsRebuildBodyEnvironmentValuesDefault),
+  config: zod
+    .object({})
+    .passthrough()
+    .default(simulateApiHarnessEnvironmentsRebuildBodyConfigDefault),
+  credential_files: zod
+    .record(
+      zod.string(),
+      zod.object({
+        manager: zod.enum(["platform-vault", "platform-config"]),
+        key: zod
+          .string()
+          .min(1)
+          .max(simulateApiHarnessEnvironmentsRebuildBodyCredentialFilesKeyMax),
+        version: zod
+          .string()
+          .min(1)
+          .max(
+            simulateApiHarnessEnvironmentsRebuildBodyCredentialFilesVersionMax,
+          )
+          .optional(),
+        purpose: zod.enum([
+          "target_provider",
+          "simulator_provider",
+          "source_checkout",
+        ]),
+      }),
+    )
+    .default(simulateApiHarnessEnvironmentsRebuildBodyCredentialFilesDefault),
+});
+
+/**
  * Create one new Run for the selected scenarios and trial count.
  */
 export const SimulateApiHarnessEnvironmentsRunParams = zod.object({

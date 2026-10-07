@@ -242,11 +242,15 @@ def _validate_known_hosted_egress(payload: dict[str, Any], callback_url: str) ->
 
 
 def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
+    from simulate.services.harness_environment_config import failure_with_input_needed
     from simulate.services.harness_usage import harness_consumption
 
     attempt = job.attempts.order_by("-attempt_number").first()
+    cycle_start = (job.payload.get("metadata") or {}).get("attempt_cycle_start")
+    if type(cycle_start) is not int or cycle_start < 1:
+        cycle_start = 1
     events: list[dict[str, Any]] = []
-    if attempt:
+    if attempt and attempt.attempt_number >= cycle_start:
         recent = list(attempt.events.filter(accepted=True).order_by("-sequence")[:100])
         events = [
             {
@@ -305,9 +309,6 @@ def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
     )[: job.scenario_count]
     receipt_rows = list(receipt_qs)
     receipts = [r.body for r in receipt_rows]
-    cycle_start = (job.payload.get("metadata") or {}).get("attempt_cycle_start")
-    if type(cycle_start) is not int or cycle_start < 1:
-        cycle_start = 1
     current_attempt = (
         attempt if attempt and attempt.attempt_number >= cycle_start else None
     )
@@ -430,7 +431,7 @@ def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
             "cancel_requested_at": (
                 job.cancel_requested_at.isoformat() if job.cancel_requested_at else None
             ),
-            "failure": job.failure,
+            "failure": failure_with_input_needed(job.failure),
         },
         "events": events,
         "stage_outputs": stage_outputs,
@@ -864,6 +865,39 @@ def _preflight_checks(
     return checks
 
 
+def hosted_preflight_checks(request, payload):
+    from simulate.services.hosted_harness import HostedHarnessError
+
+    source_error = None
+    try:
+        source_analysis = _preflight_source_connectors(request, payload)
+    except HostedHarnessError as exc:
+        source_error = exc
+        source_analysis = ([], [], 0)
+    # Keep two-item patched return values compatible with tests and custom
+    # providers written before credential-file discovery was added.
+    if len(source_analysis) == 2:
+        detected, scanned = source_analysis
+        required_files = []
+    else:
+        detected, required_files, scanned = source_analysis
+    credentials = _connector_credential_readiness(
+        payload, detected, scanned, required_files
+    )
+    probe = _preflight_credential_probe(payload)
+    credentials["report"]["probe"] = probe
+    checks = _preflight_checks(
+        payload["source"]["kind"],
+        source_error,
+        scanned,
+        credentials["missing"],
+        required_files,
+        probe,
+        str(payload["agent"].get("connector") or ""),
+    )
+    return checks, credentials, source_error
+
+
 def _sandbox_preflight_body(payload, report):
     """The declared preflight shape, rebuilt from what the sandbox server reports.
 
@@ -1165,33 +1199,7 @@ class HostedHarnessProvider:
         from simulate.services.hosted_harness import clamp_parallelism
 
         runtime = payload["runtime"]
-        source_error = None
-        try:
-            source_analysis = _preflight_source_connectors(request, payload)
-        except HostedHarnessError as exc:
-            source_error = exc
-            source_analysis = ([], [], 0)
-        # Keep two-item patched return values compatible with tests and custom
-        # providers written before credential-file discovery was added.
-        if len(source_analysis) == 2:
-            detected, scanned = source_analysis
-            required_files = []
-        else:
-            detected, required_files, scanned = source_analysis
-        credentials = _connector_credential_readiness(
-            payload, detected, scanned, required_files
-        )
-        probe = _preflight_credential_probe(payload)
-        credentials["report"]["probe"] = probe
-        checks = _preflight_checks(
-            payload["source"]["kind"],
-            source_error,
-            scanned,
-            credentials["missing"],
-            required_files,
-            probe,
-            str(payload["agent"].get("connector") or ""),
-        )
+        checks, credentials, source_error = hosted_preflight_checks(request, payload)
         failed = any(check["status"] == "failed" for check in checks)
         runtime_name, runtime_digest = sandbox_runtime_reference()
         # Continuous advisory surface (C4 §4 pin ii / §5). ``parallelism_enabled``

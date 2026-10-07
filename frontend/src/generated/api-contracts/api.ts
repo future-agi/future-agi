@@ -590,6 +590,9 @@ import type {
   HarnessEnvironmentConfigurationResponseApi,
   HarnessEnvironmentDetailApi,
   HarnessEnvironmentListResponseApi,
+  HarnessEnvironmentRebuildApi,
+  HarnessEnvironmentRebuildErrorApi,
+  HarnessEnvironmentRebuildResponseApi,
   HarnessEnvironmentRenameApi,
   HarnessEnvironmentRunEvaluationQueuedApi,
   HarnessEnvironmentToolCallEvaluationApi,
@@ -58899,6 +58902,85 @@ export const simulateApiHarnessEnvironmentsRemoveEvaluation = async (
     {
       ...options,
       method: "DELETE",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsRebuildResponse202 = {
+  data: HarnessEnvironmentRebuildResponseApi;
+  status: 202;
+};
+
+export type simulateApiHarnessEnvironmentsRebuildResponse400 = {
+  data: HarnessEnvironmentRebuildErrorApi;
+  status: 400;
+};
+
+export type simulateApiHarnessEnvironmentsRebuildResponse404 = {
+  data: HarnessEnvironmentRebuildErrorApi;
+  status: 404;
+};
+
+export type simulateApiHarnessEnvironmentsRebuildResponse409 = {
+  data: HarnessEnvironmentRebuildErrorApi;
+  status: 409;
+};
+
+export type simulateApiHarnessEnvironmentsRebuildResponse422 = {
+  data: HarnessEnvironmentRebuildErrorApi;
+  status: 422;
+};
+
+export type simulateApiHarnessEnvironmentsRebuildResponse503 = {
+  data: HarnessEnvironmentRebuildErrorApi;
+  status: 503;
+};
+
+export type simulateApiHarnessEnvironmentsRebuildResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 202 | 400 | 404 | 409 | 422 | 503>;
+};
+
+export type simulateApiHarnessEnvironmentsRebuildResponseSuccess =
+  simulateApiHarnessEnvironmentsRebuildResponse202 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsRebuildResponseError = (
+  | simulateApiHarnessEnvironmentsRebuildResponse400
+  | simulateApiHarnessEnvironmentsRebuildResponse404
+  | simulateApiHarnessEnvironmentsRebuildResponse409
+  | simulateApiHarnessEnvironmentsRebuildResponse422
+  | simulateApiHarnessEnvironmentsRebuildResponse503
+  | simulateApiHarnessEnvironmentsRebuildResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type simulateApiHarnessEnvironmentsRebuildResponse =
+  | simulateApiHarnessEnvironmentsRebuildResponseSuccess
+  | simulateApiHarnessEnvironmentsRebuildResponseError;
+
+export const getSimulateApiHarnessEnvironmentsRebuildUrl = (id: string) => {
+  return `/simulate/api/harness-environments/${id}/rebuild/`;
+};
+
+/**
+ * The same preflight a new environment runs is run again first; a
+failed check saves nothing and starts nothing.
+ * @summary Fix a failed build's keys and build it again in place.
+ */
+export const simulateApiHarnessEnvironmentsRebuild = async (
+  id: string,
+  harnessEnvironmentRebuildApi: HarnessEnvironmentRebuildApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsRebuildResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsRebuildResponse>(
+    getSimulateApiHarnessEnvironmentsRebuildUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessEnvironmentRebuildApi),
     },
   );
 };

@@ -18,6 +18,9 @@ from simulate.serializers.harness_environment import (
     HarnessEnvironmentDetailSerializer,
     HarnessEnvironmentListQuerySerializer,
     HarnessEnvironmentListResponseSerializer,
+    HarnessEnvironmentRebuildErrorSerializer,
+    HarnessEnvironmentRebuildResponseSerializer,
+    HarnessEnvironmentRebuildSerializer,
     HarnessEnvironmentRenameSerializer,
     HarnessEnvironmentRunEvaluationQueuedSerializer,
     HarnessEnvironmentToolCallEvaluationSerializer,
@@ -232,6 +235,70 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
                 status=refused.status_code,
             )
         return Response({"environment": environment_detail(job), "checks": checks})
+
+    @validated_request(
+        request_serializer=HarnessEnvironmentRebuildSerializer,
+        responses={
+            202: HarnessEnvironmentRebuildResponseSerializer,
+            400: HarnessEnvironmentRebuildErrorSerializer,
+            404: HarnessEnvironmentRebuildErrorSerializer,
+            409: HarnessEnvironmentRebuildErrorSerializer,
+            422: HarnessEnvironmentRebuildErrorSerializer,
+            503: HarnessEnvironmentRebuildErrorSerializer,
+        },
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"], url_path="rebuild")
+    def rebuild(self, request, pk=None):
+        """Fix a failed build's keys and build it again in place.
+
+        The same preflight a new environment runs is run again first; a
+        failed check saves nothing and starts nothing.
+        """
+        from simulate.services.harness_environment_config import (
+            PreflightFailed,
+            rebuild_failed_environment,
+        )
+        from simulate.services.hosted_harness import HostedHarnessError
+
+        job = self._job(request, pk)
+        if job is None:
+            return Response(
+                {"detail": "Environment not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        data = request.validated_data
+        callback_url = (
+            getattr(settings, "HARNESS_PUBLIC_BASE_URL", "")
+            or request.build_absolute_uri("/")
+        ).rstrip("/")
+        try:
+            job, checks = rebuild_failed_environment(
+                job,
+                request=request,
+                environment_values=data["environment_values"],
+                config=data["config"],
+                credential_files=data["credential_files"],
+                callback_url=callback_url,
+            )
+        except PreflightFailed as failed:
+            return Response(
+                {
+                    "detail": "Preflight failed. Nothing was saved and the build was not started.",
+                    "error": "preflight_failed",
+                    "checks": failed.checks,
+                },
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            )
+        except HostedHarnessError as refused:
+            return Response(
+                {"detail": refused.message, "error": refused.code},
+                status=refused.status_code,
+            )
+        return Response(
+            {"environment": environment_detail(job), "checks": checks},
+            status=status.HTTP_202_ACCEPTED,
+        )
 
     @swagger_auto_schema(responses={204: "Deleted"})
     def destroy(self, request, pk=None):

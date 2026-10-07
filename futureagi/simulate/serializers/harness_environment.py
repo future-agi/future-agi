@@ -4,6 +4,7 @@ from rest_framework import serializers
 
 from simulate.serializers.harness_job import (
     HarnessAgentSerializer,
+    HarnessPreflightCheckSerializer,
     HarnessSecretValuesSerializer,
     SecretReferenceSerializer,
 )
@@ -102,6 +103,11 @@ class HarnessEnvironmentConfigurationSerializer(serializers.Serializer):
             or attrs.get("credential_files")
         ):
             raise serializers.ValidationError("nothing to change")
+        return attrs
+
+
+class HarnessEnvironmentRebuildSerializer(HarnessEnvironmentConfigurationSerializer):
+    def validate(self, attrs):
         return attrs
 
 
@@ -517,3 +523,14 @@ class HarnessEnvironmentConfigurationErrorSerializer(serializers.Serializer):
     detail = serializers.CharField()
     error = serializers.CharField(required=False)
     checks = HarnessEnvironmentCredentialCheckSerializer(many=True, required=False)
+
+
+class HarnessEnvironmentRebuildResponseSerializer(serializers.Serializer):
+    environment = HarnessEnvironmentDetailSerializer()
+    checks = HarnessPreflightCheckSerializer(many=True)
+
+
+class HarnessEnvironmentRebuildErrorSerializer(serializers.Serializer):
+    detail = serializers.CharField()
+    error = serializers.CharField(required=False)
+    checks = HarnessPreflightCheckSerializer(many=True, required=False)

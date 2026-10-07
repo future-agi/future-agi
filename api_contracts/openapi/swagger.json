@@ -50852,6 +50852,80 @@
                 }
             ]
         },
+        "/simulate/api/harness-environments/{id}/rebuild/": {
+            "post": {
+                "operationId": "simulate_api_harness-environments_rebuild",
+                "summary": "Fix a failed build's keys and build it again in place.",
+                "description": "The same preflight a new environment runs is run again first; a\nfailed check saves nothing and starts nothing.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessEnvironmentRebuild"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessEnvironmentRebuildResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessEnvironmentRebuildError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessEnvironmentRebuildError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessEnvironmentRebuildError"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessEnvironmentRebuildError"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessEnvironmentRebuildError"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/harness-environments/{id}/run/": {
             "post": {
                 "operationId": "simulate_api_harness-environments_run",
@@ -123831,6 +123905,125 @@
                 }
             }
         },
+        "HarnessEnvironmentRebuild": {
+            "type": "object",
+            "properties": {
+                "environment_values": {
+                    "title": "Environment values",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "maxLength": 65536,
+                        "minLength": 1
+                    },
+                    "default": {}
+                },
+                "config": {
+                    "title": "Config",
+                    "type": "object",
+                    "default": {}
+                },
+                "credential_files": {
+                    "title": "Credential files",
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/SecretReference"
+                    },
+                    "default": {}
+                }
+            }
+        },
+        "HarnessPreflightCheck": {
+            "required": [
+                "id",
+                "label",
+                "status",
+                "detail",
+                "missing",
+                "fix"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "label": {
+                    "title": "Label",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "passed",
+                        "failed",
+                        "skipped"
+                    ]
+                },
+                "detail": {
+                    "title": "Detail",
+                    "type": "string"
+                },
+                "missing": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "fix": {
+                    "title": "Fix",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            }
+        },
+        "HarnessEnvironmentRebuildResponse": {
+            "required": [
+                "environment",
+                "checks"
+            ],
+            "type": "object",
+            "properties": {
+                "environment": {
+                    "$ref": "#/definitions/HarnessEnvironmentDetail"
+                },
+                "checks": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessPreflightCheck"
+                    }
+                }
+            }
+        },
+        "HarnessEnvironmentRebuildError": {
+            "required": [
+                "detail"
+            ],
+            "type": "object",
+            "properties": {
+                "detail": {
+                    "title": "Detail",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "checks": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessPreflightCheck"
+                    }
+                }
+            }
+        },
         "HarnessRunCreate": {
             "required": [
                 "scenario_ids"
@@ -125119,55 +125312,6 @@
                         "type": "string",
                         "maxLength": 4096
                     }
-                }
-            }
-        },
-        "HarnessPreflightCheck": {
-            "required": [
-                "id",
-                "label",
-                "status",
-                "detail",
-                "missing",
-                "fix"
-            ],
-            "type": "object",
-            "properties": {
-                "id": {
-                    "title": "Id",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "label": {
-                    "title": "Label",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "status": {
-                    "title": "Status",
-                    "type": "string",
-                    "enum": [
-                        "passed",
-                        "failed",
-                        "skipped"
-                    ]
-                },
-                "detail": {
-                    "title": "Detail",
-                    "type": "string"
-                },
-                "missing": {
-                    "type": "array",
-                    "items": {
-                        "type": "string",
-                        "minLength": 1
-                    }
-                },
-                "fix": {
-                    "title": "Fix",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
                 }
             }
         },
