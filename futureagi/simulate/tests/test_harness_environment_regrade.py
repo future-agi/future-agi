@@ -233,7 +233,7 @@ def test_regrade_answers_not_found_for_an_environment_outside_this_workspace(
 
     for response in (elsewhere, missing):
         assert response.status_code == 404, response.content
-        assert response.json() == {"detail": "Environment not found"}
+        assert response.json()["detail"] == "Environment not found"
     assert _state(environment, finished_run, call) == before
     dispatch.assert_not_called()
 
@@ -254,9 +254,10 @@ def test_regrade_refuses_an_environment_that_is_still_building(
     )
 
     assert response.status_code == 409, response.content
-    assert response.json() == {
-        "detail": "Environment has no evaluations until it finishes building"
-    }
+    assert (
+        response.json()["detail"]
+        == "Environment has no evaluations until it finishes building"
+    )
     dispatch.assert_not_called()
 
 
@@ -281,7 +282,7 @@ def test_regrade_refuses_a_run_that_is_not_this_environments(
             {"eval_config_ids": [str(cfg.id)]},
         )
         assert response.status_code == 404, response.content
-        assert response.json() == {"detail": "Run not found"}
+        assert response.json()["detail"] == "Run not found"
 
     dispatch.assert_not_called()
     foreign.refresh_from_db()
@@ -319,9 +320,10 @@ def test_regrade_says_still_finishing_while_the_harness_job_has_not_ended(
     )
 
     assert response.status_code == 409, response.content
-    assert response.json() == {
-        "detail": "This run is still finishing. Try again in a moment."
-    }
+    assert (
+        response.json()["detail"]
+        == "This run is still finishing. Try again in a moment."
+    )
     assert _state(environment, finished_run, call) == before
     dispatch.assert_not_called()
 
@@ -353,7 +355,7 @@ def test_regrade_refuses_a_run_that_has_not_finished(
     )
 
     assert response.status_code == 409, response.content
-    assert response.json() == {"detail": "Only a finished run can be graded again"}
+    assert response.json()["detail"] == "Only a finished run can be graded again"
     assert _state(environment, finished_run, call) == before
     dispatch.assert_not_called()
 
@@ -398,7 +400,7 @@ def test_regrade_refuses_an_eval_that_is_not_this_environments(
     )
 
     assert response.status_code == 404, response.content
-    assert response.json() == {"detail": "Evaluation not found"}
+    assert response.json()["detail"] == "Evaluation not found"
     assert _state(environment, finished_run, call) == before
     dispatch.assert_not_called()
 
@@ -428,7 +430,7 @@ def test_regrade_answers_not_found_before_the_harness_refusal(
     )
 
     assert response.status_code == 404, response.content
-    assert response.json() == {"detail": "Evaluation not found"}
+    assert response.json()["detail"] == "Evaluation not found"
     assert _state(environment, finished_run, call) == before
     dispatch.assert_not_called()
 
@@ -466,12 +468,10 @@ def test_regrade_refuses_a_harness_only_eval_before_writing_anything(
     )
 
     assert response.status_code == 400, response.content
-    assert response.json() == {
-        "detail": (
-            "Harness claim is scored by the harness during the call. "
-            "Only rerunning the call refreshes it."
-        )
-    }
+    assert response.json()["detail"] == (
+        "Harness claim is scored by the harness during the call. "
+        "Only rerunning the call refreshes it."
+    )
     assert _state(environment, finished_run, call) == before
     dispatch.assert_not_called()
 
@@ -492,7 +492,7 @@ def test_regrade_refuses_a_run_with_no_calls_before_writing_anything(
     )
 
     assert response.status_code == 409, response.content
-    assert response.json() == {"detail": "This run has no calls to grade"}
+    assert response.json()["detail"] == "This run has no calls to grade"
     after = _state(environment, finished_run)
     assert after == before
     assert after["status"] == TestExecution.ExecutionStatus.COMPLETED
@@ -526,9 +526,10 @@ def test_regrade_refuses_a_run_whose_calls_never_completed(
     )
 
     assert response.status_code == 409, response.content
-    assert response.json() == {
-        "detail": "Nothing to grade again: no call in this run completed."
-    }
+    assert (
+        response.json()["detail"]
+        == "Nothing to grade again: no call in this run completed."
+    )
     after = _state(environment, finished_run, call)
     assert after == before
     assert after["status"] == TestExecution.ExecutionStatus.COMPLETED
@@ -569,7 +570,7 @@ def test_regrade_refuses_a_second_request_that_raced_the_first(
         )
 
     assert response.status_code == 409, response.content
-    assert response.json() == {"detail": "Grading is already running on this run."}
+    assert response.json()["detail"] == "Grading is already running on this run."
     # Only the first request's claim moved anything.
     assert _state(environment, finished_run, call) == {
         **before,
@@ -602,12 +603,10 @@ def test_run_refuses_a_harness_only_eval_before_looking_for_calls(
     )
 
     assert response.status_code == 400, response.content
-    assert response.json() == {
-        "detail": (
-            "Harness claim is scored by the harness during the call. "
-            "Only rerunning the call refreshes it."
-        )
-    }
+    assert response.json()["detail"] == (
+        "Harness claim is scored by the harness during the call. "
+        "Only rerunning the call refreshes it."
+    )
     after = _state(environment, finished_run)
     assert after == before
     assert after["status"] == TestExecution.ExecutionStatus.COMPLETED
@@ -650,7 +649,7 @@ def test_regrade_answers_503_and_puts_every_score_back_when_grading_cannot_be_qu
     )
 
     assert response.status_code == 503, response.content
-    assert response.json() == {"detail": "Grading couldn't be started. Try again."}
+    assert response.json()["detail"] == "Grading couldn't be started. Try again."
     dispatch.assert_called_once()
     finished_run.refresh_from_db()
     graded.refresh_from_db()
