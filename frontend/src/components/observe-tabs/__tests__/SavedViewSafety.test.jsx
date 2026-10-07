@@ -18,6 +18,10 @@ vi.mock("src/api/project/saved-views", async (original) => ({
   useDeleteSavedView: () => ({ mutate: remove }),
   useDuplicateSavedView: () => ({ mutate: duplicate }),
 }));
+vi.mock("src/sections/project/context/ObserveHeaderContext", () => ({
+  useObserveHeader: () => ({ getViewConfig: () => ({ columns: [] }) }),
+}));
+
 const own = { id: "view-1", name: "Errors", revision: 3, visibility: "personal", is_owner: true, can_edit: true, can_delete: true };
 const menu = (view = own, extra = {}) => render(<TabContextMenu view={view} projectId="p" projectName="Checkout Agent" activeTab="view-view-1" anchorPosition={{ x: 20, y: 20 }} onClose={vi.fn()} onRename={vi.fn()} onTabChange={vi.fn()} {...extra} />);
 const tab = (view = own, extra = {}) => render(<CustomViewTab view={view} projectName="Checkout Agent" isActive onClick={vi.fn()} onClose={vi.fn()} onContextMenu={vi.fn()} onRenameSubmit={vi.fn()} onRenameCancel={vi.fn()} {...extra} />);
@@ -42,6 +46,17 @@ describe("saved view ownership and consent", () => {
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(update).not.toHaveBeenCalled();
   });
+  it("saves dirty changes before sharing and carries the new revision", async () => {
+    update
+      .mockImplementationOnce((_payload, callbacks) => callbacks.onSuccess({ data: { result: { revision: 4 } } }))
+      .mockImplementationOnce((_payload, callbacks) => callbacks.onSuccess());
+    menu(own, { isDirty: true });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Share with project" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Save changes first" }));
+    expect(update).toHaveBeenNthCalledWith(1, { id: "view-1", expected_revision: 3, config: { columns: [] } }, expect.any(Object));
+    expect(update).toHaveBeenNthCalledWith(2, { id: "view-1", expected_revision: 4, visibility: "project" }, expect.any(Object));
+  });
+
   it("shares only the saved version with a revision when dirty", async () => {
     menu(own, { isDirty: true });
     fireEvent.click(screen.getByRole("menuitem", { name: "Share with project" }));

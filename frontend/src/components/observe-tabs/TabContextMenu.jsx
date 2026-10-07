@@ -5,6 +5,7 @@ import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "notistack";
 import { getRequestErrorMessage } from "src/utils/errorUtils";
 import { useUpdateSavedView, useDuplicateSavedView } from "src/api/project/saved-views";
+import { useObserveHeader } from "src/sections/project/context/ObserveHeaderContext";
 import DeleteViewDialog from "./DeleteViewDialog";
 import ShareViewDialog from "./ShareViewDialog";
 
@@ -13,6 +14,7 @@ const TabContextMenu = ({ anchorPosition, view, projectId, projectName = "this p
   const [error, setError] = useState(null);
   const { mutate: updateView, isPending } = useUpdateSavedView(projectId);
   const { mutate: duplicateView } = useDuplicateSavedView(projectId);
+  const { getViewConfig } = useObserveHeader();
   if (!view || !anchorPosition) return null;
   const finish = () => {
     setDialog(null);
@@ -28,6 +30,29 @@ const TabContextMenu = ({ anchorPosition, view, projectId, projectName = "this p
     });
     finish();
   };
+  const saveThenShare = () => {
+    if (!view.can_edit || isPending) return;
+    const config = getViewConfig?.();
+    if (!config) {
+      setError("Could not save the current changes. Please retry.");
+      return;
+    }
+    updateView({ id: view.id, expected_revision: view.revision, config }, {
+      onSuccess: (response) => {
+        const revision = response?.data?.result?.revision;
+        if (revision == null) {
+          setError("The view was saved, but its revision was unavailable. Refresh and retry.");
+          return;
+        }
+        updateView({ id: view.id, expected_revision: revision, visibility: "project" }, {
+          onSuccess: finish,
+          onError: (err) => setError(getRequestErrorMessage(err, "Could not share the saved view. Please retry.")),
+        });
+      },
+      onError: (err) => setError(getRequestErrorMessage(err, "Could not save the current changes. Please retry.")),
+    });
+  };
+
   const share = () => {
     if (!view.can_edit || isPending) return;
     updateView({ id: view.id, expected_revision: view.revision, visibility: view.visibility === "project" ? "personal" : "project" }, {
