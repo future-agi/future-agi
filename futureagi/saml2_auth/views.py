@@ -583,7 +583,14 @@ class IDPUploadViews(viewsets.ModelViewSet):
             return self._gm.bad_request(
                 "Maximum supported identity providers reached. Please edit or delete an existing IdP."
             )
-        SAMLMetadataModel.objects.create(organization=organization, **data)
+        # relay_state is unique and no longer read for login (each attempt
+        # gets its own relay key), so the server assigns an opaque value
+        # rather than the empty default every upload would otherwise share.
+        SAMLMetadataModel.objects.create(
+            organization=organization,
+            relay_state=f"idp-{secrets.token_hex(16)}",
+            **data,
+        )
         return self._gm.success_response("Success")
 
     @swagger_auto_schema(
