@@ -35,11 +35,17 @@ type IdpProcess = ChildProcessByStdio<null, Readable, Readable>;
 function readReady(child: IdpProcess): Promise<ReadyMessage> {
   return new Promise((resolve, reject) => {
     const lines = createInterface({ input: child.stdout });
+    // Keep the tail of stderr so a startup failure (missing pysaml2, xmlsec1,
+    // a bad interpreter) names its cause instead of only an exit code.
+    let stderr = '';
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr = (stderr + chunk.toString()).slice(-2_000);
+    });
     const timeout = setTimeout(() => reject(new Error('local SAML IdP did not become ready')), 15_000);
     const fail = (message: string) => {
       clearTimeout(timeout);
       lines.close();
-      reject(new Error(message));
+      reject(new Error(stderr.trim() ? `${message}\n${stderr.trim()}` : message));
     };
     child.once('error', error => fail(`could not start local SAML IdP: ${error.message}`));
     child.once('exit', (code, signal) => fail(`local SAML IdP exited before ready (${code ?? signal})`));
