@@ -229,8 +229,10 @@ describe("RunTraceTable — re-running as a new simulation", () => {
 
     await openMenu(user);
     expect(screen.getByText("Re-run 2 scenarios")).toBeInTheDocument();
-    expect(screen.getByLabelText("Trials")).toHaveValue("3");
-    expect(screen.getByText("2 scenarios × 3 = 6 calls")).toBeInTheDocument();
+    expect(screen.getByText("Repeats: 3")).toBeInTheDocument();
+    expect(
+      screen.getByText("2 scenarios × 3 repeats = 6 calls"),
+    ).toBeInTheDocument();
 
     await user.click(
       screen.getByRole("menuitem", { name: /Run as a new simulation/ }),
@@ -245,8 +247,11 @@ describe("RunTraceTable — re-running as a new simulation", () => {
     await user.click(rowBox("refund · Trial 1"));
     await openMenu(user);
 
-    await user.selectOptions(screen.getByLabelText("Trials"), "1");
-    expect(screen.getByText("1 scenario × 1 = 1 call")).toBeInTheDocument();
+    await user.click(screen.getByText("Repeats: 3"));
+    await user.click(screen.getByText("1×"));
+    expect(
+      screen.getByText("1 scenario × 1 repeat = 1 call"),
+    ).toBeInTheDocument();
     await user.click(
       screen.getByRole("menuitem", { name: /Run as a new simulation/ }),
     );
@@ -262,7 +267,15 @@ describe("RunTraceTable — re-running as a new simulation", () => {
     await user.click(rowBox("escalate · Trial 1"));
     await openMenu(user);
 
-    await user.selectOptions(screen.getByLabelText("Trials"), "20");
+    await user.click(screen.getByText("Repeats: 3"));
+    await user.click(screen.getByText("Custom…"));
+    const custom = screen.getByRole("spinbutton");
+    await user.clear(custom);
+    await user.type(custom, "20");
+    await user.click(screen.getByRole("button", { name: "Set" }));
+    expect(
+      screen.getByText("2 scenarios × 20 repeats = 40 calls"),
+    ).toBeInTheDocument();
     // 2 × 20 is within the limit; the limit is about scenarios × trials.
     expect(screen.queryByText(/a run allows up to/)).not.toBeInTheDocument();
   });
@@ -297,7 +310,7 @@ describe("RunTraceTable — re-running as a new simulation", () => {
 
     expect(
       screen.getByText(
-        "That is 210 calls; a run allows up to 200. Lower Trials or select fewer scenarios.",
+        "That is 210 calls; a run allows up to 200. Lower Repeats or select fewer scenarios.",
       ),
     ).toBeInTheDocument();
     const option = screen.getByRole("menuitem", {

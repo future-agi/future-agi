@@ -88,6 +88,15 @@ const checkboxCellSx = {
   px: 1,
   textAlign: "center",
 };
+// The head row centres its labels, so its box is centred too, level with
+// "Use case" rather than at the top like the call rows' boxes.
+const checkboxHeadSx = {
+  width: 44,
+  minWidth: 44,
+  px: 1,
+  textAlign: "center",
+  verticalAlign: "middle",
+};
 const clampSx = {
   display: "-webkit-box",
   WebkitLineClamp: 4,
@@ -530,7 +539,7 @@ export default function TraceTable({
             )}
             <TableRow>
               {selection && (
-                <TableCell sx={{ ...headSx, ...checkboxCellSx, py: 0 }}>
+                <TableCell sx={{ ...headSx, ...checkboxHeadSx }}>
                   <Checkbox
                     size="small"
                     checked={selection.pageChecked}

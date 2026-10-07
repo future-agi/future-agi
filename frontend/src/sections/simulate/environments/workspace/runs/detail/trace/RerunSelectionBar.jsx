@@ -6,7 +6,6 @@ import {
   Divider,
   Popover,
   Stack,
-  TextField,
   Typography,
 } from "@mui/material";
 
@@ -14,7 +13,8 @@ import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
 import { MAX_CALLS_PER_RUN } from "src/api/simulate-environments/rerunScenarios";
 
-const TRIAL_OPTIONS = Array.from({ length: 20 }, (_, i) => i + 1);
+import TrialsPicker from "../../../scenarios/TrialsPicker";
+
 // The toolbar's height, without its outlined-button colours: a contained
 // button keeps its own text colour.
 const rerunButtonSx = {
@@ -141,7 +141,7 @@ export default function RerunSelectionBar({
         transformOrigin={{ vertical: "top", horizontal: "right" }}
         slotProps={{
           paper: {
-            sx: { mt: 0.75, width: 340, maxWidth: "calc(100vw - 32px)" },
+            sx: { mt: 0.75, width: 380, maxWidth: "calc(100vw - 32px)" },
           },
         }}
       >
@@ -206,36 +206,17 @@ export default function RerunSelectionBar({
             </Box>
           </Box>
 
-          {/* Beside the option, not inside it, so changing Trials never starts
+          {/* Beside the option, not inside it, so changing Repeats never starts
               the run. */}
           <Stack spacing={0.5} sx={{ pl: "36px", pr: 1.5, pb: 0.5 }}>
             <Stack direction="row" alignItems="center" spacing={1} useFlexGap>
-              <Typography
-                component="label"
-                htmlFor="rerun-trials"
-                sx={{ typography: "s3", color: "text.subtitle" }}
-              >
-                Trials
-              </Typography>
-              <TextField
-                select
-                id="rerun-trials"
-                size="small"
-                value={trials}
-                onChange={(e) => setTrials(Number(e.target.value))}
-                SelectProps={{ native: true }}
-                sx={{
-                  width: 64,
-                  "& .MuiInputBase-root": { height: 26, typography: "s3" },
-                  "& .MuiNativeSelect-select": { py: 0, pl: 1 },
-                }}
-              >
-                {TRIAL_OPTIONS.map((n) => (
-                  <option key={n} value={n}>
-                    {n}
-                  </option>
-                ))}
-              </TextField>
+              {/* The same Repeats picker as the environment header. */}
+              <TrialsPicker
+                trials={trials}
+                onChange={setTrials}
+                scenarioCount={scenarios}
+                size="xs"
+              />
               {ready && (
                 <Typography
                   component="output"
@@ -243,15 +224,16 @@ export default function RerunSelectionBar({
                     typography: "s3",
                     fontWeight: 600,
                     fontVariantNumeric: "tabular-nums",
+                    whiteSpace: "nowrap",
                   }}
                 >
-                  {`${plural(scenarios, "scenario")} × ${trials} = ${plural(calls, "call")}`}
+                  {`${plural(scenarios, "scenario")} × ${plural(trials, "repeat")} = ${plural(calls, "call")}`}
                 </Typography>
               )}
             </Stack>
             {ready && overLimit && (
               <Typography sx={{ typography: "s3", color: "warning.main" }}>
-                {`That is ${calls.toLocaleString()} calls; a run allows up to ${MAX_CALLS_PER_RUN}. Lower Trials or select fewer scenarios.`}
+                {`That is ${calls.toLocaleString()} calls; a run allows up to ${MAX_CALLS_PER_RUN}. Lower Repeats or select fewer scenarios.`}
               </Typography>
             )}
             {keys != null && scenarios === 0 && (
