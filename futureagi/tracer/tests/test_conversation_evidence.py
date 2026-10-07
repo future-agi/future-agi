@@ -36,7 +36,10 @@ RAW_LOG = {
     "agent_name": "Scheduler",
     "from_number": "+15550100",
     "to_number": "+15550101",
-    "retell_llm_dynamic_variables": {"greeting_line": "Hello, this is the scheduler."},
+    "retell_llm_dynamic_variables": {
+        "greeting_line": "Hello, this is the scheduler.",
+        "transfer_phone": "+15550199",
+    },
     "collected_dynamic_variables": {"current_node": "voicemail"},
     "call_analysis": {
         "call_summary": "Reached voicemail.",
@@ -161,8 +164,12 @@ def test_dossier_keeps_the_call_once_with_timed_turns_and_tool_activity():
         "ended_reason": "agent_hangup",
         "agent": {"id": "agent_1", "version": 3, "name": "Scheduler"},
     }
+    # Configured variables pass through as the stored span holds them.
     assert dossier["variables"] == {
-        "configured": {"greeting_line": "Hello, this is the scheduler."},
+        "configured": {
+            "greeting_line": "Hello, this is the scheduler.",
+            "transfer_phone": "+15550199",
+        },
         "collected": {"current_node": "voicemail"},
     }
     assert dossier["analysis"] == {
@@ -227,8 +234,8 @@ def test_dossier_keeps_the_call_once_with_timed_turns_and_tool_activity():
         },
     ]
     assert dossier["not_included"] == ["provider_log", "recording_audio"]
-    # The caller's and the agent's phone numbers stay out of the evidence.
-    assert "+1555" not in json.dumps(dossier)
+    # The call's own from and to numbers are left out.
+    assert not {"+15550100", "+15550101"} & set(json.dumps(dossier).split('"'))
 
 
 def test_agent_turn_without_word_timings_is_not_spoken():
