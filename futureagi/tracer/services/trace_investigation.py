@@ -1202,8 +1202,15 @@ def publish_investigation(
                 has_issues = True
             elif result["outcome"] == "success" and not result["findings"]:
                 has_issues = False
-        old_current_report_id = job.current_report_id if active else None
-        if active:
+        # A failed report never replaces a completed one: the earlier read stays
+        # the job's report and stays in the Feed.
+        current = active and not (
+            result["execution_status"] == "failed"
+            and job.current_report_id is not None
+            and job.current_report.execution_status == "completed"
+        )
+        old_current_report_id = job.current_report_id if current else None
+        if current:
             superseded_reports = TraceInvestigationReport.no_workspace_objects.filter(
                 project_id=job.project_id,
                 is_current=True,
@@ -1224,7 +1231,7 @@ def publish_investigation(
             test_execution_id=job.test_execution_id if simulation else None,
             trace_id=None if simulation else job.trace_id,
             recorded_at=now,
-            is_current=active,
+            is_current=current,
             has_issues=has_issues,
             job=job,
             attempt=attempt,
@@ -1254,12 +1261,12 @@ def publish_investigation(
             grouping_status=grouping_status,
         )
         _persist_investigation_details(report, result)
-        if active and groupable_findings(report).exists():
+        if current and groupable_findings(report).exists():
             report.grouping_status = TraceInvestigationGroupingStatus.PENDING
             report.save(update_fields=["grouping_status", "updated_at"])
         enqueue_grouping_features(report=report)
         transaction.on_commit(lambda report=report: charge_trace_investigation(report))
-        if active:
+        if current:
             job.current_report = report
 
         if late or attempt.status == TraceInvestigationAttemptStatus.CLAIMED:
@@ -1298,7 +1305,7 @@ def publish_investigation(
             from tracer.services.simulation_investigation import retry_unread_call_once
 
             retry_unread_call_once(job, now)
-        if active and old_current_report_id and old_current_report_id != report.id:
+        if current and old_current_report_id and old_current_report_id != report.id:
             from tracer.services.grouping.lifecycle import deproject_superseded_report
 
             deproject_superseded_report(

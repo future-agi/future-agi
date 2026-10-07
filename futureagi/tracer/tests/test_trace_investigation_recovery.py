@@ -154,7 +154,8 @@ def test_transient_failure_runs_again_with_backoff_until_its_attempts_run_out(
     _make_due(first)
     job = _fail(_claim(), "investigation_deadline")
     assert (job.state, job.generation) == (COMPLETED, 3)
-    assert job.current_report.execution_status == "failed"
+    # Each failed report replaces the failed one before it.
+    assert job.current_report.error_message == "investigation_deadline"
     _make_due(first)
     assert _claim() is None
     assert TraceInvestigationAttempt.no_workspace_objects.filter(job=job).count() == 3
@@ -218,6 +219,29 @@ def test_job_read_before_keeps_its_retries_when_a_later_attempt_fails(
 
     # The job's third attempt is the first unread one, so the backoff starts over.
     assert (job.state, job.generation, _retry_wait(job)) == (WAITING, 4, 1)
+
+
+def test_failed_report_does_not_replace_an_earlier_completed_report(observe_project):
+    _configure(observe_project)
+    trace_id = _notify(observe_project)
+    earlier = _complete(_claim())["report_id"]
+    _notify(observe_project, trace_id=trace_id, offset=2)
+
+    with mock.patch(
+        "tracer.services.grouping.lifecycle.deproject_superseded_report"
+    ) as deproject:
+        job = _fail(_claim(), "structured_output_invalid")
+
+    assert (job.state, job.generation, job.current_report_id) == (COMPLETED, 2, earlier)
+    deproject.assert_not_called()
+    reports = dict(
+        TraceInvestigationReport.no_workspace_objects.filter(job=job).values_list(
+            "execution_status", "is_current"
+        )
+    )
+    assert reports == {"completed": True, "failed": False}
+    # The job still holds a good report, so it is not offered for a requeue.
+    assert _requeue(observe_project)["unread"] == 0
 
 
 def test_failure_of_a_superseded_attempt_leaves_the_newer_generation_queued(
@@ -371,6 +395,8 @@ def test_late_report_is_used_when_the_lease_was_written_off_and_a_run_is_queued(
     _make_due(claim)
     job = _fail(_claim())
     assert (job.state, job.generation, _retry_wait(job)) == (WAITING, 3, 1)
+    # A failure of that run leaves the late report in place.
+    assert job.current_report_id == late["report_id"]
 
 
 def test_late_report_does_not_replace_the_report_of_a_later_attempt(observe_project):
