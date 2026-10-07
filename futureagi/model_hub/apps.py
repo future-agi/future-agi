@@ -39,6 +39,7 @@ OPERATOR_STARTUP_MUTATION_COMMANDS = frozenset(
     {
         "ch25_apply_schema",
         "ch25_remove_pg",
+        "backfill_harness_agent_prompts",
         "backfill_legacy_scans",
         "backfill_score_tracer_project",
         # Helm bootstrap Job: migrate, seeds, ClickHouse schema, CDC, schedules.
@@ -47,6 +48,8 @@ OPERATOR_STARTUP_MUTATION_COMMANDS = frozenset(
         "drop_legacy_observation_span",
         "migrate",
         "provision_grouping_features",
+        "enable_sampled_grouping",
+        "requeue_budget_grouping",
         "register_temporal_schedules",
         "seed_system_evals",
     }

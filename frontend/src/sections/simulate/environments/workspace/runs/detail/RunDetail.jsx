@@ -32,23 +32,6 @@ import RunAnalytics from "./RunAnalytics";
 import useCallListNavigation from "./useCallListNavigation";
 import useOpenCallParam from "./useOpenCallParam";
 
-// Terminal execution failures/cancellations outrank call-level outcomes.
-// Otherwise mixed pass/fail results are a completed run with findings.
-function headerStatus(identity, stats) {
-  // No verdict until the run resolves: while loading, identity is null and the
-  // zeroed stats would otherwise read as "Failed".
-  if (!identity) return null;
-  if (identity.status === "running" || identity.status === "cancelling") {
-    return identity.status;
-  }
-  if (identity.status === "failed" || identity.status === "cancelled") {
-    return identity.status;
-  }
-  if (stats.passed === 0) return "failed";
-  if (stats.failed === 0) return "passed";
-  return "completed";
-}
-
 /**
  * The designer-style run/execution detail page.
  *
@@ -117,10 +100,11 @@ export default function RunDetail({
       `${paths.dashboard.simulate.test}/${testId}/${executionId}/${row.id}`,
     );
 
-  const status = headerStatus(identity, stats);
+  const status = identity?.runState;
   // A live run has no final results yet, so its header actions wait for it to
   // finish. Stop simulation is the exception and stays in its own control.
-  const live = status === "running" || status === "cancelling";
+  const live =
+    identity?.status === "running" || identity?.status === "cancelling";
   // finishedAt is a known gap (the executions row carries no end time), so the
   // sub-line reports when the run STARTED rather than inventing a finish.
   const startedLabel = identity?.startedAt ? fToNow(identity.startedAt) : "";
