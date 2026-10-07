@@ -39,6 +39,7 @@ export const CONSOLE_COPY = {
   workingDot: "Working…",
   frozen: "Environment is still being built",
   stop: "Stop the current turn",
+  collapse: "Collapse chat",
 };
 
 export const PIPELINE_CHECKS_COPY = {
