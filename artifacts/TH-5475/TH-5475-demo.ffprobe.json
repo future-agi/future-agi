@@ -1,0 +1,28 @@
+{
+    "programs": [
+
+    ],
+    "stream_groups": [
+
+    ],
+    "streams": [
+        {
+            "index": 0,
+            "codec_name": "h264",
+            "codec_type": "video",
+            "width": 1280,
+            "height": 720
+        },
+        {
+            "index": 1,
+            "codec_name": "aac",
+            "codec_type": "audio",
+            "sample_rate": "24000",
+            "channels": 1
+        }
+    ],
+    "format": {
+        "duration": "117.433333",
+        "size": "2547894"
+    }
+}

@@ -1,0 +1,5 @@
+00:00  Problem and scope
+00:18  Atomic acceptance
+00:43  Destination claims
+01:08  Tests and CI
+01:39  Boundaries and handoff

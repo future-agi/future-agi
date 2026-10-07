@@ -1,0 +1,19 @@
+1
+00:00:00,000 --> 00:00:18,000
+Problem and scope — invite acceptance bypassed signup reporting.
+
+2
+00:00:18,000 --> 00:00:43,000
+Atomic acceptance — invite, expiry, activation, and pending outbox marker are transaction-safe.
+
+3
+00:00:43,000 --> 00:01:08,000
+Destination claims — ownership tokens and recoverable leases prevent stale workers from overwriting newer work.
+
+4
+00:01:08,000 --> 00:01:39,000
+Verification — seven real-Django tests, independent review/verifier pass, and qualified CI status.
+
+5
+00:01:39,360 --> 00:01:57,360
+Boundaries — no owner onboarding side effects, CRM writes, backfill, merge, or deployment.

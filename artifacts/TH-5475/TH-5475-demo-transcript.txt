@@ -1,0 +1,16 @@
+TH-5475 technical demo — recorded at 6bf87f79c8fbbeea86f0b4f4e840d00569b261a3.
+
+00:00 Problem and scope
+The bug was that users invited by another member bypassed the normal signup reporting path.
+
+00:18 Atomic acceptance
+The acceptance path locks and rechecks the invitation, validates expiry, writes the pending reporting marker in the same transaction, and queues reporting after commit.
+
+00:43 Destination claims
+Each destination has a row-locked claim, ownership token, and recoverable lease. Known failures release only the failing destination; live claims are not replayed blindly.
+
+01:08 Tests and CI
+Seven real-Django regression tests cover the acceptance and reporting contract. Independent review and verifier passed. Current CI has an unrelated untouched harness-environment baseline-count failure in pytest shard five; distributed E2E was still running at capture time.
+
+01:39 Boundaries and handoff
+The activity does not send generated-password email or seed demo traces. No live CRM calls, backfill, merge, or deployment were performed.
