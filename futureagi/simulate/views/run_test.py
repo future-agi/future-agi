@@ -5880,7 +5880,7 @@ class RunTestExecutionsView(APIView):
                         "error_reason": test_execution.error_reason,
                         "success_rate": round(success_rate, 2),
                         "avg_response_time": round(avg_response_time, 3),
-                        "calls": test_execution.total_calls,
+                        "calls": total_calls,
                         "calls_attempted": execution_calls_attempted,
                         "connected_calls": connected_calls,
                         "agent_version": agent_version_name,

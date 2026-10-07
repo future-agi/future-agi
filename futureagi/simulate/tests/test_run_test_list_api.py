@@ -1693,7 +1693,7 @@ class TestRunTestExecutionsView:
             run_test=run_test_with_v10_scenario,
             status=TestExecution.ExecutionStatus.COMPLETED,
             total_scenarios=1,
-            total_calls=6,
+            total_calls=11,
             completed_calls=2,
         )
 
@@ -1743,6 +1743,8 @@ class TestRunTestExecutionsView:
             for item in response.json()["results"]
             if item["id"] == str(test_execution.id)
         )
+        # The stored counter still says 11; the response reports the visible calls.
+        assert row["calls"] == 6
         assert row["total_calls"] == 6
         assert row["completed_calls"] == 2
         # Failed and cancelled both count as failed.
@@ -1855,6 +1857,7 @@ class TestRunTestExecutionsView:
             for item in response.json()["results"]
             if item["id"] == str(test_execution.id)
         )
+        assert row["calls"] == 3
         assert row["total_calls"] == 3
         assert row["outcome_passed"] == 1
         assert row["outcome_failed"] == 1
