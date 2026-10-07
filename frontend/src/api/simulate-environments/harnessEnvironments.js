@@ -63,6 +63,14 @@ export const runHarnessEnvironment = async (
 export const renameHarnessEnvironment = async (id, name) =>
   (await axios.patch(environmentPath(id), { name })).data;
 
+export const updateHarnessEnvironmentConfiguration = async (id, body) =>
+  (
+    await axios.patch(
+      apiPath("/simulate/api/harness-environments/{id}/configuration/", { id }),
+      body,
+    )
+  ).data;
+
 // Remove an applied evaluation (soft delete). Returns 204; the caller must
 // re-fetch the detail and read `evaluations.selected` rather than removing
 // locally.
