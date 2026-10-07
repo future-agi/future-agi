@@ -68,7 +68,10 @@ const payload = () => ({
         age: "34",
         traits: ["impatient", "in a hurry"],
       },
-      sub_goals: ["identity_verified", "refund_created"],
+      sub_goal_results: [
+        { name: "identity_verified", passed: true },
+        { name: "refund_created", passed: false },
+      ],
       tokens: 450,
       evaluations: [
         {
@@ -186,7 +189,10 @@ describe("mapCallRow", () => {
       traits: ["impatient", "in a hurry"],
     });
     expect(t.goal).toBe("Refund a double charge");
-    expect(t.subGoals).toEqual(["identity_verified", "refund_created"]);
+    expect(t.subGoalResults).toEqual([
+      { name: "identity_verified", passed: true },
+      { name: "refund_created", passed: false },
+    ]);
     expect(t.scenario).toBe("Routine refund");
     expect(t.scenarioDetails).toBe(
       "Customer requests a refund for a duplicate charge.",
@@ -511,5 +517,20 @@ describe("runCallsQueryOptions", () => {
       wrapper: makeWrapper(),
     });
     expect(axios.get).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("sub-goal verdicts", () => {
+  it("preserves passed, failed and undecided sub-goals from the API", () => {
+    const results = [
+      { name: "identity_verified", passed: true },
+      { name: "refund_created", passed: false },
+      { name: "confirmation_sent", passed: null },
+    ];
+    expect(mapCallRow({ sub_goal_results: results }).subGoalResults).toEqual(
+      results,
+    );
+    expect(mapCallRow({}).subGoalResults).toEqual([]);
   });
 });
