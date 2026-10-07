@@ -323,6 +323,43 @@ const mountView = () => {
 };
 
 describe("LLMTracingView idle rendering", () => {
+  it("scopes manual refresh events to the current project", async () => {
+    harness.projectDetail = { source: "observe" };
+    harness.observeHeader.setHeaderConfig.mockClear();
+    vi.useFakeTimers({
+      toFake: [
+        "setTimeout",
+        "clearTimeout",
+        "setInterval",
+        "clearInterval",
+        "Date",
+      ],
+    });
+    const view = mountView();
+    await settle(view);
+
+    const config = harness.observeHeader.setHeaderConfig.mock.lastCall[0];
+    const refresh = vi.fn();
+    window.addEventListener("observe-refresh", refresh);
+    config.refreshData({ includeAggregations: false });
+    await schedulerTurn();
+
+    expect(refresh).toHaveBeenCalledOnce();
+    expect(refresh.mock.calls[0][0].detail).toEqual({
+      observeId: "project-1",
+    });
+    window.removeEventListener("observe-refresh", refresh);
+
+    const listRefresh = vi.fn();
+    window.addEventListener("observe-list-refresh", listRefresh);
+    config.refreshData({ includeAggregations: false, listOnly: true });
+    expect(listRefresh).toHaveBeenCalledOnce();
+    expect(listRefresh.mock.calls[0][0].detail).toEqual({
+      observeId: "project-1",
+    });
+    window.removeEventListener("observe-list-refresh", listRefresh);
+  });
+
   it.each(["simulator", "observe"])(
     "commits nothing while a %s project's Trace tab sits idle",
     async (source) => {
