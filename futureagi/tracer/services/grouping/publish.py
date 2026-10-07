@@ -1641,7 +1641,8 @@ def publish_grouping(
                 if work.report_id in waiting_reports
                 else GroupingWorkState.COMPLETED
             )
-            work.save(update_fields=["state", "updated_at"])
+            work.failure_code = ""
+            work.save(update_fields=["state", "failure_code", "updated_at"])
             work.report.grouping_status = (
                 TraceInvestigationGroupingStatus.PENDING
                 if work.report_id in waiting_reports
