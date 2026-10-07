@@ -3,7 +3,9 @@ import { useEffect, useReducer, useRef } from "react";
 import { alpha } from "@mui/material/styles";
 import { Box, Stack, Typography, TextField, IconButton } from "@mui/material";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip/CustomTooltip";
 
+import { ENV_TAB_RAIL_HEIGHT } from "../../environmentOptions";
 import { BUILD_TONES } from "../buildTones";
 import { CONSOLE_COPY } from "../build.constants";
 import { Turn, Working } from "./ConsoleTurn";
@@ -45,6 +47,10 @@ function composerReducer(state, action) {
  * `frozen` locks the composer until the environment is Live: it blocks input
  * the same way `running` does, but stays blocked until the env finishes
  * building rather than until the last message returns.
+ *
+ * `onCollapse` adds a collapse button to the header. `active` is false while
+ * the console is collapsed (mounted but hidden); it skips the auto-scroll then
+ * and jumps to the latest turn once the console is shown again.
  */
 export default function BuilderConsole({
   turns,
@@ -55,10 +61,13 @@ export default function BuilderConsole({
   preComposer,
   frozen = false,
   frozenReason,
+  onCollapse,
+  collapseRef,
+  active = true,
 }) {
   const [state, dispatch] = useReducer(composerReducer, INITIAL);
   const { draft, scaffolds } = state;
-  const endRef = useRef(null);
+  const listRef = useRef(null);
 
   useEffect(
     () => subscribeComposerScaffold((text) => dispatch({ type: "scaffold", text })),
@@ -66,8 +75,12 @@ export default function BuilderConsole({
   );
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [turns, running, canStop]);
+    if (!active) return;
+    // Scroll only the message list. scrollIntoView would also scroll every
+    // ancestor, including the collapsing column's clip box mid-animation.
+    const list = listRef.current;
+    list?.scrollTo?.({ top: list.scrollHeight, behavior: "smooth" });
+  }, [turns, running, canStop, active]);
 
   // Frozen === the env is not Live yet, so the builder can't accept edits. It
   // blocks the composer exactly like `running`, but persists across turns.
@@ -92,27 +105,56 @@ export default function BuilderConsole({
 
   return (
     <Stack sx={{ height: "100%", minWidth: 0 }}>
+      {/* Same height as the workspace tab rail, so the two headers line up. */}
       <Stack
         direction="row" alignItems="center" spacing={1.25}
-        sx={{ flexShrink: 0, px: 2.5, py: 1.5, borderBottom: "1px solid", borderColor: "divider" }}
+        sx={{
+          flexShrink: 0, pl: 2, pr: 1, height: ENV_TAB_RAIL_HEIGHT, boxSizing: "content-box",
+          borderBottom: "1px solid", borderColor: "divider",
+        }}
       >
         <Box
           sx={{
-            width: 30, height: 30, borderRadius: 1, display: "grid", placeItems: "center", flexShrink: 0,
+            width: 24, height: 24, borderRadius: 1, display: "grid", placeItems: "center", flexShrink: 0,
             bgcolor: (t) => alpha(BUILD_TONES.accent, t.palette.mode === "dark" ? 0.16 : 0.1),
             color: BUILD_TONES.accent,
           }}
         >
-          <Iconify icon="solar:chat-round-line-linear" width={15} />
+          <Iconify icon="solar:chat-round-line-linear" width={13} />
         </Box>
         <Box flex={1} minWidth={0}>
-          <Typography sx={{ typography: "s3", color: "text.subtitle", lineHeight: 1.2 }}>
+          <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", lineHeight: 1.2 }}>
             {frozen ? reason : busy ? CONSOLE_COPY.working : CONSOLE_COPY.idle}
           </Typography>
         </Box>
+        {onCollapse && (
+          // Only while open, so the tooltip can't linger over the right pane
+          // after a click hides the console.
+          <CustomTooltip show={active} size="small" arrow title={CONSOLE_COPY.collapse}>
+            <IconButton
+              ref={collapseRef}
+              aria-label={CONSOLE_COPY.collapse}
+              onClick={onCollapse}
+              size="small"
+              sx={{
+                width: 26, height: 26, borderRadius: 1, flexShrink: 0, color: "text.subtitle",
+                "&:hover": { bgcolor: "action.hover", color: "text.primary" },
+              }}
+            >
+              <Iconify icon="lucide:chevrons-left" width={16} />
+            </IconButton>
+          </CustomTooltip>
+        )}
       </Stack>
 
-      <Box sx={{ flex: 1, overflowY: "auto", px: 2.5, py: 3 }}>
+      {/* overflow-wrap is inherited, so every message, note, error and tool row
+          below breaks a long unbroken token (a URL, an id, pasted JSON) instead
+          of pushing out of the chat column. */}
+      <Box
+        ref={listRef}
+        data-testid="builder-console-list"
+        sx={{ flex: 1, minWidth: 0, overflowY: "auto", overflowWrap: "anywhere", px: 2.5, py: 3 }}
+      >
         <Stack spacing={4}>
           {(turns || []).length === 0 && !busy ? (
             <Stack alignItems="center" spacing={1.25} sx={{ py: 6, opacity: 0.7 }}>
@@ -135,7 +177,6 @@ export default function BuilderConsole({
               {busy && <Working label={CONSOLE_COPY.workingDot} />}
             </>
           )}
-          <Box ref={endRef} />
         </Stack>
       </Box>
 
@@ -271,4 +312,8 @@ BuilderConsole.propTypes = {
   preComposer: PropTypes.node,
   frozen: PropTypes.bool,
   frozenReason: PropTypes.string,
+  onCollapse: PropTypes.func,
+  // Attached to the collapse button so focus can return to it on reopen.
+  collapseRef: PropTypes.oneOfType([PropTypes.func, PropTypes.shape({ current: PropTypes.any })]),
+  active: PropTypes.bool,
 };
