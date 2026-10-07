@@ -55691,6 +55691,9 @@ export const TracerInternalErrorFeedV2GroupingAttemptsPartialUpdateParams =
 
 export const tracerInternalErrorFeedV2GroupingAttemptsPartialUpdateBodyLeaseTokenMax = 255;
 
+export const tracerInternalErrorFeedV2GroupingAttemptsPartialUpdateBodyFailureCodeDefault = ``;
+export const tracerInternalErrorFeedV2GroupingAttemptsPartialUpdateBodyFailureCodeMax = 100;
+
 export const TracerInternalErrorFeedV2GroupingAttemptsPartialUpdateBody =
   zod.object({
     lease_token: zod
@@ -55699,12 +55702,21 @@ export const TracerInternalErrorFeedV2GroupingAttemptsPartialUpdateBody =
       .max(
         tracerInternalErrorFeedV2GroupingAttemptsPartialUpdateBodyLeaseTokenMax,
       ),
-    action: zod.enum(["renew", "cancel"]),
+    action: zod.enum(["renew", "cancel", "fail"]),
+    failure_code: zod
+      .string()
+      .max(
+        tracerInternalErrorFeedV2GroupingAttemptsPartialUpdateBodyFailureCodeMax,
+      )
+      .default(
+        tracerInternalErrorFeedV2GroupingAttemptsPartialUpdateBodyFailureCodeDefault,
+      ),
   });
 
 export const TracerInternalErrorFeedV2GroupingAttemptsPartialUpdateResponse =
   zod.object({
     state: zod.string().min(1).optional(),
+    failure_code: zod.string().min(1).optional(),
     status: zod.string().min(1).optional(),
     checkpoint_revision: zod.number().optional(),
     receipt_id: zod.string().uuid().optional(),
@@ -55738,6 +55750,7 @@ export const TracerInternalErrorFeedV2GroupingAttemptsCheckpointUpdateBody =
 export const TracerInternalErrorFeedV2GroupingAttemptsCheckpointUpdateResponse =
   zod.object({
     state: zod.string().min(1).optional(),
+    failure_code: zod.string().min(1).optional(),
     status: zod.string().min(1).optional(),
     checkpoint_revision: zod.number().optional(),
     receipt_id: zod.string().uuid().optional(),
@@ -55800,6 +55813,7 @@ export const TracerInternalErrorFeedV2GroupingAttemptsPublishCreateBody =
 export const TracerInternalErrorFeedV2GroupingAttemptsPublishCreateResponse =
   zod.object({
     state: zod.string().min(1).optional(),
+    failure_code: zod.string().min(1).optional(),
     status: zod.string().min(1).optional(),
     checkpoint_revision: zod.number().optional(),
     receipt_id: zod.string().uuid().optional(),
@@ -55883,6 +55897,7 @@ export const TracerInternalErrorFeedV2GroupingAttemptsReserveCreateBody =
 export const TracerInternalErrorFeedV2GroupingAttemptsReserveCreateResponse =
   zod.object({
     state: zod.string().min(1).optional(),
+    failure_code: zod.string().min(1).optional(),
     status: zod.string().min(1).optional(),
     checkpoint_revision: zod.number().optional(),
     receipt_id: zod.string().uuid().optional(),
@@ -55963,6 +55978,7 @@ export const TracerInternalErrorFeedV2GroupingAttemptsSettleCreateBody =
 export const TracerInternalErrorFeedV2GroupingAttemptsSettleCreateResponse =
   zod.object({
     state: zod.string().min(1).optional(),
+    failure_code: zod.string().min(1).optional(),
     status: zod.string().min(1).optional(),
     checkpoint_revision: zod.number().optional(),
     receipt_id: zod.string().uuid().optional(),
@@ -56010,6 +56026,7 @@ export const TracerInternalErrorFeedV2GroupingFeatureAttemptsPartialUpdateBody =
 export const TracerInternalErrorFeedV2GroupingFeatureAttemptsPartialUpdateResponse =
   zod.object({
     state: zod.string().min(1).optional(),
+    failure_code: zod.string().min(1).optional(),
     status: zod.string().min(1).optional(),
     checkpoint_revision: zod.number().optional(),
     receipt_id: zod.string().uuid().optional(),
@@ -56054,6 +56071,7 @@ export const TracerInternalErrorFeedV2GroupingFeatureAttemptsCompleteCreateBody 
 export const TracerInternalErrorFeedV2GroupingFeatureAttemptsCompleteCreateResponse =
   zod.object({
     state: zod.string().min(1).optional(),
+    failure_code: zod.string().min(1).optional(),
     status: zod.string().min(1).optional(),
     checkpoint_revision: zod.number().optional(),
     receipt_id: zod.string().uuid().optional(),
@@ -56107,6 +56125,7 @@ export const TracerInternalErrorFeedV2GroupingOutboxAckCreateBody = zod
 export const TracerInternalErrorFeedV2GroupingOutboxAckCreateResponse =
   zod.object({
     state: zod.string().min(1).optional(),
+    failure_code: zod.string().min(1).optional(),
     status: zod.string().min(1).optional(),
     checkpoint_revision: zod.number().optional(),
     receipt_id: zod.string().uuid().optional(),
@@ -56133,6 +56152,7 @@ export const TracerInternalErrorFeedV2GroupingSeverityAttemptsPartialUpdateBody 
 export const TracerInternalErrorFeedV2GroupingSeverityAttemptsPartialUpdateResponse =
   zod.object({
     state: zod.string().min(1).optional(),
+    failure_code: zod.string().min(1).optional(),
     status: zod.string().min(1).optional(),
     checkpoint_revision: zod.number().optional(),
     receipt_id: zod.string().uuid().optional(),
@@ -56159,6 +56179,7 @@ export const TracerInternalErrorFeedV2GroupingSeverityAttemptsPublishCreateBody 
 export const TracerInternalErrorFeedV2GroupingSeverityAttemptsPublishCreateResponse =
   zod.object({
     state: zod.string().min(1).optional(),
+    failure_code: zod.string().min(1).optional(),
     status: zod.string().min(1).optional(),
     checkpoint_revision: zod.number().optional(),
     receipt_id: zod.string().uuid().optional(),
@@ -56242,6 +56263,7 @@ export const TracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateBody 
 export const TracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateResponse =
   zod.object({
     state: zod.string().min(1).optional(),
+    failure_code: zod.string().min(1).optional(),
     status: zod.string().min(1).optional(),
     checkpoint_revision: zod.number().optional(),
     receipt_id: zod.string().uuid().optional(),
@@ -56322,6 +56344,7 @@ export const TracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateBody =
 export const TracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateResponse =
   zod.object({
     state: zod.string().min(1).optional(),
+    failure_code: zod.string().min(1).optional(),
     status: zod.string().min(1).optional(),
     checkpoint_revision: zod.number().optional(),
     receipt_id: zod.string().uuid().optional(),
