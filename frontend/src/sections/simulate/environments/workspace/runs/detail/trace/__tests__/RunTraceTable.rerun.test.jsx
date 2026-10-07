@@ -6,10 +6,10 @@ const useRunCalls = vi.fn();
 vi.mock("src/api/simulate-environments/runDetail", () => ({
   useRunCalls: (...args) => useRunCalls(...args),
 }));
-const listMatchingScenarioKeys = vi.fn();
+const listMatchingCalls = vi.fn();
 vi.mock("src/api/simulate-environments/rerunScenarios", async (orig) => ({
   ...(await orig()),
-  listMatchingScenarioKeys: (...args) => listMatchingScenarioKeys(...args),
+  listMatchingCalls: (...args) => listMatchingCalls(...args),
 }));
 
 const { default: RunTraceTable } = await import("../RunTraceTable");
@@ -46,7 +46,7 @@ const TASKS = [
 let total = TASKS.length;
 beforeEach(() => {
   total = TASKS.length;
-  listMatchingScenarioKeys.mockReset();
+  listMatchingCalls.mockReset();
   useRunCalls.mockImplementation((_id, opts = {}) => {
     const status = opts.filters?.status?.[0];
     const tasks = TASKS.filter((t) => !status || t.status === status);
@@ -230,7 +230,7 @@ describe("RunTraceTable — selecting calls to re-run", () => {
   });
 });
 
-describe("RunTraceTable — re-running as a new simulation", () => {
+describe("RunTraceTable — the Re-run menu", () => {
   const openMenu = async (user) =>
     user.click(screen.getByRole("button", { name: /^Re-run/ }));
 
@@ -243,7 +243,6 @@ describe("RunTraceTable — re-running as a new simulation", () => {
     await user.click(rowBox("escalate · Trial 2"));
 
     await openMenu(user);
-    expect(screen.getByText("Re-run 2 scenarios")).toBeInTheDocument();
     expect(screen.getByText("Repeats: 3")).toBeInTheDocument();
     expect(
       screen.getByText("2 scenarios × 3 repeats = 6 calls"),
@@ -275,14 +274,17 @@ describe("RunTraceTable — re-running as a new simulation", () => {
     const user = userEvent.setup();
     total = 120;
     let finishFirst;
-    listMatchingScenarioKeys
+    listMatchingCalls
       .mockImplementationOnce(
         () =>
           new Promise((resolve) => {
             finishFirst = resolve;
           }),
       )
-      .mockResolvedValueOnce(["refund", "escalate"]);
+      .mockResolvedValueOnce({
+        callIds: ["r1", "e1"],
+        scenarioKeys: ["refund", "escalate"],
+      });
     renderTable();
     await openRows(user);
     await user.click(pageBox());
@@ -294,19 +296,26 @@ describe("RunTraceTable — re-running as a new simulation", () => {
     expect(screen.getByText("Counting scenarios…")).toBeInTheDocument();
     await user.keyboard("{Escape}");
     await openMenu(user);
-    expect(await screen.findByText("Re-run 2 scenarios")).toBeInTheDocument();
+    const latest = "2 scenarios × 3 repeats = 6 calls";
+    expect(await screen.findByText(latest)).toBeInTheDocument();
 
-    finishFirst(["refund", "escalate", "timeout"]);
+    finishFirst({
+      callIds: ["r1", "e1", "t1"],
+      scenarioKeys: ["refund", "escalate", "timeout"],
+    });
     await new Promise((r) => setTimeout(r, 0));
-    expect(screen.getByText("Re-run 2 scenarios")).toBeInTheDocument();
+    expect(screen.getByText(latest)).toBeInTheDocument();
   });
 
-  it("offers to try again when the scenarios can't be read", async () => {
+  it("offers to try again when the selected calls can't be read", async () => {
     const user = userEvent.setup();
     total = 120;
-    listMatchingScenarioKeys
+    listMatchingCalls
       .mockRejectedValueOnce(new Error("Network Error"))
-      .mockResolvedValueOnce(["refund", "escalate"]);
+      .mockResolvedValueOnce({
+        callIds: ["r1", "e1"],
+        scenarioKeys: ["refund", "escalate"],
+      });
     renderTable();
     await openRows(user);
     await user.click(pageBox());
@@ -316,12 +325,14 @@ describe("RunTraceTable — re-running as a new simulation", () => {
 
     await openMenu(user);
     expect(
-      await screen.findByText("Couldn't read the selected scenarios"),
+      await screen.findByText("Couldn't read the selected calls"),
     ).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Try again" }));
 
-    expect(await screen.findByText("Re-run 2 scenarios")).toBeInTheDocument();
-    expect(listMatchingScenarioKeys).toHaveBeenCalledTimes(2);
+    expect(
+      await screen.findByText("2 scenarios × 3 repeats = 6 calls"),
+    ).toBeInTheDocument();
+    expect(listMatchingCalls).toHaveBeenCalledTimes(2);
   });
 
   it("sends the trials picked in the menu", async () => {
@@ -408,11 +419,10 @@ describe("RunTraceTable — re-running as a new simulation", () => {
   it("reads every matching scenario when all matching calls are selected", async () => {
     const user = userEvent.setup();
     total = 120;
-    listMatchingScenarioKeys.mockResolvedValue([
-      "refund",
-      "escalate",
-      "timeout",
-    ]);
+    listMatchingCalls.mockResolvedValue({
+      callIds: ["r1", "r3", "e1", "t1"],
+      scenarioKeys: ["refund", "escalate", "timeout"],
+    });
     const { onRerunScenarios } = renderTable();
     await openRows(user);
     await user.click(pageBox());
@@ -422,8 +432,10 @@ describe("RunTraceTable — re-running as a new simulation", () => {
     await user.click(rowBox("refund · Trial 2"));
 
     await openMenu(user);
-    expect(await screen.findByText("Re-run 3 scenarios")).toBeInTheDocument();
-    expect(listMatchingScenarioKeys).toHaveBeenCalledWith("ex1", {}, ["r2"]);
+    expect(
+      await screen.findByText("3 scenarios × 3 repeats = 9 calls"),
+    ).toBeInTheDocument();
+    expect(listMatchingCalls).toHaveBeenCalledWith("ex1", {}, ["r2"]);
 
     await user.click(
       screen.getByRole("menuitem", { name: /Run as a new simulation/ }),
@@ -443,5 +455,119 @@ describe("RunTraceTable — re-running as a new simulation", () => {
     await user.click(rowBox("refund · Trial 1"));
 
     expect(screen.getByRole("button", { name: /^Re-run/ })).toBeDisabled();
+  });
+
+  it("offers only the new simulation when evals can't be re-run here", async () => {
+    const user = userEvent.setup();
+    renderTable();
+    await openRows(user);
+    await user.click(rowBox("refund · Trial 1"));
+    await openMenu(user);
+
+    expect(
+      screen.getByRole("menuitem", { name: /Run as a new simulation/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("menuitem", { name: /Re-run evals/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("offers only re-running evals when a new simulation can't start", async () => {
+    const user = userEvent.setup();
+    renderTable({ onRerunScenarios: null, onRerunEvals: vi.fn() });
+    await openRows(user);
+    await user.click(rowBox("refund · Trial 1"));
+    await openMenu(user);
+
+    expect(
+      screen.getByRole("menuitem", { name: /Re-run evals/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("menuitem", { name: /Run as a new simulation/ }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/Repeats:/)).not.toBeInTheDocument();
+  });
+
+  it("re-runs evals on exactly the ticked calls, then clears the ticks", async () => {
+    const user = userEvent.setup();
+    const onRerunEvals = vi.fn().mockResolvedValue({});
+    const { onRerunScenarios } = renderTable({ onRerunEvals });
+    await openRows(user);
+    await user.click(rowBox("refund · Trial 1"));
+    await user.click(rowBox("refund · Trial 3"));
+    await user.click(rowBox("escalate · Trial 2"));
+    await openMenu(user);
+
+    const option = screen.getByRole("menuitem", { name: /Re-run evals/ });
+    expect(option).toHaveTextContent(
+      "Grades the 3 selected calls again in this run. No new calls.",
+    );
+    await user.click(option);
+
+    expect(onRerunEvals).toHaveBeenCalledWith(["r1", "r3", "e2"]);
+    expect(onRerunScenarios).not.toHaveBeenCalled();
+    await waitFor(() => expect(rowBox("refund · Trial 1")).not.toBeChecked());
+    expect(screen.queryByText(/selected/)).not.toBeInTheDocument();
+  });
+
+  it("keeps the ticks when the eval re-run is refused", async () => {
+    const user = userEvent.setup();
+    const onRerunEvals = vi.fn().mockRejectedValue(new Error("refused"));
+    renderTable({ onRerunEvals });
+    await openRows(user);
+    await user.click(rowBox("refund · Trial 1"));
+    await openMenu(user);
+
+    await user.click(screen.getByRole("menuitem", { name: /Re-run evals/ }));
+
+    expect(onRerunEvals).toHaveBeenCalledTimes(1);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(rowBox("refund · Trial 1")).toBeChecked();
+    expect(screen.getByText("1 selected")).toBeInTheDocument();
+  });
+
+  it("re-runs evals on every matching call but the unticked ones", async () => {
+    const user = userEvent.setup();
+    total = 120;
+    listMatchingCalls.mockResolvedValue({
+      callIds: ["r1", "r3", "e1"],
+      scenarioKeys: ["refund", "escalate"],
+    });
+    const onRerunEvals = vi.fn().mockResolvedValue({});
+    renderTable({ onRerunEvals });
+    await openRows(user);
+    await user.click(pageBox());
+    await user.click(
+      screen.getByRole("button", { name: "Select all 120 matching calls" }),
+    );
+    await user.click(rowBox("refund · Trial 2"));
+    await openMenu(user);
+
+    const option = await screen.findByRole("menuitem", {
+      name: /Grades the 3 selected calls/,
+    });
+    expect(listMatchingCalls).toHaveBeenCalledWith("ex1", {}, ["r2"]);
+    await user.click(option);
+
+    expect(onRerunEvals).toHaveBeenCalledWith(["r1", "r3", "e1"]);
+  });
+
+  it("holds the eval option while the matching calls are still being read", async () => {
+    const user = userEvent.setup();
+    total = 120;
+    listMatchingCalls.mockImplementation(() => new Promise(() => {}));
+    const onRerunEvals = vi.fn();
+    renderTable({ onRerunEvals });
+    await openRows(user);
+    await user.click(pageBox());
+    await user.click(
+      screen.getByRole("button", { name: "Select all 120 matching calls" }),
+    );
+    await openMenu(user);
+
+    const option = screen.getByRole("menuitem", { name: /Re-run evals/ });
+    expect(option).toHaveAttribute("aria-disabled", "true");
+    await user.click(option);
+    expect(onRerunEvals).not.toHaveBeenCalled();
   });
 });

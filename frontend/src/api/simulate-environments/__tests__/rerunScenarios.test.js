@@ -2,13 +2,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("src/utils/axios", async (importOriginal) => {
   const actual = await importOriginal();
-  return { ...actual, default: { get: vi.fn() } };
+  return { ...actual, default: { get: vi.fn(), post: vi.fn() } };
 });
 
 const axiosMod = await import("src/utils/axios");
 const axios = axiosMod.default;
 const { endpoints } = axiosMod;
-const { listMatchingScenarioKeys, uniqueScenarioKeys } = await import(
+const { listMatchingCalls, rerunCallEvals, uniqueScenarioKeys } = await import(
   "../rerunScenarios"
 );
 
@@ -25,7 +25,7 @@ describe("uniqueScenarioKeys", () => {
   });
 });
 
-describe("listMatchingScenarioKeys", () => {
+describe("listMatchingCalls", () => {
   beforeEach(() => axios.get.mockReset());
 
   it("walks every page of the filtered calls, flat, and skips the unticked ones", async () => {
@@ -50,11 +50,14 @@ describe("listMatchingScenarioKeys", () => {
         },
       });
 
-    const keys = await listMatchingScenarioKeys("ex1", { status: ["failed"] }, [
+    const result = await listMatchingCalls("ex1", { status: ["failed"] }, [
       "c3",
     ]);
 
-    expect(keys).toEqual(["refund", "timeout"]);
+    expect(result).toEqual({
+      callIds: ["c1", "c2", "c4"],
+      scenarioKeys: ["refund", "timeout"],
+    });
     expect(axios.get).toHaveBeenCalledTimes(2);
     expect(axios.get).toHaveBeenNthCalledWith(
       1,
@@ -69,5 +72,25 @@ describe("listMatchingScenarioKeys", () => {
       },
     );
     expect(axios.get.mock.calls[1][1].params.page).toBe(2);
+  });
+});
+
+describe("rerunCallEvals", () => {
+  beforeEach(() => axios.post.mockReset());
+
+  it("asks for an eval-only re-run of exactly these calls", async () => {
+    axios.post.mockResolvedValue({ data: { success_count: 2 } });
+
+    const data = await rerunCallEvals("ex1", ["c1", "c2"]);
+
+    expect(data).toEqual({ success_count: 2 });
+    expect(axios.post).toHaveBeenCalledWith(
+      endpoints.testExecutions.rerunExecution("ex1"),
+      {
+        select_all: false,
+        rerun_type: "eval_only",
+        call_execution_ids: ["c1", "c2"],
+      },
+    );
   });
 });
