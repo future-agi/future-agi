@@ -35,6 +35,8 @@ from tfc.middleware.workspace_context import (
     get_current_workspace,
     set_workspace_context,
 )
+from tfc.utils.api_errors import ApiErrorCode
+from tfc.utils.error_codes import get_error_message
 
 logger = structlog.get_logger(__name__)
 
@@ -72,22 +74,39 @@ _transport_security = TransportSecuritySettings(
 )
 
 
+class APIKeyExpired(Exception):
+    """The key pair matched a key whose ``expires_at`` has passed."""
+
+
 def _authenticate_and_set_context(
     api_key: str, secret_key: str
 ) -> MCPRequestContext | None:
-    """Authenticate via API key and set per-request context."""
+    """Authenticate via API key and set per-request context.
+
+    Raises ``APIKeyExpired`` for an expired key so the caller can answer with
+    the same distinct error the REST API gives instead of "Invalid credentials".
+    """
     from accounts.models.user import OrgApiKey, User
     from accounts.models.workspace import Workspace
 
     try:
-        # Use .all() to bypass BaseModelManager workspace filtering
+        # Use .all() to bypass BaseModelManager workspace filtering. Not
+        # filtered on enabled: REST auth disables a key once it expires, and
+        # that key must still read as expired here, not as a wrong key.
         org_api_key = (
             OrgApiKey.objects.all()
             .select_related("organization", "workspace")
-            .get(api_key=api_key, secret_key=secret_key, enabled=True)
+            .get(api_key=api_key, secret_key=secret_key)
         )
     except OrgApiKey.DoesNotExist:
         logger.warning("mcp_auth_failed", api_key_prefix=api_key[:8] if api_key else "")
+        return None
+
+    if org_api_key.is_expired:
+        logger.warning("mcp_auth_key_expired", api_key_prefix=api_key[:8])
+        raise APIKeyExpired
+    if not org_api_key.enabled:
+        logger.warning("mcp_auth_failed", api_key_prefix=api_key[:8])
         return None
 
     if org_api_key.type == "system":
@@ -464,9 +483,27 @@ async def _mcp_streamable_with_auth(scope, receive, send):
             await response(scope, receive, send)
             return
 
-        context = await sync_to_async(_authenticate_and_set_context)(
-            api_key, secret_key
-        )
+        try:
+            context = await sync_to_async(_authenticate_and_set_context)(
+                api_key, secret_key
+            )
+        except APIKeyExpired:
+            response = StarletteResponse(
+                content=json.dumps(
+                    {
+                        "error": "invalid_token",
+                        "error_description": get_error_message("API_KEY_EXPIRED"),
+                        "code": ApiErrorCode.API_KEY_EXPIRED.value,
+                    }
+                ),
+                status_code=401,
+                headers={
+                    "Content-Type": "application/json",
+                    "WWW-Authenticate": www_auth,
+                },
+            )
+            await response(scope, receive, send)
+            return
         if not context:
             response = StarletteResponse(
                 content='{"error":"invalid_token","error_description":"Invalid credentials"}',
