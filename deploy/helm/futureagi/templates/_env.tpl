@@ -168,6 +168,7 @@ is only port-forwarded). */ -}}
       "CODE_EXECUTOR_URL" (ternary (printf "http://%s:8060" (include "futureagi.component" (dict "root" $root "component" "code-executor"))) "" $v.codeExecutor.enabled)
       "CODE_EXECUTOR_LOCAL_FALLBACK" (toString $v.codeExecutor.localFallback)
       "AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS" (toString $v.agentccGateway.allowPrivateProviderURLs)
+      "AGENTCC_GATEWAY_FI_BASE_URL" (printf "http://%s:%v" $backend $v.backend.service.port)
       "USAGE_EVENTS_ENABLED" (toString $v.config.usageEvents)
       "MODEL_SERVING_URL" (ternary (printf "http://%s:8080" (include "futureagi.component" (dict "root" $root "component" "serving"))) "" $v.serving.enabled)
       "FI_COLLECTOR_HOST" (include "futureagi.component" (dict "root" $root "component" "fi-collector"))

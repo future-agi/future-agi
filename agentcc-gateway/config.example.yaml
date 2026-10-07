@@ -375,30 +375,35 @@ logging:
   #   include_bodies: false      # Include full request/response bodies (default: false)
   #   buffer_size: 4096          # Async buffer size (default: 4096)
   #   workers: 2                 # Number of log worker goroutines (default: 2)
-# guardrails:
-#   enabled: true
-#   fail_open: true                     # If a guardrail times out or errors, allow the request (default: true)
-#   default_timeout: 5s                 # Default per-guardrail timeout
-#   rules:
-#     - name: "pii-detection"           # Must match a registered guardrail name
-#       stage: "pre"                    # "pre" (before provider) or "post" (after provider)
-#       mode: "sync"                    # "sync" (blocks pipeline) or "async" (fire-and-forget)
-#       action: "block"                 # "block", "warn", or "log"
-#       threshold: 0.8                  # Score above this triggers the action
-#       timeout: 3s                     # Per-rule timeout override
-#       config:                         # Rule-specific config passed to the guardrail
-#         entities: ["email", "phone", "ssn"]
-#     - name: "content-moderation"
-#       stage: "post"
-#       mode: "sync"
-#       action: "warn"
-#       threshold: 0.7
-#     - name: "usage-logger"
-#       stage: "pre"
-#       mode: "async"                   # Async guardrails don't block the pipeline
-#       action: "log"
-#       threshold: 0.0
 
+# Runs the guardrails set up in the dashboard (Gateway > Guardrails) and any
+# rules below. With enabled: false none of them run, though the dashboard
+# still shows them as on. A rule below applies to every org and takes the
+# place of the dashboard check of the same name.
+guardrails:
+  enabled: true
+  # fail_open: true                     # If a guardrail times out or crashes, allow the request (default: true).
+  #                                     # A guardrail whose service call fails counts as triggered.
+  # default_timeout: 5s                 # Default per-guardrail timeout
+  # rules:
+  #   - name: "pii-detection"           # Must match a registered guardrail name
+  #     stage: "pre"                    # "pre" (before provider) or "post" (after provider)
+  #     mode: "sync"                    # "sync" (blocks pipeline) or "async" (fire-and-forget)
+  #     action: "block"                 # "block", "warn", or "log"
+  #     threshold: 0.8                  # Score above this triggers the action
+  #     timeout: 3s                     # Per-rule timeout override
+  #     config:                         # Rule-specific config passed to the guardrail
+  #       entities: ["email", "phone", "ssn"]
+  #   - name: "content-moderation"
+  #     stage: "post"
+  #     mode: "sync"
+  #     action: "warn"
+  #     threshold: 0.7
+  #   - name: "usage-logger"
+  #     stage: "pre"
+  #     mode: "async"                   # Async guardrails don't block the pipeline
+  #     action: "log"
+  #     threshold: 0.0
 # admin:
 #   token: "your-secret-admin-token"
 

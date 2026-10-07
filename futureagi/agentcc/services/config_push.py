@@ -17,6 +17,7 @@ from agentcc.contracts.gateway_admin import (
 from agentcc.models import AgentccOrgConfig
 from agentcc.org_config_defaults import normalize_cache_config
 from agentcc.services.gateway_client import GatewayClientError, get_gateway_client
+from tfc.ee_loader import is_cloud_env
 
 logger = structlog.get_logger(__name__)
 
@@ -296,6 +297,11 @@ def _normalize_url(url):
     return url.strip().rstrip("/").lower()
 
 
+# Future AGI Cloud's API: the futureagi-eval guardrail's default Base URL, in
+# the gateway and in the dashboard.
+_FI_CLOUD_BASE_URL = "https://api.futureagi.com"
+
+
 def _inject_fi_credentials(checks, org_id):
     """
     Inject the org's FI platform credentials into futureagi-eval config.
@@ -307,6 +313,14 @@ def _inject_fi_credentials(checks, org_id):
       know their own platform's API key.
     - base_url present and matches this platform's BASE_URL → same as above,
       force-inject (heals user-typed wrong keys for the local platform).
+    - base_url is exactly Future AGI Cloud's (the dashboard's default) on an
+      install that is not Cloud, and AGENTCC_GATEWAY_FI_BASE_URL names this
+      install's API as its gateway reaches it → base_url becomes that URL and
+      the org's keys are injected as above. The gateway would otherwise call
+      this install for it anyway (its FI_BASE_URL), where keys typed for Cloud
+      fail authentication and a check set to block refuses every request.
+      This install's keys never go out with Cloud's URL: without the setting
+      the check keeps its URL and its keys.
     - base_url points at a *different* environment (e.g. local gateway
       explicitly targeting https://dev.api.futureagi.com) → respect whatever
       api_key/secret_key the user provided. Local keys would 401 against the
@@ -325,9 +339,19 @@ def _inject_fi_credentials(checks, org_id):
     cfg.setdefault("base_url", django_settings.BASE_URL)
     fi_check["config"] = cfg
 
-    targets_local_platform = _normalize_url(cfg.get("base_url")) == _normalize_url(
-        django_settings.BASE_URL
-    )
+    # Exactly the dashboard's default: the gateway's FI_BASE_URL replaces only
+    # that spelling, so any other is meant for Cloud.
+    if (
+        cfg["base_url"] == _FI_CLOUD_BASE_URL
+        and django_settings.AGENTCC_GATEWAY_FI_BASE_URL
+        and not is_cloud_env(django_settings.CLOUD_DEPLOYMENT)
+    ):
+        cfg["base_url"] = django_settings.AGENTCC_GATEWAY_FI_BASE_URL
+        targets_local_platform = True
+    else:
+        targets_local_platform = _normalize_url(cfg["base_url"]) == _normalize_url(
+            django_settings.BASE_URL
+        )
     if not targets_local_platform:
         logger.info(
             "fi_credentials_skipped_cross_env",

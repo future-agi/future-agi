@@ -202,6 +202,11 @@ test('managed mock background opt-in rejects old routes and missing required set
   expect(() => validateMockEnvironment('agentcc-gateway', {}, true)).toThrow('required agentcc-gateway');
 });
 
+test('managed mock accepts the backend pointing Future AGI Eval at its own API', () => {
+  // Optional, so it stays out of backgroundEnvironment, whose keys are all required.
+  validateMockEnvironment('backend', { ...backgroundEnvironment, AGENTCC_GATEWAY_FI_BASE_URL: 'http://backend' }, true);
+});
+
 for (const [name, value] of Object.entries({
   MODEL_SERVING_URL: 'https://serving.invalid', AGENTCC_INTERNAL_URL: 'https://gateway.invalid',
   AGENTCC_INTERNAL_API_KEY: 'real-key', EE_LICENSE_KEY: 'license', ENV_TYPE: 'production',
@@ -290,6 +295,7 @@ for (const [name, override, reason] of [
   ['private provider URLs', { AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS: 'true' }, 'unsupported gateway override'],
   ['foreign control plane', { AGENTCC_CONTROL_PLANE_URL: 'https://control-plane.invalid' }, 'unsupported gateway override'],
   ['unknown gateway setting', { AGENTCC_BASE_URL: 'https://gateway.invalid' }, 'unsupported gateway override'],
+  ['Future AGI Eval off the stack', { AGENTCC_GATEWAY_FI_BASE_URL: 'https://api.futureagi.com' }, 'unsupported gateway override'],
   ['nonlocal mail', { EMAIL_BACKEND: 'django.core.mail.backends.smtp.EmailBackend' }, 'nonlocal email backend'],
   ['Sentry', { SENTRY_ENABLED: 'true' }, 'Sentry must be disabled'],
   ['telemetry', { FUTURE_AGI_TELEMETRY_DISABLED: 'false' }, 'required app FUTURE_AGI_TELEMETRY_DISABLED'],

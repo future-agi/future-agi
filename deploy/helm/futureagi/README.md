@@ -825,6 +825,21 @@ upgrade.
 Some bundled datastore settings cannot change after install: see
 [Install-time settings](#install-time-settings).
 
+**Upgrading: dashboard guardrails now run.** The guardrails set up in the
+dashboard (Gateway > Guardrails) run from this chart on: earlier charts left
+them off in the gateway config, although the dashboard showed them as on. A
+check set to block refuses the requests it matches, and a check that calls a
+service (Future AGI Eval, a third-party provider, a webhook) triggers on
+every request while that call fails, whatever the Fail Open switch says.
+Turn such checks off before upgrading, and back on one at a time afterwards.
+Future AGI Eval at its default Base URL (Future AGI Cloud's) calls the
+backend, not Cloud, with your organization's own API key, whatever keys the
+check was given: the chart gives the backend `AGENTCC_GATEWAY_FI_BASE_URL`,
+the backend Service, and pushes such checks to the gateway with that URL.
+With `agentccGateway.existingConfigMap`, add `guardrails: {enabled: true}` to
+its `config.yaml`, then restart the gateway, which reads it only at start:
+`kubectl -n futureagi rollout restart deployment/futureagi-agentcc-gateway`.
+
 ### Moving to the first published chart
 
 From an install made with a git checkout of this chart:
@@ -1414,7 +1429,7 @@ the [configuration reference](https://docs.futureagi.com/docs/self-hosting/confi
 | `agentccGateway.replicas` | `1` | Replicas when autoscaling is off. |
 | `agentccGateway.preStopSleepSeconds` | `10` | Seconds each gateway pod waits before it stops (preStop, the kubelet's sleep action: Kubernetes 1.30 or newer, skipped on older clusters), so Services stop sending it requests first. 0: none. |
 | `agentccGateway.terminationGracePeriodSeconds` | `45` | Seconds a stopping gateway gets. Keep it at least the preStop sleep + `config.server.shutdown_timeout` (30 s, for in-flight streams) + 5 s (the gateway then sends its buffered request logs): 10 + 30 + 5 = 45. With `config.otel.exporter: otlp`, add up to 15 s for the exporter's last flush. |
-| `agentccGateway.existingConfigMap` | `""` | Existing ConfigMap with the gateway configuration under the key `config.yaml`. Empty: rendered from `config`. |
+| `agentccGateway.existingConfigMap` | `""` | Existing ConfigMap with the gateway configuration under the key `config.yaml`. Empty: rendered from `config`. Without `guardrails.enabled: true` in it, the guardrails set up in the dashboard do not run. |
 | `agentccGateway.config` | see values.yaml | Gateway configuration (agentcc-gateway/config.example.yaml documents every field). `${VAR}` expands from the environment: provider keys come from `secrets.llm`. `server.port` is also the container port: the chart pins it with the AGENTCC_PORT variable, which wins over an `existingConfigMap` too. |
 | `agentccGateway.controlPlaneSync` | `true` | Pull keys and org settings from the backend on start [AGENTCC_CONTROL_PLANE_URL, AGENTCC_SYNC_ON_STARTUP], so every replica and a restarted pod serve the same keys. |
 | `agentccGateway.allowPrivateProviderURLs` | `false` | Let org providers use base URLs on private networks, such as a local Ollama or vLLM [AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS], for the gateway and the backend. Loopback, link-local and cloud metadata addresses stay refused. Only when everyone who can add a provider is trusted: it puts every in-cluster service in reach of a provider URL. Gateway and backend images from before this setting ignore it and refuse every private URL. |

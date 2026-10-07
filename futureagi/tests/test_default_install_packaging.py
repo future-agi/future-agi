@@ -409,6 +409,52 @@ def test_the_gateway_loads_keys_from_the_app_and_sends_it_request_logs() -> None
     assert backend["AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS"] == private
 
 
+def test_the_gateway_sends_future_agi_eval_to_the_app() -> None:
+    """A Future AGI Eval guardrail at the dashboard's default Base URL (Future
+    AGI Cloud's) calls the app instead, as on Helm: otherwise the gateway posts
+    the prompts it checks to Cloud."""
+    gateway = _programs()["gateway"]["environment"]
+    assert 'FI_BASE_URL="http://127.0.0.1:8000"' in gateway
+    # Only the gateway's: the API and the workers read the name for their
+    # simulation runs. [supervisord]'s environment reaches every program.
+    app = _compose(STANDALONE_COMPOSE)["services"]["app"]["environment"]
+    assert "FI_BASE_URL" not in app
+    supervisor = _supervisor()
+    for section in supervisor.sections():
+        if section != "program:gateway":
+            for key, value in supervisor.items(section):
+                assert not re.search(r"\bFI_BASE_URL\b", value), f"[{section}] {key}"
+
+    distributed = _compose(DISTRIBUTED_COMPOSE)
+    gateway = distributed["services"]["agentcc-gateway"]["environment"]
+    assert gateway["FI_BASE_URL"] == gateway["AGENTCC_CONTROL_PLANE_URL"]
+    backend_env = distributed["x-backend-env"]
+    assert "FI_BASE_URL" not in backend_env
+    for name, service in distributed["services"].items():
+        env = service.get("environment") or {}
+        if set(backend_env) <= set(env):
+            assert "FI_BASE_URL" not in env, name
+
+
+def test_the_app_pushes_future_agi_eval_to_its_own_url() -> None:
+    """A Future AGI Eval guardrail at Future AGI Cloud's URL goes to the
+    gateway with AGENTCC_GATEWAY_FI_BASE_URL and the organization's own API
+    key (agentcc/services/config_push.py): it must be the app as the gateway
+    reaches it, the gateway's FI_BASE_URL."""
+    programs = _programs()
+    gateway = programs["gateway"]["environment"]
+    assert 'FI_BASE_URL="http://127.0.0.1:8000"' in gateway
+    assert (
+        'AGENTCC_GATEWAY_FI_BASE_URL="http://127.0.0.1:8000"'
+        in programs["api"]["environment"]
+    )
+
+    distributed = _compose(DISTRIBUTED_COMPOSE)
+    gateway = distributed["services"]["agentcc-gateway"]["environment"]
+    backend_env = distributed["x-backend-env"]
+    assert backend_env["AGENTCC_GATEWAY_FI_BASE_URL"] == gateway["FI_BASE_URL"]
+
+
 @pytest.mark.parametrize("configured", ["", "from-dot-env"])
 def test_start_makes_a_webhook_secret_only_when_none_is_set(
     tmp_path, configured
@@ -797,6 +843,7 @@ STANDALONE_OWN_BACKEND_ENV = {
 # Keys of Distributed's backends that the Standalone app does without, and why.
 DISTRIBUTED_OWN_BACKEND_ENV = {
     "FAST_STARTUP": "only futureagi/entrypoint.sh reads it; the app starts through bin/start",
+    "AGENTCC_GATEWAY_FI_BASE_URL": "the image sets it, beside its gateway",
 }
 
 

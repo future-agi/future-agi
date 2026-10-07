@@ -1195,6 +1195,12 @@ BASE_URL = os.getenv(
     ),
 )
 WEBSOCKET_ENDPOINT = os.getenv("WEBSOCKET_ENDPOINT", f"{BASE_URL}/call-websocket/")
+# This install's API as the AgentCC gateway reaches it, set by the compose files
+# and the Helm chart. A futureagi-eval guardrail at Future AGI Cloud's URL (the
+# dashboard's default) is pushed to the gateway with this URL and the org's
+# system API key (agentcc/services/config_push.py). Unset, it keeps the URL and
+# keys it was given: the org's key never goes out with Cloud's URL.
+AGENTCC_GATEWAY_FI_BASE_URL = os.getenv("AGENTCC_GATEWAY_FI_BASE_URL", "").strip()
 # fi-collector's OTLP/HTTP endpoint as an SDK outside the stack reaches it. The
 # SDKs default FI_BASE_URL to Future AGI Cloud, so the in-app SDK snippet and
 # the setup screen hand this out on a self-hosted install. Compose and the Helm
