@@ -231,6 +231,33 @@ def test_a_row_already_refunded_is_not_refunded_again(organization):
     assert _refunds(row).count() == 1
 
 
+def test_a_failed_refund_rolls_back_the_close_for_retry(organization, monkeypatch):
+    """The refund helper swallows its own errors and returns ``None``; closing
+    the row anyway would lose that refund for good, since the next tick only
+    reads rows still ``processing``."""
+    APICallType.objects.get_or_create(name=APICallTypeChoices.WALLET_REFUND.value)
+    row = _row(
+        organization,
+        source="experiment",
+        age=timedelta(hours=30),
+        deducted_cost="0.5",
+    )
+    monkeypatch.setattr(stale_usage, "refund_cost_for_api_call", lambda *a, **k: None)
+
+    assert recover_stale_usage_rows(apply=True, limit=100).recovered == []
+    row.refresh_from_db()
+    assert row.status == PROCESSING
+    assert not _refunds(row).exists()
+
+    monkeypatch.undo()
+    (closed,) = recover_stale_usage_rows(apply=True, limit=100).recovered
+
+    assert closed.refunded is True
+    row.refresh_from_db()
+    assert row.status == APICallStatusChoices.ERROR.value
+    assert _refunds(row).count() == 1
+
+
 def test_the_usage_app_registers_every_source_for_recovery():
     assert set(STALE_AFTER_BY_SOURCE) <= set(recoverable_sources())
 
