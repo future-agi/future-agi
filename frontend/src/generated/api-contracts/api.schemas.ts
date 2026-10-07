@@ -17431,6 +17431,7 @@ export interface HarnessEnvironmentSelectedEvalApi {
   inputs: HarnessEnvironmentEvalInputApi[];
   id: string;
   runnable: boolean;
+  editable: boolean;
 }
 
 export type HarnessEnvironmentResultApiEvaluationsItem = {
@@ -17570,6 +17571,138 @@ export interface HarnessEnvironmentToolCallEvaluationApi {
   enable_tool_evaluation: boolean;
 }
 
+/**
+ * Updated evaluation configuration parameters.
+ */
+export type HarnessEnvironmentEvalEditApiConfig = { [key: string]: unknown };
+
+/**
+ * Updated field mapping between test data and evaluation inputs.
+ */
+export type HarnessEnvironmentEvalEditApiMapping = { [key: string]: unknown };
+
+export type HarnessEnvironmentEvalEditApiFiltersItemFilterConfigAttributeValueTypesItem =
+  (typeof HarnessEnvironmentEvalEditApiFiltersItemFilterConfigAttributeValueTypesItem)[keyof typeof HarnessEnvironmentEvalEditApiFiltersItemFilterConfigAttributeValueTypesItem];
+
+export const HarnessEnvironmentEvalEditApiFiltersItemFilterConfigAttributeValueTypesItem =
+  {
+    string: "string",
+    number: "number",
+    boolean: "boolean",
+  } as const;
+
+export type HarnessEnvironmentEvalEditApiFiltersItemFilterConfig = {
+  /** Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map. */
+  filter_type: string;
+  /** Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null. */
+  filter_op: string;
+  /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
+  filter_value?: unknown;
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  col_type?: string;
+  /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
+  attribute_value_types?: HarnessEnvironmentEvalEditApiFiltersItemFilterConfigAttributeValueTypesItem[];
+};
+
+export type HarnessEnvironmentEvalEditApiFiltersItem = {
+  /** Column or attribute id to filter on. */
+  column_id: string;
+  /** Optional stable namespaced Property Registry identity. */
+  property_id?: string;
+  /** Optional UI label for chips and saved views. */
+  display_name?: string;
+  /** Optional source surface for mixed-source filters, for example traces, datasets, or simulation. */
+  source?: string;
+  /** Optional metric output type metadata used by eval and annotation filters. */
+  output_type?: string;
+  filter_config: HarnessEnvironmentEvalEditApiFiltersItemFilterConfig;
+};
+
+export interface HarnessEnvironmentEvalEditApi {
+  /** Updated evaluation configuration parameters. */
+  config?: HarnessEnvironmentEvalEditApiConfig;
+  /** Updated field mapping between test data and evaluation inputs. */
+  mapping?: HarnessEnvironmentEvalEditApiMapping;
+  /**
+   * Model to use for evaluations.
+   * @minLength 1
+   */
+  model?: string;
+  /** Enable granular error localization in evaluation results. */
+  error_localizer?: boolean;
+  /** UUID of a knowledge base to use for grounding. Pass null to clear. Switching template_id without providing an explicit kb_id will clear the KB association. */
+  kb_id?: string;
+  /** Updated canonical filter list to restrict which test results are evaluated. */
+  filters?: HarnessEnvironmentEvalEditApiFiltersItem[];
+  /**
+   * Updated name for the evaluation configuration.
+   * @minLength 1
+   */
+  name?: string;
+}
+
+export type SimulateEvalConfigResponseApiConfig = { [key: string]: unknown };
+
+export type SimulateEvalConfigResponseApiMapping = { [key: string]: unknown };
+
+export type SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem =
+  (typeof SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem)[keyof typeof SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem];
+
+export const SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem =
+  {
+    string: "string",
+    number: "number",
+    boolean: "boolean",
+  } as const;
+
+export type SimulateEvalConfigResponseApiFiltersItemFilterConfig = {
+  /** Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map. */
+  filter_type: string;
+  /** Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null. */
+  filter_op: string;
+  /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
+  filter_value?: unknown;
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  col_type?: string;
+  /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
+  attribute_value_types?: SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem[];
+};
+
+export type SimulateEvalConfigResponseApiFiltersItem = {
+  /** Column or attribute id to filter on. */
+  column_id: string;
+  /** Optional stable namespaced Property Registry identity. */
+  property_id?: string;
+  /** Optional UI label for chips and saved views. */
+  display_name?: string;
+  /** Optional source surface for mixed-source filters, for example traces, datasets, or simulation. */
+  source?: string;
+  /** Optional metric output type metadata used by eval and annotation filters. */
+  output_type?: string;
+  filter_config: SimulateEvalConfigResponseApiFiltersItemFilterConfig;
+};
+
+export interface SimulateEvalConfigResponseApi {
+  readonly id?: string;
+  /** @minLength 1 */
+  readonly name?: string;
+  readonly config?: SimulateEvalConfigResponseApiConfig;
+  readonly mapping?: SimulateEvalConfigResponseApiMapping;
+  readonly filters?: readonly SimulateEvalConfigResponseApiFiltersItem[];
+  readonly error_localizer?: boolean;
+  /** @minLength 1 */
+  readonly model?: string;
+  /** @minLength 1 */
+  readonly status?: string;
+  /** @minLength 1 */
+  readonly eval_group?: string;
+  readonly template_id?: string;
+  /** @minLength 1 */
+  readonly eval_type?: string;
+  readonly regradable?: boolean;
+  readonly editable?: boolean;
+}
+
 export interface HarnessRunCreateApi {
   /** @maxItems 1000 */
   scenario_ids: string[];
@@ -17608,6 +17741,18 @@ export interface HarnessEnvironmentRunEvaluationQueuedApi {
   skipped_in_flight: number;
   skipped_pending: number;
   completed_calls: number;
+}
+
+export interface HarnessEnvironmentRunEvaluationsApi {
+  /** @minItems 1 */
+  eval_config_ids: string[];
+  /** Saved on the environment before grading starts; left as it is when absent. */
+  enable_tool_evaluation?: boolean;
+}
+
+export interface HarnessEnvironmentRunEvaluationsQueuedApi {
+  /** How many of the run's calls were queued for grading. */
+  call_execution_count: number;
 }
 
 export type HarnessJobReadApiReceiptsItem = { [key: string]: unknown };
@@ -19724,64 +19869,6 @@ export type RunTestResponseApiScenariosDetailItem = { [key: string]: unknown };
 
 export type RunTestResponseApiSimulatorAgentDetail = { [key: string]: unknown };
 
-export type SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem =
-  (typeof SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem)[keyof typeof SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem];
-
-export const SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem =
-  {
-    string: "string",
-    number: "number",
-    boolean: "boolean",
-  } as const;
-
-export type SimulateEvalConfigResponseApiConfig = { [key: string]: unknown };
-
-export type SimulateEvalConfigResponseApiMapping = { [key: string]: unknown };
-
-export type SimulateEvalConfigResponseApiFiltersItemFilterConfig = {
-  /** Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map. */
-  filter_type: string;
-  /** Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null. */
-  filter_op: string;
-  /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
-  filter_value?: unknown;
-  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
-  col_type?: string;
-  /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
-  attribute_value_types?: SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem[];
-};
-
-export type SimulateEvalConfigResponseApiFiltersItem = {
-  /** Column or attribute id to filter on. */
-  column_id: string;
-  /** Optional stable namespaced Property Registry identity. */
-  property_id?: string;
-  /** Optional UI label for chips and saved views. */
-  display_name?: string;
-  /** Optional source surface for mixed-source filters, for example traces, datasets, or simulation. */
-  source?: string;
-  /** Optional metric output type metadata used by eval and annotation filters. */
-  output_type?: string;
-  filter_config: SimulateEvalConfigResponseApiFiltersItemFilterConfig;
-};
-
-export interface SimulateEvalConfigResponseApi {
-  readonly id?: string;
-  /** @minLength 1 */
-  readonly name?: string;
-  readonly config?: SimulateEvalConfigResponseApiConfig;
-  readonly mapping?: SimulateEvalConfigResponseApiMapping;
-  readonly filters?: readonly SimulateEvalConfigResponseApiFiltersItem[];
-  readonly error_localizer?: boolean;
-  /** @minLength 1 */
-  readonly model?: string;
-  /** @minLength 1 */
-  readonly status?: string;
-  /** @minLength 1 */
-  readonly eval_group?: string;
-  readonly template_id?: string;
-}
-
 export interface RunTestResponseApi {
   readonly id?: string;
   /**
@@ -20848,6 +20935,10 @@ export interface EvalConfigResponseApi {
   status?: EvalConfigResponseApiStatus;
   readonly eval_group?: string;
   readonly template_id?: string;
+  /** @minLength 1 */
+  readonly eval_type?: string;
+  readonly regradable?: boolean;
+  readonly editable?: boolean;
 }
 
 export interface AddEvalConfigsResponseApi {
@@ -21184,6 +21275,7 @@ export interface RunNewEvalsResponseApi {
   message: string;
   run_test_id: string;
   call_execution_count: number;
+  dispatched: boolean;
 }
 
 export interface RunTestScenarioItemResponseApi {

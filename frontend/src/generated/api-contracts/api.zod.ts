@@ -35394,6 +35394,7 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
         ),
         id: zod.string().uuid(),
         runnable: zod.boolean(),
+        editable: zod.boolean(),
       }),
     ),
     results: zod.array(
@@ -35602,6 +35603,7 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
         ),
         id: zod.string().uuid(),
         runnable: zod.boolean(),
+        editable: zod.boolean(),
       }),
     ),
     results: zod.array(
@@ -35873,6 +35875,7 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespo
           ),
           id: zod.string().uuid(),
           runnable: zod.boolean(),
+          editable: zod.boolean(),
         }),
       ),
       results: zod.array(
@@ -35911,11 +35914,193 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespo
   });
 
 /**
+ * Change one eval of this environment. Never grades anything; grade a run again afterwards to refresh its scores.
+ */
+export const SimulateApiHarnessEnvironmentsEditEvaluationParams = zod.object({
+  id: zod.string(),
+  eval_config_id: zod.string(),
+});
+
+export const SimulateApiHarnessEnvironmentsEditEvaluationBody = zod.object({
+  config: zod
+    .record(zod.string(), zod.unknown())
+    .optional()
+    .describe("Updated evaluation configuration parameters."),
+  mapping: zod
+    .record(zod.string(), zod.unknown())
+    .optional()
+    .describe("Updated field mapping between test data and evaluation inputs."),
+  model: zod
+    .string()
+    .min(1)
+    .optional()
+    .describe("Model to use for evaluations."),
+  error_localizer: zod
+    .boolean()
+    .optional()
+    .describe("Enable granular error localization in evaluation results."),
+  kb_id: zod
+    .string()
+    .uuid()
+    .optional()
+    .describe(
+      "UUID of a knowledge base to use for grounding. Pass null to clear. Switching template_id without providing an explicit kb_id will clear the KB association.",
+    ),
+  filters: zod
+    .array(
+      zod.object({
+        column_id: zod
+          .string()
+          .describe("Column or attribute id to filter on."),
+        property_id: zod
+          .string()
+          .optional()
+          .describe("Optional stable namespaced Property Registry identity."),
+        display_name: zod
+          .string()
+          .optional()
+          .describe("Optional UI label for chips and saved views."),
+        source: zod
+          .string()
+          .optional()
+          .describe(
+            "Optional source surface for mixed-source filters, for example traces, datasets, or simulation.",
+          ),
+        output_type: zod
+          .string()
+          .optional()
+          .describe(
+            "Optional metric output type metadata used by eval and annotation filters.",
+          ),
+        filter_config: zod.object({
+          filter_type: zod
+            .string()
+            .describe(
+              "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map.",
+            ),
+          filter_op: zod
+            .string()
+            .describe(
+              "Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null.",
+            ),
+          filter_value: zod
+            .unknown()
+            .optional()
+            .describe(
+              "Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type.",
+            ),
+          col_type: zod
+            .string()
+            .optional()
+            .describe(
+              "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+            ),
+          attribute_value_types: zod
+            .array(zod.enum(["string", "number", "boolean"]))
+            .optional()
+            .describe(
+              "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values.",
+            ),
+        }),
+      }),
+    )
+    .optional()
+    .describe(
+      "Updated canonical filter list to restrict which test results are evaluated.",
+    ),
+  name: zod
+    .string()
+    .min(1)
+    .optional()
+    .describe("Updated name for the evaluation configuration."),
+});
+
+export const simulateApiHarnessEnvironmentsEditEvaluationResponseFiltersDefault =
+  [];
+
+export const SimulateApiHarnessEnvironmentsEditEvaluationResponse = zod.object({
+  id: zod.string().uuid().optional(),
+  name: zod.string().min(1).optional(),
+  config: zod.record(zod.string(), zod.unknown()).optional(),
+  mapping: zod.record(zod.string(), zod.unknown()).optional(),
+  filters: zod
+    .array(
+      zod.object({
+        column_id: zod
+          .string()
+          .describe("Column or attribute id to filter on."),
+        property_id: zod
+          .string()
+          .optional()
+          .describe("Optional stable namespaced Property Registry identity."),
+        display_name: zod
+          .string()
+          .optional()
+          .describe("Optional UI label for chips and saved views."),
+        source: zod
+          .string()
+          .optional()
+          .describe(
+            "Optional source surface for mixed-source filters, for example traces, datasets, or simulation.",
+          ),
+        output_type: zod
+          .string()
+          .optional()
+          .describe(
+            "Optional metric output type metadata used by eval and annotation filters.",
+          ),
+        filter_config: zod.object({
+          filter_type: zod
+            .string()
+            .describe(
+              "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map.",
+            ),
+          filter_op: zod
+            .string()
+            .describe(
+              "Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null.",
+            ),
+          filter_value: zod
+            .unknown()
+            .optional()
+            .describe(
+              "Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type.",
+            ),
+          col_type: zod
+            .string()
+            .optional()
+            .describe(
+              "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+            ),
+          attribute_value_types: zod
+            .array(zod.enum(["string", "number", "boolean"]))
+            .optional()
+            .describe(
+              "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values.",
+            ),
+        }),
+      }),
+    )
+    .default(
+      simulateApiHarnessEnvironmentsEditEvaluationResponseFiltersDefault,
+    ),
+  error_localizer: zod.boolean().optional(),
+  model: zod.string().min(1).optional(),
+  status: zod.string().min(1).optional(),
+  eval_group: zod.string().min(1).optional(),
+  template_id: zod.string().uuid().optional(),
+  eval_type: zod.string().min(1).optional(),
+  regradable: zod.boolean().optional(),
+  editable: zod.boolean().optional(),
+});
+
+/**
  * Soft-delete only. The verdicts an eval already produced live on the call
 executions and in their receipts, not on this row, so a hard delete would
 leave past runs showing scores for something the environment no longer
-lists. Removing it stops future scenarios being graded by it and leaves
-the history it already wrote intact.
+lists. Removing an eval someone added stops future scenarios being
+graded by it and leaves the history it already wrote intact. An eval the
+harness reported itself comes back the next time the harness grades it.
  * @summary Stop running one eval against this environment.
  */
 export const SimulateApiHarnessEnvironmentsRemoveEvaluationParams = zod.object({
@@ -35970,6 +36155,26 @@ export const SimulateApiHarnessEnvironmentsRunsAddRunEvaluationBody =
       .string()
       .min(1)
       .max(simulateApiHarnessEnvironmentsRunsAddRunEvaluationBodyNameMax),
+  });
+
+/**
+ * Grade this finished run's calls again with chosen evals of the environment, without rerunning the calls.
+ */
+export const SimulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluationsParams =
+  zod.object({
+    id: zod.string(),
+    execution_id: zod.string(),
+  });
+
+export const SimulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluationsBody =
+  zod.object({
+    eval_config_ids: zod.array(zod.string().uuid()).min(1),
+    enable_tool_evaluation: zod
+      .boolean()
+      .optional()
+      .describe(
+        "Saved on the environment before grading starts; left as it is when absent.",
+      ),
   });
 
 /**
@@ -40235,6 +40440,9 @@ export const SimulateApiRunTestsListResponseItem = zod.object({
         status: zod.string().min(1).optional(),
         eval_group: zod.string().min(1).optional(),
         template_id: zod.string().uuid().optional(),
+        eval_type: zod.string().min(1).optional(),
+        regradable: zod.boolean().optional(),
+        editable: zod.boolean().optional(),
       }),
     )
     .optional(),
@@ -40313,6 +40521,9 @@ export const SimulateApiRunTestsListResponseItem = zod.object({
         status: zod.string().min(1).optional(),
         eval_group: zod.string().min(1).optional(),
         template_id: zod.string().uuid().optional(),
+        eval_type: zod.string().min(1).optional(),
+        regradable: zod.boolean().optional(),
+        editable: zod.boolean().optional(),
       }),
     )
     .optional(),
@@ -41773,6 +41984,9 @@ export const SimulatePromptTemplatesSimulationsListResponse = zod.object({
                 status: zod.string().min(1).optional(),
                 eval_group: zod.string().min(1).optional(),
                 template_id: zod.string().uuid().optional(),
+                eval_type: zod.string().min(1).optional(),
+                regradable: zod.boolean().optional(),
+                editable: zod.boolean().optional(),
               }),
             )
             .optional(),
@@ -41853,6 +42067,9 @@ export const SimulatePromptTemplatesSimulationsListResponse = zod.object({
                 status: zod.string().min(1).optional(),
                 eval_group: zod.string().min(1).optional(),
                 template_id: zod.string().uuid().optional(),
+                eval_type: zod.string().min(1).optional(),
+                regradable: zod.boolean().optional(),
+                editable: zod.boolean().optional(),
               }),
             )
             .optional(),
@@ -42218,6 +42435,9 @@ export const SimulatePromptTemplatesSimulationsReadResponse = zod.object({
           status: zod.string().min(1).optional(),
           eval_group: zod.string().min(1).optional(),
           template_id: zod.string().uuid().optional(),
+          eval_type: zod.string().min(1).optional(),
+          regradable: zod.boolean().optional(),
+          editable: zod.boolean().optional(),
         }),
       )
       .optional(),
@@ -42296,6 +42516,9 @@ export const SimulatePromptTemplatesSimulationsReadResponse = zod.object({
           status: zod.string().min(1).optional(),
           eval_group: zod.string().min(1).optional(),
           template_id: zod.string().uuid().optional(),
+          eval_type: zod.string().min(1).optional(),
+          regradable: zod.boolean().optional(),
+          editable: zod.boolean().optional(),
         }),
       )
       .optional(),
@@ -42494,6 +42717,9 @@ export const SimulatePromptTemplatesSimulationsPartialUpdateResponse =
             status: zod.string().min(1).optional(),
             eval_group: zod.string().min(1).optional(),
             template_id: zod.string().uuid().optional(),
+            eval_type: zod.string().min(1).optional(),
+            regradable: zod.boolean().optional(),
+            editable: zod.boolean().optional(),
           }),
         )
         .optional(),
@@ -42572,6 +42798,9 @@ export const SimulatePromptTemplatesSimulationsPartialUpdateResponse =
             status: zod.string().min(1).optional(),
             eval_group: zod.string().min(1).optional(),
             template_id: zod.string().uuid().optional(),
+            eval_type: zod.string().min(1).optional(),
+            regradable: zod.boolean().optional(),
+            editable: zod.boolean().optional(),
           }),
         )
         .optional(),
@@ -42837,6 +43066,9 @@ export const SimulateRunTestsListResponse = zod.object({
               status: zod.string().min(1).optional(),
               eval_group: zod.string().min(1).optional(),
               template_id: zod.string().uuid().optional(),
+              eval_type: zod.string().min(1).optional(),
+              regradable: zod.boolean().optional(),
+              editable: zod.boolean().optional(),
             }),
           )
           .optional(),
@@ -42915,6 +43147,9 @@ export const SimulateRunTestsListResponse = zod.object({
               status: zod.string().min(1).optional(),
               eval_group: zod.string().min(1).optional(),
               template_id: zod.string().uuid().optional(),
+              eval_type: zod.string().min(1).optional(),
+              regradable: zod.boolean().optional(),
+              editable: zod.boolean().optional(),
             }),
           )
           .optional(),
@@ -43277,6 +43512,9 @@ export const SimulateRunTestsReadResponse = zod.object({
         status: zod.string().min(1).optional(),
         eval_group: zod.string().min(1).optional(),
         template_id: zod.string().uuid().optional(),
+        eval_type: zod.string().min(1).optional(),
+        regradable: zod.boolean().optional(),
+        editable: zod.boolean().optional(),
       }),
     )
     .optional(),
@@ -43353,6 +43591,9 @@ export const SimulateRunTestsReadResponse = zod.object({
         status: zod.string().min(1).optional(),
         eval_group: zod.string().min(1).optional(),
         template_id: zod.string().uuid().optional(),
+        eval_type: zod.string().min(1).optional(),
+        regradable: zod.boolean().optional(),
+        editable: zod.boolean().optional(),
       }),
     )
     .optional(),
@@ -43537,6 +43778,9 @@ export const SimulateRunTestsPartialUpdateResponse = zod.object({
         status: zod.string().min(1).optional(),
         eval_group: zod.string().min(1).optional(),
         template_id: zod.string().uuid().optional(),
+        eval_type: zod.string().min(1).optional(),
+        regradable: zod.boolean().optional(),
+        editable: zod.boolean().optional(),
       }),
     )
     .optional(),
@@ -43615,6 +43859,9 @@ export const SimulateRunTestsPartialUpdateResponse = zod.object({
         status: zod.string().min(1).optional(),
         eval_group: zod.string().min(1).optional(),
         template_id: zod.string().uuid().optional(),
+        eval_type: zod.string().min(1).optional(),
+        regradable: zod.boolean().optional(),
+        editable: zod.boolean().optional(),
       }),
     )
     .optional(),
@@ -43867,6 +44114,9 @@ export const SimulateRunTestsComponentsPartialUpdateResponse = zod.object({
         status: zod.string().min(1).optional(),
         eval_group: zod.string().min(1).optional(),
         template_id: zod.string().uuid().optional(),
+        eval_type: zod.string().min(1).optional(),
+        regradable: zod.boolean().optional(),
+        editable: zod.boolean().optional(),
       }),
     )
     .optional(),
@@ -43945,6 +44195,9 @@ export const SimulateRunTestsComponentsPartialUpdateResponse = zod.object({
         status: zod.string().min(1).optional(),
         eval_group: zod.string().min(1).optional(),
         template_id: zod.string().uuid().optional(),
+        eval_type: zod.string().min(1).optional(),
+        regradable: zod.boolean().optional(),
+        editable: zod.boolean().optional(),
       }),
     )
     .optional(),
@@ -44618,6 +44871,7 @@ export const SimulateRunTestsRunNewEvalsCreateResponse = zod.object({
   message: zod.string().min(1),
   run_test_id: zod.string().uuid(),
   call_execution_count: zod.number(),
+  dispatched: zod.boolean(),
 });
 
 /**

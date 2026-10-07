@@ -375,51 +375,76 @@ def build_evaluation_catalog(
     execution: TestExecution,
 ) -> tuple[list[dict[str, str]], set[str]]:
     """Return stable configured and harness-native columns for an execution."""
-    cache_key = None
-    if execution.status == TestExecution.ExecutionStatus.COMPLETED:
-        version = execution.completed_at or execution.updated_at
-        cache_key = f"simulate:v3:eval-catalog:v2:{execution.id}:{version.timestamp()}"
-        cached = cache.get(cache_key)
-        if cached is not None:
-            return cached[0], set(cached[1])
+    # Configs can change after a run completes, so they must always be read
+    # fresh; only the harness-native scan below is safe to cache.
     configs = list(
         SimulateEvalConfig.objects.filter(
             run_test=execution.run_test, deleted=False
         ).values("id", "name")
     )
-    columns = [
+    configured_columns = [
         {"id": str(config["id"]), "name": str(config["name"]), "kind": "evaluation"}
         for config in configs
     ]
-    live_eval_ids = {column["id"] for column in columns}
-    known = set(live_eval_ids)
-    # The catalog is execution-wide so columns never vary by page or filter.
-    outputs = CallExecution.objects.filter(test_execution=execution).values_list(
-        "eval_outputs", "call_metadata"
-    )
-    for eval_outputs, metadata in outputs:
-        if not isinstance(eval_outputs, dict):
-            continue
-        sub_goal_names = receipt_sub_goal_names(metadata)
-        for eval_id, data in eval_outputs.items():
-            eval_id = str(eval_id)
-            if (
-                eval_id in known
-                or not isinstance(data, dict)
-                or data.get("source") != "harness"
-            ):
+    live_eval_ids = {column["id"] for column in configured_columns}
+
+    harness_cache_key = None
+    harness_columns = None
+    if execution.status == TestExecution.ExecutionStatus.COMPLETED:
+        version = execution.completed_at or execution.updated_at
+        harness_cache_key = (
+            f"simulate:v3:harness-eval-columns:v2:{execution.id}:{version.timestamp()}"
+        )
+        harness_columns = cache.get(harness_cache_key)
+        # Treat any non-list value as a miss so a key collision can never
+        # crash the table.
+        if not isinstance(harness_columns, list):
+            harness_columns = None
+
+    if harness_columns is None:
+        # Cache every harness column, including ones a config covers today:
+        # that config may be deleted later and must not leave a gap.
+        seen = set()
+        harness_columns = []
+        # The catalog is execution-wide so columns never vary by page or filter.
+        # Oldest call first: saving a call must not reorder the columns, so a
+        # cached scan and a fresh one always agree.
+        outputs = (
+            CallExecution.objects.filter(test_execution=execution)
+            .order_by("created_at", "id")
+            .values_list("eval_outputs", "call_metadata")
+        )
+        for eval_outputs, metadata in outputs:
+            if not isinstance(eval_outputs, dict):
                 continue
-            name = str(data.get("name") or eval_id)
-            columns.append(
-                {
-                    "id": eval_id,
-                    "name": name,
-                    "kind": "sub_goal" if name in sub_goal_names else "evaluation",
-                }
-            )
-            known.add(eval_id)
-    if cache_key:
-        cache.set(cache_key, (columns, list(live_eval_ids)), timeout=60 * 60)
+            sub_goal_names = receipt_sub_goal_names(metadata)
+            for eval_id, data in eval_outputs.items():
+                eval_id = str(eval_id)
+                if (
+                    eval_id in seen
+                    or not isinstance(data, dict)
+                    or data.get("source") != "harness"
+                ):
+                    continue
+                name = str(data.get("name") or eval_id)
+                harness_columns.append(
+                    {
+                        "id": eval_id,
+                        "name": name,
+                        "kind": "sub_goal" if name in sub_goal_names else "evaluation",
+                    }
+                )
+                seen.add(eval_id)
+        if harness_cache_key:
+            cache.set(harness_cache_key, harness_columns, timeout=60 * 60)
+
+    known = set(live_eval_ids)
+    columns = list(configured_columns)
+    for column in harness_columns:
+        if column["id"] in known:
+            continue
+        columns.append(column)
+        known.add(column["id"])
     return columns, live_eval_ids
 
 

@@ -1886,12 +1886,18 @@ def _get_or_create_harness_eval_config(
     template: EvalTemplate,
     name: str,
 ) -> SimulateEvalConfig:
-    """Idempotently bind one external result column to its originating run."""
+    """Idempotently bind one external result column to its originating run.
+
+    The id is fixed by the run, the template and the name, so a column a
+    person removed is found again here, soft deleted, rather than created a
+    second time under the same primary key. The harness graded it again, so
+    it is listed again.
+    """
     config_id = uuid.uuid5(
         _HARNESS_EVAL_NAMESPACE,
         f"{run_test.id}:{template.id}:{name}",
     )
-    config, _ = SimulateEvalConfig.objects.get_or_create(
+    config, _ = SimulateEvalConfig.all_objects.get_or_create(
         id=config_id,
         defaults={
             "eval_template": template,
@@ -1904,6 +1910,10 @@ def _get_or_create_harness_eval_config(
             "error_localizer": True,
         },
     )
+    if config.deleted:
+        config.deleted = False
+        config.deleted_at = None
+        config.save(update_fields=["deleted", "deleted_at", "updated_at"])
     return config
 
 
