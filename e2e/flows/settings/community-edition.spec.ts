@@ -28,6 +28,7 @@ const EDITION = '/api/edition/';
 const INVITE = '/accounts/organization/invite/';
 const WORKSPACE_CREATE = '/accounts/workspaces/';
 const ORG_CREATE = '/accounts/organizations/new/';
+const ORG_SWITCH = '/accounts/organizations/switch/';
 // e2e/flows/settings/mcp-tool-groups.spec.ts (SET-E2E-001): { tool_name, params }.
 const MCP_CONFIG = '/mcp/config/';
 const TOOL_CALL = '/mcp/internal/tool-call/';
@@ -95,6 +96,8 @@ interface GateBody { error: { code: string }; enterprise_gate: Record<string, un
 // e2e/lib/provisioning.ts.
 interface UserInfo { id: string; organization: { id: string }; default_workspace_id: string }
 interface KeysEnvelope { data: { api_key: string; secret_key: string } }
+// accounts/views/organization_views.py CreateAdditionalOrganizationView (201).
+interface OrgCreated { result: { organization: { id: string } } }
 type Row = Record<string, unknown>;
 
 const isPost = (path: string) => (r: Response) =>
@@ -462,10 +465,15 @@ base('SET-E2E-002: a Community admin meets the Enterprise gate and activates a l
       expect(workspaces.map((w) => w.id)[0]).toBe(ids.workspaceId);
       expect(workspaces.slice(1).map((w) => w.name)).toEqual([minted.ws2]);
 
-      expect((await createOrganization(minted.org2)).status()).toBeLessThan(300);
-      await expect(page.getByText('Organization created successfully', { exact: true }))
-        .toBeVisible({ timeout: UI_READY });
-      expect((await organizations()).map((o) => o.display_name)).toEqual([minted.org, minted.org2]);
+      // CreateOrganizationModal switches into the new organization on success
+      // (OrganizationContext.switchOrganization), then reloads.
+      const switched = page.waitForResponse(isPost(ORG_SWITCH), { timeout: UI_READY });
+      const orgCreated = await createOrganization(minted.org2);
+      expect(orgCreated.status()).toBe(201);
+      const created: OrgCreated = await orgCreated.json();
+      expect((await switched).request().postDataJSON()).toEqual({ organization_id: created.result.organization.id });
+      expect((await organizations()).map((o) => [o.id, o.display_name]))
+        .toEqual([[ids.organizationId, minted.org], [created.result.organization.id, minted.org2]]);
     }, { timeout: STAGE.enterpriseCreates });
 
     const [org2] = await pg().pg<{ id: string }>('SELECT id FROM accounts_organization WHERE display_name = $1',
