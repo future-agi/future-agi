@@ -14,20 +14,49 @@ real Kafka, ClickHouse, Django and Postgres, and a scripted gateway response.
 
 ## Build locally
 
-From this worker repository, follow the [root build instructions](../../README.md)
-to fetch the private runtime tarball from GitHub Packages. Then:
+Moved here from the separate `future-agi/omega-error-feed-worker` repo
+(TH-8393) — see **EE tree and runtime-source decision** below. Requires Node
+22, npm and Docker with BuildKit. From the monorepo root:
 
 ```sh
-node workers/error-feed-node/prepare-image.mjs
+NODE_AUTH_TOKEN="$(gh auth token)" node futureagi/ee/workers/error-feed-node/fetch-runtime.mjs
+node futureagi/ee/workers/error-feed-node/prepare-image.mjs
 docker build -t omega-error-feed:local .artifacts/node-worker
 docker run --rm omega-error-feed:local worker/worker.mjs --healthcheck
-docker run --rm -i --network none omega-error-feed:local --input-type=module < workers/error-feed-node/kafka-codec-smoke.mjs
+docker run --rm -i --network none omega-error-feed:local --input-type=module < futureagi/ee/workers/error-feed-node/kafka-codec-smoke.mjs
 ```
 
-Tarballs and the build context are generated under ignored `.artifacts/`.
-Only that allowlisted context is sent to Docker; never build this worker from
-the repository root. The final image contains compiled runtime packages and
-worker code, not source checkout, .git, experiment traces or credentials.
+`fetch-runtime.mjs` needs a GitHub token with `packages:read` on the private
+`@future-agi/omega-runtime` package (published from the separate `omega`
+repo); it checks the tarball against its reviewed SHA-256 pin. Tarballs and
+the build context are generated under ignored `.artifacts/` at the monorepo
+root (`resolve(worker, '../../.artifacts/node-worker')`, i.e.
+`futureagi/ee/.artifacts/node-worker`). Only that allowlisted context is sent
+to Docker; never build this worker from the repository root. The final image
+contains compiled runtime packages and worker code, not source checkout,
+.git, experiment traces or credentials.
+
+## EE tree and runtime-source decision (TH-8393)
+
+Two choices this move made, written down per the ticket:
+
+1. **Where in the monorepo.** This worker is cloud-only — not something a
+   self-hosted customer runs — so it lives under `ee/` (`ee/workers/error-feed-node`),
+   the same tree as `ee/usage`, `ee/licensing`, etc. The OSS image still ships
+   this directory (nothing here is physically stripped; `ee/` code ships in
+   every image and is gated by license checks the same way the existing EE
+   apps are — confirmed no file outside `ee/` imports or references this
+   worker, so the OSS Python backend boots identically whether or not this
+   directory exists).
+2. **Fetch the published `@future-agi/omega-runtime` package, not build it
+   from the `omega` repo's source.** The package is already a deliberate,
+   reviewed artifact — pinned exact version, sha256 and source commit in
+   `fetch-runtime.mjs` — and the `omega` repo itself is large and has its own
+   independent release cadence. Pulling its full source into this monorepo's
+   build graph for one dependency would trade a small, well-defined coupling
+   (one pinned npm package) for a much bigger one (a second repo's entire
+   history and build surface). Keeping the fetch is the smaller, safer
+   coupling.
 
 The collector emits Snappy-compressed records. The daemon registers the pinned
 `kafkajs-snappy` / `snappyjs` decoder; KafkaJS alone cannot consume these records.
@@ -289,9 +318,8 @@ for offline builds while its source digest matches. The final Docker install
 remains network-free. The pinned fi-core 1.0.0 uses its working simple exporter;
 its batch option does not attach the batch processor correctly with OTel 2.x.
 
-Validation: `node --test workers/error-feed-node/*.test.mjs
-workers/error-feed-node/grouping/*.test.mjs
-workers/error-feed-node/grouping/f6/*.test.mjs` (put the command on one line).
+Validation: from `ee/workers/error-feed-node`, `node --test` (recursively
+discovers every `*.test.mjs` under this directory, grouping and f6 included).
 The export test sends real SDK spans to a local HTTP receiver using fixture
 credentials. It does not send customer data or verify delivery to a live account.
 See the [FutureAGI quickstart](https://docs.futureagi.com/docs/observe/quickstart)
