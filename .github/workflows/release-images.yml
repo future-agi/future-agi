@@ -60,8 +60,8 @@ on:
         description: >-
           Comma-separated components to run for that tag: frontend, agentcc-gateway,
           serving, fi-collector, serving-gpu, code-executor, backend, backend-slim,
-          standalone, simulation-runner, ee, docs, helm-chart, bump (the deployment
-          bump retry).
+          standalone, simulation-runner, worker, ee, docs, helm-chart, bump (the
+          deployment bump retry).
         required: false
         default: bump
         type: string
@@ -98,7 +98,7 @@ jobs:
           fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
 
-          all="frontend agentcc-gateway serving fi-collector serving-gpu code-executor backend backend-slim standalone simulation-runner ee docs helm-chart bump"
+          all="frontend agentcc-gateway serving fi-collector serving-gpu code-executor backend backend-slim standalone simulation-runner worker ee docs helm-chart bump"
           if [ "$GITHUB_EVENT_NAME" = "push" ]; then
             selected="$all"
           else
@@ -151,6 +151,7 @@ jobs:
               case "$c" in
                 frontend | agentcc-gateway | serving | fi-collector | code-executor | standalone) repo="futureagi/$c" tag="$v" ;;
                 serving-gpu) repo="futureagi/serving" tag="$v-gpu" ;;
+                worker) repo="futureagi/omega-error-feed-worker" tag="$v" ;;
                 backend) repo="futureagi/future-agi" tag="$v" ;;
                 backend-slim) repo="futureagi/future-agi" tag="$v-slim" ;;
                 *) continue ;;
@@ -579,52 +580,71 @@ jobs:
             -F 'client_payload[release_url]'="https://github.com/${GITHUB_REPOSITORY}/releases/tag/${VERSION}" \
             -F 'client_payload[release_body_b64]'="${body_b64}"
 
+  # The worker used to be a separate repo (omega-error-feed-worker) with its
+  # own release path: a GitHub App token, a dispatch-and-poll script, and a
+  # repo variable picking which worker commit shipped. TH-8393 moved its
+  # source into ee/workers/error-feed-node, so it now builds from this
+  # commit like every other image, no second repo or dispatch involved.
+  #
+  # The image still needs one external input: the private
+  # @future-agi/omega-runtime package, published from the separate `omega`
+  # repo to GitHub Packages. fetch-runtime.mjs pulls the exact pinned
+  # version+sha256 it already checks; this job does not build omega-runtime
+  # from source (see the EE tree decision note in ee/workers/error-feed-node/README.md).
   release-worker:
-    needs: [guard, approve, build, backend, code-executor]
-    if: >-
-      always() && needs.approve.result == 'success' &&
-      contains(needs.guard.outputs.components, '"bump"') &&
-      (github.event_name == 'workflow_dispatch' ||
-        (needs.build.result == 'success' && needs.backend.result == 'success' &&
-          needs.code-executor.result == 'success'))
+    needs: [guard, approve]
+    if: contains(needs.guard.outputs.components, '"worker"')
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     environment: production-auto
+    permissions:
+      contents: read
+      packages: read
     outputs:
-      digest: ${{ steps.worker.outputs.digest }}
-      source_sha: ${{ steps.worker.outputs.source_sha }}
+      digest: ${{ steps.publish.outputs.digest }}
+    env:
+      IMAGE: futureagi/omega-error-feed-worker
+      VERSION: ${{ needs.guard.outputs.version }}
+      WORKER_DIR: futureagi/ee/workers/error-feed-node
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/create-github-app-token@v2
-        id: app-token
+      - uses: actions/setup-node@v4
         with:
-          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
-          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
-          owner: future-agi
-          repositories: omega-error-feed-worker
-          permission-contents: write
-          permission-actions: read
-      - name: Build worker and verify release receipt (retry only verifies)
-        id: worker
+          node-version: '22'
+      - name: Fetch the pinned @future-agi/omega-runtime package
+        working-directory: ${{ env.WORKER_DIR }}
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          VERSION: ${{ needs.guard.outputs.version }}
-          WORKER_RELEASE_REF: ${{ vars.OMEGA_WORKER_RELEASE_REF }}
-          RELEASE_REQUEST_ID: ${{ github.run_id }}-${{ github.run_attempt }}
-        run: python3 scripts/release-error-feed-worker.py
+          # GITHUB_TOKEN needs packages:read on the private omega-runtime
+          # package; if org policy cannot grant that to the default token,
+          # set OMEGA_PACKAGES_READ_TOKEN (PAT or app token, read:packages).
+          GITHUB_TOKEN: ${{ secrets.OMEGA_PACKAGES_READ_TOKEN || secrets.GITHUB_TOKEN }}
+        run: node fetch-runtime.mjs
+      - name: Prepare the allowlisted Docker build context
+        working-directory: ${{ env.WORKER_DIR }}
+        run: node prepare-image.mjs
+      - name: Run the worker's test suite against the prepared context
+        working-directory: ${{ env.WORKER_DIR }}/../../.artifacts/node-worker
+        run: npm ci --offline --ignore-scripts --no-audit --no-fund
+      - name: Run the worker's own tests (source tree, not the prepared context)
+        working-directory: ${{ env.WORKER_DIR }}
+        run: node --test
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-      - name: Verify the registry still serves the tested digest
-        env:
-          VERSION: ${{ needs.guard.outputs.version }}
-          EXPECTED_DIGEST: ${{ steps.worker.outputs.digest }}
+      - name: Build and push (linux/amd64 only, matching the pre-move image)
+        id: publish
+        working-directory: ${{ env.WORKER_DIR }}/../../.artifacts/node-worker
         run: |
           set -eu
-          actual=$(docker buildx imagetools inspect "futureagi/omega-error-feed-worker:$VERSION" --format '{{json .Manifest}}' | jq -er '.digest')
-          test "$actual" = "$EXPECTED_DIGEST"
+          minor="${VERSION%.*}"
+          docker buildx build --platform linux/amd64 --push \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --label "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -t "$IMAGE:$VERSION" -t "$IMAGE:$minor" -t "$IMAGE:latest" .
+          digest=$(docker buildx imagetools inspect "$IMAGE:$VERSION" --format '{{json .Manifest}}' | jq -er '.digest')
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
 
   dispatch-docs:
     needs: [guard, approve, build, backend, code-executor]
@@ -701,11 +721,10 @@ jobs:
         run: python3 scripts/image_size_budget.py report --tag "$VERSION"
 
   bump-deployment:
-    needs: [guard, dispatch-ee, resolve-sdk, simulation-runner, release-worker]
+    needs: [guard, dispatch-ee, resolve-sdk, simulation-runner]
     if: >-
       always() &&
       needs.guard.result == 'success' &&
-      needs.release-worker.result == 'success' &&
       (
         github.event_name == 'workflow_dispatch' ||
         (needs.dispatch-ee.result == 'success' && needs.simulation-runner.result == 'success')
@@ -715,8 +734,6 @@ jobs:
       VERSION: ${{ needs.guard.outputs.version }}
       SDK_VERSION: ${{ needs.resolve-sdk.outputs.sdk_version }}
       SDK_WHEEL_SHA256: ${{ needs.resolve-sdk.outputs.sdk_wheel_sha256 }}
-      WORKER_DIGEST: ${{ needs.release-worker.outputs.digest }}
-      WORKER_SOURCE_SHA: ${{ needs.release-worker.outputs.source_sha }}
       # yq paths of every platform-image tag per values file. If a path list
       # drifts from the values files, the sanity check below fails the job
       # rather than silently bumping a subset.
@@ -784,10 +801,11 @@ jobs:
           set -euo pipefail
           # EE dispatch is asynchronous. Wait for the exact stable release tag;
           # retries must never fall back to latest, the OSS backend, or old pins.
-          for component in backend collector; do
+          for component in backend collector worker; do
             case "$component" in
               backend) repository=futureagi/future-agi-ee ;;
               collector) repository=futureagi/fi-collector ;;
+              worker) repository=futureagi/omega-error-feed-worker ;;
             esac
             digest=""
             for attempt in $(seq 1 40); do
@@ -811,6 +829,7 @@ jobs:
         env:
           BACKEND_DIGEST: ${{ steps.catalog-images.outputs.backend_digest }}
           COLLECTOR_DIGEST: ${{ steps.catalog-images.outputs.collector_digest }}
+          WORKER_DIGEST: ${{ steps.catalog-images.outputs.worker_digest }}
         shell: bash
         run: |
           set -euo pipefail
@@ -895,7 +914,7 @@ jobs:
             fi
             gh pr create --repo future-agi/deployment --base main --head "$branch" \
               --title "chore(release): bump platform to ${VERSION}" \
-              --body "Automated bump for [${VERSION}](https://github.com/future-agi/future-agi/releases/tag/${VERSION}). ${runner_line} Error Feed worker: ${VERSION}, commit ${WORKER_SOURCE_SHA}, digest ${WORKER_DIGEST}. Review release notes (check for the migrations callout) before deploying per the deployment guide."
+              --body "Automated bump for [${VERSION}](https://github.com/future-agi/future-agi/releases/tag/${VERSION}). ${runner_line} Error Feed worker: ${VERSION}, digest ${WORKER_DIGEST}. Review release notes (check for the migrations callout) before deploying per the deployment guide."
           else
             echo "bump PR already open"
           fi
