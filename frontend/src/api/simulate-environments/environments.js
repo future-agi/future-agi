@@ -156,8 +156,10 @@ export function useEnvironmentRunTest(runTestId, { enabled = true } = {}) {
 // follows reads the new mapping without waiting on a refetch. The cache holds
 // the raw run-test payload (`select` runs on read), hence the unwrap here.
 //
-// A failed edit re-reads the run test's list too: a 404 means the row is gone
-// on the server, and only a refetch drops it from the lists on screen.
+// Either way it settles, every run test's eval list is re-read, as a remove
+// does: a run page and the picker can each hold one, and after a failure a 404
+// means the row is gone on the server, which only a refetch drops from the
+// lists on screen.
 export function useEditAppliedEvaluation() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -177,13 +179,11 @@ export function useEditAppliedEvaluation() {
           : raw,
       );
     },
-    onError: (_error, { runTestId }) => {
-      queryClient.invalidateQueries({
-        queryKey: environmentRunTestKey(runTestId),
-      });
-    },
     onSettled: (_data, _error, { id }) => {
       queryClient.invalidateQueries({ queryKey: harnessEnvironmentKey(id) });
+      queryClient.invalidateQueries({
+        queryKey: [...SIMULATE_ENVIRONMENTS_KEY, "run-test"],
+      });
     },
   });
 }

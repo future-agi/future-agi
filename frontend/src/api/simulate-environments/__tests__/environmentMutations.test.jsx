@@ -20,6 +20,7 @@ const {
   useRemoveAppliedEvaluation,
   useEditAppliedEvaluation,
   environmentRunTestKey,
+  SIMULATE_ENVIRONMENTS_KEY,
 } = await import("src/api/simulate-environments/environments");
 const { harnessEnvironmentKey } = await import(
   "src/api/simulate-environments/environment"
@@ -137,7 +138,7 @@ describe("useEditAppliedEvaluation", () => {
     expect(client.getQueryData(environmentRunTestKey("rt-1"))).toBeUndefined();
   });
 
-  it("refreshes the environment detail", async () => {
+  it("refreshes the environment detail and every run test's eval list", async () => {
     updateAppliedEvaluation.mockResolvedValue(UPDATED);
     const { client, wrapper } = makeWrapper();
     const invalidateSpy = vi.spyOn(client, "invalidateQueries");
@@ -148,6 +149,10 @@ describe("useEditAppliedEvaluation", () => {
     await result.current.mutateAsync(vars);
     expect(invalidateSpy).toHaveBeenCalledWith({
       queryKey: harnessEnvironmentKey("env-1"),
+    });
+    // A run page and the picker can each hold a run test's list.
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: [...SIMULATE_ENVIRONMENTS_KEY, "run-test"],
     });
   });
 
@@ -177,7 +182,7 @@ describe("useEditAppliedEvaluation", () => {
 
     await expect(result.current.mutateAsync(vars)).rejects.toBeTruthy();
     expect(invalidateSpy).toHaveBeenCalledWith({
-      queryKey: environmentRunTestKey("rt-1"),
+      queryKey: [...SIMULATE_ENVIRONMENTS_KEY, "run-test"],
     });
     expect(invalidateSpy).toHaveBeenCalledWith({
       queryKey: harnessEnvironmentKey("env-1"),
