@@ -312,8 +312,8 @@ def test_saved_view_concurrent_revision(auth_client, saved_view, user, workspace
 
 @pytest.mark.django_db(transaction=True)
 def test_saved_view_migration_preserves_records_and_reverses(project, workspace, user):
-    before = ("tracer", "0110_expand_investigation_requirement_id")
-    after = ("tracer", "0111_savedview_revision_savedviewtaborder")
+    before = ("tracer", "0111_grouping_budget_wait")
+    after = ("tracer", "0112_savedview_revision_savedviewtaborder")
     executor = MigrationExecutor(connection)
     executor.migrate([before])
     try:

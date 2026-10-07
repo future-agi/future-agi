@@ -15,7 +15,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ('accounts', '0025_gcpmarketplaceprocessedevent_gcpmarketplaceaccount_and_more'),
-        ('tracer', '0110_expand_investigation_requirement_id'),
+        ('tracer', '0111_grouping_budget_wait'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 
