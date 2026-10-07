@@ -46,7 +46,7 @@ import { normalizeTags } from "./tagUtils";
 import TagChip from "./TagChip";
 import TagInput from "./TagInput";
 import EvalsTabView, { collectAllEvalsFromEntry } from "./EvalsTabView";
-import EvalRollupSection from "./EvalRollupSection";
+import EvalRollupBreakdown from "./EvalRollupSection/EvalRollupBreakdown";
 import { openFixWithFalcon } from "src/sections/falcon-ai/helpers/openFixWithFalcon";
 import ImageCard from "src/components/multimodal/ImageCard";
 import AudioCellRenderer from "src/sections/common/DevelopCellRenderer/CellRenderers/AudioCellRenderer";
@@ -2147,13 +2147,14 @@ const SpanDetailPane = ({
         {/* Evals Tab — this span + child span evals. Rendered via the
             shared EvalsTabView component so the trace drawer and the
             voice drawer use the same eval UI. */}
-        {activeTab === "evals" &&
-          (entry?.eval_rollup ? (
-            <EvalRollupSection
-              rollup={entry.eval_rollup}
-              onSelectSpan={onSelectSpan}
-            />
-          ) : (
+        {activeTab === "evals" && (
+          <>
+            {entry?.eval_rollup && (
+              <EvalRollupBreakdown
+                rollup={entry.eval_rollup}
+                onSelectSpan={onSelectSpan}
+              />
+            )}
             <EvalsTabView
             evals={collectAllEvalsFromEntry(entry)}
             onSelectSpan={onSelectSpan}
@@ -2200,7 +2201,8 @@ const SpanDetailPane = ({
               });
             }}
             />
-          ))}
+          </>
+        )}
 
         {/* Annotations Tab */}
         {activeTab === "annotations" && (

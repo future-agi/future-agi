@@ -16,7 +16,7 @@ import { isLiveKitProvider } from "src/sections/agents/constants";
 import ScoresListSection from "src/components/ScoresListSection/ScoresListSection";
 import { buildVoiceCallScoreSource } from "src/components/voiceAnnotationSources";
 import EvalsTabView from "src/components/traceDetail/EvalsTabView";
-import EvalRollupSection from "src/components/traceDetail/EvalRollupSection";
+import EvalRollupBreakdown from "src/components/traceDetail/EvalRollupSection/EvalRollupBreakdown";
 import { openFixWithFalcon } from "src/sections/falcon-ai/helpers/openFixWithFalcon";
 import VoiceLogsView from "./VoiceLogsView";
 import LoadingStateComponent from "src/components/CallLogsDetailDrawer/LoadingStateComponent";
@@ -452,10 +452,8 @@ const VoiceRightPanel = ({
           </ShowComponent>
 
           <ShowComponent condition={currentTab === TABS.EVALUATIONS}>
-            {evalRollup ? (
-              <EvalRollupSection rollup={evalRollup} />
-            ) : (
-              <EvalsTabView
+            {evalRollup && <EvalRollupBreakdown rollup={evalRollup} />}
+            <EvalsTabView
               evals={normalizedEvals}
               emptyMessage="No evaluations for this call"
               showSpanColumn={false}
@@ -503,7 +501,6 @@ const VoiceRightPanel = ({
                 });
               }}
               />
-            )}
           </ShowComponent>
 
           <ShowComponent condition={currentTab === TABS.MESSAGES}>
