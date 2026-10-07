@@ -39,6 +39,19 @@ import {
   toolbarButtonSx,
 } from "./traceTable.constants";
 
+const STATUS_CHIP_API = {
+  failing: "failed",
+  errored: "error",
+  inconclusive: "inconclusive",
+  passing: "passed",
+};
+const STATUS_LABELS = {
+  passed: "Passed",
+  failed: "Failed",
+  error: "Errored",
+  inconclusive: "Not measured",
+};
+
 const PAGE_SIZE = 50;
 // Room left under the table box for the pager row and the page's bottom gutter.
 const BELOW_TABLE_PX = 88;
@@ -61,16 +74,24 @@ export default function RunTraceTable({
   const [visibleColumns, setVisibleColumns] = useState(() =>
     defaultTraceColumns(),
   );
+  // The evaluations the user turned off, so one the run adds later shows.
+  const [hiddenEvals, setHiddenEvals] = useState(() => new Set());
   const [filterAnchor, setFilterAnchor] = useState(null);
   // Which groups are open lives here, not in the table: a filter's loading
   // and empty states unmount the table, and its own state would go with it,
   // folding every group back up. Labels differ per axis, so each axis keeps
   // its own opened set and a change under one never touches another; Expand
-  // all carries over.
+  // all carries over. Calls handed over from a diagnosis issue start open: the
+  // user came to see those rows, not the groups folded over them.
   const [groupState, setGroupState] = useState({
-    all: false,
+    all: !!initialFilters.callExecutionId?.length,
     expandedByAxis: {},
   });
+  // Whether Expand all is still the hand-off's, so dismissing its chip may end
+  // it. Once the user works the toggle, Expand all is theirs.
+  const [handoffExpanded, setHandoffExpanded] = useState(
+    () => !!initialFilters.callExecutionId?.length,
+  );
   const groupView = useMemo(
     () => ({
       all: groupState.all,
@@ -108,7 +129,7 @@ export default function RunTraceTable({
     if (filters.subGoal?.length) next.sub_goal = filters.subGoal;
     if (filters.status?.length) next.status = filters.status;
     if (filters.goal_outcome?.length) next.goal_outcome = filters.goal_outcome;
-    if (statusChip !== "all") next.status = [statusChip];
+    if (statusChip !== "all") next.status = [STATUS_CHIP_API[statusChip]];
     return next;
   }, [filters, statusChip]);
 
@@ -193,6 +214,18 @@ export default function RunTraceTable({
         .map((c) => ({ id: c.key, name: c.label })),
     [columns],
   );
+  const shownEvals = useMemo(
+    () => evals.filter((e) => !hiddenEvals.has(e.id)),
+    [evals, hiddenEvals],
+  );
+  // A query that's loading or failed has no columns; the picker keeps the last
+  // evals it had, so its entries and count don't flicker on every filter.
+  const lastEvalsRef = useRef(evals);
+  useEffect(() => {
+    if (evals.length) lastEvalsRef.current = evals;
+  }, [evals]);
+  const pickerEvals =
+    (isLoading || error) && !evals.length ? lastEvalsRef.current : evals;
   const subGoalEvals = useMemo(
     () =>
       columns
@@ -308,7 +341,8 @@ export default function RunTraceTable({
             <Switch
               size="small"
               checked={allOpen}
-              onChange={() =>
+              onChange={() => {
+                setHandoffExpanded(false);
                 setGroupView((prev) =>
                   allOpen
                     ? CLOSED_GROUP_VIEW
@@ -319,8 +353,8 @@ export default function RunTraceTable({
                           ...groups.map((g) => g.label),
                         ]),
                       },
-                )
-              }
+                );
+              }}
             />
           }
           label="Expand all"
@@ -394,6 +428,11 @@ export default function RunTraceTable({
           label={`${affectedCalls} affected call${affectedCalls === 1 ? "" : "s"}`}
           onDelete={() => {
             setFilters(({ callExecutionId: _ids, ...rest }) => rest);
+            // The groups of those calls the user saw stay open; the rest of the
+            // run comes back closed, unless the user turned Expand all on.
+            if (handoffExpanded)
+              setGroupState((prev) => ({ ...prev, all: false }));
+            setHandoffExpanded(false);
             setPage(1);
           }}
           sx={{ typography: "s2", fontWeight: 600 }}
@@ -428,6 +467,9 @@ export default function RunTraceTable({
         value={visibleColumns}
         onChange={setVisibleColumns}
         hidden={chatRun ? VOICE_ONLY_COLUMNS : undefined}
+        evals={pickerEvals}
+        hiddenEvals={hiddenEvals}
+        onHiddenEvalsChange={setHiddenEvals}
       />
     </Stack>
   );
@@ -476,7 +518,7 @@ export default function RunTraceTable({
               columns={shownColumns}
               groups={groups}
               rows={groupBy ? null : tasks}
-              evals={evals}
+              evals={shownEvals}
               subGoalEvals={subGoalEvals}
               groupView={groupView}
               onGroupViewChange={setGroupView}
