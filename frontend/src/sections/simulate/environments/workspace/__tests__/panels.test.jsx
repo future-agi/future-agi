@@ -33,7 +33,10 @@ OverviewPanelStub.propTypes = { envState: PropTypes.object, onGo: PropTypes.func
 vi.mock("../overview/OverviewPanel", () => ({ default: OverviewPanelStub }));
 vi.mock("../contract/RlContractPanel", () => ({ default: () => <div>contract-body</div> }));
 vi.mock("../scenarios/ScenariosStep", () => ({ default: () => <div>scenarios-body</div> }));
-vi.mock("../evals/EvalsStep", () => ({ default: () => <div>evals-body</div> }));
+vi.mock("../evals/EvalsStep", () => ({
+  // eslint-disable-next-line react/prop-types
+  default: ({ grading }) => <div>{`evals-body:grading=${grading}`}</div>,
+}));
 vi.mock("../runs/summary/RunsSummary", () => ({ default: () => <div>runs-body</div> }));
 
 // The real runs hook by default; the loading cases override it.
@@ -84,6 +87,23 @@ describe("WorkspacePanels", () => {
     ["Overview", "Contract", "Scenarios", "Evaluations", "Runs", "Settings"].forEach((label) => {
       expect(screen.getByRole("tab", { name: new RegExp(label) })).toBeInTheDocument();
     });
+  });
+
+  it.each([
+    ["while a run is being graded", "Evaluating", true],
+    ["while no run is being graded", "Running", false],
+  ])("tells the Evaluations tab %s", (_label, status, grading) => {
+    runsApi.useEnvironmentRuns.mockReturnValue({
+      runs: [
+        runsApi.executionToRun({ id: "r1", status: "Completed" }),
+        runsApi.executionToRun({ id: "r2", status }),
+      ],
+      isLoading: false,
+    });
+    renderPanels({ tab: "evals" });
+    expect(
+      screen.getByText(`evals-body:grading=${grading}`),
+    ).toBeInTheDocument();
   });
 
   it("hides the Runs tab until the environment has a run", () => {

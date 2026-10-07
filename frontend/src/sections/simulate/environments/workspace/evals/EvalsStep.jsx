@@ -53,6 +53,7 @@ export default function EvalsStep({
   onGo,
   locked = false,
   backed = false,
+  grading = false,
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   // The id of the eval open for editing, or null.
@@ -432,14 +433,20 @@ export default function EvalsStep({
               );
               // Only a backed env's evals exist on the server to be edited. The
               // same gates as remove apply (the server refuses while
-              // building), plus the server's own `editable`.
+              // building), plus the server's own `editable`. The server
+              // doesn't refuse an edit while a run is being graded, so that
+              // wait is ours.
               const editable = e.editable === true;
               const editAction = backed && (
                 <Tooltip
                   arrow
                   title={
                     lockedOrBuildingTooltip ||
-                    (editable ? "" : EVALS_COPY.notEditable)
+                    (!editable
+                      ? EVALS_COPY.notEditable
+                      : grading
+                        ? EVALS_COPY.gradingLocked
+                        : "")
                   }
                 >
                   <Box component="span" sx={{ display: "inline-flex" }}>
@@ -449,6 +456,7 @@ export default function EvalsStep({
                         !editable ||
                         locked ||
                         building ||
+                        grading ||
                         removeEval.isPending ||
                         Boolean(editingId)
                       }
@@ -524,4 +532,6 @@ EvalsStep.propTypes = {
   onGo: PropTypes.func,
   locked: PropTypes.bool,
   backed: PropTypes.bool,
+  // A run of this environment is being graded.
+  grading: PropTypes.bool,
 };

@@ -23,6 +23,8 @@ export const EVALS_COPY = {
   // A row the harness created and fills in itself: changing it would change
   // what later runs write into, so the server refuses the edit.
   notEditable: "Set by the harness, so it can't be edited here.",
+  // An edit saved mid-grade would leave a run scored under two settings.
+  gradingLocked: "Available once grading finishes.",
   suggestedTitle: (n) => `Suggested evaluations (${n})`,
   suggestedSubtitle:
     "The environment thinks these would matter. Add the ones you want the run scored against.",

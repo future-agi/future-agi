@@ -153,6 +153,22 @@ describe("executionToRun", () => {
     expect(stoppable("Cancelled")).toBe(false);
   });
 
+  it("marks only a run whose evals are being graded as grading", () => {
+    const grading = (status) =>
+      executionToRun({ id: "x", status, total_chats: 1 }).grading;
+    expect(grading("Evaluating")).toBe(true);
+    for (const status of [
+      "Pending",
+      "Running",
+      "Cancelling",
+      "Completed",
+      "Failed",
+      "Cancelled",
+    ]) {
+      expect(grading(status)).toBe(false);
+    }
+  });
+
   it("reads a stopped run as cancelled, not failed", () => {
     const run = executionToRun({ id: "ex-c", status: "Cancelled", total_chats: 5, success_rate: 40 });
     expect(run.status).toBe("cancelled");

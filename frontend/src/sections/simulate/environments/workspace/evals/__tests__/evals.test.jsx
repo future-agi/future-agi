@@ -91,7 +91,7 @@ const ENV = {
 };
 
 // eslint-disable-next-line react/prop-types
-function Harness({ env = ENV, initial, onGo, patchSpy, backed = false }) {
+function Harness({ env = ENV, initial, onGo, patchSpy, ...flags }) {
   const [envState, setEnvState] = useState(initial);
   const patch = (p) => {
     patchSpy?.(p);
@@ -103,7 +103,7 @@ function Harness({ env = ENV, initial, onGo, patchSpy, backed = false }) {
       envState={envState}
       patch={patch}
       onGo={onGo}
-      backed={backed}
+      {...flags}
     />
   );
 }
@@ -642,6 +642,49 @@ describe("EvalsStep — editing an eval on a backend-backed env", () => {
         "Available once the environment finishes building.",
       ),
     ).toBeInTheDocument();
+  });
+
+  it("holds edits while a run is being graded, and says why", async () => {
+    render(<Harness backed grading initial={state} patchSpy={vi.fn()} />);
+    const edit = (
+      await screen.findAllByRole("button", { name: EVALS_COPY.edit })
+    )[0];
+    expect(edit).toBeDisabled();
+    // Only the edit waits for grading.
+    expect(
+      screen.getAllByRole("button", { name: EVALS_COPY.remove })[0],
+    ).toBeEnabled();
+    fireEvent.mouseOver(edit.parentElement);
+    expect(
+      await screen.findByText(EVALS_COPY.gradingLocked),
+    ).toBeInTheDocument();
+  });
+
+  it("lets an eval be edited when no run is being graded", async () => {
+    render(
+      <Harness backed grading={false} initial={state} patchSpy={vi.fn()} />,
+    );
+    expect(
+      (await screen.findAllByRole("button", { name: EVALS_COPY.edit }))[0],
+    ).toBeEnabled();
+  });
+
+  it("says why first when an eval can't be edited at all, even mid-grade", async () => {
+    getHarnessEnvironment.mockResolvedValue({
+      overview: { agent_type: "voice", run: { run_test_id: "rt-1" } },
+      evaluations: {
+        selected: [
+          { ...selectedEntry(NO_MISSELLING, "cfg-1"), editable: false },
+        ],
+      },
+    });
+    render(<Harness backed grading initial={state} patchSpy={vi.fn()} />);
+    const edit = (
+      await screen.findAllByRole("button", { name: EVALS_COPY.edit })
+    )[0];
+    fireEvent.mouseOver(edit.parentElement);
+    expect(await screen.findByText(EVALS_COPY.notEditable)).toBeInTheDocument();
+    expect(screen.queryByText(EVALS_COPY.gradingLocked)).toBeNull();
   });
 
   it("holds edits on a locked template", async () => {
