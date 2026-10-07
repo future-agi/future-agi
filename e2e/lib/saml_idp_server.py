@@ -59,13 +59,18 @@ class SamlIdpState:
                 raise ValueError("the test did not configure a SAML identity")
             email = self.email
         request_xml = zlib.decompress(base64.b64decode(saml_request), -zlib.MAX_WBITS)
-        request_id = ElementTree.fromstring(request_xml).attrib["ID"]
+        request = ElementTree.fromstring(request_xml)
+        request_id = request.attrib["ID"]
+        # Like a real IdP, address the assertion to the SP that asked for it:
+        # the SP checks the audience against its own entity ID, which is
+        # derived from APP_URL, not from the API URL the IdP posts to.
+        issuer = request.findtext("{urn:oasis:names:tc:SAML:2.0:assertion}Issuer")
         return signed_response(
             self.keypair,
             request_id=request_id,
             recipient=self.acs_url,
             destination=self.acs_url,
-            audience=self.audience,
+            audience=(issuer or "").strip() or self.audience,
             subject_email=email,
         )
 
