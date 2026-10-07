@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, render, screen } from "@testing-library/react";
 import PropTypes from "prop-types";
-import useIsTruncated from "../hooks/useIsTruncated";
+import useIsTruncated from "src/hooks/useIsTruncated";
 
 // Widths jsdom cannot produce on its own; every element reports these.
 let widths = { scroll: 0, client: 0 };

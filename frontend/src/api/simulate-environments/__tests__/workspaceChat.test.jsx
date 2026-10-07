@@ -102,6 +102,37 @@ describe("useWorkspaceChat (real)", () => {
     );
   });
 
+  it("reports waiting while the builder's question is unanswered, and not otherwise", async () => {
+    const asked = renderChat(
+      conversationWith({
+        state: "waiting_for_user",
+        blocking_input: { message_id: "q1", kind: "question_requested", prompt: "How strict?" },
+        messages: [{ message_id: "q1", role: "assistant", kind: "question", state: "completed", content: "How strict?", created_at: "2026-09-22T10:00:00Z", sequence: 1 }],
+      }),
+    );
+    expect(asked.result.current.waiting).toBe(true);
+    // Not "in flight": the rail dot needs `waiting` to stay on while the user is asked.
+    expect(asked.result.current.inFlight).toBe(false);
+
+    const idle = renderChat(conversationWith());
+    expect(idle.result.current.waiting).toBe(false);
+  });
+
+  it("doesn't report waiting once the chat can no longer accept an answer", () => {
+    // The question stays open on the backend when the job ends without a saved
+    // workspace, but the composer is frozen: nothing for the user to do.
+    const { result } = renderChat(
+      conversationWith({
+        state: "waiting_for_user",
+        runtime: { available: false },
+        blocking_input: { message_id: "q1", kind: "question_requested", prompt: "How strict?" },
+        messages: [{ message_id: "q1", role: "assistant", kind: "question", state: "completed", content: "How strict?", created_at: "2026-09-22T10:00:00Z", sequence: 1 }],
+      }),
+    );
+    expect(result.current.frozen).toBe(true);
+    expect(result.current.waiting).toBe(false);
+  });
+
   it("routes a reply to a blocking question as user_response with reply_to", async () => {
     sendHarnessConversationMessage.mockResolvedValue(conversationWith());
     const { result } = renderChat(
