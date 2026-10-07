@@ -17515,6 +17515,87 @@ export interface HarnessEnvironmentRenameApi {
   name: string;
 }
 
+export type HarnessEnvironmentConfigurationApiEnvironmentValues = {
+  [key: string]: string;
+};
+
+export type HarnessEnvironmentConfigurationApiConfig = {
+  [key: string]: unknown;
+};
+
+export type SecretReferenceApiManager =
+  (typeof SecretReferenceApiManager)[keyof typeof SecretReferenceApiManager];
+
+export const SecretReferenceApiManager = {
+  "platform-vault": "platform-vault",
+  "platform-config": "platform-config",
+} as const;
+
+export type SecretReferenceApiPurpose =
+  (typeof SecretReferenceApiPurpose)[keyof typeof SecretReferenceApiPurpose];
+
+export const SecretReferenceApiPurpose = {
+  target_provider: "target_provider",
+  simulator_provider: "simulator_provider",
+  source_checkout: "source_checkout",
+} as const;
+
+export interface SecretReferenceApi {
+  manager: SecretReferenceApiManager;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  key: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  version?: string;
+  purpose: SecretReferenceApiPurpose;
+}
+
+export type HarnessEnvironmentConfigurationApiCredentialFiles = {
+  [key: string]: SecretReferenceApi;
+};
+
+export interface HarnessEnvironmentConfigurationApi {
+  environment_values?: HarnessEnvironmentConfigurationApiEnvironmentValues;
+  config?: HarnessEnvironmentConfigurationApiConfig;
+  credential_files?: HarnessEnvironmentConfigurationApiCredentialFiles;
+}
+
+export type HarnessEnvironmentCredentialCheckApiStatus =
+  (typeof HarnessEnvironmentCredentialCheckApiStatus)[keyof typeof HarnessEnvironmentCredentialCheckApiStatus];
+
+export const HarnessEnvironmentCredentialCheckApiStatus = {
+  accepted: "accepted",
+  rejected: "rejected",
+  not_checked: "not_checked",
+} as const;
+
+export interface HarnessEnvironmentCredentialCheckApi {
+  aliases: string[];
+  /** @minLength 1 */
+  label: string;
+  status: HarnessEnvironmentCredentialCheckApiStatus;
+  /** @minLength 1 */
+  message: string;
+}
+
+export interface HarnessEnvironmentConfigurationResponseApi {
+  environment: HarnessEnvironmentDetailApi;
+  checks: HarnessEnvironmentCredentialCheckApi[];
+}
+
+export interface HarnessEnvironmentConfigurationErrorApi {
+  /** @minLength 1 */
+  detail: string;
+  /** @minLength 1 */
+  error?: string;
+  checks?: HarnessEnvironmentCredentialCheckApi[];
+}
+
 export interface HarnessEnvironmentAddEvaluationApi {
   /**
    * @minLength 1
@@ -17934,38 +18015,6 @@ export const HarnessAgentApiCallDirection = {
   inbound: "inbound",
   outbound: "outbound",
 } as const;
-
-export type SecretReferenceApiManager =
-  (typeof SecretReferenceApiManager)[keyof typeof SecretReferenceApiManager];
-
-export const SecretReferenceApiManager = {
-  "platform-vault": "platform-vault",
-  "platform-config": "platform-config",
-} as const;
-
-export type SecretReferenceApiPurpose =
-  (typeof SecretReferenceApiPurpose)[keyof typeof SecretReferenceApiPurpose];
-
-export const SecretReferenceApiPurpose = {
-  target_provider: "target_provider",
-  simulator_provider: "simulator_provider",
-  source_checkout: "source_checkout",
-} as const;
-
-export interface SecretReferenceApi {
-  manager: SecretReferenceApiManager;
-  /**
-   * @minLength 1
-   * @maxLength 255
-   */
-  key: string;
-  /**
-   * @minLength 1
-   * @maxLength 255
-   */
-  version?: string;
-  purpose: SecretReferenceApiPurpose;
-}
 
 export type HarnessAgentApiConfig = { [key: string]: unknown };
 

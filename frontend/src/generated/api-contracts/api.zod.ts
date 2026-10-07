@@ -35432,9 +35432,8 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
 });
 
 /**
- * The name is the only editable field: everything else on an environment
-records how it was built, and editing that would make the provenance the
-contract tab shows a claim rather than a record.
+ * Keys and connection settings change through ``configuration``; everything
+else records how the environment was built.
  * @summary Rename an environment.
  */
 export const SimulateApiHarnessEnvironmentsPartialUpdateParams = zod.object({
@@ -35649,6 +35648,281 @@ reference the same credentials.
  */
 export const SimulateApiHarnessEnvironmentsDeleteParams = zod.object({
   id: zod.string(),
+});
+
+/**
+ * An environment is the job that built it (the world itself lives in object
+storage, addressed from the job's metadata), so these endpoints project the
+same rows the harness-jobs API serves. They exist separately because the
+list needs a row, not a run: the jobs list returns every event, receipt and
+stage-output payload for up to a hundred jobs, which is a detail document
+repeated a hundred times.
+
+Running and grading a simulation are deliberately not here. ``run`` starts
+one and returns 202; progress is read from the job.
+ * @summary The environments surface: list, delete, and start a simulation.
+ */
+export const SimulateApiHarnessEnvironmentsConfigurationParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiHarnessEnvironmentsConfigurationBodyEnvironmentValuesMaxOne = 65536;
+
+export const simulateApiHarnessEnvironmentsConfigurationBodyEnvironmentValuesDefault =
+  {};
+export const simulateApiHarnessEnvironmentsConfigurationBodyConfigDefault = {};
+export const simulateApiHarnessEnvironmentsConfigurationBodyCredentialFilesKeyMax = 255;
+
+export const simulateApiHarnessEnvironmentsConfigurationBodyCredentialFilesVersionMax = 255;
+
+export const simulateApiHarnessEnvironmentsConfigurationBodyCredentialFilesDefault =
+  {};
+
+export const SimulateApiHarnessEnvironmentsConfigurationBody = zod.object({
+  environment_values: zod
+    .record(
+      zod.string(),
+      zod
+        .string()
+        .min(1)
+        .max(
+          simulateApiHarnessEnvironmentsConfigurationBodyEnvironmentValuesMaxOne,
+        ),
+    )
+    .default(
+      simulateApiHarnessEnvironmentsConfigurationBodyEnvironmentValuesDefault,
+    ),
+  config: zod
+    .object({})
+    .passthrough()
+    .default(simulateApiHarnessEnvironmentsConfigurationBodyConfigDefault),
+  credential_files: zod
+    .record(
+      zod.string(),
+      zod.object({
+        manager: zod.enum(["platform-vault", "platform-config"]),
+        key: zod
+          .string()
+          .min(1)
+          .max(
+            simulateApiHarnessEnvironmentsConfigurationBodyCredentialFilesKeyMax,
+          ),
+        version: zod
+          .string()
+          .min(1)
+          .max(
+            simulateApiHarnessEnvironmentsConfigurationBodyCredentialFilesVersionMax,
+          )
+          .optional(),
+        purpose: zod.enum([
+          "target_provider",
+          "simulator_provider",
+          "source_checkout",
+        ]),
+      }),
+    )
+    .default(
+      simulateApiHarnessEnvironmentsConfigurationBodyCredentialFilesDefault,
+    ),
+});
+
+export const SimulateApiHarnessEnvironmentsConfigurationResponse = zod.object({
+  environment: zod.object({
+    id: zod.string().uuid(),
+    overview: zod.object({
+      id: zod.string().uuid(),
+      name: zod.string().min(1),
+      description: zod.string().min(1),
+      domain: zod.string().min(1),
+      source_kind: zod.string().min(1),
+      agent_type: zod.enum(["voice", "chat"]),
+      status: zod.enum(["building", "running", "completed", "failed"]),
+      stage: zod.string().min(1),
+      scenario_count: zod.number(),
+      sub_goals_count: zod.number(),
+      tools_count: zod.number(),
+      runs_count: zod.number(),
+      last_updated: zod.string().datetime({ offset: true }),
+      created_at: zod.string().datetime({ offset: true }),
+      flows_count: zod.number(),
+      guardrails_count: zod.number(),
+      personas_count: zod.number(),
+      evaluations_count: zod.number(),
+      run: zod.object({
+        run_test_id: zod.string().uuid(),
+        test_execution_id: zod.string().uuid(),
+        simulation_url: zod.string().min(1),
+      }),
+      agent: zod.object({
+        id: zod.string().uuid(),
+        name: zod.string().min(1),
+        provider: zod.string().min(1),
+        versions_count: zod.number(),
+        active_version: zod.string().min(1),
+      }),
+    }),
+    contract: zod.object({
+      agent: zod.string().optional(),
+      one_liner: zod.string().optional(),
+      modality: zod.string().optional(),
+      call_direction: zod.string().optional(),
+      system_prompt_excerpt: zod.string().optional(),
+      tools: zod.array(zod.object({}).passthrough()).optional(),
+      real_use_cases: zod.array(zod.string().min(1)).optional(),
+      hard_constraints: zod.array(zod.string().min(1)).optional(),
+      runtime: zod.object({}).passthrough().optional(),
+      dependencies: zod.array(zod.object({}).passthrough()).optional(),
+      runtime_dependencies: zod.array(zod.object({}).passthrough()).optional(),
+      implementation: zod.string().optional(),
+      tool_entrypoints: zod.array(zod.object({}).passthrough()).optional(),
+      data_store: zod.object({}).passthrough().optional(),
+      open_questions: zod.array(zod.string().min(1)).optional(),
+      amendments: zod.array(
+        zod.object({
+          subject: zod.string(),
+          note: zod.string().min(1),
+        }),
+      ),
+      sub_goals: zod.array(
+        zod.object({
+          name: zod.string().min(1),
+          what: zod.string(),
+          kind: zod.enum(["checkpoint", "judge"]),
+          claim: zod.string(),
+          check: zod.string(),
+        }),
+      ),
+      end_conditions: zod.object({
+        max_turns: zod.number(),
+        max_duration_seconds: zod.number(),
+        clock: zod.enum(["real-time", "stepped"]),
+        ended_reasons: zod.array(zod.string().min(1)),
+      }),
+      notes: zod.string().optional(),
+      chosen_evals: zod.array(zod.string().min(1)).optional(),
+      provenance: zod.object({
+        source: zod.record(zod.string(), zod.string()),
+        built_by: zod.enum(["alk", "repository"]),
+        attempt: zod.number(),
+        snapshot: zod.string().min(1),
+        digests: zod.record(zod.string(), zod.string().min(1)),
+        authored_at: zod.record(zod.string(), zod.string().min(1)),
+      }),
+    }),
+    world: zod.object({
+      runtime: zod.record(zod.string(), zod.string()),
+      personas: zod.array(
+        zod.object({
+          name: zod.string().optional(),
+          scenario_keys: zod.array(zod.string().min(1)),
+        }),
+      ),
+      stores: zod.array(
+        zod.object({
+          capability: zod.string(),
+          engine: zod.string(),
+          strategy: zod.string(),
+          tables: zod.array(
+            zod.object({
+              name: zod.string().min(1),
+              rows: zod.number(),
+            }),
+          ),
+          total_rows: zod.number(),
+        }),
+      ),
+    }),
+    scenarios: zod.array(
+      zod.object({
+        scenario_key: zod.string().min(1),
+        scenario_id: zod.string().uuid(),
+        name: zod.string(),
+        instruction: zod.string(),
+        use_case: zod.string().min(1),
+        branch: zod.string().min(1),
+        tests: zod.string().min(1),
+        fixture: zod.record(zod.string(), zod.string()),
+        steps: zod.number(),
+        sub_goals: zod.array(
+          zod.object({
+            name: zod.string().min(1),
+            what: zod.string().optional(),
+            kind: zod.enum(["checkpoint", "judge"]).optional(),
+            claim: zod.string().optional(),
+          }),
+        ),
+        persona: zod.record(zod.string(), zod.string()),
+        situation: zod.string().min(1),
+        outcome: zod.string().min(1),
+        status: zod.string().min(1),
+        call_execution_id: zod.string().uuid(),
+      }),
+    ),
+    evaluations: zod.object({
+      selected: zod.array(
+        zod.object({
+          name: zod.string().min(1),
+          description: zod.string(),
+          source: zod.enum(["system", "custom"]),
+          tags: zod.array(zod.string().min(1)),
+          required_keys: zod.array(zod.string().min(1)),
+          agent_type: zod.enum(["voice", "chat"]),
+          modality: zod.enum(["voice", "text", "any"]),
+          credits_per_run: zod.number(),
+          charges_judge_tokens: zod.boolean(),
+          inputs: zod.array(
+            zod.object({
+              key: zod.string().min(1),
+              source: zod.string().min(1),
+              label: zod.string().min(1),
+            }),
+          ),
+          id: zod.string().uuid(),
+          runnable: zod.boolean(),
+        }),
+      ),
+      results: zod.array(
+        zod.object({
+          scenario_key: zod.string().min(1),
+          status: zod.string().min(1),
+          attempt_number: zod.number(),
+          evaluations: zod.array(zod.object({}).passthrough()),
+          coverage: zod.record(zod.string(), zod.string()),
+        }),
+      ),
+    }),
+    settings: zod.object({
+      schema_version: zod.string().min(1),
+      source: zod.record(zod.string(), zod.string()),
+      agent: zod.object({
+        connector: zod.string().min(1),
+        mode: zod.string().min(1),
+        call_direction: zod.string().min(1),
+        config: zod.record(zod.string(), zod.string()),
+        secret_refs: zod.array(zod.string().min(1)),
+        secrets: zod.array(zod.string().min(1)),
+        credential_files: zod.array(
+          zod.object({
+            environment_name: zod.string().min(1),
+          }),
+        ),
+      }),
+      runtime: zod.record(zod.string(), zod.string()),
+      security: zod.record(zod.string(), zod.string()),
+      artifacts: zod.record(zod.string(), zod.string()),
+      scenario_count: zod.number(),
+      seed: zod.number(),
+      enable_tool_evaluation: zod.boolean(),
+    }),
+  }),
+  checks: zod.array(
+    zod.object({
+      aliases: zod.array(zod.string().min(1)),
+      label: zod.string().min(1),
+      status: zod.enum(["accepted", "rejected", "not_checked"]),
+      message: zod.string().min(1),
+    }),
+  ),
 });
 
 /**

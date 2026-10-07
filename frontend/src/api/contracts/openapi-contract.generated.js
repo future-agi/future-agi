@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1055,
+  endpointCount: 1056,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -28106,6 +28106,34 @@ export const OPENAPI_CONTRACT = Object.freeze({
         requestBody: null,
         queryParameters: {},
         responses: {
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/configuration/": {
+      patch: {
+        operationId: "simulate_api_harness-environments_configuration",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessEnvironmentConfiguration",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessEnvironmentConfigurationResponse",
+          },
+          400: {
+            $ref: "#/definitions/HarnessEnvironmentConfigurationError",
+          },
+          404: {
+            $ref: "#/definitions/HarnessEnvironmentConfigurationError",
+          },
+          409: {
+            $ref: "#/definitions/HarnessEnvironmentConfigurationError",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -62382,6 +62410,71 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessEnvironmentConfiguration: {
+      type: "object",
+      properties: {
+        environment_values: {
+          title: "Environment values",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            maxLength: 65536,
+            minLength: 1,
+          },
+          default: {},
+        },
+        config: {
+          title: "Config",
+          type: "object",
+          default: {},
+        },
+        credential_files: {
+          title: "Credential files",
+          type: "object",
+          additionalProperties: {
+            $ref: "#/definitions/SecretReference",
+          },
+          default: {},
+        },
+      },
+    },
+    HarnessEnvironmentConfigurationError: {
+      required: ["detail"],
+      type: "object",
+      properties: {
+        detail: {
+          title: "Detail",
+          type: "string",
+          minLength: 1,
+        },
+        error: {
+          title: "Error",
+          type: "string",
+          minLength: 1,
+        },
+        checks: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessEnvironmentCredentialCheck",
+          },
+        },
+      },
+    },
+    HarnessEnvironmentConfigurationResponse: {
+      required: ["environment", "checks"],
+      type: "object",
+      properties: {
+        environment: {
+          $ref: "#/definitions/HarnessEnvironmentDetail",
+        },
+        checks: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessEnvironmentCredentialCheck",
+          },
+        },
+      },
+    },
     HarnessEnvironmentDetail: {
       required: [
         "id",
@@ -91263,6 +91356,63 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    SecretReference: {
+      required: ["manager", "key", "purpose"],
+      type: "object",
+      properties: {
+        manager: {
+          title: "Manager",
+          type: "string",
+          enum: ["platform-vault", "platform-config"],
+        },
+        key: {
+          title: "Key",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        version: {
+          title: "Version",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        purpose: {
+          title: "Purpose",
+          type: "string",
+          enum: ["target_provider", "simulator_provider", "source_checkout"],
+        },
+      },
+    },
+    HarnessEnvironmentCredentialCheck: {
+      required: ["aliases", "label", "status", "message"],
+      type: "object",
+      properties: {
+        aliases: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          minLength: 1,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["accepted", "rejected", "not_checked"],
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
     HarnessEnvironmentContract: {
       required: ["amendments", "sub_goals", "end_conditions", "provenance"],
       type: "object",
@@ -92864,35 +93014,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/HarnessScenarioRegistrationResponse",
           },
-        },
-      },
-    },
-    SecretReference: {
-      required: ["manager", "key", "purpose"],
-      type: "object",
-      properties: {
-        manager: {
-          title: "Manager",
-          type: "string",
-          enum: ["platform-vault", "platform-config"],
-        },
-        key: {
-          title: "Key",
-          type: "string",
-          maxLength: 255,
-          minLength: 1,
-        },
-        version: {
-          title: "Version",
-          type: "string",
-          maxLength: 255,
-          minLength: 1,
-          "x-nullable": true,
-        },
-        purpose: {
-          title: "Purpose",
-          type: "string",
-          enum: ["target_provider", "simulator_provider", "source_checkout"],
         },
       },
     },
