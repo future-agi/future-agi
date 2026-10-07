@@ -1,9 +1,10 @@
 """Falcon tool routing over the generated MCP catalog plus native tools."""
 
 import pytest
+from ai_tools.generated import GeneratedAPITool, register_generated_tools
+from ai_tools.registry import ToolRegistry, registry
+from tfc.ee_loader import has_ee
 
-from ai_tools.generated import GeneratedAPITool
-from ai_tools.registry import registry
 from ee.falcon_ai.agent import _extract_primary_entity_id
 from ee.falcon_ai.modes import (
     ALL_CATEGORIES,
@@ -36,7 +37,10 @@ MODE_ONLY_CATEGORIES = {"web", "visualization"}
 
 def test_every_mode_category_has_registered_tools():
     for category in ALL_CATEGORIES:
-        assert registry.list_by_category(category), category
+        if category == "usage" and not has_ee("ee.cloud"):
+            assert not registry.list_by_category(category)
+        else:
+            assert registry.list_by_category(category), category
     for mode, config in MODES.items():
         for category in config["categories"]:
             assert category in ALL_CATEGORIES or category in MODE_ONLY_CATEGORIES, (
@@ -84,7 +88,7 @@ def test_tracing_mode_includes_error_feed_and_dashboards():
 
 def test_gateway_pages_route_to_gateway_mode():
     assert detect_mode("gateway", "show me the request logs") == "gateway"
-    assert {"list_gateways", "get_gateway_analytics", "get_usage_overview"} <= _names(
+    assert {"list_gateways", "get_gateway_analytics"} <= _names(
         load_tools_for_mode("gateway")
     )
 
@@ -154,7 +158,7 @@ def test_message_filter_keeps_catalog_discovery_tools():
     filtered = filter_tools_for_message(tools, "how much did we spend this week?")
     names = _names(filtered)
     assert len(filtered) <= 40
-    assert {"get_usage_overview", "list_dashboards", "list_datasets"} <= names
+    assert {"list_dashboard_metrics", "list_dashboards", "list_datasets"} <= names
 
 
 def test_primary_entity_id_prefers_top_level_json_id():
@@ -165,3 +169,30 @@ def test_primary_entity_id_prefers_top_level_json_id():
         == "33333333-3333-3333-3333-333333333333"
     )
     assert _extract_primary_entity_id('{"id": 12, "name": "x"}') is None
+
+
+@pytest.mark.parametrize("cloud_available", [False, True])
+def test_usage_tools_follow_cloud_availability(monkeypatch, cloud_available):
+    original_has_ee = has_ee
+    monkeypatch.setattr(
+        "tfc.ee_loader.has_ee",
+        lambda module: (
+            cloud_available if module == "ee.cloud" else original_has_ee(module)
+        ),
+    )
+    target = ToolRegistry()
+    for tool in registry.list_all():
+        if not isinstance(tool, GeneratedAPITool):
+            target.register(tool)
+    register_generated_tools(target=target)
+    register_generated_tools(target=target)
+    monkeypatch.setattr("ee.falcon_ai.modes.tool_registry", target)
+    for mode in ("general", "gateway"):
+        names = _names(load_tools_for_mode(mode))
+        assert ("get_usage_overview" in names) is cloud_available
+        assert "list_dashboard_metrics" in names
+    from ee.falcon_ai.builtin_skills_loader import load_builtin_skills
+
+    skill = next(s for s in load_builtin_skills() if s["slug"] == "analyze-costs")
+    assert all(target.get(name) for name in skill["tool_names"])
+    assert "get_usage_overview" not in skill["instructions"]

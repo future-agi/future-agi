@@ -4,6 +4,9 @@ import json
 import uuid
 
 import pytest
+from mcp_server.api_executor import APIExecutionError
+from mcp_server.generated_registry import registry as generated_registry
+from tfc.ee_loader import has_ee
 
 from ai_tools.generated import (
     GeneratedAPITool,
@@ -12,8 +15,6 @@ from ai_tools.generated import (
     render_result,
 )
 from ai_tools.registry import ToolRegistry, registry
-from mcp_server.api_executor import APIExecutionError
-from mcp_server.generated_registry import registry as generated_registry
 
 pytestmark = pytest.mark.django_db
 
@@ -22,6 +23,11 @@ class TestRegistration:
     def test_every_catalog_tool_is_registered_as_a_generated_tool(self):
         for generated in generated_registry.list_all():
             tool = registry.get(generated.name)
+            if generated.request["path"].startswith("/usage/") and not has_ee(
+                "ee.cloud"
+            ):
+                assert tool is None
+                continue
             assert isinstance(tool, GeneratedAPITool), generated.name
             assert tool.generated is generated
 
@@ -29,13 +35,18 @@ class TestRegistration:
         native = [t for t in registry.list_all() if not isinstance(t, GeneratedAPITool)]
         catalog_names = {t.name for t in generated_registry.list_all()}
         assert not catalog_names & {t.name for t in native}
-        assert registry.count() == len(native) + generated_registry.count()
+        assert registry.count() == len(native) + sum(
+            not t.request["path"].startswith("/usage/") or has_ee("ee.cloud")
+            for t in generated_registry.list_all()
+        )
 
     def test_registration_is_idempotent(self):
         fresh = ToolRegistry()
         register_generated_tools(target=fresh)
         register_generated_tools(target=fresh)
-        assert fresh.count() == generated_registry.count()
+        assert {t.name for t in fresh.list_all()} == {
+            t.name for t in registry.list_all() if isinstance(t, GeneratedAPITool)
+        }
 
     def test_catalog_groups_map_onto_falcon_categories(self):
         assert category_for_group("observability") == "tracing"
@@ -132,5 +143,5 @@ class TestExecution:
 
 
 def test_render_result_is_compact_json():
-    assert render_result({"id": "x", "n": 1}) == '{"id": "x", "n": 1}'
+    assert render_result({"id": "x", "n": 1}) == '{"id":"x","n":1}'
     assert render_result(None) == "Done."

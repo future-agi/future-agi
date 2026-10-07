@@ -6,7 +6,7 @@ class PromptBuilder:
         sections = [
             self._identity(),
             self._workspace(workspace_name, user_email),
-            self._current_time(),
+            self._current_time(tools),
             self._page_context(context),
             self._skill(skill),
             self._memories(memories),
@@ -41,13 +41,19 @@ class PromptBuilder:
     def _workspace(self, workspace_name, user_email):
         return f"Current workspace: {workspace_name}\nCurrent user: {user_email}"
 
-    def _current_time(self):
+    def _current_time(self, tools=()):
         """Anchor relative time windows.
 
         Every time filter in the tool catalog is absolute, so without the
         current date the model cannot resolve "the last seven days" and
         guesses at relative syntax the schemas reject.
         """
+        usage_time_hint = (
+            "- get_usage_overview: period and period_end take a calendar MONTH as YYYY-MM. "
+            "It cannot express a day range; use gateway or trace tools for shorter windows.\n"
+            if any(tool.name == "get_usage_overview" for tool in tools)
+            else ""
+        )
         now = timezone.now()
         return (
             f"Current date and time: {now.strftime('%Y-%m-%dT%H:%M:%SZ')} (UTC).\n"
@@ -56,9 +62,7 @@ class PromptBuilder:
             "- Date-time filters (start, end, started_after, started_before, created_after) "
             "take full ISO 8601, e.g. 2026-09-24T00:00:00Z. "
             "'Last 7 days' means start = now minus 7 days, end = now.\n"
-            "- get_usage_overview is different: period and period_end take a calendar "
-            "MONTH as YYYY-MM. It cannot express a day range — use the gateway or trace "
-            "tools for windows shorter than a month.\n"
+            f"{usage_time_hint}"
             "Never pass shorthand like '7d', '7D', 'last_week' or a bare date where a "
             "date-time is required, and never invent a parameter such as 'period' or "
             "'range' on a tool that does not define it — the schemas reject unknown fields."
@@ -123,7 +127,7 @@ class PromptBuilder:
             "- Deep trace debugging: explore_trace_legacy → read_trace_span (verbatim evidence)\n"
             "- Error feed: list_error_clusters → get_error_cluster → analyze_error_cluster\n"
             "- Dashboards: list_dashboard_metrics → query_dashboard_metrics → create_dashboard → create_dashboard_widget\n"
-            "- Costs: get_usage_overview → search_traces\n"
+            "- Costs: list_dashboard_metrics → query_dashboard_metrics → search_traces\n"
             "- Evals: list_eval_templates → create_eval_template → configure_dataset_evaluation → run_dataset_evals → list_dataset_evaluations\n"
             "- Eval tasks on traces: list_projects → create_eval_task → list_eval_tasks → pause_eval_task / resume_eval_task\n"
             "- Annotations: list_annotation_queues → list_annotation_queue_items → submit_annotation\n"

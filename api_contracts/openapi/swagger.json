@@ -28278,10 +28278,52 @@
             "delete": {
                 "operationId": "model-hub_develops_delete_dataset_delete",
                 "description": "",
-                "parameters": [],
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/DatasetDelete"
+                        }
+                    }
+                ],
                 "responses": {
-                    "204": {
-                        "description": ""
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/DevelopDatasetMessageResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
                     },
                     "default": {
                         "description": "Default error response",
@@ -28292,7 +28334,9 @@
                 },
                 "tags": [
                     "model-hub"
-                ]
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
             },
             "parameters": []
         },
@@ -69841,50 +69885,91 @@
                 "description": "",
                 "parameters": [
                     {
-                        "name": "page",
+                        "name": "page_number",
                         "in": "query",
-                        "description": "A page number within the paginated result set.",
+                        "description": "Zero-based page number.",
                         "required": false,
-                        "type": "integer"
+                        "type": "integer",
+                        "default": 0,
+                        "minimum": 0
                     },
                     {
-                        "name": "limit",
+                        "name": "page_size",
                         "in": "query",
-                        "description": "Number of results to return per page.",
                         "required": false,
-                        "type": "integer"
+                        "type": "integer",
+                        "default": 30,
+                        "maximum": 100,
+                        "minimum": 1
+                    },
+                    {
+                        "name": "search_text",
+                        "in": "query",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "required": false,
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    },
+                    {
+                        "name": "status",
+                        "in": "query",
+                        "required": false,
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "enum": [
+                                "triggered",
+                                "healthy"
+                            ]
+                        }
+                    },
+                    {
+                        "name": "metric_type",
+                        "in": "query",
+                        "required": false,
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "minLength": 1
+                        }
+                    },
+                    {
+                        "name": "sort_by",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    {
+                        "name": "sort_direction",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "enum": [
+                            "asc",
+                            "desc"
+                        ]
                     }
                 ],
                 "responses": {
                     "200": {
                         "description": "",
                         "schema": {
-                            "required": [
-                                "count",
-                                "results"
-                            ],
-                            "type": "object",
-                            "properties": {
-                                "count": {
-                                    "type": "integer"
-                                },
-                                "next": {
-                                    "type": "string",
-                                    "format": "uri",
-                                    "x-nullable": true
-                                },
-                                "previous": {
-                                    "type": "string",
-                                    "format": "uri",
-                                    "x-nullable": true
-                                },
-                                "results": {
-                                    "type": "array",
-                                    "items": {
-                                        "$ref": "#/definitions/UserAlertMonitor"
-                                    }
-                                }
-                            }
+                            "$ref": "#/definitions/UserAlertMonitorListResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
                         }
                     },
                     "default": {
@@ -69896,7 +69981,9 @@
                 },
                 "tags": [
                     "tracer"
-                ]
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
             },
             "parameters": []
         },
@@ -150370,6 +150457,202 @@
                         "oss",
                         "enterprise"
                     ]
+                }
+            }
+        },
+        "DatasetDelete": {
+            "required": [
+                "dataset_ids"
+            ],
+            "type": "object",
+            "properties": {
+                "dataset_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    "maxItems": 50
+                }
+            }
+        },
+        "UserAlertMonitorListColumn": {
+            "required": [
+                "id",
+                "name",
+                "is_visible"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "is_visible": {
+                    "title": "Is visible",
+                    "type": "boolean"
+                }
+            }
+        },
+        "UserAlertMonitorTrend": {
+            "required": [
+                "timestamp",
+                "count"
+            ],
+            "type": "object",
+            "properties": {
+                "timestamp": {
+                    "title": "Timestamp",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "count": {
+                    "title": "Count",
+                    "type": "integer",
+                    "minimum": 0
+                }
+            }
+        },
+        "UserAlertMonitorListItem": {
+            "required": [
+                "id",
+                "name",
+                "created_at",
+                "updated_at",
+                "metric_type",
+                "filters",
+                "status",
+                "no_of_alerts",
+                "last_triggered",
+                "is_mute",
+                "trends"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "updated_at": {
+                    "title": "Updated at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "metric_type": {
+                    "title": "Metric type",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "filters": {
+                    "title": "Filters",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "triggered",
+                        "healthy"
+                    ]
+                },
+                "no_of_alerts": {
+                    "title": "No of alerts",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "last_triggered": {
+                    "title": "Last triggered",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "is_mute": {
+                    "title": "Is mute",
+                    "type": "boolean"
+                },
+                "trends": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/UserAlertMonitorTrend"
+                    }
+                }
+            }
+        },
+        "UserAlertMonitorListMetadata": {
+            "required": [
+                "total_rows",
+                "total_pages"
+            ],
+            "type": "object",
+            "properties": {
+                "total_rows": {
+                    "title": "Total rows",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "total_pages": {
+                    "title": "Total pages",
+                    "type": "integer",
+                    "minimum": 0
+                }
+            }
+        },
+        "UserAlertMonitorListResult": {
+            "required": [
+                "column_config",
+                "table",
+                "metadata"
+            ],
+            "type": "object",
+            "properties": {
+                "column_config": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/UserAlertMonitorListColumn"
+                    }
+                },
+                "table": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/UserAlertMonitorListItem"
+                    }
+                },
+                "metadata": {
+                    "$ref": "#/definitions/UserAlertMonitorListMetadata"
+                }
+            }
+        },
+        "UserAlertMonitorListResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/UserAlertMonitorListResult"
                 }
             }
         }

@@ -12,11 +12,6 @@ import json
 import logging
 from typing import Any
 
-from pydantic import BaseModel as PydanticBaseModel
-
-from ai_tools import error_codes
-from ai_tools.base import BaseTool, EmptyInput, ToolContext, ToolResult
-from ai_tools.registry import registry as tool_registry
 from mcp_server.api_executor import (
     APIExecutionError,
     DjangoAPIExecutor,
@@ -25,6 +20,11 @@ from mcp_server.api_executor import (
 )
 from mcp_server.generated_registry import GeneratedTool, GeneratedToolRegistry
 from mcp_server.generated_registry import registry as generated_registry
+from pydantic import BaseModel as PydanticBaseModel
+
+from ai_tools import error_codes
+from ai_tools.base import BaseTool, EmptyInput, ToolContext, ToolResult
+from ai_tools.registry import registry as tool_registry
 
 logger = logging.getLogger(__name__)
 
@@ -187,9 +187,7 @@ RENDER_BUDGET_CHARS = 5500
 def _compact(payload: Any) -> str:
     # Separators matter: json.dumps defaults to ", "/": ", which is dead weight
     # against a character budget the model never sees.
-    return json.dumps(
-        payload, ensure_ascii=False, default=str, separators=(",", ":")
-    )
+    return json.dumps(payload, ensure_ascii=False, default=str, separators=(",", ":"))
 
 
 def _fit_to_budget(result: Any, budget: int) -> tuple[Any, int, int] | None:

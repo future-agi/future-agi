@@ -5,20 +5,19 @@ model cannot resolve "the last seven days" and guesses at relative syntax
 ('7D', an invented 'period' field) that the schemas reject.
 """
 
-from datetime import datetime, timezone as dt_timezone
+from datetime import UTC, datetime
+from types import SimpleNamespace
 
 import pytest
 
 from ee.falcon_ai.prompt_builder import PromptBuilder
 
-FIXED_NOW = datetime(2026, 10, 1, 9, 30, 15, tzinfo=dt_timezone.utc)
+FIXED_NOW = datetime(2026, 10, 1, 9, 30, 15, tzinfo=UTC)
 
 
 @pytest.fixture
 def prompt(monkeypatch):
-    monkeypatch.setattr(
-        "ee.falcon_ai.prompt_builder.timezone.now", lambda: FIXED_NOW
-    )
+    monkeypatch.setattr("ee.falcon_ai.prompt_builder.timezone.now", lambda: FIXED_NOW)
     return PromptBuilder().build(
         mode="general",
         skill=None,
@@ -39,10 +38,18 @@ def test_iso_8601_is_the_stated_format_for_datetime_filters(prompt):
     assert "started_after" in prompt
 
 
-def test_usage_overview_month_granularity_is_called_out(prompt):
-    """get_usage_overview takes YYYY-MM and cannot express a day range."""
-    assert "get_usage_overview" in prompt
-    assert "YYYY-MM" in prompt
+@pytest.mark.parametrize("available", [False, True])
+def test_usage_overview_is_only_described_when_available(available):
+    tools = [SimpleNamespace(name="get_usage_overview")] if available else []
+    section = PromptBuilder()._current_time(tools)
+    assert ("get_usage_overview" in section) is available
+    assert ("YYYY-MM" in section) is available
+
+
+def test_cost_workflow_uses_portable_tools():
+    section = PromptBuilder()._tools([SimpleNamespace(name="list_dashboard_metrics")])
+    assert "list_dashboard_metrics → query_dashboard_metrics" in section
+    assert "get_usage_overview" not in section
 
 
 def test_rejected_shorthand_is_named_explicitly(prompt):
@@ -52,7 +59,7 @@ def test_rejected_shorthand_is_named_explicitly(prompt):
 
 
 def test_time_section_tracks_the_clock(monkeypatch):
-    later = datetime(2027, 3, 14, 1, 2, 3, tzinfo=dt_timezone.utc)
+    later = datetime(2027, 3, 14, 1, 2, 3, tzinfo=UTC)
     monkeypatch.setattr("ee.falcon_ai.prompt_builder.timezone.now", lambda: later)
     built = PromptBuilder().build(
         mode="general",

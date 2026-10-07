@@ -22,12 +22,12 @@ These run on the real database.
 """
 
 import pytest
-
 from accounts.models.workspace import Workspace
+from tracer.models.eval_task import EvalTask, EvalTaskStatus, RunType
+
 from ai_tools.base import ToolContext
 from ai_tools.tests.conftest import run_tool
 from ai_tools.tests.fixtures import make_project
-from tracer.models.eval_task import EvalTask, EvalTaskStatus, RunType
 
 
 @pytest.fixture
@@ -160,9 +160,7 @@ class TestResumeEvalTaskScope:
         narrowing is a pinned contract rather than an accident of the cutover.
         """
         here = _paused_task(make_project(tool_context))
-        elsewhere = _paused_task(
-            make_project(tool_context, workspace=other_workspace)
-        )
+        elsewhere = _paused_task(make_project(tool_context, workspace=other_workspace))
         gone = _paused_task(make_project(tool_context, deleted=True))
         unscoped = ToolContext(
             user=tool_context.user,

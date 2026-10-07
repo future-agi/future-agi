@@ -1,5 +1,4 @@
 import structlog
-
 from ai_tools.registry import registry as tool_registry
 
 logger = structlog.get_logger(__name__)
@@ -26,7 +25,7 @@ COMMON_TOOLS = [
     "list_agents",
     "list_experiments",
     "list_dashboards",
-    "get_usage_overview",
+    "list_dashboard_metrics",
     "list_users",
     "get_user",
     "save_memory",
@@ -216,6 +215,7 @@ def filter_tools_for_message(tools, user_message, recent_tool_names=None, max_to
         "list_prompt_templates",
         "list_eval_templates",
         "get_usage_overview",
+        "list_dashboard_metrics",
         "search_docs",
         "ask_docs",
         "list_agents",

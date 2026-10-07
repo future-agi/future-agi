@@ -285,13 +285,15 @@ tools:
     access: write
   - name: list_trace_properties
     group: observability
-    description: List the properties a trace can be filtered on, with their ids. Call this before building the filters argument for search_traces or list_spans - each filter clause needs a valid column_id and these are the only valid values.
-    operation: {method: GET, path: "/tracer/trace/get_properties/"}
+    description: Discover filter properties from the shared metrics catalog. Pass cursor_mode=true, page_size (at most 50), source=traces (search_traces) or source=spans (list_spans), per_eval_config=true and project_ids when known. Use role=dimension to narrow to dimensions. Use name as column_id; set filter_config.col_type by mapping category system_metric to SYSTEM_METRIC, custom_attribute to SPAN_ATTRIBUTE, eval_metric to EVAL_METRIC, and annotation_metric to ANNOTATION. Preserve property_id and source for typed attribute bindings. Follow has_more/next_cursor by passing cursor; omit page and exclude_custom_attributes in cursor mode.
+    operation: {method: GET, path: "/tracer/dashboard/metrics/"}
     access: read
+    pagination:
+      page_size: {maximum: 50}
   - name: list_fired_alerts
     group: observability
-    description: List alerts that have fired, newest first. Use this to find out what the platform has already flagged before digging into traces or error clusters.
-    operation: {method: GET, path: "/tracer/user-alert-logs/all/"}
+    description: List alerts that have fired in numbered pages. Use this to find out what the platform has already flagged before digging into traces or error clusters.
+    operation: {method: GET, path: "/tracer/user-alert-logs/"}
     access: read
     pagination:
       limit: {maximum: 100}
@@ -301,7 +303,7 @@ tools:
     operation: {method: GET, path: "/tracer/user-alerts/list_monitors/"}
     access: read
     pagination:
-      limit: {maximum: 100}
+      page_size: {maximum: 100}
   - name: pause_eval_task
     group: observability
     description: Pause a running online evaluation task by eval_task_id. Already-launched evaluations may finish before the worker stops.
@@ -349,9 +351,10 @@ tools:
       limit: {maximum: 100}
   - name: get_annotation_item_detail
     group: annotations
-    description: Return everything needed to annotate one queue item - its source content, the queue instructions, every label with its settings (the allowed values a submitted value must match), any annotations already recorded, and the next/previous item ids. Call this before submit_annotation; the label settings are not available anywhere else.
+    description: Return everything needed to annotate one queue item; reserve=true acquires an editing reservation for the caller. Includes its source content, the queue instructions, every label with its settings (the allowed values a submitted value must match), any annotations already recorded, and the next/previous item ids. Call this before submit_annotation; the label settings are not available anywhere else.
     operation: {method: GET, path: "/model-hub/annotation-queues/{queue_id}/items/{id}/annotate-detail/"}
-    access: read
+    access: write
+    idempotent: false
   - name: submit_annotation
     group: annotations
     description: Submit annotation values for an item in an annotation queue. The value shape must match the label's settings from get_annotation_item_detail. Submitting moves the item to in_progress only; call complete_annotation_item to finish it.

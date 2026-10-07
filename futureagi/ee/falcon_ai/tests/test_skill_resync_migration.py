@@ -82,3 +82,27 @@ def test_surviving_builtins_match_the_yaml_tool_lists():
         )
     }
     assert {slug: names for slug, names in stale.items() if names} == {}
+
+
+def test_cost_skill_resync_removes_the_cloud_only_dependency():
+    skill, _ = Skill.objects.update_or_create(
+        organization=None,
+        slug="analyze-costs",
+        is_builtin=True,
+        defaults={
+            "name": "Analyze Costs",
+            "instructions": "Start with get_usage_overview",
+            "tool_names": ["get_usage_overview"],
+            "is_active": True,
+            "workspace": None,
+        },
+    )
+    _migration.resync_builtin_skills(_Apps(), None)
+    _migration.resync_builtin_skills(_Apps(), None)
+    skill.refresh_from_db()
+    assert skill.is_active
+    assert "get_usage_overview" not in skill.tool_names
+    assert "get_usage_overview" not in skill.instructions
+    assert {"list_dashboard_metrics", "query_dashboard_metrics"} <= set(
+        skill.tool_names
+    )

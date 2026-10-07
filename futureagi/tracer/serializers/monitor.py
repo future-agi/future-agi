@@ -1,8 +1,7 @@
 import json
 
-from rest_framework import serializers
-
 from accounts.serializers.user import UserSerializer
+from rest_framework import serializers
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.monitor import (
     AlertTypeChoices,
@@ -20,6 +19,62 @@ from tracer.serializers.filters import (
 )
 
 OBSERVATION_SPAN_TYPES = [t[0] for t in ObservationSpan.OBSERVATION_SPAN_TYPES]
+
+
+class UserAlertMonitorListQuerySerializer(serializers.Serializer):
+    page_number = serializers.IntegerField(
+        min_value=0, default=0, help_text="Zero-based page number."
+    )
+    page_size = serializers.IntegerField(min_value=1, max_value=100, default=30)
+    search_text = serializers.CharField(required=False, allow_blank=True)
+    project_id = serializers.ListField(child=serializers.UUIDField(), required=False)
+    status = serializers.ListField(
+        child=serializers.ChoiceField(choices=["triggered", "healthy"]), required=False
+    )
+    metric_type = serializers.ListField(child=serializers.CharField(), required=False)
+    sort_by = serializers.CharField(required=False)
+    sort_direction = serializers.ChoiceField(choices=["asc", "desc"], required=False)
+
+
+class UserAlertMonitorListColumnSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    name = serializers.CharField()
+    is_visible = serializers.BooleanField()
+
+
+class UserAlertMonitorTrendSerializer(serializers.Serializer):
+    timestamp = serializers.DateTimeField()
+    count = serializers.IntegerField(min_value=0)
+
+
+class UserAlertMonitorListItemSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField()
+    created_at = serializers.DateTimeField()
+    updated_at = serializers.DateTimeField()
+    metric_type = serializers.CharField()
+    filters = serializers.JSONField(allow_null=True)
+    status = serializers.ChoiceField(choices=["triggered", "healthy"])
+    no_of_alerts = serializers.IntegerField(min_value=0)
+    last_triggered = serializers.DateTimeField(allow_null=True)
+    is_mute = serializers.BooleanField()
+    trends = UserAlertMonitorTrendSerializer(many=True)
+
+
+class UserAlertMonitorListMetadataSerializer(serializers.Serializer):
+    total_rows = serializers.IntegerField(min_value=0)
+    total_pages = serializers.IntegerField(min_value=0)
+
+
+class UserAlertMonitorListResultSerializer(serializers.Serializer):
+    column_config = UserAlertMonitorListColumnSerializer(many=True)
+    table = UserAlertMonitorListItemSerializer(many=True)
+    metadata = UserAlertMonitorListMetadataSerializer()
+
+
+class UserAlertMonitorListResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = UserAlertMonitorListResultSerializer()
 
 
 class UserAlertMonitorSerializer(serializers.ModelSerializer):

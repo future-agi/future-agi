@@ -49,7 +49,6 @@ def reverse_noop(apps, schema_editor):
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
         ("falcon_ai", "0008_seed_cluster_rca_skill"),
     ]
