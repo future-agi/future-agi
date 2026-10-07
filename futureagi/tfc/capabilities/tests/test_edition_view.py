@@ -145,3 +145,118 @@ def test_expired_licence_is_community_with_state(
     assert body["edition"] == "community"
     assert body["license"]["state"] == "expired"
     assert body["limits"]["organizations"]["limit"] == 1
+
+
+# ---------------------------------------------------------------------------
+# R1: the organization comes from authentication, never from User.organization.
+# These requests use a real access token through APIKeyAuthentication, with no
+# force_authenticate and no workspace injection.
+# ---------------------------------------------------------------------------
+
+REMOVE_URL = "/accounts/organization/members/remove/"
+
+
+def _jwt_client(email, password="testpassword123"):
+    from rest_framework.test import APIClient
+
+    client = APIClient()
+    login = client.post(
+        "/accounts/token/", {"email": email, "password": password}, format="json"
+    )
+    assert login.status_code == 200, login.content
+    client.credentials(HTTP_AUTHORIZATION=f"Bearer {login.json()['access']}")
+    return client
+
+
+def _removed_from_sole_org(organization, owner, **user_extra):
+    """A former admin removed via the real endpoint, holding a fresh token.
+
+    Removal revokes the tokens issued before it, but the user stays active
+    with the legacy ``User.organization`` FK and can log in again; the only
+    membership is inactive. Returns a client with that post-removal token.
+    """
+    from accounts.models.organization_membership import OrganizationMembership
+    from tfc.capabilities.tests.edition_factories import make_invite, make_user
+    from tfc.constants.levels import Level
+
+    former = make_user(organization=organization, **user_extra)
+    OrganizationMembership.no_workspace_objects.create(
+        user=former,
+        organization=organization,
+        role=Level.to_org_string(Level.ADMIN),
+        level=Level.ADMIN,
+        is_active=True,
+    )
+    make_invite(organization, "reserved-seat@futureagi.com")
+    client = _jwt_client(former.email)
+
+    before = client.get(URL)
+    assert before.status_code == 200, before.content
+    former_org_members = edition.count(
+        edition.EditionResource.MEMBER, organization=organization
+    )
+    assert before.json()["result"]["limits"]["members"]["current"] == (
+        former_org_members
+    )
+
+    removed = _jwt_client(owner.email).delete(
+        REMOVE_URL, {"user_id": str(former.id)}, format="json"
+    )
+    assert removed.status_code == 200, removed.content
+
+    former.refresh_from_db()
+    assert former.is_active
+    assert former.organization_id == organization.id
+    memberships = OrganizationMembership.all_objects.filter(user=former)
+    assert [m.is_active for m in memberships] == [False]
+    assert client.get(URL).status_code == 401  # pre-removal token revoked
+    return _jwt_client(former.email)
+
+
+def test_removed_admin_with_valid_token_gets_no_former_org_data(
+    community, organization, user
+):
+    """R1 / AC-16: removal leaves no former-org member counts or licence block."""
+    client = _removed_from_sole_org(organization, user)
+    former_org_members = edition.count(
+        edition.EditionResource.MEMBER, organization=organization
+    )
+    assert former_org_members == 2  # owner + the reserved invite
+
+    response = client.get(URL)
+
+    assert response.status_code == 200, response.content
+    body = response.json()["result"]
+    assert body["edition"] == "community"
+    assert body["limits"]["members"]["current"] == 0
+    assert "license" not in body
+
+
+def test_removed_staff_operator_keeps_only_install_scope(community, organization, user):
+    """R1: is_staff still sees the install licence, never the former org's seats."""
+    client = _removed_from_sole_org(organization, user, is_staff=True)
+
+    body = client.get(URL).json()["result"]
+
+    assert body["limits"]["members"]["current"] == 0
+    assert body["license"]["state"] in ("missing", "invalid")
+
+
+def test_legacy_fk_only_user_keeps_the_panel(community, organization, user):
+    """R1: a user authentication resolves through the legacy FK alone (no
+    membership row at all) still sees that organization's usage."""
+    from accounts.models.organization_membership import OrganizationMembership
+    from tfc.capabilities.tests.edition_factories import make_user
+
+    legacy = make_user(organization=organization)
+    assert not OrganizationMembership.all_objects.filter(user=legacy).exists()
+
+    response = _jwt_client(legacy.email).get(URL)
+
+    assert response.status_code == 200, response.content
+    body = response.json()["result"]
+    assert body["limits"]["members"]["current"] == edition.count(
+        edition.EditionResource.MEMBER, organization=organization
+    )
+    assert body["limits"]["members"]["current"] == 2  # owner + legacy user
+    assert "license" not in body

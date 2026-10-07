@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import structlog
-
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -54,8 +53,8 @@ class CapabilitiesView(APIView):
             "features": features,
         }
 
-        is_admin_view = (
-            location == DeploymentLocation.SELF_HOSTED and self._is_admin(request)
+        is_admin_view = location == DeploymentLocation.SELF_HOSTED and self._is_admin(
+            request
         )
         if is_admin_view:
             response_data["license"] = self._get_license_details()
@@ -90,9 +89,15 @@ class CapabilitiesView(APIView):
         return {
             "issued_to": snapshot.issued_to,
             "band": snapshot.band,
-            "license_type": snapshot.license_type.value if snapshot.license_type else None,
-            "expires_at": snapshot.expires_at.isoformat() if snapshot.expires_at else None,
-            "grace_ends_at": snapshot.grace_ends_at.isoformat() if snapshot.grace_ends_at else None,
+            "license_type": (
+                snapshot.license_type.value if snapshot.license_type else None
+            ),
+            "expires_at": (
+                snapshot.expires_at.isoformat() if snapshot.expires_at else None
+            ),
+            "grace_ends_at": (
+                snapshot.grace_ends_at.isoformat() if snapshot.grace_ends_at else None
+            ),
             "features_count": len(snapshot.features),
             "state": snapshot.state.value,
         }
@@ -152,9 +157,10 @@ class EditionView(APIView):
         if edition.is_cloud():
             return gm.success_response({"edition": "cloud"})
 
-        organization = getattr(request, "organization", None) or getattr(
-            request.user, "organization", None
-        )
+        # Only the organization authentication resolved. It is None for a user
+        # removed from their only organization; the legacy User.organization
+        # FK still points there and must not bring the member counts back.
+        organization = getattr(request, "organization", None)
         data = edition.usage_summary(organization)
         data["activation"] = {"method": "env_restart"}
         if _is_admin(request):
