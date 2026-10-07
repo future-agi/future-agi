@@ -8,7 +8,11 @@ import {
   fDateTimeLocal,
 } from "src/utils/format-time";
 
-export function LocalDateTime({ value, withTime = false, emptyText = "Unknown" }) {
+export function LocalDateTime({
+  value,
+  withTime = false,
+  emptyText = "Unknown",
+}) {
   const instant = describeInstant(value);
   // Controlled from the first render. `open={flag || undefined}` would lock MUI's
   // tooltip uncontrolled, and MUI replaces the child's onTouchStart with its own

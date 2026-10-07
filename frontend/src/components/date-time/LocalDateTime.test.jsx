@@ -9,11 +9,10 @@ const INSTANT = "2025-10-31T00:00:00Z";
 
 describe("LocalDateTime", () => {
   beforeEach(() => {
-    vi.spyOn(Intl, "DateTimeFormat").mockImplementation(
-      (locale, options) =>
-        locale === undefined
-          ? { resolvedOptions: () => ({ timeZone: "Asia/Kolkata" }) }
-          : new NativeDateTimeFormat(locale, options),
+    vi.spyOn(Intl, "DateTimeFormat").mockImplementation((locale, options) =>
+      locale === undefined
+        ? { resolvedOptions: () => ({ timeZone: "Asia/Kolkata" }) }
+        : new NativeDateTimeFormat(locale, options),
     );
   });
   afterEach(() => vi.restoreAllMocks());
@@ -54,7 +53,9 @@ describe("LocalDateTime", () => {
   );
 
   it("shows Unknown by default and no tooltip for an invalid value", () => {
-    const { container } = render(<LocalDateTime value="<script>garbage</script>" />);
+    const { container } = render(
+      <LocalDateTime value="<script>garbage</script>" />,
+    );
     expect(screen.getByText("Unknown")).toBeInTheDocument();
     expect(container.querySelector("[tabindex]")).toBeNull();
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();

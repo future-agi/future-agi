@@ -121,7 +121,10 @@ const UserManagementV2 = ({ workspaceScope = false }) => {
         flex: 1,
         valueFormatter: (params) => fDateLocal(params.value),
         cellRenderer: (params) => (
-          <LocalDateTime value={params.value} emptyText="No start date recorded" />
+          <LocalDateTime
+            value={params.value}
+            emptyText="No start date recorded"
+          />
         ),
       },
       ...(useInviteLinks

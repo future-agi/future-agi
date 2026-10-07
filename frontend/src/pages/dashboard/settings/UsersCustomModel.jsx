@@ -140,7 +140,10 @@ const UsersCustomModel = () => {
         flex: 1,
         valueFormatter: (params) => fDateLocal(params.value),
         cellRenderer: (params) => (
-          <LocalDateTime value={params.value} emptyText="No date added recorded" />
+          <LocalDateTime
+            value={params.value}
+            emptyText="No date added recorded"
+          />
         ),
       },
     ],
