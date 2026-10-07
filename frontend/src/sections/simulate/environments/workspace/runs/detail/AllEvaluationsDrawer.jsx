@@ -22,20 +22,17 @@ import {
 } from "src/api/simulate-environments/environments";
 import {
   runAnalyticsKey,
+  callDetailKeyPrefix,
   runResultsKey,
   useRunNewEvals,
 } from "src/api/simulate-environments/runEvals";
 import SideDrawer from "../../../components/SideDrawer";
 import EmptyState from "../../../components/EmptyState";
 import { refusalText } from "../../evals/refusalText";
-
-// Only a harness call rerun can refresh a non-regradable row's score, so both
-// its checkbox and its run action are locked with the same explanation.
-export const HARNESS_ONLY_TOOLTIP = "Only a call rerun refreshes this";
-// Shown when a ticked eval has no mapping of its own: on this page that is one
-// of the harness's suite evals, whose scores the platform will replace.
-export const HARNESS_NOTE =
-  "Scores the harness gave will be replaced by the platform's.";
+import {
+  HARNESS_NOTE,
+  HARNESS_ONLY_TOOLTIP,
+} from "./allEvaluationsDrawer.constants";
 
 // A failed or unanswered request may still have started grading.
 const RUN_FALLBACK = "Grading may not have started. Try again.";
@@ -162,6 +159,9 @@ export default function AllEvaluationsDrawer({
           queryClient.invalidateQueries({
             queryKey: runAnalyticsKey(executionId),
           });
+          // Call rows are built from the live catalog, and a drawer keeps
+          // its detail for minutes: reopened, it must not list the removed eval.
+          queryClient.invalidateQueries({ queryKey: callDetailKeyPrefix });
         },
         onError: (e) =>
           enqueueSnackbar(refusalText(e, REMOVE_FALLBACK), {
@@ -295,8 +295,9 @@ export default function AllEvaluationsDrawer({
                         </IconButton>
                       </span>
                     </Tooltip>
-                    {/* A grader that has not started yet skips a removed eval,
-                        so its pending cell on this run would never clear. */}
+                    {/* The grader copes with a removal mid-run (it drops the
+                        pending cell), but the column would vanish from a table
+                        that is polling for its scores. Removal waits. */}
                     <Tooltip arrow title={grading ? GRADING_TOOLTIP : ""}>
                       <span>
                         <IconButton

@@ -12,10 +12,11 @@ import {
 } from "src/api/simulate-environments/environments";
 import { useRunNewEvals } from "src/api/simulate-environments/runEvals";
 import { enqueueSnackbar } from "notistack";
-import AllEvaluationsDrawer, {
-  HARNESS_ONLY_TOOLTIP,
+import AllEvaluationsDrawer from "../AllEvaluationsDrawer";
+import {
   HARNESS_NOTE,
-} from "../AllEvaluationsDrawer";
+  HARNESS_ONLY_TOOLTIP,
+} from "../allEvaluationsDrawer.constants";
 
 vi.mock("notistack", () => ({ enqueueSnackbar: vi.fn() }));
 vi.mock("src/api/simulate-environments/environments", () => ({
@@ -26,6 +27,7 @@ vi.mock("src/api/simulate-environments/runEvals", () => ({
   useRunNewEvals: vi.fn(),
   runResultsKey: (id) => ["simulation-run-results-v3", id],
   runAnalyticsKey: (id) => ["simulation-run-analytics-v3", id],
+  callDetailKeyPrefix: ["simulation-call-detail-v3"],
 }));
 
 const CONFIGS = [
@@ -268,7 +270,7 @@ describe("AllEvaluationsDrawer", () => {
     expect(screen.getByRole("button", { name: "Run (1)" })).toBeDisabled();
   });
 
-  it("removes any eval, including one the harness reports, and refreshes the run's table and analytics", () => {
+  it("removes any eval, including one the harness reports, and refreshes the run's table, analytics and call details", () => {
     removeMutate.mockImplementation((_v, o) => o.onSuccess());
     const { client } = setup();
     const invalidateSpy = vi.spyOn(client, "invalidateQueries");
@@ -297,6 +299,10 @@ describe("AllEvaluationsDrawer", () => {
     });
     expect(invalidateSpy).toHaveBeenCalledWith({
       queryKey: ["simulation-run-analytics-v3", "ex1"],
+    });
+    // A call drawer reopened within its stale window must not list it.
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: ["simulation-call-detail-v3"],
     });
 
     fireEvent.click(
