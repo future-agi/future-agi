@@ -16,10 +16,14 @@ const readEnv = (file) =>
     readFileSync(file, "utf8")
       .split("\n")
       .filter((line) => line && !line.startsWith("#"))
-      .map((line) => [line.slice(0, line.indexOf("=")), line.slice(line.indexOf("=") + 1)]),
+      .map((line) => [
+        line.slice(0, line.indexOf("=")),
+        line.slice(line.indexOf("=") + 1),
+      ]),
   );
 
-const decode = (part) => JSON.parse(Buffer.from(part, "base64url").toString("utf8"));
+const decode = (part) =>
+  JSON.parse(Buffer.from(part, "base64url").toString("utf8"));
 
 function publicKeyOf(env) {
   return createPublicKey(env.EE_LICENSE_PUBLIC_KEY.replace(/\\n/g, "\n"));
@@ -29,9 +33,18 @@ test("enterprise: an RS256 licence the env public key verifies, with the validat
   const dir = mkdtempSync(path.join(tmpdir(), "e2e-licence-"));
   const env = readEnv(writeLicenceEnv(dir, "enterprise"));
   const [header, payload, signature] = env.EE_LICENSE_KEY.split(".");
-  assert.deepEqual(decode(header), { alg: "RS256", typ: "JWT", kid: "default" });
+  assert.deepEqual(decode(header), {
+    alg: "RS256",
+    typ: "JWT",
+    kid: "default",
+  });
   assert.equal(
-    verify("sha256", Buffer.from(`${header}.${payload}`), publicKeyOf(env), Buffer.from(signature, "base64url")),
+    verify(
+      "sha256",
+      Buffer.from(`${header}.${payload}`),
+      publicKeyOf(env),
+      Buffer.from(signature, "base64url"),
+    ),
     true,
   );
   const claims = decode(payload);
@@ -63,8 +76,15 @@ test("removed: no licence key, the trusted public key stays", () => {
 });
 
 test("key material is private to the user and never printed", () => {
-  const dir = path.join(mkdtempSync(path.join(tmpdir(), "e2e-licence-")), "stack");
-  const run = spawnSync(process.execPath, [SCRIPT, "write-env", dir, "enterprise"], { encoding: "utf8" });
+  const dir = path.join(
+    mkdtempSync(path.join(tmpdir(), "e2e-licence-")),
+    "stack",
+  );
+  const run = spawnSync(
+    process.execPath,
+    [SCRIPT, "write-env", dir, "enterprise"],
+    { encoding: "utf8" },
+  );
   assert.equal(run.status, 0, run.stderr);
   assert.equal(run.stdout, "test licence: enterprise\n");
   assert.equal(run.stderr, "");
@@ -76,11 +96,19 @@ test("key material is private to the user and never printed", () => {
 
 test("an unknown state is refused", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "e2e-licence-"));
-  assert.throws(() => writeLicenceEnv(dir, "trial"), /licence state must be one of/);
-  const run = spawnSync(process.execPath, [SCRIPT, "write-env", dir, "grace"], { encoding: "utf8" });
+  assert.throws(
+    () => writeLicenceEnv(dir, "trial"),
+    /licence state must be one of/,
+  );
+  const run = spawnSync(process.execPath, [SCRIPT, "write-env", dir, "grace"], {
+    encoding: "utf8",
+  });
   assert.equal(run.status, 1);
 });
 
 test("claims are deterministic for a fixed clock", () => {
-  assert.deepEqual(licenceClaims("enterprise", 1_000_000_000), licenceClaims("enterprise", 1_000_000_000));
+  assert.deepEqual(
+    licenceClaims("enterprise", 1_000_000_000),
+    licenceClaims("enterprise", 1_000_000_000),
+  );
 });

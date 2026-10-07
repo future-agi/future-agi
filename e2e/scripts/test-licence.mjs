@@ -44,11 +44,16 @@ const EXPIRED_DAYS_AGO = 10;
 export const STATES = Object.freeze(["enterprise", "expired", "removed"]);
 
 const base64url = (value) =>
-  Buffer.from(value).toString("base64").replace(/=+$/, "").replace(/\+/g, "-").replace(/\//g, "_");
+  Buffer.from(value)
+    .toString("base64")
+    .replace(/=+$/, "")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_");
 
 /** Claims shaped like ee/licensing/tests/fixtures.py license_claims. */
 export function licenceClaims(state, now = Math.floor(Date.now() / 1000)) {
-  const exp = state === "expired" ? now - EXPIRED_DAYS_AGO * DAY : now + 365 * DAY;
+  const exp =
+    state === "expired" ? now - EXPIRED_DAYS_AGO * DAY : now + 365 * DAY;
   const issued = exp - 30 * DAY;
   return {
     typ: TYPE,
@@ -76,7 +81,11 @@ export function licenceClaims(state, now = Math.floor(Date.now() / 1000)) {
 export function signLicence(privateKeyPem, claims) {
   const header = { alg: "RS256", typ: "JWT", kid: KID };
   const input = `${base64url(JSON.stringify(header))}.${base64url(JSON.stringify(claims))}`;
-  const signature = sign("sha256", Buffer.from(input), createPrivateKey(privateKeyPem));
+  const signature = sign(
+    "sha256",
+    Buffer.from(input),
+    createPrivateKey(privateKeyPem),
+  );
   return `${input}.${base64url(signature)}`;
 }
 
@@ -114,7 +123,10 @@ export function writeLicenceEnv(dir, state, now) {
     throw new Error(`licence state must be one of ${STATES.join(", ")}`);
   }
   const { privateKey, publicKey } = ensureKeypair(dir);
-  const token = state === "removed" ? "" : signLicence(privateKey, licenceClaims(state, now));
+  const token =
+    state === "removed"
+      ? ""
+      : signLicence(privateKey, licenceClaims(state, now));
   const envFile = path.join(dir, "licence.env");
   writePrivate(
     envFile,
@@ -133,7 +145,9 @@ export function writeLicenceEnv(dir, state, now) {
 if (import.meta.url === `file://${process.argv[1]}`) {
   const [command, dir, state] = process.argv.slice(2);
   if (command !== "write-env" || !dir || !state) {
-    console.error(`usage: test-licence.mjs write-env <dir> <${STATES.join("|")}>`);
+    console.error(
+      `usage: test-licence.mjs write-env <dir> <${STATES.join("|")}>`,
+    );
     process.exit(2);
   }
   try {

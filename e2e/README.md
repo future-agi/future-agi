@@ -275,12 +275,12 @@ cannot give them. They run on their own disposable stack: the Standalone setup a
 project `futureagi-e2e-community`, with its own volumes and its own loopback-only ports from
 `e2e/stack/community-e2e.env`, so it runs next to the shared stacks and never touches their data.
 
-| Service | Port | Service | Port |
-| --- | --- | --- | --- |
-| frontend | 127.0.0.1:3300 | Postgres | 127.0.0.1:35432 |
-| backend | 127.0.0.1:8300 | ClickHouse HTTP / native | 127.0.0.1:38123 / 39000 |
+| Service         | Port            | Service                       | Port                    |
+| --------------- | --------------- | ----------------------------- | ----------------------- |
+| frontend        | 127.0.0.1:3300  | Postgres                      | 127.0.0.1:35432         |
+| backend         | 127.0.0.1:8300  | ClickHouse HTTP / native      | 127.0.0.1:38123 / 39000 |
 | agentcc-gateway | 127.0.0.1:38090 | fi-collector OTLP gRPC / HTTP | 127.0.0.1:34317 / 34318 |
-| MinIO API | 127.0.0.1:39005 | | |
+| MinIO API       | 127.0.0.1:39005 |                               |                         |
 
 ```bash
 bin/e2e build standalone                  # images from this checkout (the Standalone tag, e2esa)
