@@ -29,30 +29,17 @@ describe("useRegradeEvals", () => {
     );
   });
 
-  it("says grading started and reports a dispatch", () => {
+  it("says grading started once it is queued", () => {
     const onSuccess = vi.fn();
     const { result } = setup();
     result.current.regrade([{ id: "c1" }], { onSuccess });
-    mutate.mock.calls[0][1].onSuccess({ message: "ok" });
+    mutate.mock.calls[0][1].onSuccess({ call_execution_count: 4 });
 
     expect(enqueueSnackbar).toHaveBeenCalledWith(
       "Grading 1 evaluation. This run updates when grading finishes.",
       { variant: "success" },
     );
-    expect(onSuccess).toHaveBeenCalledWith(true);
-  });
-
-  it("warns when the grading job wasn't started", () => {
-    const onSuccess = vi.fn();
-    const { result } = setup();
-    result.current.regrade([{ id: "c1" }, { id: "c2" }], { onSuccess });
-    mutate.mock.calls[0][1].onSuccess({ dispatched: false });
-
-    expect(enqueueSnackbar).toHaveBeenCalledWith(
-      "Grading may not have started. Try again.",
-      { variant: "warning" },
-    );
-    expect(onSuccess).toHaveBeenCalledWith(false);
+    expect(onSuccess).toHaveBeenCalledWith();
   });
 
   it("shows the server's reason on a refusal and reports nothing", () => {
@@ -65,6 +52,19 @@ describe("useRegradeEvals", () => {
 
     expect(enqueueSnackbar).toHaveBeenCalledWith(
       "This run is still finishing. Try again in a moment.",
+      { variant: "error" },
+    );
+    expect(onSuccess).not.toHaveBeenCalled();
+  });
+
+  it("falls back to its own sentence when grading couldn't be queued", () => {
+    const onSuccess = vi.fn();
+    const { result } = setup();
+    result.current.regrade([{ id: "c1" }], { onSuccess });
+    mutate.mock.calls[0][1].onError({ statusCode: 503 });
+
+    expect(enqueueSnackbar).toHaveBeenCalledWith(
+      "Grading may not have started. Try again.",
       { variant: "error" },
     );
     expect(onSuccess).not.toHaveBeenCalled();

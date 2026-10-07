@@ -13,10 +13,10 @@ export const RUN_FALLBACK = "Grading may not have started. Try again.";
  *
  * `envId` is the environment the run belongs to; the re-grade route is under it.
  *
- * `regrade(configs, { onSuccess })` calls `onSuccess(dispatched)` once the
- * server answers: `dispatched` is false when it accepted the request but
- * couldn't start the grading job. A refusal shows the server's sentence and
- * calls nothing, so a confirm dialog stays open for a retry.
+ * `regrade(configs, { onSuccess })` calls `onSuccess()` once the server has
+ * queued the grading. A refusal, including a job that couldn't be queued,
+ * shows the server's sentence and calls nothing, so a confirm dialog stays
+ * open for a retry.
  */
 export function useRegradeEvals({ envId, executionId }) {
   const runEvals = useRunNewEvals();
@@ -26,21 +26,13 @@ export function useRegradeEvals({ envId, executionId }) {
     runEvals.mutate(
       { id: envId, executionId, evalConfigIds },
       {
-        onSuccess: (result) => {
-          // Only the run-test route sends this flag (false when grading never
-          // started and the old scores were put back). This route answers that
-          // with a 503 instead, so its bodies carry no flag and read as started.
-          if (result?.dispatched === false) {
-            enqueueSnackbar(RUN_FALLBACK, { variant: "warning" });
-            onSuccess?.(false);
-            return;
-          }
+        onSuccess: () => {
           const k = evalConfigIds.length;
           enqueueSnackbar(
             `Grading ${k} evaluation${k === 1 ? "" : "s"}. This run updates when grading finishes.`,
             { variant: "success" },
           );
-          onSuccess?.(true);
+          onSuccess?.();
         },
         onError: (e) => {
           enqueueSnackbar(refusalText(e, RUN_FALLBACK), { variant: "error" });
