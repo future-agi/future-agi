@@ -24,7 +24,17 @@ function Group({ title, hint, items }) {
             bgcolor: index % 2 ? "background.neutral" : "transparent",
           }}
         >
-          <Typography noWrap sx={{ typography: "s2", fontFamily: MONO, fontWeight: "fontWeightSemiBold" }}>
+          {/* Rules are full sentences: wrap them instead of cutting them off, and
+              break a long unbroken token (a URL, a tool id) rather than overflow. */}
+          <Typography
+            sx={{
+              typography: "s2",
+              fontFamily: MONO,
+              fontWeight: "fontWeightSemiBold",
+              whiteSpace: "normal",
+              overflowWrap: "anywhere",
+            }}
+          >
             {item}
           </Typography>
         </Box>

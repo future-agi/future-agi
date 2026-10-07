@@ -71,7 +71,6 @@ describe("getBlocks", () => {
   it("keeps the image blot's snake_case metadata on save", () => {
     // ImageBlot.value() stores { url, img_name, img_size } in data-image-data,
     // so imageData carries snake_case keys — there is no imgName/imgSize.
-    // (Reconciled with open PR #2707, which fixes the same overwrite.)
     const quill = mockQuill([
       {
         insert: {
