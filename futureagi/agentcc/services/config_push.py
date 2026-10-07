@@ -178,6 +178,29 @@ def _inject_guardrail_credentials(checks):
                     del cfg[key]
 
 
+# Defaults must match what the dashboard shows when the org has never saved
+# Pipeline Settings (GuardrailConfigTab.jsx): Fail Open on, Mode parallel.
+_DEFAULT_FAIL_OPEN = True
+_DEFAULT_PIPELINE_MODE = "parallel"
+_PIPELINE_SETTING_ALIASES = ("fail_open", "failOpen", "pipeline_mode", "pipelineMode")
+
+
+def _pipeline_settings(guardrails_data):
+    """Return the org's guardrail pipeline settings in gateway (snake_case) form."""
+    fail_open = guardrails_data.get("fail_open")
+    if fail_open is None:
+        fail_open = guardrails_data.get("failOpen")
+    if fail_open is None:
+        fail_open = _DEFAULT_FAIL_OPEN
+
+    mode = guardrails_data.get("pipeline_mode") or guardrails_data.get("pipelineMode")
+    mode = str(mode).strip().lower() if mode else _DEFAULT_PIPELINE_MODE
+    if mode not in ("parallel", "sequential"):
+        mode = _DEFAULT_PIPELINE_MODE
+
+    return {"fail_open": bool(fail_open), "pipeline_mode": mode}
+
+
 def _transform_guardrails(guardrails_data, org_id=None):
     """
     Transform Django org-config guardrails (rules array) into gateway tenant
@@ -221,10 +244,7 @@ def _transform_guardrails(guardrails_data, org_id=None):
             _inject_fi_credentials(checks, org_id)
         result = {
             "checks": checks,
-            "fail_open": guardrails_data.get(
-                "failOpen", guardrails_data.get("fail_open", False)
-            ),
-            "pipeline_mode": guardrails_data.get("pipeline_mode", "parallel"),
+            **_pipeline_settings(guardrails_data),
         }
         if guardrails_data.get("timeout_ms"):
             result["timeout_ms"] = guardrails_data["timeout_ms"]
@@ -249,7 +269,16 @@ def _transform_guardrails(guardrails_data, org_id=None):
             mapped[registry_name] = clean_cfg
         if org_id:
             _inject_fi_credentials(mapped, org_id)
-        return {**guardrails_data, "checks": mapped}
+        passthrough = {
+            k: v
+            for k, v in guardrails_data.items()
+            if k not in _PIPELINE_SETTING_ALIASES
+        }
+        return {
+            **passthrough,
+            "checks": mapped,
+            **_pipeline_settings(guardrails_data),
+        }
 
     # Convert rules array → checks map
     if not isinstance(rules, list) or not rules:
@@ -279,10 +308,7 @@ def _transform_guardrails(guardrails_data, org_id=None):
 
     result = {
         "checks": checks,
-        "fail_open": guardrails_data.get(
-            "failOpen", guardrails_data.get("fail_open", False)
-        ),
-        "pipeline_mode": guardrails_data.get("pipeline_mode", "parallel"),
+        **_pipeline_settings(guardrails_data),
     }
     if guardrails_data.get("timeout_ms"):
         result["timeout_ms"] = guardrails_data["timeout_ms"]
