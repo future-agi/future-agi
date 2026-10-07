@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -17,8 +18,23 @@ type ResolveResult struct {
 	WorkspaceID string
 	UserID      string
 	KeyType     string // "system", "user", "mcp"
-	mu          sync.RWMutex
-	Projects    map[string]string // project_name → project_id
+	// ExpiresAt is accounts_orgapikey.expires_at; nil means the key never
+	// expires. It is kept on the cached result so a key that expires while
+	// cached is refused on its next use rather than after the cache TTL.
+	ExpiresAt *time.Time
+	mu        sync.RWMutex
+	Projects  map[string]string // project_name → project_id
+}
+
+// Expired reports whether the key's expiry is at or before now.
+func (r *ResolveResult) Expired(now time.Time) bool {
+	return r != nil && keyExpired(r.ExpiresAt, now)
+}
+
+// keyExpired treats a nil expiry as never expiring, like Django's
+// OrgApiKey.is_expired.
+func keyExpired(expiresAt *time.Time, now time.Time) bool {
+	return expiresAt != nil && !expiresAt.After(now)
 }
 
 // GetProject returns the project ID for a given name, thread-safe.
@@ -179,24 +195,40 @@ func (r *PGResolver) Close() {
 }
 
 // ValidateKey checks an API key pair and returns the associated org context.
-// Returns nil, nil if the key is not found (invalid credentials).
+// Returns nil, nil if the key is not found or is disabled (invalid
+// credentials), and nil, ErrKeyExpired once its expires_at has passed.
+//
+// The lookup is not filtered on enabled: Django disables a key the first time
+// it sees it expired, and that key must keep reading as expired here rather
+// than as a wrong key.
 func (r *PGResolver) ValidateKey(ctx context.Context, apiKey, secretKey string) (*ResolveResult, error) {
 	const q = `
-		SELECT k.organization_id, k.workspace_id, k.user_id, k.type
+		SELECT k.organization_id, k.workspace_id, k.user_id, k.type,
+		       k.enabled, k.expires_at
 		FROM accounts_orgapikey k
 		WHERE k.api_key = $1 AND k.secret_key = $2
-		  AND k.enabled = true AND k.deleted = false
+		  AND k.deleted = false
 		LIMIT 1`
 
 	var orgID, keyType string
 	var workspaceID, userID *string
+	var enabled bool
+	var expiresAt *time.Time
 
-	err := r.read.QueryRow(ctx, q, apiKey, secretKey).Scan(&orgID, &workspaceID, &userID, &keyType)
+	err := r.read.QueryRow(ctx, q, apiKey, secretKey).Scan(
+		&orgID, &workspaceID, &userID, &keyType, &enabled, &expiresAt,
+	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, nil // invalid key
 		}
 		return nil, fmt.Errorf("validate key: %w", err)
+	}
+	if keyExpired(expiresAt, time.Now()) {
+		return nil, ErrKeyExpired
+	}
+	if !enabled {
+		return nil, nil // disabled key
 	}
 
 	effectiveWorkspace := ""
@@ -211,7 +243,7 @@ func (r *PGResolver) ValidateKey(ctx context.Context, apiKey, secretKey string) 
 	}
 	res := &ResolveResult{
 		OrgID: orgID, WorkspaceID: effectiveWorkspace,
-		KeyType: keyType, Projects: make(map[string]string),
+		KeyType: keyType, ExpiresAt: expiresAt, Projects: make(map[string]string),
 	}
 	if userID != nil {
 		res.UserID = *userID
