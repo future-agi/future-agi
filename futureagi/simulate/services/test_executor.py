@@ -4449,15 +4449,9 @@ class TestExecutor:
         has_agent_message = False
         has_customer_message = False
 
-        call_metadata = call_execution.call_metadata or {}
-        call_direction = str(call_metadata.get("call_direction") or "").strip().lower()
+        from simulate.utils.speaker_roles import SpeakerRoleResolver
 
-        call_type_lower = str(call_execution.call_type or "").strip().lower()
-        is_outbound = call_direction == "outbound"
-        if call_direction not in {"inbound", "outbound"}:
-            is_outbound = (
-                "outbound" in call_type_lower and "inbound" not in call_type_lower
-            )
+        is_outbound = SpeakerRoleResolver.detect_is_outbound(call_execution)
 
         if call_execution.simulation_call_type == CallExecution.SimulationCallType.TEXT:
             agent_roles = frozenset({ChatMessageModel.RoleChoices.ASSISTANT})
@@ -4476,8 +4470,6 @@ class TestExecutor:
                     if has_content and role_lower in customer_roles:
                         has_customer_message = True
         else:
-            from simulate.utils.speaker_roles import SpeakerRoleResolver
-
             provider = SpeakerRoleResolver.detect_provider(
                 call_execution.provider_call_data
             )
@@ -4610,11 +4602,8 @@ class TestExecutor:
                         eval_provider = SpeakerRoleResolver.detect_provider(
                             call_execution.provider_call_data
                         )
-                        eval_dir = (call_execution.call_metadata or {}).get(
-                            "call_direction", ""
-                        )
-                        eval_is_outbound = (
-                            str(eval_dir).strip().lower() == "outbound"
+                        eval_is_outbound = SpeakerRoleResolver.detect_is_outbound(
+                            call_execution
                         )
                         conversational_roles = (
                             SpeakerRoleResolver.get_conversational_roles()
