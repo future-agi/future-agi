@@ -82,7 +82,7 @@ const TabContextMenu = ({ anchorPosition, view, projectId, projectName = "this p
       {view.can_delete && <Divider />}
       {view.can_delete && <MenuItem onClick={() => setDialog("delete")} dense sx={{ color: "error.main" }}><ListItemIcon sx={{ color: "inherit" }}><Iconify icon="mdi:delete-outline" width={18} /></ListItemIcon><ListItemText>Delete</ListItemText>{!view.is_owner && <Chip label="Admin" size="small" color="primary" variant="outlined" />}</MenuItem>}
     </Menu>
-    {dialog === "share" && <ShareViewDialog view={view} projectName={projectName} dirty={isDirty} pending={isPending} error={error} onClose={finish} onSaveFirst={finish} onConfirm={share} />}
+    {dialog === "share" && <ShareViewDialog view={view} projectName={projectName} dirty={isDirty} pending={isPending} error={error} onClose={finish} onSaveFirst={saveThenShare} onConfirm={share} />}
     {dialog === "delete" && <DeleteViewDialog view={view} projectId={projectId} projectName={projectName} onClose={finish} onDeleted={(id) => { if (activeTab === `view-${id}`) onTabChange("traces"); }} />}
   </>;
 };
