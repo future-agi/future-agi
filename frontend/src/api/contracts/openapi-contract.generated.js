@@ -98915,6 +98915,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "label",
         "result_ids",
         "aggregates",
+        "distinct",
       ],
       type: "object",
       properties: {
@@ -98965,6 +98966,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         aggregates: {
           $ref: "#/definitions/GroupAggregates",
+        },
+        distinct: {
+          $ref: "#/definitions/GroupDistinctCounts",
         },
       },
     },
@@ -112593,6 +112597,36 @@ export const OPENAPI_CONTRACT = Object.freeze({
         evaluations: {
           title: "Evaluations",
           type: "object",
+        },
+      },
+    },
+    GroupDistinctCounts: {
+      required: ["personas", "situations", "outcomes", "branches"],
+      type: "object",
+      properties: {
+        personas: {
+          title: "Personas",
+          description:
+            "Distinct personas among the group's calls on this page.",
+          type: "integer",
+        },
+        situations: {
+          title: "Situations",
+          description:
+            "Distinct situations among the group's calls on this page.",
+          type: "integer",
+        },
+        outcomes: {
+          title: "Outcomes",
+          description:
+            "Distinct ideal outcomes among the group's calls on this page.",
+          type: "integer",
+        },
+        branches: {
+          title: "Branches",
+          description:
+            "Distinct conversation branches among the group's calls on this page.",
+          type: "integer",
         },
       },
     },

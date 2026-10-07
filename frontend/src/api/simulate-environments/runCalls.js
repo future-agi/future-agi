@@ -295,6 +295,7 @@ export function useRunCalls(executionId, opts = {}) {
           count: group.total,
           measured: group.measured,
           passed: group.outcomes?.passed ?? 0,
+          distinct: group.distinct ?? {},
           agg: {
             csat: group.aggregates?.csat ?? null,
             turns: group.aggregates?.turns ?? null,
