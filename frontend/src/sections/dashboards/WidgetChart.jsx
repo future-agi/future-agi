@@ -14,6 +14,12 @@ import {
   getExactDashboardResult,
   getDashboardMetricSeriesState,
   getPlottedChartSeries,
+  getChartTimeWindow,
+  getTableBucketPlan,
+  describeTableBuckets,
+  isDenseChartSeries,
+  getChartMarkerSizes,
+  isAbsentChartPoint,
   getSeriesScalar,
   getSuggestedUnitConfig,
   getUnitRendering,
@@ -23,7 +29,6 @@ import {
   groupPieSeries,
   resolveSavedSelection,
   seriesHasDataPoints,
-  shouldConnectAcrossMissingBuckets,
 } from "./widgetUtils";
 import WidgetPieCharts from "./WidgetPieCharts";
 import { toTimeRangePayload } from "./dashboardDateRange";
@@ -38,6 +43,7 @@ import {
   getQueryCompletedAt,
 } from "src/utils/queryReadState";
 import { NO_DATA_FOR_RANGE_MESSAGE } from "./constants";
+import useClampedChartTooltips from "./hooks/useClampedChartTooltips";
 
 const CHART_HEIGHT_FALLBACK = 280;
 const COLORS = [
@@ -177,41 +183,13 @@ export default function WidgetChart({
   const isTable = chartType === "table";
   const isMetricCard = chartType === "metric";
   const isLineChart = apexType === "line";
-  const connectsAcrossMissingBuckets =
-    shouldConnectAcrossMissingBuckets(apexType);
 
   // Measure container height so charts fill available space
   const containerRef = useRef(null);
   const [chartHeight, setChartHeight] = useState(CHART_HEIGHT_FALLBACK);
 
-  // ApexCharts places the tooltip entirely above the cursor — `cursorY - gridTop -
-  // tooltipHeight` — and never clamps that at 0; it clamps x three ways and clamps y
-  // only against the grid's bottom. Any point in the top `tooltipHeight` px of the
-  // plot therefore gets a negative top and is drawn above the canvas, where the
-  // widget card's `overflow: hidden` slices it. On these cards that is most of the
-  // plot: 134px of tooltip against a 230px grid. The card cannot drop the overflow
-  // (the chart's ResizeObserver then loses its height constraint and the canvas
-  // grows unbounded), `tooltip.fixed` is ignored on the intersect path these charts
-  // use, and a chart-level `mouseMove` hook loses the race — Apex rewrites the style
-  // after it, even a frame later. Watching the attribute is what reliably catches
-  // the write, whenever Apex makes it.
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const clampTooltips = () => {
-      el.querySelectorAll(".apexcharts-tooltip").forEach((tip) => {
-        const top = Number.parseFloat(tip.style.top);
-        if (Number.isFinite(top) && top < 0) tip.style.top = "0px";
-      });
-    };
-    const mo = new MutationObserver(clampTooltips);
-    mo.observe(el, {
-      attributes: true,
-      subtree: true,
-      attributeFilter: ["style"],
-    });
-    return () => mo.disconnect();
-  }, []);
+  // Mounted on first render, so this doubles as the tooltip observer's root.
+  useClampedChartTooltips(containerRef, containerRef);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -541,11 +519,13 @@ export default function WidgetChart({
     [series, visibleSeries],
   );
 
-  // A missing aggregate bucket is not a zero: line and area charts drop the
-  // null points so Apex connects the neighbouring observed ones.
+  // A missing aggregate bucket is not a zero: unstacked charts drop the null
+  // points and stacked charts pad them (see getPlottedChartSeries).
+  const chartTimeWindow = getChartTimeWindow(result);
+
   const plottedChartSeries = useMemo(
-    () => getPlottedChartSeries(chartSeries, connectsAcrossMissingBuckets),
-    [chartSeries, connectsAcrossMissingBuckets],
+    () => getPlottedChartSeries(chartSeries, { stacked: isStacked }),
+    [chartSeries, isStacked],
   );
 
   // Build from the full `series` list (not filtered chartSeries) so a
@@ -564,6 +544,16 @@ export default function WidgetChart({
     [series],
   );
   const pieColorFor = (name) => getSeriesColorFromMap(pieColorMap, name);
+
+  const isDenseSeries = isDenseChartSeries(plottedChartSeries);
+  const markerSizes = useMemo(
+    () =>
+      getChartMarkerSizes(
+        plottedChartSeries,
+        isLineChart ? 5 : apexType === "area" ? 4 : 0,
+      ),
+    [plottedChartSeries, isLineChart, apexType],
+  );
 
   const outOfRangeWarning = useMemo(
     () =>
@@ -767,7 +757,9 @@ export default function WidgetChart({
   // Table
   if (isTable) {
     // Time as rows, Segments as columns
-    const timeData = series[0]?.data || [];
+    // One row per bucket becomes thousands of rows at minute granularity, so
+    // empty buckets are dropped and the remainder capped (TH-7757).
+    const bucketPlan = getTableBucketPlan(series);
     const granLabel = (queryConfig?.granularity || "day").toLowerCase();
     const dateFmt =
       granLabel === "minute"
@@ -822,6 +814,20 @@ export default function WidgetChart({
                 }}
               >
                 Time
+                {describeTableBuckets(bucketPlan) && (
+                  <Box
+                    component="span"
+                    sx={{
+                      display: "block",
+                      fontWeight: 400,
+                      fontSize: "10px",
+                      color: "text.disabled",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {describeTableBuckets(bucketPlan)}
+                  </Box>
+                )}
               </th>
               {series.map((s, i) => (
                 <th
@@ -875,7 +881,11 @@ export default function WidgetChart({
             </tr>
           </thead>
           <tbody>
-            {timeData.map((pt, ri) => {
+            {bucketPlan.indices.map((ri) => {
+              // The plan is sized by the widest series, so a shorter series[0]
+              // must not drop a row another series still reports (TH-7757 review).
+              const pt = series.find((s) => s?.data?.[ri])?.data?.[ri];
+              if (!pt) return null;
               const hasNonZero = series.some(
                 (s) => s.data[ri]?.y != null && s.data[ri].y !== 0,
               );
@@ -1186,7 +1196,11 @@ export default function WidgetChart({
       toolbar: { show: false },
       zoom: { enabled: true },
       stacked: isStacked,
-      animations: { enabled: true, easing: "easeinout", speed: 400 },
+      animations: {
+        enabled: !isDenseSeries,
+        easing: "easeinout",
+        speed: 400,
+      },
       events: {
         mouseMove: (event, chartContext, config) => {
           const el = chartContext?.el;
@@ -1296,7 +1310,8 @@ export default function WidgetChart({
     plotOptions: { bar: { horizontal: isHorizontal } },
     xaxis: {
       type: isHorizontal ? undefined : "datetime",
-      tickAmount: Math.min(chartSeries[0]?.data?.length || 10, 12),
+      // Span the window that was queried, not just the buckets that reported.
+      ...(!isHorizontal && chartTimeWindow ? chartTimeWindow : {}),
       labels: {
         show: axisConfig?.xAxis?.visible !== false,
         style: { colors: theme.palette.text.secondary, fontSize: "11px" },
@@ -1394,7 +1409,12 @@ export default function WidgetChart({
       });
     })(),
     stroke: {
-      curve: "monotoneCubic",
+      // Not monotoneCubic: it derives each control handle from the
+      // neighbouring gap widths, so a tight cluster beside a long empty
+      // stretch gets a handle hundreds of px past its own segment and the
+      // line visibly runs forward then doubles back. "smooth" does not, and
+      // is what every other chart in the app already uses.
+      curve: "smooth",
       width: apexType === "area" ? 2 : apexType === "line" ? 2.5 : 0,
     },
     fill: (() => {
@@ -1412,7 +1432,7 @@ export default function WidgetChart({
       };
     })(),
     markers: {
-      size: isLineChart ? 5 : apexType === "area" ? 4 : 0,
+      size: markerSizes,
       strokeWidth: 2,
       strokeColors: isDark ? theme.palette.background.paper : "#fff",
       hover: isLineChart
@@ -1439,7 +1459,9 @@ export default function WidgetChart({
             format: "MMM dd, yyyy",
           },
           y: {
-            formatter: (val, { seriesIndex } = {}) => {
+            formatter: (val, { seriesIndex, dataPointIndex, w } = {}) => {
+              if (isAbsentChartPoint(w, seriesIndex, dataPointIndex))
+                return "-";
               const seriesUnit = chartSeries[seriesIndex]?.unit;
               const cfg = seriesUnit
                 ? { ...leftAxisFormatConfig, ...getUnitRendering(seriesUnit) }
@@ -1451,7 +1473,9 @@ export default function WidgetChart({
       : {
           enabled: true,
           shared: false,
-          intersect: isLineChart,
+          // A series without markers has nothing to intersect, so a dense chart
+          // finds the hovered point by position instead.
+          intersect: isLineChart && !isDenseSeries,
           custom: ({ series: s, seriesIndex, dataPointIndex, w }) => {
             const sName = w.globals.seriesNames[seriesIndex] || "";
             const color = w.globals.colors[seriesIndex] || "#6366F1";
