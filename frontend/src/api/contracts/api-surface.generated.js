@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1055,
+  endpointCount: 1056,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -761,6 +761,7 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/saml2_auth/acs/": ["post"],
       "/saml2_auth/auth/callback/": ["get"],
       "/saml2_auth/auth/callback{format}": ["get"],
+      "/saml2_auth/complete/": ["get"],
       "/saml2_auth/github/callback/": ["get"],
       "/saml2_auth/github/callback{format}": ["get"],
       "/saml2_auth/idp-login/": ["get"],
@@ -2034,6 +2035,7 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/saml2_auth/acs/": ["post"],
   "/saml2_auth/auth/callback/": ["get"],
   "/saml2_auth/auth/callback{format}": ["get"],
+  "/saml2_auth/complete/": ["get"],
   "/saml2_auth/github/callback/": ["get"],
   "/saml2_auth/github/callback{format}": ["get"],
   "/saml2_auth/idp-login/": ["get"],

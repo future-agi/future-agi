@@ -47114,6 +47114,42 @@
                 }
             ]
         },
+        "/saml2_auth/complete/": {
+            "get": {
+                "operationId": "saml2_auth_complete_list",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "c",
+                        "in": "query",
+                        "description": "One-time SAML response candidate key.",
+                        "required": true,
+                        "type": "string"
+                    }
+                ],
+                "responses": {
+                    "302": {
+                        "description": "Redirects to the configured frontend URL."
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SAMLErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "saml2_auth"
+                ]
+            },
+            "parameters": []
+        },
         "/saml2_auth/github/callback/": {
             "get": {
                 "operationId": "saml2_auth_github_callback_list",

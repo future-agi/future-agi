@@ -1060,6 +1060,7 @@ import type {
   Saml2AuthAcsCreateBodyTwo,
   Saml2AuthAuthCallbackListParams,
   Saml2AuthAuthReadParams,
+  Saml2AuthCompleteListParams,
   Saml2AuthGithubCallbackListParams,
   Saml2AuthGithubReadParams,
   Saml2AuthIdpLoginListParams,
@@ -54414,6 +54415,65 @@ export const saml2AuthAuthRead = async (
 ): Promise<saml2AuthAuthReadResponse> => {
   return apiMutator<saml2AuthAuthReadResponse>(
     getSaml2AuthAuthReadUrl(format, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type saml2AuthCompleteListResponse302 = {
+  data: void;
+  status: 302;
+};
+
+export type saml2AuthCompleteListResponse400 = {
+  data: SAMLErrorResponseApi;
+  status: 400;
+};
+
+export type saml2AuthCompleteListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 302 | 400>;
+};
+export type saml2AuthCompleteListResponseError = (
+  | saml2AuthCompleteListResponse302
+  | saml2AuthCompleteListResponse400
+  | saml2AuthCompleteListResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type saml2AuthCompleteListResponse = saml2AuthCompleteListResponseError;
+
+export const getSaml2AuthCompleteListUrl = (
+  params: Saml2AuthCompleteListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/saml2_auth/complete/?${stringifiedParams}`
+    : `/saml2_auth/complete/`;
+};
+
+export const saml2AuthCompleteList = async (
+  params: Saml2AuthCompleteListParams,
+  options?: RequestInit,
+): Promise<saml2AuthCompleteListResponse> => {
+  return apiMutator<saml2AuthCompleteListResponse>(
+    getSaml2AuthCompleteListUrl(params),
     {
       ...options,
       method: "GET",
