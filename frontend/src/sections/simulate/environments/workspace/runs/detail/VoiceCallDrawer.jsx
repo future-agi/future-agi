@@ -118,6 +118,9 @@ export default function VoiceCallDrawer({
         hidePathTabs
         // Fix with Falcon isn't wired into the environment flow yet.
         showFixWithFalcon={false}
+        // Annotation isn't either: no Annotations tab, so no "Add Label" to a
+        // dead end.
+        hideAnnotationTab
         // The product header defaults both arrows to enabled, so always pass
         // real values.
         onPrev={onPrev}

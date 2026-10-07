@@ -216,6 +216,24 @@ describe("VoiceRightPanel", () => {
     });
   });
 
+  it("drops the Annotations tab, and its Add Label, when the host hides it", () => {
+    const call = {
+      id: "call-1",
+      module: "simulate",
+      status: "completed",
+      transcript: [],
+    };
+    const { unmount } = renderWithQueryClient(<VoiceRightPanel data={call} />);
+    expect(
+      screen.getByRole("tab", { name: "Annotations" }),
+    ).toBeInTheDocument();
+    unmount();
+
+    renderWithQueryClient(<VoiceRightPanel data={call} hideAnnotationTab />);
+    expect(screen.queryByRole("tab", { name: "Annotations" })).toBeNull();
+    expect(screen.queryByText("Add Label")).toBeNull();
+  });
+
   it("shows the Scenario tab for a call with a persona but no scenario columns", () => {
     renderWithQueryClient(
       <VoiceRightPanel
