@@ -1705,7 +1705,16 @@ def deduct_cost_for_request(
         organization_subscription = OrganizationSubscription.objects.filter(
             organization=organization
         ).first()
-        wallet_balance = organization_subscription.wallet_balance
+        if organization_subscription is not None or edition.commercial_caps_apply():
+            # Cloud: the rate check bootstraps the row; a missing one fails here.
+            wallet_balance = organization_subscription.wallet_balance
+            tier_name = organization_subscription.subscription_tier.name
+        else:
+            # Self-hosted orgs created outside signup have no subscription row
+            # (the off-cloud rate check no longer bootstraps one). This row is
+            # measurement only, so price it at the global rate.
+            wallet_balance = None
+            tier_name = None
 
         if api_call_type == "voice_call":
             # Always compute the duration-based cost from the Pricing table
@@ -1714,10 +1723,7 @@ def deduct_cost_for_request(
             # cost is available (VAPI / legacy calls).
             duration_minutes = Decimal(config.get("duration_minutes", 0))
             voice_call_pricing = None
-            if (
-                organization_subscription.subscription_tier.name
-                == SubscriptionTierChoices.CUSTOM.value
-            ):
+            if tier_name == SubscriptionTierChoices.CUSTOM.value:
                 voice_call_pricing = Pricing.objects.filter(
                     api_call_type=api_call_type_instance,
                     organization=organization,
@@ -1828,10 +1834,7 @@ def deduct_cost_for_request(
         cost = None
         if api_call_type == "user_add":
             pricing = None
-            if (
-                organization_subscription.subscription_tier.name
-                == SubscriptionTierChoices.CUSTOM.value
-            ):
+            if tier_name == SubscriptionTierChoices.CUSTOM.value:
                 pricing = Pricing.objects.filter(
                     api_call_type=api_call_type_instance, organization=organization
                 ).first()
@@ -1851,7 +1854,7 @@ def deduct_cost_for_request(
             )
             source_id = config.get("reference_id", "")
             extra_traces = config.get("extra_traces", 0)
-            sub_tier = organization_subscription.subscription_tier.name
+            sub_tier = tier_name
 
             if sub_tier == SubscriptionTierChoices.FREE.value:
                 unit_price = 0.001  # $10 per 10K extra traces
@@ -1873,10 +1876,7 @@ def deduct_cost_for_request(
             pricing = None
             cost = 0
 
-            if (
-                organization_subscription.subscription_tier.name
-                == SubscriptionTierChoices.CUSTOM.value
-            ):
+            if tier_name == SubscriptionTierChoices.CUSTOM.value:
                 pricing = Pricing.objects.filter(
                     api_call_type=api_call_type_instance, organization=organization
                 ).first()
@@ -1891,10 +1891,7 @@ def deduct_cost_for_request(
             or api_call_type == "trace_error_analysis"
         ):
             pricing = None
-            if (
-                organization_subscription.subscription_tier.name
-                == SubscriptionTierChoices.CUSTOM.value
-            ):
+            if tier_name == SubscriptionTierChoices.CUSTOM.value:
                 pricing = Pricing.objects.filter(
                     api_call_type=api_call_type_instance, organization=organization
                 ).first()
@@ -1906,10 +1903,7 @@ def deduct_cost_for_request(
 
         else:
             pricing = None
-            if (
-                organization_subscription.subscription_tier.name
-                == SubscriptionTierChoices.CUSTOM.value
-            ):
+            if tier_name == SubscriptionTierChoices.CUSTOM.value:
                 pricing = Pricing.objects.filter(
                     api_call_type=api_call_type_instance, organization=organization
                 ).first()
