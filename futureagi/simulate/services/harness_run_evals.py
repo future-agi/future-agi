@@ -34,6 +34,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
 from simulate.models import CallExecution, SimulateEvalConfig, TestExecution
+from simulate.services.harness_evals import regrade_mapping
 
 # The one predicate for "this call already holds a sealed verdict for this
 # config" (``simulate/utils/verdicts.py::has_stored_verdict``).
@@ -270,9 +271,9 @@ def queue_eval_for_finished_calls(
       batch) but the returned count is not corrected.
 
     Backstops for any other caller: ``eval_config`` must be this run's own and
-    carry a non-empty ``mapping``, and the run must not be cancelled or
-    cancelling (the worker never grades those); the endpoint refuses each of
-    these itself with its own status.
+    have something to grade (``regrade_mapping``), and the run must not be
+    cancelled or cancelling (the worker never grades those); the endpoint
+    refuses each of these itself with its own status.
     """
     if eval_config.run_test_id != test_execution.run_test_id:
         raise ValueError(
@@ -280,11 +281,11 @@ def queue_eval_for_finished_calls(
             f"{eval_config.run_test_id!r}, not test_execution "
             f"{test_execution.id}'s run test {test_execution.run_test_id!r}"
         )
-    if not eval_config.mapping:
+    if regrade_mapping(eval_config) is None:
         raise ValueError(
-            f"eval_config {eval_config.id} has an empty mapping -- it is a "
-            "harness result column ingestion bound, not a selected eval, "
-            "and cannot be queued for grading"
+            f"eval_config {eval_config.id} has an empty mapping and is not a "
+            "harness suite eval -- it is a result column only the harness "
+            "fills, and cannot be queued for grading"
         )
     if test_execution.status in (
         TestExecution.ExecutionStatus.CANCELLED,
