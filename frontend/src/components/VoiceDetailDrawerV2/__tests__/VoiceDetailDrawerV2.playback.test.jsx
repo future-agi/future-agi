@@ -30,7 +30,6 @@ vi.mock("src/components/ScoresListSection/ScoresListSection", () => ({
 vi.mock("wavesurfer-multitrack", () => ({
   default: function MockMultiTrack(tracks) {
     createPlayer(tracks);
-    let onCanPlay;
     const player = {
       currentTime: 0,
       playing: false,
@@ -41,12 +40,12 @@ vi.mock("wavesurfer-multitrack", () => ({
         getDuration: () => 60,
         getCurrentTime: () => player.currentTime,
       })),
+      // The real multitrack emits canplay once every track's media has
+      // loaded; the player no longer calls initAllAudios() to start that.
       on: (event, callback) => {
-        if (event === "canplay") onCanPlay = callback;
+        if (event === "canplay") Promise.resolve().then(callback);
       },
-      initAllAudios: () => {
-        Promise.resolve().then(() => onCanPlay());
-      },
+      initAllAudios: () => {},
       destroy: vi.fn(),
       zoom: vi.fn(),
       setTime: (time) => {
