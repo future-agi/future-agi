@@ -12,6 +12,7 @@ from django.db.models import F, Q
 from django.utils import timezone
 
 from tfc.ee_gating import is_oss
+from tracer.constants.grouping_versions import SAMPLED_GROUPING_POLICY_VERSION
 from tracer.models.trace_grouping import (
     GroupingAttemptState,
     GroupingFeatureState,
@@ -25,6 +26,7 @@ from tracer.models.trace_grouping import (
 )
 from tracer.models.trace_investigation import (
     InvestigationWorkload,
+    TraceInvestigationFinding,
     TraceInvestigationJob,
     TraceInvestigationJobState,
     TraceInvestigationReport,
@@ -424,6 +426,7 @@ def claim_grouping_work(*, worker_id: str, limit: int) -> dict:
             pending_snapshots = []
             peer_works = []
             pending_count = 0
+            pending_occurrence_ids = []
             previous = work.attempts.order_by("-attempt_number").first()
             try:
                 if previous and previous.claimed_work_ids:
@@ -482,7 +485,15 @@ def claim_grouping_work(*, worker_id: str, limit: int) -> dict:
                     ):
                         continue
                     candidate = export_grouping_snapshot(report=peer.report)
-                    count = len(candidate["occurrences"])
+                    ids = [item["occurrence_id"] for item in candidate["occurrences"]]
+                    if scope.policy_version == SAMPLED_GROUPING_POLICY_VERSION:
+                        ids = list(
+                            TraceInvestigationFinding.no_workspace_objects.filter(
+                                pk__in=ids, cluster__isnull=True
+                            ).values_list("id", flat=True)
+                        )
+                        ids = sorted(str(item) for item in ids)
+                    count = len(ids)
                     if not count or pending_count + count > 100:
                         if peer.id == work.id:
                             raise GroupingSnapshotError(
@@ -492,6 +503,7 @@ def claim_grouping_work(*, worker_id: str, limit: int) -> dict:
                     pending_snapshots.append(candidate)
                     peer_works.append(peer)
                     pending_count += count
+                    pending_occurrence_ids.extend(ids)
             except GroupingSnapshotError:
                 work.state = GroupingWorkState.FAILED
                 work.save(update_fields=["state", "updated_at"])
@@ -515,6 +527,13 @@ def claim_grouping_work(*, worker_id: str, limit: int) -> dict:
             scope.refresh_from_db(fields=["lease_fence"])
             work.attempt_number += 1
             for peer in peer_works:
+                if (
+                    scope.policy_version == SAMPLED_GROUPING_POLICY_VERSION
+                    and not peer.budget_work_id
+                    and peer.id != (work.budget_work_id or work.id)
+                ):
+                    peer.budget_work_id = work.budget_work_id or work.id
+                    peer.save(update_fields=["budget_work", "updated_at"])
                 peer.state = GroupingWorkState.RUNNING
                 if peer.id == work.id:
                     peer.attempt_number = work.attempt_number
@@ -531,6 +550,7 @@ def claim_grouping_work(*, worker_id: str, limit: int) -> dict:
                 snapshot_digest=cohort_digest,
                 registry_revision=scope.registry_revision,
                 claimed_work_ids=[str(item.id) for item in peer_works],
+                pending_occurrence_ids=pending_occurrence_ids,
                 checkpoint=previous.checkpoint if reusable_checkpoint else {},
                 checkpoint_revision=(
                     previous.checkpoint_revision if reusable_checkpoint else 0
@@ -573,11 +593,7 @@ def claim_grouping_work(*, worker_id: str, limit: int) -> dict:
                 "snapshot": snapshot,
                 "snapshot_digest": attempt.snapshot_digest,
                 "pending_snapshots": pending_snapshots,
-                "pending_ids": [
-                    item["occurrence_id"]
-                    for snap in pending_snapshots
-                    for item in snap["occurrences"]
-                ],
+                "pending_ids": attempt.pending_occurrence_ids,
                 "checkpoint": attempt.checkpoint,
                 "checkpoint_revision": attempt.checkpoint_revision,
                 "receipt_ids": [

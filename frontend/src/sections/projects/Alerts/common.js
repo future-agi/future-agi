@@ -930,3 +930,13 @@ export const ISSUE_FILTER_FIELDS = [
     choiceLabels: { critical: "Critical", warning: "Warning" },
   },
 ];
+
+// Output types whose alert metric is the share of one chosen label. A Scoring
+// eval may also carry labels, but its metric is the mean score, so it must not
+// offer a choice.
+export const CHOICE_THRESHOLD_OUTPUT_TYPES = ["Pass/Fail", "choices"];
+
+export const evalUsesChoiceThreshold = (evaluation) =>
+  CHOICE_THRESHOLD_OUTPUT_TYPES.includes(evaluation?.output_type) &&
+  Array.isArray(evaluation?.choices) &&
+  evaluation.choices.length > 0;

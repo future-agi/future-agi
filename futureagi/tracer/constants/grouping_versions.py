@@ -51,6 +51,9 @@ FEATURE_POLICY_VERSION: Final[str] = "f6-minilm-features/v2"
 # grouping decisions requires a new algorithm identity and explicit migration;
 # never relabel an existing registry as if it had used the new policy.
 GROUPING_POLICY_VERSION: Final[str] = "f6-minilm/v1"
+# Explicit per-project activation only. Existing registries/receipts retain
+# their original version; feature representation is unchanged.
+SAMPLED_GROUPING_POLICY_VERSION: Final[str] = "f6-minilm-sampled/v2"
 
 # Post-grouping impact assessment. Independent of F6 membership decisions.
 # Bump for rubric, evidence selection, or model changes; old receipts retain
