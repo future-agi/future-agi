@@ -21,6 +21,7 @@ import {
   harnessEnvironmentKey,
   harnessEnvironmentQuery,
 } from "src/api/simulate-environments/environment";
+import { useErrorLocalizationAvailable } from "src/hooks/useErrorLocalization";
 import SideDrawer from "../../components/SideDrawer";
 import EmptyState from "../../components/EmptyState";
 import { EVALS_COPY } from "./evals.constants";
@@ -42,6 +43,30 @@ const NO_CONFIGS = [];
 // The harness can't grade a composite eval on an environment run yet, so the
 // picker neither lists nor creates one here.
 const SINGLE_EVALS_ONLY = { template_type: ["single"] };
+
+// Where error localization isn't available the picker's toggle is inert and
+// always reports it off, so a save would switch off what the environment
+// set. The row's own values go back instead — the config's copy too, since
+// the server replaces the config whole.
+const withRowErrorLocalizer = (body, row) => {
+  const { error_localizer: _sent, ...rest } = body;
+  const { error_localizer_enabled: _sentEnabled, ...runConfig } =
+    rest.config.run_config;
+  const saved = row.config?.run_config?.error_localizer_enabled;
+  return {
+    ...rest,
+    ...(typeof row.error_localizer === "boolean" && {
+      error_localizer: row.error_localizer,
+    }),
+    config: {
+      ...rest.config,
+      run_config: {
+        ...runConfig,
+        ...(saved !== undefined && { error_localizer_enabled: saved }),
+      },
+    },
+  };
+};
 
 /**
  * Adding evaluations to a built environment.
@@ -99,6 +124,7 @@ export default function AddEvaluationDrawer({
   const addToRunTest = useAddRunTestEval();
   const gradeRun = useAddRunEvaluation();
   const editEval = useEditAppliedEvaluation();
+  const errorLocalizationAvailable = useErrorLocalizationAvailable();
 
   const refreshFailed =
     open && runTestQuery.isError && runTestQuery.data !== undefined;
@@ -184,8 +210,11 @@ export default function AddEvaluationDrawer({
     const {
       name: _name,
       template_id: _templateId,
-      ...body
+      ...sent
     } = serializeEvalConfig(config);
+    const body = errorLocalizationAvailable
+      ? sent
+      : withRowErrorLocalizer(sent, editTarget);
     if (!Object.keys(body.mapping || {}).length) {
       enqueueSnackbar(NO_INPUTS, { variant: "error" });
       throw new Error(NO_INPUTS);
@@ -208,7 +237,10 @@ export default function AddEvaluationDrawer({
 
   // `id` stays the template id — the picker loads the template by it — and
   // `userEvalId` keys the picker per eval, so two evals of one template don't
-  // share a mounted form.
+  // share a mounted form. An eval the environment was built with keeps its
+  // model and error localizer on the row itself, but the picker only reads
+  // them from `run_config`, so they are seeded there; anything already saved
+  // in `run_config` wins.
   const initialEval = useMemo(
     () =>
       editTarget
@@ -219,7 +251,13 @@ export default function AddEvaluationDrawer({
             name: editTarget.name,
             mapping: editTarget.mapping || {},
             config: editTarget.config || {},
-            run_config: editTarget.config?.run_config || {},
+            run_config: {
+              ...(editTarget.model && { model: editTarget.model }),
+              ...(typeof editTarget.error_localizer === "boolean" && {
+                error_localizer_enabled: editTarget.error_localizer,
+              }),
+              ...(editTarget.config?.run_config || {}),
+            },
           }
         : null,
     [editTarget],
@@ -342,6 +380,8 @@ AddEvaluationDrawer.propTypes = {
     template_id: PropTypes.string,
     mapping: PropTypes.object,
     config: PropTypes.object,
+    model: PropTypes.string,
+    error_localizer: PropTypes.bool,
     editable: PropTypes.bool,
   }),
   editingEvalId: PropTypes.string,

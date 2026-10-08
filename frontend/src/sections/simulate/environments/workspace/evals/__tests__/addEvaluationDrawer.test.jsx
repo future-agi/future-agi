@@ -15,6 +15,12 @@ import {
 } from "src/components/run-tests/common";
 
 const picker = vi.hoisted(() => ({ props: null }));
+// The drawer asks whether error localization is available here; the real
+// hook would read deployment info through the axios mock below.
+const errorLocalization = vi.hoisted(() => ({ available: true }));
+vi.mock("src/hooks/useErrorLocalization", () => ({
+  useErrorLocalizationAvailable: () => errorLocalization.available,
+}));
 
 vi.mock("src/sections/common/EvalPicker", async () => ({
   serializeEvalConfig: (
@@ -124,6 +130,7 @@ const detail = ({ agentType = "voice", runTestId = "rt-1" } = {}) => ({
 });
 
 beforeEach(() => {
+  errorLocalization.available = true;
   picker.props = null;
   getHarnessEnvironment.mockReset();
   getHarnessEnvironment.mockResolvedValue(detail());
@@ -729,6 +736,78 @@ describe("AddEvaluationDrawer — editing an eval", () => {
     rerender(drawer({ ...EDITING, id: "c9", name: "other" }));
     await waitFor(() =>
       expect(picker.props?.initialEval?.userEvalId).toBe("c9"),
+    );
+  });
+
+  it("seeds the row's own model and error localizer into the picker's run_config", async () => {
+    renderEdit({
+      editingEval: {
+        ...EDITING,
+        model: "gpt-4o",
+        error_localizer: true,
+        config: { output: "Pass/Fail" },
+      },
+    });
+    await screen.findByTestId("eval-picker");
+    expect(picker.props.initialEval.run_config).toEqual({
+      model: "gpt-4o",
+      error_localizer_enabled: true,
+    });
+  });
+
+  it("lets a value already saved in run_config win over the row's own", async () => {
+    renderEdit({
+      editingEval: {
+        ...EDITING,
+        model: "gpt-4o",
+        error_localizer: true,
+        config: {
+          output: "Pass/Fail",
+          run_config: { model: "turing_small", error_localizer_enabled: false },
+        },
+      },
+    });
+    await screen.findByTestId("eval-picker");
+    expect(picker.props.initialEval.run_config).toEqual({
+      model: "turing_small",
+      error_localizer_enabled: false,
+    });
+  });
+
+  it("sends the row's own error localizer back, not the inert toggle's, where error localization isn't available", async () => {
+    errorLocalization.available = false;
+    updateAppliedEvaluation.mockResolvedValue(EDITING);
+    renderEdit({
+      editingEval: {
+        ...EDITING,
+        error_localizer: true,
+        config: {
+          output: "Pass/Fail",
+          run_config: { error_localizer_enabled: true },
+        },
+      },
+    });
+    await screen.findByTestId("eval-picker");
+    await act(() => picker.props.onEvalAdded(EDITED));
+
+    const body = updateAppliedEvaluation.mock.calls[0][2];
+    expect(body.error_localizer).toBe(true);
+    expect(body.config.run_config.error_localizer_enabled).toBe(true);
+    expect(body.mapping).toEqual(EDITED.mapping);
+    expect(body.model).toBe("turing_large");
+  });
+
+  it("says nothing about the error localizer where it isn't available and the row never set it", async () => {
+    errorLocalization.available = false;
+    updateAppliedEvaluation.mockResolvedValue(EDITING);
+    renderEdit();
+    await screen.findByTestId("eval-picker");
+    await act(() => picker.props.onEvalAdded(EDITED));
+
+    const body = updateAppliedEvaluation.mock.calls[0][2];
+    expect(body).not.toHaveProperty("error_localizer");
+    expect(body.config.run_config).not.toHaveProperty(
+      "error_localizer_enabled",
     );
   });
 });
