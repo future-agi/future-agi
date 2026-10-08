@@ -13,6 +13,7 @@ new is computed at read time, and no field is invented when its source is absent
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from typing import Any
 
@@ -24,7 +25,6 @@ from simulate.models import (
     HostedHarnessStageOutput,
 )
 from simulate.utils.ended_reason import canonical_ended_reasons
-from simulate.utils.scenario_keys import canonical_scenario_key
 
 # The four states the list's status pill knows. The pipeline reports far finer
 # stages; the raw one travels alongside as ``stage`` so a caller that wants
@@ -464,6 +464,11 @@ def _status_of(reg, receipt: HostedHarnessReceipt | None) -> str:
     return receipt.status if receipt is not None else "running"
 
 
+def _registration_key(value: Any) -> str:
+    """The key the runner registers a scenario under: its name slugged to ASCII."""
+    return re.sub(r"[^a-z0-9]+", "-", str(value or "").strip().lower()).strip("-")
+
+
 def _scenarios(
     registrations: list,
     docs: Any,
@@ -475,14 +480,14 @@ def _scenarios(
     for doc in docs if isinstance(docs, list) else []:
         if isinstance(doc, dict):
             for key in (doc.get("scenario_key"), doc.get("name")):
-                normalized = canonical_scenario_key(key)
+                normalized = _registration_key(key)
                 if normalized:
                     by_key.setdefault(normalized, doc)
     goals = _catalogue_index(catalogue)
     scenarios: list[dict[str, Any]] = []
     for reg in registrations:
         platform_name = getattr(reg.scenario, "name", "") or ""
-        doc = by_key.get(canonical_scenario_key(reg.scenario_key)) or {}
+        doc = by_key.get(_registration_key(reg.scenario_key)) or {}
         cells = rows.get(str(reg.dataset_row_id), {}) if reg.dataset_row_id else {}
         fixture = doc.get("fixture")
         steps = doc.get("steps")

@@ -288,7 +288,7 @@ def index_scenarios(
     """Persist the authored suite so it can be queried, and return how many rows it holds."""
     if not docs:
         return 0
-    from simulate.utils.scenario_keys import canonical_scenario_key
+    from simulate.services.hosted_harness_gateway import _scenario_token
 
     # Dropped rows are hidden, not deleted: a run's history still points at them.
     rows = list(HostedHarnessScenario.all_objects.filter(job=job))
@@ -296,10 +296,7 @@ def index_scenarios(
     by_token = {
         token: row
         for row in sorted(rows, key=lambda row: not row.deleted)
-        for token in (
-            canonical_scenario_key(row.scenario_key),
-            canonical_scenario_key(row.name),
-        )
+        for token in (_scenario_token(row.scenario_key), _scenario_token(row.name))
         if token
     }
     # Numbers are stable across re-indexing; only a new row gets the next free number.
@@ -309,29 +306,19 @@ def index_scenarios(
     written = 0
     seen: set[str] = set()
     for position, doc in enumerate(docs, start=1):
-        doc_key = str(doc.get("scenario_key") or "").strip()
-        exact = existing.get(doc_key)
-        held = (
-            exact
-            if exact is not None and not exact.deleted
-            else next(
-                (
-                    by_token[token]
-                    for value in (doc.get("scenario_key"), doc.get("name"))
-                    if (token := canonical_scenario_key(value)) in by_token
-                ),
-                exact,
-            )
+        held = next(
+            (
+                by_token[token]
+                for value in (doc.get("scenario_key"), doc.get("name"))
+                if (token := _scenario_token(value)) in by_token
+            ),
+            None,
         )
-        if held is None:
-            key = doc_key or str(doc.get("name") or "").strip()
-        elif doc_key and doc_key not in existing and held.scenario_id is None:
-            # A row first seen by name takes its later key, until provisioned.
-            existing.pop(held.scenario_key, None)
-            held.scenario_key = key = doc_key
-            existing[key] = held
-        else:
-            key = held.scenario_key
+        key = (
+            held.scenario_key
+            if held is not None
+            else str(doc.get("scenario_key") or doc.get("name") or "").strip()
+        )
         if not key:
             continue
         seen.add(key)
@@ -375,7 +362,7 @@ def index_scenarios(
                 job=job, scenario_key=key, **fields
             )
         else:
-            fields.update(scenario_key=key, deleted=False, deleted_at=None)
+            fields.update(deleted=False, deleted_at=None)
             for name, value in fields.items():
                 setattr(row, name, value)
             row.save(update_fields=[*fields, "updated_at"])

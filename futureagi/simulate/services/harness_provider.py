@@ -979,11 +979,11 @@ def scenarios_meant(
     keys = {
         str(one.get("scenario_key") or ""): str(one.get("name") or "") for one in suite
     }
-    from simulate.utils.scenario_keys import canonical_scenario_key
+    from simulate.services.hosted_harness_gateway import _scenario_token
 
     # Older suites carry no scenario_key, so a row's hyphenated key must still find its name.
     loose = {
-        canonical_scenario_key(label): str(one.get("name") or "")
+        _scenario_token(label): str(one.get("name") or "")
         for one in suite
         for label in (one.get("name"), one.get("scenario_key"))
         if label
@@ -1005,8 +1005,8 @@ def scenarios_meant(
             if part in keys:
                 take(keys[part])
                 continue
-            if canonical_scenario_key(part) in loose:
-                take(loose[canonical_scenario_key(part)])
+            if _scenario_token(part) in loose:
+                take(loose[_scenario_token(part)])
                 continue
             span = re.fullmatch(r"(\d+)\s*(?:-|–|to|through)\s*(\d+)", part)
             if span:

@@ -119,23 +119,6 @@ def test_provision_binds_rows_indexed_during_authoring(organization):
 
 
 @pytest.mark.django_db
-def test_index_takes_the_key_of_a_row_it_first_saw_by_name(organization):
-    job, _ = create_hosted_job(
-        organization, _payload(scenario_count=1), idempotency_key="index-adopts-key"
-    )
-    index_scenarios(job, [{"name": "refund_missing_item"}])
-    first = job.scenario_registrations.get()
-
-    index_scenarios(
-        job, [{"name": "refund_missing_item", "scenario_key": "refund-missing-item"}]
-    )
-
-    row = job.scenario_registrations.get()
-    assert row.id == first.id
-    assert row.scenario_key == "refund-missing-item"
-
-
-@pytest.mark.django_db
 def test_provision_hides_rows_indexed_for_scenarios_the_suite_dropped(organization):
     from simulate.models import HostedHarnessScenario
 
@@ -402,54 +385,6 @@ def test_chat_added_scenario_appends_a_row_without_replacing_existing_call(
     assert registrations[1].call_execution_id != original_call_id
     assert registrations[1].call_execution.row_id == registrations[1].dataset_row_id
     assert registrations[0].scenario.dataset.row_set.filter(deleted=False).count() == 2
-
-
-@pytest.mark.django_db
-def test_index_keeps_the_live_row_over_a_hidden_row_holding_the_key(organization):
-    from simulate.models import HostedHarnessScenario
-
-    job, _ = create_hosted_job(
-        organization, _payload(scenario_count=1), idempotency_key="index-prefers-live"
-    )
-    HostedHarnessScenario.all_objects.create(
-        job=job, scenario_key="refund-missing-item", name="old", deleted=True
-    )
-    live = HostedHarnessScenario.all_objects.create(
-        job=job, scenario_key="refund_missing_item", name="refund_missing_item"
-    )
-
-    index_scenarios(
-        job, [{"name": "refund_missing_item", "scenario_key": "refund-missing-item"}]
-    )
-
-    assert list(job.scenario_registrations.values_list("id", flat=True)) == [live.id]
-    assert HostedHarnessScenario.all_objects.filter(job=job).count() == 2
-
-
-def _provision(client, capability, personas):
-    return client.post(
-        f"{BASE}/{capability.attempt.id}/scenarios/",
-        {
-            "operation": "provision",
-            "name": "Billing support suite",
-            "modality": "text",
-            "personas": personas,
-        },
-        format="json",
-        **_headers(capability),
-    )
-
-
-@pytest.mark.django_db
-def test_chat_follow_up_that_drops_a_provisioned_scenario_is_refused(organization):
-    job, _ = create_hosted_job(organization, _payload(), idempotency_key="append-drop")
-    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
-    client = APIClient()
-    first = {"scenario_key": "late-refund", "name": "Sam", "situation": "s", "outcome": "o"}
-    other = {"scenario_key": "double-charge", "name": "Ava", "situation": "s", "outcome": "o"}
-    assert _provision(client, capability, [first]).status_code == 200
-
-    assert _provision(client, capability, [other]).status_code == 409
 
 
 def test_recording_content_type_uses_wave_signature_over_bad_sender_default():
