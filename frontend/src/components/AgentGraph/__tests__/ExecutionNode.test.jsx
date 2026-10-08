@@ -1,6 +1,6 @@
 import React from "react";
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
 
 vi.mock("@xyflow/react", () => ({
@@ -82,6 +82,25 @@ describe("ExecutionNode", () => {
     });
     const outerBox = container.firstChild;
     expect(outerBox).toHaveStyle({ opacity: "1" });
+  });
+
+  it("dims skipped nodes and explains why they were skipped on hover", async () => {
+    const { container } = renderNode({
+      nodeExecution: {
+        status: "skipped",
+        error_message: "Upstream node failed",
+      },
+    });
+
+    expect(container.firstChild).toHaveStyle({ opacity: "0.4" });
+    expect(container.firstChild).toHaveAttribute("aria-disabled", "true");
+
+    fireEvent.mouseOver(screen.getByText("Test Node"));
+    await waitFor(() => {
+      expect(
+        screen.getByText("Skipped: Upstream node failed"),
+      ).toBeInTheDocument();
+    });
   });
 
   it("renders SvgColor icon", () => {
