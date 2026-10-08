@@ -589,6 +589,31 @@ def test_requeue_leaves_a_cancelled_job_that_still_holds_a_completed_report(
     assert _requeue(observe_project)["unread"] == 0
 
 
+def test_requeue_leaves_a_job_whose_completed_report_lands_after_it_was_selected(
+    observe_project,
+):
+    _configure(observe_project)
+    claim = _give_up(observe_project)
+    late = {}
+
+    def report_lands(*_args):
+        # Runs after the command has selected the job and before it requeues it.
+        late.update(_complete(claim))
+        return True
+
+    with mock.patch(
+        "tracer.services.trace_investigation.is_trace_sampled",
+        side_effect=report_lands,
+    ):
+        result = _requeue(observe_project, "--apply")
+
+    job = _job(claim)
+    assert (result["selected"], result["requeued"]) == (1, 0)
+    assert (job.state, job.generation) == (COMPLETED, 3)
+    assert job.current_report_id == late["report_id"]
+    assert _claim() is None
+
+
 def test_requeue_rejects_a_limit_outside_its_bound(observe_project):
     with pytest.raises(CommandError, match="limit must be between"):
         _requeue(observe_project, "--limit", "0")
