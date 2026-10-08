@@ -29982,6 +29982,8 @@ export interface UsersTableRowApi {
   avg_output_float?: number;
   project_id?: string;
   /** @minLength 1 */
+  project_name?: string;
+  /** @minLength 1 */
   user_id_type?: string;
   /** @minLength 1 */
   user_id_hash?: string;

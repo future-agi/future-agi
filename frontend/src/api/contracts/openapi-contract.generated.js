@@ -115030,6 +115030,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           format: "uuid",
           "x-nullable": true,
         },
+        project_name: {
+          title: "Project name",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
         user_id_type: {
           title: "User id type",
           type: "string",
