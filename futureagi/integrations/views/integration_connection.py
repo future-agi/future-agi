@@ -66,6 +66,47 @@ def _build_credentials(data: dict) -> dict:
     return {}
 
 
+def _resolve_host_url(service, host_url) -> str:
+    """Resolve the platform host once, so the host credentials are validated
+    against is the host that gets saved and later synced/exported to.
+
+    An omitted host falls back to the platform service's own default, which is
+    empty for platforms that either need an explicit host (Langfuse) or don't
+    use one (Datadog routes by region, queues/storage by credentials).
+    """
+    return (host_url or "").strip() or service.default_host_url
+
+
+BACKFILL_START_FAILED_MESSAGE = (
+    "Could not start the initial sync. Use Sync Now to retry."
+)
+
+SYNC_IN_PROGRESS_MESSAGE = (
+    "Connection is already syncing. Please wait for the current sync to complete."
+)
+
+
+def _claim_for_sync(connection) -> bool:
+    """Atomically move the connection to SYNCING before a sync is dispatched.
+
+    The UPDATE only matches while the row still has the status the caller read,
+    so of two overlapping requests exactly one claims it. SYNCING is also a
+    state the worker accepts, which is what lets Sync Now run an ERROR row.
+    """
+    return bool(
+        IntegrationConnection.no_workspace_objects.filter(
+            pk=connection.pk, status=connection.status
+        ).update(status=ConnectionStatus.SYNCING, updated_at=datetime.now(UTC))
+    )
+
+
+def _release_sync_claim(connection, previous_status) -> None:
+    """Undo ``_claim_for_sync`` when no workflow was started for the claim."""
+    IntegrationConnection.no_workspace_objects.filter(
+        pk=connection.pk, status=ConnectionStatus.SYNCING
+    ).update(status=previous_status, updated_at=datetime.now(UTC))
+
+
 def _success_response(result, status_code=status.HTTP_200_OK):
     return Response({"status": True, "result": result}, status=status_code)
 
@@ -203,7 +244,7 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
             service = get_integration_service(data["platform"])
             credentials = _build_credentials(data)
             ca_cert = data.get("ca_certificate") or None
-            host_url = data.get("host_url") or ""
+            host_url = _resolve_host_url(service, data.get("host_url"))
 
             validation = service.validate_credentials(
                 host_url=host_url,
@@ -296,7 +337,7 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
                 created_by=request.user,
                 platform=data["platform"],
                 display_name=data.get("display_name") or ext_project_name,
-                host_url=host_url or f"https://{data['platform']}.com",
+                host_url=host_url,
                 encrypted_credentials=encrypted,
                 ca_certificate=ca_cert or "",
                 project=project,
@@ -320,6 +361,16 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
                         "Failed to start backfill workflow",
                         connection_id=str(connection.id),
                         error=str(e),
+                    )
+                    # Keep the connection (credentials and project mapping are
+                    # saved) but don't leave it BACKFILLING with nothing
+                    # running: the poller skips that state and the UI disables
+                    # Sync Now for it. ERROR shows the message on the detail
+                    # page, and Sync Now re-runs the still-pending backfill.
+                    connection.status = ConnectionStatus.ERROR
+                    connection.status_message = BACKFILL_START_FAILED_MESSAGE
+                    connection.save(
+                        update_fields=["status", "status_message", "updated_at"]
                     )
 
             result = IntegrationConnectionDetailSerializer(connection).data
@@ -482,7 +533,7 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
             ca_cert = data.get("ca_certificate") or None
 
             result = service.validate_credentials(
-                host_url=data.get("host_url") or "",
+                host_url=_resolve_host_url(service, data.get("host_url")),
                 credentials=credentials,
                 ca_certificate=ca_cert,
             )
@@ -524,8 +575,7 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
                 ConnectionStatus.BACKFILLING,
             ):
                 return _error_response(
-                    "Connection is already syncing. Please wait for the current sync to complete.",
-                    status.HTTP_409_CONFLICT,
+                    SYNC_IN_PROGRESS_MESSAGE, status.HTTP_409_CONFLICT
                 )
 
             if instance.status == ConnectionStatus.PAUSED:
@@ -542,12 +592,26 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
                         f"Please wait {remaining} seconds before triggering another sync."
                     )
 
-            # Dispatch sync activity
-            try:
-                from integrations.temporal.activities import sync_integration_connection
+            claimed_from = instance.status
+            if not _claim_for_sync(instance):
+                return _error_response(
+                    SYNC_IN_PROGRESS_MESSAGE, status.HTTP_409_CONFLICT
+                )
 
-                sync_integration_connection.delay(str(instance.id))
+            from temporalio.exceptions import WorkflowAlreadyStartedError
+
+            from integrations.temporal.activities import dispatch_connection_sync
+
+            try:
+                dispatch_connection_sync(str(instance.id))
+            except WorkflowAlreadyStartedError:
+                # A scheduled sync for this connection is queued or running.
+                _release_sync_claim(instance, claimed_from)
+                return _error_response(
+                    SYNC_IN_PROGRESS_MESSAGE, status.HTTP_409_CONFLICT
+                )
             except Exception as e:
+                _release_sync_claim(instance, claimed_from)
                 logger.warning(
                     "Failed to dispatch sync activity",
                     connection_id=str(instance.id),

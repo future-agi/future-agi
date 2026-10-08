@@ -18,6 +18,8 @@ EXPORT_PLATFORMS = {"datadog", "posthog", "mixpanel", "cloud_storage", "message_
 @temporal_activity(time_limit=120, queue="tasks_s")
 def poll_active_integrations():
     """Find integration connections due for sync and dispatch sync activities."""
+    from temporalio.exceptions import WorkflowAlreadyStartedError
+
     from integrations.models import ConnectionStatus, IntegrationConnection
 
     now = datetime.now(timezone.utc)
@@ -39,8 +41,11 @@ def poll_active_integrations():
                 continue
 
         try:
-            sync_integration_connection.delay(str(conn.id))
+            dispatch_connection_sync(str(conn.id))
             dispatched += 1
+        except WorkflowAlreadyStartedError:
+            # A manual or previous scheduled sync is still running.
+            continue
         except Exception as e:
             logger.warning(
                 "Failed to dispatch sync for connection",
@@ -76,6 +81,10 @@ def sync_integration_connection(connection_id: str):
         logger.warning("Connection not found or deleted", connection_id=connection_id)
         return
 
+    # SYNCING is accepted because sync_now claims the row before dispatching
+    # and Temporal retries re-enter here. It cannot be a second concurrent
+    # run: every dispatch shares one workflow id per connection (see
+    # dispatch_connection_sync).
     if connection.status not in (
         ConnectionStatus.ACTIVE,
         ConnectionStatus.SYNCING,
@@ -978,8 +987,26 @@ def _send_error_notification(connection):
     )
 
 
+def dispatch_connection_sync(connection_id: str):
+    """Start the sync workflow for a connection, at most one at a time.
+
+    Manual sync, the scheduled poller and the initial backfill all use the
+    fixed ``integration-sync-{connection_id}`` workflow id. Temporal's default
+    reuse policy lets a new run start once the previous one has closed, and
+    the FAIL conflict policy makes a start raise ``WorkflowAlreadyStartedError``
+    while one is still running, so overlapping dispatches cannot run twice.
+    """
+    from temporalio.common import WorkflowIDConflictPolicy
+
+    return sync_integration_connection.apply_async(
+        args=(connection_id,),
+        task_id=f"integration-sync-{connection_id}",
+        id_conflict_policy=WorkflowIDConflictPolicy.FAIL,
+    )
+
+
 def start_backfill_workflow(connection_id: str):
     """Start a backfill by dispatching the sync activity for the full time range."""
     # For v1, we reuse the sync activity for backfill.
     # A proper Temporal workflow with chunked processing can be added later.
-    sync_integration_connection.delay(connection_id)
+    dispatch_connection_sync(connection_id)

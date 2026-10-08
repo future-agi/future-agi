@@ -10782,7 +10782,6 @@ export const IntegrationsConnectionsListResponse = zod.object({
         host_url: zod
           .string()
           .url()
-          .min(1)
           .max(
             integrationsConnectionsListResponseResultConnectionsItemHostUrlMax,
           ),
@@ -11065,7 +11064,6 @@ export const IntegrationsConnectionsReadResponse = zod.object({
   host_url: zod
     .string()
     .url()
-    .min(1)
     .max(integrationsConnectionsReadResponseHostUrlMax),
   status: zod
     .enum(["active", "paused", "error", "syncing", "backfilling"])
@@ -11200,7 +11198,6 @@ export const IntegrationsConnectionsUpdateResponse = zod.object({
     host_url: zod
       .string()
       .url()
-      .min(1)
       .max(integrationsConnectionsUpdateResponseResultHostUrlMax),
     status: zod
       .enum(["active", "paused", "error", "syncing", "backfilling"])
@@ -11336,7 +11333,6 @@ export const IntegrationsConnectionsPartialUpdateResponse = zod.object({
     host_url: zod
       .string()
       .url()
-      .min(1)
       .max(integrationsConnectionsPartialUpdateResponseResultHostUrlMax),
     status: zod
       .enum(["active", "paused", "error", "syncing", "backfilling"])
@@ -11458,7 +11454,6 @@ export const IntegrationsConnectionsPauseResponse = zod.object({
     host_url: zod
       .string()
       .url()
-      .min(1)
       .max(integrationsConnectionsPauseResponseResultHostUrlMax),
     status: zod
       .enum(["active", "paused", "error", "syncing", "backfilling"])
@@ -11555,7 +11550,6 @@ export const IntegrationsConnectionsResumeResponse = zod.object({
     host_url: zod
       .string()
       .url()
-      .min(1)
       .max(integrationsConnectionsResumeResponseResultHostUrlMax),
     status: zod
       .enum(["active", "paused", "error", "syncing", "backfilling"])

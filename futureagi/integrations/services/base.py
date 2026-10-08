@@ -27,6 +27,10 @@ class BaseIntegrationService(ABC):
     Each platform (Langfuse, LangSmith, etc.) implements this interface.
     """
 
+    # Host used when a connection is created without ``host_url``. Empty means
+    # the platform has no default: it needs an explicit host or uses none.
+    default_host_url: str = ""
+
     @abstractmethod
     def validate_credentials(
         self,

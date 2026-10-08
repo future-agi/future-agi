@@ -63944,7 +63944,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "uri",
           maxLength: 500,
-          minLength: 1,
         },
         status: {
           title: "Status",
@@ -109522,7 +109521,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "uri",
           maxLength: 500,
-          minLength: 1,
         },
         status: {
           title: "Status",

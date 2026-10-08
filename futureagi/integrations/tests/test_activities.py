@@ -16,7 +16,9 @@ from integrations.models import (
 from integrations.temporal.activities import (
     _retry_on_429,
     check_integration_error_alerts,
+    dispatch_connection_sync,
     poll_active_integrations,
+    start_backfill_workflow,
     sync_integration_connection,
 )
 from integrations.transformers.langfuse_transformer import LangfuseTransformer
@@ -28,8 +30,8 @@ from integrations.transformers.langfuse_transformer import LangfuseTransformer
 
 @pytest.mark.django_db(transaction=True)
 class TestPollActiveIntegrations:
-    @patch("integrations.temporal.activities.sync_integration_connection")
-    def test_dispatches_due_connections(self, mock_sync, integration_connection):
+    @patch("integrations.temporal.activities.dispatch_connection_sync")
+    def test_dispatches_due_connections(self, mock_dispatch, integration_connection):
         integration_connection.last_synced_at = datetime.now(timezone.utc) - timedelta(
             minutes=10
         )
@@ -40,10 +42,10 @@ class TestPollActiveIntegrations:
 
         poll_active_integrations()
 
-        mock_sync.delay.assert_called_once_with(str(integration_connection.id))
+        mock_dispatch.assert_called_once_with(str(integration_connection.id))
 
-    @patch("integrations.temporal.activities.sync_integration_connection")
-    def test_skips_not_yet_due(self, mock_sync, integration_connection):
+    @patch("integrations.temporal.activities.dispatch_connection_sync")
+    def test_skips_not_yet_due(self, mock_dispatch, integration_connection):
         integration_connection.last_synced_at = datetime.now(timezone.utc) - timedelta(
             seconds=120
         )
@@ -54,46 +56,105 @@ class TestPollActiveIntegrations:
 
         poll_active_integrations()
 
-        mock_sync.delay.assert_not_called()
+        mock_dispatch.assert_not_called()
 
-    @patch("integrations.temporal.activities.sync_integration_connection")
-    def test_skips_paused(self, mock_sync, paused_connection):
+    @patch("integrations.temporal.activities.dispatch_connection_sync")
+    def test_skips_paused(self, mock_dispatch, paused_connection):
         poll_active_integrations()
-        mock_sync.delay.assert_not_called()
+        mock_dispatch.assert_not_called()
 
-    @patch("integrations.temporal.activities.sync_integration_connection")
-    def test_dispatches_never_synced(self, mock_sync, integration_connection):
+    @patch("integrations.temporal.activities.dispatch_connection_sync")
+    def test_dispatches_never_synced(self, mock_dispatch, integration_connection):
         integration_connection.last_synced_at = None
         integration_connection.save(update_fields=["last_synced_at"])
 
         poll_active_integrations()
 
-        mock_sync.delay.assert_called_once()
+        mock_dispatch.assert_called_once()
 
-    @patch("integrations.temporal.activities.sync_integration_connection")
-    def test_skips_deleted(self, mock_sync, integration_connection):
+    @patch("integrations.temporal.activities.dispatch_connection_sync")
+    def test_skips_deleted(self, mock_dispatch, integration_connection):
         integration_connection.deleted = True
         integration_connection.save(update_fields=["deleted"])
 
         poll_active_integrations()
 
-        mock_sync.delay.assert_not_called()
+        mock_dispatch.assert_not_called()
 
-    @patch("integrations.temporal.activities.sync_integration_connection")
-    def test_dispatch_exception_does_not_crash(self, mock_sync, integration_connection):
-        """If .delay() raises, poll continues without crashing."""
+    @patch("integrations.temporal.activities.dispatch_connection_sync")
+    def test_dispatch_exception_does_not_crash(
+        self, mock_dispatch, integration_connection
+    ):
+        """If dispatch raises, poll continues without crashing."""
         integration_connection.last_synced_at = None
         integration_connection.save(update_fields=["last_synced_at"])
-        mock_sync.delay.side_effect = RuntimeError("Temporal unavailable")
+        mock_dispatch.side_effect = RuntimeError("Temporal unavailable")
 
         # Should not raise
         poll_active_integrations()
 
-    @patch("integrations.temporal.activities.sync_integration_connection")
-    def test_skips_error_status(self, mock_sync, error_connection):
+    @patch("integrations.temporal.activities.dispatch_connection_sync")
+    def test_skips_error_status(self, mock_dispatch, error_connection):
         """Error connections are not polled for sync."""
         poll_active_integrations()
-        mock_sync.delay.assert_not_called()
+        mock_dispatch.assert_not_called()
+
+    @patch("integrations.temporal.activities.logger")
+    @patch("integrations.temporal.activities.dispatch_connection_sync")
+    def test_sync_already_running_is_skipped_quietly(
+        self, mock_dispatch, mock_logger, integration_connection
+    ):
+        """A sync still running for the connection is expected, not a failure."""
+        from temporalio.exceptions import WorkflowAlreadyStartedError
+
+        integration_connection.last_synced_at = None
+        integration_connection.save(update_fields=["last_synced_at"])
+        mock_dispatch.side_effect = WorkflowAlreadyStartedError(
+            f"task-integration-sync-{integration_connection.id}", "TaskRunnerWorkflow"
+        )
+
+        poll_active_integrations()
+
+        mock_dispatch.assert_called_once_with(str(integration_connection.id))
+        mock_logger.warning.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# dispatch_connection_sync / start_backfill_workflow
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestDispatchConnectionSync:
+    """Every sync start for a connection shares one Temporal workflow id.
+
+    Manual sync, the scheduled poller and the initial backfill all go through
+    ``dispatch_connection_sync``; with a fixed id and the FAIL conflict policy
+    Temporal itself refuses a second start while one is running.
+    """
+
+    @patch("tfc.temporal.drop_in.runner.start_activity", return_value="wf")
+    def test_uses_per_connection_workflow_id(self, mock_start_activity):
+        from temporalio.common import WorkflowIDConflictPolicy
+
+        dispatch_connection_sync("conn-1")
+
+        mock_start_activity.assert_called_once()
+        args, kwargs = mock_start_activity.call_args
+        assert args == ("sync_integration_connection",)
+        assert kwargs["args"] == ("conn-1",)
+        assert kwargs["queue"] == "tasks_l"
+        assert kwargs["task_id"] == "integration-sync-conn-1"
+        assert kwargs["id_conflict_policy"] == WorkflowIDConflictPolicy.FAIL
+
+    @patch("tfc.temporal.drop_in.runner.start_activity", return_value="wf")
+    def test_backfill_shares_the_sync_workflow_id(self, mock_start_activity):
+        start_backfill_workflow("conn-1")
+
+        mock_start_activity.assert_called_once()
+        assert mock_start_activity.call_args.kwargs["task_id"] == (
+            "integration-sync-conn-1"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -342,6 +403,43 @@ class TestSyncIntegrationConnection:
         backfilling_connection.refresh_from_db()
         assert backfilling_connection.status == ConnectionStatus.ACTIVE
         assert backfilling_connection.backfill_completed is True
+
+    @patch("time.sleep")
+    @patch("integrations.transformers.base.get_transformer")
+    @patch("integrations.services.base.get_integration_service")
+    @patch("integrations.services.credentials.CredentialManager")
+    def test_claimed_retry_runs_the_pending_backfill(
+        self,
+        mock_cred_mgr,
+        mock_get_svc,
+        mock_get_tf,
+        mock_sleep,
+        integration_connection,
+    ):
+        """Sync Now on a connection whose backfill never started.
+
+        sync_now claims the row as SYNCING before dispatching; the worker must
+        run it from the beginning of history and mark the backfill done.
+        """
+        integration_connection.status = ConnectionStatus.SYNCING
+        integration_connection.backfill_completed = False
+        integration_connection.last_synced_at = None
+        integration_connection.save(
+            update_fields=["status", "backfill_completed", "last_synced_at"]
+        )
+        mock_cred_mgr.decrypt.return_value = {"public_key": "pk", "secret_key": "sk"}
+        service = self._mock_service(traces=[])
+        mock_get_svc.return_value = service
+        mock_get_tf.return_value = LangfuseTransformer()
+
+        sync_integration_connection(str(integration_connection.id))
+
+        assert service.fetch_traces.call_args.kwargs["from_timestamp"].startswith(
+            "2020-01-01"
+        )
+        integration_connection.refresh_from_db()
+        assert integration_connection.status == ConnectionStatus.ACTIVE
+        assert integration_connection.backfill_completed is True
 
     @patch("time.sleep")
     @patch("integrations.transformers.base.get_transformer")
