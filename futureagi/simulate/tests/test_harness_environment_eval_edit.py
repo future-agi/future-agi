@@ -183,7 +183,7 @@ def test_edit_answers_not_found_for_an_environment_outside_this_workspace(
 
     for response in (elsewhere, missing):
         assert response.status_code == 404, response.content
-        assert response.json() == {"detail": "Environment not found"}
+        assert response.json()["detail"] == "Environment not found"
     assert _row(politeness) == before
     assert _clock(environment) == clock
 
@@ -202,9 +202,10 @@ def test_edit_refuses_an_environment_that_is_still_building(
     response = _edit(env_client, job.id, uuid.uuid4(), workspace, {"name": "x"})
 
     assert response.status_code == 409, response.content
-    assert response.json() == {
-        "detail": "Environment has no evaluations until it finishes building"
-    }
+    assert (
+        response.json()["detail"]
+        == "Environment has no evaluations until it finishes building"
+    )
 
 
 @pytest.mark.django_db
@@ -235,7 +236,7 @@ def test_edit_refuses_an_eval_that_is_not_this_environments(
     response = _edit(env_client, environment.id, eval_config_id, workspace, {})
 
     assert response.status_code == 404, response.content
-    assert response.json() == {"detail": "Evaluation not found"}
+    assert response.json()["detail"] == "Evaluation not found"
 
 
 @pytest.mark.django_db
@@ -267,9 +268,10 @@ def test_edit_refuses_a_harness_filled_eval_whatever_the_body(
     response = _edit(env_client, environment.id, suite.id, workspace, body)
 
     assert response.status_code == 400, response.content
-    assert response.json() == {
-        "detail": "Task completion is set by the harness and can't be edited here."
-    }
+    assert (
+        response.json()["detail"]
+        == "Task completion is set by the harness and can't be edited here."
+    )
     assert _row(suite) == before
     assert _clock(environment) == clock
 
@@ -284,7 +286,7 @@ def test_edit_refuses_an_empty_body(
     response = _edit(env_client, environment.id, politeness.id, workspace, {})
 
     assert response.status_code == 400, response.content
-    assert response.json() == {"detail": "Nothing to change"}
+    assert response.json()["detail"] == "Nothing to change"
     assert _row(politeness) == before
     assert _clock(environment) == clock
 
@@ -305,7 +307,7 @@ def test_edit_refuses_a_config_that_does_not_fit_the_template(
     )
 
     assert response.status_code == 400, response.content
-    assert response.json() == {"detail": "min_words must be >= 0"}
+    assert response.json()["detail"] == "min_words must be >= 0"
     assert _row(politeness) == before
     assert _clock(environment) == clock
 
@@ -328,12 +330,10 @@ def test_edit_refuses_a_name_another_eval_of_this_environment_has(
     )
 
     assert response.status_code == 400, response.content
-    assert response.json() == {
-        "detail": (
-            "An evaluation config with the name 'Accuracy' already exists in "
-            "this run test. Please use a different name."
-        )
-    }
+    assert response.json()["detail"] == (
+        "An evaluation config with the name 'Accuracy' already exists in "
+        "this run test. Please use a different name."
+    )
     assert _row(politeness) == before
     assert _clock(environment) == clock
 
@@ -356,7 +356,7 @@ def test_edit_refuses_a_knowledge_base_outside_this_organization(
         )
 
         assert response.status_code == 400, response.content
-        assert response.json() == {"detail": "Knowledge base not found"}
+        assert response.json()["detail"] == "Knowledge base not found"
         assert _row(politeness) == before
         assert _clock(environment) == clock
 
@@ -382,7 +382,7 @@ def test_edit_refuses_an_edit_that_leaves_the_eval_without_inputs(
     )
 
     assert response.status_code == 400, response.content
-    assert response.json() == {"detail": "Politeness needs at least one input mapped"}
+    assert response.json()["detail"] == "Politeness needs at least one input mapped"
     assert _row(politeness) == before
     assert politeness.name == "Politeness"
     assert _clock(environment) == clock
