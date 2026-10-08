@@ -59,6 +59,12 @@ on:
       size-budget-percent: { required: false, type: number, default: 0 }   # max growth over :latest; 0 = off
       standalone-install-total: { required: false, type: boolean, default: false }   # futureagi/standalone only
       verify-command: { required: false, type: string, default: '' }   # sh script run inside each arch's image
+      # GitHub environment of the build and publish jobs. release-images.yml
+      # asks for its one review itself and passes production-auto.
+      environment: { required: false, type: string, default: production }
+      # false: every job of this call is skipped (release-images.yml builds
+      # single components of a tag this way).
+      enabled:     { required: false, type: boolean, default: true }
     outputs:
       digest:
         description: Digest of the published multi-arch manifest
@@ -75,6 +81,7 @@ env:
 
 jobs:
   prepare:
+    if: inputs.enabled
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -136,7 +143,7 @@ jobs:
       matrix:
         arch: ${{ fromJSON(inputs.arches) }}
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
-    environment: production
+    environment: ${{ inputs.environment }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     permissions:
       contents: read
@@ -308,7 +315,7 @@ jobs:
   publish:
     needs: [prepare, build]
     runs-on: ubuntu-latest
-    environment: production
+    environment: ${{ inputs.environment }}
     timeout-minutes: 15
     outputs:
       digest: ${{ steps.digest.outputs.digest }}

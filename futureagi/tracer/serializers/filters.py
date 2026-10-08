@@ -10,6 +10,9 @@ from tfc.utils.api_serializers import (
     StrictInputSerializer,
 )
 from tfc.utils.serializer_fields import JSON_VALUE_SCHEMA, JsonValueField  # noqa: F401
+from tracer.services.clickhouse.graph_metric_statistic import (
+    METRIC_STATISTIC_CHOICES as OBSERVE_GRAPH_METRIC_STATISTIC_CHOICES,
+)
 from tracer.utils.attribute_suggestion_contract import (
     TYPED_STRING_SUGGESTION_MAX_UTF8_BYTES,
 )
@@ -1157,7 +1160,14 @@ class ObserveGraphDataRequestSerializer(StrictInputSerializer):
         default="day",
     )
     property = serializers.CharField(
-        required=False, allow_blank=True, default="average"
+        required=False,
+        allow_blank=True,
+        default="average",
+        help_text=(
+            "Accepted for older clients and ignored for SYSTEM_METRIC graphs: "
+            "each system metric has one statistic, named by the response's "
+            "metric_statistic. Latency is always the mean (avg) span latency."
+        ),
     )
     req_data_config = ObserveGraphMetricConfigField()
 
@@ -1189,6 +1199,16 @@ class ObserveGraphDataPointSerializer(serializers.Serializer):
 class ObserveGraphDataResultSerializer(serializers.Serializer):
     metric_name = serializers.CharField(allow_blank=True)
     name = serializers.CharField(required=False, allow_blank=True)
+    metric_statistic = serializers.ChoiceField(
+        choices=OBSERVE_GRAPH_METRIC_STATISTIC_CHOICES,
+        required=False,
+        help_text=(
+            "Statistic of the published system-metric series per bucket. "
+            "Latency is always the mean (avg) of span latency, filtered or "
+            "not. "
+            "Absent for eval and annotation series."
+        ),
+    )
     data = ObserveGraphDataPointSerializer(
         many=True,
         help_text=(

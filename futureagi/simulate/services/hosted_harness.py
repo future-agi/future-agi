@@ -185,6 +185,11 @@ def create_hosted_job(
         if seed is None:
             seed = secrets.randbits(63)
         normalized = _json_value(payload)
+        # Deployment policy must not change the submitted request's idempotency digest.
+        artifacts = normalized["artifacts"]
+        artifacts["max_artifact_bytes"] = max(
+            artifacts.get("max_artifact_bytes", 0), settings.HARNESS_MAX_ARTIFACT_BYTES
+        )
         normalized.update(
             {
                 "schema_version": _JOB_SCHEMA_VERSION,
@@ -1024,23 +1029,49 @@ def provision_scenarios(
         locked.content_updated_at = timezone.now()
         locked.save(update_fields=["run_test", "content_updated_at", "updated_at"])
         if existing_registrations:
-            if set(existing_by_key) != set(requested_keys):
+            # Rows indexed for scenarios the final suite dropped are hidden, not fatal.
+            requested = set(requested_keys)
+            stale = [
+                registration
+                for key, registration in existing_by_key.items()
+                if key not in requested
+            ]
+            if any(row.scenario_id or row.call_execution_id for row in stale):
                 raise HostedHarnessError(
                     "scenario_registration_conflict",
                     "the indexed authored suite differs from the provision request",
                     status_code=409,
                 )
-            registrations = []
             bound_at = timezone.now()
+            for row in stale:
+                row.deleted, row.deleted_at, row.updated_at = True, bound_at, bound_at
+            HostedHarnessScenario.all_objects.bulk_update(
+                stale, ["deleted", "deleted_at", "updated_at"]
+            )
+            hidden = {
+                row.scenario_key: row
+                for row in HostedHarnessScenario.all_objects.filter(
+                    job=locked,
+                    deleted=True,
+                    scenario_key__in=requested - set(existing_by_key),
+                )
+            }
+            registrations = []
             for persona, row in zip(payload["personas"], dataset_rows, strict=True):
-                registration = existing_by_key[persona["scenario_key"]]
+                key = persona["scenario_key"]
+                registration = existing_by_key.get(key) or hidden.get(key)
+                if registration is None:
+                    registration = HostedHarnessScenario.no_workspace_objects.create(
+                        job=locked, scenario_key=key
+                    )
+                registration.deleted, registration.deleted_at = False, None
                 registration.scenario = scenarios[0]
                 registration.dataset_row = row
                 registration.updated_at = bound_at
                 registrations.append(registration)
-            HostedHarnessScenario.no_workspace_objects.bulk_update(
+            HostedHarnessScenario.all_objects.bulk_update(
                 registrations,
-                ["scenario", "dataset_row", "updated_at"],
+                ["deleted", "deleted_at", "scenario", "dataset_row", "updated_at"],
             )
         else:
             registrations = [
@@ -1058,17 +1089,24 @@ def provision_scenarios(
 
 
 def _target_agent_prompt(job: HostedHarnessJob, payload: dict[str, Any]) -> str:
-    """The target agent's instructions: the guest's own prompt, else the contract excerpt."""
-    supplied = str(payload.get("agent_prompt") or "").strip()
-    if supplied:
-        return supplied
-    if str((job.payload.get("agent") or {}).get("connector") or "") == "phone":
-        return str(
+    """Resolve target instructions without reducing an Others prompt."""
+    connector = str((job.payload.get("agent") or {}).get("connector") or "")
+    if connector == "phone":
+        # "Others" is configured from a user-supplied system prompt.  Keep that
+        # complete prompt as the agent definition's source of truth: the hosted
+        # guest's ``agent_prompt`` may only be the short contract excerpt used
+        # during authoring and must not replace it.
+        configured = str(
             ((job.payload.get("agent") or {}).get("config") or {}).get(
                 "target_system_prompt"
             )
             or ""
         ).strip()
+        if configured:
+            return configured
+    supplied = str(payload.get("agent_prompt") or "").strip()
+    if supplied:
+        return supplied
     return str(_authored_contract_data(job).get("system_prompt_excerpt") or "").strip()
 
 
@@ -1115,6 +1153,25 @@ def _record_target_agent_facts(
         changed.append("agent_name")
     agent = job.payload.get("agent") or {}
     agent_config = agent.get("config") or {}
+    # Provider-backed web voice targets are identified by different payload
+    # keys, but AgentDefinition intentionally stores both in assistant_id.
+    # Without copying this identity into the definition/version, authoring can
+    # succeed while the later simulation-runner build has no Retell agent_id
+    # or Vapi assistant_id and fails every selected call before transport.
+    assistant_id = str(
+        agent_config.get("assistant_id") or agent_config.get("agent_id") or ""
+    ).strip()
+    if assistant_id and agent_definition.assistant_id != assistant_id:
+        agent_definition.assistant_id = assistant_id
+        changed.append("assistant_id")
+    contact_number = str(agent_config.get("phone_number") or "").strip()
+    if contact_number and agent_definition.contact_number != contact_number:
+        # Phone targets arrive through the hosted job payload rather than the
+        # native agent-definition form. Persist the validated destination on
+        # the definition before creating its version so the hosted runner sees
+        # a SIP target instead of treating it as a LiveKit-native agent.
+        agent_definition.contact_number = contact_number
+        changed.append("contact_number")
     explicit_inbound = agent_config.get("inbound")
     declared = str(agent.get("call_direction") or "").strip().lower()
     direction = declared or str(authored.get("call_direction") or "").strip().lower()
@@ -1138,7 +1195,14 @@ def _record_target_agent_facts(
         changed.append("target_speaks_first")
     if changed:
         agent_definition.save(update_fields=[*changed, "updated_at"])
-    if prompt and agent_definition.latest_version is None:
+    if (
+        prompt
+        and (
+            agent_definition.latest_version is None
+            or "description" in changed
+            or "assistant_id" in changed
+        )
+    ):
         agent_definition.create_version(
             description=prompt,
             commit_message="hosted harness target agent prompt",

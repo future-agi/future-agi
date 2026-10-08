@@ -11,12 +11,21 @@ URL routing:
          while browser-facing URLs use MINIO_URL (e.g. http://localhost:9005).
 """
 
+import ipaddress
 import json
 import os
 from urllib.parse import urlparse
 
+import certifi
 import structlog
+import urllib3
 from minio import Minio
+from requests.utils import (
+    get_auth_from_url,
+    get_environ_proxies,
+    prepend_scheme_if_needed,
+    select_proxy,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -29,6 +38,85 @@ def _parse_endpoint(raw_endpoint: str) -> tuple[str, bool | None]:
         parsed = urlparse(raw_endpoint)
         return parsed.netloc or parsed.path, parsed.scheme == "https"
     return raw_endpoint, None
+
+
+def _is_loopback(host: str | None) -> bool:
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _environment_proxy(url: str) -> str | None:
+    """The proxy the environment names for url, or None to connect directly.
+
+    It is picked the way requests picks it: HTTPS_PROXY or HTTP_PROXY by the
+    URL's scheme, then ALL_PROXY, in either case. The request goes direct when
+    NO_PROXY names its host or a domain suffix of it (optionally with its
+    port), its IPv4 address or a CIDR range holding it, or is exactly "*".
+    Unlike requests, loopback is always direct, as in Go's proxy selection:
+    no proxy can reach this machine's loopback, where Standalone runs MinIO.
+    """
+    if _is_loopback(urlparse(url).hostname):
+        return None
+    proxy = select_proxy(url, get_environ_proxies(url))
+    return prepend_scheme_if_needed(proxy, "http") if proxy else None
+
+
+class _EnvironmentProxyPoolManager(urllib3.PoolManager):
+    """Sends each request through the proxy the environment names for its URL.
+
+    Minio's own transport ignores HTTP_PROXY and NO_PROXY. The choice is made
+    per request because Minio does not always connect to the configured
+    endpoint: on AWS it connects to <bucket>.s3.<region>.amazonaws.com, and
+    NO_PROXY has to match that host, as it does for requests.
+    """
+
+    def __init__(self, **connection_pool_kw):
+        super().__init__(**connection_pool_kw)
+        self._through: dict[str, urllib3.ProxyManager] = {}
+
+    def urlopen(self, method, url, redirect=True, **kw):
+        proxy = _environment_proxy(url)
+        if proxy is None:
+            return super().urlopen(method, url, redirect=redirect, **kw)
+        return self._proxy_manager(proxy).urlopen(method, url, redirect=redirect, **kw)
+
+    def _proxy_manager(self, proxy: str) -> urllib3.ProxyManager:
+        if proxy not in self._through:
+            username, password = get_auth_from_url(proxy)
+            auth = f"{username}:{password}" if username else None
+            # setdefault, so threads racing on the first request share one.
+            self._through.setdefault(
+                proxy,
+                urllib3.ProxyManager(
+                    proxy,
+                    proxy_headers=auth and urllib3.make_headers(proxy_basic_auth=auth),
+                    **self.connection_pool_kw,
+                ),
+            )
+        return self._through[proxy]
+
+    def clear(self):
+        super().clear()
+        for manager in self._through.values():
+            manager.clear()
+
+
+def storage_http_client() -> urllib3.PoolManager:
+    # Minio's settings for its own transport (minio.api.Minio.__init__), so the
+    # proxy changes only the route: the same timeouts, retries and trusted CAs.
+    return _EnvironmentProxyPoolManager(
+        timeout=urllib3.Timeout(connect=300, read=300),
+        maxsize=10,
+        cert_reqs="CERT_REQUIRED",
+        ca_certs=os.environ.get("SSL_CERT_FILE") or certifi.where(),
+        retries=urllib3.Retry(
+            total=5, backoff_factor=0.2, status_forcelist=[500, 502, 503, 504]
+        ),
+    )
 
 
 def get_storage_client() -> Minio:
@@ -44,6 +132,7 @@ def get_storage_client() -> Minio:
             secret_key=os.getenv("GCS_HMAC_SECRET_KEY", ""),
             region=os.getenv("MINIO_REGION") or "auto",
             secure=True,
+            http_client=storage_http_client(),
         )
         return _client
 
@@ -66,6 +155,7 @@ def get_storage_client() -> Minio:
         secret_key=os.getenv("S3_SECRET_KEY") or os.getenv("AWS_SECRET_ACCESS_KEY", ""),
         region=os.getenv("S3_REGION") or os.getenv("AWS_DEFAULT_REGION", ""),
         secure=secure,
+        http_client=storage_http_client(),
     )
     return _client
 

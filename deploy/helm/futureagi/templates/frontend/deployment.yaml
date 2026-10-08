@@ -5,7 +5,7 @@
 {{- /* Empty VITE_HOST_API: the UI calls http://localhost:8000 (a port-forward). */ -}}
 {{- if $apiUrl }}{{ $_ := set $env "VITE_HOST_API" $apiUrl }}{{ end -}}
 {{- with $f.helpLink }}{{ $_ := set $env "VITE_HELP_LINK" . }}{{ end -}}
-{{- $env = mergeOverwrite $env ($f.extraEnv | default dict) -}}
+{{- $env = mergeOverwrite $env (include "futureagi.env.platform" (dict "root" . "kind" "frontend") | fromYaml) ($f.extraEnv | default dict) -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -13,6 +13,7 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "futureagi.componentLabels" $ctx | nindent 4 }}
+  {{- include "futureagi.block" (dict "text" (include "futureagi.workloadAnnotations" $) "indent" 2) }}
 spec:
   {{- if not $f.autoscaling.enabled }}
   replicas: {{ $f.replicas }}
@@ -40,14 +41,14 @@ spec:
         {{- end }}
     spec:
       serviceAccountName: {{ include "futureagi.serviceAccountName" . }}
-      automountServiceAccountToken: false
+      automountServiceAccountToken: {{ include "futureagi.automountServiceAccountToken" . }}
       {{- include "futureagi.block" (dict "text" (include "futureagi.imagePullSecrets" .) "indent" 6) }}
       securityContext:
-        {{- include "futureagi.podSecurityContext" (dict "uid" 101 "overrides" $f.podSecurityContext) | nindent 8 }}
-      {{- include "futureagi.block" (dict "text" (include "futureagi.scheduling" (dict "root" . "values" $f "spread" true)) "indent" 6) }}
+        {{- include "futureagi.podSecurityContext" (dict "root" $ "uid" 101 "overrides" $f.podSecurityContext) | nindent 8 }}
+      {{- include "futureagi.block" (dict "text" (include "futureagi.scheduling" (dict "root" . "values" $f "spread" true "component" "frontend" "multi" (include "futureagi.multiReplica" $f))) "indent" 6) }}
       containers:
         - name: frontend
-          image: {{ include "futureagi.image" (dict "root" . "image" $f.image) }}
+          image: {{ include "futureagi.image" (dict "root" . "image" $f.image "digestKey" "frontend") }}
           imagePullPolicy: {{ include "futureagi.imagePullPolicy" (dict "root" . "image" $f.image) }}
           # The image's entrypoint writes /config.js from the VITE_* variables, then runs nginx.
           args: ["nginx", "-c", "/etc/nginx/futureagi/nginx.conf", "-g", "daemon off;"]
@@ -76,7 +77,7 @@ spec:
           resources:
             {{- toYaml $f.resources | nindent 12 }}
           securityContext:
-            {{- include "futureagi.containerSecurityContext" (dict "overrides" $f.containerSecurityContext) | nindent 12 }}
+            {{- include "futureagi.containerSecurityContext" (dict "root" $ "overrides" $f.containerSecurityContext) | nindent 12 }}
           volumeMounts:
             - name: config
               mountPath: /etc/nginx/futureagi

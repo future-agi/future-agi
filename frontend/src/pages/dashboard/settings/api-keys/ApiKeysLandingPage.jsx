@@ -1,6 +1,5 @@
 import { Box, Button, Divider, Typography } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
-import { format } from "date-fns";
 import React, { useMemo, useRef, useState } from "react";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import { ShowComponent } from "src/components/show";
@@ -8,6 +7,8 @@ import { useDebounce } from "src/hooks/use-debounce";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
 import axios, { endpoints } from "src/utils/axios";
+import { fDateLocal } from "src/utils/format-time";
+import { LocalDateTime } from "src/components/date-time/LocalDateTime";
 import Iconify from "src/components/iconify";
 import Image from "src/components/image";
 import CreateApiKey from "./CreateApiKey";
@@ -95,11 +96,13 @@ const ApiKeysLandingPage = () => {
         headerName: "Created at",
         field: "created_at",
         flex: 1,
-        valueFormatter: (p) => {
-          if (!p.value) return "";
-          const date = new Date(p.value);
-          return isNaN(date.getTime()) ? "" : format(date, "MM-dd-yyyy");
-        },
+        valueFormatter: (params) => fDateLocal(params.value),
+        cellRenderer: (params) => (
+          <LocalDateTime
+            value={params.value}
+            emptyText="No creation date recorded"
+          />
+        ),
       },
       {
         headerName: "Actions",

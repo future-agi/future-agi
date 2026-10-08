@@ -226,8 +226,8 @@ Read by `./bin/install` from the shell environment, not from `.env`.
     [[part.section.row]]
     keys = ["FAGI_ADMIN_EMAIL", "FAGI_ADMIN_NAME", "FAGI_ADMIN_PASSWORD"]
     default = "unset"
-    setups = ["S", "D"]
-    text = "With `-y` (non-interactive), create the first account from these three. If any is missing, account creation is skipped."
+    setups = ["S", "D", "H"]
+    text = "With `-y` (non-interactive), create the first account from these three. If any is missing, account creation is skipped. Helm: the bootstrap job reads them from `bootstrap.admin.existingSecret` and creates the account only if no user with that email exists; with the email set, a missing name or password, a malformed email, or a password the sign-up rules reject fails the job, which says why."
 
     [[part.section.row]]
     keys = ["SKIP_USER_CREATION"]
@@ -327,13 +327,13 @@ ports the UI is `http://<host>:3000` and the API `http://<host>:8000`.
 
     [[part.section.row]]
     keys = ["MINIO_URL"]
-    default = "`http://localhost:9005` (follows `MINIO_API_PORT`)"
+    default = "`http://localhost:9005` (follows `MINIO_API_PORT`); Helm: `urls.objects`, else the ingress's objects host or the external endpoint, else `http://localhost:<objectStorage.bundled.service.downloadPort>`"
     setups = ["S", "D", "H"]
     text = "Base URL of every stored-file link the browser opens (uploads, exports, audio and image previews). Object storage listens on `127.0.0.1` only, so a remote browser needs a reverse proxy in front of port 9005 and this set to its URL. See [Opening the UI from another machine](repo:INSTALLATION.md#opening-the-ui-from-another-machine) in INSTALLATION.md. Wrong: file previews and downloads fail while the rest works."
 
     [[part.section.row]]
     keys = ["FI_COLLECTOR_PUBLIC_URL"]
-    default = "`http://localhost:<FI_COLLECTOR_OTLP_HTTP_PORT>` (`http://localhost:4318`); Helm: `urls.otlp`, else the ingress's OTLP host, else `http://localhost:4318` (the port-forward)"
+    default = "`http://localhost:<FI_COLLECTOR_OTLP_HTTP_PORT>` (`http://localhost:4318`); Helm: `urls.otlp`, else the OTLP host of the ingress or the Gateway API routes, else `http://localhost:4318` (the port-forward)"
     setups = ["S", "D", "H"]
     text = "OTLP/HTTP base URL of the trace collector as SDKs outside the stack reach it: what the in-app SDK snippet, the first-run setup screen, the installer's and the app's start-up summaries hand out as `FI_BASE_URL`. The collector listens on `127.0.0.1` in both Compose setups, so SDKs on other machines need a reverse proxy in front of port 4318 and this set to its URL. Wrong: copied snippets send traces to an address that does not answer."
 
@@ -477,7 +477,19 @@ which Standalone's app image leaves out; see
     keys = ["EE_LICENSE_KEY"]
     default = "empty: the open-source feature set"
     setups = ["S", "D", "H"]
-    text = "Enterprise Edition license key."
+    text = "Enterprise Edition license key. Helm: `license.existingSecret` (or `license.key`) with `edition: ee`; the chart gives it to the backend, every worker and the bootstrap job."
+
+    [[part.section.row]]
+    keys = ["FUTURE_AGI_LICENSE_URL"]
+    default = "`https://api.futureagi.com`"
+    setups = ["S", "D", "H"]
+    text = "License activation and heartbeat server. Helm: `license.url`."
+
+    [[part.section.row]]
+    keys = ["FUTURE_AGI_ENTERPRISE_HEARTBEAT_DISABLED"]
+    default = "`false`"
+    setups = ["S", "D", "H"]
+    text = "`true` stops the license heartbeat. Helm: `license.heartbeat: false`, or `global.airgap`."
 
     [[part.section.row]]
     keys = ["EE_LICENSE_PUBLIC_KEY", "EE_LICENSE_PUBLIC_KEYS", "EE_LICENSE_KEY_ID"]
@@ -613,6 +625,18 @@ the default backend ([Backend variants](/docs/self-hosting/images#backend-varian
     text = "That LLM's thinking level or token budget. Set it to go lower where the model allows, e.g. `minimal` on `gemini-3.5-flash-lite` (`gemini-3.7-flash` refuses it)."
 
     [[part.section.row]]
+    keys = ["HARNESS_CALLER_BARGE_IN_RATE"]
+    default = "`0.4`"
+    setups = ["S", "D", "H"]
+    text = "Fraction of hosted voice calls selected for optional simulator caller interruptions. Set `0` to disable or a value up to `1` to enable more calls; selected calls may contain multiple interjections."
+
+    [[part.section.row]]
+    keys = ["HARNESS_MAX_ARTIFACT_BYTES"]
+    default = "`1073741824` (1 GiB)"
+    setups = ["S", "D", "H"]
+    text = "Minimum cumulative artifact budget, in bytes, for new hosted environment jobs and simulation Runs. Applies to explicit smaller request budgets and Runs of saved environments; larger saved budgets are preserved. Existing jobs are unchanged. `0` is not an unlimited sentinel."
+
+    [[part.section.row]]
     keys = ["ALK_HOSTED_BASE_EGRESS_DOMAINS"]
     default = "empty"
     setups = ["S", "D", "H"]
@@ -685,6 +709,12 @@ the default backend ([Backend variants](/docs/self-hosting/images#backend-varian
     text = "Most scenarios one sandbox runs at once, 1 to 8: any other value fails every hosted run. The sandbox's CPU and memory can lower it further."
 
     [[part.section.row]]
+    keys = ["HARNESS_MAX_EXECUTIONS_PER_RUN"]
+    default = "`200`"
+    setups = ["S", "D", "H"]
+    text = "Most scenarios × trials one simulation Run may submit; a larger Run is refused with `run_too_large`."
+
+    [[part.section.row]]
     keys = ["HARNESS_RESOURCE_PROFILES"]
     default = "`[]`: every run uses the provider's fixed sandbox size"
     setups = ["S", "D", "H"]
@@ -694,7 +724,7 @@ the default backend ([Backend variants](/docs/self-hosting/images#backend-varian
     keys = ["ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER", "ALK_CAB_GUEST_POC_PIN"]
     default = "empty: off"
     setups = ["S", "D", "H"]
-    text = "Temporary proof-of-concept scenario policy of Future AGI's hosted service (an E.164 target and its PIN), passed to sandboxes on the platform's simulator-secret channel. Leave empty when self-hosting."
+    text = "Temporary proof-of-concept scenario policy of Future AGI's hosted service (an E.164 target and its PIN), passed only to phone sandboxes whose submitted target exactly matches the configured number. Both values are required; leave empty when self-hosting."
     audience = "internal"
 
   [[part.section]]
@@ -1012,6 +1042,24 @@ a Mixpanel token.
     text = "reCAPTCHA server key."
 
     [[part.section.row]]
+    keys = ["AUTH0_CLIENT_ID", "AUTH0_CLIENT_SECRET"]
+    default = "empty: no Google sign-in"
+    setups = ["S", "D", "H"]
+    text = "Google sign-in: the OAuth client of a Google Cloud \"Web application\" (the app names Google's settings `AUTH0_*`). Redirect URI: `<API URL>/saml2_auth/auth/callback/`. Helm: `auth.google`."
+
+    [[part.section.row]]
+    keys = ["GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET"]
+    default = "empty: no GitHub sign-in"
+    setups = ["S", "D", "H"]
+    text = "GitHub sign-in: a GitHub OAuth app. Redirect URI: `<API URL>/saml2_auth/github/callback/`. Helm: `auth.github`."
+
+    [[part.section.row]]
+    keys = ["MICROSOFT_CLIENT_ID", "MICROSOFT_CLIENT_SECRET"]
+    default = "empty: no Microsoft sign-in"
+    setups = ["S", "D", "H"]
+    text = "Microsoft sign-in: a multi-tenant Entra app registration (the `common` endpoint). Redirect URI: `<API URL>/saml2_auth/microsoft/callback/`. Helm: `auth.microsoft`."
+
+    [[part.section.row]]
     keys = ["VITE_HELP_LINK"]
     default = "empty: the community Discord"
     setups = ["S", "D", "H"]
@@ -1321,7 +1369,7 @@ database, override `PG_HOST`, `PGBOUNCER_HOST` or `CH_HOST` in a
     keys = ["CH_USERNAME"]
     default = "`default`"
     setups = ["S", "D", "H"]
-    text = "ClickHouse user of the app."
+    text = "ClickHouse user of the app. Helm: `clickhouse.user`, which must stay `default` with the bundled ClickHouse."
 
     [[part.section.row]]
     keys = ["CH_ENABLED"]
@@ -1369,7 +1417,31 @@ database, override `PG_HOST`, `PGBOUNCER_HOST` or `CH_HOST` in a
     keys = ["PGSSLROOTCERT", "PGSSLCERT", "PGSSLKEY"]
     default = "empty"
     setups = ["S", "D", "H"]
-    text = "Certificate paths inside the collector container; mount the files read-only in a compose override. Helm: mount the CA through the `extraVolumes` and `extraVolumeMounts` of `backend`, `worker`, `bootstrap` and `fiCollector`, and set `PGSSLROOTCERT` in `config.extraEnv` and `fiCollector.extraEnv` (example in the [chart README](repo:deploy/helm/futureagi/README.md#external-and-bundled-datastores))."
+    text = "Certificate paths inside the collector container; mount the files read-only in a compose override. Helm: with `postgres.external.sslMode` `verify-ca` or `verify-full` and a `global.caBundle`, the chart sets `PGSSLROOTCERT` itself; otherwise mount the CA through the `extraVolumes` and `extraVolumeMounts` of `backend`, `worker`, `bootstrap` and `fiCollector`, and set `PGSSLROOTCERT` in `config.extraEnv` and `fiCollector.extraEnv` (example in the [chart README](repo:deploy/helm/futureagi/README.md#postgresql))."
+
+    [[part.section.row]]
+    keys = ["PGBOUNCER_READ_HOST", "PGBOUNCER_READ_PORT", "PG_READ_DB"]
+    default = "unset: no replica"
+    setups = ["S", "D", "H"]
+    text = "A read replica (or a pooler in front of one) for opted-in reads; same user and password as the primary. Helm: `postgres.readReplica`."
+
+    [[part.section.row]]
+    keys = ["READ_REPLICA_OPT_IN"]
+    default = "empty: nothing reads from the replica"
+    setups = ["S", "D", "H"]
+    text = "Model class names and `feature:` keys routed to the replica, comma-separated. Helm: `postgres.readReplica.optIn`."
+
+    [[part.section.row]]
+    keys = ["PG_DIRECT_HOST", "PG_DIRECT_PORT"]
+    default = "unset"
+    setups = ["S", "D", "H"]
+    text = "A direct (unpooled) Postgres connection for migrations when `PGBOUNCER_HOST` is a transaction-mode pooler. Helm sets it on the bootstrap job when `postgres.pooler` is on."
+
+    [[part.section.row]]
+    keys = ["AGENTCC_REDIS_ADDRESS", "AGENTCC_REDIS_PASSWORD", "AGENTCC_REDIS_DB"]
+    default = "unset: state in memory"
+    setups = ["D", "H"]
+    text = "Redis the LLM gateway keeps rate limits, budgets and other shared state in, as `host:port`; needed as soon as it runs more than one replica. No TLS. Helm: `agentccGateway.redis` (on by default with more than one replica, database 4); with `redis.external.tls`, a Redis without TLS set here through `agentccGateway.extraEnv`."
 
   [[part.section]]
   heading = "Application behaviour"
@@ -1402,13 +1474,13 @@ database, override `PG_HOST`, `PGBOUNCER_HOST` or `CH_HOST` in a
     keys = ["ALLOWED_HOSTS"]
     default = "`*`"
     setups = ["S", "D", "H"]
-    text = "Host names the API answers to, comma-separated. Standalone adds `127.0.0.1,localhost` to a list without `*`, because the container's own health checks call the API on loopback. Distributed adds nothing: include `backend,localhost,127.0.0.1` yourself, since the workers call the API as `backend` (live updates, harness callbacks) and `./bin/install` checks it on `localhost`. Helm: `config.allowedHosts`, to which the chart adds its service names and the API host."
+    text = "Host names the API answers to, comma-separated. Standalone adds `127.0.0.1,localhost` to a list without `*`, because the container's own health checks call the API on loopback. Distributed adds nothing: include `backend,localhost,127.0.0.1` yourself, since the workers call the API as `backend` (live updates, harness callbacks) and `./bin/install` checks it on `localhost`. Helm: `config.allowedHosts`, to which the chart adds localhost, its service names, the API host and the pod's own IP (`$(POD_IP)`, the Host of load balancer health checks that probe pods directly); empty (the default) means the API host once the API has a public URL, else `*`."
 
     [[part.section.row]]
     keys = ["CORS_ALLOWED_ORIGINS"]
     default = "empty: any origin"
     setups = ["S", "D", "H"]
-    text = "Browser origins allowed to call the API, comma-separated (e.g. `https://app.example.com`). Setting it turns off allow-all."
+    text = "Browser origins allowed to call the API, comma-separated (e.g. `https://app.example.com`). Setting it turns off allow-all. Helm: `config.corsAllowedOrigins`; empty (the default) means the UI's origin once the UI has a public URL, else any origin; `*` keeps any origin."
 
     [[part.section.row]]
     keys = ["CORS_ALLOWED_ORIGIN_REGEXES"]
@@ -1439,6 +1511,18 @@ database, override `PG_HOST`, `PGBOUNCER_HOST` or `CH_HOST` in a
     default = "`60s` (Helm: `60s`, from `agentccGateway.config.control_plane.sync_interval`)"
     setups = ["S", "D", "H"]
     text = "A Go duration (`60s`, `5m`): the gateway also re-reads keys and org settings from the app this often, so a gateway that started before the app (Distributed on a slow host) or several gateway replicas catch up. A gateway from before this setting ignores it and syncs only on start: its `control plane sync enabled` log line shows an `interval` of `0s`. Helm sets it in the gateway's config file, which every gateway reads."
+
+    [[part.section.row]]
+    keys = ["APP_VERSION"]
+    default = "unset"
+    setups = ["S", "D", "H"]
+    text = "The running version, reported by the license check, Sentry and the model server. Helm sets it to the backend image tag."
+
+    [[part.section.row]]
+    keys = ["SIM_COLLECTOR_OTLP_ENDPOINT"]
+    default = "`fi-collector:4317`"
+    setups = ["D", "H"]
+    text = "OTLP/gRPC `host:port` where simulations and voice calls send their spans. Helm sets it to the release's collector."
 
     [[part.section.row]]
     keys = ["OTEL_ENABLED"]
@@ -1646,6 +1730,39 @@ collected them can be indexed later with `fi-observed-catalog-backfill`
   `frontend` container, so set others in a compose override. Out-of-range
   values fall back to the default.
 '''
+
+  [[part.section]]
+  heading = "Proxy, CA bundle and air-gap"
+  body = '''
+The processes honour the standard proxy and trust-store variables. Set them
+in a compose override; the Helm chart sets them from `global.proxy`,
+`global.caBundle` and `global.airgap`.
+'''
+
+    [[part.section.row]]
+    keys = ["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"]
+    label = "`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` (and lowercase)"
+    default = "unset"
+    setups = ["S", "D", "H"]
+    text = "Outbound proxy and the hosts that bypass it, object storage included; object storage on a loopback address (Standalone's) is always reached directly. On Distributed, list the internal hosts in `NO_PROXY` (`minio,code-executor,serving,agentcc-gateway,fi-collector,localhost,127.0.0.1`), or their calls go to the proxy. Helm: `global.proxy`, which builds `NO_PROXY` from the cluster's names, the release's Services and the datastore hosts plus `global.proxy.noProxy`. The LLM gateway does not use a proxy yet."
+
+    [[part.section.row]]
+    keys = ["SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "NODE_EXTRA_CA_CERTS"]
+    default = "the image's trust store"
+    setups = ["S", "D", "H"]
+    text = "A PEM bundle to trust instead of the image's (so it must include the public roots). Helm: `global.caBundle`, mounted at `/etc/futureagi/ca/ca.crt`."
+
+    [[part.section.row]]
+    keys = ["LITELLM_LOCAL_MODEL_COST_MAP"]
+    default = "unset: fetched at start"
+    setups = ["S", "D", "H"]
+    text = "`True` uses litellm's bundled model price list instead of downloading it. Helm: on with `global.airgap`."
+
+    [[part.section.row]]
+    keys = ["HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE"]
+    default = "unset"
+    setups = ["S", "D", "H"]
+    text = "`1` stops the model server from downloading models; pre-seed its cache first. Helm: on (serving only) with `global.airgap`."
 
   [[part.section]]
   heading = "Development overlays (`./bin/dev`)"

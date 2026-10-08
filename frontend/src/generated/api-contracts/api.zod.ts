@@ -35394,6 +35394,7 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
         ),
         id: zod.string().uuid(),
         runnable: zod.boolean(),
+        editable: zod.boolean(),
       }),
     ),
     results: zod.array(
@@ -35602,6 +35603,7 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
         ),
         id: zod.string().uuid(),
         runnable: zod.boolean(),
+        editable: zod.boolean(),
       }),
     ),
     results: zod.array(
@@ -35873,6 +35875,7 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespo
           ),
           id: zod.string().uuid(),
           runnable: zod.boolean(),
+          editable: zod.boolean(),
         }),
       ),
       results: zod.array(
@@ -35911,11 +35914,193 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespo
   });
 
 /**
+ * Change one eval of this environment. Never grades anything; grade a run again afterwards to refresh its scores.
+ */
+export const SimulateApiHarnessEnvironmentsEditEvaluationParams = zod.object({
+  id: zod.string(),
+  eval_config_id: zod.string(),
+});
+
+export const SimulateApiHarnessEnvironmentsEditEvaluationBody = zod.object({
+  config: zod
+    .record(zod.string(), zod.unknown())
+    .optional()
+    .describe("Updated evaluation configuration parameters."),
+  mapping: zod
+    .record(zod.string(), zod.unknown())
+    .optional()
+    .describe("Updated field mapping between test data and evaluation inputs."),
+  model: zod
+    .string()
+    .min(1)
+    .optional()
+    .describe("Model to use for evaluations."),
+  error_localizer: zod
+    .boolean()
+    .optional()
+    .describe("Enable granular error localization in evaluation results."),
+  kb_id: zod
+    .string()
+    .uuid()
+    .optional()
+    .describe(
+      "UUID of a knowledge base to use for grounding. Pass null to clear. Switching template_id without providing an explicit kb_id will clear the KB association.",
+    ),
+  filters: zod
+    .array(
+      zod.object({
+        column_id: zod
+          .string()
+          .describe("Column or attribute id to filter on."),
+        property_id: zod
+          .string()
+          .optional()
+          .describe("Optional stable namespaced Property Registry identity."),
+        display_name: zod
+          .string()
+          .optional()
+          .describe("Optional UI label for chips and saved views."),
+        source: zod
+          .string()
+          .optional()
+          .describe(
+            "Optional source surface for mixed-source filters, for example traces, datasets, or simulation.",
+          ),
+        output_type: zod
+          .string()
+          .optional()
+          .describe(
+            "Optional metric output type metadata used by eval and annotation filters.",
+          ),
+        filter_config: zod.object({
+          filter_type: zod
+            .string()
+            .describe(
+              "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map.",
+            ),
+          filter_op: zod
+            .string()
+            .describe(
+              "Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null.",
+            ),
+          filter_value: zod
+            .unknown()
+            .optional()
+            .describe(
+              "Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type.",
+            ),
+          col_type: zod
+            .string()
+            .optional()
+            .describe(
+              "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+            ),
+          attribute_value_types: zod
+            .array(zod.enum(["string", "number", "boolean"]))
+            .optional()
+            .describe(
+              "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values.",
+            ),
+        }),
+      }),
+    )
+    .optional()
+    .describe(
+      "Updated canonical filter list to restrict which test results are evaluated.",
+    ),
+  name: zod
+    .string()
+    .min(1)
+    .optional()
+    .describe("Updated name for the evaluation configuration."),
+});
+
+export const simulateApiHarnessEnvironmentsEditEvaluationResponseFiltersDefault =
+  [];
+
+export const SimulateApiHarnessEnvironmentsEditEvaluationResponse = zod.object({
+  id: zod.string().uuid().optional(),
+  name: zod.string().min(1).optional(),
+  config: zod.record(zod.string(), zod.unknown()).optional(),
+  mapping: zod.record(zod.string(), zod.unknown()).optional(),
+  filters: zod
+    .array(
+      zod.object({
+        column_id: zod
+          .string()
+          .describe("Column or attribute id to filter on."),
+        property_id: zod
+          .string()
+          .optional()
+          .describe("Optional stable namespaced Property Registry identity."),
+        display_name: zod
+          .string()
+          .optional()
+          .describe("Optional UI label for chips and saved views."),
+        source: zod
+          .string()
+          .optional()
+          .describe(
+            "Optional source surface for mixed-source filters, for example traces, datasets, or simulation.",
+          ),
+        output_type: zod
+          .string()
+          .optional()
+          .describe(
+            "Optional metric output type metadata used by eval and annotation filters.",
+          ),
+        filter_config: zod.object({
+          filter_type: zod
+            .string()
+            .describe(
+              "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map.",
+            ),
+          filter_op: zod
+            .string()
+            .describe(
+              "Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null.",
+            ),
+          filter_value: zod
+            .unknown()
+            .optional()
+            .describe(
+              "Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type.",
+            ),
+          col_type: zod
+            .string()
+            .optional()
+            .describe(
+              "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+            ),
+          attribute_value_types: zod
+            .array(zod.enum(["string", "number", "boolean"]))
+            .optional()
+            .describe(
+              "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values.",
+            ),
+        }),
+      }),
+    )
+    .default(
+      simulateApiHarnessEnvironmentsEditEvaluationResponseFiltersDefault,
+    ),
+  error_localizer: zod.boolean().optional(),
+  model: zod.string().min(1).optional(),
+  status: zod.string().min(1).optional(),
+  eval_group: zod.string().min(1).optional(),
+  template_id: zod.string().uuid().optional(),
+  eval_type: zod.string().min(1).optional(),
+  regradable: zod.boolean().optional(),
+  editable: zod.boolean().optional(),
+});
+
+/**
  * Soft-delete only. The verdicts an eval already produced live on the call
 executions and in their receipts, not on this row, so a hard delete would
 leave past runs showing scores for something the environment no longer
-lists. Removing it stops future scenarios being graded by it and leaves
-the history it already wrote intact.
+lists. Removing an eval someone added stops future scenarios being
+graded by it and leaves the history it already wrote intact. An eval the
+harness reported itself comes back the next time the harness grades it.
  * @summary Stop running one eval against this environment.
  */
 export const SimulateApiHarnessEnvironmentsRemoveEvaluationParams = zod.object({
@@ -35970,6 +36155,26 @@ export const SimulateApiHarnessEnvironmentsRunsAddRunEvaluationBody =
       .string()
       .min(1)
       .max(simulateApiHarnessEnvironmentsRunsAddRunEvaluationBodyNameMax),
+  });
+
+/**
+ * Grade this finished run's calls again with chosen evals of the environment, without rerunning the calls.
+ */
+export const SimulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluationsParams =
+  zod.object({
+    id: zod.string(),
+    execution_id: zod.string(),
+  });
+
+export const SimulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluationsBody =
+  zod.object({
+    eval_config_ids: zod.array(zod.string().uuid()).min(1),
+    enable_tool_evaluation: zod
+      .boolean()
+      .optional()
+      .describe(
+        "Saved on the environment before grading starts; left as it is when absent.",
+      ),
   });
 
 /**
@@ -37666,6 +37871,32 @@ export const simulateApiHarnessAttemptsResultsBodyCallRecordingArtifactsDefault 
   [];
 export const simulateApiHarnessAttemptsResultsBodyCallStopReasonMax = 128;
 
+export const simulateApiHarnessAttemptsResultsBodyCallTargetMetricsUsagePromptTokensMin = 0;
+
+export const simulateApiHarnessAttemptsResultsBodyCallTargetMetricsUsageCompletionTokensMin = 0;
+
+export const simulateApiHarnessAttemptsResultsBodyCallTargetMetricsUsageTotalTokensMin = 0;
+
+export const simulateApiHarnessAttemptsResultsBodyCallTargetMetricsCostCentsMin = 0;
+
+export const simulateApiHarnessAttemptsResultsBodyCallTargetMetricsLatencyTurnMin = 0;
+
+export const simulateApiHarnessAttemptsResultsBodyCallTargetMetricsLatencyModelMin = 0;
+
+export const simulateApiHarnessAttemptsResultsBodyCallTargetMetricsLatencyVoiceMin = 0;
+
+export const simulateApiHarnessAttemptsResultsBodyCallTargetMetricsLatencyTranscriberMin = 0;
+
+export const simulateApiHarnessAttemptsResultsBodyCallTargetMetricsLatencyEndpointingMin = 0;
+
+export const simulateApiHarnessAttemptsResultsBodyCallTargetMetricsLatencyTurnsItemMin = 0;
+
+export const simulateApiHarnessAttemptsResultsBodyCallTargetMetricsLatencyTurnsMax = 1000;
+
+export const simulateApiHarnessAttemptsResultsBodyCallTargetMetricsProviderCallIdMax = 255;
+
+export const simulateApiHarnessAttemptsResultsBodyCallTargetMetricsProviderEndReasonMax = 255;
+
 export const simulateApiHarnessAttemptsResultsBodyFailureStageMax = 64;
 
 export const simulateApiHarnessAttemptsResultsBodyFailureCodeMax = 128;
@@ -37735,6 +37966,100 @@ export const SimulateApiHarnessAttemptsResultsBody = zod.object({
       .string()
       .min(1)
       .max(simulateApiHarnessAttemptsResultsBodyCallStopReasonMax)
+      .optional(),
+    script_completed: zod.boolean().optional(),
+    target_metrics: zod
+      .object({
+        provider: zod.enum(["vapi", "retell", "livekit"]),
+        usage: zod
+          .object({
+            prompt_tokens: zod
+              .number()
+              .min(
+                simulateApiHarnessAttemptsResultsBodyCallTargetMetricsUsagePromptTokensMin,
+              )
+              .optional(),
+            completion_tokens: zod
+              .number()
+              .min(
+                simulateApiHarnessAttemptsResultsBodyCallTargetMetricsUsageCompletionTokensMin,
+              )
+              .optional(),
+            total_tokens: zod
+              .number()
+              .min(
+                simulateApiHarnessAttemptsResultsBodyCallTargetMetricsUsageTotalTokensMin,
+              )
+              .optional(),
+          })
+          .optional(),
+        cost_cents: zod
+          .number()
+          .min(
+            simulateApiHarnessAttemptsResultsBodyCallTargetMetricsCostCentsMin,
+          )
+          .optional(),
+        latency: zod
+          .object({
+            turn: zod
+              .number()
+              .min(
+                simulateApiHarnessAttemptsResultsBodyCallTargetMetricsLatencyTurnMin,
+              )
+              .optional(),
+            model: zod
+              .number()
+              .min(
+                simulateApiHarnessAttemptsResultsBodyCallTargetMetricsLatencyModelMin,
+              )
+              .optional(),
+            voice: zod
+              .number()
+              .min(
+                simulateApiHarnessAttemptsResultsBodyCallTargetMetricsLatencyVoiceMin,
+              )
+              .optional(),
+            transcriber: zod
+              .number()
+              .min(
+                simulateApiHarnessAttemptsResultsBodyCallTargetMetricsLatencyTranscriberMin,
+              )
+              .optional(),
+            endpointing: zod
+              .number()
+              .min(
+                simulateApiHarnessAttemptsResultsBodyCallTargetMetricsLatencyEndpointingMin,
+              )
+              .optional(),
+            turns: zod
+              .array(
+                zod
+                  .number()
+                  .min(
+                    simulateApiHarnessAttemptsResultsBodyCallTargetMetricsLatencyTurnsItemMin,
+                  ),
+              )
+              .max(
+                simulateApiHarnessAttemptsResultsBodyCallTargetMetricsLatencyTurnsMax,
+              )
+              .optional(),
+          })
+          .optional(),
+        provider_call_id: zod
+          .string()
+          .min(1)
+          .max(
+            simulateApiHarnessAttemptsResultsBodyCallTargetMetricsProviderCallIdMax,
+          )
+          .optional(),
+        provider_end_reason: zod
+          .string()
+          .min(1)
+          .max(
+            simulateApiHarnessAttemptsResultsBodyCallTargetMetricsProviderEndReasonMax,
+          )
+          .optional(),
+      })
       .optional(),
   }),
   failure: zod.object({
@@ -40115,6 +40440,9 @@ export const SimulateApiRunTestsListResponseItem = zod.object({
         status: zod.string().min(1).optional(),
         eval_group: zod.string().min(1).optional(),
         template_id: zod.string().uuid().optional(),
+        eval_type: zod.string().min(1).optional(),
+        regradable: zod.boolean().optional(),
+        editable: zod.boolean().optional(),
       }),
     )
     .optional(),
@@ -40193,6 +40521,9 @@ export const SimulateApiRunTestsListResponseItem = zod.object({
         status: zod.string().min(1).optional(),
         eval_group: zod.string().min(1).optional(),
         template_id: zod.string().uuid().optional(),
+        eval_type: zod.string().min(1).optional(),
+        regradable: zod.boolean().optional(),
+        editable: zod.boolean().optional(),
       }),
     )
     .optional(),
@@ -40675,6 +41006,12 @@ export const SimulateCallExecutionsReadResponse = zod.object({
         reason: zod.string().optional(),
         type: zod.string().optional(),
         template_type: zod.string().optional(),
+        kind: zod
+          .enum(["evaluation", "sub_goal"])
+          .optional()
+          .describe(
+            "Set on the v3 call detail: a sub-goal check or an evaluation",
+          ),
         visible: zod.boolean().optional(),
         error: zod.boolean().optional(),
         status: zod.string().optional(),
@@ -41647,6 +41984,9 @@ export const SimulatePromptTemplatesSimulationsListResponse = zod.object({
                 status: zod.string().min(1).optional(),
                 eval_group: zod.string().min(1).optional(),
                 template_id: zod.string().uuid().optional(),
+                eval_type: zod.string().min(1).optional(),
+                regradable: zod.boolean().optional(),
+                editable: zod.boolean().optional(),
               }),
             )
             .optional(),
@@ -41727,6 +42067,9 @@ export const SimulatePromptTemplatesSimulationsListResponse = zod.object({
                 status: zod.string().min(1).optional(),
                 eval_group: zod.string().min(1).optional(),
                 template_id: zod.string().uuid().optional(),
+                eval_type: zod.string().min(1).optional(),
+                regradable: zod.boolean().optional(),
+                editable: zod.boolean().optional(),
               }),
             )
             .optional(),
@@ -42092,6 +42435,9 @@ export const SimulatePromptTemplatesSimulationsReadResponse = zod.object({
           status: zod.string().min(1).optional(),
           eval_group: zod.string().min(1).optional(),
           template_id: zod.string().uuid().optional(),
+          eval_type: zod.string().min(1).optional(),
+          regradable: zod.boolean().optional(),
+          editable: zod.boolean().optional(),
         }),
       )
       .optional(),
@@ -42170,6 +42516,9 @@ export const SimulatePromptTemplatesSimulationsReadResponse = zod.object({
           status: zod.string().min(1).optional(),
           eval_group: zod.string().min(1).optional(),
           template_id: zod.string().uuid().optional(),
+          eval_type: zod.string().min(1).optional(),
+          regradable: zod.boolean().optional(),
+          editable: zod.boolean().optional(),
         }),
       )
       .optional(),
@@ -42368,6 +42717,9 @@ export const SimulatePromptTemplatesSimulationsPartialUpdateResponse =
             status: zod.string().min(1).optional(),
             eval_group: zod.string().min(1).optional(),
             template_id: zod.string().uuid().optional(),
+            eval_type: zod.string().min(1).optional(),
+            regradable: zod.boolean().optional(),
+            editable: zod.boolean().optional(),
           }),
         )
         .optional(),
@@ -42446,6 +42798,9 @@ export const SimulatePromptTemplatesSimulationsPartialUpdateResponse =
             status: zod.string().min(1).optional(),
             eval_group: zod.string().min(1).optional(),
             template_id: zod.string().uuid().optional(),
+            eval_type: zod.string().min(1).optional(),
+            regradable: zod.boolean().optional(),
+            editable: zod.boolean().optional(),
           }),
         )
         .optional(),
@@ -42711,6 +43066,9 @@ export const SimulateRunTestsListResponse = zod.object({
               status: zod.string().min(1).optional(),
               eval_group: zod.string().min(1).optional(),
               template_id: zod.string().uuid().optional(),
+              eval_type: zod.string().min(1).optional(),
+              regradable: zod.boolean().optional(),
+              editable: zod.boolean().optional(),
             }),
           )
           .optional(),
@@ -42789,6 +43147,9 @@ export const SimulateRunTestsListResponse = zod.object({
               status: zod.string().min(1).optional(),
               eval_group: zod.string().min(1).optional(),
               template_id: zod.string().uuid().optional(),
+              eval_type: zod.string().min(1).optional(),
+              regradable: zod.boolean().optional(),
+              editable: zod.boolean().optional(),
             }),
           )
           .optional(),
@@ -43151,6 +43512,9 @@ export const SimulateRunTestsReadResponse = zod.object({
         status: zod.string().min(1).optional(),
         eval_group: zod.string().min(1).optional(),
         template_id: zod.string().uuid().optional(),
+        eval_type: zod.string().min(1).optional(),
+        regradable: zod.boolean().optional(),
+        editable: zod.boolean().optional(),
       }),
     )
     .optional(),
@@ -43227,6 +43591,9 @@ export const SimulateRunTestsReadResponse = zod.object({
         status: zod.string().min(1).optional(),
         eval_group: zod.string().min(1).optional(),
         template_id: zod.string().uuid().optional(),
+        eval_type: zod.string().min(1).optional(),
+        regradable: zod.boolean().optional(),
+        editable: zod.boolean().optional(),
       }),
     )
     .optional(),
@@ -43411,6 +43778,9 @@ export const SimulateRunTestsPartialUpdateResponse = zod.object({
         status: zod.string().min(1).optional(),
         eval_group: zod.string().min(1).optional(),
         template_id: zod.string().uuid().optional(),
+        eval_type: zod.string().min(1).optional(),
+        regradable: zod.boolean().optional(),
+        editable: zod.boolean().optional(),
       }),
     )
     .optional(),
@@ -43489,6 +43859,9 @@ export const SimulateRunTestsPartialUpdateResponse = zod.object({
         status: zod.string().min(1).optional(),
         eval_group: zod.string().min(1).optional(),
         template_id: zod.string().uuid().optional(),
+        eval_type: zod.string().min(1).optional(),
+        regradable: zod.boolean().optional(),
+        editable: zod.boolean().optional(),
       }),
     )
     .optional(),
@@ -43741,6 +44114,9 @@ export const SimulateRunTestsComponentsPartialUpdateResponse = zod.object({
         status: zod.string().min(1).optional(),
         eval_group: zod.string().min(1).optional(),
         template_id: zod.string().uuid().optional(),
+        eval_type: zod.string().min(1).optional(),
+        regradable: zod.boolean().optional(),
+        editable: zod.boolean().optional(),
       }),
     )
     .optional(),
@@ -43819,6 +44195,9 @@ export const SimulateRunTestsComponentsPartialUpdateResponse = zod.object({
         status: zod.string().min(1).optional(),
         eval_group: zod.string().min(1).optional(),
         template_id: zod.string().uuid().optional(),
+        eval_type: zod.string().min(1).optional(),
+        regradable: zod.boolean().optional(),
+        editable: zod.boolean().optional(),
       }),
     )
     .optional(),
@@ -44356,6 +44735,7 @@ export const SimulateRunTestsExecutionsListResponse = zod.object({
       }),
     )
     .optional(),
+  covered_scenario_count: zod.number().optional(),
 });
 
 export const SimulateRunTestsPreviewExecutionsListParams = zod.object({
@@ -44491,6 +44871,7 @@ export const SimulateRunTestsRunNewEvalsCreateResponse = zod.object({
   message: zod.string().min(1),
   run_test_id: zod.string().uuid(),
   call_execution_count: zod.number(),
+  dispatched: zod.boolean(),
 });
 
 /**
@@ -46493,6 +46874,12 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
         reason: zod.string().optional(),
         type: zod.string().optional(),
         template_type: zod.string().optional(),
+        kind: zod
+          .enum(["evaluation", "sub_goal"])
+          .optional()
+          .describe(
+            "Set on the v3 call detail: a sub-goal check or an evaluation",
+          ),
         visible: zod.boolean().optional(),
         error: zod.boolean().optional(),
         status: zod.string().optional(),
@@ -46640,7 +47027,20 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
     traits: zod.array(zod.string().min(1)),
   }),
   sub_goals: zod.array(zod.string().min(1)),
-  outcome: zod.enum(["passed", "failed", "error", "inconclusive"]),
+  sub_goal_results: zod.array(
+    zod.object({
+      name: zod.string().min(1),
+      passed: zod.boolean().nullable(),
+    }),
+  ),
+  outcome: zod.enum([
+    "queued",
+    "in_progress",
+    "passed",
+    "failed",
+    "inconclusive",
+    "error",
+  ]),
   cost_breakdown_cents: zod.object({
     stt: zod.number(),
     llm: zod.number(),
@@ -46668,6 +47068,7 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
       result: zod.object({}).passthrough().optional(),
       output: zod.object({}).passthrough().optional(),
       duration_ms: zod.number().optional(),
+      start_time_ms: zod.number().optional(),
     }),
   ),
 });
@@ -46739,6 +47140,7 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
         label: zod.string().min(1),
         started_at: zod.string().datetime({ offset: true }),
         calls: zod.number(),
+        latency_ms: zod.number(),
         duration_ms: zod.number(),
         llm_cents: zod.number(),
         tts_cents: zod.number(),
@@ -46748,6 +47150,12 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
     ),
     series_limit: zod.number(),
     series_mode: zod.enum(["calls", "time_buckets"]),
+    agent_latency_percentiles: zod.array(
+      zod.object({
+        percentile: zod.number(),
+        value: zod.number(),
+      }),
+    ),
     latency_percentiles: zod.array(
       zod.object({
         percentile: zod.number(),
@@ -46777,6 +47185,8 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
       ),
       measured: zod.number(),
       total: zod.number(),
+      satisfied: zod.number(),
+      satisfied_percent: zod.number(),
       agreement: zod.object({
         compared: zod.number(),
         agreed: zod.number(),
@@ -46866,16 +47276,35 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
       passed: zod.number(),
       measured: zod.number(),
       pass_rate: zod.number(),
+      errored_checks: zod.number(),
     }),
     use_case_risk: zod.array(
       zod.object({
-        goal: zod.string().min(1),
+        queued: zod.number(),
+        in_progress: zod.number(),
+        scenario: zod.string().min(1),
         passed: zod.number(),
         failed: zod.number(),
         error: zod.number(),
         inconclusive: zod.number(),
       }),
     ),
+    run_health: zod.object({
+      show_banner: zod.boolean(),
+      attempted: zod.number(),
+      ran_cleanly: zod.number(),
+      connected: zod.number(),
+      errored: zod.number(),
+      not_evaluated: zod.number(),
+      eval_errors: zod.number(),
+    }),
+    comparison: zod.object({
+      available: zod.boolean(),
+      previous_execution_id: zod.string().uuid(),
+      shared_scenarios: zod.number(),
+      newly_passing: zod.array(zod.string().min(1)),
+      newly_failing: zod.array(zod.string().min(1)),
+    }),
     goal_count: zod.number(),
   }),
   execution: zod.object({
@@ -46887,6 +47316,8 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
   summary: zod.object({
     total: zod.number(),
     outcomes: zod.object({
+      queued: zod.number(),
+      in_progress: zod.number(),
       passed: zod.number(),
       failed: zod.number(),
       error: zod.number(),
@@ -46942,6 +47373,8 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
     zod.object({
       total: zod.number(),
       outcomes: zod.object({
+        queued: zod.number(),
+        in_progress: zod.number(),
         passed: zod.number(),
         failed: zod.number(),
         error: zod.number(),
@@ -46991,11 +47424,46 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
         total: zod.number(),
         total_value: zod.number(),
       }),
-      goal: zod.string().min(1),
+      scenario: zod.string().min(1),
+      scenario_key: zod.string().min(1),
     }),
   ),
+  reliability: zod.object({
+    trials: zod.number(),
+    scenarios: zod.number(),
+    consistent_pass: zod.number(),
+    passed_at_least_once: zod.number(),
+    repeated: zod.number(),
+    flaky: zod.number(),
+    flip_rate: zod.number(),
+    pass_rate_interval: zod.object({
+      low: zod.number(),
+      high: zod.number(),
+      effective_n: zod.number(),
+      evaluated: zod.number(),
+      clusters: zod.number(),
+    }),
+    rows: zod.array(
+      zod.object({
+        queued: zod.number(),
+        in_progress: zod.number(),
+        passed: zod.number(),
+        failed: zod.number(),
+        error: zod.number(),
+        inconclusive: zod.number(),
+        scenario: zod.string().min(1),
+        scenario_key: zod.string().min(1),
+        runs: zod.number(),
+        evaluated: zod.number(),
+        pass_rate: zod.number(),
+        verdict: zod.enum(["passed", "failed", "flaky", "not_evaluated"]),
+      }),
+    ),
+  }),
   turn_distribution: zod.array(
     zod.object({
+      queued: zod.number(),
+      in_progress: zod.number(),
       passed: zod.number(),
       failed: zod.number(),
       error: zod.number(),
@@ -47010,6 +47478,7 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
       passed: zod.number(),
       failed: zod.number(),
       measured: zod.number(),
+      errored: zod.number(),
       missing: zod.number(),
       pass_rate: zod.number(),
       average_score: zod.number(),
@@ -47097,6 +47566,8 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
     zod.object({
       total: zod.number(),
       outcomes: zod.object({
+        queued: zod.number(),
+        in_progress: zod.number(),
         passed: zod.number(),
         failed: zod.number(),
         error: zod.number(),
@@ -47153,6 +47624,8 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
     zod.object({
       total: zod.number(),
       outcomes: zod.object({
+        queued: zod.number(),
+        in_progress: zod.number(),
         passed: zod.number(),
         failed: zod.number(),
         error: zod.number(),
@@ -47209,6 +47682,8 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
     zod.object({
       total: zod.number(),
       outcomes: zod.object({
+        queued: zod.number(),
+        in_progress: zod.number(),
         passed: zod.number(),
         failed: zod.number(),
         error: zod.number(),
@@ -47347,6 +47822,8 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
     summary: zod.object({
       total: zod.number(),
       outcomes: zod.object({
+        queued: zod.number(),
+        in_progress: zod.number(),
         passed: zod.number(),
         failed: zod.number(),
         error: zod.number(),
@@ -47401,6 +47878,8 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
   summary: zod.object({
     total: zod.number(),
     outcomes: zod.object({
+      queued: zod.number(),
+      in_progress: zod.number(),
       passed: zod.number(),
       failed: zod.number(),
       error: zod.number(),
@@ -47471,10 +47950,23 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
         traits: zod.array(zod.string().min(1)),
       }),
       sub_goals: zod.array(zod.string().min(1)),
+      sub_goal_results: zod.array(
+        zod.object({
+          name: zod.string().min(1),
+          passed: zod.boolean().nullable(),
+        }),
+      ),
       harness_outcome_status: zod.string().min(1),
       source_scenario_key: zod.string().min(1),
       trial_index: zod.number(),
-      outcome: zod.enum(["passed", "failed", "error", "inconclusive"]),
+      outcome: zod.enum([
+        "queued",
+        "in_progress",
+        "passed",
+        "failed",
+        "inconclusive",
+        "error",
+      ]),
       execution_status: zod.string().min(1),
       modality: zod.string().min(1),
       provider: zod.string().min(1),
@@ -47482,6 +47974,13 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
       completed_at: zod.string().datetime({ offset: true }),
       duration_seconds: zod.number(),
       latency_ms: zod.number(),
+      avg_stop_time_after_interruption: zod
+        .number()
+        .nullable()
+        .describe(
+          "Average stop time after caller interruption in milliseconds.",
+        ),
+      ai_interruption_count: zod.number().nullable(),
       turn_count: zod.number(),
       tokens: zod.number(),
       cost_cents: zod.number(),
@@ -47513,6 +48012,8 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
     zod.object({
       total: zod.number(),
       outcomes: zod.object({
+        queued: zod.number(),
+        in_progress: zod.number(),
         passed: zod.number(),
         failed: zod.number(),
         error: zod.number(),
@@ -47569,6 +48070,18 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
         csat: zod.number(),
         turns: zod.number(),
         latency_ms: zod.number(),
+        avg_stop_time_after_interruption: zod
+          .number()
+          .nullable()
+          .describe(
+            "Mean call stop latency in milliseconds, excluding unmeasured calls.",
+          ),
+        ai_interruptions: zod
+          .number()
+          .nullable()
+          .describe(
+            "Mean AI interruption count per call, excluding unmeasured calls.",
+          ),
         tokens: zod.number(),
         evaluations: zod.object({}).passthrough(),
       }),
@@ -47598,6 +48111,7 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
     zod.object({
       id: zod.string().min(1),
       name: zod.string().min(1),
+      kind: zod.enum(["evaluation", "sub_goal"]),
     }),
   ),
 });
@@ -47895,6 +48409,9 @@ export const TracerChartsFetchGraphResponse = zod.object({
       metric_name: zod.string().optional(),
       id: zod.string().optional(),
       name: zod.string().optional(),
+      metric_statistic: zod
+        .enum(["count", "sum", "mean", "percentage"])
+        .optional(),
       data: zod.array(
         zod.object({
           timestamp: zod.string(),
@@ -57458,7 +57975,10 @@ export const TracerObservationSpanGetGraphMethodsBody = zod.object({
     .default(tracerObservationSpanGetGraphMethodsBodyIntervalDefault),
   property: zod
     .string()
-    .default(tracerObservationSpanGetGraphMethodsBodyPropertyDefault),
+    .default(tracerObservationSpanGetGraphMethodsBodyPropertyDefault)
+    .describe(
+      "Accepted for older clients and ignored for SYSTEM_METRIC graphs: each system metric has one statistic, named by the response's metric_statistic. Latency is always the mean (avg) span latency.",
+    ),
   req_data_config: zod.object({
     id: zod.string(),
     type: zod.enum(["SYSTEM_METRIC", "EVAL", "ANNOTATION"]),
@@ -57505,6 +58025,12 @@ export const TracerObservationSpanGetGraphMethodsResponse = zod.object({
   result: zod.object({
     metric_name: zod.string(),
     name: zod.string().optional(),
+    metric_statistic: zod
+      .enum(["count", "sum", "mean", "percentage"])
+      .optional()
+      .describe(
+        "Statistic of the published system-metric series per bucket. Latency is always the mean (avg) of span latency, filtered or not. Absent for eval and annotation series.",
+      ),
     data: zod
       .array(
         zod
@@ -60084,6 +60610,12 @@ export const TracerProjectGetGraphDataResponse = zod.object({
       .object({})
       .passthrough()
       .describe("Any valid JSON value."),
+    system_metric_statistics: zod
+      .record(zod.string(), zod.enum(["count", "sum", "mean", "percentage"]))
+      .optional()
+      .describe(
+        'Statistic of each ``system_metrics`` series per bucket, e.g. {"latency": "mean", "tokens": "sum", "cost": "mean", "traffic": "count"}. Latency is always the mean (avg) span latency.',
+      ),
     evaluations: zod.object({}).passthrough().describe("Any valid JSON value."),
   }),
 });
@@ -60425,6 +60957,12 @@ export const TracerProjectGetUsersAggregateGraphDataResponse = zod.object({
   result: zod.object({
     metric_name: zod.string(),
     name: zod.string().optional(),
+    metric_statistic: zod
+      .enum(["count", "sum", "mean", "percentage"])
+      .optional()
+      .describe(
+        "Statistic of the published system-metric series per bucket. Latency is always the mean (avg) of span latency, filtered or not. Absent for eval and annotation series.",
+      ),
     data: zod
       .array(
         zod
@@ -62647,7 +63185,10 @@ export const TracerTraceSessionGetSessionGraphDataBody = zod.object({
     .default(tracerTraceSessionGetSessionGraphDataBodyIntervalDefault),
   property: zod
     .string()
-    .default(tracerTraceSessionGetSessionGraphDataBodyPropertyDefault),
+    .default(tracerTraceSessionGetSessionGraphDataBodyPropertyDefault)
+    .describe(
+      "Accepted for older clients and ignored for SYSTEM_METRIC graphs: each system metric has one statistic, named by the response's metric_statistic. Latency is always the mean (avg) span latency.",
+    ),
   req_data_config: zod.object({
     id: zod.string(),
     type: zod.enum(["SYSTEM_METRIC", "EVAL", "ANNOTATION"]),
@@ -62694,6 +63235,12 @@ export const TracerTraceSessionGetSessionGraphDataResponse = zod.object({
   result: zod.object({
     metric_name: zod.string(),
     name: zod.string().optional(),
+    metric_statistic: zod
+      .enum(["count", "sum", "mean", "percentage"])
+      .optional()
+      .describe(
+        "Statistic of the published system-metric series per bucket. Latency is always the mean (avg) of span latency, filtered or not. Absent for eval and annotation series.",
+      ),
     data: zod
       .array(
         zod
@@ -63834,7 +64381,12 @@ export const TracerTraceGetGraphMethodsBody = zod.object({
   interval: zod
     .enum(["hour", "day", "week", "month"])
     .default(tracerTraceGetGraphMethodsBodyIntervalDefault),
-  property: zod.string().default(tracerTraceGetGraphMethodsBodyPropertyDefault),
+  property: zod
+    .string()
+    .default(tracerTraceGetGraphMethodsBodyPropertyDefault)
+    .describe(
+      "Accepted for older clients and ignored for SYSTEM_METRIC graphs: each system metric has one statistic, named by the response's metric_statistic. Latency is always the mean (avg) span latency.",
+    ),
   req_data_config: zod.object({
     id: zod.string(),
     type: zod.enum(["SYSTEM_METRIC", "EVAL", "ANNOTATION"]),
@@ -63893,6 +64445,12 @@ export const TracerTraceGetGraphMethodsResponse = zod.object({
   result: zod.object({
     metric_name: zod.string(),
     name: zod.string().optional(),
+    metric_statistic: zod
+      .enum(["count", "sum", "mean", "percentage"])
+      .optional()
+      .describe(
+        "Statistic of the published system-metric series per bucket. Latency is always the mean (avg) of span latency, filtered or not. Absent for eval and annotation series.",
+      ),
     data: zod
       .array(
         zod
@@ -67165,6 +67723,7 @@ export const TracerUsersListResponse = zod.object({
         bool_eval_pass_rate: zod.number().optional(),
         avg_output_float: zod.number().optional(),
         project_id: zod.string().uuid().optional(),
+        project_name: zod.string().min(1).optional(),
         user_id_type: zod.string().min(1).optional(),
         user_id_hash: zod.string().min(1).optional(),
         end_user_id: zod.string().uuid().optional(),

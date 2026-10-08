@@ -438,6 +438,40 @@ def _open_ch_test_http_client(
     return client
 
 
+def _ch_test_apply_v2_schema(
+    database: str, *, environ: Mapping[str, str] = os.environ
+) -> None:
+    """Apply the repo's v2 schema to one owned test database, or fail the test."""
+
+    from tracer.services.clickhouse.v2 import apply_schema
+
+    _open_ch_test_http_client(database=database, environ=environ).close()
+    rc = apply_schema.main(
+        [
+            "--schema-dir",
+            str(
+                Path(__file__).parent
+                / "tracer"
+                / "services"
+                / "clickhouse"
+                / "v2"
+                / "schema"
+            ),
+            "--ch-host",
+            environ.get("CH25_HOST", "127.0.0.1"),
+            "--ch-http-port",
+            str(_ch_test_http_port(environ).port),
+            "--ch-user",
+            environ.get("CH25_USER") or environ.get("CH_USERNAME") or "default",
+            "--ch-password",
+            environ.get("CH25_PASSWORD") or environ.get("CH_PASSWORD") or "",
+            "--ch-database",
+            database,
+        ]
+    )
+    assert rc == 0, f"v2 schema apply failed with rc={rc}"
+
+
 def _apply_ch25_schema_for_tests():
     """Apply the CH 25.3 v2 schema to the test ClickHouse BEFORE
     Django app startup runs `model_hub.apps._ensure_analytics_schema`.
@@ -694,6 +728,7 @@ def _ensure_test_score_tenant_column():
     """
     try:
         import clickhouse_connect
+
         from tracer.services.clickhouse.schema import CDC_MODEL_HUB_SCORE
         from tracer.services.clickhouse.v2 import get_v2_config
 

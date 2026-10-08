@@ -1,22 +1,32 @@
 eval_id: 133
 name: customer_agent_task_completion
-description: Evaluates whether the agent successfully completes the task assigned to it based on the customer-agent interaction,
-  including execution finality, outcome delivery, and correct handling of blockers or policy boundaries.
-criteria: "You are evaluating whether the agent successfully completes the task assigned to it based on the customer-agent\
-  \ interaction.\n\n## Criteria\n1. Task execution and finality: The agent carries out the necessary actions to fully resolve\
-  \ the primary objective or core request of the customer.\n2. Explicit confirmation or outcome delivery: The agent clearly\
-  \ communicates the final result, confirmation, or status of the task so that the customer is aware it has been handled.\n\
-  3. Handling blockers or policy boundaries: The agent correctly navigates system constraints, accurately applying company\
-  \ policies or executing valid workarounds to reach the closest possible resolution.\n\n## Anti-bias Rules\n- If the customer\
-  \ abruptly terminates the conversation or refuses to provide mandatory information (e.g., account verification), do not penalize\
-  \ the agent for non-completion.\n- An accurate, policy-compliant refusal (e.g., correctly denying a refund because it violates\
-  \ terms of service) counts as a successful task completion, as the inquiry was definitively resolved according to business\
-  \ logic.\n- If the task requires back-end processing that takes hours or days to complete, the agent fulfills the criteria\
-  \ by successfully initiating the workflow and setting clear timeline expectations.\n\n## Scoring\n- Return PASS if the agent\
-  \ completely resolves the customer's request, delivers a clear and definitive outcome (including valid policy-based refusals),\
-  \ and ensures all necessary execution steps within the scope of the chat are completed.\n- Return FAIL if the agent leaves\
-  \ the request pending, promises an action but fails to execute it, abandons the interaction mid-process, or incorrectly states\
-  \ a task cannot be done due to agent error.\n\n## Input\n<agent_prompt>{{agent_prompt}}</agent_prompt>\n<conversation>{{conversation}}</conversation>"
+description: "Checks whether the user's primary objective and stated conditions were fulfilled in the conversation."
+criteria: |-
+  Evaluate whether the user's primary objective was completed, using the supplied conversation.
+
+  ## Criteria
+  1. Identify the primary objective and stated conditions, including explicit changes or accepted alternatives.
+  2. Compare the communicated outcome with that objective; a success statement does not override contradictory details or unresolved conditions.
+  3. An explanation or refusal may answer an informational question, but does not fulfill an unmet request for action.
+  4. Apply only requirements established by the conversation or supplied instructions; do not assume a particular workflow or approval procedure.
+
+  ## Anti-bias Rules
+  - Distinguish non-completion from agent fault; a limitation or user withdrawal explains an unfinished task but does not make it complete.
+  - Judge the requested stage of work: confirmed initiation can satisfy a request to begin a process, but a promise alone cannot.
+  - Accept clear conversational evidence without requiring external execution records or claiming unseen actions were verified.
+  - Exclude unclear or missing content from error judgments; do not invent exchanges or penalize unrelated minor issues.
+
+  ## Scoring
+  - Return PASS when the conversation establishes fulfillment of the primary objective and its stated conditions, or an explicitly accepted and fulfilled alternative.
+  - Return FAIL when assessable evidence establishes an unmet objective, or claimed completion conflicts with an unresolved material condition.
+
+  ## Explanation
+  State the objective, outcome, decisive evidence, and any evidence limitation; explain non-completion separately from fault.
+
+  ## Input
+  <agent_prompt>{{agent_prompt}}</agent_prompt>
+  <conversation>{{conversation}}</conversation>
+
 eval_tags:
 - Agents
 - Conversation
@@ -61,19 +71,28 @@ config:
     - FLOAT
     - ARRAY
     - DATETIME
-  rule_prompt: "You are evaluating whether the agent successfully completes the task assigned to it based on the customer-agent\
-    \ interaction.\n\n## Criteria\n1. Task execution and finality: The agent carries out the necessary actions to fully resolve\
-    \ the primary objective or core request of the customer.\n2. Explicit confirmation or outcome delivery: The agent clearly\
-    \ communicates the final result, confirmation, or status of the task so that the customer is aware it has been handled.\n\
-    3. Handling blockers or policy boundaries: The agent correctly navigates system constraints, accurately applying company\
-    \ policies or executing valid workarounds to reach the closest possible resolution.\n\n## Anti-bias Rules\n- If the customer\
-    \ abruptly terminates the conversation or refuses to provide mandatory information (e.g., account verification), do not\
-    \ penalize the agent for non-completion.\n- An accurate, policy-compliant refusal (e.g., correctly denying a refund because\
-    \ it violates terms of service) counts as a successful task completion, as the inquiry was definitively resolved according\
-    \ to business logic.\n- If the task requires back-end processing that takes hours or days to complete, the agent fulfills\
-    \ the criteria by successfully initiating the workflow and setting clear timeline expectations.\n\n## Scoring\n- Return\
-    \ PASS if the agent completely resolves the customer's request, delivers a clear and definitive outcome (including valid\
-    \ policy-based refusals), and ensures all necessary execution steps within the scope of the chat are completed.\n- Return\
-    \ FAIL if the agent leaves the request pending, promises an action but fails to execute it, abandons the interaction mid-process,\
-    \ or incorrectly states a task cannot be done due to agent error.\n\n## Input\n<agent_prompt>{{agent_prompt}}</agent_prompt>\n\
-    <conversation>{{conversation}}</conversation>"
+  rule_prompt: |-
+    Evaluate whether the user's primary objective was completed, using the supplied conversation.
+
+    ## Criteria
+    1. Identify the primary objective and stated conditions, including explicit changes or accepted alternatives.
+    2. Compare the communicated outcome with that objective; a success statement does not override contradictory details or unresolved conditions.
+    3. An explanation or refusal may answer an informational question, but does not fulfill an unmet request for action.
+    4. Apply only requirements established by the conversation or supplied instructions; do not assume a particular workflow or approval procedure.
+
+    ## Anti-bias Rules
+    - Distinguish non-completion from agent fault; a limitation or user withdrawal explains an unfinished task but does not make it complete.
+    - Judge the requested stage of work: confirmed initiation can satisfy a request to begin a process, but a promise alone cannot.
+    - Accept clear conversational evidence without requiring external execution records or claiming unseen actions were verified.
+    - Exclude unclear or missing content from error judgments; do not invent exchanges or penalize unrelated minor issues.
+
+    ## Scoring
+    - Return PASS when the conversation establishes fulfillment of the primary objective and its stated conditions, or an explicitly accepted and fulfilled alternative.
+    - Return FAIL when assessable evidence establishes an unmet objective, or claimed completion conflicts with an unresolved material condition.
+
+    ## Explanation
+    State the objective, outcome, decisive evidence, and any evidence limitation; explain non-completion separately from fault.
+
+    ## Input
+    <agent_prompt>{{agent_prompt}}</agent_prompt>
+    <conversation>{{conversation}}</conversation>
