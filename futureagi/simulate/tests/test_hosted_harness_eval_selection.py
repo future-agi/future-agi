@@ -1308,7 +1308,7 @@ def test_others_provision_preserves_the_complete_environment_prompt(
         "connector": "phone",
         "mode": "connect_only",
         "config": {
-            "phone_number": "+19258565786",
+            "phone_number": "+15551234567",
             "target_system_prompt": full_prompt,
             "inbound": True,
         },
@@ -1332,12 +1332,12 @@ def test_others_provision_preserves_the_complete_environment_prompt(
     job.refresh_from_db()
     agent = job.run_test.agent_definition
     assert agent.description == full_prompt
-    assert agent.contact_number == "+19258565786"
+    assert agent.contact_number == "+15551234567"
     version = agent.latest_version
     assert version is not None
     assert version.description == full_prompt
     assert version.configuration_snapshot["description"] == full_prompt
-    assert version.configuration_snapshot["contact_number"] == "+19258565786"
+    assert version.configuration_snapshot["contact_number"] == "+15551234567"
 
 
 @pytest.mark.django_db
