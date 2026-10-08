@@ -554,6 +554,7 @@ def _selected_evals(job: HostedHarnessJob) -> list[dict[str, Any]]:
     its `id`, which is what remove addresses, and `runnable`, true by
     construction here.
     """
+    from simulate.services.eval_config_edit import has_own_mapping
     from simulate.services.harness_evals import (
         _required_keys,
         eval_entry,
@@ -600,7 +601,16 @@ def _selected_evals(job: HostedHarnessJob) -> list[dict[str, Any]]:
         entry["required_keys"] = [
             key for key in _required_keys(template) if key in (config.mapping or {})
         ]
-        rows.append({**entry, "id": str(config.id), "runnable": True})
+        # `editable` follows the one rule the run test's eval list applies:
+        # only a harness-filled row is locked, and none reaches this list.
+        rows.append(
+            {
+                **entry,
+                "id": str(config.id),
+                "runnable": True,
+                "editable": has_own_mapping(config),
+            }
+        )
     return rows
 
 

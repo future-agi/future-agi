@@ -12,10 +12,13 @@ from simulate.serializers.harness_environment import (
     HarnessEnvironmentAddEvaluationSerializer,
     HarnessEnvironmentAvailableEvalsSerializer,
     HarnessEnvironmentDetailSerializer,
+    HarnessEnvironmentEvalEditSerializer,
     HarnessEnvironmentListQuerySerializer,
     HarnessEnvironmentListResponseSerializer,
     HarnessEnvironmentRenameSerializer,
     HarnessEnvironmentRunEvaluationQueuedSerializer,
+    HarnessEnvironmentRunEvaluationsQueuedSerializer,
+    HarnessEnvironmentRunEvaluationsSerializer,
     HarnessEnvironmentToolCallEvaluationSerializer,
     HarnessScenarioCoverageQuerySerializer,
     HarnessScenarioCoverageResponseSerializer,
@@ -27,6 +30,7 @@ from simulate.serializers.harness_job import (
     HarnessRunCreateResponseSerializer,
     HarnessRunCreateSerializer,
 )
+from simulate.serializers.response.run_test import SimulateEvalConfigResponseSerializer
 from simulate.services.harness_environment import (
     annotate_for_list,
     environment_detail,
@@ -36,6 +40,7 @@ from simulate.services.harness_environment import (
 from simulate.services.harness_provider import (
     get_harness_provider,
     request_organization,
+    request_workspace,
     scope_jobs,
 )
 from simulate.services.harness_scenarios import (
@@ -46,6 +51,7 @@ from simulate.services.harness_scenarios import (
     suite_coverage,
 )
 from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_errors import build_error_envelope
 from tfc.utils.pagination import ExtendedPageNumberPagination
 
 
@@ -414,6 +420,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             EvalSelectionFull,
             EvalSelectionRefused,
             add_selected_eval,
+            regrade_mapping,
         )
         from simulate.services.harness_run_evals import queue_eval_for_finished_calls
 
@@ -466,11 +473,13 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
                 eval_config = _bound_by_name(job.run_test, wanted) or add_selected_eval(
                     job.run_test, wanted, modality
                 )
-                if not eval_config.mapping:
+                if regrade_mapping(eval_config) is None:
                     # The bind above can return a row with an empty mapping
                     # -- a harness result column, or a person's eval with no
-                    # inputs -- which has nothing to grade. It gets its own
-                    # reason before anything is stamped.
+                    # inputs. A harness suite eval can still be graded, by
+                    # the same rule a re-grade uses; anything else has
+                    # nothing to grade and gets its own reason before
+                    # anything is stamped.
                     transaction.set_rollback(True)
                     return Response(
                         {
@@ -498,7 +507,156 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             _touch_content(job)
         return Response(counts, status=status.HTTP_202_ACCEPTED)
 
-    @swagger_auto_schema(responses={204: "Removed"})
+    @validated_request(
+        request_serializer=HarnessEnvironmentRunEvaluationsSerializer,
+        responses={202: HarnessEnvironmentRunEvaluationsQueuedSerializer},
+        reject_unknown_fields=True,
+        operation_description=(
+            "Grade this finished run's calls again with chosen evals of the "
+            "environment, without rerunning the calls."
+        ),
+    )
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path=r"runs/(?P<execution_id>[0-9a-fA-F-]{36})/evaluations/run",
+    )
+    def run_evaluations(self, request, pk=None, execution_id=None):
+        """Grade a finished run's calls again with evals the environment already has.
+
+        The calls are not rerun. Each chosen eval is graded again on every call
+        of the run, its previous score is replaced, and the run reads
+        ``evaluating`` until grading ends. The run-test page's
+        ``run-new-evals`` goes through the same service, so both refuse the
+        same evals and queue the same job.
+
+        Every refusal leaves the run as it was, a run with no calls or no
+        completed call included; a second click that raced the first is
+        refused at the claim, and what it had started writing is rolled back.
+        The job check comes before the status read, so that read sees
+        whatever a harness job's teardown wrote onto the run. A grading job
+        that could not be queued answers 503 after every call's scores and
+        the run's status were put back.
+        """
+        from simulate.models import TestExecution
+        from simulate.services.harness_evals import is_harness_run_test
+        from simulate.services.run_regrade import (
+            RegradeAlreadyRunning,
+            RegradeDispatchFailed,
+            RegradeEvalNotFound,
+            RegradeNoCalls,
+            RegradeNoCompletedCall,
+            RegradeRefused,
+            RegradeStillFinishing,
+            regrade_run_evals,
+            regrade_still_finishing,
+        )
+
+        job, refusal = self._run_test_job(request, pk)
+        if refusal is not None:
+            return refusal
+        identifier = _uuid_or_none(execution_id)
+        runs = TestExecution.objects.filter(id=identifier, run_test_id=job.run_test_id)
+        if identifier is None or not runs.exists():
+            return Response(
+                build_error_envelope(
+                    "Run not found", status_code=status.HTTP_404_NOT_FOUND
+                ),
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        execution_ids = [str(identifier)]
+        harness_run = is_harness_run_test(job.run_test_id)
+        try:
+            regrade_still_finishing(execution_ids, harness_run=harness_run)
+        except RegradeStillFinishing as finishing:
+            return Response(
+                build_error_envelope(
+                    str(finishing), status_code=status.HTTP_409_CONFLICT
+                ),
+                status=status.HTTP_409_CONFLICT,
+            )
+        # Read after the job check above, for the teardown reason it gives.
+        run_status = runs.values_list("status", flat=True).first()
+        if run_status != TestExecution.ExecutionStatus.COMPLETED:
+            return Response(
+                build_error_envelope(
+                    "Only a finished run can be graded again",
+                    status_code=status.HTTP_409_CONFLICT,
+                ),
+                status=status.HTTP_409_CONFLICT,
+            )
+        eval_config_ids = request.validated_data["eval_config_ids"]
+        try:
+            call_execution_count = regrade_run_evals(
+                job.run_test,
+                execution_ids,
+                {str(identifier): run_status},
+                eval_config_ids,
+                harness_run=harness_run,
+                enable_tool_evaluation=request.validated_data.get(
+                    "enable_tool_evaluation"
+                ),
+            )
+        except RegradeEvalNotFound:
+            # An eval removed between the check above and the service's own.
+            return Response(
+                build_error_envelope(
+                    "Evaluation not found", status_code=status.HTTP_404_NOT_FOUND
+                ),
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except RegradeRefused as refused:
+            return Response(
+                build_error_envelope(
+                    str(refused), status_code=status.HTTP_400_BAD_REQUEST
+                ),
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except RegradeNoCalls:
+            return Response(
+                build_error_envelope(
+                    "This run has no calls to grade",
+                    status_code=status.HTTP_409_CONFLICT,
+                ),
+                status=status.HTTP_409_CONFLICT,
+            )
+        except RegradeNoCompletedCall:
+            return Response(
+                build_error_envelope(
+                    "Nothing to grade again: no call in this run completed.",
+                    status_code=status.HTTP_409_CONFLICT,
+                ),
+                status=status.HTTP_409_CONFLICT,
+            )
+        except RegradeAlreadyRunning:
+            return Response(
+                build_error_envelope(
+                    "Grading is already running on this run.",
+                    status_code=status.HTTP_409_CONFLICT,
+                ),
+                status=status.HTTP_409_CONFLICT,
+            )
+        except RegradeDispatchFailed:
+            return Response(
+                build_error_envelope(
+                    "Grading couldn't be started. Try again.",
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                ),
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        # Queuing a grade is content movement, as it is for add_run_evaluation.
+        _touch_content(job)
+        return Response(
+            {"call_execution_count": call_execution_count},
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+    # Pinned: the PATCH below shares this action's path, and DRF names the
+    # operations of a two-method action after the path and the method.
+    @swagger_auto_schema(
+        responses={204: "Removed"},
+        operation_id="simulate_api_harness-environments_remove_evaluation",
+    )
     @action(
         detail=True,
         methods=["delete"],
@@ -510,8 +668,9 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         Soft-delete only. The verdicts an eval already produced live on the call
         executions and in their receipts, not on this row, so a hard delete would
         leave past runs showing scores for something the environment no longer
-        lists. Removing it stops future scenarios being graded by it and leaves
-        the history it already wrote intact.
+        lists. Removing an eval someone added stops future scenarios being
+        graded by it and leaves the history it already wrote intact. An eval the
+        harness reported itself comes back the next time the harness grades it.
         """
         from simulate.models.eval_config import SimulateEvalConfig
 
@@ -536,6 +695,99 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         config.save(update_fields=["deleted", "deleted_at", "updated_at"])
         _touch_content(job)
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @validated_request(
+        request_serializer=HarnessEnvironmentEvalEditSerializer,
+        responses={200: SimulateEvalConfigResponseSerializer},
+        request_methods=["PATCH"],
+        reject_unknown_fields=True,
+        operation_id="simulate_api_harness-environments_edit_evaluation",
+        operation_description=(
+            "Change one eval of this environment. Never grades anything; "
+            "grade a run again afterwards to refresh its scores."
+        ),
+    )
+    @remove_evaluation.mapping.patch
+    def edit_evaluation(self, request, pk=None, eval_config_id=None):
+        """Change one eval's name, settings, inputs or judge model.
+
+        The run-test page's eval edit goes through the same service, so the
+        checks and their sentences are the same, but nothing here grades:
+        grading a run again is ``runs/{id}/evaluations/run``.
+
+        A row the harness fills is refused whatever the body says. It keeps an
+        empty mapping on purpose, and later harness runs write into it by its
+        fixed id, so for the same reason an edit may not leave a row without
+        inputs of its own. Every refusal comes before the row is saved.
+        """
+        from django.db import transaction
+
+        from simulate.models.eval_config import SimulateEvalConfig
+        from simulate.serializers.run_test import SimulateEvalConfigSimpleSerializer
+        from simulate.services.eval_config_edit import (
+            EvalConfigEditRefused,
+            has_own_mapping,
+            update_eval_config,
+        )
+        from simulate.services.harness_evals import is_harness_run_test
+
+        job, refusal = self._run_test_job(request, pk)
+        if refusal is not None:
+            return refusal
+        config_id = _uuid_or_none(eval_config_id)
+        config = (
+            SimulateEvalConfig.objects.select_related("eval_template")
+            .filter(id=config_id, run_test_id=job.run_test_id, deleted=False)
+            .first()
+            if config_id is not None
+            else None
+        )
+        if config is None:
+            return Response(
+                build_error_envelope(
+                    "Evaluation not found", status_code=status.HTTP_404_NOT_FOUND
+                ),
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        name = config.name or "This evaluation"
+        if is_harness_run_test(job.run_test_id) and not has_own_mapping(config):
+            return Response(
+                build_error_envelope(
+                    f"{name} is set by the harness and can't be edited here.",
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                ),
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not request.validated_data:
+            return Response(
+                build_error_envelope(
+                    "Nothing to change", status_code=status.HTTP_400_BAD_REQUEST
+                ),
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        def keeps_its_inputs(edited):
+            if not has_own_mapping(edited):
+                raise EvalConfigEditRefused(f"{name} needs at least one input mapped")
+
+        try:
+            with transaction.atomic():
+                update_eval_config(
+                    config,
+                    request.validated_data,
+                    organization=request_organization(request),
+                    workspace=request_workspace(request),
+                    before_save=keeps_its_inputs,
+                )
+                _touch_content(job)
+        except EvalConfigEditRefused as refused:
+            return Response(
+                build_error_envelope(
+                    str(refused), status_code=status.HTTP_400_BAD_REQUEST
+                ),
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response(SimulateEvalConfigSimpleSerializer(config).data)
 
     @validated_request(
         request_serializer=HarnessEnvironmentToolCallEvaluationSerializer,

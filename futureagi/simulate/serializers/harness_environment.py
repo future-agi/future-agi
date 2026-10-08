@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from rest_framework import serializers
 
+from simulate.serializers.requests.run_test_evals import (
+    EvalConfigUpdateRequestSerializer,
+)
 from simulate.services.harness_environment import (
     AGENT_TYPE_CHAT,
     AGENT_TYPE_VOICE,
@@ -21,7 +24,6 @@ class HarnessEnvironmentListQuerySerializer(serializers.Serializer):
 
     page = serializers.IntegerField(required=False, min_value=1)
     limit = serializers.IntegerField(required=False, min_value=1, max_value=100)
-
 
 
 class HarnessEnvironmentRenameSerializer(serializers.Serializer):
@@ -77,7 +79,6 @@ class HarnessEnvironmentListResponseSerializer(serializers.Serializer):
     results = HarnessEnvironmentSerializer(many=True)
 
 
-
 class HarnessEnvironmentRunLinkSerializer(serializers.Serializer):
     run_test_id = serializers.UUIDField(allow_null=True)
     test_execution_id = serializers.UUIDField(allow_null=True)
@@ -130,6 +131,52 @@ class HarnessEnvironmentRunEvaluationQueuedSerializer(serializers.Serializer):
     skipped_in_flight = serializers.IntegerField()
     skipped_pending = serializers.IntegerField()
     completed_calls = serializers.IntegerField()
+
+
+class HarnessEnvironmentRunEvaluationsSerializer(serializers.Serializer):
+    """Which of the environment's evals to grade a finished run's calls with again."""
+
+    eval_config_ids = serializers.ListField(
+        child=serializers.UUIDField(), allow_empty=False, min_length=1
+    )
+    # allow_null makes a form body without the key read as None (left
+    # alone) rather than DRF's html default of False.
+    enable_tool_evaluation = serializers.BooleanField(
+        required=False,
+        allow_null=True,
+        help_text="Saved on the environment before grading starts; left as it is when absent.",
+    )
+
+    def validate_eval_config_ids(self, value):
+        if len(set(value)) != len(value):
+            raise serializers.ValidationError("Each evaluation can be sent only once.")
+        return value
+
+
+class HarnessEnvironmentRunEvaluationsQueuedSerializer(serializers.Serializer):
+    """What grading a run again reports back."""
+
+    call_execution_count = serializers.IntegerField(
+        help_text="How many of the run's calls were queued for grading."
+    )
+
+
+class HarnessEnvironmentEvalEditSerializer(EvalConfigUpdateRequestSerializer):
+    """What may change on one of an environment's evals.
+
+    The run-test page's edit fields without the two that also grade (grading
+    a run again is its own request here) and without ``template_id``: an
+    environment eval's id is derived from its template, so switching the
+    template in place would leave a row whose id names a template it no
+    longer has, and a later remove and re-add of that template would revive
+    it with the wrong template. A switch is a remove and an add, which also
+    runs the add route's offer and mapping checks. Every key is optional; the
+    view refuses an empty body with its own sentence.
+    """
+
+    run = None
+    test_execution_id = None
+    template_id = None
 
 
 class HarnessEnvironmentToolCallEvaluationSerializer(serializers.Serializer):
@@ -347,12 +394,13 @@ class HarnessEnvironmentSelectedEvalSerializer(HarnessEnvironmentOfferedEvalSeri
 
     Only the configs that carry a mapping are listed; the rows ingestion
     creates for the harness's own result columns are bound to the run but were
-    never selected. ``runnable`` is therefore always true here and is kept
-    because the frontend already reads it.
+    never selected. ``runnable`` and ``editable`` are therefore always true
+    here; both are kept so the frontend reads one rule for every eval list.
     """
 
     id = serializers.UUIDField()
     runnable = serializers.BooleanField()
+    editable = serializers.BooleanField()
 
 
 class HarnessEnvironmentResultSerializer(serializers.Serializer):

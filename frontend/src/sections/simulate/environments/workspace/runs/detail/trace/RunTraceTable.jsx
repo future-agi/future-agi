@@ -39,19 +39,6 @@ import {
   toolbarButtonSx,
 } from "./traceTable.constants";
 
-const STATUS_CHIP_API = {
-  failing: "failed",
-  errored: "error",
-  inconclusive: "inconclusive",
-  passing: "passed",
-};
-const STATUS_LABELS = {
-  passed: "Passed",
-  failed: "Failed",
-  error: "Errored",
-  inconclusive: "Not measured",
-};
-
 const PAGE_SIZE = 50;
 // Room left under the table box for the pager row and the page's bottom gutter.
 const BELOW_TABLE_PX = 88;
@@ -81,11 +68,17 @@ export default function RunTraceTable({
   // and empty states unmount the table, and its own state would go with it,
   // folding every group back up. Labels differ per axis, so each axis keeps
   // its own opened set and a change under one never touches another; Expand
-  // all carries over.
+  // all carries over. Calls handed over from a diagnosis issue start open: the
+  // user came to see those rows, not the groups folded over them.
   const [groupState, setGroupState] = useState({
-    all: false,
+    all: !!initialFilters.callExecutionId?.length,
     expandedByAxis: {},
   });
+  // Whether Expand all is still the hand-off's, so dismissing its chip may end
+  // it. Once the user works the toggle, Expand all is theirs.
+  const [handoffExpanded, setHandoffExpanded] = useState(
+    () => !!initialFilters.callExecutionId?.length,
+  );
   const groupView = useMemo(
     () => ({
       all: groupState.all,
@@ -123,7 +116,7 @@ export default function RunTraceTable({
     if (filters.subGoal?.length) next.sub_goal = filters.subGoal;
     if (filters.status?.length) next.status = filters.status;
     if (filters.goal_outcome?.length) next.goal_outcome = filters.goal_outcome;
-    if (statusChip !== "all") next.status = [STATUS_CHIP_API[statusChip]];
+    if (statusChip !== "all") next.status = [statusChip];
     return next;
   }, [filters, statusChip]);
 
@@ -335,7 +328,8 @@ export default function RunTraceTable({
             <Switch
               size="small"
               checked={allOpen}
-              onChange={() =>
+              onChange={() => {
+                setHandoffExpanded(false);
                 setGroupView((prev) =>
                   allOpen
                     ? CLOSED_GROUP_VIEW
@@ -346,8 +340,8 @@ export default function RunTraceTable({
                           ...groups.map((g) => g.label),
                         ]),
                       },
-                )
-              }
+                );
+              }}
             />
           }
           label="Expand all"
@@ -421,6 +415,11 @@ export default function RunTraceTable({
           label={`${affectedCalls} affected call${affectedCalls === 1 ? "" : "s"}`}
           onDelete={() => {
             setFilters(({ callExecutionId: _ids, ...rest }) => rest);
+            // The groups of those calls the user saw stay open; the rest of the
+            // run comes back closed, unless the user turned Expand all on.
+            if (handoffExpanded)
+              setGroupState((prev) => ({ ...prev, all: false }));
+            setHandoffExpanded(false);
             setPage(1);
           }}
           sx={{ typography: "s2", fontWeight: 600 }}
