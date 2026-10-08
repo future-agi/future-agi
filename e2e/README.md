@@ -84,9 +84,24 @@ Waiting for peerdb-init (CDC mirror setup) ...
 
 **Timing.** A cold boot on a laptop (fresh volumes, images pulled) takes about 8–9 minutes; the
 backend alone spends roughly 6.5 of those minutes on first-run migrations before `/health/` answers,
-which is why the budget is 600 s and not 300. Warm boots are far quicker. The suite itself is fast:
-the two Observe flows run together in 8–19 s, and the eval flow — the slowest, because it waits out
-CDC — takes 20.6–58.5 s (21.1 s in the run recorded for this document).
+which is why the budget is 600 s and not 300. Warm boots are far quicker. The whole suite holds
+roughly an hour of test time, so CI splits it across six runners (`--shard=N/6`), each with its own
+stack, and merges the six blob reports into one HTML report.
+
+**Postgres snapshot.** `bin/e2e snapshot` boots only Postgres, Redis, Temporal and
+`postgres-schema-bootstrap`, waits for the migrations to finish, and dumps the database to
+`e2e/stack/pg-snapshot/futureagi.sql.gz` (gitignored). The overlay mounts that directory as
+Postgres's `docker-entrypoint-initdb.d`, so the next boot on a fresh volume loads the dump and
+`migrate` has only the migrations added since then left to apply. The dump is taken before any CDC
+step runs on purpose: the CDC bootstrap writes outbox and sync-state rows to Postgres that must not
+outlive the ClickHouse volume they describe. CI caches the dump keyed by the migration files, the
+system-eval seeds and `Dockerfile.oss`; a PR that changes any of them migrates from empty once.
+Delete the file to go back to migrating from empty locally.
+
+```bash
+bin/e2e down -v && bin/e2e snapshot   # once: migrate from empty, keep the dump
+bin/e2e up                            # every later fresh boot skips the migrations
+```
 
 Ports come from `e2e/stack/e2e.env` and are chosen to collide with neither a normal dev stack nor
 `futureagi-test` (1xxxx), so the E2E stack can run side by side with both:
@@ -112,6 +127,7 @@ bin/e2e report               # open the last HTML report
 bin/e2e ps                   # compose ps for the futureagi-e2e project
 bin/e2e logs --tail 200      # compose logs (add a service name to narrow)
 bin/e2e compose <args>       # raw compose passthrough with the e2e env file/project
+bin/e2e snapshot             # migrate a fresh stack and save the Postgres dump the next boot loads
 bin/e2e down                 # stop the stack;  bin/e2e down -v  also wipes volumes
 ```
 

@@ -18,6 +18,9 @@ services:
     # install and may hold real provider keys. The harness env file is the
     # only source of interpolated values (bin/e2e passes --env-file).
     env_file: !reset []
+    environment:
+      EE_LICENSE_PUBLIC_KEY: ${EE_LICENSE_PUBLIC_KEY:-}
+      MAX_LOGIN_ATTEMPTS_PER_HOUR: ${E2E_MAX_LOGIN_ATTEMPTS_PER_HOUR:-10}
     extra_hosts:
       - "agentcc-gateway:127.0.0.1"
     # A crash should fail the run loudly instead of restarting quietly.

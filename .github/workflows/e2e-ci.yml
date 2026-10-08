@@ -105,7 +105,7 @@ jobs:
           echo "stacks=$stacks" >> "$GITHUB_OUTPUT"
 
   e2e:
-    name: e2e (${{ matrix.stack }})
+    name: e2e (${{ matrix.stack }} ${{ matrix.shard }}/6)
     needs: changes
     if: needs.changes.outputs.any == 'true'
     strategy:
@@ -113,6 +113,7 @@ jobs:
       fail-fast: false
       matrix:
         stack: ${{ fromJSON(needs.changes.outputs.stacks) }}
+        shard: [1, 2, 3, 4, 5, 6]
     runs-on: ubuntu-latest
     timeout-minutes: 90
     permissions:
@@ -181,59 +182,49 @@ jobs:
       # The backend, frontend and gateway images are always built from this
       # PR's code (see the env block above); the registry cache keeps the
       # backend build short.
-      - name: Build backend image from PR code
-        if: env.BUILD_BACKEND == 'true'
-        uses: docker/build-push-action@v5
-        with:
-          # Contexts mirror release-images.yml:41/45 — Dockerfile.oss expects
-          # the futureagi/ dir as context, not the repo root.
-          context: futureagi
-          file: futureagi/Dockerfile.oss
-          load: true
-          # Standalone assembles its app image on the slim variant, as a release
-          # does. It shares the default variant's dependency layers; the
-          # release builds keep its own cache.
-          build-args: ${{ matrix.stack == 'standalone' && 'IMAGE_VARIANT=slim' || '' }}
-          tags: futureagi/future-agi:${{ env.IMAGE_TAG }}
-          cache-from: |
-            type=registry,ref=${{ env.CACHE_REPO }}:backend
-            ${{ matrix.stack == 'standalone' && format('type=registry,ref={0}:backend-slim-amd64', env.BUILD_CACHE) || '' }}
-          cache-to: ${{ github.event_name == 'push' && format('type=registry,ref={0}:backend,mode=max', env.CACHE_REPO) || '' }}
-
-      - name: Build fi-collector image from PR code
-        if: env.BUILD_BACKEND == 'true'
-        uses: docker/build-push-action@v5
-        with:
-          context: fi-collector
-          file: fi-collector/Dockerfile
-          load: true
-          tags: futureagi/fi-collector:${{ env.IMAGE_TAG }}
-          cache-from: type=registry,ref=${{ env.CACHE_REPO }}:fi-collector
-          cache-to: ${{ github.event_name == 'push' && format('type=registry,ref={0}:fi-collector,mode=max', env.CACHE_REPO) || '' }}
-
-      - name: Build frontend image from PR code
-        if: env.BUILD_FRONTEND == 'true'
-        uses: docker/build-push-action@v5
-        with:
-          context: frontend
-          file: frontend/Dockerfile
-          load: true
-          tags: futureagi/frontend:${{ env.IMAGE_TAG }}
-          cache-from: type=registry,ref=${{ env.CACHE_REPO }}:frontend
-          cache-to: ${{ github.event_name == 'push' && format('type=registry,ref={0}:frontend,mode=max', env.CACHE_REPO) || '' }}
-
-      - name: Build agentcc-gateway image from PR code
-        # The eval flow routes the mock LLM through the gateway, so gateway
-        # changes have to run as built code, not as released :latest.
-        if: env.BUILD_GATEWAY == 'true'
-        uses: docker/build-push-action@v5
-        with:
-          context: agentcc-gateway
-          file: agentcc-gateway/Dockerfile
-          load: true
-          tags: futureagi/agentcc-gateway:${{ env.IMAGE_TAG }}
-          cache-from: type=registry,ref=${{ env.CACHE_REPO }}:gateway
-          cache-to: ${{ github.event_name == 'push' && format('type=registry,ref={0}:gateway,mode=max', env.CACHE_REPO) || '' }}
+      - name: Build images from PR code
+        env:
+          CACHE_WRITE: ${{ github.event_name == 'push' && matrix.shard == 1 }}
+        run: |
+          build() {
+            local name=$1 context=$2 tag=$3
+            shift 3
+            local cache_to=()
+            if [ "$CACHE_WRITE" = true ]; then
+              cache_to=(--cache-to "type=registry,ref=$CACHE_REPO:$name,mode=max")
+            fi
+            docker buildx build --load --tag "$tag" \
+              --cache-from "type=registry,ref=$CACHE_REPO:$name" "${cache_to[@]}" \
+              "$@" "$context" > "/tmp/build-$name.log" 2>&1
+          }
+          backend_args=(--file futureagi/Dockerfile.oss)
+          if [ "$E2E_STACK" = standalone ]; then
+            backend_args+=(--build-arg IMAGE_VARIANT=slim
+              --cache-from "type=registry,ref=$BUILD_CACHE:backend-slim-amd64")
+          fi
+          declare -A pids
+          if [ "$BUILD_BACKEND" = true ]; then
+            build backend futureagi "futureagi/future-agi:$IMAGE_TAG" "${backend_args[@]}" &
+            pids[backend]=$!
+            build fi-collector fi-collector "futureagi/fi-collector:$IMAGE_TAG" --file fi-collector/Dockerfile &
+            pids[fi-collector]=$!
+          fi
+          if [ "$BUILD_FRONTEND" = true ]; then
+            build frontend frontend "futureagi/frontend:$IMAGE_TAG" --file frontend/Dockerfile &
+            pids[frontend]=$!
+          fi
+          if [ "$BUILD_GATEWAY" = true ]; then
+            build gateway agentcc-gateway "futureagi/agentcc-gateway:$IMAGE_TAG" --file agentcc-gateway/Dockerfile &
+            pids[gateway]=$!
+          fi
+          failed=0
+          for name in "${!pids[@]}"; do
+            if wait "${pids[$name]}"; then status=ok; else status=FAILED; failed=1; fi
+            echo "::group::$name build ($status)"
+            cat "/tmp/build-$name.log"
+            echo "::endgroup::"
+          done
+          exit "$failed"
 
       - name: Assemble futureagi/standalone from those images
         if: matrix.stack == 'standalone'
@@ -314,19 +305,38 @@ jobs:
         working-directory: e2e
         run: yarn catalog:check
 
+      - name: Restore the migrated Postgres snapshot
+        id: pg-snapshot
+        if: matrix.stack == 'distributed'
+        uses: actions/cache/restore@v4
+        with:
+          path: e2e/stack/pg-snapshot/futureagi.sql.gz
+          key: e2e-pg-snapshot-v1-${{ hashFiles('futureagi/**/migrations/**', 'futureagi/model_hub/system_evals/**', 'futureagi/model_hub/management/commands/seed_system_evals.py', 'futureagi/Dockerfile.oss') }}
+
+      - name: Migrate an empty database and snapshot it
+        if: matrix.stack == 'distributed' && steps.pg-snapshot.outputs.cache-hit != 'true'
+        run: bin/e2e snapshot
+
+      - name: Save the Postgres snapshot
+        if: matrix.stack == 'distributed' && steps.pg-snapshot.outputs.cache-hit != 'true' && matrix.shard == 1
+        uses: actions/cache/save@v4
+        with:
+          path: e2e/stack/pg-snapshot/futureagi.sql.gz
+          key: e2e-pg-snapshot-v1-${{ hashFiles('futureagi/**/migrations/**', 'futureagi/model_hub/system_evals/**', 'futureagi/model_hub/management/commands/seed_system_evals.py', 'futureagi/Dockerfile.oss') }}
+
       - name: Boot the e2e stack
         run: bin/e2e up
 
       - name: Run E2E suite
-        run: bin/e2e test
+        run: bin/e2e test --shard=${{ matrix.shard }}/6
 
-      - name: Upload report
+      - name: Upload blob report
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.stack == 'standalone' && 'playwright-report-standalone' || 'playwright-report' }}
-          path: e2e/playwright-report
-          retention-days: 7
+          name: blob-report-${{ matrix.stack }}-${{ matrix.shard }}
+          path: e2e/blob-report
+          retention-days: 1
           # A job that dies before the suite runs has no report; the real
           # failure is upstream and must not be buried by an upload error.
           if-no-files-found: warn
@@ -338,6 +348,46 @@ jobs:
           cat /tmp/e2e-pull.log || true
           bin/e2e ps
           bin/e2e logs --tail 200
+
+  e2e-report:
+    name: e2e report (${{ matrix.stack }})
+    needs: [changes, e2e]
+    if: ${{ !cancelled() && needs.changes.outputs.any == 'true' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        stack: ${{ fromJSON(needs.changes.outputs.stacks) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.18"
+          cache: yarn
+          cache-dependency-path: e2e/yarn.lock
+
+      - name: Install harness
+        working-directory: e2e
+        run: yarn install --frozen-lockfile
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: blob-report-${{ matrix.stack }}-*
+          path: e2e/all-blob-reports
+          merge-multiple: true
+
+      - name: Merge shard reports
+        working-directory: e2e
+        run: npx playwright merge-reports --reporter html ./all-blob-reports
+
+      - name: Upload report
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.stack == 'standalone' && 'playwright-report-standalone' || 'playwright-report' }}
+          path: e2e/playwright-report
+          retention-days: 7
 
   e2e-tests:
     name: E2E Tests Pass

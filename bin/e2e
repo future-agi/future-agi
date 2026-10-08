@@ -35,7 +35,31 @@ if [[ "${E2E_STACK:-distributed}" == standalone ]]; then
   SERVICES=(app postgres clickhouse mock-llm)
 fi
 
+root_env_value() {
+  [[ -f "$ROOT/.env" ]] || return 0
+  sed -n "s/^$1=//p" "$ROOT/.env" | tail -1 | sed -E "s/^\"(.*)\"\$/\\1/; s/^'(.*)'\$/\\1/"
+}
+
+E2E_EDITION="${E2E_EDITION:-oss}"
+case "$E2E_EDITION" in
+  oss)
+    EE_LICENSE_KEY=""
+    EE_LICENSE_PUBLIC_KEY=""
+    E2E_MAX_LOGIN_ATTEMPTS_PER_HOUR=10
+    ;;
+  ee)
+    EE_LICENSE_KEY="${EE_LICENSE_KEY:-$(root_env_value EE_LICENSE_KEY)}"
+    EE_LICENSE_PUBLIC_KEY="${EE_LICENSE_PUBLIC_KEY:-$(root_env_value EE_LICENSE_PUBLIC_KEY)}"
+    [[ -n "$EE_LICENSE_KEY" && -n "$EE_LICENSE_PUBLIC_KEY" ]] \
+      || die "E2E_EDITION=ee needs EE_LICENSE_KEY and EE_LICENSE_PUBLIC_KEY, exported or in $ROOT/.env"
+    E2E_MAX_LOGIN_ATTEMPTS_PER_HOUR=100000
+    ;;
+  *) die "E2E_EDITION must be oss or ee, got: $E2E_EDITION" ;;
+esac
+export E2E_EDITION EE_LICENSE_KEY EE_LICENSE_PUBLIC_KEY E2E_MAX_LOGIN_ATTEMPTS_PER_HOUR
+
 BUILD_TARGETS="backend|frontend|collector|all|standalone|standalone-app"
+PG_SNAPSHOT="$ROOT/e2e/stack/pg-snapshot/futureagi.sql.gz"
 
 backend_port() { grep '^BACKEND_PORT=' "$ENV_FILE" | cut -d= -f2; }
 ch_port() { grep '^CH_HTTP_PORT=' "$ENV_FILE" | cut -d= -f2; }
@@ -69,7 +93,33 @@ wait_ready() {
     ((SECONDS < deadline)) || { echo "frontend not up in 600s"; exit 1; }
     sleep 2
   done
-  echo "E2E stack ready: app http://localhost:$(frontend_port)  api http://localhost:$(backend_port)"
+  echo "E2E stack ready ($E2E_EDITION): app http://localhost:$(frontend_port)  api http://localhost:$(backend_port)"
+}
+
+save_pg_snapshot() {
+  [[ "${E2E_STACK:-distributed}" != standalone ]] || die "bin/e2e snapshot supports the distributed stack only"
+  "${COMPOSE[@]}" up -d postgres-schema-bootstrap
+  local id code
+  id=$("${COMPOSE[@]}" ps -aq postgres-schema-bootstrap)
+  code=$(docker wait "$id")
+  if [[ "$code" != 0 ]]; then
+    "${COMPOSE[@]}" logs --tail 200 postgres-schema-bootstrap
+    die "postgres-schema-bootstrap exited $code"
+  fi
+  local temporal_tables exclude=()
+  temporal_tables=$("${COMPOSE[@]}" exec -T temporal sh -c \
+    'grep -rhoiE "CREATE TABLE (IF NOT EXISTS )?[a-z_0-9]+" /etc/temporal/schema/postgresql/v12/temporal' \
+    | awk '{print tolower($NF)}' | sort -u)
+  [[ -n "$temporal_tables" ]] || die "could not read Temporal's table list from the temporal container"
+  for table in $temporal_tables schema_version schema_update_history; do
+    exclude+=(--exclude-table="public.$table")
+  done
+  "${COMPOSE[@]}" exec -T postgres sh -c \
+    'pg_dump --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --no-owner --no-privileges "$@"' \
+    sh "${exclude[@]}" \
+    | gzip > "$PG_SNAPSHOT.tmp"
+  mv "$PG_SNAPSHOT.tmp" "$PG_SNAPSHOT"
+  echo "Postgres snapshot saved: $PG_SNAPSHOT ($(du -h "$PG_SNAPSHOT" | cut -f1))"
 }
 
 build_target() {
@@ -105,6 +155,7 @@ case "$cmd" in
   # PG migrations and initial snapshots precede backend readiness. No hidden
   # force-recreate/retry loop: failed or uncertain setup must be inspected.
   up)      "${COMPOSE[@]}" up -d --wait --wait-timeout 1200 "${SERVICES[@]}"; wait_ready ;;
+  snapshot) save_pg_snapshot ;;
   down)    "${COMPOSE[@]}" down "$@" ;;
   build)   build_target "${1:?usage: bin/e2e build $BUILD_TARGETS}" ;;
   test)    (cd "$ROOT/e2e" && yarn playwright test "$@") ;;
@@ -113,5 +164,5 @@ case "$cmd" in
   logs)    "${COMPOSE[@]}" logs "$@" ;;
   ps)      "${COMPOSE[@]}" ps "$@" ;;
   compose) "${COMPOSE[@]}" "$@" ;;
-  *) echo "usage: bin/e2e up|down [-v]|build <target>|test [pw args]|ui|report|logs|ps|compose <args>"; exit 2 ;;
+  *) echo "usage: bin/e2e up|snapshot|down [-v]|build <target>|test [pw args]|ui|report|logs|ps|compose <args>"; exit 2 ;;
 esac

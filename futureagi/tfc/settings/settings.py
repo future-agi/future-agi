@@ -1381,7 +1381,7 @@ else:
 MAX_LOGIN_ATTEMPTS = 10  # Maximum failed login attempts before account lockout
 ACCOUNT_LOCKOUT_DURATION = 1800  # 30 minutes in seconds
 FAILED_ATTEMPTS_TIMEOUT = 3600  # 1 hour in seconds
-MAX_LOGIN_ATTEMPTS_PER_HOUR = 10  # Rate limiting per IP
+MAX_LOGIN_ATTEMPTS_PER_HOUR = int(os.environ.get("MAX_LOGIN_ATTEMPTS_PER_HOUR", "10"))  # Rate limiting per IP
 IP_BLOCK_DURATION = 3600  # 1 hour in seconds
 
 DATA_UPLOAD_MAX_MEMORY_SIZE = 1024 * 1024 * 1024  # 1GB in bytes

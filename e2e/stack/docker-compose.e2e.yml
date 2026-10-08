@@ -1,5 +1,8 @@
 # Overlay on docker-compose.distributed.yml (the distributed topology) for the futureagi-e2e stack.
 services:
+  postgres:
+    volumes:
+      - ./e2e/stack/pg-snapshot:/docker-entrypoint-initdb.d:ro
   clickhouse:
     # Seatbelt on 16GB CI runners: CH is the first OOM-kill victim otherwise.
     mem_limit: 3g
@@ -15,17 +18,28 @@ services:
       SQL_VIS_MAX_IDLE_CONNS: "1"
   backend:
     restart: "no"
+    env_file: !reset []
     environment:
       MODEL_SERVING_URL: http://mock-llm:8080
       FUTURE_AGI_TELEMETRY_DISABLED: "true"
       # Request logs reach Django over this shared secret; without it the
       # webhook rejects every batch the gateway sends.
       AGENTCC_WEBHOOK_SECRET: ${AGENTCC_WEBHOOK_SECRET:-e2e-agentcc-webhook-secret}
+      EE_LICENSE_PUBLIC_KEY: ${EE_LICENSE_PUBLIC_KEY:-}
+      MAX_LOGIN_ATTEMPTS_PER_HOUR: ${E2E_MAX_LOGIN_ATTEMPTS_PER_HOUR:-10}
   worker:
     restart: "no"
+    env_file: !reset []
     environment:
       MODEL_SERVING_URL: http://mock-llm:8080
       FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      EE_LICENSE_PUBLIC_KEY: ${EE_LICENSE_PUBLIC_KEY:-}
+  worker-exact-aggregation:
+    env_file: !reset []
+    environment:
+      EE_LICENSE_PUBLIC_KEY: ${EE_LICENSE_PUBLIC_KEY:-}
+  agentcc-gateway:
+    env_file: !reset []
   fi-collector:
     # Collector and consumer must run the same checked-out transport protocol.
     image: futureagi/fi-collector:${E2E_FI_COLLECTOR_VERSION:-latest}
