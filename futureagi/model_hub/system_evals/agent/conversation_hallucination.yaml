@@ -1,7 +1,32 @@
 eval_id: 200
 name: conversation_hallucination
-description: Identifies if the agent fabricated facts across the conversation, optionally grounded against provided context.
-criteria: "You are evaluating whether the agent's turns in the conversation contain fabricated information not supported by the conversation history or the provided context.\n\n## Criteria\n\n1. User-attributed fabrication: The agent claims the user said, asked, or believes something that does not appear in the user's actual turns.\n   - Pass: \"You mentioned you live in Austin\" when the user did state this earlier in the conversation.\n   - Fail: \"You said you preferred email\" when the user never expressed that preference.\n\n2. Self-contradiction or self-attributed fabrication: The agent contradicts its own prior turn or claims to have already said or done something it did not.\n   - Pass: Agent's later turns remain consistent with earlier ones; corrections are explicitly framed as such.\n   - Fail: Agent says \"As I told you, the deadline is Friday\" when no such statement was made earlier, or quotes a price that contradicts a price it gave in an earlier turn.\n\n3. External fact fabrication: The agent asserts world-facts (names, dates, numbers, events, policies) not supported by the conversation or, when provided, by the context.\n   - Pass: Every concrete factual claim is grounded in conversation content or in the provided context.\n   - Fail: Agent invents a product spec, policy detail, or statistic that has no basis in either source.\n\n## Anti-bias Rules\n\n- If context is empty or absent, evaluate against the conversation alone; do not treat the absence of context as a hallucination signal.\n- Reasonable logical inferences from facts present in the conversation or context are NOT hallucinations.\n- Generic filler (\"That's a great question\", \"Let me help\") making no factual claims is NOT a hallucination.\n- Agent acknowledgments of uncertainty (\"I don't have that information\") are NOT hallucinations, even if the underlying fact is known to be true elsewhere.\n- Evaluate only the agent's turns; user turns are the ground truth for what the user said, not subjects of evaluation.\n\n## Scoring\n\nReturn 'Passed' if every claim in every agent turn is supported by the conversation history or the provided context (or appropriately hedged as uncertain). Return 'Failed' if any agent turn contains a fabricated user attribution, a self-contradiction or false self-quotation, or an unsupported external factual claim.\n\n## Inputs\n\n<conversation>{{conversation}}</conversation>\n\n<context>{{context}}</context>"
+description: "Detects fabricated attributions, false dialogue history, material contradictions, and misrepresentation of supplied factual context."
+criteria: |-
+  Evaluate fabricated or misrepresented information in the agent's statements against the conversation and relevant supplied context.
+
+  ## Criteria
+  1. Attribution: Claims about another participant's statements, requests, or agreement must match that participant's actual contributions.
+  2. Dialogue history: Claims about earlier exchanges must match the available history; the agent's own unsupported assertion is not independent evidence.
+  3. Consistency: Material claims must remain consistent unless new information or an explicit correction supports a change; repeated misrepresentation remains a failure.
+  4. Grounding: Assess factual claims against relevant supplied context, including unsupported additions falsely presented as grounded in that context.
+
+  ## Anti-bias Rules
+  - Allow explicit corrections that are retained, reasonable supported inferences, labeled proposals or hypotheticals, and statements of uncertainty.
+  - Participant statements establish what was said, not necessarily its external truth; instructions describe expected behavior, not proof of events.
+  - Do not infer fabrication from unclear speech, transcription artifacts, incomplete capture, or missing context.
+  - If supplied inputs cannot verify an external claim, neither fail it solely for absent support nor describe it as verified.
+
+  ## Scoring
+  - Return 'Failed' for an established fabricated attribution, false account of prior dialogue, unresolved or repeated material contradiction, or misrepresentation of supplied factual context.
+  - Return 'Passed' when no such failure is established; this does not certify claims the supplied inputs cannot verify.
+
+  ## Explanation
+  Identify the claim and decisive evidence, considering corrections or new information; distinguish a demonstrated error from an uncheckable claim.
+
+  ## Inputs
+  <conversation>{{conversation}}</conversation>
+  <context>{{context}}</context>
+
 eval_tags:
 - Hallucination
 - Conversation
@@ -54,4 +79,28 @@ config:
     - ARRAY
     - DATETIME
     - IMAGES
-  rule_prompt: "You are evaluating whether the agent's turns in the conversation contain fabricated information not supported by the conversation history or the provided context.\n\n## Criteria\n\n1. User-attributed fabrication: The agent claims the user said, asked, or believes something that does not appear in the user's actual turns.\n   - Pass: \"You mentioned you live in Austin\" when the user did state this earlier in the conversation.\n   - Fail: \"You said you preferred email\" when the user never expressed that preference.\n\n2. Self-contradiction or self-attributed fabrication: The agent contradicts its own prior turn or claims to have already said or done something it did not.\n   - Pass: Agent's later turns remain consistent with earlier ones; corrections are explicitly framed as such.\n   - Fail: Agent says \"As I told you, the deadline is Friday\" when no such statement was made earlier, or quotes a price that contradicts a price it gave in an earlier turn.\n\n3. External fact fabrication: The agent asserts world-facts (names, dates, numbers, events, policies) not supported by the conversation or, when provided, by the context.\n   - Pass: Every concrete factual claim is grounded in conversation content or in the provided context.\n   - Fail: Agent invents a product spec, policy detail, or statistic that has no basis in either source.\n\n## Anti-bias Rules\n\n- If context is empty or absent, evaluate against the conversation alone; do not treat the absence of context as a hallucination signal.\n- Reasonable logical inferences from facts present in the conversation or context are NOT hallucinations.\n- Generic filler (\"That's a great question\", \"Let me help\") making no factual claims is NOT a hallucination.\n- Agent acknowledgments of uncertainty (\"I don't have that information\") are NOT hallucinations, even if the underlying fact is known to be true elsewhere.\n- Evaluate only the agent's turns; user turns are the ground truth for what the user said, not subjects of evaluation.\n\n## Scoring\n\nReturn 'Passed' if every claim in every agent turn is supported by the conversation history or the provided context (or appropriately hedged as uncertain). Return 'Failed' if any agent turn contains a fabricated user attribution, a self-contradiction or false self-quotation, or an unsupported external factual claim.\n\n## Inputs\n\n<conversation>{{conversation}}</conversation>\n\n<context>{{context}}</context>"
+  rule_prompt: |-
+    Evaluate fabricated or misrepresented information in the agent's statements against the conversation and relevant supplied context.
+
+    ## Criteria
+    1. Attribution: Claims about another participant's statements, requests, or agreement must match that participant's actual contributions.
+    2. Dialogue history: Claims about earlier exchanges must match the available history; the agent's own unsupported assertion is not independent evidence.
+    3. Consistency: Material claims must remain consistent unless new information or an explicit correction supports a change; repeated misrepresentation remains a failure.
+    4. Grounding: Assess factual claims against relevant supplied context, including unsupported additions falsely presented as grounded in that context.
+
+    ## Anti-bias Rules
+    - Allow explicit corrections that are retained, reasonable supported inferences, labeled proposals or hypotheticals, and statements of uncertainty.
+    - Participant statements establish what was said, not necessarily its external truth; instructions describe expected behavior, not proof of events.
+    - Do not infer fabrication from unclear speech, transcription artifacts, incomplete capture, or missing context.
+    - If supplied inputs cannot verify an external claim, neither fail it solely for absent support nor describe it as verified.
+
+    ## Scoring
+    - Return 'Failed' for an established fabricated attribution, false account of prior dialogue, unresolved or repeated material contradiction, or misrepresentation of supplied factual context.
+    - Return 'Passed' when no such failure is established; this does not certify claims the supplied inputs cannot verify.
+
+    ## Explanation
+    Identify the claim and decisive evidence, considering corrections or new information; distinguish a demonstrated error from an uncheckable claim.
+
+    ## Inputs
+    <conversation>{{conversation}}</conversation>
+    <context>{{context}}</context>

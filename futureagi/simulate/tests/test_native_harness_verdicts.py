@@ -6,10 +6,10 @@ from model_hub.models.evals_metric import EvalTemplate
 from simulate.models import CallExecution, Scenarios, SimulateEvalConfig, TestExecution
 from simulate.models.run_test import RunTest
 from simulate.services.run_results_v3 import call_outcome
+from simulate.services.run_results_v3_page import run_calls_page
 from simulate.services.run_results_v3_queries import (
     apply_run_call_query,
     run_calls_queryset,
-    summarize_run_calls,
 )
 
 
@@ -77,7 +77,9 @@ def test_native_check_rows_filters_and_counts_agree(
     for outcome in ("passed", "failed", "error", "inconclusive"):
         filtered = apply_run_call_query(queryset, {"filters": {"status": [outcome]}})
         assert filtered.count() == int(outcome == expected)
-    summary = summarize_run_calls(queryset, include_percentiles=False)
+    summary = run_calls_page(
+        execution, {"page": 1, "page_size": 1}, [], lambda: queryset
+    )["summary"]
     assert summary["outcomes"][expected] == 1
     assert sum(summary["outcomes"].values()) == 1
 

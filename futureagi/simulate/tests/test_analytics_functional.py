@@ -9,6 +9,7 @@ from datetime import timedelta
 from pathlib import Path
 
 import pytest
+from django.core.cache import cache
 from django.utils import timezone
 from rest_framework import status
 
@@ -27,7 +28,16 @@ from simulate.models.hosted_harness import (
 from simulate.models.run_test import RunTest
 from simulate.models.simulator_agent import SimulatorAgent
 from simulate.models.test_execution import CallExecution, TestExecution
+from simulate.services.run_results_v3_page import CALL_VALUE_FIELDS, group_call_values
 from simulate.services.run_results_v3_queries import run_calls_queryset
+
+
+def _call_row(call_id, **values):
+    row = dict.fromkeys(CALL_VALUE_FIELDS)
+    row.update(id=str(call_id), result_outcome="passed", scores={})
+    row.update(values)
+    return row
+
 
 # ============================================================================
 # Fixtures
@@ -445,6 +455,94 @@ class TestTestExecutionAnalyticsView:
 @pytest.mark.api
 class TestRunResultsV3Views:
     """The v3 run-results surface remains independent from legacy contracts."""
+
+    @pytest.mark.parametrize("source", ["hosted_harness_receipt", "metadata"])
+    def test_sub_goal_verdicts_are_exposed_in_list_and_detail(
+        self, auth_client, test_execution, scenario, source
+    ):
+        goals = [
+            {"name": "Verify identity", "held": True},
+            {"name": "Create refund", "held": False},
+            {"name": "Send confirmation", "held": None},
+            "Unmeasured goal",
+        ]
+        metadata = (
+            {"hosted_harness_receipt": {"sub_goals": goals}}
+            if source == "hosted_harness_receipt"
+            else {"sub_goals": goals}
+        )
+        call = CallExecution.objects.create(
+            test_execution=test_execution,
+            scenario=scenario,
+            status="completed",
+            call_metadata=metadata,
+        )
+        expected = [
+            {"name": "Verify identity", "passed": True},
+            {"name": "Create refund", "passed": False},
+            {"name": "Send confirmation", "passed": None},
+            {"name": "Unmeasured goal", "passed": None},
+        ]
+        response = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/calls/"
+        )
+        assert response.status_code == 200
+        result = response.json()["results"][0]
+        assert result["sub_goal_results"] == expected
+        assert result["sub_goals"] == [goal["name"] for goal in expected]
+        detail = auth_client.get(f"/simulate/v3/call-executions/{call.id}/")
+        assert detail.status_code == 200
+        assert detail.json()["sub_goal_results"] == expected
+        assert detail.json()["sub_goals"] == [goal["name"] for goal in expected]
+
+    @pytest.mark.parametrize(
+        "execution_status,expected,label",
+        [
+            ("pending", "queued", "Queued"),
+            ("queued", "queued", "Queued"),
+            ("ongoing", "in_progress", "In progress"),
+            ("analyzing", "in_progress", "In progress"),
+            ("completed", "inconclusive", "Inconclusive"),
+            ("failed", "error", "Error"),
+            ("cancelled", "error", "Error"),
+        ],
+    )
+    def test_call_lifecycle_outcomes_match_rows_filters_groups_and_detail(
+        self, auth_client, test_execution, scenario, execution_status, expected, label
+    ):
+        from simulate.services.run_results_v3 import call_outcome
+        from simulate.services.run_results_v3_queries import run_calls_queryset
+
+        call = CallExecution.objects.create(
+            test_execution=test_execution,
+            scenario=scenario,
+            status=execution_status,
+        )
+        assert call_outcome(call, {}) == expected
+        assert (
+            run_calls_queryset(test_execution).get(pk=call.pk).result_outcome
+            == expected
+        )
+        base = f"/simulate/v3/test-executions/{test_execution.id}"
+        response = auth_client.get(
+            f"{base}/calls/",
+            {"filters": json.dumps({"status": [expected]}), "group_by": "status"},
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["count"] == 1
+        assert body["results"][0]["outcome"] == expected
+        assert body["results"][0]["execution_status"] == execution_status
+        assert body["summary"]["outcomes"][expected] == 1
+        assert body["summary"]["measured"] == 0
+        assert body["facets"]["status"] == [{"value": expected, "count": 1}]
+        assert body["groups"][0]["label"] == label
+        detail = auth_client.get(f"/simulate/v3/call-executions/{call.id}/")
+        assert detail.status_code == 200
+        assert detail.json()["outcome"] == expected
+        analytics = auth_client.get(f"{base}/analytics/")
+        assert analytics.status_code == 200
+        assert analytics.json()["summary"]["outcomes"][expected] == 1
 
     @pytest.mark.parametrize(
         (
@@ -990,6 +1088,7 @@ class TestRunResultsV3Views:
             "harness_scenario_key": "routine-return",
             "harness_trial_index": 2,
             "use_case": "Returns",
+            "conversation_branch": "Caller requests a routine return",
             "row_data": {
                 "persona": json.dumps(
                     {
@@ -1034,9 +1133,12 @@ class TestRunResultsV3Views:
             "traits": ["polite", "hard of hearing"],
         }
         assert row["sub_goals"] == ["identity_verified"]
+        assert row["sub_goal_results"] == [
+            {"name": "identity_verified", "passed": True}
+        ]
         assert row["scenario_details"] == "Caller needs help with a return."
         assert row["ideal_outcome"] == "Return is completed"
-        assert row["conversation_branch"] == "routine-return"
+        assert row["conversation_branch"] == "Caller requests a routine return"
         assert row["source_scenario_key"] == "routine-return"
         assert row["trial_index"] == 2
         assert row["outcome"] == "passed"
@@ -1062,6 +1164,91 @@ class TestRunResultsV3Views:
         assert body["execution"]["id"] == str(test_execution.id)
         assert body["execution"]["selected_scenario_keys"] == ["routine-return"]
         assert body["execution"]["trials"] == 2
+
+    @pytest.mark.parametrize(
+        ("branch_metadata", "expected"),
+        [
+            ({}, None),
+            (
+                {"conversation_branch": "Caller asks for a refund"},
+                "Caller asks for a refund",
+            ),
+            (
+                {"row_data": {"branch": "Caller corrects the invoice"}},
+                "Caller corrects the invoice",
+            ),
+        ],
+    )
+    def test_conversation_branch_never_falls_back_to_receipt_id(
+        self,
+        auth_client,
+        test_execution,
+        analytics_call_executions,
+        branch_metadata,
+        expected,
+    ):
+        call = analytics_call_executions[0]
+        receipt_key = uuid.uuid4().hex
+        call.call_metadata = {
+            "harness_scenario_key": "refund",
+            "hosted_harness_receipt": {"scenario_key": receipt_key},
+            **branch_metadata,
+        }
+        call.save(update_fields=["call_metadata"])
+
+        base = f"/simulate/v3/test-executions/{test_execution.id}"
+        response = auth_client.get(f"{base}/calls/")
+        assert response.status_code == 200
+        row = next(
+            item for item in response.json()["results"] if item["id"] == str(call.id)
+        )
+        assert row["conversation_branch"] == expected
+        assert row["source_scenario_key"] == "refund"
+        detail = auth_client.get(f"/simulate/v3/call-executions/{call.id}/")
+        assert detail.status_code == 200
+        assert detail.json()["conversation_branch"] == expected
+
+        export = auth_client.post(f"{base}/export/", {}, format="json")
+        assert export.status_code == 200
+        rows = list(
+            csv.DictReader(io.StringIO(b"".join(export.streaming_content).decode()))
+        )
+        exported = next(item for item in rows if item["call_id"] == str(call.id))
+        assert exported["conversation_branch"] == (expected or "")
+
+    @pytest.mark.parametrize(
+        "source_key", [["refund"], {"name": "refund"}, 42, True, None, "", " "]
+    )
+    def test_invalid_branch_source_key_keeps_list_detail_and_export_available(
+        self, auth_client, test_execution, analytics_call_executions, source_key
+    ):
+        call = analytics_call_executions[0]
+        expected = "Caller asks for a refund"
+        call.call_metadata = {
+            "harness_scenario_key": source_key,
+            "conversation_branch": expected,
+        }
+        call.save(update_fields=["call_metadata"])
+
+        base = f"/simulate/v3/test-executions/{test_execution.id}"
+        response = auth_client.get(f"{base}/calls/")
+        assert response.status_code == 200
+        row = next(
+            item for item in response.json()["results"] if item["id"] == str(call.id)
+        )
+        assert row["conversation_branch"] == expected
+
+        detail = auth_client.get(f"/simulate/v3/call-executions/{call.id}/")
+        assert detail.status_code == 200
+        assert detail.json()["conversation_branch"] == expected
+
+        export = auth_client.post(f"{base}/export/", {}, format="json")
+        assert export.status_code == 200
+        rows = list(
+            csv.DictReader(io.StringIO(b"".join(export.streaming_content).decode()))
+        )
+        exported = next(item for item in rows if item["call_id"] == str(call.id))
+        assert exported["conversation_branch"] == expected
 
     def test_harness_error_is_not_green_when_transport_completed(
         self, auth_client, test_execution, analytics_call_executions
@@ -1218,6 +1405,7 @@ class TestRunResultsV3Views:
         call = analytics_call_executions[0]
         authored = {
             "scenario_key": "pin-reset",
+            "branch": "Caller provides a guest PIN and requests a reset",
             "use_case": "Verify the caller's guest PIN",
             "sub_goals": ["pin_verified", "exact_greeting"],
             "persona": {"accent": "Indian", "age_group": "40-50"},
@@ -1234,7 +1422,10 @@ class TestRunResultsV3Views:
             HostedHarnessScenario.no_workspace_objects.create(
                 job=environment, **authored
             )
-            call.call_metadata = {"harness_scenario_key": "pin-reset"}
+            call.call_metadata = {
+                "harness_scenario_key": "pin-reset",
+                "hosted_harness_receipt": {"scenario_key": uuid.uuid4().hex},
+            }
             call.save(update_fields=["call_metadata"])
         else:
             # begin_scenarios(): the suite lives on the run's own job and each
@@ -1283,6 +1474,10 @@ class TestRunResultsV3Views:
             r for r in auth_client.get(url).json()["results"] if r["id"] == str(call.id)
         )
         assert row["goal"] == "Verify the caller's guest PIN"
+        assert row["conversation_branch"] == authored["branch"]
+        detail = auth_client.get(f"/simulate/v3/call-executions/{call.id}/")
+        assert detail.status_code == 200
+        assert detail.json()["conversation_branch"] == authored["branch"]
 
     def test_hosted_call_reads_its_own_run_scenario_before_the_environment_suite(
         self,
@@ -1329,11 +1524,14 @@ class TestRunResultsV3Views:
         )
         for owner, goal in suites:
             HostedHarnessScenario.no_workspace_objects.create(
-                job=owner, scenario_key="pin-reset", use_case=goal
+                job=owner,
+                scenario_key="pin-reset",
+                use_case=goal,
+                branch=f"{goal} branch",
             )
         for owner, goal in suites[:2]:
             HostedHarnessScenario.no_workspace_objects.create(
-                job=owner, scenario_key="refund", use_case=goal
+                job=owner, scenario_key="refund", use_case=goal, branch=f"{goal} branch"
             )
         own_key, environment_key, stray_key = analytics_call_executions[:3]
         for call, key in (
@@ -1347,11 +1545,16 @@ class TestRunResultsV3Views:
         url = f"/simulate/v3/test-executions/{test_execution.id}/calls/"
         rows = {row["id"]: row for row in auth_client.get(url).json()["results"]}
         assert rows[str(own_key.id)]["goal"] == "Own run goal"
+        assert rows[str(own_key.id)]["conversation_branch"] == "Own run goal branch"
         # A key the run never re-authored comes from the environment, not from
         # a sibling run of the same test, however recent that run is.
         assert rows[str(environment_key.id)]["goal"] == "Environment goal"
+        assert rows[str(environment_key.id)]["conversation_branch"] == (
+            "Environment goal branch"
+        )
         # A key no job authored keeps the plain scenario fallback.
         assert rows[str(stray_key.id)]["goal"] == stray_key.scenario.name
+        assert rows[str(stray_key.id)]["conversation_branch"] is None
 
         groups = auth_client.get(url, {"group_by": "goal"}).json()["groups"]
         by_key = {group["key"]: group["result_ids"] for group in groups}
@@ -1427,6 +1630,26 @@ class TestRunResultsV3Views:
 
         assert "simulate_hosted_harness_scenario" in sql
         assert "simulate_hosted_harness_job" not in sql
+
+    def test_calls_read_their_large_json_columns_once_per_row(
+        self, test_execution, analytics_call_executions
+    ):
+        queryset = run_calls_queryset(test_execution)
+        sql = str(queryset.query)
+
+        assert "jsonb_path_query_first(\"eval_outputs\", '$')" in sql
+        assert "jsonb_path_query_first(\"call_metadata\", '$')" in sql
+        # Without the fence the planner inlines the subquery again.
+        assert 'OFFSET 0) "simulate_call_execution"' in sql
+        assert queryset.count() == len(analytics_call_executions)
+        nested = CallExecution.objects.filter(pk__in=queryset.values("pk"))
+        assert "jsonb_path_query_first" in str(nested.query)
+        assert nested.count() == len(analytics_call_executions)
+
+    def test_an_empty_run_list_reads_no_calls(
+        self, test_execution, analytics_call_executions
+    ):
+        assert list(run_calls_queryset(test_execution, [])) == []
 
     def test_non_numeric_json_metrics_do_not_break_list_or_analytics(
         self,
@@ -1521,42 +1744,20 @@ class TestRunResultsV3Views:
         assert len(body["results"]) == 1
         assert body["groups"][0]["result_ids"] == [body["results"][0]["id"]]
 
-    def test_sub_goal_groups_batch_exact_memberships_across_pages(
-        self, test_execution, analytics_call_executions, django_assert_num_queries
+    def test_sub_goal_groups_match_exact_memberships_across_pages(
+        self, analytics_call_executions, django_assert_num_queries
     ):
-        from django.db.models import Case, JSONField, Value, When
-
-        from simulate.services.run_results_v3_queries import (
-            group_run_calls,
-            run_calls_queryset,
-        )
-
-        first, second = analytics_call_executions[:2]
-        queryset = run_calls_queryset(test_execution).annotate(
-            result_sub_goal=Case(
-                When(
-                    pk=first.pk,
-                    then=Value(
-                        ["alpha", "alpha", " beta ", "Ungrouped"],
-                        output_field=JSONField(),
-                    ),
-                ),
-                When(
-                    pk=second.pk,
-                    then=Value(["alpha", "beta"], output_field=JSONField()),
-                ),
-                default=Value([], output_field=JSONField()),
-                output_field=JSONField(),
-            )
-        )
-        with django_assert_num_queries(2):
-            groups = group_run_calls(
-                queryset,
-                "sub_goal",
-                [{"id": str(first.pk)}],
-                [],
-                execution=test_execution,
-            )
+        first, second, third, fourth = analytics_call_executions
+        rows = [
+            _call_row(
+                first.pk, result_sub_goal=["alpha", "alpha", " beta ", "Ungrouped"]
+            ),
+            _call_row(second.pk, result_sub_goal=["alpha", "beta"]),
+            _call_row(third.pk, result_sub_goal=[]),
+            _call_row(fourth.pk, result_sub_goal=[]),
+        ]
+        with django_assert_num_queries(0):
+            groups = group_call_values(rows, "sub_goal", [str(first.pk)], [])
         by_key = {group["key"]: group for group in groups}
         assert {key: group["total"] for key, group in by_key.items()} == {
             "alpha": 2,
@@ -1565,72 +1766,320 @@ class TestRunResultsV3Views:
         }
         assert all(group["result_ids"] == [str(first.pk)] for group in groups)
 
-    def test_sub_goal_group_keeps_zero_total_for_normalized_unmatched_key(
-        self, test_execution, analytics_call_executions, django_assert_num_queries
+    def test_ungrouped_sub_goal_group_counts_only_calls_with_no_sub_goals(
+        self, analytics_call_executions
     ):
-        from django.db.models import JSONField, Value
+        first, second, third, fourth = analytics_call_executions
+        rows = [
+            _call_row(first.pk, result_sub_goal=[]),
+            _call_row(second.pk, result_sub_goal=["alpha"]),
+            _call_row(third.pk, result_sub_goal=[]),
+            _call_row(fourth.pk, result_sub_goal=["alpha", "beta"]),
+        ]
+        groups = group_call_values(rows, "sub_goal", [str(first.pk)], [])
+        assert [
+            (group["key"], group["label"], group["total"], group["result_ids"])
+            for group in groups
+        ] == [("Ungrouped", "Ungrouped", 2, [str(first.pk)])]
 
-        from simulate.services.run_results_v3_queries import (
-            group_run_calls,
-            run_calls_queryset,
-        )
-
-        queryset = run_calls_queryset(test_execution).annotate(
-            result_sub_goal=Value([" padded "], output_field=JSONField())
-        )
-        with django_assert_num_queries(2):
-            groups = group_run_calls(
-                queryset,
-                "sub_goal",
-                [{"id": str(analytics_call_executions[0].pk)}],
-                [],
-                execution=test_execution,
-            )
+    def test_sub_goal_group_keeps_zero_total_for_normalized_unmatched_key(
+        self, analytics_call_executions, django_assert_num_queries
+    ):
+        call = analytics_call_executions[0]
+        rows = [_call_row(call.pk, result_sub_goal=[" padded "])]
+        with django_assert_num_queries(0):
+            groups = group_call_values(rows, "sub_goal", [str(call.pk)], [])
         assert len(groups) == 1
         assert groups[0]["key"] == "padded"
         assert groups[0]["total"] == 0
         assert groups[0]["aggregates"]["avg_stop_time_after_interruption"] is None
         assert groups[0]["aggregates"]["ai_interruptions"] is None
 
-    def test_empty_group_page_does_not_query(
-        self, test_execution, django_assert_num_queries
-    ):
-        from simulate.services.run_results_v3_queries import (
-            group_run_calls,
-            run_calls_queryset,
-        )
-
-        queryset = run_calls_queryset(test_execution)
+    def test_empty_group_page_builds_no_groups(self, db, django_assert_num_queries):
+        rows = [_call_row(uuid.uuid4(), result_sub_goal=["alpha"])]
         with django_assert_num_queries(0):
-            assert (
-                group_run_calls(queryset, "sub_goal", [], [], execution=test_execution)
-                == []
-            )
+            assert group_call_values(rows, "sub_goal", [], []) == []
+            assert group_call_values(rows, None, [rows[0]["id"]], []) == []
 
     def test_visible_groups_preserve_null_keys_and_off_page_totals(
-        self, test_execution, analytics_call_executions, django_assert_num_queries
+        self, analytics_call_executions, django_assert_num_queries
     ):
-        from django.db.models import Case, CharField, Value, When
+        first, second, third, fourth = analytics_call_executions
+        rows = [
+            _call_row(first.pk, result_goal=None),
+            _call_row(second.pk, result_goal=None),
+            _call_row(third.pk, result_goal="Returns"),
+            _call_row(fourth.pk, result_goal="Returns"),
+        ]
+        with django_assert_num_queries(0):
+            groups = group_call_values(rows, "goal", [str(first.pk)], [])
+        assert [
+            (group["key"], group["total"], group["result_ids"]) for group in groups
+        ] == [("None", 2, [str(first.pk)])]
 
-        from simulate.services.run_results_v3_queries import (
-            group_run_calls,
-            run_calls_queryset,
+    def test_groups_are_ordered_largest_first_then_by_label(self):
+        rows = [
+            _call_row(1, result_goal="Returns"),
+            _call_row(2, result_goal="Billing"),
+            _call_row(3, result_goal="Billing"),
+            _call_row(4, result_goal="account"),
+        ]
+        groups = group_call_values(rows, "goal", ["1", "2", "4"], [])
+
+        # Ties sort by label without regard to case, so "account" leads "Returns".
+        assert [(group["key"], group["total"]) for group in groups] == [
+            ("Billing", 2),
+            ("account", 1),
+            ("Returns", 1),
+        ]
+
+    def _calls(self, auth_client, test_execution, **params):
+        response = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/calls/", params
+        )
+        assert response.status_code == status.HTTP_200_OK
+        return response.json()
+
+    def test_completed_run_calls_page_is_served_from_cache(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        first = self._calls(auth_client, test_execution)
+        call = analytics_call_executions[0]
+        call.duration_seconds = 600
+        call.save(update_fields=["duration_seconds"])
+
+        cached = self._calls(auth_client, test_execution)
+        cache.clear()
+        fresh = self._calls(auth_client, test_execution)
+
+        assert first["summary"]["duration"]["average"] == 45
+        assert cached["summary"] == first["summary"]
+        assert fresh["summary"]["duration"]["average"] == 180
+
+    def test_active_run_calls_page_is_never_cached(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        test_execution.status = TestExecution.ExecutionStatus.RUNNING
+        test_execution.save(update_fields=["status"])
+        self._calls(auth_client, test_execution)
+        call = analytics_call_executions[0]
+        call.duration_seconds = 600
+        call.save(update_fields=["duration_seconds"])
+
+        summary = self._calls(auth_client, test_execution)["summary"]
+        assert summary["duration"]["average"] == 180
+
+    def test_removing_an_eval_config_refreshes_the_cached_page(
+        self,
+        auth_client,
+        test_execution,
+        analytics_call_executions,
+        pass_fail_eval_config,
+        score_eval_config,
+    ):
+        # The removed config is not the last one saved, so no live stamp moves.
+        assert score_eval_config.updated_at > pass_fail_eval_config.updated_at
+        call = analytics_call_executions[0]
+        call.eval_outputs = {
+            str(pass_fail_eval_config.id): {"output": "Failed", "status": "completed"}
+        }
+        call.save(update_fields=["eval_outputs"])
+        before = self._calls(auth_client, test_execution)["summary"]["outcomes"]
+        assert before["failed"] == 1
+
+        # The soft delete the run test view does, which leaves updated_at alone.
+        pass_fail_eval_config.deleted = True
+        pass_fail_eval_config.deleted_at = timezone.now()
+        pass_fail_eval_config.save(update_fields=["deleted", "deleted_at"])
+
+        after = self._calls(auth_client, test_execution)["summary"]["outcomes"]
+        assert after["failed"] == 0
+
+    def _threshold_eval(self, organization, run_test, analytics_call_executions):
+        template = EvalTemplate.objects.create(
+            name="Accuracy",
+            organization=organization,
+            output_type_normalized="percentage",
+            pass_threshold=0.5,
+        )
+        config = SimulateEvalConfig.objects.create(
+            name="Accuracy", run_test=run_test, eval_template=template
+        )
+        call = analytics_call_executions[0]
+        call.eval_outputs = {
+            str(config.id): {
+                "output": 0.6,
+                "output_type": "percentage",
+                "status": "completed",
+            }
+        }
+        call.save(update_fields=["eval_outputs"])
+        return template, config
+
+    def test_an_eval_binding_edit_without_updated_at_refreshes_the_cached_page(
+        self, auth_client, organization, run_test, test_execution, analytics_call_executions
+    ):
+        _, config = self._threshold_eval(
+            organization, run_test, analytics_call_executions
+        )
+        before = self._calls(auth_client, test_execution)["summary"]["outcomes"]
+        assert (before["passed"], before["failed"]) == (1, 0)
+
+        # The assistant's update tool saves only the fields it changed.
+        config.config = {"pass_threshold": 0.9}
+        config.save(update_fields=["config"])
+
+        after = self._calls(auth_client, test_execution)["summary"]["outcomes"]
+        assert (after["passed"], after["failed"]) == (0, 1)
+
+    def test_an_eval_template_edit_refreshes_the_cached_page(
+        self, auth_client, organization, run_test, test_execution, analytics_call_executions
+    ):
+        template, _ = self._threshold_eval(
+            organization, run_test, analytics_call_executions
+        )
+        before = self._calls(auth_client, test_execution)["summary"]["outcomes"]
+        assert (before["passed"], before["failed"]) == (1, 0)
+
+        template.pass_threshold = 0.9
+        template.save()
+
+        after = self._calls(auth_client, test_execution)["summary"]["outcomes"]
+        assert (after["passed"], after["failed"]) == (0, 1)
+
+    def test_calls_pages_slice_the_cached_rows(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        first = self._calls(auth_client, test_execution, page=1, page_size=3)
+        second = self._calls(auth_client, test_execution, page=2, page_size=3)
+        third = self._calls(auth_client, test_execution, page=3, page_size=3)
+
+        first_ids = [row["id"] for row in first["results"]]
+        second_ids = [row["id"] for row in second["results"]]
+        assert (first["count"], first["total_pages"]) == (4, 2)
+        assert (len(first_ids), len(second_ids), second["page"]) == (3, 1, 2)
+        assert set(first_ids + second_ids) == {
+            str(call.id) for call in analytics_call_executions
+        }
+        assert third["results"] == []
+
+    def test_run_summary_stays_whole_while_the_page_is_filtered(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        body = self._calls(
+            auth_client, test_execution, filters=json.dumps({"status": ["error"]})
         )
 
-        first = analytics_call_executions[0]
-        queryset = run_calls_queryset(test_execution).annotate(
-            result_goal=Case(
-                When(pk=first.pk, then=Value(None, output_field=CharField())),
-                default=Value("None"),
-                output_field=CharField(),
-            )
+        assert (body["count"], body["summary"]["total"]) == (1, 1)
+        assert body["execution"]["summary"]["total"] == 4
+
+    def test_a_new_completion_time_refreshes_the_cached_page(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        runs = TestExecution.objects.filter(id=test_execution.id)
+        first_completion = timezone.now() - timedelta(minutes=10)
+        runs.update(completed_at=first_completion)
+        self._calls(auth_client, test_execution)
+        call = analytics_call_executions[0]
+        call.duration_seconds = 600
+        call.save(update_fields=["duration_seconds"])
+        # A rerun ends by stamping the run again.
+        runs.update(completed_at=first_completion + timedelta(minutes=5))
+
+        summary = self._calls(auth_client, test_execution)["summary"]
+        assert summary["duration"]["average"] == 180
+
+    def test_deleting_a_call_refreshes_the_cached_page(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        assert self._calls(auth_client, test_execution)["count"] == 4
+
+        deleted = auth_client.delete(
+            f"/simulate/call-executions/{analytics_call_executions[0].id}/delete/"
         )
-        with django_assert_num_queries(2):
-            groups = group_run_calls(
-                queryset, "goal", [{"id": str(first.pk)}], [], execution=test_execution
-            )
-        assert sorted(group["total"] for group in groups) == [1, 3]
-        assert all(group["key"] == "None" for group in groups)
+        assert deleted.status_code == status.HTTP_204_NO_CONTENT
+
+        after = self._calls(auth_client, test_execution)
+        assert (after["count"], len(after["results"])) == (3, 3)
+        assert after["summary"]["total"] == 3
+        assert sum(facet["count"] for facet in after["facets"]["status"]) == 3
+
+    def test_grouping_without_a_key_reads_the_same_cached_rows(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        first = self._calls(auth_client, test_execution)
+        call = analytics_call_executions[0]
+        call.duration_seconds = 600
+        call.save(update_fields=["duration_seconds"])
+
+        # Still the first pass: a grouping with no key filters nothing.
+        grouped = self._calls(auth_client, test_execution, group_by="status")
+        assert grouped["summary"] == first["summary"]
+        assert grouped["groups"]
+
+    def test_a_group_key_is_cached_per_grouping(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        by_status = self._calls(
+            auth_client, test_execution, group_by="status", group_key="error"
+        )
+        by_goal = self._calls(
+            auth_client, test_execution, group_by="goal", group_key="error"
+        )
+
+        assert (by_status["count"], by_goal["count"]) == (1, 0)
+
+    def test_groups_score_an_eval_the_catalog_has_not_listed(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        # The catalog is cached here, before the call carries the eval.
+        assert self._calls(auth_client, test_execution)["evaluation_columns"] == []
+        call = analytics_call_executions[0]
+        call.eval_outputs = {
+            "native-check": {
+                "source": "harness",
+                "name": "Native check",
+                "output": "Passed",
+                "status": "completed",
+            }
+        }
+        call.save(update_fields=["eval_outputs"])
+
+        body = self._calls(auth_client, test_execution, group_by="status")
+        scored = {
+            group["key"]: group["aggregates"]["evaluations"]["native-check"]
+            for group in body["groups"]
+        }
+        assert scored["passed"] == {"scored": 1, "score_sum": 1.0}
+
+    def test_calls_page_is_served_when_the_cache_cannot_store_it(
+        self,
+        auth_client,
+        test_execution,
+        analytics_call_executions,
+        monkeypatch,
+        caplog,
+    ):
+        class RefusesWrites:
+            timeouts = []
+
+            def get(self, key):
+                return None
+
+            def set(self, key, value, timeout):
+                self.timeouts.append(timeout)
+                raise RuntimeError("cache write refused")
+
+        page_cache = RefusesWrites()
+        monkeypatch.setattr("simulate.services.run_results_v3_page.cache", page_cache)
+
+        with caplog.at_level("WARNING", logger="simulate.services.run_results_v3_page"):
+            body = self._calls(auth_client, test_execution)
+        assert body["count"] == len(analytics_call_executions)
+        assert "Could not cache 4 calls of run" in caplog.text
+        # Every stale case the key does not cover is bounded by this lifetime.
+        assert len(page_cache.timeouts) == 1
+        assert 0 < page_cache.timeouts[0] <= 5 * 60
 
     def test_detail_uses_v3_route(self, auth_client, analytics_call_executions):
         call = analytics_call_executions[0]
@@ -1678,6 +2127,8 @@ class TestRunResultsV3Views:
         assert response.status_code == status.HTTP_200_OK
         body = response.json()
         assert body["summary"]["outcomes"] == {
+            "queued": 0,
+            "in_progress": 0,
             "passed": 1,
             "failed": 0,
             "error": 1,
@@ -2009,15 +2460,43 @@ class TestRunResultsV3Views:
         assert str(call.id) in csv_body
         assert str(analytics_call_executions[-1].id) not in csv_body
 
+    @pytest.mark.parametrize(
+        ("queued_status", "active_status"),
+        [("pending", "ongoing"), ("queued", "analyzing")],
+    )
+    @pytest.mark.parametrize(
+        ("harness_outcome", "ended_reason"),
+        [
+            (None, None),
+            ("escalated", None),
+            ("handoff", None),
+            (None, "warm-transfer-completed"),
+        ],
+    )
     def test_goal_outcome_chart_drill_down_matches_list_and_export(
-        self, auth_client, test_execution, analytics_call_executions
+        self,
+        auth_client,
+        test_execution,
+        analytics_call_executions,
+        queued_status,
+        active_status,
+        harness_outcome,
+        ended_reason,
     ):
-        transferred, passed = analytics_call_executions[:2]
+        transferred, passed, queued, in_progress = analytics_call_executions
         for call in (transferred, passed):
             call.call_metadata = {"harness_outcome_status": "passed"}
             call.save(update_fields=["call_metadata"])
         transferred.ended_reason = "warm-transfer-completed"
         transferred.save(update_fields=["ended_reason"])
+        for call, call_status in (
+            (queued, queued_status),
+            (in_progress, active_status),
+        ):
+            call.status = call_status
+            call.call_metadata = {"harness_outcome_status": harness_outcome}
+            call.ended_reason = ended_reason
+            call.save(update_fields=["status", "call_metadata", "ended_reason"])
 
         base = f"/simulate/v3/test-executions/{test_execution.id}"
         dashboard = auth_client.get(f"{base}/analytics/").json()["dashboard"]
@@ -2026,8 +2505,16 @@ class TestRunResultsV3Views:
         )
         counts = {segment["label"]: segment["count"] for segment in chart["segments"]}
         assert counts["passed"] == counts["escalated"] == 1
+        assert counts["queued"] == counts["in_progress"] == 1
+        assert sum(counts.values()) == chart["total"] == 4
+        assert sum(segment["share"] for segment in chart["segments"]) == 100
 
-        for outcome, expected in (("passed", passed), ("escalated", transferred)):
+        for outcome, expected in (
+            ("passed", passed),
+            ("escalated", transferred),
+            ("queued", queued),
+            ("in_progress", in_progress),
+        ):
             filters = {"goal_outcome": [outcome]}
             response = auth_client.get(
                 f"{base}/calls/", {"filters": json.dumps(filters)}
@@ -2044,8 +2531,48 @@ class TestRunResultsV3Views:
             assert export.status_code == 200
             csv_body = b"".join(export.streaming_content).decode()
             assert str(expected.id) in csv_body
-            other = transferred if expected == passed else passed
-            assert str(other.id) not in csv_body
+            for other in analytics_call_executions:
+                if other != expected:
+                    assert str(other.id) not in csv_body
+
+    @pytest.mark.parametrize(
+        ("call_status", "outcome"),
+        [
+            ("pending", "queued"),
+            ("queued", "queued"),
+            ("ongoing", "in_progress"),
+            ("analyzing", "in_progress"),
+        ],
+    )
+    def test_goal_outcome_chart_counts_all_active_calls(
+        self,
+        auth_client,
+        test_execution,
+        analytics_call_executions,
+        call_status,
+        outcome,
+    ):
+        for call in analytics_call_executions:
+            call.status = call_status
+            call.save(update_fields=["status"])
+
+        response = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/analytics/"
+        )
+        assert response.status_code == status.HTTP_200_OK
+        chart = next(
+            item
+            for item in response.json()["dashboard"]["breakdowns"]
+            if item["key"] == "goal_outcome"
+        )
+        segment = next(item for item in chart["segments"] if item["label"] == outcome)
+        assert segment == {
+            "label": outcome,
+            "count": 4,
+            "share": 100.0,
+            "statuses": [outcome],
+        }
+        assert sum(item["count"] for item in chart["segments"]) == chart["total"] == 4
 
     def test_dashboard_distinguishes_missing_metrics_and_tool_verdicts(
         self, auth_client, test_execution, analytics_call_executions
@@ -2398,6 +2925,371 @@ class TestRunResultsV3Views:
             )
             assert response.status_code == status.HTTP_404_NOT_FOUND
 
+    def test_eval_added_after_completion_appears_on_next_load(
+        self,
+        auth_client,
+        test_execution,
+        run_test,
+        score_template,
+        eval_summary_te1_calls,
+    ):
+        """Configs added after a run completes must not wait on the cache."""
+        url = f"/simulate/v3/test-executions/{test_execution.id}/calls/"
+        warm = auth_client.get(url)
+        assert warm.status_code == status.HTTP_200_OK
+
+        new_config = SimulateEvalConfig.objects.create(
+            name="Bonus Score", eval_template=score_template, run_test=run_test
+        )
+        call = eval_summary_te1_calls[0]
+        call.eval_outputs = {
+            **call.eval_outputs,
+            str(new_config.id): {
+                "name": "Bonus Score",
+                "output": 0.75,
+                "output_type": "score",
+            },
+        }
+        call.save(update_fields=["eval_outputs"])
+
+        response = auth_client.get(url)
+        assert response.status_code == status.HTTP_200_OK
+        body = response.json()
+        assert str(new_config.id) in {
+            column["id"] for column in body["evaluation_columns"]
+        }
+        row = next(item for item in body["results"] if item["id"] == str(call.id))
+        evaluations = {item["id"]: item for item in row["evaluations"]}
+        assert evaluations[str(new_config.id)]["score"] == 0.75
+
+    def test_catalog_lists_configs_added_or_renamed_after_a_warm_load(
+        self,
+        test_execution,
+        run_test,
+        score_template,
+        pass_fail_eval_config,
+        score_eval_config,
+    ):
+        """The CSV header and run analytics read the catalog alone, so a
+        config added or renamed after the run completed must show there,
+        newest first, before any call has an output for it."""
+        from simulate.services.run_results_v3 import build_evaluation_catalog
+
+        now = timezone.now()
+        SimulateEvalConfig.objects.filter(pk=pass_fail_eval_config.pk).update(
+            created_at=now - timedelta(minutes=2)
+        )
+        SimulateEvalConfig.objects.filter(pk=score_eval_config.pk).update(
+            created_at=now - timedelta(minutes=1)
+        )
+        warm, _ = build_evaluation_catalog(test_execution)
+        assert warm == [
+            {
+                "id": str(score_eval_config.id),
+                "name": "Accuracy Score",
+                "kind": "evaluation",
+            },
+            {
+                "id": str(pass_fail_eval_config.id),
+                "name": "Quality Gate",
+                "kind": "evaluation",
+            },
+        ]
+
+        new_config = SimulateEvalConfig.objects.create(
+            name="Bonus Score", eval_template=score_template, run_test=run_test
+        )
+        pass_fail_eval_config.name = "Quality Gate v2"
+        pass_fail_eval_config.save(update_fields=["name"])
+
+        columns, live_eval_ids = build_evaluation_catalog(test_execution)
+
+        assert columns == [
+            {"id": str(new_config.id), "name": "Bonus Score", "kind": "evaluation"},
+            {
+                "id": str(score_eval_config.id),
+                "name": "Accuracy Score",
+                "kind": "evaluation",
+            },
+            {
+                "id": str(pass_fail_eval_config.id),
+                "name": "Quality Gate v2",
+                "kind": "evaluation",
+            },
+        ]
+        assert live_eval_ids == {
+            str(new_config.id),
+            str(score_eval_config.id),
+            str(pass_fail_eval_config.id),
+        }
+
+    def test_eval_removed_after_completion_disappears_on_next_load(
+        self,
+        auth_client,
+        test_execution,
+        pass_fail_eval_config,
+        eval_summary_te1_calls,
+    ):
+        url = f"/simulate/v3/test-executions/{test_execution.id}/calls/"
+        warm = auth_client.get(url)
+        assert str(pass_fail_eval_config.id) in {
+            column["id"] for column in warm.json()["evaluation_columns"]
+        }
+
+        pass_fail_eval_config.deleted = True
+        pass_fail_eval_config.save(update_fields=["deleted"])
+
+        response = auth_client.get(url)
+        assert response.status_code == status.HTTP_200_OK
+        assert str(pass_fail_eval_config.id) not in {
+            column["id"] for column in response.json()["evaluation_columns"]
+        }
+
+    def test_harness_columns_remain_cached_after_completion(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        call = analytics_call_executions[-1]
+        call.eval_outputs = {
+            "policy-check": {
+                "source": "harness",
+                "name": "Policy check",
+                "output": "Passed",
+                "output_type": "Pass/Fail",
+            }
+        }
+        call.save(update_fields=["eval_outputs"])
+
+        url = f"/simulate/v3/test-executions/{test_execution.id}/calls/"
+        warm = auth_client.get(url)
+        assert warm.status_code == status.HTTP_200_OK
+        assert "policy-check" in {
+            column["id"] for column in warm.json()["evaluation_columns"]
+        }
+
+        call.eval_outputs = {}
+        call.save(update_fields=["eval_outputs"])
+
+        response = auth_client.get(url)
+        assert response.status_code == status.HTTP_200_OK
+        # Served from the harness-columns cache: the column survives even
+        # though the call no longer carries that output.
+        assert "policy-check" in {
+            column["id"] for column in response.json()["evaluation_columns"]
+        }
+
+    def test_harness_scored_config_deleted_after_warm_load_keeps_its_column(
+        self, test_execution, analytics_call_executions, score_eval_config
+    ):
+        # The catalog alone decides columns for other pages and the CSV
+        # header, so check it directly: page rows would mask a gap here.
+        from simulate.services.run_results_v3 import build_evaluation_catalog
+
+        config_id = str(score_eval_config.id)
+        call = analytics_call_executions[0]
+        call.eval_outputs = {
+            config_id: {
+                "source": "harness",
+                "name": "Accuracy Score",
+                "output": 0.7,
+                "output_type": "score",
+            }
+        }
+        call.save(update_fields=["eval_outputs"])
+
+        warm, _ = build_evaluation_catalog(test_execution)
+        assert config_id in {column["id"] for column in warm}
+
+        score_eval_config.deleted = True
+        score_eval_config.save(update_fields=["deleted"])
+
+        columns, live_eval_ids = build_evaluation_catalog(test_execution)
+        # Same as an uncached scan: the config is gone, but the harness's own
+        # result is still listed as a harness column.
+        assert config_id in {column["id"] for column in columns}
+        assert config_id not in live_eval_ids
+
+    def test_harness_output_for_live_config_id_is_deduped_with_name_precedence(
+        self, test_execution, analytics_call_executions, score_eval_config
+    ):
+        """A harness output keyed by a still-live config id must not create a
+        second column, the configured name must win over the harness name,
+        and among harness-only ids the name on the oldest call must win,
+        however recently another call was saved."""
+        from simulate.services.run_results_v3 import build_evaluation_catalog
+
+        config_id = str(score_eval_config.id)
+        calls = analytics_call_executions
+        calls[0].eval_outputs = {
+            config_id: {
+                "source": "harness",
+                "name": "Harness Name Should Lose",
+                "output": 0.7,
+                "output_type": "score",
+            },
+            "policy-check": {
+                "source": "harness",
+                "name": "Name A",
+                "output": "Passed",
+                "output_type": "Pass/Fail",
+            },
+        }
+        calls[0].save(update_fields=["eval_outputs"])
+        calls[1].eval_outputs = {
+            "policy-check": {
+                "source": "harness",
+                "name": "Name B",
+                "output": "Failed",
+                "output_type": "Pass/Fail",
+            }
+        }
+        calls[1].save(update_fields=["eval_outputs"])
+        CallExecution.objects.filter(pk=calls[1].pk).update(
+            created_at=calls[0].created_at - timedelta(minutes=1),
+            updated_at=calls[0].updated_at - timedelta(minutes=1),
+        )
+
+        columns, live_eval_ids = build_evaluation_catalog(test_execution)
+
+        assert columns == [
+            {"id": config_id, "name": "Accuracy Score", "kind": "evaluation"},
+            {"id": "policy-check", "name": "Name B", "kind": "evaluation"},
+        ]
+        assert [column["id"] for column in columns].count(config_id) == 1
+        assert live_eval_ids == {config_id}
+
+    @pytest.mark.parametrize(
+        "in_flight_status",
+        [
+            TestExecution.ExecutionStatus.RUNNING,
+            TestExecution.ExecutionStatus.EVALUATING,
+        ],
+    )
+    def test_rerun_computes_fresh_harness_columns_and_rotates_the_cache_key(
+        self, test_execution, analytics_call_executions, in_flight_status
+    ):
+        """A rerun must not surface the previous attempt's harness columns:
+        the scan must be fresh while the run is running or evaluating (an
+        evaluating rerun still carries the previous attempt's completed_at),
+        and the completed-run cache key must rotate so a new attempt is
+        never masked by the old one."""
+        from simulate.services.run_results_v3 import build_evaluation_catalog
+
+        call = analytics_call_executions[0]
+        call.eval_outputs = {
+            "attempt-a": {
+                "source": "harness",
+                "name": "Attempt A",
+                "output": "Passed",
+                "output_type": "Pass/Fail",
+            }
+        }
+        call.save(update_fields=["eval_outputs"])
+        # A whole second, so the bump below stays inside it: a key that kept
+        # only whole seconds would then fail to rotate.
+        original_completed_at = (test_execution.completed_at or timezone.now()).replace(
+            microsecond=0
+        )
+        test_execution.completed_at = original_completed_at
+        test_execution.save(update_fields=["completed_at"])
+
+        warm, _ = build_evaluation_catalog(test_execution)
+        assert {column["id"] for column in warm} == {"attempt-a"}
+
+        test_execution.status = in_flight_status
+        test_execution.save(update_fields=["status"])
+        call.eval_outputs = {
+            "attempt-b": {
+                "source": "harness",
+                "name": "Attempt B",
+                "output": "Passed",
+                "output_type": "Pass/Fail",
+            }
+        }
+        call.save(update_fields=["eval_outputs"])
+
+        while_in_flight, _ = build_evaluation_catalog(test_execution)
+        assert {column["id"] for column in while_in_flight} == {"attempt-b"}
+
+        test_execution.status = TestExecution.ExecutionStatus.COMPLETED
+        test_execution.completed_at = original_completed_at + timedelta(
+            milliseconds=300
+        )
+        test_execution.save(update_fields=["status", "completed_at"])
+
+        rerun_catalog, _ = build_evaluation_catalog(test_execution)
+        assert {column["id"] for column in rerun_catalog} == {"attempt-b"}
+
+    def test_a_value_under_the_harness_key_that_is_not_a_list_is_rescanned(
+        self, test_execution, analytics_call_executions
+    ):
+        """Whatever else sits under the harness-columns key, the table gets
+        the columns a fresh scan finds rather than an error."""
+        from django.core.cache import cache
+
+        from simulate.services.run_results_v3 import build_evaluation_catalog
+
+        call = analytics_call_executions[0]
+        call.eval_outputs = {
+            "attempt-a": {
+                "source": "harness",
+                "name": "Attempt A",
+                "output": "Passed",
+                "output_type": "Pass/Fail",
+            }
+        }
+        call.save(update_fields=["eval_outputs"])
+        test_execution.status = TestExecution.ExecutionStatus.COMPLETED
+        test_execution.completed_at = timezone.now()
+        test_execution.save(update_fields=["status", "completed_at"])
+        cache.set(
+            "simulate:v3:harness-eval-columns:v2:"
+            f"{test_execution.id}:{test_execution.completed_at.timestamp()}",
+            ([], []),
+        )
+
+        columns, _ = build_evaluation_catalog(test_execution)
+
+        assert "attempt-a" in {column["id"] for column in columns}
+
+    def test_a_sub_goal_check_keeps_its_kind_on_a_cached_load(
+        self, test_execution, analytics_call_executions
+    ):
+        """A harness column named after one of the call's receipt sub-goals is
+        a sub-goal column, on the first load and on the cached one."""
+        from simulate.services.run_results_v3 import build_evaluation_catalog
+
+        call = analytics_call_executions[0]
+        call.call_metadata = {
+            "hosted_harness_receipt": {
+                "sub_goals": [{"name": "identity_verified", "held": True}]
+            }
+        }
+        call.eval_outputs = {
+            "sub-goal-check": {
+                "source": "harness",
+                "name": "identity_verified",
+                "output": "Passed",
+                "output_type": "Pass/Fail",
+            },
+            "policy-check": {
+                "source": "harness",
+                "name": "Policy check",
+                "output": "Passed",
+                "output_type": "Pass/Fail",
+            },
+        }
+        call.save(update_fields=["call_metadata", "eval_outputs"])
+        expected = [
+            {"id": "policy-check", "name": "Policy check", "kind": "evaluation"},
+            {"id": "sub-goal-check", "name": "identity_verified", "kind": "sub_goal"},
+        ]
+
+        first, _ = build_evaluation_catalog(test_execution)
+        cached, _ = build_evaluation_catalog(test_execution)
+
+        assert first == expected
+        assert cached == expected
+
     @staticmethod
     def _harness_job(organization, workspace, **fields):
         return HostedHarnessJob.no_workspace_objects.create(
@@ -2465,6 +3357,10 @@ class TestRunResultsV3Views:
         row = self._call_row(auth_client, test_execution, call)
 
         assert row["sub_goals"] == ["pin_verified", "exact_greeting"]
+        assert row["sub_goal_results"] == [
+            {"name": "pin_verified", "passed": None},
+            {"name": "exact_greeting", "passed": None},
+        ]
 
     def test_receipt_sub_goals_take_priority_over_the_authored_scenarios(
         self,
@@ -2491,6 +3387,9 @@ class TestRunResultsV3Views:
         row = self._call_row(auth_client, test_execution, call)
 
         assert row["sub_goals"] == ["identity_verified"]
+        assert row["sub_goal_results"] == [
+            {"name": "identity_verified", "passed": True}
+        ]
 
     @pytest.mark.parametrize("layout", ["trial", "registration"])
     def test_authored_sub_goals_filter_and_facet_like_the_rows_show_them(
@@ -2556,6 +3455,7 @@ class TestRunResultsV3Views:
         body = response.json()
         row = next(row for row in body["results"] if row["id"] == str(call.id))
         assert row["sub_goals"] == ["pin_verified"]
+        assert row["sub_goal_results"] == [{"name": "pin_verified", "passed": None}]
         assert body["facets"]["sub_goal"] == [{"value": "pin_verified", "count": 1}]
 
     def test_receipt_sub_goals_keep_the_authored_ones_out_of_filters_and_facets(

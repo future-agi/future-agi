@@ -16,6 +16,10 @@ of existing ones, but keeps an existing schedule's paused state and note, so a
 """
 
 import asyncio
+import atexit
+import os
+import sys
+import threading
 
 from django.core.management.base import BaseCommand, CommandError
 
@@ -86,6 +90,14 @@ class Command(BaseCommand):
             metavar="SCHEDULE_ID",
             help="Describe a specific schedule",
         )
+
+    def run_from_argv(self, argv):
+        super().run_from_argv(argv)
+        # The usual exit steps, minus the teardown that aborts under an SDK thread.
+        threading._shutdown()
+        atexit._run_exitfuncs()
+        sys.stdout.flush()
+        os._exit(0)
 
     def handle(self, *args, **options):
         asyncio.run(self._handle_async(options))

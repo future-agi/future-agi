@@ -10,8 +10,16 @@ import pytest
 from django.core.serializers.json import DjangoJSONEncoder
 from django.test import override_settings
 
+from tracer.constants.grouping_versions import (
+    GROUPING_POLICY_VERSION,
+    SAMPLED_GROUPING_POLICY_VERSION,
+)
 from tracer.models.trace_error_analysis import ErrorClusterTraces
-from tracer.models.trace_grouping import TraceGroupingFeature, TraceGroupingWork
+from tracer.models.trace_grouping import (
+    TraceGroupingFeature,
+    TraceGroupingScope,
+    TraceGroupingWork,
+)
 from tracer.services.grouping.accounting import reserve_call, settle_call
 from tracer.services.grouping.control import (
     checkpoint_attempt,
@@ -35,7 +43,10 @@ pytestmark = pytest.mark.django_db
     ERROR_FEED_GROUPING_TENANT_BUDGET_USD="10",
     ERROR_FEED_GROUPING_DEBOUNCE_SECONDS=0,
 )
-def test_python_claim_node_features_python_completion(observe_project):
+@pytest.mark.parametrize(
+    "policy_version", [GROUPING_POLICY_VERSION, SAMPLED_GROUPING_POLICY_VERSION]
+)
+def test_python_claim_node_features_python_completion(observe_project, policy_version):
     worker_root = os.environ.get("OMEGA_GROUPING_WORKER_ROOT")
     if not worker_root:
         pytest.skip("set OMEGA_GROUPING_WORKER_ROOT to the worker checkout")
@@ -84,6 +95,9 @@ process.stdout.write(JSON.stringify(completion));
     vectors = [
         {**row, "bucket_keys": row["index_buckets"]} for row in completion["features"]
     ]
+    TraceGroupingScope.no_workspace_objects.filter(project=observe_project).update(
+        policy_version=policy_version
+    )
     with patch(
         "tracer.services.grouping.context.GroupingFeatureStore"
     ) as feature_store:

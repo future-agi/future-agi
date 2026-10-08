@@ -103,7 +103,7 @@ def test_many_evaluations_project_once_for_filtered_group_aggregates():
     baseline_sql, baseline_params = grouped(baseline).query.sql_with_params()
 
     assert sql.count("CROSS JOIN LATERAL") == 1
-    assert sql.count("OFFSET 0") == 1
+    assert sql.count("AS value OFFSET 0") == 1
     assert len(sql) < len(baseline_sql) / 3
     assert len(params) < len(baseline_params) / 3
     cloned_sql, cloned_params = grouped(queryset).all().query.sql_with_params()
