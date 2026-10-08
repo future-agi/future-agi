@@ -1308,7 +1308,7 @@ def test_others_provision_preserves_the_complete_environment_prompt(
         "connector": "phone",
         "mode": "connect_only",
         "config": {
-            "phone_number": "+19258565786",
+            "phone_number": "+15551234567",
             "target_system_prompt": full_prompt,
             "inbound": True,
         },
@@ -1332,10 +1332,12 @@ def test_others_provision_preserves_the_complete_environment_prompt(
     job.refresh_from_db()
     agent = job.run_test.agent_definition
     assert agent.description == full_prompt
+    assert agent.contact_number == "+15551234567"
     version = agent.latest_version
     assert version is not None
     assert version.description == full_prompt
     assert version.configuration_snapshot["description"] == full_prompt
+    assert version.configuration_snapshot["contact_number"] == "+15551234567"
 
 
 @pytest.mark.django_db
@@ -1421,6 +1423,43 @@ def test_provision_records_explicit_rl_call_behavior_over_authored_direction(
     assert agent.target_speaks_first is True
     assert agent.latest_version.configuration_snapshot["inbound"] is False
     assert agent.latest_version.configuration_snapshot["target_speaks_first"] is True
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("connector", "config_key", "target_id"),
+    [
+        ("retell", "agent_id", "agent_retell_123"),
+        ("vapi", "assistant_id", "assistant_vapi_456"),
+    ],
+)
+def test_provision_records_provider_target_identity(
+    organization, workspace, connector, config_key, target_id
+):
+    payload = _payload()
+    payload["agent"] = {
+        "connector": connector,
+        "mode": "connect_only",
+        "config": {config_key: target_id},
+        "secret_refs": {},
+    }
+    job, _ = create_hosted_job(
+        organization,
+        payload,
+        idempotency_key=f"{connector}-target-identity",
+        workspace=workspace,
+    )
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+
+    response = _provision(
+        APIClient(), capability, agent_prompt="Handle the provider call."
+    )
+    assert response.status_code == 200, response.content
+
+    job.refresh_from_db()
+    agent = job.run_test.agent_definition
+    assert agent.assistant_id == target_id
+    assert agent.latest_version.configuration_snapshot["assistant_id"] == target_id
 
 
 # --- The hand list is gone --------------------------------------------------------
