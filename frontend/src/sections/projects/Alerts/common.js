@@ -173,6 +173,10 @@ export const notificationOptions = [
     label: "Slack",
     value: "slack",
   },
+  {
+    label: "Webhook",
+    value: "webhook",
+  },
 ];
 
 export const timeOptions = [
