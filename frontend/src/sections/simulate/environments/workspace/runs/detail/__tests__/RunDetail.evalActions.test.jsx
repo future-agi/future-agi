@@ -221,6 +221,37 @@ describe("RunDetail — the drawer and the column menus share one re-run", () =>
   });
 });
 
+describe("RunDetail — editing from a column menu", () => {
+  it("opens the edit form on that column's eval, then the confirm on it once saved", async () => {
+    const user = userEvent.setup();
+    renderDetail();
+
+    await user.click(
+      screen.getByRole("button", { name: "Actions for no_misselling" }),
+    );
+    await user.click(menuItem("Edit"));
+    expect(await screen.findByText("edit-drawer:c1")).toBeInTheDocument();
+    expect(
+      screen.queryByText("This will overwrite previous evaluation results."),
+    ).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "save edit" }));
+    const confirm = await screen.findByRole("dialog");
+    expect(
+      within(confirm).getByText("no_misselling", { exact: false }),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.queryByText("edit-drawer:c1")).toBeNull(),
+    );
+
+    await user.click(
+      within(confirm).getByRole("button", { name: "Run Evaluations" }),
+    );
+    expect(runEvaluationsAgain).toHaveBeenCalledWith("env-1", "ex1", ["c1"]);
+  });
+});
+
 describe("RunDetail — dialogs opened from the All Evaluations drawer", () => {
   // Every modal here sits at MUI's own z-index for its kind (drawers 1200,
   // dialogs 1300), so between two drawers the later one in the page is on
