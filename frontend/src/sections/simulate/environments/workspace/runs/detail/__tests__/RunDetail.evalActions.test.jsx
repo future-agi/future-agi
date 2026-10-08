@@ -199,6 +199,7 @@ describe("RunDetail — the drawer and the column menus share one re-run", () =>
       screen.getByRole("button", { name: "Actions for no_misselling" }),
     );
     expect(menuItem("Re-run")).toHaveAttribute("aria-disabled", "true");
+    expect(menuItem("Edit")).toHaveAttribute("aria-disabled", "true");
     expect(runEvaluationsAgain).toHaveBeenCalledTimes(1);
   });
 

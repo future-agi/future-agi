@@ -71,7 +71,9 @@ export default function EvalColumnActions({
           : !canRun
             ? NOT_COMPLETED_TOOLTIP
             : null;
-  const editDisabled = !known || Boolean(editReason);
+  // A re-run already on its way would grade the old settings, so an edit
+  // waits for it as a second re-run does.
+  const editDisabled = !known || Boolean(editReason) || rerunPending;
 
   const menuItem = ({ label, icon, reason, disabled, onClick }) => (
     <MenuItem

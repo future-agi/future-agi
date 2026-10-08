@@ -119,10 +119,12 @@ describe("EvalColumnActions", () => {
     expect(screen.getByText(GRADING_TOOLTIP)).toBeInTheDocument();
   });
 
-  it("holds re-runs while the run page's re-run is on its way", () => {
+  it("holds both while the run page's re-run is on its way, without a reason", () => {
     setup({ rerunPending: true });
     expect(item("Re-run")).toHaveAttribute("aria-disabled", "true");
-    expect(item("Edit")).not.toHaveAttribute("aria-disabled", "true");
+    expect(item("Edit")).toHaveAttribute("aria-disabled", "true");
+    expect(screen.queryByText(NOT_COMPLETED_TOOLTIP)).toBeNull();
+    expect(screen.queryByText(GRADING_TOOLTIP)).toBeNull();
   });
 
   it("says so when the column's eval is no longer on the environment", () => {

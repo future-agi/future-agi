@@ -474,4 +474,12 @@ describe("AllEvaluationsDrawer — editing an eval", () => {
       screen.getByRole("button", { name: "Edit no_misselling" }),
     ).toBeDisabled();
   });
+
+  it("holds every edit while the run page's re-run is on its way", () => {
+    setup({ rerunPending: true });
+
+    expect(
+      screen.getByRole("button", { name: "Edit no_misselling" }),
+    ).toBeDisabled();
+  });
 });

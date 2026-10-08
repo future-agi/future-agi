@@ -279,7 +279,13 @@ export default function AllEvaluationsDrawer({
                       <span>
                         <IconButton
                           aria-label={`Edit ${config.name}`}
-                          disabled={!editable || grading || !canRun || editOpen}
+                          disabled={
+                            !editable ||
+                            grading ||
+                            !canRun ||
+                            editOpen ||
+                            rerunPending
+                          }
                           onClick={() =>
                             onEdit?.(config, { onSuccess: onClose })
                           }
@@ -343,6 +349,7 @@ AllEvaluationsDrawer.propTypes = {
   canRun: PropTypes.bool,
   grading: PropTypes.bool,
   // The run page's re-run is on its way, from here or from a column menu.
+  // Runs and edits both wait on it: one sent now would grade the old settings.
   rerunPending: PropTypes.bool,
   // The run page's edit form is open.
   editOpen: PropTypes.bool,
