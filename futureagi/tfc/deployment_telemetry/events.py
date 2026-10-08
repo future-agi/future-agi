@@ -76,7 +76,7 @@ _flush_thread: threading.Thread | None = None
 def pseudonymous_id(value: Any, prefix: str, instance_id: UUID | str | None = None) -> str:
     """Return a stable, install-local actor identifier without secrets/PII."""
     scope = str(instance_id) if instance_id is not None else "unregistered"
-    digest = hashlib.sha256(f"{scope}:{value}".encode("utf-8")).hexdigest()[:24]
+    digest = hashlib.sha256(f"{scope}:{value}".encode()).hexdigest()[:24]
     return f"{prefix}:{digest}"
 
 

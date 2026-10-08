@@ -3,12 +3,16 @@ from __future__ import annotations
 import json
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
 
-from tfc.deployment_telemetry.event_buffer import load_event, pending_events, store_event
+from tfc.deployment_telemetry.event_buffer import (
+    load_event,
+    pending_events,
+    store_event,
+)
 from tfc.deployment_telemetry.events import (
     build_event,
     flush_events,

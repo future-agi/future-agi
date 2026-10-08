@@ -11,9 +11,11 @@ from uuid import UUID, uuid4
 
 import structlog
 
-from tfc.deployment_telemetry.buffer import _trusted, _refuse
-from tfc.deployment_telemetry.config import get_telemetry_buffer_dir
-from tfc.deployment_telemetry.config import BUFFER_RETENTION_DAYS
+from tfc.deployment_telemetry.buffer import _refuse, _trusted
+from tfc.deployment_telemetry.config import (
+    BUFFER_RETENTION_DAYS,
+    get_telemetry_buffer_dir,
+)
 
 logger = structlog.get_logger(__name__)
 
