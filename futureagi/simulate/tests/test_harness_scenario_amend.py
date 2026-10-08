@@ -318,3 +318,78 @@ def test_an_archive_that_cannot_take_the_edit_leaves_everything_unchanged(
     output = HostedHarnessStageOutput.no_workspace_objects.get(job=job, kind="scenarios")
     assert [one["name"] for one in output.data] == ["one", "two"]
     pushed.assert_not_called()
+
+
+def _repoint(job, suite):
+    job.payload = {**job.payload, "metadata": {"authoring_revision": "edited"}}
+    job.save(update_fields=["payload", "updated_at"])
+
+
+def test_a_failed_row_write_reverts_the_snapshot_and_the_suite(user, workspace):
+    job = _job(user, workspace, SUITE)
+    with patch(
+        "simulate.services.hosted_harness_gateway.push_scenarios_into_live_sandbox",
+        return_value=False,
+    ) as pushed, patch(
+        "simulate.services.hosted_harness_gateway.rewrite_authoring_scenarios",
+        side_effect=_repoint,
+    ), patch(
+        "simulate.services.harness_scenarios.index_scenarios",
+        side_effect=RuntimeError("row write failed"),
+    ):
+        response = _post(user, job, [{"op": "drop", "scenario": "two"}])
+
+    receipt = response.json()["receipts"][0]
+    assert receipt["outcome"] == "refused"
+    assert "could not be updated" in receipt["why"]
+    job.refresh_from_db()
+    assert job.payload["metadata"] == {}
+    output = HostedHarnessStageOutput.no_workspace_objects.get(
+        job=job, kind="scenarios"
+    )
+    assert [one["name"] for one in output.data] == ["one", "two"]
+    pushed.assert_not_called()
+
+
+def test_a_sandbox_that_cannot_take_the_change_keeps_it_saved(user, workspace):
+    job = _job(user, workspace, SUITE)
+    with (
+        patch(
+            "simulate.services.hosted_harness_gateway.push_scenarios_into_live_sandbox",
+            side_effect=RuntimeError("sandbox gone"),
+        ),
+        patch(
+            "simulate.services.hosted_harness_gateway.rewrite_authoring_scenarios",
+            return_value=None,
+        ),
+    ):
+        response = _post(user, job, [{"op": "drop", "scenario": "two"}])
+
+    assert response.json()["receipts"][0]["outcome"] == "applied"
+    output = HostedHarnessStageOutput.no_workspace_objects.get(
+        job=job, kind="scenarios"
+    )
+    assert [one["name"] for one in output.data] == ["one"]
+
+
+def test_the_last_scenario_cannot_be_dropped(user, workspace):
+    job = _job(user, workspace, SUITE)
+    with (
+        patch(
+            "simulate.services.hosted_harness_gateway.push_scenarios_into_live_sandbox",
+            return_value=False,
+        ),
+        patch(
+            "simulate.services.hosted_harness_gateway.rewrite_authoring_scenarios",
+            return_value=None,
+        ),
+    ):
+        response = _post(user, job, [{"op": "drop", "scenarios": ["one", "two"]}])
+
+    outcomes = [one["outcome"] for one in response.json()["receipts"]]
+    assert outcomes == ["applied", "refused"]
+    assert "at least one scenario" in response.json()["receipts"][1]["why"]
+    output = HostedHarnessStageOutput.no_workspace_objects.get(
+        job=job, kind="scenarios"
+    )
+    assert [one["name"] for one in output.data] == ["two"]
