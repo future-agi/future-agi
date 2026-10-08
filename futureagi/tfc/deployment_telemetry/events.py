@@ -178,6 +178,8 @@ def _flush_events() -> int:
 
 def flush_events() -> int:
     """Flush pending events synchronously; useful for workers and tests."""
+    if not pending_events(limit=1):
+        return 0
     close_old_connections()
     try:
         prune_events()

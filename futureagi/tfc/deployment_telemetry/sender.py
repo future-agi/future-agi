@@ -410,17 +410,9 @@ def _run_telemetry_cycle() -> dict:
         }
 
     sent_count, flush_complete = _flush_buffer()
-    try:
-        from tfc.deployment_telemetry.events import flush_events
-
-        events_sent = flush_events()
-    except Exception:
-        logger.warning("deployment_telemetry_event_flush_failed", exc_info=True)
-        events_sent = 0
     return {
         "sent": sent_count > 0,
         "sent_count": sent_count,
-        "events_sent": events_sent,
         "flush_complete": flush_complete,
         "window_start": window_start.isoformat(),
         "window_end": window_end.isoformat(),

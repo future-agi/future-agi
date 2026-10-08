@@ -1,3 +1,4 @@
+import inspect
 import os
 import re
 import secrets
@@ -403,7 +404,7 @@ def first_signup(data, mode=None, telemetry_source="web"):
         raise Exception(str(error_messages))
 
 
-def create_owner_account(email, full_name, password, telemetry_source="cli"):
+def create_owner_account(email, full_name, password, telemetry_source=None):
     """An account that owns a new organization, as a first signup creates it:
     ``manage.py create_user`` and the Helm chart's first admin
     (``bootstrap_install``). Raises ValidationError, with messages for the
@@ -417,15 +418,20 @@ def create_owner_account(email, full_name, password, telemetry_source="cli"):
         raise ValidationError(f"A user with the email {email} already exists.")
     # UserSignupSerializer trims the password before it validates and stores it.
     validate_password(password.strip())
-    return first_signup(
-        {
-            "email": email,
-            "full_name": full_name,
-            "password": password,
-            "allow_email": True,
-        },
-        telemetry_source=telemetry_source,
-    )
+    signup_data = {
+        "email": email,
+        "full_name": full_name,
+        "password": password,
+        "allow_email": True,
+    }
+    if telemetry_source is None:
+        return first_signup(signup_data)
+    # Keep compatibility with callers that replace first_signup with a simple
+    # one-argument callback (management-command tests and downstream hooks),
+    # while passing the source to the real implementation.
+    if "telemetry_source" not in inspect.signature(first_signup).parameters:
+        return first_signup(signup_data)
+    return first_signup(signup_data, telemetry_source=telemetry_source)
 
 
 def persist_pending_org_invite(
