@@ -583,6 +583,31 @@ def _protected(state: TraceGroupingIssueState) -> bool:
     )
 
 
+def _refresh_prototypes(
+    state: TraceGroupingIssueState | None, command: dict, members: list[str]
+) -> list[str]:
+    if (
+        state is None
+        or state.retired
+        or state.revision != command["expected_issue_revision"]
+    ):
+        raise GroupingConflict("refresh target is stale or not offered")
+    if _mechanism(command["mechanism"]) != state.mechanism:
+        raise GroupingConflict("refresh cannot silently relabel the issue")
+    prototypes = _ids(
+        command["prototype_occurrence_ids"], limit=5, label="refreshed prototypes"
+    )
+    if not set(prototypes).issubset(members):
+        raise GroupingConflict("refreshed prototype is not a current member")
+    if _protected(state):
+        if set(prototypes) != set(state.prototype_occurrence_ids):
+            raise GroupingConflict("refresh target is stale or not offered")
+        # Old checkpoints may contain a refresh caused only by ID sorting.
+        # Accept it without changing the human-owned issue's order or revision.
+        return state.prototype_occurrence_ids
+    return prototypes
+
+
 def _hard_safe(
     scope: TraceGroupingScope, member_ids: list[str], issue_id: str | None = None
 ) -> None:
@@ -1249,24 +1274,13 @@ def publish_grouping(
                 touched.add(str(state.cluster_id))
             elif kind == "refresh":
                 state = states.get(command["issue_id"])
-                if (
-                    state is None
-                    or state.retired
-                    or _protected(state)
-                    or state.revision != command["expected_issue_revision"]
-                ):
-                    raise GroupingConflict("refresh target is stale or not offered")
-                if _mechanism(command["mechanism"]) != state.mechanism:
-                    raise GroupingConflict("refresh cannot silently relabel the issue")
-                prototypes = _ids(
-                    command["prototype_occurrence_ids"],
-                    limit=5,
-                    label="refreshed prototypes",
+                prototypes = _refresh_prototypes(
+                    state, command, membership.get(command["issue_id"], [])
                 )
-                if not set(prototypes).issubset(membership[command["issue_id"]]):
-                    raise GroupingConflict(
-                        "refreshed prototype is not a current member"
-                    )
+                if _protected(state):
+                    # The validated protected refresh is a no-op, including
+                    # recounting and enqueueing another severity assessment.
+                    continue
                 if prototypes != state.prototype_occurrence_ids:
                     state.prototype_occurrence_ids = prototypes
                     state.revision += 1
@@ -1669,7 +1683,8 @@ def publish_grouping(
                 if work.report_id in waiting_reports
                 else GroupingWorkState.COMPLETED
             )
-            work.save(update_fields=["state", "updated_at"])
+            work.failure_code = ""
+            work.save(update_fields=["state", "failure_code", "updated_at"])
             work.report.grouping_status = (
                 TraceInvestigationGroupingStatus.PENDING
                 if work.report_id in waiting_reports

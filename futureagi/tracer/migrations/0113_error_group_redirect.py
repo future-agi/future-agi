@@ -7,7 +7,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("tracer", "0111_grouping_budget_wait"),
+        ("tracer", "0112_grouping_failure_recovery"),
     ]
 
     operations = [

@@ -115,5 +115,5 @@ def backfill_redirects(apps, schema_editor):
 
 class Migration(migrations.Migration):
     atomic = False
-    dependencies = [("tracer", "0112_error_group_redirect")]
+    dependencies = [("tracer", "0113_error_group_redirect")]
     operations = [migrations.RunPython(backfill_redirects, migrations.RunPython.noop)]

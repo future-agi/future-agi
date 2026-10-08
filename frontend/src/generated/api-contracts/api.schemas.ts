@@ -25947,6 +25947,7 @@ export type UpdateGroupingAttemptApiAction =
 export const UpdateGroupingAttemptApiAction = {
   renew: "renew",
   cancel: "cancel",
+  fail: "fail",
 } as const;
 
 export interface UpdateGroupingAttemptApi {
@@ -25956,11 +25957,15 @@ export interface UpdateGroupingAttemptApi {
    */
   lease_token: string;
   action: UpdateGroupingAttemptApiAction;
+  /** @maxLength 100 */
+  failure_code?: string;
 }
 
 export interface GroupingControlResponseApi {
   /** @minLength 1 */
   state?: string;
+  /** @minLength 1 */
+  failure_code?: string;
   /** @minLength 1 */
   status?: string;
   checkpoint_revision?: number;
