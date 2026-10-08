@@ -1,11 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { LocalDateTime } from "./LocalDateTime";
 
 const NativeDateTimeFormat = Intl.DateTimeFormat;
 const INSTANT = "2025-10-31T00:00:00Z";
+// A closing tooltip stays in the DOM until its fade-out ends.
+const outlastCloseTransition = () =>
+  act(() => new Promise((resolve) => setTimeout(resolve, 400)));
 
 describe("LocalDateTime", () => {
   beforeEach(() => {
@@ -61,12 +64,27 @@ describe("LocalDateTime", () => {
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
   });
 
-  it("opens the disclosure on touch through its own handler, not MUI's long press", () => {
+  // A tap is touchstart, touchend, then the click the browser fires for it.
+  it("keeps the disclosure open after a full tap", async () => {
     render(<LocalDateTime value={INSTANT} />);
     const date = screen.getByText("31 Oct 2025");
     fireEvent.touchStart(date);
+    fireEvent.touchEnd(date);
+    fireEvent.click(date);
+    await outlastCloseTransition();
     const tooltip = screen.getByRole("tooltip");
     expect(tooltip).toHaveTextContent("Zone: Asia/Kolkata (UTC+05:30)");
     expect(tooltip).toHaveTextContent("UTC: 2025-10-31T00:00:00.000Z");
+  });
+
+  it("keeps the disclosure open when the hovered date is clicked", async () => {
+    const user = userEvent.setup();
+    render(<LocalDateTime value={INSTANT} />);
+    const date = screen.getByText("31 Oct 2025");
+    await user.hover(date);
+    await screen.findByRole("tooltip");
+    await user.click(date);
+    await outlastCloseTransition();
+    expect(screen.getByRole("tooltip")).toBeInTheDocument();
   });
 });

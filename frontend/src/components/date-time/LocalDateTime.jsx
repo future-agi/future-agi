@@ -35,7 +35,9 @@ export function LocalDateTime({
       <span
         tabIndex={0}
         onTouchStart={() => setOpen(true)}
-        onClick={() => setOpen((current) => !current)}
+        // Open only: a tap fires a click right after touchstart, so a toggle
+        // would shut the disclosure the tap just opened.
+        onClick={() => setOpen(true)}
       >
         {withTime ? fDateTimeLocal(value) : fDateLocal(value)}
       </span>
