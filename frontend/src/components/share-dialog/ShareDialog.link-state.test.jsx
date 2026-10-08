@@ -604,24 +604,20 @@ describe("ShareDialog confirmed vs pending access (R5, R6)", () => {
 describe("ShareDialog caller compatibility (R8)", () => {
   const voiceFallback = `${window.location.origin}/dashboard/observe/project-1/voice/trace-1`;
 
-  it("AC20: an explicit caller fallback is shown and copyable when no token exists", async () => {
+  it("AC20: a caller-supplied page URL is never offered in place of a share link", async () => {
     mocks.useGetSharedLinks.mockReturnValue(linksState({ data: [] }));
     mocks.useCreateSharedLink.mockReturnValue(
       createState({ isError: true, error: new Error("lost") }),
     );
     render(dialog({ fallbackShareUrl: voiceFallback }));
 
-    expect(await screen.findByText(voiceFallback)).toBeInTheDocument();
-    fireEvent.click(await findReadyCopy());
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith(voiceFallback));
-    expect(publicOption()).toHaveAttribute("aria-disabled", "true");
-  });
-
-  it("AC20: a ready token takes precedence over the caller fallback", async () => {
-    render(dialog({ fallbackShareUrl: voiceFallback }));
-    await findReadyCopy();
-    expect(screen.getByText(sharedUrl("token-1"))).toBeInTheDocument();
+    expect(
+      await screen.findByText("Share link not available"),
+    ).toBeInTheDocument();
     expect(screen.queryByText(voiceFallback)).not.toBeInTheDocument();
+    expect(copyButton()).toBeDisabled();
+    fireEvent.click(copyButton());
+    expect(writeText).not.toHaveBeenCalled();
   });
 
   it("AC20: the implicit current-page fallback is gone for callers without one", () => {
@@ -926,5 +922,51 @@ describe("ShareDialog verifier follow-ups (V2–V5)", () => {
     expect(screen.getByText(/last confirmed/i)).toBeInTheDocument();
     expect(restrictedOption()).toHaveAttribute("aria-pressed", "true");
     expect(copyButton()).toBeDisabled();
+  });
+});
+
+describe("ShareDialog access mode the server has not confirmed", () => {
+  const expectNeitherSelected = () => {
+    expect(publicOption()).toHaveAttribute("aria-pressed", "false");
+    expect(restrictedOption()).toHaveAttribute("aria-pressed", "false");
+  };
+
+  it("selects neither option when the link list fails to load for a public link", async () => {
+    mocks.useGetSharedLinks.mockReturnValue(
+      linksState({ data: undefined, isError: true, error: new Error("boom") }),
+    );
+    refetch.mockResolvedValue({ data: undefined, isError: true });
+    render(dialog());
+    await act(async () => {});
+
+    expectNeitherSelected();
+    expect(screen.queryByText(/last confirmed/i)).not.toBeInTheDocument();
+  });
+
+  it("selects neither option while the list loads, then the server's mode once it lands", async () => {
+    mocks.useGetSharedLinks.mockReturnValue(
+      linksState({ data: undefined, isLoading: true }),
+    );
+    const view = render(dialog());
+    await act(async () => {});
+    expectNeitherSelected();
+
+    mocks.useGetSharedLinks.mockReturnValue(
+      linksState({ data: [{ ...activeLink, access_type: "public" }] }),
+    );
+    view.rerender(dialog());
+    await waitFor(() =>
+      expect(publicOption()).toHaveAttribute("aria-pressed", "true"),
+    );
+    expect(restrictedOption()).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("selects neither option while the first link is still being created", async () => {
+    mocks.useGetSharedLinks.mockReturnValue(linksState({ data: [] }));
+    mocks.useCreateSharedLink.mockReturnValue(createState({ isPending: true }));
+    render(dialog());
+    await act(async () => {});
+
+    expectNeitherSelected();
   });
 });
