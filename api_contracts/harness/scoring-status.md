@@ -23,6 +23,13 @@ All fields below are always present.
 | `csat_status`    | enum           | `not_applicable` \| `pending` \| `succeeded` \| `failed` \| `timed_out` \| `skipped`                   |
 | `csat_reason`    | string \| null | `null` unless `csat_status` is `failed`, `skipped` or `timed_out`; then one of the fixed strings below |
 
+`csat_reason` is `null` on most calls. The generated type
+(`frontend/src/generated/api-contracts/api.schemas.ts`) declares it a
+non-empty `string`, and the generated zod schema (`api.zod.ts`) is
+`zod.string().min(1)`, because the client generator drops the nullable flag.
+Check for `null` before using it, and do not parse these responses with that
+schema until the generator is fixed.
+
 `scoring_status` sums up the call's evals and CSAT: `pending` if anything is
 still being scored, else `timed_out` if anything timed out, else `failed` if
 anything failed, else `succeeded` if anything was scored. Evals and CSAT that
@@ -106,11 +113,14 @@ Keep polling while `execution.status` is one of the active statuses
 (`pending`, `running`, `cancelling`, `evaluating` — `ACTIVE_EXECUTION_STATUSES`
 in `frontend/src/sections/simulate/environments/workspace/runs/runs.constants.js`)
 **or** `summary.scoring.pending > 0`. `liveEvalCell` in
-`frontend/src/api/simulate-environments/runCalls.js` already carries the
-entry's `status`, but its default (`"completed"`) and its comment list the old
-values. The API now always sends one of the five values above: `succeeded`
-where it sent `completed`, `failed` where it sent `error`, and the new
-`timed_out`.
+`frontend/src/api/simulate-environments/runCalls.js` carries the entry's
+`status` to the cell. The API now always sends one of the five values above:
+`succeeded` where it sent `completed`, `failed` where it sent `error`, and the
+new `timed_out`. Anything that compared an eval's `status` with `completed` or
+`error` must switch to the new values. The runs table does not yet have a
+`timed_out` case: `UnscoredEval` (`traceCells.jsx`) shows such an eval as
+"N/A" with the tooltip "Not applicable to this scenario" and does not show its
+`reason`, until it gets one (TH-8098).
 
 Three things to expect:
 
