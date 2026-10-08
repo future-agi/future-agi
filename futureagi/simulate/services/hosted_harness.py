@@ -6,7 +6,6 @@ import secrets
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from typing import Any
 
 import structlog
@@ -33,7 +32,6 @@ from simulate.services.alk_simulate_ingestion import (
     precreate_alk_sim_call_executions,
     provision_alk_sim_run_test,
 )
-from simulate.utils.scenario_keys import canonical_scenario_key
 
 _CAPABILITY_SCHEMA_VERSION = "futureagi.harness-capabilities.v1"
 _JOB_SCHEMA_VERSION = "futureagi.harness-job.v1"
@@ -474,6 +472,7 @@ def _scenario_edits(
     """Each selected scenario's editable fields as the environment holds them now."""
     from simulate.models import HostedHarnessStageOutput
     from simulate.services.harness_provider import HostedHarnessProvider
+    from simulate.services.hosted_harness_gateway import _scenario_token
 
     suite = (
         HostedHarnessStageOutput.no_workspace_objects.filter(
@@ -494,7 +493,7 @@ def _scenario_edits(
         for one in (suite if isinstance(suite, list) else [])
         if isinstance(one, dict)
         for field in ("name", "scenario_key")
-        if (token := canonical_scenario_key(one.get(field)))
+        if (token := _scenario_token(one.get(field)))
     }
     fields = (
         HostedHarnessProvider._DESCRIPTIVE_FIELDS
@@ -508,9 +507,9 @@ def _scenario_edits(
                 for value in (
                     registration.name,
                     registration.scenario_key,
-                    Path(registration.folder).name,
+                    registration.folder,
                 )
-                if (token := canonical_scenario_key(value)) in by_token
+                if (token := _scenario_token(value)) in by_token
             ),
             None,
         )

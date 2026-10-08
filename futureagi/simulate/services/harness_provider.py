@@ -27,14 +27,7 @@ from simulate.models import (
     HostedHarnessStageOutput,
     TestExecution,
 )
-from simulate.services.harness_scenarios import (
-    EDITABLE_BEHAVIOUR_FIELDS,
-    EDITABLE_PERSONA_FIELDS,
-    EDITABLE_TEXT_FIELDS,
-    editing_contract,
-)
 from simulate.services.hosted_harness_conversation import serialize_conversation
-from simulate.services.scenario_changes import scenarios_meant  # noqa: F401
 from tfc.utils.api_errors import build_error_envelope
 
 logger = logging.getLogger(__name__)
@@ -962,6 +955,78 @@ def _packaging_check(packaging):
     )
 
 
+_ORDINAL_WORDS = {
+    word: number
+    for number, word in enumerate(
+        (
+            "first second third fourth fifth sixth seventh eighth ninth tenth "
+            "eleventh twelfth thirteenth fourteenth fifteenth sixteenth seventeenth "
+            "eighteenth nineteenth twentieth"
+        ).split(),
+        start=1,
+    )
+}
+
+
+def scenarios_meant(
+    said: Any, suite: list[dict], numbering: dict[int, str] | None = None
+) -> list[str]:
+    """Scenario names from "4", "12-30", "12, 15, 18" or a name; `numbering` maps stored numbers."""
+    by_number = numbering or {
+        position: str(one.get("name") or "") for position, one in enumerate(suite, 1)
+    }
+    known = {str(one.get("name") or "") for one in suite}
+    keys = {
+        str(one.get("scenario_key") or ""): str(one.get("name") or "") for one in suite
+    }
+    from simulate.services.hosted_harness_gateway import _scenario_token
+
+    # Older suites carry no scenario_key, so a row's hyphenated key must still find its name.
+    loose = {
+        _scenario_token(label): str(one.get("name") or "")
+        for one in suite
+        for label in (one.get("name"), one.get("scenario_key"))
+        if label
+    }
+    found: list[str] = []
+
+    def take(name: str) -> None:
+        if name and name not in found:
+            found.append(name)
+
+    for piece in said if isinstance(said, (list, tuple)) else [said]:
+        for part in re.split(r"[,\s]+(?:and\s+)?", str(piece or "").strip()):
+            part = part.strip().strip(".")
+            if not part:
+                continue
+            if part in known:
+                take(part)
+                continue
+            if part in keys:
+                take(keys[part])
+                continue
+            if _scenario_token(part) in loose:
+                take(loose[_scenario_token(part)])
+                continue
+            span = re.fullmatch(r"(\d+)\s*(?:-|–|to|through)\s*(\d+)", part)
+            if span:
+                low, high = sorted((int(span.group(1)), int(span.group(2))))
+                for number in range(low, high + 1):
+                    take(by_number.get(number, ""))
+                continue
+            # "#4", "4th", "the fourth".
+            plain = re.sub(
+                r"^(?:the|scenario|no\.?|#)\s*", "", part, flags=re.IGNORECASE
+            )
+            plain = re.sub(r"(?<=\d)(?:st|nd|rd|th)$", "", plain, flags=re.IGNORECASE)
+            if plain.isdigit():
+                take(by_number.get(int(plain), ""))
+                continue
+            if plain.lower() in _ORDINAL_WORDS:
+                take(by_number.get(_ORDINAL_WORDS[plain.lower()], ""))
+    return found
+
+
 def _scenario_row(reg, number: int | None = None) -> dict:
     """One registered scenario; ``number`` is its one-based place in its own suite."""
     return {
@@ -1436,11 +1501,13 @@ class HostedHarnessProvider:
     def send_message(self, request, pk) -> Response:
         from simulate.services.hosted_harness import HostedHarnessError
         from simulate.services.hosted_harness_conversation import (
-            check_builder_workspace,
-            send_builder_message,
+            enqueue_message,
             serialize_conversation,
         )
         from simulate.services.hosted_harness_ingress import _public_base_url
+        from simulate.tasks.hosted_harness_conversation import (
+            schedule_conversation_runtime,
+        )
 
         job = self._job(request, pk)
         if job is None:
@@ -1448,22 +1515,71 @@ class HostedHarnessProvider:
                 {"detail": "Hosted harness job not found"},
                 status=status.HTTP_404_NOT_FOUND,
             )
+        terminal_states = {
+            HostedHarnessJob.State.COMPLETED,
+            HostedHarnessJob.State.FAILED,
+            HostedHarnessJob.State.CANCELED,
+        }
+        if job.state in terminal_states:
+            conversation = (
+                HostedHarnessConversation.no_workspace_objects.filter(job=job)
+                .only("latest_workspace_object_key", "state")
+                .first()
+            )
+            metadata = (job.payload or {}).get("metadata") or {}
+            has_archive = bool(
+                metadata.get("authoring_object_key")
+                or getattr(conversation, "latest_workspace_object_key", None)
+            )
+            files_gone = (
+                getattr(conversation, "state", None)
+                == HostedHarnessConversation.State.RETIRED
+            )
+            if files_gone or (
+                job.state == HostedHarnessJob.State.COMPLETED and not has_archive
+            ):
+                return Response(
+                    {
+                        "error": "conversation_workspace_not_ready",
+                        "message": (
+                            "This environment's saved files are no longer available; "
+                            "rebuild it to chat."
+                            if files_gone
+                            else "This completed run has no saved authoring workspace to restore."
+                        ),
+                        "retryable": False,
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
         data = request.validated_data
+        # Checked before queueing, so a message never waits on a runtime that cannot call back.
         try:
-            check_builder_workspace(job)
-            # Checked before queueing, so a message never waits on a runtime that cannot call back.
             base_url = _public_base_url(request)
-            conversation = send_builder_message(
+        except HostedHarnessError as exc:
+            return Response(exc.as_dict(), status=exc.status_code)
+        try:
+            conversation, _message, _created = enqueue_message(
                 job,
                 content=data["content"],
                 client_request_id=data["client_request_id"],
-                base_url=base_url,
                 kind=data["kind"],
                 reply_to=data.get("reply_to"),
                 payload=data.get("payload"),
             )
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)
+        try:
+            schedule_conversation_runtime(str(conversation.id), base_url)
+        except Exception:
+            return Response(
+                {
+                    "error": "conversation_scheduler_unavailable",
+                    "message": "The message was saved but its runtime could not be scheduled",
+                    "retryable": True,
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        conversation.refresh_from_db()
         return Response(
             serialize_conversation(conversation),
             status=status.HTTP_202_ACCEPTED,
@@ -1592,51 +1708,172 @@ class HostedHarnessProvider:
         return serialize_job(child)
 
     # Editable fields; all but `tests` are refused when the caller declines a re-proof.
-    _DESCRIPTIVE_FIELDS = EDITABLE_TEXT_FIELDS
-    _BEHAVIOURAL_FIELDS = EDITABLE_BEHAVIOUR_FIELDS
-    _PERSONA_FIELDS = EDITABLE_PERSONA_FIELDS
+    _DESCRIPTIVE_FIELDS = frozenset({"tests"})
+    _BEHAVIOURAL_FIELDS = frozenset({"max_turns", "background_noise", "keywords"})
+    _PERSONA_FIELDS = frozenset(
+        {
+            "personality",
+            "communication_style",
+            "accent",
+            "languages",
+            "occupation",
+            "location",
+        }
+    )
 
     def _editing_contract(self, spoken: bool = True) -> dict[str, Any]:
-        return editing_contract(spoken)
+        """Which fields an amend will take, and which of them cannot be taken without a re-proof."""
+        from simulate.models.agent_definition import AgentDefinition
+        from simulate.models.persona import Persona
+        from simulate.services.harness_scenarios import NOISE_LABELS
+
+        # A call has no turn budget; a chat has no accent or room behind the caller.
+        behavioural = self._BEHAVIOURAL_FIELDS - (
+            {"max_turns"} if spoken else {"background_noise"}
+        )
+        persona = self._PERSONA_FIELDS - (set() if spoken else {"accent"})
+        vocabulary = {
+            "personality": Persona.PersonalityChoices,
+            "communication_style": Persona.CommunicationStyleChoices,
+            "accent": Persona.AccentChoices,
+            "languages": AgentDefinition.LanguageChoices,
+            "occupation": Persona.ProfessionChoices,
+            "location": Persona.LocationChoices,
+        }
+        return {
+            "editable_fields": sorted(self._DESCRIPTIVE_FIELDS | behavioural),
+            "persona_fields": sorted(persona),
+            "persona_choices": {
+                field: (
+                    list(vocabulary[field].labels)
+                    if field == "languages"
+                    else [value for value, _ in vocabulary[field].choices]
+                )
+                for field in sorted(persona)
+            },
+            "noise_choices": (
+                [bed for bed in NOISE_LABELS if bed != "present"] if spoken else []
+            ),
+            "rework_fields": sorted(behavioural | persona),
+        }
 
     def list_scenarios(self, request, pk) -> Response:
         """One page of a run's authored scenarios, in the order they were written."""
-        from simulate.services.harness_scenarios import (
-            ensure_suite_indexed,
-            filtered_suite,
-            scenario_page,
-        )
         from tfc.utils.pagination import ExtendedPageNumberPagination
 
         job = _scoped_job(request, pk)
         if job is None:
             return Response({"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND)
-        ensure_suite_indexed(job)
-        filtered, offerable = filtered_suite(job, request.query_params)
-        paginator = ExtendedPageNumberPagination()
-        page = paginator.paginate_queryset(filtered, request)
-        rows, details = scenario_page(
-            job, page or [], filtered, offerable, request.query_params.get("group_by")
+
+        from simulate.services.harness_scenarios import (
+            apply_filters,
+            apply_ordering,
+            apply_search,
+            field_catalogue,
+            group_counts,
+            grouped,
+            index_scenarios,
+            scenario_row,
         )
+
+        queryset = HostedHarnessScenario.no_workspace_objects.filter(
+            job=job
+        ).select_related("scenario", "call_execution")
+        if not queryset.filter(number__isnull=False).exists():
+            # Runs from before indexing: index from the stage output or the unpacked archive.
+            artefact = (
+                HostedHarnessStageOutput.no_workspace_objects.filter(
+                    job=job, kind="scenarios"
+                )
+                .values_list("data", flat=True)
+                .first()
+            )
+            if not artefact:
+                artefact = next(
+                    (
+                        one.get("data")
+                        for one in (job.stage_outputs or [])
+                        if isinstance(one, dict) and one.get("kind") == "scenarios"
+                    ),
+                    None,
+                )
+            if isinstance(artefact, list) and artefact:
+                index_scenarios(job, artefact)
+                queryset = HostedHarnessScenario.no_workspace_objects.filter(
+                    job=job
+                ).select_related("scenario", "call_execution")
+        # Filter choices are counted before filtering, or picking one value would hide the others.
+        queryset = apply_search(queryset, request.query_params.get("search", ""))
+        offerable = queryset
+        queryset = apply_filters(queryset, request.query_params)
+        queryset = apply_ordering(queryset, request.query_params.get("ordering", ""))
+
+        paginator = ExtendedPageNumberPagination()
+        page = paginator.paginate_queryset(queryset, request)
+        from simulate.services.harness_scenarios import DEFAULT_GROUP_BY
+
+        asked = request.query_params.get("group_by")
+        group_by = DEFAULT_GROUP_BY if asked is None else asked
+        rows = grouped([scenario_row(one) for one in page or []], group_by)
         response = paginator.get_paginated_response(rows)
-        response.data.update(details)
+        response.data["groups"] = group_counts(rows, queryset, group_by)
+        response.data["group_by"] = group_by
+        from simulate.services.harness_environment import AGENT_TYPE_VOICE, agent_type
+
+        spoken = agent_type(job) == AGENT_TYPE_VOICE
+        response.data["fields"] = field_catalogue(offerable, spoken=spoken)
+        response.data["scenario_editing"] = self._editing_contract(spoken)
+        from simulate.services.harness_scenarios import GROUPINGS
+
+        response.data["groupings"] = [
+            dict(one) for one in GROUPINGS if spoken or one["value"] != "accent"
+        ]
+        from simulate.services.harness_scenarios import level_labels_for
+
+        response.data["level_labels"] = level_labels_for(rows, response.data["fields"])
         return response
 
     def scenario_coverage(self, request, pk) -> Response:
         """The suite's coverage grid, over the filtered suite rather than a page."""
-        from simulate.services.harness_scenarios import suite_coverage
-
         job = _scoped_job(request, pk)
         if job is None:
             return Response({"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND)
-        return Response(suite_coverage(job, request.query_params))
+
+        from simulate.services.harness_scenarios import (
+            DEFAULT_COL_AXIS,
+            DEFAULT_ROW_AXIS,
+            apply_filters,
+            apply_search,
+            coverage_grid,
+        )
+
+        queryset = HostedHarnessScenario.no_workspace_objects.filter(job=job)
+        queryset = apply_search(queryset, request.query_params.get("search", ""))
+        queryset = apply_filters(queryset, request.query_params)
+        from simulate.services.harness_environment import AGENT_TYPE_VOICE, agent_type
+
+        return Response(
+            coverage_grid(
+                queryset,
+                request.query_params.get("row_axis") or DEFAULT_ROW_AXIS,
+                request.query_params.get("col_axis") or DEFAULT_COL_AXIS,
+                spoken=agent_type(job) == AGENT_TYPE_VOICE,
+            )
+        )
 
     def amend_scenarios(self, request, pk) -> Response:
         """Edit a finished run's authored suite, one receipt per requested change."""
-        from simulate.services.scenario_changes import amend_suite
+        from simulate.services.harness_scenarios import index_scenarios
+        from simulate.services.hosted_harness_gateway import (
+            AuthoringArchiveKept,
+            push_scenarios_into_live_sandbox,
+            rewrite_authoring_scenarios,
+            rewrite_conversation_scenarios,
+        )
 
         changes = request.validated_data["changes"]
         rework = bool(request.validated_data.get("rework", True))
+        committed = None
         with transaction.atomic():
             # Scope before locking, so a busy lock never reveals a job outside the caller's scope.
             scoped = _scoped_job(request, pk)
@@ -1653,8 +1890,294 @@ class HostedHarnessProvider:
                 return Response(
                     {"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND
                 )
-            change = amend_suite(job, changes, rework=rework)
-        return Response(change.after_commit(job), status=change.status)
+            output = (
+                HostedHarnessStageOutput.no_workspace_objects.select_for_update()
+                .filter(job=job, kind="scenarios")
+                .first()
+            )
+            suite = list(output.data or []) if output is not None else None
+            if suite is None:
+                suite = [
+                    dict(one)
+                    for one in next(
+                        (
+                            item.get("data") or []
+                            for item in (job.stage_outputs or [])
+                            if item.get("kind") == "scenarios"
+                        ),
+                        [],
+                    )
+                ]
+            if not suite:
+                return Response(
+                    {
+                        "error": "no_authored_suite",
+                        "message": "this run has no authored scenarios to amend",
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
+            by_name = {str(one.get("name") or ""): one for one in suite}
+            receipts = []
+            touched = False
+            changed: set[str] = set()
+            # One change may name many scenarios; each gets its own receipt.
+            spread = []
+            for change in changes:
+                said = change.get("scenarios") or change.get("scenario")
+                # Resolve numbers against stored numbering, not list position.
+                numbering = {
+                    row.number: row.name or row.scenario_key
+                    for row in HostedHarnessScenario.no_workspace_objects.filter(
+                        job=job, number__isnull=False
+                    )
+                }
+                meant = scenarios_meant(said, suite, numbering or None)
+                if not meant:
+                    receipts.append(
+                        {
+                            "scenario": str(change.get("scenario") or ""),
+                            "outcome": "refused",
+                            "why": "nothing in this suite answers to that",
+                        }
+                    )
+                    continue
+                spread.extend({**change, "scenario": name} for name in meant)
+            for change in spread:
+                name = str(change.get("scenario") or "")
+                target = by_name.get(name)
+                if target is None:
+                    receipts.append(
+                        {
+                            "scenario": name,
+                            "outcome": "refused",
+                            "why": "no scenario of that name in this suite",
+                        }
+                    )
+                    continue
+                op = str(change.get("op") or "")
+                if op == "drop":
+                    if not rework:
+                        receipts.append(
+                            {
+                                "scenario": name,
+                                "outcome": "refused",
+                                "why": "dropping a scenario changes the suite, so it needs a re-proof",
+                            }
+                        )
+                        continue
+                    if len(suite) == 1:
+                        receipts.append(
+                            {
+                                "scenario": name,
+                                "outcome": "refused",
+                                "why": "an environment needs at least one scenario",
+                            }
+                        )
+                        continue
+                    suite = [one for one in suite if one is not target]
+                    by_name.pop(name, None)
+                    touched = True
+                    receipts.append(
+                        {"scenario": name, "outcome": "applied", "why": "dropped"}
+                    )
+                    continue
+                if op == "set_field":
+                    field = str(change.get("field") or "")
+                    if field in self._DESCRIPTIVE_FIELDS:
+                        pass
+                    elif field in self._BEHAVIOURAL_FIELDS:
+                        if not rework:
+                            receipts.append(
+                                {
+                                    "scenario": name,
+                                    "outcome": "refused",
+                                    "why": f"{field} changes what the run does, so it needs a re-proof",
+                                }
+                            )
+                            continue
+                    else:
+                        receipts.append(
+                            {
+                                "scenario": name,
+                                "outcome": "refused",
+                                "why": f"{field} is not editable: it is proved, not described",
+                            }
+                        )
+                        continue
+                    target[field] = change.get("value")
+                    touched = True
+                    changed.add(name)
+                    receipts.append(
+                        {
+                            "scenario": name,
+                            "outcome": "applied",
+                            "why": f"{field} updated",
+                        }
+                    )
+                    continue
+                if op == "set_persona":
+                    if not rework:
+                        receipts.append(
+                            {
+                                "scenario": name,
+                                "outcome": "refused",
+                                "why": "the persona is what the agent hears, so it needs a re-proof",
+                            }
+                        )
+                        continue
+                    given = dict(change.get("persona") or {})
+                    unknown = sorted(set(given) - self._PERSONA_FIELDS)
+                    if unknown:
+                        receipts.append(
+                            {
+                                "scenario": name,
+                                "outcome": "refused",
+                                "why": f"not editable on a persona: {', '.join(unknown)}",
+                            }
+                        )
+                        continue
+                    persona = dict(target.get("persona") or {})
+                    persona.update(
+                        {
+                            key: value
+                            for key, value in given.items()
+                            if value is not None
+                        }
+                    )
+                    target["persona"] = persona
+                    touched = True
+                    changed.add(name)
+                    receipts.append(
+                        {
+                            "scenario": name,
+                            "outcome": "applied",
+                            "why": "persona updated",
+                        }
+                    )
+                    continue
+                receipts.append(
+                    {
+                        "scenario": name,
+                        "outcome": "refused",
+                        "why": f"unknown change {op!r}",
+                    }
+                )
+            # Only the scenarios this amend changed pass the gates again.
+            if changed:
+                try:
+                    from fi.alk.harness.scenario import Scenario, scenario_edit_problems
+                except (
+                    ImportError
+                ):  # the harness package ships in the runner image, not the web backend
+                    scenario_edit_problems = None
+
+                rejected = []
+                for one in (
+                    [one for one in suite if str(one.get("name") or "") in changed]
+                    if scenario_edit_problems
+                    else ()
+                ):
+                    try:
+                        problems = scenario_edit_problems(Scenario.model_validate(one))
+                    except (
+                        Exception
+                    ):  # noqa: BLE001 - a document we cannot read is the edit's fault
+                        problems = ["the edited scenario could not be read"]
+                    if problems:
+                        rejected.append((str(one.get("name") or ""), problems))
+                if rejected:
+                    named = {name for name, _ in rejected}
+                    return Response(
+                        {
+                            "receipts": [
+                                {
+                                    "scenario": name,
+                                    "outcome": "refused",
+                                    "why": "; ".join(problems),
+                                }
+                                for name, problems in rejected
+                            ]
+                            + [
+                                one
+                                for one in receipts
+                                if one.get("scenario") not in named
+                                and one.get("outcome") == "refused"
+                            ]
+                        }
+                    )
+            if touched:
+
+                def refused_all(why: str) -> Response:
+                    return Response(
+                        {
+                            "receipts": [
+                                (
+                                    {
+                                        **one,
+                                        "outcome": "refused",
+                                        "why": f"nothing changed: {why}",
+                                    }
+                                    if one.get("outcome") == "applied"
+                                    else one
+                                )
+                                for one in receipts
+                            ]
+                        }
+                    )
+
+                try:
+                    # One savepoint: the snapshot, the scenarios output and the rows move together.
+                    with transaction.atomic():
+                        rewrite_authoring_scenarios(job, suite)
+                        if output is not None:
+                            output.data = suite
+                            output.summary = f"{len(suite)} pre-authored scenarios"
+                            output.save(update_fields=["data", "summary", "updated_at"])
+                        else:
+                            job.stage_outputs = [
+                                (
+                                    {**item, "data": suite}
+                                    if item.get("kind") == "scenarios"
+                                    else item
+                                )
+                                for item in (job.stage_outputs or [])
+                            ]
+                            job.save(update_fields=["stage_outputs", "updated_at"])
+                        index_scenarios(job, suite, prune=True)
+                except AuthoringArchiveKept as kept:
+                    return refused_all(str(kept))
+                except Exception:  # noqa: BLE001 - every store reverts together
+                    logger.exception("harness_scenario_record_failed job_id=%s", job.id)
+                    return refused_all("the scenario list could not be updated")
+                committed = suite
+        if committed is not None:
+            # Sandboxes and saved chat workspaces follow the committed suite.
+            # A stale chat workspace is rebased on its next publish; a sandbox catches up.
+            try:
+                rewrite_conversation_scenarios(job, committed)
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "harness_conversation_rewrite_failed job_id=%s",
+                    job.id,
+                    exc_info=True,
+                )
+            try:
+                delivered = push_scenarios_into_live_sandbox(job, committed)
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "harness_live_sandbox_push_failed job_id=%s", job.id, exc_info=True
+                )
+                delivered = False
+            if delivered:
+                receipts = [
+                    (
+                        {**one, "outcome": "queued"}
+                        if one.get("outcome") == "applied"
+                        else one
+                    )
+                    for one in receipts
+                ]
+        return Response({"receipts": receipts})
 
     def extend(self, request, pk) -> Response:
         """Chat 'Add scenarios' on a finished RL environment: add ``count`` new scenarios,

@@ -189,6 +189,17 @@ describe("ScenariosStep", () => {
     expect(amendScenarios).not.toHaveBeenCalled();
   });
 
+  it("does not offer to delete an environment's only scenario", async () => {
+    const only = SERVER_ROWS.slice(0, 1);
+    listScenarios.mockImplementation((jobId, params) => queryScenarioFixture(params, only));
+    renderStep(only);
+    await screen.findByRole("table");
+    fireEvent.click(screen.getByRole("button", { name: "Remove from this environment" }));
+
+    expect(screen.getByText(/its only scenario can't be deleted/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
+  });
+
   it("shows the empty placeholder with a disabled (coming-soon) Add when there are no scenarios", async () => {
     // The empty-state gate reads the server's unfiltered suite total now, so the
     // list source must report an empty suite (not just an empty envState).

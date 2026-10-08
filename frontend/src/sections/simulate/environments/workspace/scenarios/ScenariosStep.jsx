@@ -68,6 +68,20 @@ function AddButton({ onClick, contained = false, locked = false }) {
 }
 AddButton.propTypes = { onClick: PropTypes.func, contained: PropTypes.bool, locked: PropTypes.bool };
 
+// An environment keeps at least one scenario, so a delete that would empty the
+// suite says which part of it goes through before anything is removed.
+function deleteWording(count, total) {
+  if (total <= 1) {
+    return "An environment needs at least one scenario, so its only scenario can't be deleted.";
+  }
+  if (count >= total) {
+    return `${total - 1} of these ${count} scenarios will be permanently removed. An environment needs at least one scenario, so one stays. This can't be undone.`;
+  }
+  return count === 1
+    ? "This scenario will be permanently removed. This can't be undone."
+    : `${count} scenarios will be permanently removed. This can't be undone.`;
+}
+
 // Shown when the environment has no scenarios at all — rare, since they are
 // normally derived when the environment is built.
 function RoutePlaceholder({ onAdd, locked = false }) {
@@ -531,15 +545,15 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
         title="Delete scenarios?"
         content={
           <Typography component="span" sx={{ typography: "s2" }}>
-            {pendingDelete?.count === 1
-              ? "This scenario will be permanently removed. This can't be undone."
-              : `${pendingDelete?.count ?? 0} scenarios will be permanently removed. This can't be undone.`}
+            {deleteWording(pendingDelete?.count ?? 0, suiteTotal)}
           </Typography>
         }
         action={
-          <Button size="small" variant="contained" color="error" onClick={confirmDelete}>
-            Delete
-          </Button>
+          suiteTotal > 1 && (
+            <Button size="small" variant="contained" color="error" onClick={confirmDelete}>
+              Delete
+            </Button>
+          )
         }
       />
     </Box>
