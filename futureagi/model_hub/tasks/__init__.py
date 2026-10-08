@@ -11,4 +11,5 @@ from .insights import *  # noqa: F403
 from .optimisation_runner import *  # noqa: F403
 from .prompt_template_optimizer import *  # noqa: F403
 from .run_prompt import *  # noqa: F403
+from .stale_work import recover_stale_work_activity
 from .user_evaluation import *  # noqa: F403

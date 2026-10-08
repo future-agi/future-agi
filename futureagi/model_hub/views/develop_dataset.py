@@ -12402,6 +12402,14 @@ class SingleRowEvaluationView(APIView):
             # Prepare data for batch processing
             evaluation_data = {"metric_ids": user_eval_metric_ids, "row_ids": row_ids}
 
+            # Stamp the metric as Running before the cells, not after the worker
+            # picks the job up: stale-work recovery reads this to tell a queued
+            # rerun from an abandoned one, and a rerun's cells can otherwise look
+            # abandoned for as long as the job sits queued or the cell mirror
+            # lags behind this write.
+            UserEvalMetric.objects.filter(id__in=user_eval_metric_ids).update(
+                status=StatusType.RUNNING.value, updated_at=timezone.now()
+            )
             Cell.objects.filter(
                 dataset=dataset,
                 row_id__in=row_ids,
@@ -12436,7 +12444,7 @@ def run_evaluation_task(evaluation_data):
             "template", "pinned_version"
         )
         metric_map = {str(metric.id): metric for metric in list(metrics)}
-        metrics.update(status=StatusType.RUNNING.value)
+        metrics.update(status=StatusType.RUNNING.value, updated_at=timezone.now())
 
         if (
             evaluation_data.get("column_source", "")
