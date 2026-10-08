@@ -905,23 +905,24 @@ def provision_scenarios(
                 "created_at"
             )
         )
+        existing_keys = [item.scenario_key for item in registrations]
+        existing_set = set(existing_keys)
         requested_keys = [persona["scenario_key"] for persona in payload["personas"]]
-        matched = _match_registrations(registrations, requested_keys)
+        requested_set = set(requested_keys)
+        if requested_set == existing_set:
+            return _provision_response(job, registrations)
         # A chat "add scenarios" follow-up seals the existing set PLUS new personas. Dropping
         # an existing scenario is a real conflict, not an extension.
-        if len({id(row) for row in matched.values() if row}) != len(registrations):
+        if not existing_set.issubset(requested_set):
             raise HostedHarnessError(
                 "scenario_registration_conflict",
                 "the job already has a different sealed scenario registration",
                 status_code=409,
             )
-        _adopt_requested_keys(job, matched)
-        if all(matched.values()):
-            return _provision_response(job, registrations)
         new_personas = [
             persona
             for persona in payload["personas"]
-            if matched[persona["scenario_key"]] is None
+            if persona["scenario_key"] not in existing_set
         ]
         shared_scenario, appended = append_alk_sim_scenarios(
             job.run_test,
@@ -1006,150 +1007,86 @@ def provision_scenarios(
         locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(
             id=job.id
         )
-        # Before provisioning the rows only index what authoring wrote, and a retry after
-        # a dead attempt may have written a different suite: the request is the truth.
-        rows = list(
-            HostedHarnessScenario.all_objects.select_for_update()
+        existing_registrations = list(
+            HostedHarnessScenario.no_workspace_objects.select_for_update()
             .filter(job=locked)
-            .order_by("deleted", "created_at")
+            .order_by("created_at")
         )
         requested_keys = [persona["scenario_key"] for persona in payload["personas"]]
-        matched = _match_registrations(rows, requested_keys)
+        existing_by_key = {
+            registration.scenario_key: registration
+            for registration in existing_registrations
+        }
         if locked.run_test_id:
-            live = [row for row in rows if not row.deleted]
-            if all(matched.values()) and {id(row) for row in matched.values()} == {
-                id(row) for row in live
-            }:
+            if set(existing_by_key) == set(requested_keys):
                 # A concurrent request already provisioned this suite; return it.
-                return _provision_response(
-                    locked, [matched[key] for key in requested_keys]
-                )
+                return _provision_response(locked, existing_registrations)
             raise HostedHarnessError(
                 "scenario_registration_conflict",
                 "another attempt registered scenarios first",
                 status_code=409,
             )
-        chosen = {id(row) for row in matched.values() if row}
-        stale = [row for row in rows if not row.deleted and id(row) not in chosen]
-        if any(row.scenario_id or row.call_execution_id for row in stale):
-            raise HostedHarnessError(
-                "scenario_registration_conflict",
-                "the indexed authored suite differs from the provision request",
-                status_code=409,
-            )
         locked.run_test = run_test
         locked.content_updated_at = timezone.now()
         locked.save(update_fields=["run_test", "content_updated_at", "updated_at"])
-        bound_at = timezone.now()
-        for row in stale:
-            row.deleted, row.deleted_at, row.updated_at = True, bound_at, bound_at
-        # Hide stale rows first so the unique (job, scenario_key) constraint always holds.
-        HostedHarnessScenario.all_objects.bulk_update(
-            stale, ["deleted", "deleted_at", "updated_at"]
-        )
-        registrations = []
-        rebound = []
-        for persona, dataset_row in zip(payload["personas"], dataset_rows, strict=True):
-            registration = matched[persona["scenario_key"]]
-            if registration is None:
-                registration = HostedHarnessScenario.no_workspace_objects.create(
+        if existing_registrations:
+            # Rows indexed for scenarios the final suite dropped are hidden, not fatal.
+            requested = set(requested_keys)
+            stale = [
+                registration
+                for key, registration in existing_by_key.items()
+                if key not in requested
+            ]
+            if any(row.scenario_id or row.call_execution_id for row in stale):
+                raise HostedHarnessError(
+                    "scenario_registration_conflict",
+                    "the indexed authored suite differs from the provision request",
+                    status_code=409,
+                )
+            bound_at = timezone.now()
+            for row in stale:
+                row.deleted, row.deleted_at, row.updated_at = True, bound_at, bound_at
+            HostedHarnessScenario.all_objects.bulk_update(
+                stale, ["deleted", "deleted_at", "updated_at"]
+            )
+            hidden = {
+                row.scenario_key: row
+                for row in HostedHarnessScenario.all_objects.filter(
+                    job=locked,
+                    deleted=True,
+                    scenario_key__in=requested - set(existing_by_key),
+                )
+            }
+            registrations = []
+            for persona, row in zip(payload["personas"], dataset_rows, strict=True):
+                key = persona["scenario_key"]
+                registration = existing_by_key.get(key) or hidden.get(key)
+                if registration is None:
+                    registration = HostedHarnessScenario.no_workspace_objects.create(
+                        job=locked, scenario_key=key
+                    )
+                registration.deleted, registration.deleted_at = False, None
+                registration.scenario = scenarios[0]
+                registration.dataset_row = row
+                registration.updated_at = bound_at
+                registrations.append(registration)
+            HostedHarnessScenario.all_objects.bulk_update(
+                registrations,
+                ["deleted", "deleted_at", "scenario", "dataset_row", "updated_at"],
+            )
+        else:
+            registrations = [
+                HostedHarnessScenario.no_workspace_objects.create(
                     job=locked,
                     scenario_key=persona["scenario_key"],
                     scenario=scenarios[0],
-                    dataset_row=dataset_row,
+                    dataset_row=row,
                 )
-            else:
-                # The index may have seen a scenario by name before its key existed.
-                registration.scenario_key = persona["scenario_key"]
-                registration.scenario = scenarios[0]
-                registration.dataset_row = dataset_row
-                registration.deleted, registration.deleted_at = False, None
-                registration.updated_at = bound_at
-                rebound.append(registration)
-            registrations.append(registration)
-        HostedHarnessScenario.all_objects.bulk_update(
-            rebound,
-            [
-                "scenario_key",
-                "scenario",
-                "dataset_row",
-                "deleted",
-                "deleted_at",
-                "updated_at",
-            ],
-        )
+                for persona, row in zip(payload["personas"], dataset_rows, strict=True)
+            ]
         _record_target_agent_facts(locked, agent_definition, payload)
         _select_platform_evals(locked, run_test, payload, modality)
     return _provision_response(locked, registrations)
-
-
-def _match_registrations(
-    rows: list[HostedHarnessScenario], requested_keys: list[str]
-) -> dict[str, HostedHarnessScenario | None]:
-    """Each requested key's row: the one holding it, else the same scenario under another
-    spelling of its key or name. A row answers for at most one key."""
-    by_key: dict[str, HostedHarnessScenario] = {}
-    by_spelling: dict[str, list[HostedHarnessScenario]] = {}
-    for row in rows:
-        by_key.setdefault(row.scenario_key, row)
-        for spelling in {
-            canonical_scenario_key(row.scenario_key),
-            canonical_scenario_key(row.name),
-        } - {""}:
-            by_spelling.setdefault(spelling, []).append(row)
-    matched: dict[str, HostedHarnessScenario | None] = {}
-    taken: set[int] = set()
-    for key in requested_keys:
-        row = by_key.get(key)
-        if row is not None and id(row) not in taken:
-            matched[key] = row
-            taken.add(id(row))
-    for key in requested_keys:
-        if key in matched:
-            continue
-        row = next(
-            (
-                row
-                for row in by_spelling.get(canonical_scenario_key(key), [])
-                if id(row) not in taken
-            ),
-            None,
-        )
-        matched[key] = row
-        if row is not None:
-            taken.add(id(row))
-    return matched
-
-
-def _adopt_requested_keys(
-    job: HostedHarnessJob, matched: dict[str, HostedHarnessScenario | None]
-) -> None:
-    """Give rows the keys the guest registered them under, so begin and receipts match."""
-    renamed = [
-        (key, row)
-        for key, row in matched.items()
-        if row is not None and row.scenario_key != key
-    ]
-    if not renamed:
-        return
-    if (
-        HostedHarnessScenario.all_objects.filter(
-            job=job, scenario_key__in=[key for key, _ in renamed]
-        )
-        .exclude(id__in=[row.id for _, row in renamed])
-        .exists()
-    ):
-        raise HostedHarnessError(
-            "scenario_registration_conflict",
-            "a requested scenario key already belongs to another scenario",
-            status_code=409,
-        )
-    renamed_at = timezone.now()
-    for key, row in renamed:
-        row.scenario_key, row.updated_at = key, renamed_at
-    HostedHarnessScenario.all_objects.bulk_update(
-        [row for _, row in renamed], ["scenario_key", "updated_at"]
-    )
 
 
 def _target_agent_prompt(job: HostedHarnessJob, payload: dict[str, Any]) -> str:
