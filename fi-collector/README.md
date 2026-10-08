@@ -155,6 +155,20 @@ these four TLS variables; mount certificate files read-only at their configured
 container paths using a deployment override. Other deployments must explicitly
 pass the variables and mounts to the collector process/container.
 
+## Sending spans
+
+Authenticate every request with the API key pair: the `X-Api-Key` and
+`X-Secret-Key` headers (gRPC metadata or HTTP), or `Authorization: Basic
+base64(api_key:secret_key)` over HTTP. Without both, gRPC answers
+`Unauthenticated` and HTTP answers 401.
+
+Every `ResourceSpans` in the request must carry a `project_name` resource
+attribute. The collector looks it up in the workspace of the API key and
+creates an `observe` project with that name if there is none. If any
+`ResourceSpans` in a batch has no `project_name`, the whole batch is refused
+(gRPC `InvalidArgument`, HTTP 400) with
+`auth stamp: stamp: N ResourceSpan(s) have no project_name (indices: ...)`.
+
 ## Pricing Configuration
 
 ### FI_PRICING_JSON
