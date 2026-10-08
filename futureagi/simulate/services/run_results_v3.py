@@ -9,7 +9,6 @@ import re
 from collections import defaultdict
 from typing import Any
 
-import structlog
 from django.core.cache import cache
 
 from model_hub.models.develop_dataset import Cell
@@ -27,8 +26,6 @@ from simulate.services.run_results_v3_scoring import (
     resolve_eval_scoring_spec,
 )
 from simulate.utils.eval_summary import iter_live_eval_outputs
-
-logger = structlog.get_logger(__name__)
 
 OUTCOME_LABELS = {
     "queued": "Queued",
@@ -446,15 +443,7 @@ def build_call_rows(
             if scenario.dataset_row_id
         },
     )
-    try:
-        authored_branches = _authored_branches(execution, calls)
-    except Exception:  # noqa: BLE001 - the branch column is optional; the rows are not
-        logger.warning(
-            "run_results_authored_lookup_failed",
-            execution_id=str(execution.id),
-            exc_info=True,
-        )
-        authored_branches = {}
+    authored_branches = _authored_branches(execution, calls)
     rows = []
     harness_columns: dict[str, dict[str, str]] = {}
     for call in calls:

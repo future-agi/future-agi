@@ -18,14 +18,6 @@ import {
   renderWithClient,
 } from "./scenariosTestUtils";
 
-const { mockSnack } = vi.hoisted(() => ({ mockSnack: { calls: [] } }));
-vi.mock("notistack", () => ({
-  useSnackbar: () => ({
-    enqueueSnackbar: (message, options) => { mockSnack.calls.push({ message, options }); return "snack-key"; },
-    closeSnackbar: () => {},
-  }),
-}));
-
 // The list reads the server (fixtures) source.
 vi.mock("src/api/simulate-environments/scenarios", async () => {
   const actual = await vi.importActual("src/api/simulate-environments/scenarios");
@@ -33,15 +25,12 @@ vi.mock("src/api/simulate-environments/scenarios", async () => {
     ...actual,
     listScenarios: vi.fn(),
     amendScenarios: vi.fn(),
-    editScenario: vi.fn(),
     // Mock coverage too so CoverageMatrix does not fire a real (failing) request
     // that spams the axios auth-redirect interceptor on every render.
     scenarioCoverage: vi.fn(async () => ({ axes: [], per_axis: [], rows: [], columns: [], cells: [] })),
   };
 });
-const { listScenarios, amendScenarios, editScenario } = await import(
-  "src/api/simulate-environments/scenarios"
-);
+const { listScenarios, amendScenarios } = await import("src/api/simulate-environments/scenarios");
 const { queryScenarioFixture, resetScenarioFixture } = await import(
   "src/api/simulate-environments/_fixtures/scenariosFixtures"
 );
@@ -71,9 +60,6 @@ beforeEach(() => {
   );
   amendScenarios.mockReset();
   amendScenarios.mockResolvedValue({ receipts: [] });
-  editScenario.mockReset();
-  editScenario.mockResolvedValue({ receipts: [], revision: "", scenario: null });
-  mockSnack.calls = [];
 });
 
 describe("ScenariosStep — add", () => {
@@ -140,61 +126,6 @@ describe("ScenariosStep — edit", () => {
       changes: [
         { op: "set_field", scenario: row.name, field: "tests", value: "Passes when it books the ride." },
       ],
-    });
-  });
-});
-
-describe("ScenariosStep: direct edits", () => {
-  it("saves a directly editable field on the scenario by its row id", async () => {
-    renderStep();
-    await screen.findByRole("table");
-    const row = firstRow();
-    fireEvent.click(screen.getAllByRole("button", { name: "Edit scenario" })[0]);
-
-    const turns = Number(row.max_turns) === 7 ? 9 : 7;
-    fireEvent.change(screen.getByRole("slider"), { target: { value: turns } });
-    fireEvent.click(screen.getByRole("button", { name: "Save scenario" }));
-
-    await waitFor(() => expect(editScenario).toHaveBeenCalledTimes(1));
-    expect(editScenario).toHaveBeenCalledWith("job-test", row.id, { max_turns: turns });
-    expect(amendScenarios).not.toHaveBeenCalled();
-  });
-});
-
-describe("ScenariosStep — refused edits", () => {
-  const saveFirstRow = async () => {
-    renderStep();
-    await screen.findByRole("table");
-    const row = firstRow();
-    fireEvent.click(screen.getAllByRole("button", { name: "Edit scenario" })[0]);
-    const turns = Number(row.max_turns) === 7 ? 9 : 7;
-    fireEvent.change(screen.getByRole("slider"), { target: { value: turns } });
-    fireEvent.click(screen.getByRole("button", { name: "Save scenario" }));
-  };
-
-  it("says why the server refused an edit instead of asking for a retry", async () => {
-    editScenario.mockRejectedValue({
-      error: "scenario_change_refused",
-      message: "the coordinate claims a condition the call does not carry",
-      statusCode: 409,
-    });
-    await saveFirstRow();
-
-    await waitFor(() => expect(mockSnack.calls).toHaveLength(1));
-    expect(mockSnack.calls[0]).toEqual({
-      message: "The coordinate claims a condition the call does not carry",
-      options: expect.objectContaining({ variant: "warning" }),
-    });
-  });
-
-  it("keeps the generic message for anything the server did not word for the user", async () => {
-    editScenario.mockRejectedValue({ error: "internal_error", message: "Traceback: boom", statusCode: 500 });
-    await saveFirstRow();
-
-    await waitFor(() => expect(mockSnack.calls).toHaveLength(1));
-    expect(mockSnack.calls[0]).toEqual({
-      message: "Couldn't save. Try again",
-      options: expect.objectContaining({ variant: "error" }),
     });
   });
 });

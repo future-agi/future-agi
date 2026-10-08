@@ -32,15 +32,12 @@ vi.mock("src/api/simulate-environments/scenarios", async () => {
     ...actual,
     listScenarios: vi.fn(),
     amendScenarios: vi.fn(),
-    deleteScenarios: vi.fn(),
     // Mock coverage too so CoverageMatrix does not fire a real (failing) request
     // that spams the axios auth-redirect interceptor on every render.
     scenarioCoverage: vi.fn(async () => ({ axes: [], per_axis: [], rows: [], columns: [], cells: [] })),
   };
 });
-const { listScenarios, amendScenarios, deleteScenarios } = await import(
-  "src/api/simulate-environments/scenarios"
-);
+const { listScenarios, amendScenarios } = await import("src/api/simulate-environments/scenarios");
 const { queryScenarioFixture, resetScenarioFixture } = await import(
   "src/api/simulate-environments/_fixtures/scenariosFixtures"
 );
@@ -75,8 +72,6 @@ beforeEach(() => {
   );
   amendScenarios.mockReset();
   amendScenarios.mockResolvedValue({ receipts: [] });
-  deleteScenarios.mockReset();
-  deleteScenarios.mockResolvedValue({ receipts: [], revision: "", scenario: null });
 });
 
 describe("ScenariosStep — pagination", () => {
@@ -125,9 +120,9 @@ describe("ScenariosStep — pagination", () => {
     listScenarios.mockImplementation((jobId, params) =>
       queryScenarioFixture(params, makeServerRows(rowCount)),
     );
-    deleteScenarios.mockImplementation(async () => {
+    amendScenarios.mockImplementation(async () => {
       rowCount = 40;
-      return { receipts: [], revision: "", scenario: null };
+      return { receipts: [] };
     });
     renderStep(makeServerRows(60));
 
@@ -174,20 +169,21 @@ describe("ScenariosStep — select all matching", () => {
     screen.getAllByRole("checkbox").forEach((c) => expect(c).toBeChecked());
   });
 
-  it("bulk-deletes the whole match by enumerating row ids, then one delete", async () => {
+  it("bulk-deletes the whole match by enumerating names, then one amend drop", async () => {
     renderStep();
     await screen.findByText(/Showing 1–25 of 60/);
     fireEvent.click(headerCheckbox());
     fireEvent.click(screen.getByRole("button", { name: /Select all 60 matching/ }));
     fireEvent.click(screen.getByRole("button", { name: "Delete selected scenarios" }));
 
-    // Confirm, then all 60 matches are enumerated (paged server-side) and
-    // removed in a single request carrying every row id.
+    // Confirm, then all 60 matches are enumerated (paged server-side) and dropped
+    // in a single amend naming every one.
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
-    await waitFor(() => expect(deleteScenarios).toHaveBeenCalledTimes(1));
-    const ids = deleteScenarios.mock.calls[0][1];
-    expect(ids).toHaveLength(60);
-    expect(new Set(ids).size).toBe(60);
+    await waitFor(() => expect(amendScenarios).toHaveBeenCalledTimes(1));
+    const body = amendScenarios.mock.calls[0][1];
+    expect(body.changes).toHaveLength(1);
+    expect(body.changes[0].op).toBe("drop");
+    expect(body.changes[0].scenarios).toHaveLength(60);
   });
 
   it("un-checking a row in all-mode drops one from the count (an exclusion)", async () => {

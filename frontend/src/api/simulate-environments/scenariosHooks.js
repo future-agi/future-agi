@@ -8,8 +8,6 @@ import {
   listScenarios,
   scenarioFromApi,
   amendScenarios,
-  deleteScenarios,
-  editScenario,
   scenarioCoverage,
 } from "src/api/simulate-environments/scenarios";
 
@@ -115,31 +113,6 @@ export function useAmendScenarios(jobId) {
     meta: { errorHandled: true },
     mutationFn: (body) => amendScenarios(jobId, body),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: harnessScenariosListKey(jobId) });
-    },
-  });
-}
-
-// Direct edit / delete by row id. Same invalidation as an amend: either reshapes
-// the list page and the coverage grid. A refusal refreshes too, since the suite
-// may have moved underneath the page.
-export function useEditScenario(jobId) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    meta: { errorHandled: true },
-    mutationFn: ({ scenarioId, body }) => editScenario(jobId, scenarioId, body),
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: harnessScenariosListKey(jobId) });
-    },
-  });
-}
-
-export function useDeleteScenarios(jobId) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    meta: { errorHandled: true },
-    mutationFn: (scenarioIds) => deleteScenarios(jobId, scenarioIds),
-    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: harnessScenariosListKey(jobId) });
     },
   });

@@ -147,7 +147,7 @@ export default function ScenarioEditor({ open, onClose, row, onSave, scenarioEdi
 
   const save = () => {
     if (!changes.length) return;
-    onSave({ changes, rework, scenarioId: row.id });
+    onSave({ changes, rework });
     onClose();
   };
 

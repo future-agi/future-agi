@@ -6,11 +6,7 @@ import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { resolveScenarioSelection } from "src/api/simulate-environments/scenarioSelection";
-import {
-  useAmendScenarios,
-  useDeleteScenarios,
-  useEditScenario,
-} from "src/api/simulate-environments/scenariosHooks";
+import { useAmendScenarios } from "src/api/simulate-environments/scenariosHooks";
 import SectionCard from "../../components/SectionCard";
 import EmptyState from "../../components/EmptyState";
 import ScenarioToolbar from "./ScenarioToolbar";
@@ -36,9 +32,6 @@ import PagedScenarioViews from "./PagedScenarioViews";
 // A seeded-from-template env is read-only until forked; every mutating control
 // carries this on its tooltip while locked.
 const LOCK_TOOLTIP = "Fork this environment to edit.";
-
-// Refusals whose message is written for the person editing.
-const REFUSALS_SHOWN = new Set(["scenario_change_refused", "scenario_suite_changed", "environment_not_ready"]);
 
 // The add CTA. Rendered in two places (header when the list is populated, and
 // the empty placeholder), so it lives here as one node. Disabled with a
@@ -104,8 +97,6 @@ RoutePlaceholder.propTypes = { onAdd: PropTypes.func, locked: PropTypes.bool };
 export default function ScenariosStep({ env, envState, patch, locked = false, onStartRun, canRun = false }) {
   const { enqueueSnackbar } = useSnackbar();
   const amend = useAmendScenarios(env?.id);
-  const editById = useEditScenario(env?.id);
-  const deleteByIds = useDeleteScenarios(env?.id);
   const [view, setView] = useState("table");
   const [rowHeight, setRowHeight] = useState("Short");
   // Repeats (k) for a selection run — how many times each selected scenario is
@@ -254,21 +245,11 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
     enqueueSnackbar(successLabel, { variant: "success", autoHideDuration: 4000 });
   };
 
-  // A refusal the server words for the user (a gate, a moved suite, a build still
-  // running) says why; anything else stays a generic retry.
-  const refusedOr = (error, fallback) => {
-    const said = REFUSALS_SHOWN.has(error?.error) && error?.message;
-    if (said) {
-      enqueueSnackbar(said.charAt(0).toUpperCase() + said.slice(1), { variant: "warning", autoHideDuration: 8000 });
-    } else {
-      enqueueSnackbar(fallback, { variant: "error" });
-    }
-  };
-
-  // Row trash → confirm, then remove that one scenario by its row id.
+  // Row trash → confirm, then drop that one scenario by name.
   const removeScenario = (id) => {
-    if (!pageData.rows.some((r) => r.id === id)) return;
-    setPendingDelete({ count: 1, resolve: async () => [id] });
+    const name = pageData.rows.find((r) => r.id === id)?.name;
+    if (!name) return;
+    setPendingDelete({ count: 1, resolve: async () => [name] });
   };
 
   // Resolve the selection against the current filter, server-side. The
@@ -314,35 +295,42 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
   // "N selected" chip hanging in the chat.
   useEffect(() => () => clearScenarioSelection(), []);
 
-  // Bulk delete → confirm, then one request carrying the selection's row ids.
+  // The scenario names a bulk delete targets. Names — not ids — because the
+  // amend route resolves drops by name.
+  const resolveSelectionNames = () => resolveSelection((r) => r.name);
+
+  // Bulk delete → confirm, then one drop naming the whole selection.
   const bulkDelete = () => {
     if (sel.count === 0) return;
-    setPendingDelete({ count: sel.count, resolve: () => resolveSelection((r) => r.id) });
+    setPendingDelete({ count: sel.count, resolve: resolveSelectionNames });
   };
 
-  // Run the confirmed delete: resolve the row ids, then one delete request.
+  // Run the confirmed delete: resolve the names, then a single amend `drop`.
   const confirmDelete = async () => {
     const pending = pendingDelete;
     setPendingDelete(null);
     if (!pending) return;
-    let ids;
+    let names;
     try {
-      ids = await pending.resolve();
+      names = await pending.resolve();
     } catch {
       enqueueSnackbar("Couldn't delete. Try again", { variant: "error" });
       return;
     }
-    if (!ids.length) return;
-    deleteByIds.mutate(ids, {
-      onSuccess: (data) => {
-        sel.clear();
-        surfaceReceipts(
-          data,
-          ids.length === 1 ? "Deleted 1 scenario" : `Deleted ${ids.length} scenarios`,
-        );
+    if (!names.length) return;
+    amend.mutate(
+      { rework: true, changes: [{ op: "drop", scenarios: names }] },
+      {
+        onSuccess: (data) => {
+          sel.clear();
+          surfaceReceipts(
+            data,
+            names.length === 1 ? "Deleted 1 scenario" : `Deleted ${names.length} scenarios`,
+          );
+        },
+        onError: () => enqueueSnackbar("Couldn't delete. Try again", { variant: "error" }),
       },
-      onError: (error) => refusedOr(error, "Couldn't delete. Try again"),
-    });
+    );
   };
 
   // Adds dedupe against what is already on the environment, so re-adding a row
@@ -353,32 +341,18 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
     if (fresh.length) patch({ scenarios: [...selected, ...fresh] });
   };
 
-  // Directly editable fields go to the scenario by its row id. The "passes when"
-  // line still travels through the amend route, since it is proved rather than
-  // described. A refused receipt surfaces its `why`; a success refreshes the row.
-  const saveScenario = ({ changes, rework, scenarioId }) => {
+  // Edits route through the amend route as set_field / set_persona ops (the
+  // editor emits only the changed writable fields). A refused receipt surfaces
+  // its `why`; a success invalidates the list + coverage so the row updates.
+  const saveScenario = ({ changes, rework }) => {
     if (!changes?.length) return;
-    const proved = changes.filter((c) => c.op === "set_field" && c.field === "tests");
-    const body = {};
-    for (const change of changes) {
-      if (change.op === "set_persona") body.persona = change.persona;
-      else if (change.op === "set_field" && change.field !== "tests") {
-        body[change.field] = change.value;
-      }
-    }
-    const failed = (error) => refusedOr(error, "Couldn't save. Try again");
-    if (Object.keys(body).length && scenarioId) {
-      editById.mutate(
-        { scenarioId, body },
-        { onSuccess: (data) => surfaceReceipts(data, "Saved"), onError: failed },
-      );
-    }
-    if (proved.length) {
-      amend.mutate(
-        { rework, changes: proved },
-        { onSuccess: (data) => surfaceReceipts(data, "Saved"), onError: failed },
-      );
-    }
+    amend.mutate(
+      { rework, changes },
+      {
+        onSuccess: (data) => surfaceReceipts(data, "Saved"),
+        onError: () => enqueueSnackbar("Couldn't save. Try again", { variant: "error" }),
+      },
+    );
   };
 
   return (

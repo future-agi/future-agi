@@ -5,15 +5,12 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-import structlog
 from django.db.models import Case, IntegerField, Q, QuerySet, Value, When
 from django.db.models.functions import Replace
 from django.utils import timezone
 
 from simulate.models.hosted_harness import HostedHarnessJob, HostedHarnessScenario
 from simulate.models.test_execution import CallExecution
-
-logger = structlog.get_logger(__name__)
 
 # Filter panel properties; a dotted `value` reads into that JSON column.
 FIELDS: tuple[dict[str, Any], ...] = (
@@ -630,145 +627,3 @@ def group_counts(
     for section in sections:
         section["total"] = totals.get(section["name"], section["count"])
     return sections
-
-
-# Editable fields; all but `tests` are refused when the caller declines a re-proof.
-EDITABLE_TEXT_FIELDS = frozenset({"tests"})
-EDITABLE_BEHAVIOUR_FIELDS = frozenset({"max_turns", "background_noise", "keywords"})
-EDITABLE_PERSONA_FIELDS = frozenset(
-    {
-        "personality",
-        "communication_style",
-        "accent",
-        "languages",
-        "occupation",
-        "location",
-    }
-)
-
-
-def editing_contract(spoken: bool = True) -> dict[str, Any]:
-    """Which fields an amend will take, and which of them cannot be taken without a re-proof."""
-    from simulate.models.agent_definition import AgentDefinition
-    from simulate.models.persona import Persona
-
-    # A call has no turn budget; a chat has no accent or room behind the caller.
-    behavioural = EDITABLE_BEHAVIOUR_FIELDS - (
-        {"max_turns"} if spoken else {"background_noise"}
-    )
-    persona = EDITABLE_PERSONA_FIELDS - (set() if spoken else {"accent"})
-    vocabulary = {
-        "personality": Persona.PersonalityChoices,
-        "communication_style": Persona.CommunicationStyleChoices,
-        "accent": Persona.AccentChoices,
-        "languages": AgentDefinition.LanguageChoices,
-        "occupation": Persona.ProfessionChoices,
-        "location": Persona.LocationChoices,
-    }
-    return {
-        "editable_fields": sorted(EDITABLE_TEXT_FIELDS | behavioural),
-        "persona_fields": sorted(persona),
-        "persona_choices": {
-            field: (
-                list(vocabulary[field].labels)
-                if field == "languages"
-                else [value for value, _ in vocabulary[field].choices]
-            )
-            for field in sorted(persona)
-        },
-        "noise_choices": (
-            [bed for bed in NOISE_LABELS if bed != "present"] if spoken else []
-        ),
-        "rework_fields": sorted(behavioural | persona),
-    }
-
-
-def is_spoken_suite(job: HostedHarnessJob) -> bool:
-    from simulate.services.harness_environment import AGENT_TYPE_VOICE, agent_type
-
-    return agent_type(job) == AGENT_TYPE_VOICE
-
-
-def ensure_suite_indexed(job: HostedHarnessJob) -> None:
-    """Index a suite authored before scenarios were indexed, from its stored scenarios output."""
-    from simulate.models import HostedHarnessStageOutput
-
-    if HostedHarnessScenario.no_workspace_objects.filter(
-        job=job, number__isnull=False
-    ).exists():
-        return
-    artefact = (
-        HostedHarnessStageOutput.no_workspace_objects.filter(job=job, kind="scenarios")
-        .values_list("data", flat=True)
-        .first()
-    )
-    if not artefact:
-        artefact = next(
-            (
-                one.get("data")
-                for one in (job.stage_outputs or [])
-                if isinstance(one, dict) and one.get("kind") == "scenarios"
-            ),
-            None,
-        )
-    if isinstance(artefact, list) and artefact:
-        try:
-            index_scenarios(job, artefact)
-        except Exception:  # noqa: BLE001 - the list still shows what is indexed
-            logger.warning("harness_suite_backfill_failed", job_id=str(job.id), exc_info=True)
-
-
-def filtered_suite(job: HostedHarnessJob, params) -> tuple[QuerySet, QuerySet]:
-    """The suite narrowed by search, filters and ordering, and the searched-only set.
-
-    Filter choices are counted over the second, or picking one value would hide the others.
-    """
-    queryset = HostedHarnessScenario.no_workspace_objects.filter(
-        job=job
-    ).select_related("scenario", "call_execution")
-    offerable = apply_search(queryset, params.get("search", ""))
-    filtered = apply_ordering(
-        apply_filters(offerable, params), params.get("ordering", "")
-    )
-    return filtered, offerable
-
-
-def scenario_page(
-    job: HostedHarnessJob,
-    page,
-    filtered: QuerySet,
-    offerable: QuerySet,
-    group_by: str | None,
-) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """One page's rows and the panel details that go with them."""
-    group_by = DEFAULT_GROUP_BY if group_by is None else group_by
-    spoken = is_spoken_suite(job)
-    rows = grouped([scenario_row(one) for one in page], group_by)
-    fields = field_catalogue(offerable, spoken=spoken)
-    return rows, {
-        "groups": group_counts(rows, filtered, group_by),
-        "group_by": group_by,
-        "fields": fields,
-        "scenario_editing": editing_contract(spoken),
-        "groupings": [
-            dict(one) for one in GROUPINGS if spoken or one["value"] != "accent"
-        ],
-        "level_labels": level_labels_for(rows, fields),
-    }
-
-
-def suite_coverage(job: HostedHarnessJob, params) -> dict[str, Any]:
-    """The suite's coverage grid, over the filtered suite rather than a page."""
-    queryset = apply_filters(
-        apply_search(
-            HostedHarnessScenario.no_workspace_objects.filter(job=job),
-            params.get("search", ""),
-        ),
-        params,
-    )
-    return coverage_grid(
-        queryset,
-        params.get("row_axis") or DEFAULT_ROW_AXIS,
-        params.get("col_axis") or DEFAULT_COL_AXIS,
-        spoken=is_spoken_suite(job),
-    )

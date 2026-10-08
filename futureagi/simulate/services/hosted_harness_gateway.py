@@ -3195,18 +3195,13 @@ class HostedHarnessGateway:
             from simulate.services.harness_scenarios import index_scenarios
 
             try:
-                # Under the job lock, so provisioning and edits never interleave with it.
-                with transaction.atomic():
-                    HostedHarnessJob.no_workspace_objects.select_for_update().filter(
-                        id=job.id
-                    ).exists()
-                    index_scenarios(
-                        job,
-                        scenarios,
-                        prune=authoring_complete
-                        or isinstance(invariants, dict)
-                        or isinstance(certified, dict),
-                    )
+                index_scenarios(
+                    job,
+                    scenarios,
+                    prune=authoring_complete
+                    or isinstance(invariants, dict)
+                    or isinstance(certified, dict),
+                )
             except Exception:  # noqa: BLE001 - indexing must never stop a run
                 logger.exception("could not index authored scenarios job=%s", job.id)
         stage = "understanding_agent"
