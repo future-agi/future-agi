@@ -1117,6 +1117,48 @@ def promote_turn_checkpoint(
     )
 
 
+_NOT_PUBLISHED_REPLIES = {
+    "conversation_checkpoint_stale": (
+        "The scenarios changed while I was working, so this change was not saved. "
+        "I have loaded the latest scenarios; please ask again."
+    ),
+    "conversation_checkpoint_invalid": (
+        "This change was not saved: an environment needs 1 to 200 scenarios, "
+        "each with a different name. Your scenarios are unchanged."
+    ),
+}
+_NOT_PUBLISHED_REPLY = (
+    "This change could not be saved. Your scenarios are unchanged; please try again."
+)
+
+
+def tell_checkpoint_not_published(
+    conversation_id: str, turn_sequence: int, code: str
+) -> None:
+    """Tell the chat that a finished turn's workspace did not become the environment's."""
+    request_id = f"not-published-{turn_sequence}"
+    with transaction.atomic():
+        conversation = (
+            HostedHarnessConversation.no_workspace_objects.select_for_update().get(
+                id=conversation_id
+            )
+        )
+        if conversation.messages.filter(client_request_id=request_id).exists():
+            return
+        HostedHarnessConversationMessage.no_workspace_objects.create(
+            conversation=conversation,
+            client_request_id=request_id,
+            sequence=conversation.next_message_sequence,
+            role=HostedHarnessConversationMessage.Role.ASSISTANT,
+            kind=HostedHarnessConversationMessage.Kind.MESSAGE,
+            state=HostedHarnessConversationMessage.State.FAILED,
+            stage=conversation.current_stage,
+            content=_NOT_PUBLISHED_REPLIES.get(code, _NOT_PUBLISHED_REPLY),
+        )
+        conversation.next_message_sequence += 1
+        conversation.save(update_fields=["next_message_sequence", "updated_at"])
+
+
 def promote_latest_checkpoint(
     conversation: HostedHarnessConversation,
 ) -> HostedHarnessJob | None:
