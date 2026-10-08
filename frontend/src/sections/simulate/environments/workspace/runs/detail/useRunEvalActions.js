@@ -18,6 +18,15 @@ export function useRunEvalActions({ envId, executionId }) {
   const [editing, setEditing] = useState(null);
   // The evals the confirm dialog is about and who asked, or null.
   const [confirming, setConfirming] = useState(null);
+  // Both dialogs are about one run. They close in the render that first sees
+  // another run, rather than in an effect, so the old run's dialog is never
+  // painted over the new one.
+  const [shownFor, setShownFor] = useState(executionId);
+  if (shownFor !== executionId) {
+    setShownFor(executionId);
+    setEditing(null);
+    setConfirming(null);
+  }
   const { regrade, isPending } = useRegradeEvals({ envId, executionId });
 
   const requestRerun = (configs, { onSuccess } = {}) =>

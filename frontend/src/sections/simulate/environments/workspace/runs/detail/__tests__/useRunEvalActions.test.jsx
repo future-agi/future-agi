@@ -1,6 +1,12 @@
 /* eslint-disable react/prop-types */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { act, render, screen, fireEvent } from "@testing-library/react";
+import {
+  act,
+  render,
+  renderHook,
+  screen,
+  fireEvent,
+} from "@testing-library/react";
 import { useRunNewEvals } from "src/api/simulate-environments/runEvals";
 import { enqueueSnackbar } from "notistack";
 import RunEvalDialogs from "../RunEvalDialogs";
@@ -262,5 +268,39 @@ describe("useRunEvalActions — editing an eval", () => {
     fireEvent.click(screen.getByText("save edit"));
 
     expect(screen.getByText(HARNESS_NOTE)).toBeInTheDocument();
+  });
+});
+
+describe("useRunEvalActions — moving to another run", () => {
+  const renderActions = () =>
+    renderHook(
+      ({ executionId }) => useRunEvalActions({ envId: "env-1", executionId }),
+      { initialProps: { executionId: "ex1" } },
+    );
+  const openBoth = (result) => {
+    act(() => result.current.requestEdit(MAPPED));
+    act(() => result.current.requestRerun([SUITE]));
+    expect(result.current.dialogProps.editing).toBe(MAPPED);
+    expect(result.current.dialogProps.confirming).toEqual([SUITE]);
+  };
+
+  it("closes both dialogs once the page shows another run", () => {
+    const { result, rerender } = renderActions();
+    openBoth(result);
+
+    rerender({ executionId: "ex2" });
+    expect(result.current.editOpen).toBe(false);
+    expect(result.current.dialogProps.editing).toBeNull();
+    expect(result.current.dialogProps.confirming).toBeNull();
+  });
+
+  it("keeps both open while the page stays on the same run", () => {
+    const { result, rerender } = renderActions();
+    openBoth(result);
+
+    rerender({ executionId: "ex1" });
+    expect(result.current.editOpen).toBe(true);
+    expect(result.current.dialogProps.editing).toBe(MAPPED);
+    expect(result.current.dialogProps.confirming).toEqual([SUITE]);
   });
 });
