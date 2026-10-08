@@ -639,6 +639,10 @@ def _preflight_credential_probe(payload) -> list[dict[str, Any]]:
         )
         if target is not None:
             results.append(target)
+    if connector == "livekit" and mode == "connect_only":
+        target = probe_provider_target(connector, config.get("agent_name"), values)
+        if target is not None:
+            results.append(target)
     return [result.as_dict() for result in results]
 
 

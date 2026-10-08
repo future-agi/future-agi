@@ -94,7 +94,7 @@ class HarnessSourceSerializer(serializers.Serializer):
 VOICE_CONNECTORS = ("livekit", "vapi", "retell", "phone")
 
 # Connectors that reach an already-running agent, so the run carries no source tree.
-PROVIDER_TARGET_CONNECTORS = {"vapi", "retell", "retell_chat", "phone"}
+PROVIDER_TARGET_CONNECTORS = {"vapi", "retell", "retell_chat", "phone", "livekit"}
 
 # Mirrors the SDK's own E.164 rule so a malformed number is refused at admission.
 _E164 = re.compile(r"^\+[1-9]\d{6,14}$")
@@ -247,6 +247,23 @@ class HarnessAgentSerializer(serializers.Serializer):
                 )
             if not has_id:
                 attrs["connector"] = connector = provider_connector = "phone"
+        if connector == "livekit" and mode is not None:
+            if mode != "connect_only":
+                raise serializers.ValidationError(
+                    {"mode": "LiveKit targets support connect_only only"}
+                )
+            if not str(config.get("agent_name") or "").strip():
+                raise serializers.ValidationError(
+                    {"config": "agent_name is required for a connected LiveKit agent"}
+                )
+            prompt = str(config.get("target_system_prompt") or "").strip()
+            if not prompt or len(prompt) > TARGET_SYSTEM_PROMPT_MAX_CHARS:
+                raise serializers.ValidationError(
+                    {
+                        "config": "target_system_prompt is required (maximum 65536 characters)"
+                    }
+                )
+            return attrs
         if mode and provider_connector not in {"vapi", "retell", "phone"}:
             raise serializers.ValidationError(
                 {"mode": "provider mode is supported only for Vapi, Retell, and phone"}
@@ -445,7 +462,7 @@ class HarnessJobCreateSerializer(serializers.Serializer):
         }
         if source is None:
             if (
-                agent["connector"] not in {"vapi", "retell", "retell_chat", "phone"}
+                agent["connector"] not in PROVIDER_TARGET_CONNECTORS
                 or not provider_target_mode
             ):
                 raise serializers.ValidationError(
@@ -455,12 +472,12 @@ class HarnessJobCreateSerializer(serializers.Serializer):
                 )
             attrs["source"] = {"kind": "provider", "visibility": "public"}
         elif source["kind"] == "provider" and (
-            agent["connector"] not in {"vapi", "retell", "retell_chat", "phone"}
+            agent["connector"] not in PROVIDER_TARGET_CONNECTORS
             or not provider_target_mode
         ):
             raise serializers.ValidationError(
                 {
-                    "source": "provider sources require a connected Vapi/Retell agent or phone number"
+                    "source": "provider sources require a connected Vapi/Retell/LiveKit agent or phone number"
                 }
             )
         # Voice scenarios are intentionally sequential by default and may each consume the

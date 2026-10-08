@@ -200,6 +200,15 @@ function platformPayload(draft, name) {
       target_system_prompt: prompt,
       ...(contact ? { inbound: true, target_speaks_first: Boolean(contact.agentSpeaksFirst) } : {}),
     };
+  } else if (connector === PREFLIGHT_CONNECTOR.LIVEKIT) {
+    const prompt = String(draft.prompt || "").trim();
+    if (!prompt) return { skipped: "LiveKit needs the agent's system prompt" };
+    config = {
+      agent_name: draft.agentId,
+      livekit_url: String(draft.livekitUrl || "").trim(),
+      target_system_prompt: prompt,
+      ...callBehaviour(contact),
+    };
   } else {
     const idKey = connector === PREFLIGHT_CONNECTOR.VAPI ? "assistant_id" : "agent_id";
     config = {

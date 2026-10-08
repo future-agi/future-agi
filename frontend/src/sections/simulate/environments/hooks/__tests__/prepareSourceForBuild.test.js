@@ -21,15 +21,17 @@ beforeEach(() => {
 });
 
 describe("redactSource", () => {
-  it("strips plaintext apiKey and envText but keeps opaque fields", () => {
+  it("strips plaintext apiKey, apiSecret and envText but keeps opaque fields", () => {
     const safe = redactSource({
       kind: "platform",
       apiKey: "sk-secret",
+      apiSecret: "lk-secret",
       envText: "A=1",
       secret_refs: { A: "ref://A" },
       secretFiles: [{ name: "f", secret_ref: "sref-1" }],
     });
     expect(safe.apiKey).toBeUndefined();
+    expect(safe.apiSecret).toBeUndefined();
     expect(safe.envText).toBeUndefined();
     expect(safe.secret_refs).toEqual({ A: "ref://A" });
     expect(safe.secretFiles).toEqual([{ name: "f", secret_ref: "sref-1" }]);
@@ -103,17 +105,29 @@ describe("prepareSourceForBuild", () => {
     expect(credentialValues).toEqual({});
   });
 
-  it("does not exchange a provider that has no single-key alias (livekit)", async () => {
+  it("exchanges the livekit key and secret and redacts both", async () => {
     const { draft, credentialValues } = await prepareSourceForBuild({
       kind: "platform",
       provider: "livekit",
-      agentId: "lk_1",
-      apiKey: "should-drop",
+      agentId: "returns-agent",
+      apiKey: " lk-key ",
+      apiSecret: " lk-secret ",
+      livekitUrl: "wss://demo.livekit.cloud",
     });
-    expect(storeHarnessSecretValues).not.toHaveBeenCalled();
-    expect("secret_refs" in draft).toBe(false);
-    // The unexchangeable key is still redacted, never persisted, and never probed.
+    expect(storeHarnessSecretValues).toHaveBeenCalledWith({
+      LIVEKIT_API_KEY: "lk-key",
+      LIVEKIT_API_SECRET: "lk-secret",
+    });
+    expect(draft.secret_refs).toEqual({
+      LIVEKIT_API_KEY: "ref://LIVEKIT_API_KEY",
+      LIVEKIT_API_SECRET: "ref://LIVEKIT_API_SECRET",
+    });
     expect(draft.apiKey).toBeUndefined();
-    expect(credentialValues).toEqual({});
+    expect(draft.apiSecret).toBeUndefined();
+    expect(draft.livekitUrl).toBe("wss://demo.livekit.cloud");
+    expect(credentialValues).toEqual({
+      LIVEKIT_API_KEY: "lk-key",
+      LIVEKIT_API_SECRET: "lk-secret",
+    });
   });
 });

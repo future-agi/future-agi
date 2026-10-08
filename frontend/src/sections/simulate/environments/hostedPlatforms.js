@@ -66,10 +66,10 @@ export const HOSTED_PLATFORMS_BY_TYPE = {
       name: "LiveKit",
       icon: "solar:server-minimalistic-linear",
       brand: "#1FD5F9",
+      isLiveKit: true,
       idLabel: "Agent name",
       idPlaceholder: "returns-line-agent",
       keyLabel: "LiveKit API key",
-      comingSoon: true,
     },
   ],
   [AGENT_TYPES.CHAT]: [

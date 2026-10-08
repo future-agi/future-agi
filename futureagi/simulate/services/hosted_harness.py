@@ -1091,7 +1091,7 @@ def provision_scenarios(
 def _target_agent_prompt(job: HostedHarnessJob, payload: dict[str, Any]) -> str:
     """Resolve target instructions without reducing an Others prompt."""
     connector = str((job.payload.get("agent") or {}).get("connector") or "")
-    if connector == "phone":
+    if connector in {"phone", "livekit"}:
         # "Others" is configured from a user-supplied system prompt.  Keep that
         # complete prompt as the agent definition's source of truth: the hosted
         # guest's ``agent_prompt`` may only be the short contract excerpt used
