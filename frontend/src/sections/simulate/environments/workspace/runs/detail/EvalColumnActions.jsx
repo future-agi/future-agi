@@ -55,9 +55,11 @@ export default function EvalColumnActions({
       ? EVAL_GONE_TOOLTIP
       : config.regradable !== true
         ? HARNESS_ONLY_TOOLTIP
-        : !canRun
-          ? NOT_COMPLETED_TOOLTIP
-          : null;
+        : grading
+          ? GRADING_TOOLTIP
+          : !canRun
+            ? NOT_COMPLETED_TOOLTIP
+            : null;
   const rerunDisabled = !known || Boolean(rerunReason) || rerunPending;
 
   const editReason = !known

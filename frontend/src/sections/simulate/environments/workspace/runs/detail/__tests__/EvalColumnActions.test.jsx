@@ -113,10 +113,12 @@ describe("EvalColumnActions", () => {
     expect(screen.getAllByText(NOT_COMPLETED_TOOLTIP)).toHaveLength(2);
   });
 
-  it("holds edits while the run is being graded", () => {
+  it("holds both while the run is being graded, and says so", () => {
     setup({ canRun: false, grading: true });
+    expect(item("Re-run")).toHaveAttribute("aria-disabled", "true");
     expect(item("Edit")).toHaveAttribute("aria-disabled", "true");
-    expect(screen.getByText(GRADING_TOOLTIP)).toBeInTheDocument();
+    expect(screen.getAllByText(GRADING_TOOLTIP)).toHaveLength(2);
+    expect(screen.queryByText(NOT_COMPLETED_TOOLTIP)).toBeNull();
   });
 
   it("holds both while the run page's re-run is on its way, without a reason", () => {
