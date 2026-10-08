@@ -1,12 +1,18 @@
+from django.conf import settings
 from django.urls import path  # type: ignore
 from rest_framework.routers import DefaultRouter
 
+from tracer.views.alerts import (
+    AlertDetailView,
+    AlertOptionsView,
+    AlertView,
+    ErrorFeedAlertTestView,
+)
 from tracer.views.annotation import (
     BulkAnnotationView,
     GetAnnotationLabelsView,
     TraceAnnotationView,
 )
-from tracer.views.alerts import AlertDetailView, AlertOptionsView, AlertView, ErrorFeedAlertTestView
 from tracer.views.charts import ChartsView
 from tracer.views.custom_eval_config import CustomEvalConfigView
 from tracer.views.dashboard import DashboardViewSet, DashboardWidgetViewSet
@@ -98,8 +104,16 @@ router.register(r"dashboard", DashboardViewSet, basename="dashboard")
 urlpatterns = [
     path("alerts/", AlertView.as_view(), name="alerts"),
     path("alerts/options/", AlertOptionsView.as_view(), name="alert-options"),
-    path("alerts/error_feed/<uuid:alert_id>/test/", ErrorFeedAlertTestView.as_view(), name="error-feed-alert-test"),
-    path("alerts/<str:kind>/<uuid:alert_id>/", AlertDetailView.as_view(), name="alert-detail"),
+    path(
+        "alerts/error_feed/<uuid:alert_id>/test/",
+        ErrorFeedAlertTestView.as_view(),
+        name="error-feed-alert-test",
+    ),
+    path(
+        "alerts/<str:kind>/<uuid:alert_id>/",
+        AlertDetailView.as_view(),
+        name="alert-detail",
+    ),
     path(
         "internal/error-feed-v2/grouping/severity/claims/",
         ClaimSeverityView.as_view(),
@@ -338,3 +352,8 @@ urlpatterns = [
     ),
     *router.urls,
 ]
+
+if settings.ENV_TYPE == "local" and settings.E2E_ERROR_FEED_ENABLED:
+    from tracer.views.e2e_feed_issue import E2EFeedIssueView
+
+    urlpatterns.append(path("e2e/feed-issue/", E2EFeedIssueView.as_view()))

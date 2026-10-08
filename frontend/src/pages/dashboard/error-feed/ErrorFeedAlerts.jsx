@@ -124,6 +124,8 @@ function AlertRuleForm({ rule, draft, onClose }) {
   const projects = optionQuery.data?.projects || [];
   const [name, setName] = useState(draft?.name ?? rule?.name ?? "");
   const [projectId, setProjectId] = useState(draft?.projectId ?? config.project_id ?? rule?.project_id ?? "");
+  const selectedProject = projects.find((project) => String(project.value || project.id) === String(projectId));
+  const selectedProjectName = selectedProject?.label || selectedProject?.name || "Selected project";
   const [trigger, setTrigger] = useState(draft?.trigger ?? config.trigger_type ?? "new_issue");
   const [triggerValue, setTriggerValue] = useState(draft?.triggerValue ?? config.trigger_value ?? "high");
   const [sources, setSources] = useState(draft?.sources ?? config.filters?.sources ?? []);
@@ -235,7 +237,7 @@ function AlertRuleForm({ rule, draft, onClose }) {
           <TextField size="small" label="Rule name" placeholder="For example, Critical production issues" InputLabelProps={{ shrink: true }} value={name} onChange={(e) => { setName(e.target.value); clearFieldError("name"); }} error={Boolean(fieldErrors.name)} helperText={fieldErrors.name} fullWidth />
           <FormControl fullWidth size="small" error={Boolean(fieldErrors.project || optionQuery.isError)}>
             <InputLabel id="project-label" shrink>Project</InputLabel>
-            <Select labelId="project-label" label="Project" displayEmpty value={projectId} onChange={(e) => { setProjectId(e.target.value); clearFieldError("project"); }} renderValue={(value) => value ? projects.find((project) => String(project.value || project.id) === String(value))?.label || "Selected project" : placeholder("All projects in this workspace")}><MenuItem value="">All projects in this workspace</MenuItem>{projects.map((project) => <MenuItem key={project.value || project.id} value={project.value || project.id}>{project.label || project.name}</MenuItem>)}</Select>
+            <Select labelId="project-label" label="Project" displayEmpty value={projectId} onChange={(e) => { setProjectId(e.target.value); clearFieldError("project"); }} renderValue={(value) => value ? selectedProjectName : placeholder("All projects in this workspace")}><MenuItem value="">All projects in this workspace</MenuItem>{projects.map((project) => <MenuItem key={project.value || project.id} value={project.value || project.id}>{project.label || project.name}</MenuItem>)}</Select>
             {(fieldErrors.project || optionQuery.isError) && <FormHelperText>{fieldErrors.project || "Could not load alert options."}{optionQuery.isError && <Button size="small" onClick={() => optionQuery.refetch?.()}>Retry</Button>}</FormHelperText>}
           </FormControl>
           <SectionTitle step="1" title="When" subtitle="Choose the issue event that starts this rule." />
@@ -319,7 +321,7 @@ function AlertRuleForm({ rule, draft, onClose }) {
           <FormControl fullWidth size="small" error={Boolean(fieldErrors.cooldown)}><InputLabel id="cooldown-label">Notify at most</InputLabel><Select labelId="cooldown-label" label="Notify at most" value={cooldown} onChange={(e) => { setCooldown(e.target.value); clearFieldError("cooldown"); }}>{COOLDOWNS.map((seconds) => <MenuItem key={seconds} value={seconds}>{cooldownLabel(seconds)}</MenuItem>)}</Select>{fieldErrors.cooldown && <FormHelperText>{fieldErrors.cooldown}</FormHelperText>}</FormControl>
           <Card variant="outlined" sx={{ p: 1.5, bgcolor: "background.neutral", overflowWrap: "anywhere" }}>
             <Typography typography="s2" color="text.secondary">Preview</Typography>
-            <Typography typography="s1" color="text.primary" mt={0.5}>When {TRIGGERS.find((item) => item.value === trigger)?.label.toLowerCase()}{trigger === "severity_reached" ? `: ${triggerValue}` : trigger === "occurrences_crossed" ? `: ${triggerValue}` : ""}{projectId ? ` in ${projects.find((item) => String(item.value || item.id) === String(projectId))?.label || "selected project"}` : " in any project"}, post to #{channels.find((item) => String(item.id) === String(channelId))?.name || "selected channel"}.</Typography>
+            <Typography typography="s1" color="text.primary" mt={0.5}>When {TRIGGERS.find((item) => item.value === trigger)?.label.toLowerCase()}{trigger === "severity_reached" ? `: ${triggerValue}` : trigger === "occurrences_crossed" ? `: ${triggerValue}` : ""}{projectId ? ` in ${selectedProjectName.toLowerCase() === "selected project" ? "selected project" : selectedProjectName}` : " in any project"}, post to #{channels.find((item) => String(item.id) === String(channelId))?.name || "selected channel"}.</Typography>
           </Card>
         </Stack>
       </Box>
