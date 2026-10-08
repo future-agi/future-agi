@@ -17755,6 +17755,125 @@ export interface HarnessEnvironmentRunEvaluationsQueuedApi {
   call_execution_count: number;
 }
 
+export type HarnessScenarioChangeRequestApiKind =
+  (typeof HarnessScenarioChangeRequestApiKind)[keyof typeof HarnessScenarioChangeRequestApiKind];
+
+export const HarnessScenarioChangeRequestApiKind = {
+  revise: "revise",
+  add: "add",
+} as const;
+
+export interface HarnessScenarioChangeRequestApi {
+  kind: HarnessScenarioChangeRequestApiKind;
+  /** @maxLength 4000 */
+  instruction?: string;
+  /** @maxItems 50 */
+  scenario_ids?: string[];
+  /**
+   * @minimum 1
+   * @maximum 50
+   */
+  count?: number;
+}
+
+export type HarnessConversationReadApiBlockingInput = {
+  [key: string]: unknown;
+};
+
+export type HarnessConversationMessageApiRole =
+  (typeof HarnessConversationMessageApiRole)[keyof typeof HarnessConversationMessageApiRole];
+
+export const HarnessConversationMessageApiRole = {
+  user: "user",
+  assistant: "assistant",
+  system: "system",
+} as const;
+
+export type HarnessConversationMessageApiKind =
+  (typeof HarnessConversationMessageApiKind)[keyof typeof HarnessConversationMessageApiKind];
+
+export const HarnessConversationMessageApiKind = {
+  message: "message",
+  question: "question",
+  confirmation: "confirmation",
+  status: "status",
+} as const;
+
+export type HarnessConversationMessageApiState =
+  (typeof HarnessConversationMessageApiState)[keyof typeof HarnessConversationMessageApiState];
+
+export const HarnessConversationMessageApiState = {
+  queued: "queued",
+  delivered: "delivered",
+  streaming: "streaming",
+  completed: "completed",
+  failed: "failed",
+} as const;
+
+export type HarnessConversationMessageApiPayload = { [key: string]: unknown };
+
+export interface HarnessConversationMessageApi {
+  message_id: string;
+  /** @minimum 1 */
+  sequence: number;
+  role: HarnessConversationMessageApiRole;
+  kind: HarnessConversationMessageApiKind;
+  state: HarnessConversationMessageApiState;
+  stage: string;
+  content: string;
+  payload: HarnessConversationMessageApiPayload;
+  /** @minLength 1 */
+  invocation_id?: string;
+  /** @minLength 1 */
+  function_call_id?: string;
+  reply_to?: string;
+  created_at: string;
+}
+
+export type HarnessConversationEventReadApiPayload = { [key: string]: unknown };
+
+export interface HarnessConversationEventReadApi {
+  /** @minLength 1 */
+  event_id: string;
+  /** @minimum 1 */
+  sequence: number;
+  /** @minLength 1 */
+  kind: string;
+  message_id?: string;
+  stage: string;
+  /** @minLength 1 */
+  invocation_id?: string;
+  /** @minLength 1 */
+  function_call_id?: string;
+  payload: HarnessConversationEventReadApiPayload;
+  emitted_at: string;
+}
+
+export interface HarnessConversationRuntimeApi {
+  /** @minLength 1 */
+  state: string;
+  warm_until: string;
+  degraded: boolean;
+  available: boolean;
+}
+
+export interface HarnessConversationReadApi {
+  conversation_id: string;
+  job_id: string;
+  /** @minLength 1 */
+  state: string;
+  /** @minLength 1 */
+  stage: string;
+  /** @minLength 1 */
+  active_invocation_id: string;
+  blocking_input: HarnessConversationReadApiBlockingInput;
+  messages: HarnessConversationMessageApi[];
+  events: HarnessConversationEventReadApi[];
+  /** @minimum 0 */
+  event_watermark: number;
+  runtime: HarnessConversationRuntimeApi;
+}
+
 export type HarnessJobReadApiReceiptsItem = { [key: string]: unknown };
 
 export type HarnessJobReadApiUsageLimit = { [key: string]: unknown };
@@ -17864,104 +17983,6 @@ export interface HarnessParallelismApi {
   admitted: number;
   effective: number;
   degrade_reasons: string[];
-}
-
-export type HarnessConversationMessageApiRole =
-  (typeof HarnessConversationMessageApiRole)[keyof typeof HarnessConversationMessageApiRole];
-
-export const HarnessConversationMessageApiRole = {
-  user: "user",
-  assistant: "assistant",
-  system: "system",
-} as const;
-
-export type HarnessConversationMessageApiKind =
-  (typeof HarnessConversationMessageApiKind)[keyof typeof HarnessConversationMessageApiKind];
-
-export const HarnessConversationMessageApiKind = {
-  message: "message",
-  question: "question",
-  confirmation: "confirmation",
-  status: "status",
-} as const;
-
-export type HarnessConversationMessageApiState =
-  (typeof HarnessConversationMessageApiState)[keyof typeof HarnessConversationMessageApiState];
-
-export const HarnessConversationMessageApiState = {
-  queued: "queued",
-  delivered: "delivered",
-  streaming: "streaming",
-  completed: "completed",
-  failed: "failed",
-} as const;
-
-export type HarnessConversationMessageApiPayload = { [key: string]: unknown };
-
-export interface HarnessConversationMessageApi {
-  message_id: string;
-  /** @minimum 1 */
-  sequence: number;
-  role: HarnessConversationMessageApiRole;
-  kind: HarnessConversationMessageApiKind;
-  state: HarnessConversationMessageApiState;
-  stage: string;
-  content: string;
-  payload: HarnessConversationMessageApiPayload;
-  /** @minLength 1 */
-  invocation_id?: string;
-  /** @minLength 1 */
-  function_call_id?: string;
-  reply_to?: string;
-  created_at: string;
-}
-
-export type HarnessConversationEventReadApiPayload = { [key: string]: unknown };
-
-export interface HarnessConversationEventReadApi {
-  /** @minLength 1 */
-  event_id: string;
-  /** @minimum 1 */
-  sequence: number;
-  /** @minLength 1 */
-  kind: string;
-  message_id?: string;
-  stage: string;
-  /** @minLength 1 */
-  invocation_id?: string;
-  /** @minLength 1 */
-  function_call_id?: string;
-  payload: HarnessConversationEventReadApiPayload;
-  emitted_at: string;
-}
-
-export interface HarnessConversationRuntimeApi {
-  /** @minLength 1 */
-  state: string;
-  warm_until: string;
-  degraded: boolean;
-  available: boolean;
-}
-
-export type HarnessConversationReadApiBlockingInput = {
-  [key: string]: unknown;
-};
-
-export interface HarnessConversationReadApi {
-  conversation_id: string;
-  job_id: string;
-  /** @minLength 1 */
-  state: string;
-  /** @minLength 1 */
-  stage: string;
-  /** @minLength 1 */
-  active_invocation_id: string;
-  blocking_input: HarnessConversationReadApiBlockingInput;
-  messages: HarnessConversationMessageApi[];
-  events: HarnessConversationEventReadApi[];
-  /** @minimum 0 */
-  event_watermark: number;
-  runtime: HarnessConversationRuntimeApi;
 }
 
 export interface HarnessConsumptionApi {

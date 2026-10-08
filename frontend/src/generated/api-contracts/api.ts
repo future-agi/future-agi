@@ -610,6 +610,7 @@ import type {
   HarnessRunCreateApi,
   HarnessRunCreateResponseApi,
   HarnessScenarioAmendApi,
+  HarnessScenarioChangeRequestApi,
   HarnessScenarioOperationApi,
   HarnessScenarioOperationResponseApi,
   HarnessSecretFileUploadResponseApi,
@@ -59031,6 +59032,56 @@ export const simulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluations =
       },
     );
   };
+
+export type simulateApiHarnessEnvironmentsScenariosChangeScenariosResponse202 =
+  {
+    data: HarnessConversationReadApi;
+    status: 202;
+  };
+
+export type simulateApiHarnessEnvironmentsScenariosChangeScenariosResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 202>;
+  };
+
+export type simulateApiHarnessEnvironmentsScenariosChangeScenariosResponseSuccess =
+  simulateApiHarnessEnvironmentsScenariosChangeScenariosResponse202 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsScenariosChangeScenariosResponseError =
+  simulateApiHarnessEnvironmentsScenariosChangeScenariosResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsScenariosChangeScenariosResponse =
+  | simulateApiHarnessEnvironmentsScenariosChangeScenariosResponseSuccess
+  | simulateApiHarnessEnvironmentsScenariosChangeScenariosResponseError;
+
+export const getSimulateApiHarnessEnvironmentsScenariosChangeScenariosUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/scenarios/changes/`;
+};
+
+/**
+ * Revise scenarios or add new ones through the environment's builder agent, which re-proves them and publishes the suite when its turn ends.
+ */
+export const simulateApiHarnessEnvironmentsScenariosChangeScenarios = async (
+  id: string,
+  harnessScenarioChangeRequestApi: HarnessScenarioChangeRequestApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsScenariosChangeScenariosResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsScenariosChangeScenariosResponse>(
+    getSimulateApiHarnessEnvironmentsScenariosChangeScenariosUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessScenarioChangeRequestApi),
+    },
+  );
+};
 
 export type simulateApiHarnessJobsListResponse200 = {
   data: HarnessJobReadApi[];

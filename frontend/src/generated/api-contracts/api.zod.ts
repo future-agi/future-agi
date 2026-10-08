@@ -36178,6 +36178,42 @@ export const SimulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluationsBody =
   });
 
 /**
+ * Revise scenarios or add new ones through the environment's builder agent, which re-proves them and publishes the suite when its turn ends.
+ */
+export const SimulateApiHarnessEnvironmentsScenariosChangeScenariosParams =
+  zod.object({
+    id: zod.string(),
+  });
+
+export const simulateApiHarnessEnvironmentsScenariosChangeScenariosBodyInstructionMax = 4000;
+
+export const simulateApiHarnessEnvironmentsScenariosChangeScenariosBodyScenarioIdsMax = 50;
+
+export const simulateApiHarnessEnvironmentsScenariosChangeScenariosBodyCountMax = 50;
+
+export const SimulateApiHarnessEnvironmentsScenariosChangeScenariosBody =
+  zod.object({
+    kind: zod.enum(["revise", "add"]),
+    instruction: zod
+      .string()
+      .max(
+        simulateApiHarnessEnvironmentsScenariosChangeScenariosBodyInstructionMax,
+      )
+      .optional(),
+    scenario_ids: zod
+      .array(zod.string().uuid())
+      .max(
+        simulateApiHarnessEnvironmentsScenariosChangeScenariosBodyScenarioIdsMax,
+      )
+      .optional(),
+    count: zod
+      .number()
+      .min(1)
+      .max(simulateApiHarnessEnvironmentsScenariosChangeScenariosBodyCountMax)
+      .optional(),
+  });
+
+/**
  * Validates the v1.6 request contract and delegates execution to the public backend selected by
 ``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
 selects its managed sandbox runtime.

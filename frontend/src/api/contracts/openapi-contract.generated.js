@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1056,
+  endpointCount: 1057,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -28261,6 +28261,26 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
         },
       },
+    "/simulate/api/harness-environments/{id}/scenarios/changes/": {
+      post: {
+        operationId:
+          "simulate_api_harness-environments_scenarios_change_scenarios",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessScenarioChangeRequest",
+        },
+        queryParameters: {},
+        responses: {
+          202: {
+            $ref: "#/definitions/HarnessConversationRead",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/simulate/api/harness-jobs/": {
       get: {
         operationId: "simulate_api_harness-jobs_list",
@@ -62288,7 +62308,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           $ref: "#/definitions/HarnessConversationRuntime",
         },
       },
-      "x-nullable": true,
     },
     HarnessConversationRerun: {
       type: "object",
@@ -63349,6 +63368,36 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Rework",
           type: "boolean",
           default: true,
+        },
+      },
+    },
+    HarnessScenarioChangeRequest: {
+      required: ["kind"],
+      type: "object",
+      properties: {
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["revise", "add"],
+        },
+        instruction: {
+          title: "Instruction",
+          type: "string",
+          maxLength: 4000,
+        },
+        scenario_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            format: "uuid",
+          },
+          maxItems: 50,
+        },
+        count: {
+          title: "Count",
+          type: "integer",
+          maximum: 50,
+          minimum: 1,
         },
       },
     },

@@ -50964,6 +50964,49 @@
                 }
             ]
         },
+        "/simulate/api/harness-environments/{id}/scenarios/changes/": {
+            "post": {
+                "operationId": "simulate_api_harness-environments_scenarios_change_scenarios",
+                "description": "Revise scenarios or add new ones through the environment's builder agent, which re-proves them and publishes the suite when its turn ends.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessScenarioChangeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessConversationRead"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/harness-jobs/": {
             "get": {
                 "operationId": "simulate_api_harness-jobs_list",
@@ -124152,6 +124195,289 @@
                 }
             }
         },
+        "HarnessScenarioChangeRequest": {
+            "required": [
+                "kind"
+            ],
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "enum": [
+                        "revise",
+                        "add"
+                    ]
+                },
+                "instruction": {
+                    "title": "Instruction",
+                    "type": "string",
+                    "maxLength": 4000
+                },
+                "scenario_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    "maxItems": 50
+                },
+                "count": {
+                    "title": "Count",
+                    "type": "integer",
+                    "maximum": 50,
+                    "minimum": 1
+                }
+            }
+        },
+        "HarnessConversationMessage": {
+            "required": [
+                "message_id",
+                "sequence",
+                "role",
+                "kind",
+                "state",
+                "stage",
+                "content",
+                "payload",
+                "created_at"
+            ],
+            "type": "object",
+            "properties": {
+                "message_id": {
+                    "title": "Message id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "sequence": {
+                    "title": "Sequence",
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "role": {
+                    "title": "Role",
+                    "type": "string",
+                    "enum": [
+                        "user",
+                        "assistant",
+                        "system"
+                    ]
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "enum": [
+                        "message",
+                        "question",
+                        "confirmation",
+                        "status"
+                    ]
+                },
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "enum": [
+                        "queued",
+                        "delivered",
+                        "streaming",
+                        "completed",
+                        "failed"
+                    ]
+                },
+                "stage": {
+                    "title": "Stage",
+                    "type": "string"
+                },
+                "content": {
+                    "title": "Content",
+                    "type": "string"
+                },
+                "payload": {
+                    "title": "Payload",
+                    "type": "object"
+                },
+                "invocation_id": {
+                    "title": "Invocation id",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "function_call_id": {
+                    "title": "Function call id",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "reply_to": {
+                    "title": "Reply to",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time"
+                }
+            }
+        },
+        "HarnessConversationEventRead": {
+            "required": [
+                "event_id",
+                "sequence",
+                "kind",
+                "stage",
+                "payload",
+                "emitted_at"
+            ],
+            "type": "object",
+            "properties": {
+                "event_id": {
+                    "title": "Event id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "sequence": {
+                    "title": "Sequence",
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "message_id": {
+                    "title": "Message id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "stage": {
+                    "title": "Stage",
+                    "type": "string"
+                },
+                "invocation_id": {
+                    "title": "Invocation id",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "function_call_id": {
+                    "title": "Function call id",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "payload": {
+                    "title": "Payload",
+                    "type": "object"
+                },
+                "emitted_at": {
+                    "title": "Emitted at",
+                    "type": "string",
+                    "format": "date-time"
+                }
+            }
+        },
+        "HarnessConversationRuntime": {
+            "required": [
+                "state",
+                "warm_until",
+                "degraded",
+                "available"
+            ],
+            "type": "object",
+            "properties": {
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "warm_until": {
+                    "title": "Warm until",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "degraded": {
+                    "title": "Degraded",
+                    "type": "boolean"
+                },
+                "available": {
+                    "title": "Available",
+                    "type": "boolean"
+                }
+            }
+        },
+        "HarnessConversationRead": {
+            "required": [
+                "conversation_id",
+                "job_id",
+                "state",
+                "stage",
+                "active_invocation_id",
+                "blocking_input",
+                "messages",
+                "events",
+                "event_watermark",
+                "runtime"
+            ],
+            "type": "object",
+            "properties": {
+                "conversation_id": {
+                    "title": "Conversation id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "job_id": {
+                    "title": "Job id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "stage": {
+                    "title": "Stage",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "active_invocation_id": {
+                    "title": "Active invocation id",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "blocking_input": {
+                    "title": "Blocking input",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "messages": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessConversationMessage"
+                    }
+                },
+                "events": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessConversationEventRead"
+                    }
+                },
+                "event_watermark": {
+                    "title": "Event watermark",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "runtime": {
+                    "$ref": "#/definitions/HarnessConversationRuntime"
+                }
+            }
+        },
         "HarnessJobInfo": {
             "required": [
                 "job_id",
@@ -124506,255 +124832,6 @@
                     }
                 }
             }
-        },
-        "HarnessConversationMessage": {
-            "required": [
-                "message_id",
-                "sequence",
-                "role",
-                "kind",
-                "state",
-                "stage",
-                "content",
-                "payload",
-                "created_at"
-            ],
-            "type": "object",
-            "properties": {
-                "message_id": {
-                    "title": "Message id",
-                    "type": "string",
-                    "format": "uuid"
-                },
-                "sequence": {
-                    "title": "Sequence",
-                    "type": "integer",
-                    "minimum": 1
-                },
-                "role": {
-                    "title": "Role",
-                    "type": "string",
-                    "enum": [
-                        "user",
-                        "assistant",
-                        "system"
-                    ]
-                },
-                "kind": {
-                    "title": "Kind",
-                    "type": "string",
-                    "enum": [
-                        "message",
-                        "question",
-                        "confirmation",
-                        "status"
-                    ]
-                },
-                "state": {
-                    "title": "State",
-                    "type": "string",
-                    "enum": [
-                        "queued",
-                        "delivered",
-                        "streaming",
-                        "completed",
-                        "failed"
-                    ]
-                },
-                "stage": {
-                    "title": "Stage",
-                    "type": "string"
-                },
-                "content": {
-                    "title": "Content",
-                    "type": "string"
-                },
-                "payload": {
-                    "title": "Payload",
-                    "type": "object"
-                },
-                "invocation_id": {
-                    "title": "Invocation id",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "function_call_id": {
-                    "title": "Function call id",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "reply_to": {
-                    "title": "Reply to",
-                    "type": "string",
-                    "format": "uuid",
-                    "x-nullable": true
-                },
-                "created_at": {
-                    "title": "Created at",
-                    "type": "string",
-                    "format": "date-time"
-                }
-            }
-        },
-        "HarnessConversationEventRead": {
-            "required": [
-                "event_id",
-                "sequence",
-                "kind",
-                "stage",
-                "payload",
-                "emitted_at"
-            ],
-            "type": "object",
-            "properties": {
-                "event_id": {
-                    "title": "Event id",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "sequence": {
-                    "title": "Sequence",
-                    "type": "integer",
-                    "minimum": 1
-                },
-                "kind": {
-                    "title": "Kind",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "message_id": {
-                    "title": "Message id",
-                    "type": "string",
-                    "format": "uuid",
-                    "x-nullable": true
-                },
-                "stage": {
-                    "title": "Stage",
-                    "type": "string"
-                },
-                "invocation_id": {
-                    "title": "Invocation id",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "function_call_id": {
-                    "title": "Function call id",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "payload": {
-                    "title": "Payload",
-                    "type": "object"
-                },
-                "emitted_at": {
-                    "title": "Emitted at",
-                    "type": "string",
-                    "format": "date-time"
-                }
-            }
-        },
-        "HarnessConversationRuntime": {
-            "required": [
-                "state",
-                "warm_until",
-                "degraded",
-                "available"
-            ],
-            "type": "object",
-            "properties": {
-                "state": {
-                    "title": "State",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "warm_until": {
-                    "title": "Warm until",
-                    "type": "string",
-                    "format": "date-time",
-                    "x-nullable": true
-                },
-                "degraded": {
-                    "title": "Degraded",
-                    "type": "boolean"
-                },
-                "available": {
-                    "title": "Available",
-                    "type": "boolean"
-                }
-            }
-        },
-        "HarnessConversationRead": {
-            "required": [
-                "conversation_id",
-                "job_id",
-                "state",
-                "stage",
-                "active_invocation_id",
-                "blocking_input",
-                "messages",
-                "events",
-                "event_watermark",
-                "runtime"
-            ],
-            "type": "object",
-            "properties": {
-                "conversation_id": {
-                    "title": "Conversation id",
-                    "type": "string",
-                    "format": "uuid"
-                },
-                "job_id": {
-                    "title": "Job id",
-                    "type": "string",
-                    "format": "uuid"
-                },
-                "state": {
-                    "title": "State",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "stage": {
-                    "title": "Stage",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "active_invocation_id": {
-                    "title": "Active invocation id",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "blocking_input": {
-                    "title": "Blocking input",
-                    "type": "object",
-                    "x-nullable": true
-                },
-                "messages": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/HarnessConversationMessage"
-                    }
-                },
-                "events": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/HarnessConversationEventRead"
-                    }
-                },
-                "event_watermark": {
-                    "title": "Event watermark",
-                    "type": "integer",
-                    "minimum": 0
-                },
-                "runtime": {
-                    "$ref": "#/definitions/HarnessConversationRuntime"
-                }
-            },
-            "x-nullable": true
         },
         "HarnessConsumption": {
             "required": [

@@ -20,10 +20,14 @@ from simulate.serializers.harness_environment import (
     HarnessEnvironmentRunEvaluationsQueuedSerializer,
     HarnessEnvironmentRunEvaluationsSerializer,
     HarnessEnvironmentToolCallEvaluationSerializer,
+    HarnessScenarioChangeRequestSerializer,
 )
 from simulate.serializers.harness_job import (
     HarnessRunCreateResponseSerializer,
     HarnessRunCreateSerializer,
+)
+from simulate.serializers.hosted_harness_conversation import (
+    HarnessConversationReadSerializer,
 )
 from simulate.serializers.response.run_test import SimulateEvalConfigResponseSerializer
 from simulate.services.harness_environment import (
@@ -715,6 +719,60 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         return Response(SimulateEvalConfigSimpleSerializer(config).data)
+
+    @validated_request(
+        request_serializer=HarnessScenarioChangeRequestSerializer,
+        responses={202: HarnessConversationReadSerializer},
+        reject_unknown_fields=True,
+        operation_description=(
+            "Revise scenarios or add new ones through the environment's builder "
+            "agent, which re-proves them and publishes the suite when its turn ends."
+        ),
+    )
+    @action(detail=True, methods=["post"], url_path="scenarios/changes")
+    def change_scenarios(self, request, pk=None):
+        """Revise scenarios or add new ones through the builder agent."""
+        import hashlib
+        import uuid
+
+        from simulate.services.hosted_harness import HostedHarnessError
+        from simulate.services.hosted_harness_conversation import (
+            request_scenario_change,
+            serialize_conversation,
+        )
+        from simulate.services.hosted_harness_ingress import _public_base_url
+
+        job = self._job(request, pk)
+        if job is None:
+            return Response(
+                build_error_envelope(
+                    "Environment not found", status_code=status.HTTP_404_NOT_FOUND
+                ),
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        key = request.headers.get("Idempotency-Key") or uuid.uuid4().hex
+        data = request.validated_data
+        try:
+            conversation = request_scenario_change(
+                job,
+                kind=data["kind"],
+                instruction=data.get("instruction") or "",
+                scenario_ids=data.get("scenario_ids") or [],
+                count=data.get("count"),
+                client_request_id="change-"
+                + hashlib.sha256(key.encode()).hexdigest()[:40],
+                base_url=_public_base_url(request),
+            )
+        except HostedHarnessError as exc:
+            return Response(
+                build_error_envelope(
+                    exc.message, status_code=exc.status_code, code=exc.code
+                ),
+                status=exc.status_code,
+            )
+        return Response(
+            serialize_conversation(conversation), status=status.HTTP_202_ACCEPTED
+        )
 
     @validated_request(
         request_serializer=HarnessEnvironmentToolCallEvaluationSerializer,
