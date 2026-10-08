@@ -1917,12 +1917,28 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   );
 
   const refreshAll = useCallback(
-    ({ includeAggregations = true } = {}) => {
+    ({ includeAggregations = true, listOnly = false } = {}) => {
       setLatestActive(true);
-      refreshPrimary(false, { includeAggregations });
-      refreshCompare(false, { includeAggregations });
+      if (projectSource === PROJECT_SOURCE.SIMULATOR) {
+        refreshPrimary(false, { includeAggregations });
+        refreshCompare(false, { includeAggregations });
+      } else {
+        trackEvent(Events.pObserveRefreshClicked);
+        window.dispatchEvent(
+          new CustomEvent(
+            listOnly ? OBSERVE_LIST_REFRESH_EVENT : "observe-refresh",
+            { detail: { observeId } },
+          ),
+        );
+        if (includeAggregations) {
+          queryClient.invalidateQueries({
+            queryKey: ["llm-tracing-graph"],
+          });
+        }
+      }
+      return true;
     },
-    [refreshCompare, refreshPrimary],
+    [observeId, projectSource, queryClient, refreshCompare, refreshPrimary],
   );
 
   const columnKey = useMemo(() => {
