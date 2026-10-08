@@ -540,15 +540,16 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
   };
 
   // Which listed models this provider serves on /v1/responses rather than chat
-  // completions. Already-selected ones are included so a model saved earlier
-  // keeps its tag even if the listing no longer offers it.
+  // completions. Built from the live catalogue only: `models` can hold an ID
+  // the user typed by hand (e.g. Perplexity's `sonar`, which chat completions
+  // serves and the catalogue never lists), and that must never be tagged.
   const responsesOnly = useMemo(
     () =>
-      responsesOnlyModelSet([...modelOptions, ...models], {
+      responsesOnlyModelSet(modelOptions, {
         providerName: name,
         baseUrl,
       }),
-    [modelOptions, models, name, baseUrl],
+    [modelOptions, name, baseUrl],
   );
 
   // What "Select All" covers. Tagged models stay out, which is what keeps them
