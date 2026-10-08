@@ -22,12 +22,12 @@ These run on the real database.
 """
 
 import pytest
-from accounts.models.workspace import Workspace
-from tracer.models.eval_task import EvalTask, EvalTaskStatus, RunType
 
+from accounts.models.workspace import Workspace
 from ai_tools.base import ToolContext
 from ai_tools.tests.conftest import run_tool
 from ai_tools.tests.fixtures import make_project
+from tracer.models.eval_task import EvalTask, EvalTaskStatus, RunType
 
 
 @pytest.fixture
