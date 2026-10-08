@@ -5568,6 +5568,9 @@ class RunTestExecutionsView(APIView):
 
             # Get test executions for this run test with annotations to avoid N+1 queries
             # Use annotations to calculate call metrics in a single query
+            # A join over "calls" does not go through the model manager, so
+            # every aggregate has to leave soft-deleted calls out itself.
+            visible_calls = models.Q(calls__deleted=False)
             test_executions = (
                 TestExecution.objects.filter(run_test=run_test, deleted=False)
                 .select_related(
@@ -5576,26 +5579,26 @@ class RunTestExecutionsView(APIView):
                 )
                 .prefetch_related("calls")
                 .annotate(
-                    _total_calls=Count("calls"),
+                    _total_calls=Count("calls", filter=visible_calls),
                     _completed_calls=Count(
                         "calls",
-                        filter=models.Q(
-                            calls__status=CallExecution.CallStatus.COMPLETED
-                        ),
+                        filter=visible_calls
+                        & models.Q(calls__status=CallExecution.CallStatus.COMPLETED),
                     ),
                     _pending_calls=Count(
                         "calls",
-                        filter=models.Q(calls__status=CallExecution.CallStatus.PENDING),
+                        filter=visible_calls
+                        & models.Q(calls__status=CallExecution.CallStatus.PENDING),
                     ),
                     _queued_calls=Count(
                         "calls",
-                        filter=models.Q(
-                            calls__status=CallExecution.CallStatus.REGISTERED
-                        ),
+                        filter=visible_calls
+                        & models.Q(calls__status=CallExecution.CallStatus.REGISTERED),
                     ),
                     _failed_calls=Count(
                         "calls",
-                        filter=models.Q(
+                        filter=visible_calls
+                        & models.Q(
                             calls__status__in=(
                                 CallExecution.CallStatus.FAILED,
                                 CallExecution.CallStatus.CANCELLED,
@@ -5604,9 +5607,11 @@ class RunTestExecutionsView(APIView):
                     ),
                     _connected_calls=Count(
                         "calls",
-                        filter=models.Q(calls__duration_seconds__gt=0),
+                        filter=visible_calls & models.Q(calls__duration_seconds__gt=0),
                     ),
-                    _avg_response_time_ms=Avg("calls__response_time_ms"),
+                    _avg_response_time_ms=Avg(
+                        "calls__response_time_ms", filter=visible_calls
+                    ),
                 )
             )
 
@@ -5679,10 +5684,20 @@ class RunTestExecutionsView(APIView):
             }
             outcome_counts = {}
             if hosted_jobs:
+                # A receipt belongs to a call through its execution, or, for a
+                # scenario-level receipt, through the scenario registration.
+                # Receipts of soft-deleted calls stay in the table and must
+                # not be counted.
+                receipt_of_deleted_call = models.Q(
+                    execution__call_execution__deleted=True
+                ) | models.Q(
+                    execution__isnull=True, scenario__call_execution__deleted=True
+                )
                 for row in (
                     HostedHarnessReceipt.no_workspace_objects.filter(
                         job_id__in=hosted_jobs.values()
                     )
+                    .exclude(receipt_of_deleted_call)
                     .values("job_id", "status")
                     .annotate(count=Count("id"))
                 ):
@@ -5695,6 +5710,7 @@ class RunTestExecutionsView(APIView):
                 turn_counts_qs = (
                     ChatMessageModel.objects.filter(
                         call_execution__test_execution_id__in=execution_ids,
+                        call_execution__deleted=False,
                         role=ChatMessageModel.RoleChoices.USER,
                     )
                     .values("call_execution__test_execution_id")
@@ -5712,6 +5728,7 @@ class RunTestExecutionsView(APIView):
                     chat_times_qs = (
                         ChatMessageModel.objects.filter(
                             call_execution__test_execution_id__in=execution_ids,
+                            call_execution__deleted=False,
                         )
                         .values("call_execution__test_execution_id")
                         .annotate(
@@ -5871,7 +5888,7 @@ class RunTestExecutionsView(APIView):
                         "error_reason": test_execution.error_reason,
                         "success_rate": round(success_rate, 2),
                         "avg_response_time": round(avg_response_time, 3),
-                        "calls": test_execution.total_calls,
+                        "calls": total_calls,
                         "calls_attempted": execution_calls_attempted,
                         "connected_calls": connected_calls,
                         "agent_version": agent_version_name,
