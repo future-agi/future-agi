@@ -1369,16 +1369,22 @@ def requeue_unread_investigations(
     requeued = 0
     if apply:
         now = timezone.now()
-        # The state filter is re-checked under the row lock, so a job that a new
-        # notification queued or a worker claimed in the meantime is left alone.
-        requeued = TraceInvestigationJob.no_workspace_objects.filter(
-            id__in=selected, state__in=unread_states
-        ).update(
-            generation=F("generation") + 1,
-            state=TraceInvestigationJobState.WAITING,
-            not_before=now,
-            updated_at=now,
-        )
+        # The selected rows are locked first and their eligibility is read again
+        # under the lock, so a job that was queued, claimed or given a completed
+        # report in the meantime is left alone. One UPDATE with the report filter
+        # would not see a report that commits while it waits for the row.
+        with transaction.atomic():
+            locked = list(
+                TraceInvestigationJob.no_workspace_objects.select_for_update()
+                .filter(id__in=selected)
+                .values_list("id", flat=True)
+            )
+            requeued = unread.filter(id__in=locked).update(
+                generation=F("generation") + 1,
+                state=TraceInvestigationJobState.WAITING,
+                not_before=now,
+                updated_at=now,
+            )
     return {
         "project_id": str(project_id),
         "sampling_rate": rate,
