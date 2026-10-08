@@ -221,6 +221,8 @@ def filter_tools_for_message(tools, user_message, recent_tool_names=None, max_to
         "list_agents",
         "list_annotation_queues",
         "list_dashboards",
+        "list_error_feed_alert_rules",
+        "list_slack_alert_integrations",
         "list_knowledge_bases",
     }
 
