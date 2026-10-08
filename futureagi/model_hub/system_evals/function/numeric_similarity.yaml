@@ -33,9 +33,12 @@ config:
             value_str = str(value).strip()
             if not value_str:
                 return None, f"{name} is empty"
-            match = re.search(r'-?\d+\.?\d*', value_str)
+            match = re.search(
+                r'[-+]?(?:\d{1,3}(?:,\d{3})+(?!\d)(?:\.\d+)?|\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?',
+                value_str,
+            )
             if match:
-                return float(match.group()), None
+                return float(match.group().replace(",", "")), None
             return None, f"No numeric value found in {name}"
         pred_num, pred_error = _to_number(pred, "output")
         ref_num, ref_error = _to_number(ref, "expected")

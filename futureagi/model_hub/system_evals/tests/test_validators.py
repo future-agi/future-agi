@@ -357,3 +357,69 @@ def test_meteor_one_empty_reports_missing():
     r = _meteor_full_path("the cat sat", "")
     assert r["score"] == 0.0
     assert "missing" in r["reason"].lower()
+
+
+# ---------------------------------------------------------------------------
+# numeric_similarity
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "output, expected",
+    [
+        ("1,234", "1234"),
+        ("$1,234.56", "1234.56"),
+        ("1,234,567.89", "1234567.89"),
+        ("1e5", "100000"),
+        ("1.5E3", "1500"),
+        ("2e-3", "0.002"),
+        (".5", "0.5"),
+        ("+5", "5"),
+        ("The total is 1,234 units", "1234"),
+    ],
+)
+def test_numeric_similarity_equal_values_written_differently(output, expected):
+    ev = _load_eval("numeric_similarity")
+    assert ev(None, output, expected, None)["score"] == 1.0
+    assert ev(None, expected, output, None)["score"] == 1.0
+
+
+@pytest.mark.parametrize(
+    "output, expected, score",
+    [
+        ("-10", "-20", 0.5),
+        ("-100", "-101", 1 - 1 / 101),
+        ("1,500", "1000", 1 - 500 / 1500),
+        ("12.5", "25", 0.5),
+        (42, "42", 1.0),
+        (3.5, 3.5, 1.0),
+    ],
+)
+def test_numeric_similarity_scores_by_relative_difference(output, expected, score):
+    ev = _load_eval("numeric_similarity")
+    assert ev(None, output, expected, None)["score"] == pytest.approx(score)
+
+
+@pytest.mark.parametrize(
+    "output, expected",
+    [
+        # Groups must be exactly three digits, otherwise the comma is not a
+        # thousands separator and the leading number is read as before.
+        ("1,2345", "1"),
+        ("12,34", "12"),
+        ("1,5", "1"),
+        ("1,2,3", "1"),
+    ],
+)
+def test_numeric_similarity_comma_without_three_digit_group_is_not_thousands(
+    output, expected
+):
+    ev = _load_eval("numeric_similarity")
+    assert ev(None, output, expected, None)["score"] == 1.0
+
+
+def test_numeric_similarity_unparseable_still_reports_error():
+    ev = _load_eval("numeric_similarity")
+    r = ev(None, "no digits here", "5", None)
+    assert r["score"] == 0.0
+    assert "No numeric value found in output" in r["reason"]
