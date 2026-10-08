@@ -4,6 +4,7 @@ import Iconify from "src/components/iconify";
 import { useEnvironmentRunTest } from "src/api/simulate-environments/environments";
 import {
   EVAL_GONE_TOOLTIP,
+  EVALS_LOAD_FAILED_TOOLTIP,
   GRADING_TOOLTIP,
   HARNESS_ONLY_TOOLTIP,
   NOT_COMPLETED_TOOLTIP,
@@ -37,42 +38,50 @@ export default function EvalColumnActions({
   menuFor = null,
   onClose,
 }) {
-  const { data: configs, isPending: configsPending } = useEnvironmentRunTest(
-    runTestId,
-    { enabled: Boolean(runTestId) },
-  );
+  const {
+    data: configs,
+    isPending: configsPending,
+    isError: configsFailed,
+  } = useEnvironmentRunTest(runTestId, { enabled: Boolean(runTestId) });
 
   const config = menuFor
     ? (configs ?? []).find((c) => c.id === menuFor.evalId) ?? null
     : null;
-  // Reasons only make sense once the column's eval has been looked up.
+  // Reasons only make sense once the column's eval has been looked up. A read
+  // that failed with nothing cached says nothing about whether it's still
+  // there; a failed refresh keeps acting on the list already read.
   const known = Boolean(menuFor) && !configsPending;
-  const gone = known && !config;
+  const unread = known && Boolean(configsFailed) && configs === undefined;
+  const gone = known && !unread && !config;
 
   const rerunReason = !known
     ? null
-    : gone
-      ? EVAL_GONE_TOOLTIP
-      : config.regradable !== true
-        ? HARNESS_ONLY_TOOLTIP
-        : grading
-          ? GRADING_TOOLTIP
-          : !canRun
-            ? NOT_COMPLETED_TOOLTIP
-            : null;
+    : unread
+      ? EVALS_LOAD_FAILED_TOOLTIP
+      : gone
+        ? EVAL_GONE_TOOLTIP
+        : config.regradable !== true
+          ? HARNESS_ONLY_TOOLTIP
+          : grading
+            ? GRADING_TOOLTIP
+            : !canRun
+              ? NOT_COMPLETED_TOOLTIP
+              : null;
   const rerunDisabled = !known || Boolean(rerunReason) || rerunPending;
 
   const editReason = !known
     ? null
-    : gone
-      ? EVAL_GONE_TOOLTIP
-      : config.editable !== true
-        ? NOT_EDITABLE_TOOLTIP
-        : grading
-          ? GRADING_TOOLTIP
-          : !canRun
-            ? NOT_COMPLETED_TOOLTIP
-            : null;
+    : unread
+      ? EVALS_LOAD_FAILED_TOOLTIP
+      : gone
+        ? EVAL_GONE_TOOLTIP
+        : config.editable !== true
+          ? NOT_EDITABLE_TOOLTIP
+          : grading
+            ? GRADING_TOOLTIP
+            : !canRun
+              ? NOT_COMPLETED_TOOLTIP
+              : null;
   // A re-run already on its way would grade the old settings, so an edit
   // waits for it as a second re-run does.
   const editDisabled = !known || Boolean(editReason) || rerunPending;

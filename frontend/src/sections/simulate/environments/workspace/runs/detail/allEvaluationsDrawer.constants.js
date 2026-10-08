@@ -15,3 +15,7 @@ export const GRADING_TOOLTIP = EVALS_COPY.gradingLocked;
 // environment after the run keeps its column but has nothing to act on.
 export const EVAL_GONE_TOOLTIP =
   "This evaluation isn't on this environment any more.";
+// A failed read of the run's evals says nothing about whether one is still
+// there, so it must not be mistaken for a removed eval.
+export const EVALS_LOAD_FAILED_TOOLTIP =
+  "Couldn’t load this run's evaluations. Try again.";

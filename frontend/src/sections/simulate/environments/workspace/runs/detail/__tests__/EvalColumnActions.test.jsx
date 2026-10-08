@@ -4,6 +4,7 @@ import { useEnvironmentRunTest } from "src/api/simulate-environments/environment
 import EvalColumnActions from "../EvalColumnActions";
 import {
   EVAL_GONE_TOOLTIP,
+  EVALS_LOAD_FAILED_TOOLTIP,
   GRADING_TOOLTIP,
   HARNESS_ONLY_TOOLTIP,
   NOT_COMPLETED_TOOLTIP,
@@ -142,6 +143,31 @@ describe("EvalColumnActions", () => {
     expect(item("Re-run")).toHaveAttribute("aria-disabled", "true");
     expect(item("Edit")).toHaveAttribute("aria-disabled", "true");
     expect(screen.queryByText(EVAL_GONE_TOOLTIP)).toBeNull();
+  });
+
+  it("holds both when the evals couldn't be read, and says so rather than calling the eval gone", () => {
+    useEnvironmentRunTest.mockReturnValue({
+      data: undefined,
+      isPending: false,
+      isError: true,
+    });
+    setup();
+    expect(item("Re-run")).toHaveAttribute("aria-disabled", "true");
+    expect(item("Edit")).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getAllByText(EVALS_LOAD_FAILED_TOOLTIP)).toHaveLength(2);
+    expect(screen.queryByText(EVAL_GONE_TOOLTIP)).toBeNull();
+  });
+
+  it("keeps acting on the evals already read when a refresh fails", () => {
+    useEnvironmentRunTest.mockReturnValue({
+      data: CONFIGS,
+      isPending: false,
+      isError: true,
+    });
+    setup();
+    expect(item("Re-run")).not.toHaveAttribute("aria-disabled", "true");
+    expect(item("Edit")).not.toHaveAttribute("aria-disabled", "true");
+    expect(screen.queryByText(EVALS_LOAD_FAILED_TOOLTIP)).toBeNull();
   });
 
   it("closes and asks the run page to edit that eval", () => {

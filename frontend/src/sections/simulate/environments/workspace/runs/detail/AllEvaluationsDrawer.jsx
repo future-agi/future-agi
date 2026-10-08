@@ -28,6 +28,7 @@ import SideDrawer from "../../../components/SideDrawer";
 import EmptyState from "../../../components/EmptyState";
 import { refusalText } from "../../evals/refusalText";
 import {
+  EVALS_LOAD_FAILED_TOOLTIP,
   GRADING_TOOLTIP,
   HARNESS_ONLY_TOOLTIP,
   NOT_COMPLETED_TOOLTIP,
@@ -190,10 +191,7 @@ export default function AllEvaluationsDrawer({
           ) : isError && configsData === undefined ? (
             <EmptyState
               title="Couldn’t load evaluations"
-              body={refusalText(
-                error,
-                "Couldn’t load this run's evaluations. Try again.",
-              )}
+              body={refusalText(error, EVALS_LOAD_FAILED_TOOLTIP)}
               action={
                 <Button
                   variant="outlined"
