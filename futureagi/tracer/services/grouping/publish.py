@@ -160,7 +160,12 @@ def _command_shape(command: object, *, sampled: bool = False) -> dict:
     fields = COMMAND_FIELDS[command["type"]]
     if sampled and command["type"] == "merge":
         fields = fields | {"reviewed_occurrence_ids"}
-    if set(command) != fields:
+    legacy_merge_fields = (
+        (fields - {"survivor_issue_id"}) | {"temporary_id"}
+        if command["type"] == "merge"
+        else None
+    )
+    if set(command) != fields and set(command) != legacy_merge_fields:
         raise GroupingControlError("grouping command has unknown or missing fields")
     return command
 
@@ -1281,9 +1286,15 @@ def publish_grouping(
                     key not in states or states[key].retired for key in source_ids
                 ):
                     raise GroupingConflict("merge sources were not both offered")
-                survivor_id = command["survivor_issue_id"]
-                if survivor_id not in source_ids:
+                survivor_id = command.get("survivor_issue_id")
+                if survivor_id is not None and survivor_id not in source_ids:
                     raise GroupingControlError("merge survivor must be a source issue")
+                if survivor_id is None and (
+                    not isinstance(command["temporary_id"], str)
+                    or not command["temporary_id"]
+                    or command["temporary_id"] in states
+                ):
+                    raise GroupingControlError("invalid temporary merge issue identity")
                 if not isinstance(command["expected_revisions"], dict) or set(
                     command["expected_revisions"]
                 ) != set(source_ids):
@@ -1371,34 +1382,42 @@ def publish_grouping(
                         "merge citations differ from stored reconciliation"
                     )
                 _validate_citations(command, set(reviewed_ids), snapshots, findings)
-                target = states[survivor_id]
-                target.mechanism = _mechanism(command["mechanism"])
-                target.prototype_occurrence_ids = prototypes
-                target.revision += 1
-                target.membership_revision += 1
-                target.save(
-                    update_fields=[
-                        "mechanism",
-                        "prototype_occurrence_ids",
-                        "revision",
-                        "membership_revision",
-                        "updated_at",
-                    ]
-                )
-                target.cluster.title = target.mechanism.get(
-                    "title", target.mechanism["mechanism"]
-                )[:1000]
-                target.cluster.error_type = target.mechanism["mechanism"][:200]
-                target.cluster.combined_description = target.mechanism["mechanism"]
-                target.cluster.save(
-                    update_fields=[
-                        "title",
-                        "error_type",
-                        "combined_description",
-                        "updated_at",
-                    ]
-                )
-                membership[survivor_id] = list(ids)
+                if survivor_id is None:
+                    target = _new_issue(
+                        scope, _mechanism(command["mechanism"]), prototypes
+                    )
+                    new_ids[command["temporary_id"]] = str(target.cluster_id)
+                    states[command["temporary_id"]] = target
+                    membership[command["temporary_id"]] = list(ids)
+                else:
+                    target = states[survivor_id]
+                    target.mechanism = _mechanism(command["mechanism"])
+                    target.prototype_occurrence_ids = prototypes
+                    target.revision += 1
+                    target.membership_revision += 1
+                    target.save(
+                        update_fields=[
+                            "mechanism",
+                            "prototype_occurrence_ids",
+                            "revision",
+                            "membership_revision",
+                            "updated_at",
+                        ]
+                    )
+                    target.cluster.title = target.mechanism.get(
+                        "title", target.mechanism["mechanism"]
+                    )[:1000]
+                    target.cluster.error_type = target.mechanism["mechanism"][:200]
+                    target.cluster.combined_description = target.mechanism["mechanism"]
+                    target.cluster.save(
+                        update_fields=[
+                            "title",
+                            "error_type",
+                            "combined_description",
+                            "updated_at",
+                        ]
+                    )
+                    membership[survivor_id] = list(ids)
                 old_uuid = {state.cluster_id for state in sources}
                 if sampled:
                     _move_merge_members(

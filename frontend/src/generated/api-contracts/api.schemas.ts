@@ -25503,6 +25503,18 @@ export interface OverviewApiResponseApi {
   result: OverviewResponseApi;
 }
 
+export interface FeedRedirectApi {
+  /** @minLength 1 */
+  requested_cluster_id: string;
+  /** @minLength 1 */
+  resolved_cluster_id: string;
+}
+
+export interface FeedRedirectApiResponseApi {
+  status?: boolean;
+  result: FeedRedirectApi;
+}
+
 export interface RootCauseApi {
   rank: number;
   /** @minLength 1 */
@@ -31674,18 +31686,6 @@ export interface ActivationResponseApi {
   scope: ActivationResponseApiScope;
 }
 
-export interface FeedRedirectApi {
-  /** @minLength 1 */
-  requested_cluster_id: string;
-  /** @minLength 1 */
-  resolved_cluster_id: string;
-}
-
-export interface FeedRedirectApiResponseApi {
-  status?: boolean;
-  result: FeedRedirectApi;
-}
-
 export type AccountsAwsMarketplaceLaunchSoftwareCreateBody = {
   "x-amzn-marketplace-token": string;
   "x-amzn-marketplace-product-id"?: string;
@@ -35100,6 +35100,10 @@ export type TracerFeedIssuesOverviewListParams = {
   rep_limit?: number;
 };
 
+export type TracerFeedIssuesRedirectListParams = {
+  project_id?: string;
+};
+
 export type TracerFeedIssuesRootCauseListParams = {
   /**
    * @minLength 1
@@ -36378,8 +36382,4 @@ export type UsageWorkspaceUsageSummaryListParams = {
    */
   month?: number;
   year?: number;
-};
-
-export type TracerFeedIssuesRedirectListParams = {
-  project_id?: string;
 };

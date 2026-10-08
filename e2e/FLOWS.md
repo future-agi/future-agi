@@ -591,6 +591,24 @@
 - current property label, value choices and filtered UI/API rows agree after editing
 - removed columns and datasets cannot be rediscovered through metadata or value requests
 
+## error-feed
+
+### FEED-E2E-001 — an old issue URL opens the surviving issue
+
+**Goal:** A saved link to a retired issue opens its surviving issue  
+**Spec:** `flows/error-feed/retired-issue-redirect.spec.ts:7`  
+**Tags:** —
+
+**User steps:**
+
+1. open the retired issue URL
+2. follow its redirect to the active issue URL
+
+**Backend state verified:**
+
+- the browser requests the redirect for the retired ID
+- the browser never requests the retired issue detail
+
 ## evals
 
 ### EVAL-E2E-001 — eval task runs over ingested spans via the mock LLM
