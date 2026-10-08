@@ -41,6 +41,7 @@ ALL_CATEGORIES = [
     "annotations",
     "evaluations",
     "tracing",
+    "error_feed",
     "experiments",
     "agents",
     "simulation",
@@ -65,7 +66,7 @@ MODES = {
         "description": "Evaluation analysis",
     },
     "tracing": {
-        "categories": ["context", "tracing"],
+        "categories": ["context", "tracing", "error_feed"],
         "description": "Trace debugging",
     },
     "experiments": {
@@ -97,6 +98,7 @@ PAGE_TO_MODE = {
     "evals": "evaluations",
     "tracing": "tracing",
     "observe": "tracing",
+    "error-feed": "tracing",
     "experiments": "experiments",
     "agents": "agents",
     "simulation": "agents",
@@ -124,7 +126,16 @@ KEYWORDS = {
         "agent eval",
         "ground truth",
     ],
-    "tracing": ["trace", "span", "latency", "error rate", "debug"],
+    "tracing": [
+        "trace",
+        "span",
+        "latency",
+        "error rate",
+        "debug",
+        "error feed",
+        "error alert",
+        "slack alert",
+    ],
     "experiments": ["experiment", "a/b test", "variant"],
     "agents": ["agent", "simulation", "scenario", "persona"],
     "prompts": ["prompt engineering", "prompt version", "optimize prompt"],
@@ -202,6 +213,8 @@ def filter_tools_for_message(tools, user_message, recent_tool_names=None, max_to
         "list_annotation_labels",
         "list_annotation_queues",
         "list_alert_monitors",
+        "list_error_feed_alert_rules",
+        "list_slack_alert_integrations",
         "list_knowledge_bases",
     }
 

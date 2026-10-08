@@ -31676,6 +31676,64 @@ export interface ActivationResponseApi {
   scope: ActivationResponseApiScope;
 }
 
+export interface SlackInstallApi {
+  connection_id?: string;
+}
+
+export type AlertWriteRequestApiKind =
+  (typeof AlertWriteRequestApiKind)[keyof typeof AlertWriteRequestApiKind];
+
+export const AlertWriteRequestApiKind = {
+  metric: "metric",
+  error_feed: "error_feed",
+} as const;
+
+export type AlertWriteRequestApiTriggerValue = { [key: string]: unknown };
+
+export type AlertWriteRequestApiFilters = { [key: string]: unknown };
+
+export interface AlertWriteRequestApi {
+  kind?: AlertWriteRequestApiKind;
+  /** @minLength 1 */
+  name?: string;
+  enabled?: boolean;
+  project_id?: string;
+  /** @minLength 1 */
+  trigger_type?: string;
+  trigger_value?: AlertWriteRequestApiTriggerValue;
+  filters?: AlertWriteRequestApiFilters;
+  slack_connection_id?: string;
+  /** @minLength 1 */
+  slack_channel_id?: string;
+  /** @minimum 0 */
+  cooldown_seconds?: number;
+  project?: string;
+  /** @minLength 1 */
+  metric_type?: string;
+  /** @minLength 1 */
+  threshold_type?: string;
+  /** @minLength 1 */
+  threshold_operator?: string;
+  critical_threshold_value?: number;
+  warning_threshold_value?: number;
+  notification_emails?: string[];
+}
+
+export interface AlertTestRequestApi {
+  [key: string]: unknown;
+}
+
+export interface AlertTestResultApi {
+  sent: boolean;
+  /** @minLength 1 */
+  slack_ts: string;
+}
+
+export interface AlertTestResponseApi {
+  status: boolean;
+  result: AlertTestResultApi;
+}
+
 export type AccountsAwsMarketplaceLaunchSoftwareCreateBody = {
   "x-amzn-marketplace-token": string;
   "x-amzn-marketplace-product-id"?: string;

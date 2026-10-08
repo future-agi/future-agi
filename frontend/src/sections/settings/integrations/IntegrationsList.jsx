@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   Alert,
   Box,
@@ -12,23 +14,82 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { LoadingScreen } from "src/components/loading-screen";
-import { useIntegrationConnections } from "src/api/integrations";
+import { integrationKeys, useIntegrationConnections, useStartSlackInstall } from "src/api/integrations";
 import IntegrationCard from "./IntegrationCard";
 import PlatformLogo from "./PlatformLogo";
 import AddIntegrationWizard from "./AddIntegrationWizard";
 import { PLATFORMS } from "./constants";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
+import { getErrorMessage } from "./utils";
+
+const SLACK_RETURN_TO_KEY = "slack-integration-return-to";
 
 export default function IntegrationsList() {
   const { role } = useAuthContext();
   const theme = useTheme();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { data, isLoading, isError } = useIntegrationConnections();
+  const { mutate: startSlackInstall, isPending: connectingSlack } = useStartSlackInstall();
+  const autoStartedSlack = useRef(false);
+  const [slackError, setSlackError] = useState("");
+  const [slackNotice, setSlackNotice] = useState("");
   // null = wizard closed, "" = wizard open (no platform), "langfuse" = wizard open with platform
   const [selectedPlatform, setSelectedPlatform] = useState(null);
 
   const wizardOpen = selectedPlatform !== null;
   const connections = Array.isArray(data) ? data : [];
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get("slack") === "connected") {
+      queryClient.invalidateQueries({ queryKey: integrationKeys.connections() });
+      const returnTo = sessionStorage.getItem(SLACK_RETURN_TO_KEY);
+      sessionStorage.removeItem(SLACK_RETURN_TO_KEY);
+      if (returnTo?.startsWith("/") && !returnTo.startsWith("//")) {
+        navigate(`${returnTo}${returnTo.includes("?") ? "&" : "?"}resume_alert=1`, { replace: true });
+      } else {
+        setSlackNotice("Slack workspace connected successfully.");
+      }
+    } else if (params.get("slack") === "error") {
+      setSlackError("Could not connect Slack. Please try again.");
+    }
+  }, [location.search, navigate, queryClient]);
+
+  const connectSlack = useCallback(() => {
+    setSlackError("");
+    const params = new URLSearchParams(location.search);
+    const returnTo = params.get("return_to");
+    if (returnTo?.startsWith("/") && !returnTo.startsWith("//")) {
+      sessionStorage.setItem(SLACK_RETURN_TO_KEY, returnTo);
+    }
+    startSlackInstall(undefined, {
+      onSuccess: (response) => {
+        const authorizationUrl = response.data?.result?.authorization_url;
+        if (!authorizationUrl) {
+          setSlackError("Could not start Slack authorization. Please try again.");
+          return;
+        }
+        window.location.assign(authorizationUrl);
+      },
+      onError: (error) => setSlackError(getErrorMessage(error, "Could not connect Slack.")),
+    });
+  }, [location.search, startSlackInstall]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get("platform") === "slack" && !params.has("slack") && !isLoading && !autoStartedSlack.current) {
+      autoStartedSlack.current = true;
+      connectSlack();
+    }
+  }, [connectSlack, isLoading, location.search]);
+
+  const selectPlatform = (platformId) => {
+    if (platformId === "slack") connectSlack();
+    else setSelectedPlatform(platformId);
+  };
 
   if (isLoading) {
     return (
@@ -48,6 +109,9 @@ export default function IntegrationsList() {
 
   return (
     <Box>
+      {slackError && <Alert severity="error" sx={{ mb: 2 }}>{slackError}</Alert>}
+      {slackNotice && <Alert severity="success" sx={{ mb: 2 }}>{slackNotice}</Alert>}
+      {connectingSlack && <Alert severity="info" sx={{ mb: 2 }}>Starting Slack authorization…</Alert>}
       {/* Header */}
       <Box
         display="flex"
@@ -174,7 +238,7 @@ export default function IntegrationsList() {
             >
               <CardActionArea
                 disabled={!platform.available}
-                onClick={() => setSelectedPlatform(platform.id)}
+                onClick={() => selectPlatform(platform.id)}
                 sx={{ p: theme.spacing(2.5) }}
               >
                 <Box display="flex" alignItems="center" gap={theme.spacing(2)}>
@@ -228,6 +292,7 @@ export default function IntegrationsList() {
         open={wizardOpen}
         onClose={() => setSelectedPlatform(null)}
         initialPlatform={selectedPlatform || undefined}
+        onSelectSlack={() => { setSelectedPlatform(null); connectSlack(); }}
       />
     </Box>
   );
