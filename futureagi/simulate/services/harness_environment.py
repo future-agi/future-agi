@@ -285,6 +285,7 @@ _CONTRACT_FIELDS = (
     "implementation",
     "tool_entrypoints",
     "data_store",
+    "data_schema",
     "open_questions",
     "amendments",
     "notes",

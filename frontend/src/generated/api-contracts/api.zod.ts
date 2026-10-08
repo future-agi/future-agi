@@ -35291,6 +35291,7 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
     implementation: zod.string().optional(),
     tool_entrypoints: zod.array(zod.object({}).passthrough()).optional(),
     data_store: zod.object({}).passthrough().optional(),
+    data_schema: zod.object({}).passthrough().optional(),
     open_questions: zod.array(zod.string().min(1)).optional(),
     amendments: zod.array(
       zod.object({
@@ -35500,6 +35501,7 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
     implementation: zod.string().optional(),
     tool_entrypoints: zod.array(zod.object({}).passthrough()).optional(),
     data_store: zod.object({}).passthrough().optional(),
+    data_schema: zod.object({}).passthrough().optional(),
     open_questions: zod.array(zod.string().min(1)).optional(),
     amendments: zod.array(
       zod.object({
@@ -35772,6 +35774,7 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespo
       implementation: zod.string().optional(),
       tool_entrypoints: zod.array(zod.object({}).passthrough()).optional(),
       data_store: zod.object({}).passthrough().optional(),
+      data_schema: zod.object({}).passthrough().optional(),
       open_questions: zod.array(zod.string().min(1)).optional(),
       amendments: zod.array(
         zod.object({

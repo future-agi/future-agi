@@ -91723,6 +91723,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           "x-nullable": true,
         },
+        data_schema: {
+          title: "Data schema",
+          type: "object",
+          "x-nullable": true,
+        },
         open_questions: {
           type: "array",
           items: {

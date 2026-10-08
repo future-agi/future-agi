@@ -73,8 +73,8 @@ export default function RlContractPanel({ env, envState, patch, locked = false, 
           {CONTRACT_COPY.heading}
         </Typography>
         <Typography sx={{ typography: "s2", color: "text.secondary", maxWidth: 780 }}>
-          What this environment is made of: the world runs execute against, the code
-          behind every tool call and grader, and how each run ends.
+          What this environment is made of: the world runs execute against, each tool&apos;s
+          declared interface and implementation entrypoint, and how each run ends.
         </Typography>
       </Box>
 
@@ -85,7 +85,7 @@ export default function RlContractPanel({ env, envState, patch, locked = false, 
         </Box>
       )}
 
-      {/* ── internals: DB schema + tool code + check code ─────────────── */}
+      {/* ── internals: DB metadata/schema + tool contracts/entrypoints ── */}
       <WorldInternalsSection env={env} envState={envState} patch={patch} locked={locked} />
 
       {/* ── run end conditions ────────────────────────────────────────── */}

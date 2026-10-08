@@ -1630,6 +1630,65 @@ def test_environments_list_reports_absent_contract_as_null(user, workspace):
 
 @pytest.mark.django_db
 @override_settings(HARNESS_PROVIDER="daytona")
+def test_environment_detail_preserves_data_schema_for_contract_ui(user, workspace):
+    job, _ = create_hosted_job(
+        user.organization,
+        _v1_payload(),
+        idempotency_key="env-detail-schema",
+        workspace=workspace,
+    )
+    job.stage_outputs = [
+        {
+            "kind": "contract",
+            "data": {
+                "agent": "support-agent",
+                "one_liner": "Looks orders up",
+                "modality": "chat",
+                "tools": [{"name": "lookup_order", "args": ["order_id"]}],
+                "tool_entrypoints": [
+                    {
+                        "tool": "lookup_order",
+                        "mode": "import",
+                        "module": "support.tools",
+                        "callable": "lookup_order",
+                    }
+                ],
+                "data_store": {
+                    "kind": "postgres",
+                    "host": "orders-db",
+                    "database": "support",
+                },
+                "data_schema": {
+                    "orders": {
+                        "id": "TEXT PRIMARY KEY",
+                        "status": "TEXT NOT NULL",
+                    }
+                },
+            },
+        }
+    ]
+    job.state = job.State.COMPLETED
+    job.current_stage = "completed"
+    job.save(update_fields=["stage_outputs", "state", "current_stage", "updated_at"])
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    response = client.get(
+        f"/simulate/api/harness-environments/{job.id}/",
+        HTTP_X_WORKSPACE_ID=str(workspace.id),
+    )
+
+    assert response.status_code == 200, response.content
+    contract = response.json()["contract"]
+    assert contract["data_store"]["database"] == "support"
+    assert contract["data_schema"] == {
+        "orders": {"id": "TEXT PRIMARY KEY", "status": "TEXT NOT NULL"}
+    }
+    assert contract["tool_entrypoints"][0]["callable"] == "lookup_order"
+
+
+@pytest.mark.django_db
+@override_settings(HARNESS_PROVIDER="daytona")
 def test_environments_list_sorts_undated_rows_last(user, workspace):
     undated, _ = create_hosted_job(
         user.organization,
