@@ -67,6 +67,27 @@ const DETAIL = {
       ended_reasons: ["assistant-ended-call", "customer-ended-call"],
     },
     chosen_evals: ["cs_policy"],
+    data_store: {
+      kind: "postgres",
+      host: "orders-db",
+      port: 5432,
+      database: "support",
+      schema_from: "db/schema.sql",
+    },
+    data_schema: {
+      orders: { id: "TEXT PRIMARY KEY", status: "TEXT NOT NULL" },
+      refunds: { id: "TEXT PRIMARY KEY", order_id: "TEXT NOT NULL" },
+    },
+    tool_entrypoints: [
+      {
+        tool: "lookup_order",
+        mode: "construct",
+        module: "support.agent",
+        callable: "SupportAgent.lookup_order",
+        factory: "SupportAgent(state)",
+        first_arg: "self",
+      },
+    ],
   },
   world: {
     runtime: { services: ["agent", "tools-api"] },
@@ -170,6 +191,19 @@ describe("harnessDetailToEnvironment", () => {
     expect(env.seed.services).toEqual(["agent", "tools-api"]);
     expect(env.stores).toHaveLength(1);
     expect(env.personas[0].name).toBe("Priya Raman");
+  });
+
+  it("keeps real datastore, schema and tool-entrypoint details for Contract", () => {
+    const { env } = harnessDetailToEnvironment(DETAIL);
+    expect(env.dataStore).toMatchObject({ kind: "postgres", database: "support" });
+    expect(env.dataSchema.orders).toEqual({
+      id: "TEXT PRIMARY KEY",
+      status: "TEXT NOT NULL",
+    });
+    expect(env.toolEntrypoints[0]).toMatchObject({
+      tool: "lookup_order",
+      callable: "SupportAgent.lookup_order",
+    });
   });
 
   it("maps scenarios to pool rows with real sub-goals and use_case", () => {

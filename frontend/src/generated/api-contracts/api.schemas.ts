@@ -17287,6 +17287,10 @@ export type HarnessEnvironmentContractApiToolEntrypointsItem = {
 
 export type HarnessEnvironmentContractApiDataStore = { [key: string]: unknown };
 
+export type HarnessEnvironmentContractApiDataSchema = {
+  [key: string]: unknown;
+};
+
 export interface HarnessEnvironmentContractApi {
   agent?: string;
   one_liner?: string;
@@ -17302,6 +17306,7 @@ export interface HarnessEnvironmentContractApi {
   implementation?: string;
   tool_entrypoints?: HarnessEnvironmentContractApiToolEntrypointsItem[];
   data_store?: HarnessEnvironmentContractApiDataStore;
+  data_schema?: HarnessEnvironmentContractApiDataSchema;
   open_questions?: string[];
   amendments: HarnessEnvironmentAmendmentApi[];
   sub_goals: HarnessEnvironmentCatalogueSubGoalApi[];

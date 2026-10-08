@@ -267,6 +267,7 @@ class HarnessEnvironmentContractSerializer(serializers.Serializer):
         child=serializers.JSONField(), required=False, allow_null=True
     )
     data_store = serializers.JSONField(required=False, allow_null=True)
+    data_schema = serializers.JSONField(required=False, allow_null=True)
     open_questions = serializers.ListField(
         child=serializers.CharField(), required=False, allow_null=True
     )
