@@ -7,12 +7,15 @@ from django.db.models.lookups import Exact
 
 from simulate.semantics import SupportedProviders
 
-PAYLOAD_PROVIDERS = tuple(sorted(SupportedProviders))
+# "livekit" is excluded: hosted ALK stores it for any call with a tool trace,
+# whatever the target, so it would label some calls of one agent and not others.
+PAYLOAD_PROVIDERS = tuple(sorted(set(SupportedProviders) - {"livekit"}))
 
 
 def call_provider(call):
     execution = call.test_execution
-    version = execution.agent_version
+    # Hosted and SDK runs pin the version on each call rather than on the run.
+    version = execution.agent_version or call.agent_version
     snapshot = getattr(version, "configuration_snapshot", None)
     if isinstance(snapshot, dict):
         provider = snapshot.get("provider")
@@ -54,6 +57,15 @@ def call_provider_expression():
                     KeyTextTransform(
                         "provider",
                         F("test_execution__agent_version__configuration_snapshot"),
+                    ),
+                    Value(""),
+                ),
+            ),
+            When(
+                agent_version__isnull=False,
+                then=NullIf(
+                    KeyTextTransform(
+                        "provider", F("agent_version__configuration_snapshot")
                     ),
                     Value(""),
                 ),

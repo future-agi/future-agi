@@ -803,7 +803,10 @@ def run_calls_queryset(
         ),
     )
     return project_annotation(queryset, "result_outcome").select_related(
-        "scenario", "test_execution__agent_definition", "test_execution__agent_version"
+        "scenario",
+        "test_execution__agent_definition",
+        "test_execution__agent_version",
+        "agent_version",
     )
 
 

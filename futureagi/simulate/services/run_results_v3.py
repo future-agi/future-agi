@@ -415,6 +415,7 @@ def build_call_rows(
                 "scenario",
                 "test_execution__agent_definition",
                 "test_execution__agent_version",
+                "agent_version",
             )
             .order_by("-updated_at")
         )

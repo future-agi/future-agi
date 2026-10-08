@@ -40,6 +40,7 @@ def test_call_rows_csat_requires_explicit_score(metrics, provider_score, expecte
         row_id=None,
         call_metadata={},
         provider_call_data={},
+        agent_version=None,
         test_execution=SimpleNamespace(agent_definition=None, agent_version=None),
         scenario=SimpleNamespace(name="Scenario", metadata={}),
         conversation_metrics_data=metrics,

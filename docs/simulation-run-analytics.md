@@ -34,11 +34,14 @@ only explicit invocation verdicts, independently of whether the enclosing call
 passed. Calls with messages or an available transcript count as connected.
 
 Call provider labels identify the tested agent, not the simulator transport.
-Rows, detail views, CSV exports and provider breakdowns read the run's pinned
-`agent_version.configuration_snapshot.provider`. An existing snapshot is
-authoritative even when its provider is unset; only unversioned runs read the
+Rows, detail views, CSV exports and provider breakdowns read the pinned
+`agent_version.configuration_snapshot.provider`: the run's version, else the
+call's (hosted and SDK runs pin it per call). An existing snapshot is
+authoritative even when its provider is unset; only unversioned calls read the
 live agent definition. If neither supplies a provider, readers fall back to a
-non-empty supported-provider payload, in deterministic provider-name order.
+non-empty target-provider payload, in deterministic provider-name order. A
+`livekit` payload is never used: hosted runs store one only for calls with a
+tool trace, so it would label some calls of one agent and not others.
 Without either source, detail/row values are null and analytics uses `Unknown`.
 The detail response's `transport` reads `call_metadata.call_channel` first,
 then prefers LiveKit payload evidence so mixed target/transport payloads do not

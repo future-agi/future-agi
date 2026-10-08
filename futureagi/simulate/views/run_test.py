@@ -2210,6 +2210,8 @@ class RunTestCallExecutionsView(APIView):
                     "test_execution",
                     "test_execution__simulator_agent",
                     "test_execution__agent_definition",
+                    "test_execution__agent_version",
+                    "agent_version",
                 )
                 .prefetch_related("transcripts", "snapshots")
             )
@@ -2291,6 +2293,8 @@ class RunTestCallExecutionsView(APIView):
                         "test_execution",
                         "test_execution__simulator_agent",
                         "test_execution__agent_definition",
+                        "test_execution__agent_version",
+                        "agent_version",
                     )
                     .prefetch_related("transcripts")
                 )
@@ -2309,6 +2313,8 @@ class RunTestCallExecutionsView(APIView):
                     "call_execution__test_execution",
                     "call_execution__test_execution__simulator_agent",
                     "call_execution__test_execution__agent_definition",
+                    "call_execution__test_execution__agent_version",
+                    "call_execution__agent_version",
                 )
 
                 for snapshot in snapshots:
@@ -2586,6 +2592,8 @@ class TestExecutionDetailView(APIView):
                     "test_execution",
                     "test_execution__simulator_agent",
                     "test_execution__agent_definition",
+                    "test_execution__agent_version",
+                    "agent_version",
                     "test_execution__run_test",
                     "test_execution__run_test__agent_definition",
                 )

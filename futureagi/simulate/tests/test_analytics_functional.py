@@ -3875,24 +3875,42 @@ class TestRunTestEvalSummaryComparisonView:
 @pytest.mark.integration
 @pytest.mark.django_db
 @pytest.mark.parametrize(
-    "live_provider,snapshot,payload,expected",
+    "live_provider,snapshot,pinned_on,payload,expected",
     [
-        ("vapi", None, {"livekit": {"tool_calls": [{"name": "lookup"}]}}, "vapi"),
-        ("retell", {"provider": "vapi"}, {"livekit": {"engine": "livekit"}}, "vapi"),
-        ("retell", {}, {"vapi": {"call_id": "legacy"}}, "vapi"),
-        (None, None, {"vapi": {"call_id": "sdk"}}, "vapi"),
-        ("", None, {"vapi": {}, "livekit": {"engine": "livekit"}}, "livekit"),
-        (None, None, {}, None),
+        ("vapi", None, None, {"livekit": {"tool_calls": [{"name": "x"}]}}, "vapi"),
+        ("retell", {"provider": "vapi"}, "run", {"livekit": {"engine": "lk"}}, "vapi"),
+        # Hosted and SDK runs pin the version on the call, not the run.
+        ("retell", {"provider": "vapi"}, "call", {}, "vapi"),
+        ("retell", {}, "run", {"vapi": {"call_id": "legacy"}}, "vapi"),
+        (None, None, None, {"vapi": {"call_id": "sdk"}}, "vapi"),
+        # A LiveKit payload is a transport trace, never the agent's provider.
+        (
+            "",
+            None,
+            None,
+            {"vapi": {"call_id": "t"}, "livekit": {"tool_calls": [{"name": "x"}]}},
+            "vapi",
+        ),
+        ("", None, None, {"livekit": {"tool_calls": [{"name": "x"}]}}, None),
+        (None, None, None, {}, None),
     ],
 )
 def test_call_provider_agrees_across_rows_csv_detail_and_analytics(
-    auth_client, test_execution, scenario, live_provider, snapshot, payload, expected
+    auth_client,
+    test_execution,
+    scenario,
+    live_provider,
+    snapshot,
+    pinned_on,
+    payload,
+    expected,
 ):
     from simulate.models.agent_version import AgentVersion
 
     agent = test_execution.agent_definition
     agent.provider = live_provider
     agent.save(update_fields=["provider"])
+    version = None
     if snapshot is not None:
         version = AgentVersion.objects.create(
             agent_definition=agent,
@@ -3902,6 +3920,7 @@ def test_call_provider_agrees_across_rows_csv_detail_and_analytics(
             version_name="Pinned",
             configuration_snapshot={"description": "Pinned inputs", **snapshot},
         )
+    if pinned_on == "run":
         test_execution.agent_version = version
         test_execution.save(update_fields=["agent_version"])
     call = CallExecution.objects.create(
@@ -3909,6 +3928,7 @@ def test_call_provider_agrees_across_rows_csv_detail_and_analytics(
         scenario=scenario,
         status="completed",
         provider_call_data=payload,
+        agent_version=version if pinned_on == "call" else None,
     )
     base = f"/simulate/v3/test-executions/{test_execution.id}"
     rows = auth_client.get(f"{base}/calls/")
@@ -3931,23 +3951,34 @@ def test_call_provider_agrees_across_rows_csv_detail_and_analytics(
 @pytest.mark.integration
 @pytest.mark.django_db
 @pytest.mark.parametrize(
-    "payload",
+    "payload,metadata",
     [
-        {},
-        {
-            "vapi": {"call_id": "target"},
-            "livekit": {"tool_calls": [{"name": "lookup"}]},
-        },
+        ({}, {"call_channel": "livekit", "external_runner": "alk"}),
+        (
+            {
+                "vapi": {"call_id": "target"},
+                "livekit": {"tool_calls": [{"name": "lookup"}]},
+            },
+            {"call_channel": "livekit", "external_runner": "alk"},
+        ),
+        # Without call_channel, a LiveKit payload still wins over the target's.
+        (
+            {
+                "vapi": {"call_id": "target"},
+                "livekit": {"tool_calls": [{"name": "lookup"}]},
+            },
+            {},
+        ),
     ],
 )
 def test_hosted_transport_does_not_depend_on_tool_trace(
-    auth_client, test_execution, scenario, payload
+    auth_client, test_execution, scenario, payload, metadata
 ):
     call = CallExecution.objects.create(
         test_execution=test_execution,
         scenario=scenario,
         provider_call_data=payload,
-        call_metadata={"call_channel": "livekit", "external_runner": "alk"},
+        call_metadata=metadata,
     )
     response = auth_client.get(f"/simulate/v3/call-executions/{call.id}/")
     assert response.status_code == 200
