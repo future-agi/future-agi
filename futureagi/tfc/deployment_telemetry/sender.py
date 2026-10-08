@@ -214,6 +214,26 @@ def ensure_registration() -> tuple[bool, UUID | None]:
             payload,
             instance_secret=issued_secret,
         )
+        # Queue a lifecycle event after registration succeeds.  The event is
+        # written locally and flushed by the normal event sender, so this
+        # registration path never recursively calls ensure_registration().
+        try:
+            from tfc.deployment_telemetry.events import (
+                _queue_boot_event_for_instance,
+                record_event_for_instance,
+            )
+
+            if not current_disabled:
+                _queue_boot_event_for_instance(state.instance_id)
+            record_event_for_instance(
+                state.instance_id,
+                "telemetry_registered",
+                actor_type="system_worker",
+                actor_id=f"instance:{state.instance_id}",
+                source="system",
+            )
+        except Exception:
+            logger.warning("deployment_telemetry_registration_event_failed", exc_info=True)
         return is_full, state.instance_id
     except Exception:
         logger.warning("deployment_telemetry_registration_failed", exc_info=True)
@@ -245,8 +265,9 @@ def _log_disclosure() -> None:
         logger.info(
             "deployment_telemetry_disclosure",
             mode="enabled",
-            sends="registration (active admin user emails + domains) and periodic "
-            "usage-count heartbeats; never usage content",
+            sends="registration (active admin user emails + domains), periodic "
+            "usage-count heartbeats, and content-free actor journey events; "
+            "never prompts, completions, traces, request bodies, or secrets",
             url=get_telemetry_url(),
             opt_out_env="FUTURE_AGI_TELEMETRY_DISABLED=true",
         )
@@ -362,6 +383,12 @@ def _run_telemetry_cycle() -> dict:
     registration_is_full, instance_id = ensure_registration()
     if telemetry_is_disabled():
         clear_buffer()
+        try:
+            from tfc.deployment_telemetry.event_buffer import clear_events
+
+            clear_events()
+        except Exception:
+            logger.warning("deployment_telemetry_event_buffer_clear_failed", exc_info=True)
         return {"skipped": True, "reason": "disabled"}
 
     window_start, window_end = compute_previous_utc_window()
@@ -383,9 +410,17 @@ def _run_telemetry_cycle() -> dict:
         }
 
     sent_count, flush_complete = _flush_buffer()
+    try:
+        from tfc.deployment_telemetry.events import flush_events
+
+        events_sent = flush_events()
+    except Exception:
+        logger.warning("deployment_telemetry_event_flush_failed", exc_info=True)
+        events_sent = 0
     return {
         "sent": sent_count > 0,
         "sent_count": sent_count,
+        "events_sent": events_sent,
         "flush_complete": flush_complete,
         "window_start": window_start.isoformat(),
         "window_end": window_end.isoformat(),

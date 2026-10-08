@@ -901,14 +901,14 @@ sends, and how to see what your install sent:
     keys = ["FUTURE_AGI_TELEMETRY_DISABLED"]
     default = "`false`"
     setups = ["S", "D", "H"]
-    text = '`true` opts out (`1`, `yes` and `on` also work): no email addresses and no heartbeats are sent, and buffered heartbeats are deleted; one minimal registration remains ([what it contains](/docs/self-hosting/configuration/telemetry#turn-it-off)). `./bin/install --no-telemetry` (`.\bin\install.ps1 -NoTelemetry`) writes it before anything starts. Helm: `config.telemetry=false`.'
+    text = '`true` opts out (`1`, `yes` and `on` also work): no email addresses, heartbeats or journey events are sent, and buffered telemetry is deleted; one minimal registration remains ([what it contains](/docs/self-hosting/configuration/telemetry#turn-it-off)). `./bin/install --no-telemetry` (`.\bin\install.ps1 -NoTelemetry`) writes it before anything starts. Helm: `config.telemetry=false`.'
     tag = "telemetry"
 
     [[part.section.row]]
     keys = ["FUTURE_AGI_TELEMETRY_URL"]
     default = "`https://api.futureagi.com`"
     setups = ["S", "D", "H"]
-    text = "Where registrations and heartbeats go. Change it only to test against another receiver."
+    text = "Where registrations, heartbeats and customer journey events go. Change it only to test against another receiver."
     tag = "telemetry"
 
     [[part.section.row]]
@@ -926,6 +926,13 @@ sends, and how to see what your install sent:
     tag = "telemetry"
 
     [[part.section.row]]
+    keys = ["FUTURE_AGI_TELEMETRY_EVENT_FLUSH_SECONDS"]
+    default = "`60`"
+    setups = ["S", "D", "H"]
+    text = "Retry interval for the durable customer journey event outbox, in seconds (30 through 900). Events also trigger a best-effort background flush when recorded."
+    tag = "telemetry"
+
+    [[part.section.row]]
     keys = ["FUTURE_AGI_TELEMETRY_TIMEOUT_SECONDS"]
     default = "`5`"
     setups = ["S", "D", "H"]
@@ -934,7 +941,7 @@ sends, and how to see what your install sent:
 
     [[part.section.row]]
     keys = ["FUTURE_AGI_TELEMETRY_BUFFER_DIR"]
-    default = { S = "`/data/telemetry`", D = "`/tmp/futureagi-deployment-telemetry`", H = "`futureagi-deployment-telemetry` under the system temp dir" }
+    default = { S = "`/data/telemetry`", D = "`/data/telemetry`", H = "`futureagi-deployment-telemetry` under the system temp dir" }
     setups = ["S", "D", "H"]
     text = "Where undelivered heartbeats wait for the next attempt, in a directory only the app's user can read. Files older than 30 days are deleted."
     tag = "telemetry"

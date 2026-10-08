@@ -261,6 +261,18 @@ def user_signup(request):
 
         if is_oss():
             logger.info("signup_auto_login", email=email, user_id=str(user.id))
+            try:
+                from tfc.deployment_telemetry.events import record_event
+
+                record_event(
+                    "user_logged_in",
+                    actor_type="human_user",
+                    actor_id=user.id,
+                    source="web",
+                    organization_id=user.organization_id,
+                )
+            except Exception:
+                logger.debug("deployment_telemetry_signup_login_event_failed", exc_info=True)
             return _gm.success_response(_login_payload(user), status=status.HTTP_200_OK)
 
         return _gm.success_response(

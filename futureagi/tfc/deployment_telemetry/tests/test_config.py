@@ -6,6 +6,7 @@ from tfc.deployment_telemetry.config import (
     detect_deployment_type,
     get_telemetry_interval_hours,
     get_telemetry_jitter_seconds,
+    get_event_flush_seconds,
     get_version,
     is_self_hosted_deployment,
     telemetry_is_disabled,
@@ -46,6 +47,18 @@ def test_valid_jitter(monkeypatch, value):
 def test_invalid_jitter_falls_back_to_thirty_minutes(monkeypatch, value):
     monkeypatch.setenv("FUTURE_AGI_TELEMETRY_JITTER_SECONDS", value)
     assert get_telemetry_jitter_seconds() == 1800
+
+
+@pytest.mark.parametrize("value", ["30", "60", "900"])
+def test_valid_event_flush_interval(monkeypatch, value):
+    monkeypatch.setenv("FUTURE_AGI_TELEMETRY_EVENT_FLUSH_SECONDS", value)
+    assert get_event_flush_seconds() == int(value)
+
+
+@pytest.mark.parametrize("value", ["bad", "0", "29", "901"])
+def test_invalid_event_flush_interval_falls_back_to_one_minute(monkeypatch, value):
+    monkeypatch.setenv("FUTURE_AGI_TELEMETRY_EVENT_FLUSH_SECONDS", value)
+    assert get_event_flush_seconds() == 60
 
 
 def test_version_fallback_chain(monkeypatch):
