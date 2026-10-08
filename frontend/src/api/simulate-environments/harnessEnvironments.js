@@ -99,3 +99,20 @@ const runEvaluationsPath = (id, executionId) =>
 // this response to seed the applied list from.
 export const addRunEvaluation = async (id, executionId, name) =>
   (await axios.post(runEvaluationsPath(id, executionId), { name })).data;
+
+const runEvaluationsAgainPath = (id, executionId) =>
+  apiPath(
+    "/simulate/api/harness-environments/{id}/runs/{execution_id}/evaluations/run/",
+    { id, execution_id: executionId },
+  );
+
+// Grade a finished run's calls again with evals the environment already has,
+// without rerunning the calls. The 202 body is `{ call_execution_count }`.
+// A refusal carries its sentence under `detail`; a 503 means the grading job
+// could not be queued and every score is as it was.
+export const runEvaluationsAgain = async (id, executionId, evalConfigIds) =>
+  (
+    await axios.post(runEvaluationsAgainPath(id, executionId), {
+      eval_config_ids: evalConfigIds,
+    })
+  ).data;

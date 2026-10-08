@@ -18,6 +18,7 @@ from tracer.serializers.filters import (
     filter_list_field,
     filter_list_query_param_field,
 )
+from tracer.utils.monitor import uses_choice_threshold
 
 OBSERVATION_SPAN_TYPES = [t[0] for t in ObservationSpan.OBSERVATION_SPAN_TYPES]
 
@@ -104,7 +105,9 @@ class UserAlertMonitorSerializer(serializers.ModelSerializer):
                 )
                 if eval_config:
                     metric_name = eval_config.name
-                    if obj.threshold_metric_value:
+                    if obj.threshold_metric_value and uses_choice_threshold(
+                        eval_config.eval_template
+                    ):
                         metric_name += f" ({obj.threshold_metric_value})"
                     return metric_name
                 return "Invalid Eval"
@@ -133,7 +136,9 @@ class UserAlertMonitorSerializer(serializers.ModelSerializer):
                     f"An alert with the name '{name}' already exists in this project."
                 )
 
-    def _validate_metric_type(self, data):
+    def _validate_metric_type(self, data, choice_from_row=False):
+        """Returns True when a stored choice on a scoring eval should be
+        dropped rather than rejected (see `validate`)."""
         metric_type = data.get("metric_type")
         metric = data.get("metric")
         project = data.get("project")
@@ -153,11 +158,9 @@ class UserAlertMonitorSerializer(serializers.ModelSerializer):
                     {"metric": f"Invalid metric format for '{metric}'."}
                 )
 
+            eval_template = custom_eval_config.eval_template
             choices = (
-                custom_eval_config.eval_template.choices
-                if custom_eval_config.eval_template
-                and custom_eval_config.eval_template.choices
-                else None
+                eval_template.choices if uses_choice_threshold(eval_template) else None
             )
             if choices:
                 if threshold_metric_value is None:
@@ -173,6 +176,8 @@ class UserAlertMonitorSerializer(serializers.ModelSerializer):
                         }
                     )
             elif threshold_metric_value is not None:
+                if choice_from_row:
+                    return True
                 raise serializers.ValidationError(
                     {
                         "threshold_metric_value": "This field must be empty for evals without predefined choices."
@@ -183,6 +188,7 @@ class UserAlertMonitorSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     f"Metric and threshold_metric_value are not allowed for metric type {metric_type}"
                 )
+        return False
 
     def _validate_threshold_type(self, data):
         threshold_type = data.get("threshold_type")
@@ -276,7 +282,16 @@ class UserAlertMonitorSerializer(serializers.ModelSerializer):
 
         self._validate_project_organization(project, organization)
         self._validate_unique_name(project, name)
-        self._validate_metric_type(full_data)
+        # A scoring-eval alert saved before scoring evals stopped taking a
+        # choice can still carry one. The client no longer sends it, so on an
+        # update it only reaches validation from the row: drop it instead of
+        # failing every unrelated edit. A choice the request sends is still
+        # validated.
+        choice_from_row = (
+            self.instance is not None and "threshold_metric_value" not in data
+        )
+        if self._validate_metric_type(full_data, choice_from_row=choice_from_row):
+            validated_data["threshold_metric_value"] = None
         self._validate_threshold_type(full_data)
         if "filters" in validated_data and filters:
             validated_data["filters"] = self.validate_filters(filters)
@@ -535,7 +550,9 @@ class UserAlertMonitorDetailSerializer(serializers.ModelSerializer):
                 )
                 if eval_config:
                     metric_name = eval_config.name
-                    if obj.threshold_metric_value:
+                    if obj.threshold_metric_value and uses_choice_threshold(
+                        eval_config.eval_template
+                    ):
                         metric_name += f" ({obj.threshold_metric_value})"
                     return metric_name
                 return "Invalid Eval"
