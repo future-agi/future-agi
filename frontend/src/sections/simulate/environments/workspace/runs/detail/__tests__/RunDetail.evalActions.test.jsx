@@ -222,7 +222,7 @@ describe("RunDetail — the drawer and the column menus share one re-run", () =>
 });
 
 describe("RunDetail — editing from a column menu", () => {
-  it("opens the edit form on that column's eval, then the confirm on it once saved", async () => {
+  it("opens the edit form on that column's eval, and saving it only saves", async () => {
     const user = userEvent.setup();
     renderDetail();
 
@@ -237,18 +237,15 @@ describe("RunDetail — editing from a column menu", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
 
     await user.click(screen.getByRole("button", { name: "save edit" }));
-    const confirm = await screen.findByRole("dialog");
-    expect(
-      within(confirm).getByText("no_misselling", { exact: false }),
-    ).toBeInTheDocument();
     await waitFor(() =>
       expect(screen.queryByText("edit-drawer:c1")).toBeNull(),
     );
-
-    await user.click(
-      within(confirm).getByRole("button", { name: "Run Evaluations" }),
-    );
-    expect(runEvaluationsAgain).toHaveBeenCalledWith("env-1", "ex1", ["c1"]);
+    await settle();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(
+      screen.queryByText("This will overwrite previous evaluation results."),
+    ).toBeNull();
+    expect(runEvaluationsAgain).not.toHaveBeenCalled();
   });
 });
 
@@ -258,7 +255,7 @@ describe("RunDetail — dialogs opened from the All Evaluations drawer", () => {
   // top, and MUI hides everything under the topmost from assistive tech.
   const modalOf = (node) => node.closest(".MuiModal-root");
 
-  it("opens the edit form above the drawer, then the confirm above both", async () => {
+  it("opens the edit form above the drawer, and saving it leaves the drawer open", async () => {
     const user = userEvent.setup();
     renderDetail();
 
@@ -277,18 +274,15 @@ describe("RunDetail — dialogs opened from the All Evaluations drawer", () => {
     expect(edit).not.toHaveAttribute("aria-hidden");
 
     await user.click(within(edit).getByRole("button", { name: "save edit" }));
-    const confirm = await screen.findByRole("dialog");
-    expect(
-      within(confirm).getByText("no_misselling", { exact: false }),
-    ).toBeInTheDocument();
-    expect(
-      drawer.compareDocumentPosition(modalOf(confirm)) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    expect(drawer).toHaveAttribute("aria-hidden", "true");
     await waitFor(() =>
       expect(screen.queryByText("edit-drawer:c1")).toBeNull(),
     );
+    await settle();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(runEvaluationsAgain).not.toHaveBeenCalled();
+    expect(drawer).toBeInTheDocument();
+    expect(modalOf(screen.getByText("All Evaluations"))).toBe(drawer);
+    expect(drawer).not.toHaveAttribute("aria-hidden");
   });
 
   it("opens a row's confirm above the drawer", async () => {

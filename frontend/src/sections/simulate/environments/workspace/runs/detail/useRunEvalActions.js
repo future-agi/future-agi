@@ -2,19 +2,20 @@ import { useState } from "react";
 import { useRegradeEvals } from "./useRegradeEvals";
 
 /**
- * The run page's one place to re-run evals, or edit one and then re-run it.
+ * The run page's one place to re-run evals or edit one.
  *
  * The All Evaluations drawer and every eval column's ⋮ menu ask through here,
  * so they share one edit form, one confirm dialog and one request: a re-run
  * sent from either holds both until the server answers.
  *
- * `requestRerun(configs, { onSuccess })` opens the confirm on those evals.
- * `requestEdit(config, { onSuccess })` opens the edit form; saving it opens
- * the confirm on the edited eval. Either `onSuccess` runs once the grading
- * is queued. `dialogProps` go to `RunEvalDialogs`.
+ * `requestRerun(configs, { onSuccess })` opens the confirm on those evals;
+ * `onSuccess` runs once the grading is queued. `requestEdit(config)` opens
+ * the edit form, and saving it only saves: grading the run again with the
+ * edited eval is a separate choice, made through `requestRerun`.
+ * `dialogProps` go to `RunEvalDialogs`.
  */
 export function useRunEvalActions({ envId, executionId }) {
-  // The eval open for editing and who asked, or null.
+  // The eval open for editing, or null.
   const [editing, setEditing] = useState(null);
   // The evals the confirm dialog is about and who asked, or null.
   const [confirming, setConfirming] = useState(null);
@@ -31,8 +32,7 @@ export function useRunEvalActions({ envId, executionId }) {
 
   const requestRerun = (configs, { onSuccess } = {}) =>
     setConfirming({ configs, onSuccess });
-  const requestEdit = (config, { onSuccess } = {}) =>
-    setEditing({ config, onSuccess });
+  const requestEdit = (config) => setEditing(config);
 
   return {
     requestRerun,
@@ -40,18 +40,11 @@ export function useRunEvalActions({ envId, executionId }) {
     isPending,
     editOpen: Boolean(editing),
     dialogProps: {
-      editing: editing?.config ?? null,
+      editing,
       confirming: confirming?.configs ?? null,
       loading: isPending,
       onEditClose: () => setEditing(null),
-      onEdited: (updated) => {
-        setEditing(null);
-        setConfirming(
-          updated
-            ? { configs: [updated], onSuccess: editing?.onSuccess }
-            : null,
-        );
-      },
+      onEdited: () => setEditing(null),
       onConfirmClose: () => setConfirming(null),
       onConfirm: (list) =>
         regrade(list, {

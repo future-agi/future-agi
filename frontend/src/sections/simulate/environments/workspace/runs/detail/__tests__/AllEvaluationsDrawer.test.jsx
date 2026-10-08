@@ -453,18 +453,13 @@ describe("AllEvaluationsDrawer — editing an eval", () => {
     ).toBeInTheDocument();
   });
 
-  it("asks the run page to edit that eval, and stays open until its re-run is queued", () => {
+  it("asks the run page to edit that eval and stays open", () => {
     const { onEdit, onClose } = setup();
 
     fireEvent.click(screen.getByRole("button", { name: "Edit no_misselling" }));
-    expect(onEdit).toHaveBeenCalledWith(CONFIGS[0], {
-      onSuccess: expect.any(Function),
-    });
+    expect(onEdit).toHaveBeenCalledWith(CONFIGS[0]);
     expect(onClose).not.toHaveBeenCalled();
     expect(screen.getByText("All Evaluations")).toBeInTheDocument();
-
-    act(() => onEdit.mock.calls[0][1].onSuccess());
-    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it("holds every edit while the run page's edit form is open", () => {

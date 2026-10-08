@@ -49,8 +49,9 @@ const NO_CONFIGS = [];
  * rerun refreshes them, but they can still be removed. The footer runs the
  * ticked rows and a row's run icon runs just that row; a row's edit icon edits
  * that eval. Both go to the run page (`onRerun`, `onEdit`), whose one edit form
- * and confirm dialog also serve the table's column menus, and this drawer
- * closes once the grading it asked for is queued.
+ * and confirm dialog also serve the table's column menus. This drawer closes
+ * once a re-run it asked for is queued; a saved edit leaves it open, since
+ * the person is still managing the run's evals here.
  */
 export default function AllEvaluationsDrawer({
   open,
@@ -284,9 +285,7 @@ export default function AllEvaluationsDrawer({
                             editOpen ||
                             rerunPending
                           }
-                          onClick={() =>
-                            onEdit?.(config, { onSuccess: onClose })
-                          }
+                          onClick={() => onEdit?.(config)}
                         >
                           <Iconify icon="solar:pen-linear" width={18} />
                         </IconButton>
