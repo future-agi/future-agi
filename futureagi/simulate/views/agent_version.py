@@ -598,6 +598,10 @@ class AgentVersionCallExecutionView(APIView):
             ).exclude(eval_outputs={})
 
             paginator = ExtendedPageNumberPagination()
+            # The call-log grid sends page_size, as it does to the trace lists;
+            # limit is still read when that is what a caller sends.
+            if "page_size" in request.query_params:
+                paginator.page_size_query_param = "page_size"
             result_page = paginator.paginate_queryset(call_executions, request)
             serializer = CallExecutionSerializer(result_page, many=True)
 

@@ -50755,10 +50755,43 @@
             ]
         },
         "/simulate/api/harness-environments/{id}/evaluations/{eval_config_id}/": {
+            "patch": {
+                "operationId": "simulate_api_harness-environments_edit_evaluation",
+                "description": "Change one eval of this environment. Never grades anything; grade a run again afterwards to refresh its scores.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessEnvironmentEvalEdit"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SimulateEvalConfigResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
             "delete": {
                 "operationId": "simulate_api_harness-environments_remove_evaluation",
                 "summary": "Stop running one eval against this environment.",
-                "description": "Soft-delete only. The verdicts an eval already produced live on the call\nexecutions and in their receipts, not on this row, so a hard delete would\nleave past runs showing scores for something the environment no longer\nlists. Removing it stops future scenarios being graded by it and leaves\nthe history it already wrote intact.",
+                "description": "Soft-delete only. The verdicts an eval already produced live on the call\nexecutions and in their receipts, not on this row, so a hard delete would\nleave past runs showing scores for something the environment no longer\nlists. Removing an eval someone added stops future scenarios being\ngraded by it and leaves the history it already wrote intact. An eval the\nharness reported itself comes back the next time the harness grades it.",
                 "parameters": [],
                 "responses": {
                     "204": {
@@ -50852,6 +50885,55 @@
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/HarnessEnvironmentRunEvaluationQueued"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "execution_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness-environments/{id}/runs/{execution_id}/evaluations/run/": {
+            "post": {
+                "operationId": "simulate_api_harness-environments_runs_evaluations_run_evaluations",
+                "description": "Grade this finished run's calls again with chosen evals of the environment, without rerunning the calls.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessEnvironmentRunEvaluations"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessEnvironmentRunEvaluationsQueued"
                         }
                     },
                     "default": {
@@ -56233,6 +56315,12 @@
                             "$ref": "#/definitions/EvalErrorResponse"
                         }
                     },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/EvalErrorResponse"
+                        }
+                    },
                     "500": {
                         "description": "",
                         "schema": {
@@ -57323,6 +57411,12 @@
                         }
                     },
                     "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "409": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ErrorResponse"
@@ -123465,7 +123559,8 @@
                 "charges_judge_tokens",
                 "inputs",
                 "id",
-                "runnable"
+                "runnable",
+                "editable"
             ],
             "type": "object",
             "properties": {
@@ -123538,6 +123633,10 @@
                 },
                 "runnable": {
                     "title": "Runnable",
+                    "type": "boolean"
+                },
+                "editable": {
+                    "title": "Editable",
                     "type": "boolean"
                 }
             }
@@ -123923,6 +124022,277 @@
                 }
             }
         },
+        "HarnessEnvironmentEvalEdit": {
+            "type": "object",
+            "properties": {
+                "config": {
+                    "title": "Config",
+                    "description": "Updated evaluation configuration parameters.",
+                    "type": "object",
+                    "x-nullable": true,
+                    "additionalProperties": true
+                },
+                "mapping": {
+                    "title": "Mapping",
+                    "description": "Updated field mapping between test data and evaluation inputs.",
+                    "type": "object",
+                    "x-nullable": true,
+                    "additionalProperties": true
+                },
+                "model": {
+                    "title": "Model",
+                    "description": "Model to use for evaluations.",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "error_localizer": {
+                    "title": "Error localizer",
+                    "description": "Enable granular error localization in evaluation results.",
+                    "type": "boolean"
+                },
+                "kb_id": {
+                    "title": "Kb id",
+                    "description": "UUID of a knowledge base to use for grounding. Pass null to clear. Switching template_id without providing an explicit kb_id will clear the KB association.",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "filters": {
+                    "description": "Updated canonical filter list to restrict which test results are evaluated.",
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "column_id": {
+                                "type": "string",
+                                "description": "Column or attribute id to filter on."
+                            },
+                            "property_id": {
+                                "type": "string",
+                                "description": "Optional stable namespaced Property Registry identity."
+                            },
+                            "display_name": {
+                                "type": "string",
+                                "description": "Optional UI label for chips and saved views."
+                            },
+                            "source": {
+                                "type": "string",
+                                "description": "Optional source surface for mixed-source filters, for example traces, datasets, or simulation."
+                            },
+                            "output_type": {
+                                "type": "string",
+                                "description": "Optional metric output type metadata used by eval and annotation filters."
+                            },
+                            "filter_config": {
+                                "type": "object",
+                                "properties": {
+                                    "filter_type": {
+                                        "type": "string",
+                                        "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map."
+                                    },
+                                    "filter_op": {
+                                        "type": "string",
+                                        "description": "Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null."
+                                    },
+                                    "filter_value": {
+                                        "description": "Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type."
+                                    },
+                                    "col_type": {
+                                        "type": "string",
+                                        "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                                    },
+                                    "attribute_value_types": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "string",
+                                            "enum": [
+                                                "string",
+                                                "number",
+                                                "boolean"
+                                            ],
+                                            "x-nullable": true
+                                        },
+                                        "description": "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values."
+                                    }
+                                },
+                                "required": [
+                                    "filter_type",
+                                    "filter_op"
+                                ],
+                                "additionalProperties": false
+                            }
+                        },
+                        "required": [
+                            "column_id",
+                            "filter_config"
+                        ],
+                        "additionalProperties": false
+                    },
+                    "x-nullable": true
+                },
+                "name": {
+                    "title": "Name",
+                    "description": "Updated name for the evaluation configuration.",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "SimulateEvalConfigResponse": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "config": {
+                    "title": "Config",
+                    "type": "object",
+                    "readOnly": true,
+                    "x-nullable": true,
+                    "additionalProperties": true
+                },
+                "mapping": {
+                    "title": "Mapping",
+                    "type": "object",
+                    "readOnly": true,
+                    "x-nullable": true,
+                    "additionalProperties": true
+                },
+                "filters": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "column_id": {
+                                "type": "string",
+                                "description": "Column or attribute id to filter on."
+                            },
+                            "property_id": {
+                                "type": "string",
+                                "description": "Optional stable namespaced Property Registry identity."
+                            },
+                            "display_name": {
+                                "type": "string",
+                                "description": "Optional UI label for chips and saved views."
+                            },
+                            "source": {
+                                "type": "string",
+                                "description": "Optional source surface for mixed-source filters, for example traces, datasets, or simulation."
+                            },
+                            "output_type": {
+                                "type": "string",
+                                "description": "Optional metric output type metadata used by eval and annotation filters."
+                            },
+                            "filter_config": {
+                                "type": "object",
+                                "properties": {
+                                    "filter_type": {
+                                        "type": "string",
+                                        "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map."
+                                    },
+                                    "filter_op": {
+                                        "type": "string",
+                                        "description": "Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null."
+                                    },
+                                    "filter_value": {
+                                        "description": "Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type."
+                                    },
+                                    "col_type": {
+                                        "type": "string",
+                                        "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                                    },
+                                    "attribute_value_types": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "string",
+                                            "enum": [
+                                                "string",
+                                                "number",
+                                                "boolean"
+                                            ],
+                                            "x-nullable": true
+                                        },
+                                        "description": "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values."
+                                    }
+                                },
+                                "required": [
+                                    "filter_type",
+                                    "filter_op"
+                                ],
+                                "additionalProperties": false
+                            }
+                        },
+                        "required": [
+                            "column_id",
+                            "filter_config"
+                        ],
+                        "additionalProperties": false
+                    },
+                    "readOnly": true,
+                    "default": []
+                },
+                "error_localizer": {
+                    "title": "Error localizer",
+                    "type": "boolean",
+                    "readOnly": true
+                },
+                "model": {
+                    "title": "Model",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "eval_group": {
+                    "title": "Eval group",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "template_id": {
+                    "title": "Template id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "eval_type": {
+                    "title": "Eval type",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "regradable": {
+                    "title": "Regradable",
+                    "type": "boolean",
+                    "readOnly": true
+                },
+                "editable": {
+                    "title": "Editable",
+                    "type": "boolean",
+                    "readOnly": true
+                }
+            }
+        },
         "HarnessRunCreate": {
             "required": [
                 "scenario_ids"
@@ -124044,6 +124414,41 @@
                 },
                 "completed_calls": {
                     "title": "Completed calls",
+                    "type": "integer"
+                }
+            }
+        },
+        "HarnessEnvironmentRunEvaluations": {
+            "required": [
+                "eval_config_ids"
+            ],
+            "type": "object",
+            "properties": {
+                "eval_config_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    "minItems": 1
+                },
+                "enable_tool_evaluation": {
+                    "title": "Enable tool evaluation",
+                    "description": "Saved on the environment before grading starts; left as it is when absent.",
+                    "type": "boolean",
+                    "x-nullable": true
+                }
+            }
+        },
+        "HarnessEnvironmentRunEvaluationsQueued": {
+            "required": [
+                "call_execution_count"
+            ],
+            "type": "object",
+            "properties": {
+                "call_execution_count": {
+                    "title": "Call execution count",
+                    "description": "How many of the run's calls were queued for grading.",
                     "type": "integer"
                 }
             }
@@ -128611,144 +129016,6 @@
                 }
             }
         },
-        "SimulateEvalConfigResponse": {
-            "type": "object",
-            "properties": {
-                "id": {
-                    "title": "Id",
-                    "type": "string",
-                    "format": "uuid",
-                    "readOnly": true
-                },
-                "name": {
-                    "title": "Name",
-                    "type": "string",
-                    "readOnly": true,
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "config": {
-                    "title": "Config",
-                    "type": "object",
-                    "readOnly": true,
-                    "x-nullable": true,
-                    "additionalProperties": true
-                },
-                "mapping": {
-                    "title": "Mapping",
-                    "type": "object",
-                    "readOnly": true,
-                    "x-nullable": true,
-                    "additionalProperties": true
-                },
-                "filters": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "column_id": {
-                                "type": "string",
-                                "description": "Column or attribute id to filter on."
-                            },
-                            "property_id": {
-                                "type": "string",
-                                "description": "Optional stable namespaced Property Registry identity."
-                            },
-                            "display_name": {
-                                "type": "string",
-                                "description": "Optional UI label for chips and saved views."
-                            },
-                            "source": {
-                                "type": "string",
-                                "description": "Optional source surface for mixed-source filters, for example traces, datasets, or simulation."
-                            },
-                            "output_type": {
-                                "type": "string",
-                                "description": "Optional metric output type metadata used by eval and annotation filters."
-                            },
-                            "filter_config": {
-                                "type": "object",
-                                "properties": {
-                                    "filter_type": {
-                                        "type": "string",
-                                        "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map."
-                                    },
-                                    "filter_op": {
-                                        "type": "string",
-                                        "description": "Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null."
-                                    },
-                                    "filter_value": {
-                                        "description": "Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type."
-                                    },
-                                    "col_type": {
-                                        "type": "string",
-                                        "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
-                                    },
-                                    "attribute_value_types": {
-                                        "type": "array",
-                                        "items": {
-                                            "type": "string",
-                                            "enum": [
-                                                "string",
-                                                "number",
-                                                "boolean"
-                                            ],
-                                            "x-nullable": true
-                                        },
-                                        "description": "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values."
-                                    }
-                                },
-                                "required": [
-                                    "filter_type",
-                                    "filter_op"
-                                ],
-                                "additionalProperties": false
-                            }
-                        },
-                        "required": [
-                            "column_id",
-                            "filter_config"
-                        ],
-                        "additionalProperties": false
-                    },
-                    "readOnly": true,
-                    "default": []
-                },
-                "error_localizer": {
-                    "title": "Error localizer",
-                    "type": "boolean",
-                    "readOnly": true
-                },
-                "model": {
-                    "title": "Model",
-                    "type": "string",
-                    "readOnly": true,
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "status": {
-                    "title": "Status",
-                    "type": "string",
-                    "readOnly": true,
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "eval_group": {
-                    "title": "Eval group",
-                    "type": "string",
-                    "readOnly": true,
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "template_id": {
-                    "title": "Template id",
-                    "type": "string",
-                    "format": "uuid",
-                    "readOnly": true,
-                    "x-nullable": true
-                }
-            }
-        },
         "RunTestResponse": {
             "type": "object",
             "properties": {
@@ -131411,6 +131678,22 @@
                     "type": "string",
                     "format": "uuid",
                     "readOnly": true
+                },
+                "eval_type": {
+                    "title": "Eval type",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "regradable": {
+                    "title": "Regradable",
+                    "type": "boolean",
+                    "readOnly": true
+                },
+                "editable": {
+                    "title": "Editable",
+                    "type": "boolean",
+                    "readOnly": true
                 }
             }
         },
@@ -132400,7 +132683,8 @@
             "required": [
                 "message",
                 "run_test_id",
-                "call_execution_count"
+                "call_execution_count",
+                "dispatched"
             ],
             "type": "object",
             "properties": {
@@ -132417,6 +132701,10 @@
                 "call_execution_count": {
                     "title": "Call execution count",
                     "type": "integer"
+                },
+                "dispatched": {
+                    "title": "Dispatched",
+                    "type": "boolean"
                 }
             }
         },
@@ -153414,6 +153702,12 @@
                     "title": "Project id",
                     "type": "string",
                     "format": "uuid",
+                    "x-nullable": true
+                },
+                "project_name": {
+                    "title": "Project name",
+                    "type": "string",
+                    "minLength": 1,
                     "x-nullable": true
                 },
                 "user_id_type": {

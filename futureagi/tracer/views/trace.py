@@ -7165,15 +7165,19 @@ class UsersView(APIView):
 
             # Workspace isolation is request-bound, so resolve the allowed
             # projects here and pass the plain list to the manager (CH25: the
-            # curated source has no workspace_id column to filter on).
+            # curated source has no workspace_id column to filter on).  The
+            # same read supplies each project's display name: a Users row is
+            # one user within one project, and the row names that project.
+            allowed_projects = {
+                str(pid): name
+                for pid, name in _project_queryset_for_request(request).values_list(
+                    "id", "name"
+                )
+            }
             manager = UsersListManager(
                 organization_id=str(request.user.organization.id),
-                allowed_project_ids=[
-                    str(pid)
-                    for pid in _project_queryset_for_request(request).values_list(
-                        "id", flat=True
-                    )
-                ],
+                allowed_project_ids=list(allowed_projects),
+                project_names=allowed_projects,
                 project_id=query_data.get("project_id") or None,
                 search=search.strip() if search else None,
                 filters=query_data.get("filters", []),
