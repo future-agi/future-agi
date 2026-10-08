@@ -362,7 +362,13 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
     # The sandbox resolves nothing on our network, so the guest's collector is configured
     # separately and only falls back to ours when they are the same host.
     collector = str(
-        os.environ.get("ALK_HOSTED_FI_BASE_URL") or os.environ.get("FI_BASE_URL") or ""
+        os.environ.get("ALK_HOSTED_FI_BASE_URL")
+        # The harness callback URL is already required to be sandbox-reachable. It is a
+        # safer fallback than FI_BASE_URL, which commonly names an internal Compose/K8s
+        # service (for example ``http://backend:80``) that cannot resolve from E2B.
+        or os.environ.get("HARNESS_PUBLIC_BASE_URL")
+        or os.environ.get("FI_BASE_URL")
+        or ""
     ).strip()
     if collector:
         values["FI_BASE_URL"] = collector
