@@ -932,6 +932,9 @@ class UsersTableRowSerializer(serializers.Serializer):
     bool_eval_pass_rate = serializers.FloatField(required=False, allow_null=True)
     avg_output_float = serializers.FloatField(required=False, allow_null=True)
     project_id = serializers.UUIDField(required=False, allow_null=True)
+    # Each row is one user within one project; ``project_name`` labels that
+    # scope (null when the project is no longer readable).
+    project_name = serializers.CharField(required=False, allow_null=True)
     user_id_type = serializers.CharField(required=False, allow_null=True)
     user_id_hash = serializers.CharField(required=False, allow_null=True)
     end_user_id = serializers.UUIDField(required=False, allow_null=True)
