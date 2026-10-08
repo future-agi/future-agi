@@ -13,11 +13,6 @@ import {
 import { enqueueSnackbar } from "notistack";
 import { useUpdateMCPServer } from "./hooks/useMCPConfig";
 
-const TRANSPORT_OPTIONS = [
-  { value: "http", label: "HTTP" },
-  { value: "stdio", label: "Stdio" },
-];
-
 const AUTH_OPTIONS = [
   { value: "none", label: "None" },
   { value: "bearer", label: "Bearer Token" },
@@ -31,13 +26,10 @@ const AddMCPServerDialog = ({ open, onClose, gatewayId, editServer }) => {
   const [form, setForm] = useState({
     server_id: "",
     url: "",
-    transport: "http",
     authType: "none",
     token: "",
     header: "",
     apiKey: "",
-    command: "",
-    args: "",
     toolsCacheTtl: "",
   });
 
@@ -48,26 +40,20 @@ const AddMCPServerDialog = ({ open, onClose, gatewayId, editServer }) => {
       setForm({
         server_id: editServer.serverId || editServer.server_id || "",
         url: cfg.url || "",
-        transport: cfg.transport || "http",
         authType: auth.type || "none",
         token: auth.token || "",
         header: auth.header || "",
         apiKey: auth.key || "",
-        command: cfg.command || "",
-        args: (cfg.args || []).join(" "),
         toolsCacheTtl: cfg.tools_cache_ttl || "",
       });
     } else {
       setForm({
         server_id: "",
         url: "",
-        transport: "http",
         authType: "none",
         token: "",
         header: "",
         apiKey: "",
-        command: "",
-        args: "",
         toolsCacheTtl: "",
       });
     }
@@ -82,29 +68,12 @@ const AddMCPServerDialog = ({ open, onClose, gatewayId, editServer }) => {
       enqueueSnackbar("Server ID is required", { variant: "warning" });
       return;
     }
-    if (form.transport === "http" && !form.url.trim()) {
-      enqueueSnackbar("URL is required for HTTP transport", {
-        variant: "warning",
-      });
-      return;
-    }
-    if (form.transport === "stdio" && !form.command.trim()) {
-      enqueueSnackbar("Command is required for Stdio transport", {
-        variant: "warning",
-      });
+    if (!form.url.trim()) {
+      enqueueSnackbar("URL is required", { variant: "warning" });
       return;
     }
 
-    const serverConfig = { transport: form.transport };
-
-    if (form.transport === "http") {
-      serverConfig.url = form.url.trim();
-    } else {
-      serverConfig.command = form.command.trim();
-      if (form.args.trim()) {
-        serverConfig.args = form.args.trim().split(/\s+/);
-      }
-    }
+    const serverConfig = { transport: "http", url: form.url.trim() };
 
     if (form.authType !== "none") {
       serverConfig.auth = { type: form.authType };
@@ -164,54 +133,14 @@ const AddMCPServerDialog = ({ open, onClose, gatewayId, editServer }) => {
           />
 
           <TextField
-            label="Transport"
-            value={form.transport}
-            onChange={handleChange("transport")}
-            select
+            label="URL"
+            value={form.url}
+            onChange={handleChange("url")}
+            required
             fullWidth
             size="small"
-          >
-            {TRANSPORT_OPTIONS.map((opt) => (
-              <MenuItem key={opt.value} value={opt.value}>
-                {opt.label}
-              </MenuItem>
-            ))}
-          </TextField>
-
-          {form.transport === "http" && (
-            <TextField
-              label="URL"
-              value={form.url}
-              onChange={handleChange("url")}
-              required
-              fullWidth
-              size="small"
-              placeholder="http://mcp-server:8080"
-            />
-          )}
-
-          {form.transport === "stdio" && (
-            <>
-              <TextField
-                label="Command"
-                value={form.command}
-                onChange={handleChange("command")}
-                required
-                fullWidth
-                size="small"
-                placeholder="/usr/local/bin/mcp-tool"
-              />
-              <TextField
-                label="Arguments"
-                value={form.args}
-                onChange={handleChange("args")}
-                fullWidth
-                size="small"
-                placeholder="--port 8080 --verbose"
-                helperText="Space-separated arguments"
-              />
-            </>
-          )}
+            placeholder="http://mcp-server:8080"
+          />
 
           <TextField
             label="Auth Type"

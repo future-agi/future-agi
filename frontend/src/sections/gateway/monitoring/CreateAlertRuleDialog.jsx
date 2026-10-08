@@ -26,6 +26,7 @@ const CreateAlertRuleDialog = ({
   onClose,
   gatewayId,
   existingRules = [],
+  channelNames = [],
 }) => {
   const [name, setName] = useState("");
   const [metric, setMetric] = useState(DEFAULT_ALERT_METRIC);
@@ -33,6 +34,7 @@ const CreateAlertRuleDialog = ({
   const [threshold, setThreshold] = useState("");
   const [window, setWindow] = useState("5m");
   const [severity, setSeverity] = useState("warning");
+  const [ruleChannels, setRuleChannels] = useState([]);
 
   const updateConfig = useUpdateConfig();
 
@@ -43,6 +45,7 @@ const CreateAlertRuleDialog = ({
     setThreshold("");
     setWindow("5m");
     setSeverity("warning");
+    setRuleChannels([]);
   };
 
   const handleClose = () => {
@@ -58,6 +61,7 @@ const CreateAlertRuleDialog = ({
       condition,
       threshold: Number(threshold),
       window,
+      channels: ruleChannels,
       severity,
       enabled: true,
     };
@@ -156,6 +160,26 @@ const CreateAlertRuleDialog = ({
               </MenuItem>
             ))}
           </TextField>
+          <TextField
+            label="Notify Channels"
+            select
+            fullWidth
+            value={ruleChannels}
+            onChange={(e) => setRuleChannels(e.target.value)}
+            SelectProps={{ multiple: true }}
+            disabled={channelNames.length === 0}
+            helperText={
+              channelNames.length === 0
+                ? "Add a notification channel first. A rule with no channel notifies nobody."
+                : "A rule with no channel notifies nobody."
+            }
+          >
+            {channelNames.map((channelName) => (
+              <MenuItem key={channelName} value={channelName}>
+                {channelName}
+              </MenuItem>
+            ))}
+          </TextField>
           {updateConfig.isError && (
             <Alert severity="error">
               {updateConfig.error?.message || "Failed to create rule"}
@@ -182,6 +206,7 @@ CreateAlertRuleDialog.propTypes = {
   onClose: PropTypes.func.isRequired,
   gatewayId: PropTypes.string,
   existingRules: PropTypes.arrayOf(PropTypes.object),
+  channelNames: PropTypes.arrayOf(PropTypes.string),
 };
 
 export default CreateAlertRuleDialog;

@@ -7,6 +7,7 @@ import copy
 
 import structlog
 from django.conf import settings as django_settings
+from pydantic import ValidationError
 
 from agentcc.contracts.gateway_admin import (
     AlertChannelConfig as GatewayAlertChannelConfig,
@@ -658,6 +659,30 @@ def _build_payload(org_id, config):
         by_alias=True,
         exclude_none=True,
     )
+
+
+class OrgConfigRejected(ValueError):
+    """The gateway contract does not accept an org config."""
+
+
+def validate_org_config(config):
+    """
+    Raise OrgConfigRejected if the gateway cannot accept `config`.
+
+    Call it before a config version becomes active. The gateway pulls every
+    active config through the same contract, so a version the contract rejects
+    stops that org's sync until someone repairs the row.
+    """
+    try:
+        _build_payload(str(config.organization_id), config)
+    except ValidationError as e:
+        fields = "; ".join(
+            f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}"
+            for error in e.errors()
+        )
+        raise OrgConfigRejected(
+            f"The gateway cannot accept this config. {fields}"
+        ) from e
 
 
 def push_org_config(org_id, config):

@@ -32,7 +32,6 @@ const MCPGuardrailsTab = ({ config, mcpStatus, gatewayId }) => {
     allowedServers: [],
     validateInputs: false,
     validateOutputs: false,
-    customPatterns: [],
     toolRateLimits: {},
   });
   const [isDirty, setIsDirty] = useState(false);
@@ -46,7 +45,6 @@ const MCPGuardrailsTab = ({ config, mcpStatus, gatewayId }) => {
       allowedServers: guardrailsConfig.allowed_servers || [],
       validateInputs: guardrailsConfig.validate_inputs || false,
       validateOutputs: guardrailsConfig.validate_outputs || false,
-      customPatterns: guardrailsConfig.custom_patterns || [],
       toolRateLimits: guardrailsConfig.tool_rate_limits || {},
     });
     setIsDirty(false);
@@ -56,7 +54,6 @@ const MCPGuardrailsTab = ({ config, mcpStatus, gatewayId }) => {
     guardrailsConfig.allowed_servers?.length,
     guardrailsConfig.validate_inputs,
     guardrailsConfig.validate_outputs,
-    guardrailsConfig.custom_patterns?.length,
     JSON.stringify(guardrailsConfig.tool_rate_limits),
   ]);
 
@@ -104,7 +101,6 @@ const MCPGuardrailsTab = ({ config, mcpStatus, gatewayId }) => {
       allowed_servers: form.allowedServers,
       validate_inputs: form.validateInputs,
       validate_outputs: form.validateOutputs,
-      custom_patterns: form.customPatterns,
       tool_rate_limits: form.toolRateLimits,
     };
 
@@ -261,51 +257,6 @@ const MCPGuardrailsTab = ({ config, mcpStatus, gatewayId }) => {
                   {...params}
                   size="small"
                   placeholder="Type a server ID or select from connected..."
-                />
-              )}
-            />
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent>
-            <Typography variant="subtitle1" fontWeight={700} gutterBottom>
-              Custom Injection Patterns
-            </Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              Add custom regex patterns to detect injection attacks in tool
-              arguments and outputs. These are checked alongside the 8 built-in
-              patterns.
-            </Typography>
-            <Autocomplete
-              multiple
-              freeSolo
-              options={[]}
-              value={form.customPatterns}
-              onChange={(_, newValue) => {
-                setForm((prev) => ({ ...prev, customPatterns: newValue }));
-                setIsDirty(true);
-              }}
-              disabled={!form.enabled}
-              renderTags={(value, getTagProps) =>
-                value.map((option, index) => (
-                  <Chip
-                    label={option}
-                    size="small"
-                    color="warning"
-                    variant="outlined"
-                    {...getTagProps({ index })}
-                    key={option}
-                    sx={{ fontFamily: "monospace", fontSize: 12 }}
-                  />
-                ))
-              }
-              renderInput={(params) => (
-                <TextField
-                  {...params}
-                  size="small"
-                  placeholder="Type a regex pattern and press Enter..."
-                  helperText="Example: (?i)\bpassword\b or .*secret.*"
                 />
               )}
             />

@@ -11,3 +11,12 @@ export const ALERT_METRIC_OPTIONS = [
 ];
 
 export const DEFAULT_ALERT_METRIC = "error_count";
+
+// The only channel types the gateway's alerting plugin can deliver to — see
+// the channel switch in the same file. Any other type is accepted and then
+// skipped with a log line.
+export const ALERT_CHANNEL_TYPE_OPTIONS = [
+  { value: "webhook", label: "Webhook" },
+  { value: "slack", label: "Slack" },
+  { value: "log", label: "Log Only" },
+];

@@ -199,7 +199,7 @@ function maskUrl(url) {
   }
 }
 
-const ChannelsTab = ({ channels }) => (
+const ChannelsTab = ({ channels, onDelete, isDeleting }) => (
   <Stack spacing={2}>
     {channels.length === 0 ? (
       <Card sx={{ p: 4 }}>
@@ -239,6 +239,19 @@ const ChannelsTab = ({ channels }) => (
                   color={ch.enabled !== false ? "success" : "default"}
                   size="small"
                 />
+                <Tooltip title="Delete channel">
+                  <span>
+                    <IconButton
+                      size="small"
+                      color="error"
+                      disabled={isDeleting}
+                      onClick={() => onDelete(idx)}
+                      aria-label={`Delete channel ${ch.name || idx + 1}`}
+                    >
+                      <Iconify icon="mdi:delete-outline" width={18} />
+                    </IconButton>
+                  </span>
+                </Tooltip>
               </Stack>
             </Stack>
             <Stack spacing={0.75}>
@@ -530,6 +543,29 @@ const AlertingMonitoringSection = () => {
     [rules, gatewayId, updateConfig],
   );
 
+  const handleDeleteChannel = useCallback(
+    (idx) => {
+      const channel = channels[idx];
+      updateConfig.mutate(
+        {
+          gatewayId,
+          config: {
+            alerting: { channels: channels.filter((_, i) => i !== idx) },
+          },
+        },
+        {
+          onSuccess: () =>
+            enqueueSnackbar(`Channel "${channel?.name || idx + 1}" deleted`, {
+              variant: "success",
+            }),
+          onError: () =>
+            enqueueSnackbar("Failed to delete channel", { variant: "error" }),
+        },
+      );
+    },
+    [channels, gatewayId, updateConfig],
+  );
+
   if (gwLoading || configLoading) {
     return (
       <Box p={3}>
@@ -600,18 +636,26 @@ const AlertingMonitoringSection = () => {
           isDeleting={updateConfig.isPending}
         />
       )}
-      {tab === 2 && <ChannelsTab channels={channels} />}
+      {tab === 2 && (
+        <ChannelsTab
+          channels={channels}
+          onDelete={handleDeleteChannel}
+          isDeleting={updateConfig.isPending}
+        />
+      )}
 
       <CreateAlertRuleDialog
         open={createRuleOpen}
         onClose={() => setCreateRuleOpen(false)}
         gatewayId={gatewayId}
         existingRules={rules}
+        channelNames={channels.map((c) => c?.name).filter(Boolean)}
       />
       <CreateChannelDialog
         open={createChannelOpen}
         onClose={() => setCreateChannelOpen(false)}
         gatewayId={gatewayId}
+        existingChannels={channels}
       />
     </Box>
   );

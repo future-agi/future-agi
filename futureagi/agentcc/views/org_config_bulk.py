@@ -55,10 +55,12 @@ class OrgConfigBulkView(APIView):
                 try:
                     result[org_id] = _build_payload(org_id, cfg)
                 except Exception as e:
-                    # A config the gateway contract rejects is that org's
-                    # problem, not the fleet's. Failing the response drops every
-                    # org's config from the gateway on its next restart, so the
-                    # bad org is skipped and the rest are served.
+                    # One org's payload must not fail the response for every
+                    # org. The gateway drops an org that is absent from this
+                    # response, so the skipped org loses its config there too.
+                    # Saves are validated before a version becomes active, so
+                    # this path is for a payload that stops building for
+                    # another reason.
                     skipped.append(org_id)
                     logger.warning(
                         "org_config_bulk_org_skipped",

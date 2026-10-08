@@ -17,6 +17,7 @@ import {
 } from "@mui/material";
 import { Icon } from "@iconify/react";
 import {
+  ALERT_CHANNEL_TYPE_OPTIONS,
   ALERT_METRIC_OPTIONS,
   DEFAULT_ALERT_METRIC,
 } from "../constants/alerting";
@@ -27,12 +28,6 @@ const CONDITIONS = [
   { value: "<=", label: "<=" },
   { value: "<", label: "<" },
   { value: "==", label: "==" },
-];
-
-const CHANNEL_TYPES = [
-  { value: "webhook", label: "Webhook" },
-  { value: "slack", label: "Slack" },
-  { value: "log", label: "Log Only" },
 ];
 
 const AlertingConfigTab = ({ alerting, onChange }) => {
@@ -174,7 +169,7 @@ const AlertingConfigTab = ({ alerting, onChange }) => {
                     }
                     sx={{ width: 130 }}
                   >
-                    {CHANNEL_TYPES.map((ct) => (
+                    {ALERT_CHANNEL_TYPE_OPTIONS.map((ct) => (
                       <MenuItem key={ct.value} value={ct.value}>
                         {ct.label}
                       </MenuItem>

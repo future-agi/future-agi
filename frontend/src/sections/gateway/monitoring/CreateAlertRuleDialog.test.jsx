@@ -102,4 +102,24 @@ describe("CreateAlertRuleDialog", () => {
     expect(payload.config.alerting.rules).toHaveLength(1);
     expect(payload.config.alerting.rules[0].threshold).toBe(5);
   });
+
+  it("puts the picked channels on the rule so it has somewhere to notify", async () => {
+    const user = userEvent.setup();
+    render(
+      <CreateAlertRuleDialog
+        open
+        onClose={vi.fn()}
+        gatewayId="gw-1"
+        channelNames={["ops", "oncall"]}
+      />,
+    );
+
+    await user.click(screen.getByLabelText(/Notify Channels/));
+    await user.click(screen.getByRole("option", { name: "ops" }));
+    await user.keyboard("{Escape}");
+    await fillAndSubmit(user);
+
+    const [payload] = mockUpdateMutate.mock.calls[0];
+    expect(payload.config.alerting.rules[0].channels).toEqual(["ops"]);
+  });
 });
