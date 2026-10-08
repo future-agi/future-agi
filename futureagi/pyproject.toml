@@ -161,6 +161,10 @@ dependencies = [
     # pairs with the ffmpeg binary kept in the runtime image stage.
     "pydub",
     "audioop-lts>=0.2.2; python_version >= '3.13'",  # pydub on newer Python
+    "livekit-api>=1.0.0",
+    "livekit>=1.0.0",
+    "retell-sdk",
+    "stripe",
 ]
 
 [project.optional-dependencies]

@@ -2,12 +2,15 @@
 #    uv export --frozen --no-dev --no-hashes --no-emit-project -o requirements.txt
 absl-py==2.3.1
     # via rouge-score
+aiofiles==25.1.0
+    # via livekit
 aiohappyeyeballs==2.6.1
     # via aiohttp
 aiohttp==3.14.3
     # via
     #   core-backend
     #   litellm
+    #   livekit-api
 aiosignal==1.4.0
     # via aiohttp
 amqp==5.3.1
@@ -25,6 +28,7 @@ anyio==4.12.1
     #   httpx
     #   mcp
     #   openai
+    #   retell-sdk
     #   sse-starlette
     #   starlette
     #   watchfiles
@@ -135,6 +139,7 @@ cryptography==46.0.5
     #   pyjwt
     #   pyopenssl
     #   pysaml2
+    #   retell-sdk
     #   webauthn
 dacite==1.9.2
     # via traceai-bedrock
@@ -146,6 +151,7 @@ distro==1.9.0
     #   google-genai
     #   openai
     #   posthog
+    #   retell-sdk
 django==5.1.8
     # via
     #   channels
@@ -307,6 +313,7 @@ httpx==0.28.1
     #   mcp
     #   mixpanel
     #   openai
+    #   retell-sdk
 httpx-sse==0.4.3
     # via mcp
 huggingface-hub==0.36.0
@@ -375,6 +382,12 @@ litellm==1.81.11
     # via
     #   core-backend
     #   traceai-litellm
+livekit==1.1.4
+    # via core-backend
+livekit-api==1.1.0
+    # via core-backend
+livekit-protocol==1.1.2
+    # via livekit-api
 lxml==6.0.2
     # via
     #   python-docx
@@ -407,6 +420,7 @@ nltk==3.9.2
 numpy==2.3.5
     # via
     #   core-backend
+    #   livekit
     #   pandas
     #   rouge-score
     #   scikit-learn
@@ -620,6 +634,9 @@ protobuf==6.33.6
     #   grpcio-health-checking
     #   grpcio-status
     #   grpcio-tools
+    #   livekit
+    #   livekit-api
+    #   livekit-protocol
     #   opentelemetry-proto
     #   proto-plus
     #   temporalio
@@ -654,6 +671,7 @@ pydantic==2.13.5
     #   mixpanel
     #   openai
     #   pydantic-settings
+    #   retell-sdk
 pydantic-core==2.46.5
     # via pydantic
 pydantic-settings==2.12.0
@@ -664,6 +682,7 @@ pyjwt==2.10.1
     # via
     #   core-backend
     #   djangorestframework-simplejwt
+    #   livekit-api
     #   mcp
 pyopenssl==26.0.0
     # via
@@ -748,10 +767,13 @@ requests==2.32.5
     #   posthog
     #   pysaml2
     #   requests-toolbelt
+    #   stripe
     #   tiktoken
 requests-toolbelt==1.0.0
     # via langsmith
 restrictedpython==8.5
+    # via core-backend
+retell-sdk==5.8.0
     # via core-backend
 retrying==1.4.2
     # via core-backend
@@ -790,6 +812,7 @@ sniffio==1.3.1
     #   anthropic
     #   google-genai
     #   openai
+    #   retell-sdk
 soupsieve==2.8.3
     # via beautifulsoup4
 sqlparse==0.5.5
@@ -800,6 +823,8 @@ starlette==1.0.0
     # via
     #   mcp
     #   sse-starlette
+stripe==14.1.0
+    # via core-backend
 striprtf==0.0.29
     # via core-backend
 structlog==25.5.0
@@ -835,7 +860,11 @@ traceai-litellm==0.1.9
 traceai-openai==0.1.9
     # via core-backend
 types-protobuf==6.32.1.20251210
-    # via temporalio
+    # via
+    #   livekit
+    #   livekit-api
+    #   livekit-protocol
+    #   temporalio
 typing-extensions==4.16.0
     # via
     #   aiohttp
@@ -867,7 +896,9 @@ typing-extensions==4.16.0
     #   pyopenssl
     #   python-docx
     #   referencing
+    #   retell-sdk
     #   starlette
+    #   stripe
     #   temporalio
     #   typing-inspection
 typing-inspection==0.4.2
