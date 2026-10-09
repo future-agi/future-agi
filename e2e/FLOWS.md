@@ -1227,6 +1227,26 @@
 
 - all 45 seeded trace_ids present in CH `spans` (FINAL) under the auto-created project
 
+### OBS-E2E-037 — bulk Add tags on selected traces adds the tag to each trace and keeps its existing tags
+
+**Goal:** A developer tags several traces at once from the Observe trace list  
+**Spec:** `flows/observe/trace-bulk-tags.spec.ts:31`  
+**Tags:** —
+
+**User steps:**
+
+1. send two OTLP traces into one project and register both as Postgres traces (the Django ingestion path), one already tagged `prod`
+2. open the project's trace list and see the existing `prod` tag
+3. select both traces
+4. choose Actions → Add tags and add `need improvement`
+5. see "Tags applied to 2 items"
+
+**Backend state verified:**
+
+- every tag PATCH the page sends carries a list of tag-name strings, one per selected trace
+- Postgres tracer_trace.tags keeps `prod` and adds `need improvement` on the tagged trace
+- Postgres tracer_trace.tags is exactly [`need improvement`] on the untagged trace
+
 ## prompts
 
 ### PROMPT-E2E-001 — a mock-run prompt exposes its current evaluation configuration lifecycle
