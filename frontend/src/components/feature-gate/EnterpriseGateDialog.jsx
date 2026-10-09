@@ -25,7 +25,6 @@ export default function EnterpriseGateDialog({ open, gate, onClose, note }) {
     <Dialog
       open={open}
       onClose={onClose}
-      aria-label={title}
       maxWidth="sm"
       fullWidth
       PaperProps={{
