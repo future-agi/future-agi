@@ -143830,6 +143830,339 @@
                 }
             }
         },
+        "ConversationCallAgent": {
+            "required": [
+                "id",
+                "version",
+                "name"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "version": {
+                    "title": "Version",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                }
+            }
+        },
+        "ConversationCall": {
+            "required": [
+                "status",
+                "direction",
+                "duration_seconds",
+                "ended_reason",
+                "agent"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "direction": {
+                    "title": "Direction",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "duration_seconds": {
+                    "title": "Duration seconds",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "ended_reason": {
+                    "title": "Ended reason",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "agent": {
+                    "$ref": "#/definitions/ConversationCallAgent"
+                }
+            }
+        },
+        "ConversationVariables": {
+            "required": [
+                "configured",
+                "collected"
+            ],
+            "type": "object",
+            "properties": {
+                "configured": {
+                    "title": "Configured",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "object",
+                        "x-nullable": true,
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
+                    }
+                },
+                "collected": {
+                    "title": "Collected",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "object",
+                        "x-nullable": true,
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
+                    }
+                }
+            }
+        },
+        "ConversationAnalysis": {
+            "required": [
+                "summary",
+                "successful",
+                "in_voicemail",
+                "sentiment",
+                "flags"
+            ],
+            "type": "object",
+            "properties": {
+                "summary": {
+                    "title": "Summary",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "successful": {
+                    "title": "Successful",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "in_voicemail": {
+                    "title": "In voicemail",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "sentiment": {
+                    "title": "Sentiment",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "flags": {
+                    "title": "Flags",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "object",
+                        "x-nullable": true,
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
+                    }
+                }
+            }
+        },
+        "ConversationLatency": {
+            "required": [
+                "p50",
+                "p90",
+                "max",
+                "num"
+            ],
+            "type": "object",
+            "properties": {
+                "p50": {
+                    "title": "P50",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "p90": {
+                    "title": "P90",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "max": {
+                    "title": "Max",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "num": {
+                    "title": "Num",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                }
+            }
+        },
+        "ConversationTurn": {
+            "required": [
+                "i",
+                "role"
+            ],
+            "type": "object",
+            "properties": {
+                "i": {
+                    "title": "I",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "role": {
+                    "title": "Role",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "start": {
+                    "title": "Start",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "end": {
+                    "title": "End",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "text": {
+                    "title": "Text",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "spoken": {
+                    "title": "Spoken",
+                    "type": "boolean"
+                },
+                "at": {
+                    "title": "At",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "id": {
+                    "title": "Id",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "arguments": {
+                    "title": "Arguments",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "ok": {
+                    "title": "Ok",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "content": {
+                    "title": "Content",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "to": {
+                    "title": "To",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "type": {
+                    "title": "Type",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "digit": {
+                    "title": "Digit",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "media": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "x-nullable": true,
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
+                    }
+                },
+                "from": {
+                    "title": "From",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                }
+            }
+        },
+        "ConversationProviderLogIssue": {
+            "required": [
+                "at",
+                "level",
+                "message"
+            ],
+            "type": "object",
+            "properties": {
+                "at": {
+                    "title": "At",
+                    "type": "number"
+                },
+                "level": {
+                    "title": "Level",
+                    "type": "string",
+                    "enum": [
+                        "warn",
+                        "error"
+                    ]
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string"
+                }
+            }
+        },
         "ConversationDossier": {
             "required": [
                 "provider",
@@ -143854,55 +144187,31 @@
                     "x-nullable": true
                 },
                 "call": {
-                    "title": "Call",
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "string",
-                        "x-nullable": true
-                    }
+                    "$ref": "#/definitions/ConversationCall"
                 },
                 "variables": {
-                    "title": "Variables",
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "string",
-                        "x-nullable": true
-                    }
+                    "$ref": "#/definitions/ConversationVariables"
                 },
                 "analysis": {
-                    "title": "Analysis",
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "string",
-                        "x-nullable": true
-                    }
+                    "$ref": "#/definitions/ConversationAnalysis"
                 },
                 "latency_ms": {
                     "title": "Latency ms",
                     "type": "object",
                     "additionalProperties": {
-                        "type": "string",
-                        "x-nullable": true
+                        "$ref": "#/definitions/ConversationLatency"
                     }
                 },
                 "turns": {
                     "type": "array",
                     "items": {
-                        "type": "object",
-                        "additionalProperties": {
-                            "type": "string",
-                            "x-nullable": true
-                        }
+                        "$ref": "#/definitions/ConversationTurn"
                     }
                 },
                 "provider_log_issues": {
                     "type": "array",
                     "items": {
-                        "type": "object",
-                        "additionalProperties": {
-                            "type": "string",
-                            "x-nullable": true
-                        }
+                        "$ref": "#/definitions/ConversationProviderLogIssue"
                     }
                 },
                 "not_included": {

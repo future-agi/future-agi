@@ -1,6 +1,7 @@
 from rest_framework import serializers
 
 from tfc.utils.api_serializers import ManagementAPIErrorResponseSerializer
+from tfc.utils.serializer_fields import JsonValueField
 from tracer.serializers.filters import StrictInputSerializer
 from tracer.services.trace_investigation import (
     InvestigationControlError,
@@ -340,16 +341,87 @@ class ConversationEvidenceRequestSerializer(StrictInputSerializer):
     lease_token = serializers.CharField(max_length=255)
 
 
+# The compact call record. Values the provider logged are passed on as they are
+# (any JSON); only the times this module computes have a declared type.
+class ConversationCallAgentSerializer(serializers.Serializer):
+    id = JsonValueField(allow_null=True)
+    version = JsonValueField(allow_null=True)
+    name = JsonValueField(allow_null=True)
+
+
+class ConversationCallSerializer(serializers.Serializer):
+    status = JsonValueField(allow_null=True)
+    direction = JsonValueField(allow_null=True)
+    duration_seconds = serializers.FloatField(allow_null=True)
+    ended_reason = JsonValueField(allow_null=True)
+    agent = ConversationCallAgentSerializer()
+
+
+class ConversationVariablesSerializer(serializers.Serializer):
+    configured = serializers.DictField(child=JsonValueField(allow_null=True))
+    collected = serializers.DictField(child=JsonValueField(allow_null=True))
+
+
+class ConversationAnalysisSerializer(serializers.Serializer):
+    summary = JsonValueField(allow_null=True)
+    successful = JsonValueField(allow_null=True)
+    in_voicemail = JsonValueField(allow_null=True)
+    sentiment = JsonValueField(allow_null=True)
+    flags = serializers.DictField(child=JsonValueField(allow_null=True))
+
+
+class ConversationLatencySerializer(serializers.Serializer):
+    p50 = JsonValueField(allow_null=True)
+    p90 = JsonValueField(allow_null=True)
+    max = JsonValueField(allow_null=True)
+    num = JsonValueField(allow_null=True)
+
+
+class ConversationTurnSerializer(serializers.Serializer):
+    """One transcript event. ``role`` decides which of the optional keys it has."""
+
+    i = serializers.IntegerField(min_value=0)
+    role = serializers.CharField()
+    # A spoken line: agent, user or transfer target.
+    start = serializers.FloatField(required=False, allow_null=True)
+    end = serializers.FloatField(required=False, allow_null=True)
+    text = JsonValueField(required=False, allow_null=True)
+    spoken = serializers.BooleanField(required=False)
+    # Every other event carries the moment it was logged, when the provider gave one.
+    at = serializers.FloatField(required=False, allow_null=True)
+    id = JsonValueField(required=False, allow_null=True)
+    name = JsonValueField(required=False, allow_null=True)
+    arguments = JsonValueField(required=False, allow_null=True)
+    ok = JsonValueField(required=False, allow_null=True)
+    content = JsonValueField(required=False, allow_null=True)
+    to = JsonValueField(required=False, allow_null=True)
+    type = JsonValueField(required=False, allow_null=True)
+    digit = JsonValueField(required=False, allow_null=True)
+    media = serializers.ListField(child=JsonValueField(allow_null=True), required=False)
+
+    def get_fields(self):
+        fields = super().get_fields()
+        # "from" is a Python keyword, so it cannot be a class attribute.
+        fields["from"] = JsonValueField(required=False, allow_null=True)
+        return fields
+
+
+class ConversationProviderLogIssueSerializer(serializers.Serializer):
+    at = serializers.FloatField()
+    level = serializers.ChoiceField(choices=["warn", "error"])
+    message = serializers.CharField(allow_blank=True)
+
+
 class ConversationDossierSerializer(serializers.Serializer):
     provider = serializers.CharField()
     agent_instructions = serializers.CharField(allow_null=True, allow_blank=True)
-    call = serializers.DictField()
-    variables = serializers.DictField()
-    analysis = serializers.DictField()
-    latency_ms = serializers.DictField()
-    turns = serializers.ListField(child=serializers.DictField())
-    provider_log_issues = serializers.ListField(
-        child=serializers.DictField(), required=False
+    call = ConversationCallSerializer()
+    variables = ConversationVariablesSerializer()
+    analysis = ConversationAnalysisSerializer()
+    latency_ms = serializers.DictField(child=ConversationLatencySerializer())
+    turns = ConversationTurnSerializer(many=True)
+    provider_log_issues = ConversationProviderLogIssueSerializer(
+        many=True, required=False
     )
     not_included = serializers.ListField(child=serializers.CharField())
 

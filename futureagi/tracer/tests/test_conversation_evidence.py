@@ -9,6 +9,7 @@ from django.utils import timezone
 from tracer.models.observability_provider import ObservabilityProvider
 from tracer.models.trace_investigation import TraceInvestigationAttempt
 from tracer.serializers.trace_investigation import (
+    ConversationDossierSerializer,
     ConversationEvidenceResponseSerializer,
 )
 from tracer.services.clickhouse.v2.span_reader import CHSpan
@@ -345,6 +346,41 @@ def test_dossier_keeps_the_events_that_are_not_agent_or_user_turns():
             "turns"
         ]
         assert turn["role"] == entry["role"], index
+
+
+def test_declared_contract_accepts_a_record_with_every_event_and_missing_values():
+    # The same record, as JSON, is checked against the generated validator in
+    # frontend/src/api/contracts/__tests__/generated-conversation-evidence-contract.test.js
+    raw_log = {
+        **RAW_LOG,
+        "duration_ms": None,
+        "transcript_with_tool_calls": [
+            *RAW_LOG["transcript_with_tool_calls"],
+            {"role": "agent", "content": "Hi"},
+            {"role": "transfer_target", "content": "No.", "words": []},
+            {"role": "dtmf", "digit": "2"},
+            {"role": "sms", "content": "Code 1234", "multimedia": [{"summary": None}]},
+            {"role": "injected", "content": "A returning customer.", "time_sec": 7},
+        ],
+    }
+    dossier = conversation_dossier(
+        _span(
+            attrs={
+                "raw_log": json.dumps(raw_log),
+                "llm.input_messages.0.message.role": "user",
+                "conversation.provider_log.issues": json.dumps(
+                    [{"at": 12.5, "level": "error", "message": "timed out"}]
+                ),
+            }
+        )
+    )
+
+    assert dossier["agent_instructions"] is None
+    assert dossier["call"]["duration_seconds"] is None
+    serializer = ConversationDossierSerializer(data=dossier)
+    assert serializer.is_valid(), serializer.errors
+    # Every key of the record is declared: validation keeps all of them.
+    assert json.loads(json.dumps(serializer.validated_data)) == dossier
 
 
 def test_transcript_with_an_event_the_record_cannot_keep_has_no_dossier():

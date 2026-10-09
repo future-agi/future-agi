@@ -55555,6 +55555,8 @@ export const TracerInternalErrorFeedV2AttemptsConversationEvidenceCreateBody =
 
 export const tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponseRowsItemIdMax = 64;
 
+export const tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponseRowsItemConversationTurnsItemIMin = 0;
+
 export const TracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponse =
   zod.object({
     rows: zod.array(
@@ -55572,18 +55574,100 @@ export const TracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponse
         name: zod.string(),
         observation_type: zod.string().min(1),
         start_time: zod.string().datetime({ offset: true }),
-        end_time: zod.string().datetime({ offset: true }),
+        end_time: zod.string().datetime({ offset: true }).nullable(),
         attrs_string: zod.record(zod.string(), zod.string().min(1)),
         conversation: zod.object({
           provider: zod.string().min(1),
-          agent_instructions: zod.string(),
-          call: zod.record(zod.string(), zod.string()),
-          variables: zod.record(zod.string(), zod.string()),
-          analysis: zod.record(zod.string(), zod.string()),
-          latency_ms: zod.record(zod.string(), zod.string()),
-          turns: zod.array(zod.record(zod.string(), zod.string())),
+          agent_instructions: zod.string().nullable(),
+          call: zod.object({
+            status: jsonValueSchema.describe("Any valid JSON value."),
+            direction: jsonValueSchema.describe("Any valid JSON value."),
+            duration_seconds: zod.number().nullable(),
+            ended_reason: jsonValueSchema.describe("Any valid JSON value."),
+            agent: zod.object({
+              id: jsonValueSchema.describe("Any valid JSON value."),
+              version: jsonValueSchema.describe("Any valid JSON value."),
+              name: jsonValueSchema.describe("Any valid JSON value."),
+            }),
+          }),
+          variables: zod.object({
+            configured: zod.record(
+              zod.string(),
+              jsonValueSchema.describe("Any valid JSON value."),
+            ),
+            collected: zod.record(
+              zod.string(),
+              jsonValueSchema.describe("Any valid JSON value."),
+            ),
+          }),
+          analysis: zod.object({
+            summary: jsonValueSchema.describe("Any valid JSON value."),
+            successful: jsonValueSchema.describe("Any valid JSON value."),
+            in_voicemail: jsonValueSchema.describe("Any valid JSON value."),
+            sentiment: jsonValueSchema.describe("Any valid JSON value."),
+            flags: zod.record(
+              zod.string(),
+              jsonValueSchema.describe("Any valid JSON value."),
+            ),
+          }),
+          latency_ms: zod.record(
+            zod.string(),
+            zod.object({
+              p50: jsonValueSchema.describe("Any valid JSON value."),
+              p90: jsonValueSchema.describe("Any valid JSON value."),
+              max: jsonValueSchema.describe("Any valid JSON value."),
+              num: jsonValueSchema.describe("Any valid JSON value."),
+            }),
+          ),
+          turns: zod.array(
+            zod.object({
+              i: zod
+                .number()
+                .min(
+                  tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponseRowsItemConversationTurnsItemIMin,
+                ),
+              role: zod.string().min(1),
+              start: zod.number().nullable().optional(),
+              end: zod.number().nullable().optional(),
+              text: jsonValueSchema
+                .optional()
+                .describe("Any valid JSON value."),
+              spoken: zod.boolean().optional(),
+              at: zod.number().nullable().optional(),
+              id: jsonValueSchema.optional().describe("Any valid JSON value."),
+              name: jsonValueSchema
+                .optional()
+                .describe("Any valid JSON value."),
+              arguments: jsonValueSchema
+                .optional()
+                .describe("Any valid JSON value."),
+              ok: jsonValueSchema.optional().describe("Any valid JSON value."),
+              content: jsonValueSchema
+                .optional()
+                .describe("Any valid JSON value."),
+              to: jsonValueSchema.optional().describe("Any valid JSON value."),
+              type: jsonValueSchema
+                .optional()
+                .describe("Any valid JSON value."),
+              digit: jsonValueSchema
+                .optional()
+                .describe("Any valid JSON value."),
+              media: zod
+                .array(jsonValueSchema.describe("Any valid JSON value."))
+                .optional(),
+              from: jsonValueSchema
+                .optional()
+                .describe("Any valid JSON value."),
+            }),
+          ),
           provider_log_issues: zod
-            .array(zod.record(zod.string(), zod.string()))
+            .array(
+              zod.object({
+                at: zod.number(),
+                level: zod.enum(["warn", "error"]),
+                message: zod.string(),
+              }),
+            )
             .optional(),
           not_included: zod.array(zod.string().min(1)),
         }),
