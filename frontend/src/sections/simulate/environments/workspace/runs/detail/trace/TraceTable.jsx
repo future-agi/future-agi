@@ -9,7 +9,6 @@ import {
   TableCell,
   TableHead,
   TableRow,
-  Button,
   tableBodyClasses,
   tableCellClasses,
   tableHeadClasses,
@@ -22,14 +21,20 @@ import { BUILD_TONES } from "../../../../buildEnvironment/buildTones";
 import {
   defaultTraceColumns,
   headCellSx,
+  bandCellSx,
+  GROUP_BAND_PX,
+  TRACE_COLUMNS,
   HEAD_ROW_PX,
   GROUP_ROW_PX,
   numCellSx,
   bodyCellSx,
   runOutcome,
-  CALL_STATUS_CHIPS,
+  CLOSED_GROUP_VIEW,
 } from "./traceTable.constants";
-import StatusChip from "../../StatusChip";
+import {
+  SubTasksCell,
+  TruncTooltip,
+} from "../../../scenarios/ScenarioTableCells";
 import { MetricValue, Score, Field, UnscoredEval } from "./traceCells";
 import TraceGroupHeaderRow from "./TraceGroupHeaderRow";
 
@@ -59,7 +64,12 @@ const lastRowDividersSx = {
 const TEXT_COL_WIDTH = { long: 260, short: 200 };
 // A call still in flight — its eval cells can only be waiting. `analyzing`
 // is a finished conversation whose evals are grading (the chat path).
-const LIVE_CALL_STATUSES = new Set(["pending", "queued", "ongoing", "analyzing"]);
+const LIVE_CALL_STATUSES = new Set([
+  "pending",
+  "queued",
+  "ongoing",
+  "analyzing",
+]);
 const textCellSx = (width) => ({
   ...bodyCellSx,
   width,
@@ -85,20 +95,49 @@ export default function TraceTable({
   groups,
   rows = null,
   evals,
+  subGoalEvals = [],
+  firstColumnLabel = "Run details",
   onOpen,
   columns,
   activeCallId = null,
   scrollRef,
+  groupView: groupViewProp,
+  onGroupViewChange,
+  expandedForRef: expandedForRefProp,
   runActive = false,
 }) {
-  const [collapsed, setCollapsed] = useState(null);
+  // A parent that unmounts this table (a filter's loading or empty state)
+  // passes the open/closed groups in, so they survive the remount. Without
+  // one, the table keeps them itself.
+  const [ownGroupView, setOwnGroupView] = useState(CLOSED_GROUP_VIEW);
+  const groupView = onGroupViewChange
+    ? groupViewProp ?? CLOSED_GROUP_VIEW
+    : ownGroupView;
+  const setGroupView = onGroupViewChange || setOwnGroupView;
   const activeRowRef = useRef(null);
   // The call already expanded for, so a group the user collapses afterwards
   // stays collapsed across refetches.
-  const expandedForRef = useRef(null);
+  const ownExpandedForRef = useRef(null);
+  const expandedForRef = expandedForRefProp || ownExpandedForRef;
   const visible = columns || defaultTraceColumns();
   const show = (key) => visible.has(key);
-  const showEvals = show("evals");
+  const showSubGoalEvals = show("subGoalEvals");
+  const scoredColumns = [...(showSubGoalEvals ? subGoalEvals : []), ...evals];
+  // The band above the head row: one segment per run of columns sharing a
+  // group, in column order, then the scored columns under their own names.
+  const bandSegments = TRACE_COLUMNS.filter(
+    (c) => c.key !== "subGoalEvals" && show(c.key),
+  ).reduce((acc, c) => {
+    const last = acc[acc.length - 1];
+    if (last && last.name === c.group) last.span += 1;
+    else acc.push({ name: c.group, span: 1 });
+    return acc;
+  }, []);
+  if (showSubGoalEvals && subGoalEvals.length)
+    bandSegments.push({ name: "Sub-goal Results", span: subGoalEvals.length });
+  if (evals.length)
+    bandSegments.push({ name: "Evaluations", span: evals.length });
+  const headSx = { ...headCellSx, top: GROUP_BAND_PX };
   // The server's group figures can't tell a call still running from one with no
   // value. So a group counts as still coming while one of its calls here is
   // live, or, while the run goes on, while some of its calls are on other pages.
@@ -106,14 +145,36 @@ export default function TraceTable({
     g.rows.some((t) => LIVE_CALL_STATUSES.has(t.executionStatus)) ||
     (runActive && g.rows.length < g.count);
 
-  const collapsedSet = collapsed ?? new Set(groups.map((g) => g.label));
-  const toggleCollapsed = (label) =>
-    setCollapsed(() => {
-      const next = new Set(collapsedSet);
-      if (next.has(label)) next.delete(label);
-      else next.add(label);
-      return next;
+  const isOpen = (label) => groupView.all || groupView.expanded.has(label);
+  // Closing a group ends Expand all, but the groups it opened stay open.
+  const toggleGroup = (label) =>
+    setGroupView((prev) => {
+      const expanded = new Set(prev.expanded);
+      if (prev.all || expanded.has(label)) {
+        if (prev.all) groups.forEach((g) => expanded.add(g.label));
+        expanded.delete(label);
+        return { all: false, expanded };
+      }
+      expanded.add(label);
+      return { ...prev, expanded };
     });
+  // Under Expand all, groups that turn up from another filter or page open
+  // too. Record them, so closing one later leaves these open.
+  useEffect(() => {
+    if (!groupView.all || groups.every((g) => groupView.expanded.has(g.label)))
+      return;
+    setGroupView((prev) =>
+      prev.all
+        ? {
+            ...prev,
+            expanded: new Set([
+              ...prev.expanded,
+              ...groups.map((g) => g.label),
+            ]),
+          }
+        : prev,
+    );
+  }, [groupView, groups, setGroupView]);
   // The open call's row must be visible: expand its group once per call, then
   // bring the row into view.
   const activeGroupLabel = activeCallId
@@ -122,25 +183,18 @@ export default function TraceTable({
   useEffect(() => {
     if (!activeGroupLabel || expandedForRef.current === activeCallId) return;
     expandedForRef.current = activeCallId;
-    setCollapsed((prev) => {
-      const next = new Set(prev ?? groups.map((g) => g.label));
-      next.delete(activeGroupLabel);
-      return next;
-    });
-  }, [activeCallId, activeGroupLabel, groups]);
+    setGroupView((prev) =>
+      prev.all || prev.expanded.has(activeGroupLabel)
+        ? prev
+        : { ...prev, expanded: new Set([...prev.expanded, activeGroupLabel]) },
+    );
+  }, [activeCallId, activeGroupLabel, expandedForRef, setGroupView]);
   // Its row only mounts once its group expands, so scroll again when that
   // happens — not just when the call changes.
-  const activeGroupCollapsed = collapsedSet.has(activeGroupLabel);
+  const activeGroupCollapsed = !isOpen(activeGroupLabel);
   useEffect(() => {
     activeRowRef.current?.scrollIntoView?.({ block: "nearest" });
   }, [activeCallId, activeGroupLabel, activeGroupCollapsed]);
-
-  const allCollapsed =
-    groups.length > 0 && groups.every((g) => collapsedSet.has(g.label));
-  const toggleAllGroups = () =>
-    setCollapsed(
-      allCollapsed ? new Set() : new Set(groups.map((g) => g.label)),
-    );
 
   const renderRow = (t) => {
     const outcome = runOutcome(t.status);
@@ -155,7 +209,7 @@ export default function TraceTable({
           cursor: "pointer",
           bgcolor: active ? "action.selected" : "transparent",
           // Scrolled into view below the pinned head and group rows, not under.
-          scrollMarginTop: HEAD_ROW_PX + GROUP_ROW_PX,
+          scrollMarginTop: GROUP_BAND_PX + HEAD_ROW_PX + GROUP_ROW_PX,
         }}
       >
         {show("callDetails") && (
@@ -223,24 +277,54 @@ export default function TraceTable({
                   </>
                 )}
               </Stack>
+              {t.subGoalResults?.length > 0 && (
+                <Stack spacing={0.5} sx={{ mt: 1 }}>
+                  {t.subGoalResults.map((goal, goalIndex) => {
+                    const verdict = runOutcome(
+                      goal.passed === true
+                        ? "passed"
+                        : goal.passed === false
+                          ? "failed"
+                          : "inconclusive",
+                    );
+                    return (
+                      <Stack
+                        key={`${goal.name}-${goalIndex}`}
+                        direction="row"
+                        alignItems="center"
+                        spacing={0.75}
+                      >
+                        <Typography
+                          sx={{ typography: "s3", color: "text.secondary" }}
+                        >
+                          {goal.name}
+                        </Typography>
+                        {goal.passed == null ? (
+                          <Typography
+                            sx={{ typography: "s3", color: verdict.color }}
+                          >
+                            {verdict.label}
+                          </Typography>
+                        ) : (
+                          <Box
+                            role="img"
+                            aria-label={verdict.label}
+                            title={verdict.label}
+                            sx={{ display: "flex", color: verdict.color }}
+                          >
+                            <Iconify
+                              icon={goal.passed ? "mdi:check" : "mdi:close"}
+                              width={16}
+                              aria-hidden="true"
+                            />
+                          </Box>
+                        )}
+                      </Stack>
+                    );
+                  })}
+                </Stack>
+              )}
             </Box>
-          </TableCell>
-        )}
-
-        {show("status") && (
-          <TableCell sx={bodyCellSx} onClick={() => onOpen(t)}>
-            {CALL_STATUS_CHIPS[t.executionStatus] ? (
-              <Box sx={{ display: "inline-flex" }}>
-                <StatusChip
-                  status={CALL_STATUS_CHIPS[t.executionStatus].chip}
-                  label={CALL_STATUS_CHIPS[t.executionStatus].label}
-                />
-              </Box>
-            ) : (
-              <Typography sx={{ typography: "s3", color: "text.disabled" }}>
-                -
-              </Typography>
-            )}
           </TableCell>
         )}
 
@@ -282,7 +366,29 @@ export default function TraceTable({
             sx={textCellSx(TEXT_COL_WIDTH.long)}
             onClick={() => onOpen(t)}
           >
-            <Box sx={clampSx}>{t.scenarioDetails || t.scenario || "-"}</Box>
+            <Box sx={clampSx}>{t.scenario || "-"}</Box>
+          </TableCell>
+        )}
+
+        {show("situation") && (
+          <TableCell
+            sx={textCellSx(TEXT_COL_WIDTH.long)}
+            onClick={() => onOpen(t)}
+          >
+            <TruncTooltip title={t.scenarioDetails}>
+              <Box sx={clampSx}>{t.scenarioDetails || "-"}</Box>
+            </TruncTooltip>
+          </TableCell>
+        )}
+
+        {show("subGoals") && (
+          <TableCell
+            sx={textCellSx(TEXT_COL_WIDTH.long)}
+            onClick={() => onOpen(t)}
+          >
+            <SubTasksCell
+              subTasks={(t.subGoalResults || []).map((goal) => goal.name)}
+            />
           </TableCell>
         )}
 
@@ -291,7 +397,9 @@ export default function TraceTable({
             sx={textCellSx(TEXT_COL_WIDTH.long)}
             onClick={() => onOpen(t)}
           >
-            <Box sx={clampSx}>{t.idealOutcome || "-"}</Box>
+            <TruncTooltip title={t.idealOutcome}>
+              <Box sx={clampSx}>{t.idealOutcome || "-"}</Box>
+            </TruncTooltip>
           </TableCell>
         )}
 
@@ -316,7 +424,12 @@ export default function TraceTable({
         )}
         {show("latency") && (
           <TableCell sx={numCellSx} onClick={() => onOpen(t)}>
-            <MetricValue metric="latency" value={t.latencyMs} suffix="ms" loading={callLive} />
+            <MetricValue
+              metric="latency"
+              value={t.latencyMs}
+              suffix="ms"
+              loading={callLive}
+            />
           </TableCell>
         )}
         {show("stopLatency") && (
@@ -344,147 +457,120 @@ export default function TraceTable({
           </TableCell>
         )}
 
-        {showEvals &&
-          evals.map((e) => {
-            const r = t.evalResults?.find((x) => x.id === e.id);
-            return (
-              <TableCell
-                key={e.id}
-                sx={{ ...bodyCellSx, p: 0, position: "relative" }}
-                onClick={() => onOpen(t)}
-              >
-                {r?.score != null || r?.label ? (
-                  <Score result={r} />
-                ) : (
-                  <UnscoredEval
-                    result={r}
-                    callLive={callLive}
-                    callStatus={t.executionStatus}
-                  />
-                )}
-              </TableCell>
-            );
-          })}
+        {scoredColumns.map((e) => {
+          const r = t.evalResults?.find((x) => x.id === e.id);
+          return (
+            <TableCell
+              key={e.id}
+              sx={{ ...bodyCellSx, p: 0, position: "relative" }}
+              onClick={() => onOpen(t)}
+            >
+              {r?.score != null || r?.label ? (
+                <Score result={r} />
+              ) : (
+                <UnscoredEval
+                  result={r}
+                  callLive={callLive}
+                  callStatus={t.executionStatus}
+                />
+              )}
+            </TableCell>
+          );
+        })}
       </TableRow>
     );
   };
 
-  // The table scrolls both ways in its own box, below the "Collapse all" bar,
-  // so the head and group rows stick to it rather than to the page.
+  // The table scrolls both ways in its own box, so the head and group rows
+  // stick to it rather than to the page.
   return (
     <Box sx={{ height: "100%", display: "flex", flexDirection: "column" }}>
-      {!rows && (
-        <Stack
-          direction="row"
-          alignItems="center"
-          spacing={1}
-          sx={{
-            flexShrink: 0,
-            px: 1.5,
-            py: 1,
-            borderBottom: "1px solid",
-            borderColor: "divider",
-          }}
-        >
-          <Button
-            size="small"
-            variant="text"
-            onClick={toggleAllGroups}
-            startIcon={
-              <Iconify
-                icon={
-                  allCollapsed
-                    ? "solar:alt-arrow-down-linear"
-                    : "solar:alt-arrow-right-linear"
-                }
-                width={14}
-              />
-            }
-            sx={{
-              typography: "s3",
-              fontWeight: "fontWeightSemiBold",
-              color: "text.secondary",
-              "&:hover": { bgcolor: "action.hover" },
-            }}
-          >
-            {allCollapsed ? "Expand all" : "Collapse all"}
-          </Button>
-          <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-            {groups.length} {groups.length === 1 ? "group" : "groups"}
-          </Typography>
-        </Stack>
-      )}
       <Box ref={scrollRef} sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
         <Table size="small" sx={lastRowDividersSx}>
           <TableHead>
+            {bandSegments.length > 0 && (
+              <TableRow>
+                {bandSegments.map((segment) => (
+                  <TableCell
+                    key={segment.name}
+                    colSpan={segment.span}
+                    sx={bandCellSx}
+                  >
+                    {segment.name}
+                  </TableCell>
+                ))}
+              </TableRow>
+            )}
             <TableRow>
               {show("callDetails") && (
-                <TableCell sx={{ ...headCellSx, width: 200 }}>
-                  Run details
-                </TableCell>
-              )}
-              {show("status") && (
-                <TableCell sx={{ ...headCellSx, width: 120 }}>
-                  Status
+                <TableCell sx={{ ...headSx, width: 200 }}>
+                  {firstColumnLabel}
                 </TableCell>
               )}
               {show("persona") && (
-                <TableCell sx={{ ...headCellSx, width: 200 }}>
-                  Persona
-                </TableCell>
+                <TableCell sx={{ ...headSx, width: 200 }}>Persona</TableCell>
               )}
               {show("scenario") && (
-                <TableCell sx={{ ...headCellSx, width: TEXT_COL_WIDTH.long }}>
+                <TableCell sx={{ ...headSx, width: TEXT_COL_WIDTH.long }}>
                   Scenario
                 </TableCell>
               )}
+              {show("situation") && (
+                <TableCell sx={{ ...headSx, width: TEXT_COL_WIDTH.long }}>
+                  Situation
+                </TableCell>
+              )}
+              {show("subGoals") && (
+                <TableCell sx={{ ...headSx, width: TEXT_COL_WIDTH.long }}>
+                  Sub-goals
+                </TableCell>
+              )}
               {show("idealOutcome") && (
-                <TableCell sx={{ ...headCellSx, width: TEXT_COL_WIDTH.long }}>
+                <TableCell sx={{ ...headSx, width: TEXT_COL_WIDTH.long }}>
                   Ideal outcome
                 </TableCell>
               )}
               {show("conversationBranch") && (
-                <TableCell sx={{ ...headCellSx, width: TEXT_COL_WIDTH.short }}>
+                <TableCell sx={{ ...headSx, width: TEXT_COL_WIDTH.short }}>
                   Conversation branch
                 </TableCell>
               )}
               {show("csat") && (
-                <TableCell sx={{ ...headCellSx, width: 84 }}>CSAT</TableCell>
+                <TableCell sx={{ ...headSx, width: 84 }}>CSAT</TableCell>
               )}
               {show("turns") && (
-                <TableCell sx={{ ...headCellSx, width: 92 }}>Turns</TableCell>
+                <TableCell sx={{ ...headSx, width: 92 }}>Turns</TableCell>
               )}
               {show("latency") && (
-                <TableCell sx={{ ...headCellSx, width: 96 }}>Latency</TableCell>
+                <TableCell sx={{ ...headSx, width: 96 }}>Latency</TableCell>
               )}
               {show("stopLatency") && (
-                <TableCell sx={{ ...headCellSx, width: 140 }}>
+                <TableCell sx={{ ...headSx, width: 140 }}>
                   Stop latency
                 </TableCell>
               )}
               {show("aiInterruptions") && (
-                <TableCell sx={{ ...headCellSx, width: 150 }}>
+                <TableCell sx={{ ...headSx, width: 150 }}>
                   AI interruptions
                 </TableCell>
               )}
               {show("tokens") && (
-                <TableCell sx={{ ...headCellSx, width: 120 }}>Tokens</TableCell>
+                <TableCell sx={{ ...headSx, width: 120 }}>Tokens</TableCell>
               )}
-              {showEvals &&
-                evals.map((e) => (
-                  <TableCell key={e.id} sx={{ ...headCellSx, width: 150 }}>
-                    <Typography
-                      noWrap
-                      sx={{
-                        typography: "s2",
-                        fontWeight: "fontWeightMedium",
-                        color: "text.secondary",
-                      }}
-                    >
-                      {e.name}
-                    </Typography>
-                  </TableCell>
-                ))}
+              {scoredColumns.map((e) => (
+                <TableCell key={e.id} sx={{ ...headSx, width: 150 }}>
+                  <Typography
+                    noWrap
+                    sx={{
+                      typography: "s2",
+                      fontWeight: "fontWeightMedium",
+                      color: "text.secondary",
+                    }}
+                  >
+                    {e.name}
+                  </Typography>
+                </TableCell>
+              ))}
             </TableRow>
           </TableHead>
           <TableBody>
@@ -495,13 +581,14 @@ export default function TraceTable({
                     <TraceGroupHeaderRow
                       group={g}
                       loading={groupLive(g)}
-                      collapsed={collapsedSet.has(g.label)}
-                      onToggle={() => toggleCollapsed(g.label)}
+                      collapsed={!isOpen(g.label)}
+                      onToggle={() => toggleGroup(g.label)}
+                      top={GROUP_BAND_PX + HEAD_ROW_PX}
                       show={show}
-                      showEvals={showEvals}
-                      evals={evals}
+                      showEvals={scoredColumns.length > 0}
+                      evals={scoredColumns}
                     />
-                    {!collapsedSet.has(g.label) && g.rows.map(renderRow)}
+                    {isOpen(g.label) && g.rows.map(renderRow)}
                   </React.Fragment>
                 ))}
           </TableBody>
@@ -514,9 +601,20 @@ TraceTable.propTypes = {
   groups: PropTypes.array.isRequired,
   rows: PropTypes.array,
   evals: PropTypes.array.isRequired,
+  subGoalEvals: PropTypes.array,
+  // The head of the first column: the axis the rows are grouped by.
+  firstColumnLabel: PropTypes.string,
   onOpen: PropTypes.func,
   columns: PropTypes.instanceOf(Set),
   activeCallId: PropTypes.string,
   scrollRef: PropTypes.oneOfType([PropTypes.func, PropTypes.object]),
+  // Which groups are open: `all` while Expand all is on, plus the labels
+  // opened. Pass both, or neither and the table keeps its own.
+  groupView: PropTypes.shape({
+    all: PropTypes.bool,
+    expanded: PropTypes.instanceOf(Set),
+  }),
+  onGroupViewChange: PropTypes.func,
+  expandedForRef: PropTypes.shape({ current: PropTypes.any }),
   runActive: PropTypes.bool,
 };

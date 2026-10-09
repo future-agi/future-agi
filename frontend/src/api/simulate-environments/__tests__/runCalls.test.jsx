@@ -68,7 +68,10 @@ const payload = () => ({
         age: "34",
         traits: ["impatient", "in a hurry"],
       },
-      sub_goals: ["identity_verified", "refund_created"],
+      sub_goal_results: [
+        { name: "identity_verified", passed: true },
+        { name: "refund_created", passed: false },
+      ],
       tokens: 450,
       evaluations: [
         {
@@ -186,7 +189,10 @@ describe("mapCallRow", () => {
       traits: ["impatient", "in a hurry"],
     });
     expect(t.goal).toBe("Refund a double charge");
-    expect(t.subGoals).toEqual(["identity_verified", "refund_created"]);
+    expect(t.subGoalResults).toEqual([
+      { name: "identity_verified", passed: true },
+      { name: "refund_created", passed: false },
+    ]);
     expect(t.scenario).toBe("Routine refund");
     expect(t.scenarioDetails).toBe(
       "Customer requests a refund for a duplicate charge.",
@@ -285,6 +291,18 @@ describe("mapCallRow", () => {
 });
 
 describe("buildTraceColumns", () => {
+  it("files a sub-goal check under Sub-goal Results, and an eval under Evaluations", () => {
+    const cols = buildTraceColumns([
+      { id: "sg-1", name: "pin_verified", kind: "sub_goal" },
+      { id: "ev-1", name: "Tone", kind: "evaluation" },
+      { id: "ev-2", name: "Legacy" },
+    ]);
+    const groupOf = (key) => cols.find((c) => c.key === key)?.group;
+    expect(groupOf("sg-1")).toBe("Sub-goal Results");
+    expect(groupOf("ev-1")).toBe("Evaluations");
+    expect(groupOf("ev-2")).toBe("Evaluations");
+  });
+
   it("emits the system columns plus one column per real eval", () => {
     const cols = buildTraceColumns(columnOrder());
     const keys = cols.map((c) => c.key);
@@ -499,5 +517,20 @@ describe("runCallsQueryOptions", () => {
       wrapper: makeWrapper(),
     });
     expect(axios.get).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("sub-goal verdicts", () => {
+  it("preserves passed, failed and undecided sub-goals from the API", () => {
+    const results = [
+      { name: "identity_verified", passed: true },
+      { name: "refund_created", passed: false },
+      { name: "confirmation_sent", passed: null },
+    ];
+    expect(mapCallRow({ sub_goal_results: results }).subGoalResults).toEqual(
+      results,
+    );
+    expect(mapCallRow({}).subGoalResults).toEqual([]);
   });
 });

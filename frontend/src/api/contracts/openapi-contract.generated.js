@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1055,
+  endpointCount: 1056,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -28170,6 +28170,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     "/simulate/api/harness-environments/{id}/evaluations/{eval_config_id}/": {
+      patch: {
+        operationId: "simulate_api_harness-environments_edit_evaluation",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessEnvironmentEvalEdit",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/SimulateEvalConfigResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
       delete: {
         operationId: "simulate_api_harness-environments_remove_evaluation",
         runtimeRequestValidation: false,
@@ -28216,6 +28233,27 @@ export const OPENAPI_CONTRACT = Object.freeze({
           responses: {
             202: {
               $ref: "#/definitions/HarnessEnvironmentRunEvaluationQueued",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
+    "/simulate/api/harness-environments/{id}/runs/{execution_id}/evaluations/run/":
+      {
+        post: {
+          operationId:
+            "simulate_api_harness-environments_runs_evaluations_run_evaluations",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: {
+            $ref: "#/definitions/HarnessEnvironmentRunEvaluations",
+          },
+          queryParameters: {},
+          responses: {
+            202: {
+              $ref: "#/definitions/HarnessEnvironmentRunEvaluationsQueued",
             },
             default: {
               $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -30900,6 +30938,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           404: {
             $ref: "#/definitions/EvalErrorResponse",
           },
+          409: {
+            $ref: "#/definitions/EvalErrorResponse",
+          },
           500: {
             $ref: "#/definitions/EvalErrorResponse",
           },
@@ -31508,6 +31549,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/ErrorResponse",
           },
           404: {
+            $ref: "#/definitions/ErrorResponse",
+          },
+          409: {
             $ref: "#/definitions/ErrorResponse",
           },
           500: {
@@ -52164,6 +52208,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "persona",
         "persona_details",
         "sub_goals",
+        "sub_goal_results",
         "outcome",
         "cost_breakdown_cents",
         "evaluations",
@@ -52604,10 +52649,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
             minLength: 1,
           },
         },
+        sub_goal_results: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SubGoalResult",
+          },
+        },
         outcome: {
           title: "Outcome",
           type: "string",
-          enum: ["passed", "failed", "error", "inconclusive"],
+          enum: [
+            "queued",
+            "in_progress",
+            "passed",
+            "failed",
+            "inconclusive",
+            "error",
+          ],
         },
         cost_breakdown_cents: {
           $ref: "#/definitions/CostBreakdown",
@@ -62408,6 +62466,125 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessEnvironmentEvalEdit: {
+      type: "object",
+      properties: {
+        config: {
+          title: "Config",
+          description: "Updated evaluation configuration parameters.",
+          type: "object",
+          "x-nullable": true,
+          additionalProperties: true,
+        },
+        mapping: {
+          title: "Mapping",
+          description:
+            "Updated field mapping between test data and evaluation inputs.",
+          type: "object",
+          "x-nullable": true,
+          additionalProperties: true,
+        },
+        model: {
+          title: "Model",
+          description: "Model to use for evaluations.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        error_localizer: {
+          title: "Error localizer",
+          description:
+            "Enable granular error localization in evaluation results.",
+          type: "boolean",
+        },
+        kb_id: {
+          title: "Kb id",
+          description:
+            "UUID of a knowledge base to use for grounding. Pass null to clear. Switching template_id without providing an explicit kb_id will clear the KB association.",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        filters: {
+          description:
+            "Updated canonical filter list to restrict which test results are evaluated.",
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              column_id: {
+                type: "string",
+                description: "Column or attribute id to filter on.",
+              },
+              property_id: {
+                type: "string",
+                description:
+                  "Optional stable namespaced Property Registry identity.",
+              },
+              display_name: {
+                type: "string",
+                description: "Optional UI label for chips and saved views.",
+              },
+              source: {
+                type: "string",
+                description:
+                  "Optional source surface for mixed-source filters, for example traces, datasets, or simulation.",
+              },
+              output_type: {
+                type: "string",
+                description:
+                  "Optional metric output type metadata used by eval and annotation filters.",
+              },
+              filter_config: {
+                type: "object",
+                properties: {
+                  filter_type: {
+                    type: "string",
+                    description:
+                      "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map.",
+                  },
+                  filter_op: {
+                    type: "string",
+                    description:
+                      "Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null.",
+                  },
+                  filter_value: {
+                    description:
+                      "Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type.",
+                  },
+                  col_type: {
+                    type: "string",
+                    description:
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                  },
+                  attribute_value_types: {
+                    type: "array",
+                    items: {
+                      type: "string",
+                      enum: ["string", "number", "boolean"],
+                      "x-nullable": true,
+                    },
+                    description:
+                      "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values.",
+                  },
+                },
+                required: ["filter_type", "filter_op"],
+                additionalProperties: false,
+              },
+            },
+            required: ["column_id", "filter_config"],
+            additionalProperties: false,
+          },
+          "x-nullable": true,
+        },
+        name: {
+          title: "Name",
+          description: "Updated name for the evaluation configuration.",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
     HarnessEnvironmentListResponse: {
       required: [
         "count",
@@ -62493,6 +62670,38 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         completed_calls: {
           title: "Completed calls",
+          type: "integer",
+        },
+      },
+    },
+    HarnessEnvironmentRunEvaluations: {
+      required: ["eval_config_ids"],
+      type: "object",
+      properties: {
+        eval_config_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            format: "uuid",
+          },
+          minItems: 1,
+        },
+        enable_tool_evaluation: {
+          title: "Enable tool evaluation",
+          description:
+            "Saved on the environment before grading starts; left as it is when absent.",
+          type: "boolean",
+          "x-nullable": true,
+        },
+      },
+    },
+    HarnessEnvironmentRunEvaluationsQueued: {
+      required: ["call_execution_count"],
+      type: "object",
+      properties: {
+        call_execution_count: {
+          title: "Call execution count",
+          description: "How many of the run's calls were queued for grading.",
           type: "integer",
         },
       },
@@ -72410,6 +72619,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "execution",
         "summary",
         "scenario_risk",
+        "reliability",
         "turn_distribution",
         "evaluations",
         "failure_breakdown",
@@ -72435,6 +72645,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/Risk",
           },
+        },
+        reliability: {
+          $ref: "#/definitions/Reliability",
         },
         turn_distribution: {
           type: "array",
@@ -72618,7 +72831,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     RunNewEvalsResponse: {
-      required: ["message", "run_test_id", "call_execution_count"],
+      required: [
+        "message",
+        "run_test_id",
+        "call_execution_count",
+        "dispatched",
+      ],
       type: "object",
       properties: {
         message: {
@@ -72634,6 +72852,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         call_execution_count: {
           title: "Call execution count",
           type: "integer",
+        },
+        dispatched: {
+          title: "Dispatched",
+          type: "boolean",
         },
       },
     },
@@ -75298,6 +75520,158 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         result: {
           $ref: "#/definitions/SignupResult",
+        },
+      },
+    },
+    SimulateEvalConfigResponse: {
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        config: {
+          title: "Config",
+          type: "object",
+          readOnly: true,
+          "x-nullable": true,
+          additionalProperties: true,
+        },
+        mapping: {
+          title: "Mapping",
+          type: "object",
+          readOnly: true,
+          "x-nullable": true,
+          additionalProperties: true,
+        },
+        filters: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              column_id: {
+                type: "string",
+                description: "Column or attribute id to filter on.",
+              },
+              property_id: {
+                type: "string",
+                description:
+                  "Optional stable namespaced Property Registry identity.",
+              },
+              display_name: {
+                type: "string",
+                description: "Optional UI label for chips and saved views.",
+              },
+              source: {
+                type: "string",
+                description:
+                  "Optional source surface for mixed-source filters, for example traces, datasets, or simulation.",
+              },
+              output_type: {
+                type: "string",
+                description:
+                  "Optional metric output type metadata used by eval and annotation filters.",
+              },
+              filter_config: {
+                type: "object",
+                properties: {
+                  filter_type: {
+                    type: "string",
+                    description:
+                      "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map.",
+                  },
+                  filter_op: {
+                    type: "string",
+                    description:
+                      "Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null.",
+                  },
+                  filter_value: {
+                    description:
+                      "Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type.",
+                  },
+                  col_type: {
+                    type: "string",
+                    description:
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                  },
+                  attribute_value_types: {
+                    type: "array",
+                    items: {
+                      type: "string",
+                      enum: ["string", "number", "boolean"],
+                      "x-nullable": true,
+                    },
+                    description:
+                      "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values.",
+                  },
+                },
+                required: ["filter_type", "filter_op"],
+                additionalProperties: false,
+              },
+            },
+            required: ["column_id", "filter_config"],
+            additionalProperties: false,
+          },
+          readOnly: true,
+          default: [],
+        },
+        error_localizer: {
+          title: "Error localizer",
+          type: "boolean",
+          readOnly: true,
+        },
+        model: {
+          title: "Model",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        eval_group: {
+          title: "Eval group",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        template_id: {
+          title: "Template id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        eval_type: {
+          title: "Eval type",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        regradable: {
+          title: "Regradable",
+          type: "boolean",
+          readOnly: true,
+        },
+        editable: {
+          title: "Editable",
+          type: "boolean",
+          readOnly: true,
         },
       },
     },
@@ -83083,6 +83457,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
           format: "uuid",
           readOnly: true,
         },
+        eval_type: {
+          title: "Eval type",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        regradable: {
+          title: "Regradable",
+          type: "boolean",
+          readOnly: true,
+        },
+        editable: {
+          title: "Editable",
+          type: "boolean",
+          readOnly: true,
+        },
       },
     },
     AddQueueItem: {
@@ -84746,6 +85136,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           "x-nullable": true,
         },
+        kind: {
+          title: "Kind",
+          description:
+            "Set on the v3 call detail: a sub-goal check or an evaluation",
+          type: "string",
+          enum: ["evaluation", "sub_goal"],
+        },
         visible: {
           title: "Visible",
           type: "boolean",
@@ -85128,6 +85525,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         start_time_ms: {
           title: "Start time ms",
           type: "integer",
+        },
+      },
+    },
+    SubGoalResult: {
+      required: ["name", "passed"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        passed: {
+          title: "Passed",
+          type: "boolean",
+          "x-nullable": true,
         },
       },
     },
@@ -92653,6 +93066,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minLength: 1,
           "x-nullable": true,
         },
+        script_completed: {
+          title: "Script completed",
+          type: "boolean",
+        },
+        target_metrics: {
+          $ref: "#/definitions/HarnessTargetMetrics",
+        },
       },
       "x-nullable": true,
     },
@@ -98005,6 +98425,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "passed",
         "failed",
         "measured",
+        "errored",
         "missing",
         "pass_rate",
         "average_score",
@@ -98031,6 +98452,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         measured: {
           title: "Measured",
+          type: "integer",
+        },
+        errored: {
+          title: "Errored",
           type: "integer",
         },
         missing: {
@@ -98166,6 +98591,60 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    Reliability: {
+      required: [
+        "trials",
+        "scenarios",
+        "consistent_pass",
+        "passed_at_least_once",
+        "repeated",
+        "flaky",
+        "flip_rate",
+        "pass_rate_interval",
+        "rows",
+      ],
+      type: "object",
+      properties: {
+        trials: {
+          title: "Trials",
+          type: "integer",
+        },
+        scenarios: {
+          title: "Scenarios",
+          type: "integer",
+        },
+        consistent_pass: {
+          title: "Consistent pass",
+          type: "integer",
+        },
+        passed_at_least_once: {
+          title: "Passed at least once",
+          type: "integer",
+        },
+        repeated: {
+          title: "Repeated",
+          type: "integer",
+        },
+        flaky: {
+          title: "Flaky",
+          type: "integer",
+        },
+        flip_rate: {
+          title: "Flip rate",
+          type: "number",
+          "x-nullable": true,
+        },
+        pass_rate_interval: {
+          $ref: "#/definitions/ReliabilityInterval",
+        },
+        rows: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/ReliabilityRow",
+          },
+        },
+      },
+    },
     Risk: {
       required: [
         "total",
@@ -98176,7 +98655,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "latency",
         "tokens",
         "cost_cents",
-        "goal",
+        "scenario",
+        "scenario_key",
       ],
       type: "object",
       properties: {
@@ -98208,8 +98688,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
         cost_cents: {
           $ref: "#/definitions/TotalMetricStats",
         },
-        goal: {
-          title: "Goal",
+        scenario: {
+          title: "Scenario",
+          type: "string",
+          minLength: 1,
+        },
+        scenario_key: {
+          title: "Scenario key",
           type: "string",
           minLength: 1,
         },
@@ -98224,6 +98709,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "series",
         "series_limit",
         "series_mode",
+        "agent_latency_percentiles",
         "latency_percentiles",
         "distributions",
         "csat",
@@ -98235,6 +98721,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "unavailable_features",
         "evaluation_summary",
         "use_case_risk",
+        "run_health",
+        "comparison",
         "goal_count",
       ],
       type: "object",
@@ -98274,6 +98762,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Series mode",
           type: "string",
           enum: ["calls", "time_buckets"],
+        },
+        agent_latency_percentiles: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/RunDashboardPercentile",
+          },
         },
         latency_percentiles: {
           type: "array",
@@ -98328,6 +98822,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/RunDashboardRisk",
           },
+        },
+        run_health: {
+          $ref: "#/definitions/RunDashboardHealth",
+        },
+        comparison: {
+          $ref: "#/definitions/RunDashboardComparison",
         },
         goal_count: {
           title: "Goal count",
@@ -98392,9 +98892,25 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     TurnDistribution: {
-      required: ["passed", "failed", "error", "inconclusive", "turn_count"],
+      required: [
+        "queued",
+        "in_progress",
+        "passed",
+        "failed",
+        "error",
+        "inconclusive",
+        "turn_count",
+      ],
       type: "object",
       properties: {
+        queued: {
+          title: "Queued",
+          type: "integer",
+        },
+        in_progress: {
+          title: "In progress",
+          type: "integer",
+        },
         passed: {
           title: "Passed",
           type: "integer",
@@ -98418,7 +98934,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     EvaluationColumn: {
-      required: ["id", "name"],
+      required: ["id", "name", "kind"],
       type: "object",
       properties: {
         id: {
@@ -98430,6 +98946,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Name",
           type: "string",
           minLength: 1,
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["evaluation", "sub_goal"],
         },
       },
     },
@@ -98444,6 +98965,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "persona",
         "persona_details",
         "sub_goals",
+        "sub_goal_results",
         "harness_outcome_status",
         "source_scenario_key",
         "trial_index",
@@ -98517,6 +99039,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
             minLength: 1,
           },
         },
+        sub_goal_results: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SubGoalResult",
+          },
+        },
         harness_outcome_status: {
           title: "Harness outcome status",
           type: "string",
@@ -98537,7 +99065,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         outcome: {
           title: "Outcome",
           type: "string",
-          enum: ["passed", "failed", "error", "inconclusive"],
+          enum: [
+            "queued",
+            "in_progress",
+            "passed",
+            "failed",
+            "inconclusive",
+            "error",
+          ],
         },
         execution_status: {
           title: "Execution status",
@@ -99139,142 +99674,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Run test name",
           type: "string",
           minLength: 1,
-        },
-      },
-    },
-    SimulateEvalConfigResponse: {
-      type: "object",
-      properties: {
-        id: {
-          title: "Id",
-          type: "string",
-          format: "uuid",
-          readOnly: true,
-        },
-        name: {
-          title: "Name",
-          type: "string",
-          readOnly: true,
-          minLength: 1,
-          "x-nullable": true,
-        },
-        config: {
-          title: "Config",
-          type: "object",
-          readOnly: true,
-          "x-nullable": true,
-          additionalProperties: true,
-        },
-        mapping: {
-          title: "Mapping",
-          type: "object",
-          readOnly: true,
-          "x-nullable": true,
-          additionalProperties: true,
-        },
-        filters: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: {
-              column_id: {
-                type: "string",
-                description: "Column or attribute id to filter on.",
-              },
-              property_id: {
-                type: "string",
-                description:
-                  "Optional stable namespaced Property Registry identity.",
-              },
-              display_name: {
-                type: "string",
-                description: "Optional UI label for chips and saved views.",
-              },
-              source: {
-                type: "string",
-                description:
-                  "Optional source surface for mixed-source filters, for example traces, datasets, or simulation.",
-              },
-              output_type: {
-                type: "string",
-                description:
-                  "Optional metric output type metadata used by eval and annotation filters.",
-              },
-              filter_config: {
-                type: "object",
-                properties: {
-                  filter_type: {
-                    type: "string",
-                    description:
-                      "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map.",
-                  },
-                  filter_op: {
-                    type: "string",
-                    description:
-                      "Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null.",
-                  },
-                  filter_value: {
-                    description:
-                      "Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type.",
-                  },
-                  col_type: {
-                    type: "string",
-                    description:
-                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
-                  },
-                  attribute_value_types: {
-                    type: "array",
-                    items: {
-                      type: "string",
-                      enum: ["string", "number", "boolean"],
-                      "x-nullable": true,
-                    },
-                    description:
-                      "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values.",
-                  },
-                },
-                required: ["filter_type", "filter_op"],
-                additionalProperties: false,
-              },
-            },
-            required: ["column_id", "filter_config"],
-            additionalProperties: false,
-          },
-          readOnly: true,
-          default: [],
-        },
-        error_localizer: {
-          title: "Error localizer",
-          type: "boolean",
-          readOnly: true,
-        },
-        model: {
-          title: "Model",
-          type: "string",
-          readOnly: true,
-          minLength: 1,
-          "x-nullable": true,
-        },
-        status: {
-          title: "Status",
-          type: "string",
-          readOnly: true,
-          minLength: 1,
-          "x-nullable": true,
-        },
-        eval_group: {
-          title: "Eval group",
-          type: "string",
-          readOnly: true,
-          minLength: 1,
-          "x-nullable": true,
-        },
-        template_id: {
-          title: "Template id",
-          type: "string",
-          format: "uuid",
-          readOnly: true,
-          "x-nullable": true,
         },
       },
     },
@@ -108632,6 +109031,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "inputs",
         "id",
         "runnable",
+        "editable",
       ],
       type: "object",
       properties: {
@@ -108694,6 +109094,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         runnable: {
           title: "Runnable",
+          type: "boolean",
+        },
+        editable: {
+          title: "Editable",
           type: "boolean",
         },
       },
@@ -108918,6 +109322,41 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
         },
       },
+    },
+    HarnessTargetMetrics: {
+      required: ["provider"],
+      type: "object",
+      properties: {
+        provider: {
+          title: "Provider",
+          type: "string",
+          enum: ["vapi", "retell", "livekit"],
+        },
+        usage: {
+          $ref: "#/definitions/HarnessTargetUsage",
+        },
+        cost_cents: {
+          title: "Cost cents",
+          type: "integer",
+          minimum: 0,
+        },
+        latency: {
+          $ref: "#/definitions/HarnessTargetLatency",
+        },
+        provider_call_id: {
+          title: "Provider call id",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        provider_end_reason: {
+          title: "Provider end reason",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+      },
+      "x-nullable": true,
     },
     HarnessScenarioRegistrationResponse: {
       required: ["scenario_key", "scenario_id"],
@@ -111495,9 +111934,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     OutcomeCounts: {
-      required: ["passed", "failed", "error", "inconclusive"],
+      required: [
+        "queued",
+        "in_progress",
+        "passed",
+        "failed",
+        "error",
+        "inconclusive",
+      ],
       type: "object",
       properties: {
+        queued: {
+          title: "Queued",
+          type: "integer",
+        },
+        in_progress: {
+          title: "In progress",
+          type: "integer",
+        },
         passed: {
           title: "Passed",
           type: "integer",
@@ -111594,6 +112048,104 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    ReliabilityInterval: {
+      required: ["low", "high", "effective_n", "evaluated", "clusters"],
+      type: "object",
+      properties: {
+        low: {
+          title: "Low",
+          type: "number",
+        },
+        high: {
+          title: "High",
+          type: "number",
+        },
+        effective_n: {
+          title: "Effective n",
+          type: "number",
+        },
+        evaluated: {
+          title: "Evaluated",
+          type: "integer",
+        },
+        clusters: {
+          title: "Clusters",
+          type: "integer",
+        },
+      },
+      "x-nullable": true,
+    },
+    ReliabilityRow: {
+      required: [
+        "queued",
+        "in_progress",
+        "passed",
+        "failed",
+        "error",
+        "inconclusive",
+        "scenario",
+        "scenario_key",
+        "runs",
+        "evaluated",
+        "pass_rate",
+        "verdict",
+      ],
+      type: "object",
+      properties: {
+        queued: {
+          title: "Queued",
+          type: "integer",
+        },
+        in_progress: {
+          title: "In progress",
+          type: "integer",
+        },
+        passed: {
+          title: "Passed",
+          type: "integer",
+        },
+        failed: {
+          title: "Failed",
+          type: "integer",
+        },
+        error: {
+          title: "Error",
+          type: "integer",
+        },
+        inconclusive: {
+          title: "Inconclusive",
+          type: "integer",
+        },
+        scenario: {
+          title: "Scenario",
+          type: "string",
+          minLength: 1,
+        },
+        scenario_key: {
+          title: "Scenario key",
+          type: "string",
+          minLength: 1,
+        },
+        runs: {
+          title: "Runs",
+          type: "integer",
+        },
+        evaluated: {
+          title: "Evaluated",
+          type: "integer",
+        },
+        pass_rate: {
+          title: "Pass rate",
+          type: "number",
+          "x-nullable": true,
+        },
+        verdict: {
+          title: "Verdict",
+          type: "string",
+          enum: ["passed", "failed", "flaky", "not_evaluated"],
+        },
+      },
+    },
     RunDashboardBreakdown: {
       required: ["key", "label", "total", "segments", "headline"],
       type: "object",
@@ -111623,8 +112175,55 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    RunDashboardComparison: {
+      required: [
+        "available",
+        "previous_execution_id",
+        "shared_scenarios",
+        "newly_passing",
+        "newly_failing",
+      ],
+      type: "object",
+      properties: {
+        available: {
+          title: "Available",
+          type: "boolean",
+        },
+        previous_execution_id: {
+          title: "Previous execution id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        shared_scenarios: {
+          title: "Shared scenarios",
+          type: "integer",
+        },
+        newly_passing: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        newly_failing: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+    },
     RunDashboardCsat: {
-      required: ["bins", "measured", "total", "agreement"],
+      required: [
+        "bins",
+        "measured",
+        "total",
+        "satisfied",
+        "satisfied_percent",
+        "agreement",
+      ],
       type: "object",
       properties: {
         bins: {
@@ -111640,6 +112239,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
         total: {
           title: "Total",
           type: "integer",
+        },
+        satisfied: {
+          title: "Satisfied",
+          type: "integer",
+        },
+        satisfied_percent: {
+          title: "Satisfied percent",
+          type: "number",
+          "x-nullable": true,
         },
         agreement: {
           $ref: "#/definitions/RunDashboardAgreement",
@@ -111687,7 +112295,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     RunDashboardEvaluationSummary: {
-      required: ["graders", "passed", "measured", "pass_rate"],
+      required: [
+        "graders",
+        "passed",
+        "measured",
+        "pass_rate",
+        "errored_checks",
+      ],
       type: "object",
       properties: {
         graders: {
@@ -111706,6 +112320,52 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Pass rate",
           type: "number",
           "x-nullable": true,
+        },
+        errored_checks: {
+          title: "Errored checks",
+          type: "integer",
+        },
+      },
+    },
+    RunDashboardHealth: {
+      required: [
+        "show_banner",
+        "attempted",
+        "ran_cleanly",
+        "connected",
+        "errored",
+        "not_evaluated",
+        "eval_errors",
+      ],
+      type: "object",
+      properties: {
+        show_banner: {
+          title: "Show banner",
+          type: "boolean",
+        },
+        attempted: {
+          title: "Attempted",
+          type: "integer",
+        },
+        ran_cleanly: {
+          title: "Ran cleanly",
+          type: "integer",
+        },
+        connected: {
+          title: "Connected",
+          type: "integer",
+        },
+        errored: {
+          title: "Errored",
+          type: "integer",
+        },
+        not_evaluated: {
+          title: "Not evaluated",
+          type: "integer",
+        },
+        eval_errors: {
+          title: "Eval errors",
+          type: "integer",
         },
       },
     },
@@ -111862,11 +112522,27 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     RunDashboardRisk: {
-      required: ["goal", "passed", "failed", "error", "inconclusive"],
+      required: [
+        "queued",
+        "in_progress",
+        "scenario",
+        "passed",
+        "failed",
+        "error",
+        "inconclusive",
+      ],
       type: "object",
       properties: {
-        goal: {
-          title: "Goal",
+        queued: {
+          title: "Queued",
+          type: "integer",
+        },
+        in_progress: {
+          title: "In progress",
+          type: "integer",
+        },
+        scenario: {
+          title: "Scenario",
           type: "string",
           minLength: 1,
         },
@@ -111893,6 +112569,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "label",
         "started_at",
         "calls",
+        "latency_ms",
         "duration_ms",
         "llm_cents",
         "tts_cents",
@@ -111915,6 +112592,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         calls: {
           title: "Calls",
           type: "integer",
+        },
+        latency_ms: {
+          title: "Latency ms",
+          type: "number",
+          "x-nullable": true,
         },
         duration_ms: {
           title: "Duration ms",
@@ -114329,6 +115011,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           format: "uuid",
           "x-nullable": true,
         },
+        project_name: {
+          title: "Project name",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
         user_id_type: {
           title: "User id type",
           type: "string",
@@ -115377,6 +116065,64 @@ export const OPENAPI_CONTRACT = Object.freeze({
         rows: {
           title: "Rows",
           type: "integer",
+        },
+      },
+    },
+    HarnessTargetLatency: {
+      type: "object",
+      properties: {
+        turn: {
+          title: "Turn",
+          type: "integer",
+          minimum: 0,
+        },
+        model: {
+          title: "Model",
+          type: "integer",
+          minimum: 0,
+        },
+        voice: {
+          title: "Voice",
+          type: "integer",
+          minimum: 0,
+        },
+        transcriber: {
+          title: "Transcriber",
+          type: "integer",
+          minimum: 0,
+        },
+        endpointing: {
+          title: "Endpointing",
+          type: "integer",
+          minimum: 0,
+        },
+        turns: {
+          type: "array",
+          items: {
+            type: "integer",
+            minimum: 0,
+          },
+          maxItems: 1000,
+        },
+      },
+    },
+    HarnessTargetUsage: {
+      type: "object",
+      properties: {
+        prompt_tokens: {
+          title: "Prompt tokens",
+          type: "integer",
+          minimum: 0,
+        },
+        completion_tokens: {
+          title: "Completion tokens",
+          type: "integer",
+          minimum: 0,
+        },
+        total_tokens: {
+          title: "Total tokens",
+          type: "integer",
+          minimum: 0,
         },
       },
     },

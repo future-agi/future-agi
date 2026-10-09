@@ -188,6 +188,7 @@ class CreateAlertMonitorTool(BaseTool):
                     error_code="VALIDATION_ERROR",
                 )
             from tracer.models.custom_eval_config import CustomEvalConfig
+            from tracer.utils.monitor import uses_choice_threshold
 
             try:
                 custom_eval_config = CustomEvalConfig.objects.get(
@@ -201,8 +202,7 @@ class CreateAlertMonitorTool(BaseTool):
 
             choices = (
                 custom_eval_config.eval_template.choices
-                if custom_eval_config.eval_template
-                and custom_eval_config.eval_template.choices
+                if uses_choice_threshold(custom_eval_config.eval_template)
                 else None
             )
             if choices:

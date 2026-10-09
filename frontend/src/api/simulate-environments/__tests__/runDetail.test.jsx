@@ -771,6 +771,27 @@ describe("useRunDetail", () => {
     );
   });
 
+  it.each([
+    ["Pending", "queued"],
+    ["Running", "running"],
+    ["Evaluating", "running"],
+    ["Completed", "finished"],
+    ["Failed", "failed"],
+    ["Cancelling", "cancelling"],
+    ["Cancelled", "cancelled"],
+  ])("matches the runs list lifecycle for %s", async (status, expected) => {
+    axios.get.mockResolvedValueOnce({
+      data: { execution: { id: "ex-state", status: status.toLowerCase() } },
+    });
+    const { result } = renderHook(() => useRunDetail("rt1", "ex-state"), {
+      wrapper: makeWrapper(),
+    });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    const [listRow] = mapExecutions({ results: [{ id: "ex-state", status }], count: 1 });
+    expect(listRow.runState).toBe(expected);
+    expect(result.current.identity.runState).toBe(listRow.runState);
+  });
+
   it("keeps terminal Run failure when some calls already passed", async () => {
     axios.get.mockResolvedValueOnce({
       data: {
@@ -795,7 +816,7 @@ describe("useRunDetail", () => {
     expect(result.current.stats.failed).toBe(4);
   });
 
-  it("marks a running Run stoppable and a cancelling one not", async () => {
+  it("marks a running Run stoppable and a cancelling or grading one not", async () => {
     const identityFor = async (status) => {
       axios.get.mockResolvedValueOnce({
         data: {
@@ -817,6 +838,27 @@ describe("useRunDetail", () => {
     expect((await identityFor("pending")).stoppable).toBe(true);
     expect((await identityFor("cancelling")).stoppable).toBe(false);
     expect((await identityFor("completed")).stoppable).toBe(false);
+    expect((await identityFor("evaluating")).stoppable).toBe(false);
+  });
+
+  it("exposes the execution's own status so the page knows when it can grade again", async () => {
+    for (const status of ["completed", "evaluating"]) {
+      axios.get.mockResolvedValueOnce({
+        data: {
+          execution: {
+            id: `ex-raw-${status}`,
+            status,
+            summary: { total: 4, outcomes: {} },
+          },
+        },
+      });
+      const { result } = renderHook(
+        () => useRunDetail("rt1", `ex-raw-${status}`),
+        { wrapper: makeWrapper() },
+      );
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      expect(result.current.identity.executionStatus).toBe(status);
+    }
   });
 
   it("reports a cancelling Run as cancelling, not running", async () => {
