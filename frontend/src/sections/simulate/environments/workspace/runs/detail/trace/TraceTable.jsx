@@ -105,6 +105,7 @@ export default function TraceTable({
   onGroupViewChange,
   expandedForRef: expandedForRefProp,
   runActive = false,
+  renderEvalHeaderAction = null,
 }) {
   // A parent that unmounts this table (a filter's loading or empty state)
   // passes the open/closed groups in, so they survive the remount. Without
@@ -557,20 +558,39 @@ export default function TraceTable({
               {show("tokens") && (
                 <TableCell sx={{ ...headSx, width: 120 }}>Tokens</TableCell>
               )}
-              {scoredColumns.map((e) => (
-                <TableCell key={e.id} sx={{ ...headSx, width: 150 }}>
+              {scoredColumns.map((e) => {
+                // Sub-goal columns share this row but aren't evals, so only
+                // an eval's own column gets the action.
+                const action =
+                  renderEvalHeaderAction && evals.includes(e)
+                    ? renderEvalHeaderAction(e)
+                    : null;
+                const name = (
                   <Typography
                     noWrap
                     sx={{
                       typography: "s2",
                       fontWeight: "fontWeightMedium",
                       color: "text.secondary",
+                      ...(action && { flex: 1, minWidth: 0 }),
                     }}
                   >
                     {e.name}
                   </Typography>
-                </TableCell>
-              ))}
+                );
+                return (
+                  <TableCell key={e.id} sx={{ ...headSx, width: 150 }}>
+                    {action ? (
+                      <Stack direction="row" alignItems="center" spacing={0.5}>
+                        {name}
+                        <Box sx={{ flexShrink: 0 }}>{action}</Box>
+                      </Stack>
+                    ) : (
+                      name
+                    )}
+                  </TableCell>
+                );
+              })}
             </TableRow>
           </TableHead>
           <TableBody>
@@ -617,4 +637,6 @@ TraceTable.propTypes = {
   onGroupViewChange: PropTypes.func,
   expandedForRef: PropTypes.shape({ current: PropTypes.any }),
   runActive: PropTypes.bool,
+  // Optional per-eval node shown after the eval's name in its header cell.
+  renderEvalHeaderAction: PropTypes.func,
 };

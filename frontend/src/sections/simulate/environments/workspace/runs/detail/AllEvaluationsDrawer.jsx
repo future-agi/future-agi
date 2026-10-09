@@ -15,7 +15,6 @@ import {
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import EvalTypeBadge from "src/sections/evals/components/EvalTypeBadge";
-import ConfirmRunEvaluations from "src/sections/common/EvaluationDrawer/ConfirmRunEvaluations";
 import {
   useEnvironmentRunTest,
   useRemoveAppliedEvaluation,
@@ -24,21 +23,19 @@ import {
   runAnalyticsKey,
   callDetailKeyPrefix,
   runResultsKey,
-  useRunNewEvals,
 } from "src/api/simulate-environments/runEvals";
 import SideDrawer from "../../../components/SideDrawer";
 import EmptyState from "../../../components/EmptyState";
 import { refusalText } from "../../evals/refusalText";
 import {
-  HARNESS_NOTE,
+  EVALS_LOAD_FAILED_TOOLTIP,
+  GRADING_TOOLTIP,
   HARNESS_ONLY_TOOLTIP,
+  NOT_COMPLETED_TOOLTIP,
+  NOT_EDITABLE_TOOLTIP,
 } from "./allEvaluationsDrawer.constants";
 
-// A failed or unanswered request may still have started grading.
-const RUN_FALLBACK = "Grading may not have started. Try again.";
 const REMOVE_FALLBACK = "Couldn’t remove the evaluation. Try again.";
-const NOT_COMPLETED_TOOLTIP = "Only a completed run can be graded again.";
-const GRADING_TOOLTIP = "Available once grading finishes.";
 // A stable empty-array constant: `= []` as a hook default is a fresh
 // reference on every render, which would re-run the memos below even when
 // the run test's configs have not changed.
@@ -49,9 +46,11 @@ const NO_CONFIGS = [];
  *
  * Every eval bound to the run test is listed here, including the harness's
  * per-scenario checks — those can't be ticked or re-run, because only a call
- * rerun refreshes them, but they can still be removed. Ticking rows and the
- * footer both open the same confirm dialog as the rest of the product; a
- * single row's run icon opens it pre-filled with just that row.
+ * rerun refreshes them, but they can still be removed. The footer runs the
+ * ticked rows and a row's run icon runs just that row; a row's edit icon edits
+ * that eval. Both go to the run page (`onRerun`, `onEdit`), whose one edit form
+ * and confirm dialog also serve the table's column menus, and this drawer
+ * closes once the grading it asked for is queued.
  */
 export default function AllEvaluationsDrawer({
   open,
@@ -61,12 +60,14 @@ export default function AllEvaluationsDrawer({
   executionId,
   canRun = false,
   grading = false,
+  rerunPending = false,
+  editOpen = false,
+  onRerun,
+  onEdit,
   onAddEvaluations,
 }) {
   const queryClient = useQueryClient();
   const [ticked, setTicked] = useState(() => new Set());
-  // Holds the configs the confirm dialog is about, or null while it's closed.
-  const [confirming, setConfirming] = useState(null);
 
   // The run page keeps this drawer mounted while it's closed, so ticks would
   // otherwise still be there on reopening — including on a removed eval that
@@ -84,7 +85,6 @@ export default function AllEvaluationsDrawer({
   } = useEnvironmentRunTest(runTestId, { enabled: open && Boolean(runTestId) });
   const configs = configsData ?? NO_CONFIGS;
 
-  const runEvals = useRunNewEvals();
   const removeEval = useRemoveAppliedEvaluation();
 
   const runnableIds = useMemo(
@@ -119,34 +119,7 @@ export default function AllEvaluationsDrawer({
     });
   };
 
-  const handleConfirm = (list) => {
-    const evalConfigIds = list.map((c) => c.id);
-    runEvals.mutate(
-      { id: env?.id, executionId, evalConfigIds },
-      {
-        onSuccess: (result) => {
-          setConfirming(null);
-          setTicked(new Set());
-          // Only the run-test route sends this flag (false when grading never
-          // started and the old scores were put back). This route answers that
-          // with a 503 instead, so its bodies carry no flag and read as started.
-          if (result?.dispatched === false) {
-            enqueueSnackbar(RUN_FALLBACK, { variant: "warning" });
-            return;
-          }
-          const k = evalConfigIds.length;
-          enqueueSnackbar(
-            `Grading ${k} evaluation${k === 1 ? "" : "s"}. This run updates when grading finishes.`,
-            { variant: "success" },
-          );
-          onClose();
-        },
-        onError: (e) => {
-          enqueueSnackbar(refusalText(e, RUN_FALLBACK), { variant: "error" });
-        },
-      },
-    );
-  };
+  const requestRerun = (list) => onRerun?.(list, { onSuccess: onClose });
 
   const handleRemove = (config) => {
     removeEval.mutate(
@@ -218,10 +191,7 @@ export default function AllEvaluationsDrawer({
           ) : isError && configsData === undefined ? (
             <EmptyState
               title="Couldn’t load evaluations"
-              body={refusalText(
-                error,
-                "Couldn’t load this run's evaluations. Try again.",
-              )}
+              body={refusalText(error, EVALS_LOAD_FAILED_TOOLTIP)}
               action={
                 <Button
                   variant="outlined"
@@ -247,6 +217,14 @@ export default function AllEvaluationsDrawer({
             >
               {configs.map((config) => {
                 const runnable = config.regradable === true;
+                const editable = config.editable === true;
+                const editTooltip = !editable
+                  ? NOT_EDITABLE_TOOLTIP
+                  : grading
+                    ? GRADING_TOOLTIP
+                    : !canRun
+                      ? NOT_COMPLETED_TOOLTIP
+                      : "";
                 const runTooltip = !runnable
                   ? HARNESS_ONLY_TOOLTIP
                   : !canRun
@@ -288,10 +266,29 @@ export default function AllEvaluationsDrawer({
                       <span>
                         <IconButton
                           aria-label={`Run ${config.name}`}
-                          disabled={!runnable || !canRun || runEvals.isPending}
-                          onClick={() => setConfirming([config])}
+                          disabled={!runnable || !canRun || rerunPending}
+                          onClick={() => requestRerun([config])}
                         >
                           <Iconify icon="solar:play-circle-linear" width={18} />
+                        </IconButton>
+                      </span>
+                    </Tooltip>
+                    <Tooltip arrow title={editTooltip}>
+                      <span>
+                        <IconButton
+                          aria-label={`Edit ${config.name}`}
+                          disabled={
+                            !editable ||
+                            grading ||
+                            !canRun ||
+                            editOpen ||
+                            rerunPending
+                          }
+                          onClick={() =>
+                            onEdit?.(config, { onSuccess: onClose })
+                          }
+                        >
+                          <Iconify icon="solar:pen-linear" width={18} />
                         </IconButton>
                       </span>
                     </Tooltip>
@@ -326,10 +323,8 @@ export default function AllEvaluationsDrawer({
                 fullWidth
                 variant="contained"
                 startIcon={<Iconify icon="solar:play-bold" width={16} />}
-                disabled={
-                  selectedIds.length === 0 || !canRun || runEvals.isPending
-                }
-                onClick={() => setConfirming(selectedConfigs)}
+                disabled={selectedIds.length === 0 || !canRun || rerunPending}
+                onClick={() => requestRerun(selectedConfigs)}
               >
                 {allTicked && runnableIds.length > 0
                   ? `Run All (${selectedIds.length})`
@@ -339,22 +334,6 @@ export default function AllEvaluationsDrawer({
           </Tooltip>
         </Box>
       </Box>
-
-      <ConfirmRunEvaluations
-        open={Boolean(confirming)}
-        onClose={() => setConfirming(null)}
-        onConfirm={handleConfirm}
-        selectedUserEvalList={confirming || []}
-        loading={runEvals.isPending}
-        // Only runnable configs ever reach the dialog, so an empty mapping
-        // there means one of the harness's built-in suite evals; its score
-        // came from the harness and will be replaced by the platform's.
-        getNote={(list) =>
-          list.some((c) => Object.keys(c.mapping || {}).length === 0)
-            ? HARNESS_NOTE
-            : null
-        }
-      />
     </SideDrawer>
   );
 }
@@ -367,5 +346,12 @@ AllEvaluationsDrawer.propTypes = {
   executionId: PropTypes.string,
   canRun: PropTypes.bool,
   grading: PropTypes.bool,
+  // The run page's re-run is on its way, from here or from a column menu.
+  // Runs and edits both wait on it: one sent now would grade the old settings.
+  rerunPending: PropTypes.bool,
+  // The run page's edit form is open.
+  editOpen: PropTypes.bool,
+  onRerun: PropTypes.func,
+  onEdit: PropTypes.func,
   onAddEvaluations: PropTypes.func,
 };

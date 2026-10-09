@@ -53,8 +53,11 @@ export default function EvalsStep({
   onGo,
   locked = false,
   backed = false,
+  grading = false,
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
+  // The id of the eval open for editing, or null.
+  const [editingId, setEditingId] = useState(null);
   // The workspace routes away from this tab when there are no scenarios; this
   // is the backstop if it is ever rendered directly without them.
   const needsScenarios = (envState?.scenarios?.length || 0) === 0;
@@ -116,6 +119,11 @@ export default function EvalsStep({
   const building = env.buildStatus === BUILD_STATUS.BUILDING;
   const removeDisabled =
     locked || (backed && (building || removeEval.isPending));
+  const lockedOrBuildingTooltip = locked
+    ? LOCK_TOOLTIP
+    : backed && building
+      ? "Available once the environment finishes building."
+      : "";
   const onRemove = (id) => {
     if (!backed) {
       store.remove(id);
@@ -403,19 +411,10 @@ export default function EvalsStep({
             }
           >
             {appliedEvals.map((e) => {
-              const action = (
+              const removeAction = (
                 // No always-on evals. Every added row is removable — except on a
                 // locked template, where every edit is gated behind a fork.
-                <Tooltip
-                  arrow
-                  title={
-                    locked
-                      ? LOCK_TOOLTIP
-                      : backed && building
-                        ? "Available once the environment finishes building."
-                        : ""
-                  }
-                >
+                <Tooltip arrow title={lockedOrBuildingTooltip}>
                   <Box component="span" sx={{ display: "inline-flex" }}>
                     <IconButton
                       size="small"
@@ -432,12 +431,62 @@ export default function EvalsStep({
                   </Box>
                 </Tooltip>
               );
+              // Only a backed env's evals exist on the server to be edited. The
+              // same gates as remove apply (the server refuses while
+              // building), plus the server's own `editable`. The server
+              // doesn't refuse an edit while a run is being graded, so that
+              // wait is ours.
+              const editable = e.editable === true;
+              const editAction = backed && (
+                <Tooltip
+                  arrow
+                  title={
+                    lockedOrBuildingTooltip ||
+                    (!editable
+                      ? EVALS_COPY.notEditable
+                      : grading
+                        ? EVALS_COPY.gradingLocked
+                        : "")
+                  }
+                >
+                  <Box component="span" sx={{ display: "inline-flex" }}>
+                    <IconButton
+                      size="small"
+                      disabled={
+                        !editable ||
+                        locked ||
+                        building ||
+                        grading ||
+                        removeEval.isPending ||
+                        Boolean(editingId)
+                      }
+                      aria-label={EVALS_COPY.edit}
+                      onClick={() => setEditingId(e.id)}
+                    >
+                      <Iconify
+                        icon="solar:pen-linear"
+                        width={16}
+                        sx={{ color: "text.subtitle" }}
+                      />
+                    </IconButton>
+                  </Box>
+                </Tooltip>
+              );
               // A backed env's rows are catalogue entries; a forked/template env's rows
               // are still the fixture catalogue shape the store holds.
               return backed ? (
-                <SelectedEvalRow key={e.id} item={e} action={action} />
+                <SelectedEvalRow
+                  key={e.id}
+                  item={e}
+                  action={
+                    <Stack direction="row" spacing={0.5}>
+                      {editAction}
+                      {removeAction}
+                    </Stack>
+                  }
+                />
               ) : (
-                <EvalRow key={e.id} item={e} action={action} />
+                <EvalRow key={e.id} item={e} action={removeAction} />
               );
             })}
           </Stack>
@@ -447,6 +496,15 @@ export default function EvalsStep({
       {/* A backed env adds from the whole catalogue through the product picker,
           saved on its run test; a forked/template env keeps the store-only
           product picker. */}
+      {backed && (
+        <AddEvaluationDrawer
+          open={Boolean(editingId)}
+          env={env}
+          editingEvalId={editingId}
+          onClose={() => setEditingId(null)}
+          onEdited={() => setEditingId(null)}
+        />
+      )}
       {backed ? (
         <AddEvaluationDrawer
           open={pickerOpen}
@@ -474,4 +532,6 @@ EvalsStep.propTypes = {
   onGo: PropTypes.func,
   locked: PropTypes.bool,
   backed: PropTypes.bool,
+  // A run of this environment is being graded.
+  grading: PropTypes.bool,
 };

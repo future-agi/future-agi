@@ -9,6 +9,22 @@ vi.mock("src/api/simulate-environments/runDetail", () => ({
   useRunCalls: (...args) => useRunCalls(...args),
 }));
 
+// The eval column menu owns its own data; here it only has to receive the
+// right column, and the run page's actions as they were handed in.
+vi.mock("../../EvalColumnActions", () => ({
+  default: ({ menuFor, runTestId, rerunPending, onRerun, onEdit }) => (
+    <div data-testid="eval-actions">
+      {`eval-actions:${menuFor?.evalId ?? "-"}:${runTestId}:${rerunPending}`}
+      <button type="button" onClick={() => onRerun([{ id: "eval-1" }])}>
+        menu re-run
+      </button>
+      <button type="button" onClick={() => onEdit({ id: "eval-1" })}>
+        menu edit
+      </button>
+    </div>
+  ),
+}));
+
 const { default: RunTraceTable } = await import("../RunTraceTable");
 const { default: TraceGroupHeaderRow } = await import("../TraceGroupHeaderRow");
 const { TRACE_COLUMNS, VOICE_ONLY_COLUMNS } = await import(
@@ -1326,5 +1342,42 @@ describe("RunTraceTable", () => {
     renderTable();
     expect(screen.getByText(/Couldn't load calls/i)).toBeInTheDocument();
     expect(screen.queryByText(/No calls match that filter/)).toBeNull();
+  });
+
+  it("adds no column menu without eval actions", () => {
+    renderTable();
+    expect(
+      screen.queryByRole("button", { name: "Actions for Tone" }),
+    ).toBeNull();
+    expect(screen.queryByTestId("eval-actions")).toBeNull();
+  });
+
+  it("opens the eval column's menu for that column, with the run page's actions", async () => {
+    const user = userEvent.setup();
+    const onRerun = vi.fn();
+    const onEdit = vi.fn();
+    renderTable({
+      evalActions: {
+        runTestId: "rt1",
+        canRun: true,
+        grading: false,
+        rerunPending: true,
+        onRerun,
+        onEdit,
+      },
+    });
+    expect(screen.getByText("eval-actions:-:rt1:true")).toBeInTheDocument();
+
+    const button = screen.getByRole("button", { name: "Actions for Tone" });
+    expect(button.closest("th")).toHaveTextContent("Tone");
+    await user.click(button);
+    expect(
+      screen.getByText("eval-actions:eval-1:rt1:true"),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "menu re-run" }));
+    expect(onRerun).toHaveBeenCalledWith([{ id: "eval-1" }]);
+    await user.click(screen.getByRole("button", { name: "menu edit" }));
+    expect(onEdit).toHaveBeenCalledWith({ id: "eval-1" });
   });
 });

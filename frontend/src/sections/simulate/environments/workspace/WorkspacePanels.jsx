@@ -59,6 +59,10 @@ export default function WorkspacePanels({
     isLoading: runsLoading,
   } = useEnvironmentRuns(env, envState);
 
+  // Editing an eval waits while any run is being graded. Only the newest page
+  // of runs is read, and it polls while one is grading, so this clears itself.
+  const grading = runs.some((run) => run.grading);
+
   // The runs list's total is what the Runs tab lists. The environment's own
   // count comes with the environment, so it stands in until the list loads;
   // it can run high once loaded, since a deleted run leaves its job behind.
@@ -102,7 +106,18 @@ export default function WorkspacePanels({
       case "scenarios":
         return <ScenariosStep env={env} envState={envState} patch={patch} locked={locked} onFork={onFork} onStartRun={onStartRun} canRun={canRun} />;
       case "evals":
-        return <EvalsStep env={env} envState={envState} patch={patch} onGo={go} locked={locked} backed={backed} onFork={onFork} />;
+        return (
+          <EvalsStep
+            env={env}
+            envState={envState}
+            patch={patch}
+            onGo={go}
+            locked={locked}
+            backed={backed}
+            grading={grading}
+            onFork={onFork}
+          />
+        );
       case "runs":
         // The summary's eval columns come from the runs' own scores, so it
         // only needs the store for its scenario count.
