@@ -26,7 +26,10 @@ const AddTagsPopover = ({
   onSuccess,
 }) => {
   const items = Array.isArray(bulkItems) ? bulkItems : [];
-  const isBulk = items.length > 1;
+  // Only the grid's bulk action passes bulkItems, with no traceId or
+  // currentTags, so any selection (one row included) takes the bulk path.
+  const isBulk = items.length > 0;
+  const itemsLabel = `${items.length} ${items.length === 1 ? "item" : "items"}`;
 
   const [tags, setTags] = useState(() =>
     isBulk ? [] : normalizeTags(currentTags),
@@ -73,7 +76,7 @@ const AddTagsPopover = ({
     },
     onSuccess: () => {
       enqueueSnackbar(
-        isBulk ? `Tags applied to ${items.length} items` : "Tags updated",
+        isBulk ? `Tags applied to ${itemsLabel}` : "Tags updated",
         { variant: "success" },
       );
       // Refreshes the trace-detail drawer. The LLM tracing grid is AG-Grid
@@ -132,7 +135,7 @@ const AddTagsPopover = ({
       slotProps={{ paper: { sx: { width: 300, p: 1.5, mt: 0.5 } } }}
     >
       <Typography sx={{ fontSize: 12, fontWeight: 600, mb: 1 }}>
-        {isBulk ? `Add tags to ${items.length} items` : "Tags"}
+        {isBulk ? `Add tags to ${itemsLabel}` : "Tags"}
       </Typography>
 
       {!isBulk && tags.length > 0 && (
