@@ -51,6 +51,13 @@ _DEFAULT_LIMITS = {
     "max_evidence_bytes": 64 * 1024 * 1024,
     "max_tool_result_bytes": 16 * 1024,
 }
+# One simulation call carries what both sides were told and its recordings, so
+# reading it and listening to it take more calls and time than a trace does.
+_SIMULATION_LIMITS = {
+    **_DEFAULT_LIMITS,
+    "deadline_seconds": 300,
+    "max_model_calls": 18,
+}
 _LIMIT_CEILINGS = {
     "deadline_seconds": 600,
     "max_model_calls": 50,
@@ -613,7 +620,7 @@ def claim_due_investigations(
                 ),
                 memory_digest=memory_digest,
                 memory=memory,
-                limits=_DEFAULT_LIMITS.copy(),
+                limits=_SIMULATION_LIMITS.copy(),
             )
             job.state = TraceInvestigationJobState.RUNNING
             job.save(update_fields=["state", "updated_at"])
