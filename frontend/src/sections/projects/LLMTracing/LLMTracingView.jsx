@@ -4277,6 +4277,9 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     // against concurrent clicks triggering duplicate fetches.
                     // A call's trace id can exist in several projects, so
                     // read this project's copy.
+                    // The tags PATCH replaces the whole list, so a call whose
+                    // tags can't be read must not be merged into [] (that
+                    // would drop its tags): open nothing if any read fails.
                     if (tagsFetching) return;
                     const ids = (selectedCallIds || []).filter(Boolean);
                     if (ids.length === 0) return;
@@ -4287,19 +4290,28 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                           .get(endpoints.project.getTrace(id), {
                             params: { project_id: observeId },
                           })
-                          .then((res) => ({
-                            id,
-                            type: "trace",
-                            currentTags: res?.data?.result?.tags || [],
-                          }))
-                          .catch(() => ({
-                            id,
-                            type: "trace",
-                            currentTags: [],
-                          })),
+                          .then((res) => {
+                            // TraceDetailResult: { trace: { tags }, ... }
+                            const result = res?.data?.result;
+                            return {
+                              id,
+                              type: "trace",
+                              currentTags:
+                                result?.trace?.tags || result?.tags || [],
+                            };
+                          })
+                          .catch(() => null),
                       ),
                     )
                       .then((items) => {
+                        const unread = items.filter((item) => !item).length;
+                        if (unread > 0) {
+                          enqueueSnackbar(
+                            `Couldn't load the current tags of ${unread} of ${ids.length} selected calls. No tags were changed.`,
+                            { variant: "error" },
+                          );
+                          return;
+                        }
                         setTagsBulkItems(items);
                         setTagsAnchorEl(anchor);
                       })
