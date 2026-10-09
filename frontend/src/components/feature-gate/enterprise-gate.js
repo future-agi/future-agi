@@ -52,8 +52,8 @@ const EDITION_COPY = {
 
 export const ENTERPRISE_GATE_STEPS = Object.freeze([
   `Contact ${SALES_EMAIL} for an Enterprise license.`,
-  "Set EE_LICENSE_KEY on every backend, worker and Temporal worker, then restart them.",
-  "Everything you already have stays as it is.",
+  "Set EE_LICENSE_KEY, plus the matching issuer public key (EE_LICENSE_PUBLIC_KEY) when your release needs one, on every backend, worker and Temporal worker, then restart them. Never a private signing key.",
+  "Plan & License lists the exact steps. Everything you already have stays as it is.",
 ]);
 
 /** Title and description for an `enterprise_gate` block. */

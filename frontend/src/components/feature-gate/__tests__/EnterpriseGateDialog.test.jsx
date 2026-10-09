@@ -66,6 +66,15 @@ describe("EnterpriseGateDialog (TH-8084 AC-08, AC-20)", () => {
     expect(contact).toHaveAttribute("href", "mailto:sales@futureagi.com");
   });
 
+  it("activation steps name the matching public key, never a private key (verify-r3 N1)", () => {
+    render(<EnterpriseGateDialog open gate={memberGate} onClose={() => {}} />);
+    const text = document.body.textContent;
+    expect(text).toContain("EE_LICENSE_KEY");
+    expect(text).toMatch(/EE_LICENSE_PUBLIC_KEY/);
+    expect(text).toMatch(/never a private signing key/i);
+    expect(text).toMatch(/Plan & License/);
+  });
+
   it("Activate license closes the dialog and opens Plan & License", () => {
     const onClose = vi.fn();
     render(<EnterpriseGateDialog open gate={memberGate} onClose={onClose} />);
