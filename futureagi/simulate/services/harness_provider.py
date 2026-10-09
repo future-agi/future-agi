@@ -1047,6 +1047,48 @@ def _scenario_row(reg, number: int | None = None) -> dict:
     }
 
 
+def _authoring_revision(job: HostedHarnessJob) -> str:
+    return str(
+        ((job.payload or {}).get("metadata") or {}).get("authoring_revision") or ""
+    )
+
+
+def _deliver_committed_suite(job_id, suite: list[dict], revision: str) -> bool:
+    """Bring saved chat workspaces and live sandboxes to a committed suite.
+
+    The job lock serializes deliveries and a suite a later edit replaced is skipped, so
+    live copies end on the suite the database holds. Delivery never fails a saved edit.
+    """
+    from simulate.services.hosted_harness_gateway import (
+        push_scenarios_into_live_sandbox,
+        rewrite_conversation_scenarios,
+    )
+
+    with transaction.atomic():
+        job = (
+            HostedHarnessJob.no_workspace_objects.select_for_update()
+            .filter(id=job_id)
+            .first()
+        )
+        if job is None or _authoring_revision(job) != revision:
+            logger.info("harness_superseded_delivery_skipped job_id=%s", job_id)
+            return False
+        try:
+            with transaction.atomic():
+                rewrite_conversation_scenarios(job, suite)
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "harness_conversation_rewrite_failed job_id=%s", job_id, exc_info=True
+            )
+        try:
+            return push_scenarios_into_live_sandbox(job, suite)
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "harness_live_sandbox_push_failed job_id=%s", job_id, exc_info=True
+            )
+            return False
+
+
 class HostedHarnessProvider:
     """Persist jobs and drive the configured managed sandbox through Temporal."""
 
@@ -1866,9 +1908,7 @@ class HostedHarnessProvider:
         from simulate.services.harness_scenarios import index_scenarios
         from simulate.services.hosted_harness_gateway import (
             AuthoringArchiveKept,
-            push_scenarios_into_live_sandbox,
             rewrite_authoring_scenarios,
-            rewrite_conversation_scenarios,
         )
 
         changes = request.validated_data["changes"]
@@ -2151,23 +2191,9 @@ class HostedHarnessProvider:
                     return refused_all("the scenario list could not be updated")
                 committed = suite
         if committed is not None:
-            # Sandboxes and saved chat workspaces follow the committed suite.
-            # A stale chat workspace is rebased on its next publish; a sandbox catches up.
-            try:
-                rewrite_conversation_scenarios(job, committed)
-            except Exception:  # noqa: BLE001
-                logger.warning(
-                    "harness_conversation_rewrite_failed job_id=%s",
-                    job.id,
-                    exc_info=True,
-                )
-            try:
-                delivered = push_scenarios_into_live_sandbox(job, committed)
-            except Exception:  # noqa: BLE001
-                logger.warning(
-                    "harness_live_sandbox_push_failed job_id=%s", job.id, exc_info=True
-                )
-                delivered = False
+            delivered = _deliver_committed_suite(
+                job.id, committed, _authoring_revision(job)
+            )
             if delivered:
                 receipts = [
                     (

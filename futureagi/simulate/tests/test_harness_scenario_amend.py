@@ -393,3 +393,119 @@ def test_the_last_scenario_cannot_be_dropped(user, workspace):
         job=job, kind="scenarios"
     )
     assert [one["name"] for one in output.data] == ["two"]
+
+
+def _sealing():
+    """A snapshot rewrite that, like the real one, records a new revision on the job."""
+    revisions = iter(range(1, 100))
+
+    def seal(job, suite):
+        payload = dict(job.payload or {})
+        payload["metadata"] = {
+            **(payload.get("metadata") or {}),
+            "authoring_revision": f"rev-{next(revisions)}",
+        }
+        job.payload = payload
+        job.save(update_fields=["payload", "updated_at"])
+
+    return seal
+
+
+def test_an_edit_superseded_before_it_delivers_never_reaches_the_sandbox(
+    user, workspace
+):
+    from simulate.services import harness_provider
+
+    job = _job(user, workspace, SUITE)
+    deliver = harness_provider._deliver_committed_suite
+    delivered = []
+    later = {"done": False}
+
+    def in_order(job_id, suite, revision):
+        # The first edit has committed; a second edit commits and delivers before it does.
+        if not later["done"]:
+            later["done"] = True
+            _post(
+                user,
+                job,
+                [
+                    {
+                        "op": "set_field",
+                        "scenario": "one",
+                        "field": "tests",
+                        "value": "newer",
+                    }
+                ],
+            )
+        return deliver(job_id, suite, revision)
+
+    with (
+        patch(
+            "simulate.services.hosted_harness_gateway.push_scenarios_into_live_sandbox",
+            side_effect=lambda job, suite: delivered.append(suite[0]["tests"]) or True,
+        ),
+        patch(
+            "simulate.services.hosted_harness_gateway.rewrite_conversation_scenarios",
+            return_value=0,
+        ),
+        patch(
+            "simulate.services.hosted_harness_gateway.rewrite_authoring_scenarios",
+            side_effect=_sealing(),
+        ),
+        patch.object(
+            harness_provider, "_deliver_committed_suite", side_effect=in_order
+        ),
+    ):
+        older = _post(
+            user,
+            job,
+            [
+                {
+                    "op": "set_field",
+                    "scenario": "one",
+                    "field": "tests",
+                    "value": "older",
+                }
+            ],
+        )
+
+    assert delivered == ["newer"]
+    assert older.json()["receipts"][0]["outcome"] == "applied"
+    output = HostedHarnessStageOutput.no_workspace_objects.get(
+        job=job, kind="scenarios"
+    )
+    assert output.data[0]["tests"] == "newer"
+
+
+def test_a_committed_edit_with_no_later_one_is_delivered(user, workspace):
+    job = _job(user, workspace, SUITE)
+    with (
+        patch(
+            "simulate.services.hosted_harness_gateway.push_scenarios_into_live_sandbox",
+            return_value=True,
+        ) as pushed,
+        patch(
+            "simulate.services.hosted_harness_gateway.rewrite_conversation_scenarios",
+            return_value=0,
+        ) as rebased,
+        patch(
+            "simulate.services.hosted_harness_gateway.rewrite_authoring_scenarios",
+            side_effect=_sealing(),
+        ),
+    ):
+        response = _post(
+            user,
+            job,
+            [
+                {
+                    "op": "set_field",
+                    "scenario": "one",
+                    "field": "tests",
+                    "value": "reworded",
+                }
+            ],
+        )
+
+    assert response.json()["receipts"][0]["outcome"] == "queued"
+    pushed.assert_called_once()
+    rebased.assert_called_once()
