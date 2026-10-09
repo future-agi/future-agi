@@ -155,6 +155,30 @@ def test_opt_out_drops_events_without_network(monkeypatch):
     store.assert_not_called()
 
 
+def test_request_events_reuse_cached_install_id(monkeypatch):
+    state = SimpleNamespace(instance_id=uuid4())
+    state_calls = []
+    monkeypatch.setattr(
+        "tfc.deployment_telemetry.events.get_or_create_telemetry_state",
+        lambda: state_calls.append(state) or state,
+    )
+    with patch("tfc.deployment_telemetry.events._schedule_flush"):
+        assert record_event(
+            "user_logged_in",
+            actor_type="human_user",
+            actor_id="user-1",
+            source="web",
+        )
+        assert record_event(
+            "user_logged_in",
+            actor_type="human_user",
+            actor_id="user-2",
+            source="web",
+        )
+
+    assert len(state_calls) == 1
+
+
 def test_request_event_attributes_api_key_actor_without_request_body():
     request = SimpleNamespace(
         path="/api/agent/run",

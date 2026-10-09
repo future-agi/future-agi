@@ -19,6 +19,7 @@ from django.utils import timezone
 
 from tfc.deployment_telemetry.config import (
     detect_deployment_type,
+    get_telemetry_buffer_dir,
     get_version,
     is_self_hosted_deployment,
     telemetry_is_disabled,
@@ -71,6 +72,8 @@ EVENT_PROPERTY_KEYS = frozenset(
 _flush_lock = threading.Lock()
 _flush_thread_lock = threading.Lock()
 _flush_thread: threading.Thread | None = None
+_instance_id_cache_lock = threading.Lock()
+_instance_id_cache: tuple[str, UUID] | None = None
 
 
 def pseudonymous_id(value: Any, prefix: str, instance_id: UUID | str | None = None) -> str:
@@ -217,18 +220,34 @@ def _schedule_flush() -> None:
         _flush_thread.start()
 
 
+def _get_cached_instance_id() -> UUID:
+    """Resolve the install ID once per process instead of locking the DB per request."""
+    global _instance_id_cache
+    scope = str(get_telemetry_buffer_dir())
+    cached = _instance_id_cache
+    if cached is not None and cached[0] == scope:
+        return cached[1]
+    with _instance_id_cache_lock:
+        cached = _instance_id_cache
+        if cached is not None and cached[0] == scope:
+            return cached[1]
+        instance_id = get_or_create_telemetry_state().instance_id
+        _instance_id_cache = (scope, instance_id)
+        return instance_id
+
+
 def record_event(event_name: str, **kwargs) -> bool:
     """Enqueue one event and trigger a non-blocking best-effort flush."""
     if telemetry_is_disabled() or not is_self_hosted_deployment():
         return False
-    state = get_or_create_telemetry_state()
+    instance_id = _get_cached_instance_id()
     if kwargs.get("actor_id") and kwargs.get("actor_type") != "anonymous":
         # Callers provide the stable source identifier (user/API-key id), not
         # an email or credential. Scope it to this install before it leaves.
         kwargs["actor_id"] = pseudonymous_id(
-            kwargs["actor_id"], kwargs.get("actor_type", "actor"), state.instance_id
+            kwargs["actor_id"], kwargs.get("actor_type", "actor"), instance_id
         )
-    event = build_event(event_name, instance_id=state.instance_id, **kwargs)
+    event = build_event(event_name, instance_id=instance_id, **kwargs)
     stored = _store_event(event)
     if stored:
         _schedule_flush()
@@ -251,6 +270,8 @@ def record_event_for_instance(instance_id: UUID, event_name: str, **kwargs) -> b
 
 def record_request_event(request, response, duration_ms: float) -> bool:
     """Record an authenticated/anonymous request without reading its body."""
+    if telemetry_is_disabled() or not is_self_hosted_deployment():
+        return False
     path = getattr(request, "path", "") or ""
     if path.startswith(("/telemetry/", "/health", "/ready", "/static/", "/admin/", "/favicon.ico")):
         return False
