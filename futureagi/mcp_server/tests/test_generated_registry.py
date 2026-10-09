@@ -11,10 +11,13 @@ from mcp_server.generated_registry import (
 def test_committed_generated_registry_loads_all_tools():
     registry = GeneratedToolRegistry.from_manifest()
 
-    assert registry.count() == 92
+    assert registry.count() == 95
     assert registry.get("list_datasets").group == "datasets"
     assert registry.get("get_dashboard").group == "dashboards"
     assert registry.get("get_gateway_config").group == "gateway"
+    assert registry.get("list_custom_eval_configs").group == "observability"
+    assert registry.get("create_custom_eval_config").group == "observability"
+    assert registry.get("check_eval_config_exists").group == "observability"
     assert registry.get("missing") is None
 
 
