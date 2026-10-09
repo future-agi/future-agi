@@ -18,6 +18,9 @@ def test_sandbox_imports_without_the_resource_module(monkeypatch):
     # it does on a platform that does not ship the module.
     monkeypatch.setitem(sys.modules, "resource", None)
     monkeypatch.delitem(sys.modules, SANDBOX, raising=False)
+    # Re-importing also rebinds ``fi_utils.sandbox`` on the parent package; put
+    # the original back afterwards so later tests get the live module.
+    monkeypatch.delattr(SANDBOX, raising=False)
 
     sandbox = importlib.import_module(SANDBOX)
 
