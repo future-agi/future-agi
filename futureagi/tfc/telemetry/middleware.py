@@ -339,15 +339,31 @@ class OTelContextMiddleware:
         if hasattr(user, "email") and user.email:
             span.set_attribute("enduser.email", user.email)
 
-        # Organization context
+        # Organization context.  Do not dereference ``user.organization``
+        # here: AuthenticationMiddleware normally loads a User without the
+        # related Organization, so doing so would add a synchronous ORM query
+        # to every authenticated request.  Use an organization already
+        # attached to the request or present in Django's relation cache.
         org_id = None
         org_name = None
 
-        if hasattr(user, "organization_id"):
+        deferred_fields = getattr(user, "get_deferred_fields", lambda: set())()
+        if "organization_id" not in deferred_fields and hasattr(
+            user, "organization_id"
+        ):
             org_id = user.organization_id
-        if hasattr(user, "organization") and user.organization:
-            org_id = getattr(user.organization, "id", org_id)
-            org_name = getattr(user.organization, "name", None)
+
+        missing = object()
+        organization = getattr(request, "organization", missing)
+        if organization is missing:
+            state = getattr(user, "_state", None)
+            fields_cache = getattr(state, "fields_cache", None)
+            organization = (
+                fields_cache.get("organization") if fields_cache is not None else None
+            )
+        if organization is not None:
+            org_id = getattr(organization, "id", org_id)
+            org_name = getattr(organization, "name", None)
 
         if org_id:
             span.set_attribute("organization.id", str(org_id))
