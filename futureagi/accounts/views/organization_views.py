@@ -10,6 +10,7 @@ from accounts.models.user import OrgApiKey
 from accounts.models.workspace import Workspace, WorkspaceMembership
 from accounts.serializers.contracts import (
     ACCOUNTS_ERROR_RESPONSES,
+    ACCOUNTS_GATED_CREATE_ERROR_RESPONSES,
     AdditionalOrganizationCreateResponseSerializer,
     OrganizationCreateRequestSerializer,
     OrganizationCreateResponseSerializer,
@@ -19,6 +20,8 @@ from accounts.serializers.contracts import (
 )
 from accounts.services.workspace_membership import create_workspace_membership
 from accounts.utils import process_post_registration
+from tfc.capabilities import edition
+from tfc.capabilities.edition import EditionResource
 from tfc.constants.email import FREE_EMAIL_DOMAINS
 from tfc.constants.levels import Level
 from tfc.constants.roles import OrganizationRoles
@@ -42,7 +45,7 @@ class OrganizationCreateAPIView(APIView):
         request_serializer=OrganizationNameRequestSerializer,
         responses={
             201: OrganizationCreateResponseSerializer,
-            **ACCOUNTS_ERROR_RESPONSES,
+            **ACCOUNTS_GATED_CREATE_ERROR_RESPONSES,
         },
         reject_unknown_fields=True,
     )
@@ -68,6 +71,11 @@ class OrganizationCreateAPIView(APIView):
                 org_name = domain.split(".")[0]
 
         with transaction.atomic():
+            # Community edition: one organization per install (no-op on Cloud
+            # and when licensed); the default workspace follows this decision.
+            with edition.creation_lock():
+                edition.assert_can_create(EditionResource.ORGANIZATION)
+
             # 1. Create Organization
             organization = Organization.objects.create(name=org_name)
 
@@ -218,7 +226,7 @@ class CreateAdditionalOrganizationView(APIView):
         request_serializer=OrganizationCreateRequestSerializer,
         responses={
             201: AdditionalOrganizationCreateResponseSerializer,
-            **ACCOUNTS_ERROR_RESPONSES,
+            **ACCOUNTS_GATED_CREATE_ERROR_RESPONSES,
         },
         reject_unknown_fields=True,
     )
@@ -233,6 +241,11 @@ class CreateAdditionalOrganizationView(APIView):
             return gm.bad_request("Organization name is required.")
 
         with transaction.atomic():
+            # Community edition: one organization per install (no-op on Cloud
+            # and when licensed); the default workspace follows this decision.
+            with edition.creation_lock():
+                edition.assert_can_create(EditionResource.ORGANIZATION)
+
             # 1. Create Organization
             organization = Organization.objects.create(
                 name=org_name,

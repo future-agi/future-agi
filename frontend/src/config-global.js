@@ -87,4 +87,6 @@ export const AUTH0_API = {
 export const MAPBOX_API = import.meta.env.VITE_MAPBOX_API;
 
 // ROOT PATH AFTER LOGIN SUCCESSFUL
-export const PATH_AFTER_LOGIN = paths.dashboard.falconAI; // as '/dashboard/falcon-ai'
+// Self-hosted installs land on Get started (an included product); the real
+// landing is decided by usePostLoginPath (src/hooks/useDeploymentMode.js).
+export const PATH_AFTER_LOGIN = paths.dashboard.getstarted;

@@ -406,8 +406,10 @@ import type {
   DynamicColumnCreateResponseApi,
   DynamicColumnMessageResponseApi,
   EditRunPromptColumnApi,
+  EditionEnvelopeApi,
   EmbeddingsResponseApi,
   EmptyRequestApi,
+  EnterpriseGateErrorResponseApi,
   EnterpriseHeartbeatResponseApi,
   ErrorResponseApi,
   EvalApiLogRowResponseApi,
@@ -2492,19 +2494,26 @@ export type accountsActivateReadResponse200 = {
   status: 200;
 };
 
+export type accountsActivateReadResponse402 = {
+  data: EnterpriseGateErrorResponseApi;
+  status: 402;
+};
+
 export type accountsActivateReadResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 200 | 402>;
 };
 
 export type accountsActivateReadResponseSuccess =
   accountsActivateReadResponse200 & {
     headers: Headers;
   };
-export type accountsActivateReadResponseError =
-  accountsActivateReadResponseDefault & {
-    headers: Headers;
-  };
+export type accountsActivateReadResponseError = (
+  | accountsActivateReadResponse402
+  | accountsActivateReadResponseDefault
+) & {
+  headers: Headers;
+};
 
 export type accountsActivateReadResponse =
   | accountsActivateReadResponseSuccess
@@ -2613,6 +2622,11 @@ export type accountsAppsmithUsersCreateResponse401 = {
   status: 401;
 };
 
+export type accountsAppsmithUsersCreateResponse402 = {
+  data: EnterpriseGateErrorResponseApi;
+  status: 402;
+};
+
 export type accountsAppsmithUsersCreateResponse403 = {
   data: AccountsErrorResponseApi;
   status: 403;
@@ -2630,7 +2644,7 @@ export type accountsAppsmithUsersCreateResponse500 = {
 
 export type accountsAppsmithUsersCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201 | 400 | 401 | 403 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 201 | 400 | 401 | 402 | 403 | 404 | 500>;
 };
 
 export type accountsAppsmithUsersCreateResponseSuccess =
@@ -2640,6 +2654,7 @@ export type accountsAppsmithUsersCreateResponseSuccess =
 export type accountsAppsmithUsersCreateResponseError = (
   | accountsAppsmithUsersCreateResponse400
   | accountsAppsmithUsersCreateResponse401
+  | accountsAppsmithUsersCreateResponse402
   | accountsAppsmithUsersCreateResponse403
   | accountsAppsmithUsersCreateResponse404
   | accountsAppsmithUsersCreateResponse500
@@ -4717,6 +4732,11 @@ export type accountsOrganizationInviteCreateResponse401 = {
   status: 401;
 };
 
+export type accountsOrganizationInviteCreateResponse402 = {
+  data: EnterpriseGateErrorResponseApi;
+  status: 402;
+};
+
 export type accountsOrganizationInviteCreateResponse403 = {
   data: AccountsErrorResponseApi;
   status: 403;
@@ -4734,7 +4754,7 @@ export type accountsOrganizationInviteCreateResponse500 = {
 
 export type accountsOrganizationInviteCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 403 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>;
 };
 
 export type accountsOrganizationInviteCreateResponseSuccess =
@@ -4744,6 +4764,7 @@ export type accountsOrganizationInviteCreateResponseSuccess =
 export type accountsOrganizationInviteCreateResponseError = (
   | accountsOrganizationInviteCreateResponse400
   | accountsOrganizationInviteCreateResponse401
+  | accountsOrganizationInviteCreateResponse402
   | accountsOrganizationInviteCreateResponse403
   | accountsOrganizationInviteCreateResponse404
   | accountsOrganizationInviteCreateResponse500
@@ -4872,6 +4893,11 @@ export type accountsOrganizationInviteResendCreateResponse401 = {
   status: 401;
 };
 
+export type accountsOrganizationInviteResendCreateResponse402 = {
+  data: EnterpriseGateErrorResponseApi;
+  status: 402;
+};
+
 export type accountsOrganizationInviteResendCreateResponse403 = {
   data: AccountsErrorResponseApi;
   status: 403;
@@ -4889,7 +4915,7 @@ export type accountsOrganizationInviteResendCreateResponse500 = {
 
 export type accountsOrganizationInviteResendCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 403 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>;
 };
 
 export type accountsOrganizationInviteResendCreateResponseSuccess =
@@ -4899,6 +4925,7 @@ export type accountsOrganizationInviteResendCreateResponseSuccess =
 export type accountsOrganizationInviteResendCreateResponseError = (
   | accountsOrganizationInviteResendCreateResponse400
   | accountsOrganizationInviteResendCreateResponse401
+  | accountsOrganizationInviteResendCreateResponse402
   | accountsOrganizationInviteResendCreateResponse403
   | accountsOrganizationInviteResendCreateResponse404
   | accountsOrganizationInviteResendCreateResponse500
@@ -5043,6 +5070,11 @@ export type accountsOrganizationMembersReactivateCreateResponse401 = {
   status: 401;
 };
 
+export type accountsOrganizationMembersReactivateCreateResponse402 = {
+  data: EnterpriseGateErrorResponseApi;
+  status: 402;
+};
+
 export type accountsOrganizationMembersReactivateCreateResponse403 = {
   data: AccountsErrorResponseApi;
   status: 403;
@@ -5060,7 +5092,7 @@ export type accountsOrganizationMembersReactivateCreateResponse500 = {
 
 export type accountsOrganizationMembersReactivateCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 403 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>;
 };
 
 export type accountsOrganizationMembersReactivateCreateResponseSuccess =
@@ -5070,6 +5102,7 @@ export type accountsOrganizationMembersReactivateCreateResponseSuccess =
 export type accountsOrganizationMembersReactivateCreateResponseError = (
   | accountsOrganizationMembersReactivateCreateResponse400
   | accountsOrganizationMembersReactivateCreateResponse401
+  | accountsOrganizationMembersReactivateCreateResponse402
   | accountsOrganizationMembersReactivateCreateResponse403
   | accountsOrganizationMembersReactivateCreateResponse404
   | accountsOrganizationMembersReactivateCreateResponse500
@@ -5426,6 +5459,11 @@ export type accountsOrganizationsCreateCreateResponse401 = {
   status: 401;
 };
 
+export type accountsOrganizationsCreateCreateResponse402 = {
+  data: EnterpriseGateErrorResponseApi;
+  status: 402;
+};
+
 export type accountsOrganizationsCreateCreateResponse403 = {
   data: AccountsErrorResponseApi;
   status: 403;
@@ -5443,7 +5481,7 @@ export type accountsOrganizationsCreateCreateResponse500 = {
 
 export type accountsOrganizationsCreateCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201 | 400 | 401 | 403 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 201 | 400 | 401 | 402 | 403 | 404 | 500>;
 };
 
 export type accountsOrganizationsCreateCreateResponseSuccess =
@@ -5453,6 +5491,7 @@ export type accountsOrganizationsCreateCreateResponseSuccess =
 export type accountsOrganizationsCreateCreateResponseError = (
   | accountsOrganizationsCreateCreateResponse400
   | accountsOrganizationsCreateCreateResponse401
+  | accountsOrganizationsCreateCreateResponse402
   | accountsOrganizationsCreateCreateResponse403
   | accountsOrganizationsCreateCreateResponse404
   | accountsOrganizationsCreateCreateResponse500
@@ -5577,6 +5616,11 @@ export type accountsOrganizationsNewCreateResponse401 = {
   status: 401;
 };
 
+export type accountsOrganizationsNewCreateResponse402 = {
+  data: EnterpriseGateErrorResponseApi;
+  status: 402;
+};
+
 export type accountsOrganizationsNewCreateResponse403 = {
   data: AccountsErrorResponseApi;
   status: 403;
@@ -5594,7 +5638,7 @@ export type accountsOrganizationsNewCreateResponse500 = {
 
 export type accountsOrganizationsNewCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201 | 400 | 401 | 403 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 201 | 400 | 401 | 402 | 403 | 404 | 500>;
 };
 
 export type accountsOrganizationsNewCreateResponseSuccess =
@@ -5604,6 +5648,7 @@ export type accountsOrganizationsNewCreateResponseSuccess =
 export type accountsOrganizationsNewCreateResponseError = (
   | accountsOrganizationsNewCreateResponse400
   | accountsOrganizationsNewCreateResponse401
+  | accountsOrganizationsNewCreateResponse402
   | accountsOrganizationsNewCreateResponse403
   | accountsOrganizationsNewCreateResponse404
   | accountsOrganizationsNewCreateResponse500
@@ -6712,6 +6757,11 @@ export type accountsSignupCreateResponse401 = {
   status: 401;
 };
 
+export type accountsSignupCreateResponse402 = {
+  data: EnterpriseGateErrorResponseApi;
+  status: 402;
+};
+
 export type accountsSignupCreateResponse403 = {
   data: AccountsErrorResponseApi;
   status: 403;
@@ -6729,7 +6779,7 @@ export type accountsSignupCreateResponse500 = {
 
 export type accountsSignupCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 403 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>;
 };
 
 export type accountsSignupCreateResponseSuccess =
@@ -6739,6 +6789,7 @@ export type accountsSignupCreateResponseSuccess =
 export type accountsSignupCreateResponseError = (
   | accountsSignupCreateResponse400
   | accountsSignupCreateResponse401
+  | accountsSignupCreateResponse402
   | accountsSignupCreateResponse403
   | accountsSignupCreateResponse404
   | accountsSignupCreateResponse500
@@ -6855,6 +6906,11 @@ export type accountsTeamUsersCreateResponse401 = {
   status: 401;
 };
 
+export type accountsTeamUsersCreateResponse402 = {
+  data: EnterpriseGateErrorResponseApi;
+  status: 402;
+};
+
 export type accountsTeamUsersCreateResponse403 = {
   data: AccountsErrorResponseApi;
   status: 403;
@@ -6872,7 +6928,7 @@ export type accountsTeamUsersCreateResponse500 = {
 
 export type accountsTeamUsersCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201 | 400 | 401 | 403 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 201 | 400 | 401 | 402 | 403 | 404 | 500>;
 };
 
 export type accountsTeamUsersCreateResponseSuccess =
@@ -6882,6 +6938,7 @@ export type accountsTeamUsersCreateResponseSuccess =
 export type accountsTeamUsersCreateResponseError = (
   | accountsTeamUsersCreateResponse400
   | accountsTeamUsersCreateResponse401
+  | accountsTeamUsersCreateResponse402
   | accountsTeamUsersCreateResponse403
   | accountsTeamUsersCreateResponse404
   | accountsTeamUsersCreateResponse500
@@ -7832,6 +7889,11 @@ export type accountsWorkspaceInviteCreateResponse401 = {
   status: 401;
 };
 
+export type accountsWorkspaceInviteCreateResponse402 = {
+  data: EnterpriseGateErrorResponseApi;
+  status: 402;
+};
+
 export type accountsWorkspaceInviteCreateResponse403 = {
   data: AccountsErrorResponseApi;
   status: 403;
@@ -7849,7 +7911,7 @@ export type accountsWorkspaceInviteCreateResponse500 = {
 
 export type accountsWorkspaceInviteCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 403 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>;
 };
 
 export type accountsWorkspaceInviteCreateResponseSuccess =
@@ -7859,6 +7921,7 @@ export type accountsWorkspaceInviteCreateResponseSuccess =
 export type accountsWorkspaceInviteCreateResponseError = (
   | accountsWorkspaceInviteCreateResponse400
   | accountsWorkspaceInviteCreateResponse401
+  | accountsWorkspaceInviteCreateResponse402
   | accountsWorkspaceInviteCreateResponse403
   | accountsWorkspaceInviteCreateResponse404
   | accountsWorkspaceInviteCreateResponse500
@@ -8405,6 +8468,11 @@ export type accountsWorkspacesCreateResponse401 = {
   status: 401;
 };
 
+export type accountsWorkspacesCreateResponse402 = {
+  data: EnterpriseGateErrorResponseApi;
+  status: 402;
+};
+
 export type accountsWorkspacesCreateResponse403 = {
   data: AccountsErrorResponseApi;
   status: 403;
@@ -8422,7 +8490,7 @@ export type accountsWorkspacesCreateResponse500 = {
 
 export type accountsWorkspacesCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201 | 400 | 401 | 403 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 201 | 400 | 401 | 402 | 403 | 404 | 500>;
 };
 
 export type accountsWorkspacesCreateResponseSuccess =
@@ -8432,6 +8500,7 @@ export type accountsWorkspacesCreateResponseSuccess =
 export type accountsWorkspacesCreateResponseError = (
   | accountsWorkspacesCreateResponse400
   | accountsWorkspacesCreateResponse401
+  | accountsWorkspacesCreateResponse402
   | accountsWorkspacesCreateResponse403
   | accountsWorkspacesCreateResponse404
   | accountsWorkspacesCreateResponse500
@@ -8781,6 +8850,11 @@ export type accountsWorkspacesMembersCreateResponse401 = {
   status: 401;
 };
 
+export type accountsWorkspacesMembersCreateResponse402 = {
+  data: EnterpriseGateErrorResponseApi;
+  status: 402;
+};
+
 export type accountsWorkspacesMembersCreateResponse403 = {
   data: AccountsErrorResponseApi;
   status: 403;
@@ -8798,7 +8872,7 @@ export type accountsWorkspacesMembersCreateResponse500 = {
 
 export type accountsWorkspacesMembersCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201 | 400 | 401 | 403 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 201 | 400 | 401 | 402 | 403 | 404 | 500>;
 };
 
 export type accountsWorkspacesMembersCreateResponseSuccess =
@@ -8808,6 +8882,7 @@ export type accountsWorkspacesMembersCreateResponseSuccess =
 export type accountsWorkspacesMembersCreateResponseError = (
   | accountsWorkspacesMembersCreateResponse400
   | accountsWorkspacesMembersCreateResponse401
+  | accountsWorkspacesMembersCreateResponse402
   | accountsWorkspacesMembersCreateResponse403
   | accountsWorkspacesMembersCreateResponse404
   | accountsWorkspacesMembersCreateResponse500
@@ -18881,6 +18956,48 @@ export const apiDeploymentInfoList = async (
   );
 };
 
+export type apiEditionListResponse200 = {
+  data: EditionEnvelopeApi;
+  status: 200;
+};
+
+export type apiEditionListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type apiEditionListResponseSuccess = apiEditionListResponse200 & {
+  headers: Headers;
+};
+export type apiEditionListResponseError = apiEditionListResponseDefault & {
+  headers: Headers;
+};
+
+export type apiEditionListResponse =
+  | apiEditionListResponseSuccess
+  | apiEditionListResponseError;
+
+export const getApiEditionListUrl = () => {
+  return `/api/edition/`;
+};
+
+/**
+ * GET /api/edition/: the self-hosted edition, Community limits with current
+usage, and (admins only) the licence status, for Settings > Plan & License.
+
+Cloud answers ``{"edition": "cloud"}``. The raw licence key is never
+returned or logged: the licence id is masked and the key appears only as
+the first 8 hex digits of its SHA-256.
+ */
+export const apiEditionList = async (
+  options?: RequestInit,
+): Promise<apiEditionListResponse> => {
+  return apiMutator<apiEditionListResponse>(getApiEditionListUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
 export type apiHealthClickhouseListResponse200 = {
   data: ClickHouseHealthResponseApi;
   status: 200;
@@ -19164,10 +19281,10 @@ export const getApiSetupChecksListUrl = () => {
  * Returns ``{"status": "ok"|"issues", "mode": ..., "setup":
 "standalone"|"distributed"|"helm", "collector_http_url": ...,
 "account_exists": true|false, "checks": [...]}``. No auth — it runs
-before anyone can sign in. Self-hosted only:
-on cloud and EE the route answers 404, so neither the internal service
-topology nor the outbound probes it triggers are reachable by an
-anonymous caller.
+before anyone can sign in. Self-hosted only, licensed or not (TH-8084):
+on Cloud the route answers 404, so neither the internal service topology
+nor the outbound probes it triggers are reachable by an anonymous caller
+there. A self-hosted operator already controls who can reach the install.
  * @summary Public infrastructure probe for the OSS first-run setup screen.
  */
 export const apiSetupChecksList = async (

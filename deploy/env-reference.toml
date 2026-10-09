@@ -1009,6 +1009,12 @@ a Mixpanel token.
     text = "`false` turns Sentry off even with a DSN."
 
     [[part.section.row]]
+    keys = ["COMMERCIAL_QUOTAS_ENABLED"]
+    default = "`false` in both compose files, the Standalone image and the chart (`config.commercialQuotas`)"
+    setups = ["S", "D", "H"]
+    text = "Future AGI Cloud's plan quotas in fi-collector and agentcc-gateway: the free-tier caps on `usage:` counters, `quota:` limits and budget `pause:` keys. Unset, both binaries turn them on, which is right only for Future AGI Cloud. Self-hosted installs keep it `false`, so Redis keys carried over from Cloud can never cap them; Redis still serves auth and API key revocation, and customer gateway budgets stay on. Upgrading with your own compose file or Helm values: add `COMMERCIAL_QUOTAS_ENABLED=false` (or `config.commercialQuotas: false`). `true`, `1`, `yes`, `on`, `false`, `0`, `no` and `off` are accepted; anything else stops the service at start."
+
+    [[part.section.row]]
     keys = ["USAGE_EVENTS_ENABLED"]
     default = "`false` in both compose files and the chart (`config.usageEvents`)"
     setups = ["S", "D", "H"]

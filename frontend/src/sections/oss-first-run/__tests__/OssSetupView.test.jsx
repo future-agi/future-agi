@@ -2,10 +2,15 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import OssSetupView from "../OssSetupView";
 
-const h = vi.hoisted(() => ({ navigate: vi.fn(), authenticated: false }));
+const h = vi.hoisted(() => ({
+  navigate: vi.fn(),
+  authenticated: false,
+  mode: "oss",
+}));
 
 vi.mock("react-router-dom", () => ({
-  Navigate: () => null,
+  // eslint-disable-next-line react/prop-types
+  Navigate: ({ to }) => <p>{`redirect:${to}`}</p>,
   useNavigate: () => h.navigate,
 }));
 vi.mock("src/routes/paths", () => ({
@@ -17,7 +22,15 @@ vi.mock("src/auth/hooks", () => ({
   useAuthContext: () => ({ authenticated: h.authenticated }),
 }));
 vi.mock("src/hooks/useDeploymentMode", () => ({
-  useDeploymentMode: () => ({ isOSS: true, isLoading: false, isSuccess: true }),
+  useDeploymentMode: () => ({
+    mode: h.mode,
+    isOSS: h.mode === "oss",
+    isEE: h.mode === "ee",
+    isCloud: h.mode === "cloud",
+    isSelfHosted: h.mode !== "cloud",
+    isLoading: false,
+    isSuccess: true,
+  }),
   usePostLoginPath: () => "/dashboard",
 }));
 vi.mock("src/components/loading-screen", () => ({ SplashScreen: () => null }));
@@ -57,6 +70,7 @@ const continueWith = (label) => {
 beforeEach(() => {
   vi.clearAllMocks();
   h.authenticated = false;
+  h.mode = "oss";
 });
 
 describe("OssSetupView", () => {
@@ -74,5 +88,21 @@ describe("OssSetupView", () => {
     h.authenticated = true;
     continueWith("Continue with an account");
     expect(h.navigate).toHaveBeenCalledWith("/dashboard");
+  });
+});
+
+// TH-8084 option 1: a licence does not take the first-run screen away.
+describe("OssSetupView by deployment", () => {
+  it("ee: a licensed self-hosted install runs the checks", () => {
+    h.mode = "ee";
+    continueWith("Continue with an account");
+    expect(h.navigate).toHaveBeenCalledWith("/auth/jwt/login");
+  });
+
+  it("cloud: a typed /setup goes to the app", () => {
+    h.mode = "cloud";
+    render(<OssSetupView />);
+    expect(screen.getByText("redirect:/dashboard")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Pick mode" })).toBeNull();
   });
 });

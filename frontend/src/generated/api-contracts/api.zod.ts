@@ -9373,6 +9373,7 @@ export const ApiCapabilitiesListResponse = zod.object({
         "NETWORK_REQUIRED",
         "USAGE_LIMIT_REACHED",
         "PLAN_FEATURE_MISSING",
+        "ENTERPRISE_FEATURE_REQUIRED",
         "LICENSE_VERSION_UNSUPPORTED",
       ]),
       requires_network: zod.boolean(),
@@ -9414,6 +9415,78 @@ export const ApiDeploymentInfoListResponse = zod.object({
   status: zod.boolean().default(apiDeploymentInfoListResponseStatusDefault),
   result: zod.object({
     mode: zod.enum(["oss", "ee", "cloud"]),
+  }),
+});
+
+/**
+ * GET /api/edition/: the self-hosted edition, Community limits with current
+usage, and (admins only) the licence status, for Settings > Plan & License.
+
+Cloud answers ``{"edition": "cloud"}``. The raw licence key is never
+returned or logged: the licence id is masked and the key appears only as
+the first 8 hex digits of its SHA-256.
+ */
+export const apiEditionListResponseResultLimitsOrganizationsCurrentMin = 0;
+
+export const apiEditionListResponseResultLimitsWorkspacesCurrentMin = 0;
+
+export const apiEditionListResponseResultLimitsMembersCurrentMin = 0;
+
+export const ApiEditionListResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    edition: zod.enum(["community", "enterprise", "cloud"]),
+    deployment: zod.enum(["self_hosted", "cloud"]).optional(),
+    limits: zod
+      .object({
+        organizations: zod.object({
+          limit: zod.number(),
+          current: zod
+            .number()
+            .min(apiEditionListResponseResultLimitsOrganizationsCurrentMin),
+        }),
+        workspaces: zod.object({
+          limit: zod.number(),
+          current: zod
+            .number()
+            .min(apiEditionListResponseResultLimitsWorkspacesCurrentMin),
+        }),
+        members: zod.object({
+          limit: zod.number(),
+          current: zod
+            .number()
+            .min(apiEditionListResponseResultLimitsMembersCurrentMin),
+        }),
+      })
+      .optional(),
+    over_limit: zod.boolean().optional(),
+    enterprise_features: zod.array(zod.string().min(1)).optional(),
+    contact: zod.string().email().min(1).optional(),
+    activation: zod
+      .object({
+        method: zod.enum(["env_restart"]),
+      })
+      .optional(),
+    license: zod
+      .object({
+        state: zod.enum([
+          "not_applicable",
+          "missing",
+          "invalid",
+          "active",
+          "grace",
+          "expired",
+          "trial_active",
+          "trial_expired",
+        ]),
+        license_type: zod.enum(["production", "trial"]),
+        issued_to: zod.string(),
+        expires_at: zod.string().datetime({ offset: true }),
+        grace_ends_at: zod.string().datetime({ offset: true }),
+        license_id_masked: zod.string().min(1),
+        key_fingerprint: zod.string().min(1),
+      })
+      .optional(),
   }),
 });
 
@@ -9492,10 +9565,10 @@ export const ApiPublicTracesListResponse = zod.object({
  * Returns ``{"status": "ok"|"issues", "mode": ..., "setup":
 "standalone"|"distributed"|"helm", "collector_http_url": ...,
 "account_exists": true|false, "checks": [...]}``. No auth — it runs
-before anyone can sign in. Self-hosted only:
-on cloud and EE the route answers 404, so neither the internal service
-topology nor the outbound probes it triggers are reachable by an
-anonymous caller.
+before anyone can sign in. Self-hosted only, licensed or not (TH-8084):
+on Cloud the route answers 404, so neither the internal service topology
+nor the outbound probes it triggers are reachable by an anonymous caller
+there. A self-hosted operator already controls who can reach the install.
  * @summary Public infrastructure probe for the OSS first-run setup screen.
  */
 export const apiSetupChecksListResponseStatusDefault = true;
@@ -71417,3 +71490,29 @@ export const V1SelfHostedActivationsCreateResponse = zod.object({
   allowed_models: zod.array(zod.string().min(1)),
   scope: zod.enum(["oss", "enterprise"]),
 });
+
+/**
+ * String error message, or the structured capability denial.
+ * The management OpenAPI schema omits error responses from Orval's Zod output,
+ * so this named contract is emitted from the same schema as api.ts.
+ */
+export const EnterpriseGateErrorResponseApiErrorDetail = zod.object({
+  feature: zod.enum([
+    "organizations",
+    "workspaces",
+    "members",
+    "error_feed",
+    "falcon_ai",
+    "protect",
+    "turing_models",
+  ]),
+});
+
+export const EnterpriseGateErrorResponseApiError = zod.union([
+  zod.string(),
+  zod.object({
+    code: zod.string(),
+    message: zod.string(),
+    detail: EnterpriseGateErrorResponseApiErrorDetail,
+  }),
+]);

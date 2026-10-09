@@ -856,3 +856,77 @@ class TestErrorResponseEnvelope:
         data = resp.json()
         assert data["status"] is False
         assert "error_code" in data["result"]
+
+
+# ---------------------------------------------------------------------------
+# The per-IP limit on login, token and signup requests (AuthMonitoringMiddleware)
+# comes from MAX_LOGIN_ATTEMPTS_PER_HOUR in the environment, default 10. The
+# E2E stacks raise it: their licensed backend applies the limit, and every
+# actor reaches the API from the same address (TH-8084).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "value, expected", [(None, "10"), ("", "10"), ("250", "250")]
+)
+def test_the_per_ip_auth_limit_comes_from_the_environment(value, expected):
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    backend_root = Path(__file__).resolve().parents[2]
+    environment = {
+        key: val
+        for key, val in os.environ.items()
+        if key != "MAX_LOGIN_ATTEMPTS_PER_HOUR"
+    }
+    environment.update(
+        DJANGO_SETTINGS_MODULE="tfc.settings.test", NO_STARTUP_DB_MUTATIONS="true"
+    )
+    if value is not None:
+        environment["MAX_LOGIN_ATTEMPTS_PER_HOUR"] = value
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from django.conf import settings; "
+            "print('LIMIT', settings.MAX_LOGIN_ATTEMPTS_PER_HOUR)",
+        ],
+        cwd=backend_root,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"LIMIT {expected}" in result.stdout.splitlines()
+
+
+def test_a_bad_per_ip_auth_limit_stops_start_up():
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from django.conf import settings; settings.MAX_LOGIN_ATTEMPTS_PER_HOUR",
+        ],
+        cwd=Path(__file__).resolve().parents[2],
+        env={
+            **os.environ,
+            "DJANGO_SETTINGS_MODULE": "tfc.settings.test",
+            "NO_STARTUP_DB_MUTATIONS": "true",
+            "MAX_LOGIN_ATTEMPTS_PER_HOUR": "0",
+        },
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+    assert result.returncode != 0
+    assert "MAX_LOGIN_ATTEMPTS_PER_HOUR must be between 1 and" in result.stderr

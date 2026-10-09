@@ -2,6 +2,7 @@ import json
 import re
 import traceback
 from datetime import datetime
+from functools import partial
 
 import structlog
 from django.contrib.auth.tokens import default_token_generator
@@ -33,6 +34,7 @@ from accounts.models.user import User
 from accounts.models.workspace import OrganizationRoles, Workspace, WorkspaceMembership
 from accounts.serializers.contracts import (
     ACCOUNTS_ERROR_RESPONSES,
+    ACCOUNTS_GATED_CREATE_ERROR_RESPONSES,
     DeactivateUserResponseSerializer,
     DeleteUserResponseSerializer,
     ResendInviteResponseSerializer,
@@ -79,6 +81,9 @@ from analytics.utils import (
     get_mixpanel_properties,
     track_mixpanel_event,
 )
+from tfc.capabilities import edition
+from tfc.capabilities.edition import EditionResource
+from tfc.capabilities.errors import EnterpriseFeatureRequired
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 from tfc.constants.levels import Level
 from tfc.constants.roles import RoleMapping, RolePermissions
@@ -304,7 +309,10 @@ class WorkspaceInviteAPIView(APIView):
 
     @validated_request(
         request_serializer=WorkspaceInviteSerializer,
-        responses={200: WorkspaceInviteResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={
+            200: WorkspaceInviteResponseSerializer,
+            **ACCOUNTS_GATED_CREATE_ERROR_RESPONSES,
+        },
         reject_unknown_fields=True,
     )
     @transaction.atomic
@@ -441,6 +449,16 @@ class WorkspaceInviteAPIView(APIView):
             else:
                 # Role is already a workspace-level role
                 workspace_role = role
+
+            # Community edition: up to 3 organization members (no-op on Cloud
+            # and when licensed). The lock is held until this request's
+            # transaction commits.
+            with edition.creation_lock():
+                edition.assert_can_create(
+                    EditionResource.MEMBER,
+                    organization=organization,
+                    new_member_emails=emails,
+                )
 
             results = []
             errors = []
@@ -671,6 +689,8 @@ class WorkspaceInviteAPIView(APIView):
 
             return self._gm.success_response(response_data)
 
+        except EnterpriseFeatureRequired:
+            raise
         except Exception as e:
             logger.exception(f"Error in inviting users to workspace: {str(e)}")
             return self._gm.bad_request("Error in inviting users to workspace")
@@ -1929,10 +1949,44 @@ class ManageTeamView(APIView):
 
     @validated_request(
         request_serializer=TeamCreateRequestSerializer,
-        responses={201: TeamCreateResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={
+            201: TeamCreateResponseSerializer,
+            **ACCOUNTS_GATED_CREATE_ERROR_RESPONSES,
+        },
         reject_unknown_fields=True,
     )
     def post(self, request, *args, **kwargs):
+        # Community edition: the seat count and every write of the request
+        # share one transaction holding the edition lock, so a refusal (the
+        # seat check, the workspace check or the membership backstop) leaves
+        # no user, invite, workspace or organization change behind. Cloud and
+        # licensed installs take no lock.
+        with edition.creation_lock():
+            return self._create_team(request, *args, **kwargs)
+
+    def _after_team_commit(self, kind, callback):
+        # Keep Cloud/licensed delivery and its existing immediate error path.
+        if not edition.edition_rule_applies():
+            transaction.on_commit(callback)
+            return
+
+        def run_side_effect():
+            try:
+                callback()
+            except Exception as exc:
+                # The team has already committed. A delivery/analytics failure
+                # cannot roll it back and must not emit a misleading retryable
+                # HTTP 500 or stop later invitations. Pending invites retain
+                # the existing resend path. Do not log callback args or PII.
+                logger.error(
+                    "team_post_commit_side_effect_failed",
+                    side_effect=kind,
+                    error_type=type(exc).__name__,
+                )
+
+        transaction.on_commit(run_side_effect)
+
+    def _create_team(self, request, *args, **kwargs):
         try:
             validated_data = request.validated_data
             user = request.user
@@ -1953,6 +2007,23 @@ class ManageTeamView(APIView):
                     "Member-specific team create is not supported. Use /accounts/team/users/."
                 )
 
+            # Community edition: up to 3 organization members, checked before
+            # anything is written, under the lock post() holds until commit.
+            # Off-cloud this replaces the Free-tier USERS limit below (A3),
+            # which only caps on Cloud; new members are added through the M11
+            # backstop, which re-checks under the same lock.
+            new_members = validated_data.get("members") or []
+            if isinstance(new_members, list) and new_members:
+                edition.assert_can_create(
+                    EditionResource.MEMBER,
+                    organization=organization,
+                    new_member_emails=[
+                        str(member.get("email") or "").lower()
+                        for member in new_members
+                        if isinstance(member, dict)
+                    ],
+                )
+
             # Handle organization name update
             org_display_name = validated_data.get("org_name")
             if org_display_name:
@@ -1968,10 +2039,15 @@ class ManageTeamView(APIView):
                         subscription = SubscriptionTierChoices.FREE.value
                 else:
                     subscription = None
-                mixpanel_tracker.update_org_details(
-                    org_id=str(organization.id),
-                    org_name=org_display_name,
-                    subscription=subscription,
+                # Only report the new name once it is committed.
+                self._after_team_commit(
+                    "organization_analytics",
+                    partial(
+                        mixpanel_tracker.update_org_details,
+                        org_id=str(organization.id),
+                        org_name=org_display_name,
+                        subscription=subscription,
+                    ),
                 )
             organization.is_new = False
             organization.save()
@@ -1997,14 +2073,16 @@ class ManageTeamView(APIView):
                         workspace.description = workspace_description
                         workspace.save()
                     except Workspace.DoesNotExist:
-                        # Create new workspace
-                        workspace = Workspace.objects.create(
-                            name=workspace_name,
-                            display_name=workspace_display_name,
-                            description=workspace_description,
-                            organization=organization,
-                            created_by=user,
-                        )
+                        # Create new workspace (Community edition: one per install)
+                        with edition.creation_lock():
+                            edition.assert_can_create(EditionResource.WORKSPACE)
+                            workspace = Workspace.objects.create(
+                                name=workspace_name,
+                                display_name=workspace_display_name,
+                                description=workspace_description,
+                                organization=organization,
+                                created_by=user,
+                            )
 
                         # Add organization owner to workspace with admin role
                         create_workspace_membership(
@@ -2234,51 +2312,60 @@ class ManageTeamView(APIView):
                             #     )
                             #     continue
 
-                        # Create new user for this organization
-                        new_member = User.objects.create(
-                            email=member_data["email"],
-                            name=member_data["name"],
-                            organization=organization,
-                            organization_role=org_role,  # None for workspace-level roles
-                            is_active=False,
-                            invited_by=request.user,
-                        )
-                        password = generate_password()
-                        new_member.set_password(password)
-                        new_member.save()
+                        # A savepoint per member: an IntegrityError here rolls
+                        # back only this member and the request carries on.
+                        with transaction.atomic():
+                            # Create new user for this organization
+                            new_member = User.objects.create(
+                                email=member_data["email"],
+                                name=member_data["name"],
+                                organization=organization,
+                                organization_role=org_role,  # None for workspace-level roles
+                                is_active=False,
+                                invited_by=request.user,
+                            )
+                            password = generate_password()
+                            new_member.set_password(password)
+                            new_member.save()
 
-                        # Add user to workspace with determined workspace role
-                        self._add_user_to_workspace(
-                            new_member,
-                            workspace,
-                            workspace_role,
-                            request.user,
-                        )
+                            # Add user to workspace with determined workspace role
+                            self._add_user_to_workspace(
+                                new_member,
+                                workspace,
+                                workspace_role,
+                                request.user,
+                            )
 
-                        persist_pending_org_invite(
-                            organization=organization,
-                            target_email=member_data["email"],
-                            org_role=org_role,
-                            workspace_role=workspace_role,
-                            workspaces=[workspace],
-                            invited_by=request.user,
-                        )
+                            persist_pending_org_invite(
+                                organization=organization,
+                                target_email=member_data["email"],
+                                org_role=org_role,
+                                workspace_role=workspace_role,
+                                workspaces=[workspace],
+                                invited_by=request.user,
+                            )
 
                         token = default_token_generator.make_token(new_member)
                         uidb64 = urlsafe_base64_encode(force_bytes(new_member.pk))
-                        email_helper(
-                            f"You are invited by {organization.display_name if organization.display_name else organization.name} - Future AGI",
-                            "member_invite.html",
-                            {
-                                "password": password,
-                                "email": member_data["email"],
-                                "uid": str(uidb64),
-                                "token": token,
-                                "workspace_name": workspace.name,
-                                "app_url": settings.APP_URL,
-                                "ssl": ssl,
-                            },
-                            [member_data["email"]],
+                        # Sent only once the whole request commits: a later
+                        # refusal rolls this member back and no invite leaves.
+                        self._after_team_commit(
+                            "invitation_email",
+                            partial(
+                                email_helper,
+                                f"You are invited by {organization.display_name if organization.display_name else organization.name} - Future AGI",
+                                "member_invite.html",
+                                {
+                                    "password": password,
+                                    "email": member_data["email"],
+                                    "uid": str(uidb64),
+                                    "token": token,
+                                    "workspace_name": workspace.name,
+                                    "app_url": settings.APP_URL,
+                                    "ssl": ssl,
+                                },
+                                [member_data["email"]],
+                            ),
                         )
                         created_members.append(UserSerializer(new_member).data)
 
@@ -2318,6 +2405,8 @@ class ManageTeamView(APIView):
                 return self._gm.bad_request(response_data)
 
             return self._gm.create_response(response_data)
+        except EnterpriseFeatureRequired:
+            raise
         except Exception as e:
             traceback.print_exc()
             logger.exception(f"Error in managing users: {str(e)}")

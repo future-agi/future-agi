@@ -163,7 +163,7 @@ kubectl -n "$ns" exec "statefulset/$release-temporal" -- \
   fail "the outbox CDC drain schedule is not registered"
 echo "ok   ClickHouse schema, $triggers CDC triggers, Temporal schedules"
 
-say "a second account with manage.py create_user (install notes, step 3)"
+say "a second account with manage.py create_user (install notes, step 3; joins the organization as a member on Community)"
 kubectl -n "$ns" exec "deploy/$release-backend" -c backend -- python manage.py create_user \
   --email "smoke-$(date +%s)@example.com" --name "Smoke Test" --password "$admin_password"
 

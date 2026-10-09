@@ -491,7 +491,7 @@ export function useNavSettingsData() {
     }
     if (!isCloud && isOrgAdminPlus) {
       orgItems.push({
-        title: "License",
+        title: "Plan & License",
         path: "/dashboard/settings/ee-licenses",
         icon: SettingsIcons.Keys,
       });

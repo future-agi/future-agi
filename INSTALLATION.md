@@ -143,6 +143,12 @@ printf '%s\n' "$PASSWORD" | docker compose exec -T app python manage.py create_u
 
 On Helm: `kubectl -n futureagi exec -it deploy/futureagi-backend -c backend -- python manage.py create_user`.
 
+The first account owns the install's organization. On the Community edition a
+later `create_user` adds the new account to that organization and its
+workspace as a member, up to 3 members (Settings > Users invites do the same
+from the UI); a fourth is refused with the Enterprise message. With an
+Enterprise licence each account gets its own organization, as before.
+
 ### Reset a password
 
 With [email](#email) configured, "Forgot password" on the sign-in page emails

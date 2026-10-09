@@ -47,6 +47,7 @@ const FeatureGateOverlay = ({
   onPrimary,
   secondaryLabel,
   secondaryHref,
+  onSecondary,
   footnote,
   blur = 9,
   blurFrom = "38%",
@@ -238,12 +239,13 @@ const FeatureGateOverlay = ({
               alignItems="center"
               justifyContent="flex-end"
             >
-              {secondaryLabel && secondaryHref && (
+              {secondaryLabel && (secondaryHref || onSecondary) && (
                 <Button
                   color="inherit"
-                  href={secondaryHref}
-                  target="_blank"
-                  rel="noopener"
+                  onClick={onSecondary}
+                  href={onSecondary ? undefined : secondaryHref}
+                  target={onSecondary ? undefined : "_blank"}
+                  rel={onSecondary ? undefined : "noopener"}
                   sx={{ color: "text.secondary" }}
                 >
                   {secondaryLabel}
@@ -299,6 +301,7 @@ FeatureGateOverlay.propTypes = {
   onPrimary: PropTypes.func,
   secondaryLabel: PropTypes.string,
   secondaryHref: PropTypes.string,
+  onSecondary: PropTypes.func,
   footnote: PropTypes.node,
   blur: PropTypes.number,
   blurFrom: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),

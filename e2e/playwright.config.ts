@@ -2,9 +2,18 @@ import { defineConfig } from '@playwright/test';
 import { E2E } from './lib/env';
 import { grepInvertPattern } from './lib/quarantine';
 
+// Flows that need a fresh Community install of their own: they run only on
+// the Community lane (E2E_STACK=community bin/e2e test, README "The Community
+// edition lane"); every other spec runs on the shared, licensed stacks.
+const COMMUNITY_LANE_SPECS = ['flows/settings/community-edition.spec.ts'];
+
 export default defineConfig({
   testDir: '.',
-  testMatch: ['flows/**/*.spec.ts', 'harness/**/*.spec.ts'],
+  projects: [
+    { name: 'default', testMatch: ['flows/**/*.spec.ts', 'harness/**/*.spec.ts'],
+      testIgnore: COMMUNITY_LANE_SPECS },
+    { name: 'community-edition', testMatch: COMMUNITY_LANE_SPECS },
+  ],
   grepInvert: grepInvertPattern(),
   fullyParallel: true,
   forbidOnly: !!process.env.CI,

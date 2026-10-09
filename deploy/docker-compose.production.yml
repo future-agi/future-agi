@@ -21,6 +21,9 @@ services:
   fi-collector:
     image: futureagi/fi-collector:${FI_COLLECTOR_VERSION:?set the reviewed collector release for production}
     build: !reset null
+    environment:
+      # Self-hosted: never Future AGI Cloud's free-tier caps or budget pauses.
+      COMMERCIAL_QUOTAS_ENABLED: "false"
 
   # Hosted schema/mirror changes require an explicit, separately qualified
   # deployment. Never inherit the local fresh-install --apply commands.
@@ -108,6 +111,8 @@ services:
     environment:
       AGENTCC_INTERNAL_API_KEY: ${AGENTCC_INTERNAL_API_KEY:?must be set for production}
       AGENTCC_ADMIN_TOKEN: ${AGENTCC_ADMIN_TOKEN:?must be set for production}
+      # Self-hosted: never Future AGI Cloud's gateway request quota.
+      COMMERCIAL_QUOTAS_ENABLED: "false"
     restart: always
 
   frontend:

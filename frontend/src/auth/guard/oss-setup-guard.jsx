@@ -10,13 +10,13 @@ import { isValidationDone } from "src/sections/oss-first-run/ossFlowState";
 // ----------------------------------------------------------------------
 
 // Signup is the end of the first-run flow, so anyone arriving before the checks
-// gets them first.
+// gets them first. Every self-hosted install, licensed or not (TH-8084).
 export default function OssSetupGuard({ children }) {
-  const { isOSS, isLoading, isSuccess } = useDeploymentMode();
+  const { isSelfHosted, isLoading, isSuccess } = useDeploymentMode();
 
   if (isLoading) return <SplashScreen />;
 
-  if (isSuccess && isOSS && !isValidationDone()) {
+  if (isSuccess && isSelfHosted && !isValidationDone()) {
     return <Navigate to={paths.ossSetup} replace />;
   }
 

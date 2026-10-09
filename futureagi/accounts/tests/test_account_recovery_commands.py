@@ -105,21 +105,62 @@ def test_a_blocked_command_still_fails_before_it_runs(transactional_db):
 
 @pytest.mark.parametrize("line_end", ["\n", "\r\n"], ids=["bash", "powershell"])
 def test_create_user_reads_the_password_the_installers_pipe_in(
-    transactional_db, line_end
+    empty_instance, line_end
 ):
     """bin/install and bin/install.ps1 pipe the first account's password in,
     so it never shows on a command line: without a terminal, getpass reads
     it from stdin. Windows PowerShell ends the line with \\r\\n, which the
-    signup serializer trims."""
+    signup serializer trims.
+
+    The subprocess sees every committed row and the Community rule counts the
+    whole install, so this starts from an empty one, as an installer does."""
+    email = f"first-owner-{line_end.encode().hex()}@futureagi.com"
     result = _manage_py(
         "create_user",
         "--email",
-        "first-owner@futureagi.com",
+        email,
         "--name",
         "First Owner",
         stdin=f"Piped-Passw0rd!{line_end}",
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    user = User.objects.get(email="first-owner@futureagi.com")
+    user = User.objects.get(email=email)
     assert user.check_password("Piped-Passw0rd!")
+
+
+def test_installer_create_user_joins_an_organization_that_already_exists(
+    empty_instance,
+):
+    """The CI failure mode: the install already has its one organization (a
+    first account, or one an earlier test left behind). On Community the
+    piped create_user still succeeds and the account joins that organization
+    as a member; on a licensed or Cloud install it gets its own, as before.
+    Starts from an empty install so only this organization exists."""
+    from accounts.models.organization import Organization
+    from tfc.capabilities import edition
+
+    existing = Organization.objects.create(name="Existing")
+    User.objects.create_user(
+        email="existing-owner@futureagi.com",
+        password="Existing-Passw0rd!",
+        name="Existing Owner",
+        organization=existing,
+        organization_role="Owner",
+    )
+
+    result = _manage_py(
+        "create_user",
+        "--email",
+        "joining-member@futureagi.com",
+        "--name",
+        "Joining Member",
+        stdin="Piped-Passw0rd!\n",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    user = User.objects.get(email="joining-member@futureagi.com")
+    assert user.check_password("Piped-Passw0rd!")
+    if edition.edition_rule_applies():
+        assert user.organization_id == existing.id
+        assert Organization.objects.count() == 1

@@ -283,6 +283,8 @@ kubectl -n futureagi exec deploy/futureagi-backend -c backend -- python manage.p
 The password must pass the sign-up rules: 8+ characters, not a common
 password, not all digits. Or let the bootstrap job create the first admin
 from a Secret (`bootstrap.admin.existingSecret`), which suits GitOps.
+Running `create_user` again adds more accounts: on the Community edition each
+joins the first account's organization as a member (up to 3 members).
 
 Traces go to fi-collector over OpenTelemetry, with the API keys from the UI;
 [OTLP](#otlp) lists the endpoints. `helm test futureagi -n futureagi`
@@ -1105,6 +1107,7 @@ the [configuration reference](https://docs.futureagi.com/docs/self-hosting/confi
 | `config.recaptcha` | `false` | [RECAPTCHA_ENABLED] reCAPTCHA on sign-up, login and token refresh, for every Host but localhost. Needs `secrets.extra.RECAPTCHA_SECRET_KEY` (without it every such login is refused) and a frontend image built with VITE_GOOGLE_SITE_KEY (a build-time setting: the published image has none, so its logins fail). |
 | `config.otel` | `false` | [OTEL_ENABLED] export the platform's own traces over OpenTelemetry (configure OTEL_* in `config.extraEnv`). |
 | `config.usageEvents` | `false` | [USAGE_EVENTS_ENABLED] billing usage events on the Redis stream usage:events, from the backend, workers and fi-collector. Only for installs that run the usage consumer (Future AGI Cloud): anywhere else nothing drains the stream and it fills Redis. |
+| `config.commercialQuotas` | `false` | [COMMERCIAL_QUOTAS_ENABLED] Future AGI Cloud's plan quotas in fi-collector and agentcc-gateway (free-tier caps, budget pauses). Off on every self-hosted install: Redis keys carried over from Cloud can then never cap it. Customer gateway budgets, auth and key revocation are unaffected. |
 | `config.cdcMode` | `"outbox"` | [FI_CDC_MODE] Postgres to ClickHouse change data capture. `outbox`: triggers plus a drain in the Temporal workers (no PeerDB). `off` removes it (Observe views then miss relational data). |
 | `config.email.mailgunSenderDomain` | `""` | [MAILGUN_SENDER_DOMAIN]. Email stays off until `secrets.mailgunApiKey` is set too; invites then return a link to share yourself. |
 | `config.email.fromEmail` | `""` | [DEFAULT_FROM_EMAIL] sender of every app email (invites, password resets). Empty: `Future AGI <noreply@<mailgunSenderDomain>>`. |

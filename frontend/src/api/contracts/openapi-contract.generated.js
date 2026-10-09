@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1058,
+  endpointCount: 1059,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -415,6 +415,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         requestBody: null,
         queryParameters: {},
         responses: {
+          402: {
+            $ref: "#/definitions/EnterpriseGateErrorResponse",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -469,6 +472,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           401: {
             $ref: "#/definitions/AccountsErrorResponse",
+          },
+          402: {
+            $ref: "#/definitions/EnterpriseGateErrorResponse",
           },
           403: {
             $ref: "#/definitions/AccountsErrorResponse",
@@ -599,6 +605,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           401: {
             $ref: "#/definitions/AccountsErrorResponse",
+          },
+          402: {
+            $ref: "#/definitions/EnterpriseGateErrorResponse",
           },
           403: {
             $ref: "#/definitions/AccountsErrorResponse",
@@ -1414,6 +1423,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           401: {
             $ref: "#/definitions/AccountsErrorResponse",
           },
+          402: {
+            $ref: "#/definitions/EnterpriseGateErrorResponse",
+          },
           403: {
             $ref: "#/definitions/AccountsErrorResponse",
           },
@@ -1481,6 +1493,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           401: {
             $ref: "#/definitions/AccountsErrorResponse",
+          },
+          402: {
+            $ref: "#/definitions/EnterpriseGateErrorResponse",
           },
           403: {
             $ref: "#/definitions/AccountsErrorResponse",
@@ -1617,6 +1632,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           401: {
             $ref: "#/definitions/AccountsErrorResponse",
+          },
+          402: {
+            $ref: "#/definitions/EnterpriseGateErrorResponse",
           },
           403: {
             $ref: "#/definitions/AccountsErrorResponse",
@@ -1784,6 +1802,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           401: {
             $ref: "#/definitions/AccountsErrorResponse",
           },
+          402: {
+            $ref: "#/definitions/EnterpriseGateErrorResponse",
+          },
           403: {
             $ref: "#/definitions/AccountsErrorResponse",
           },
@@ -1849,6 +1870,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           401: {
             $ref: "#/definitions/AccountsErrorResponse",
+          },
+          402: {
+            $ref: "#/definitions/EnterpriseGateErrorResponse",
           },
           403: {
             $ref: "#/definitions/AccountsErrorResponse",
@@ -2355,6 +2379,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           401: {
             $ref: "#/definitions/AccountsErrorResponse",
           },
+          402: {
+            $ref: "#/definitions/EnterpriseGateErrorResponse",
+          },
           403: {
             $ref: "#/definitions/AccountsErrorResponse",
           },
@@ -2418,6 +2445,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           401: {
             $ref: "#/definitions/AccountsErrorResponse",
+          },
+          402: {
+            $ref: "#/definitions/EnterpriseGateErrorResponse",
           },
           403: {
             $ref: "#/definitions/AccountsErrorResponse",
@@ -2512,6 +2542,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           401: {
             $ref: "#/definitions/AccountsErrorResponse",
+          },
+          402: {
+            $ref: "#/definitions/EnterpriseGateErrorResponse",
           },
           403: {
             $ref: "#/definitions/AccountsErrorResponse",
@@ -2993,6 +3026,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           401: {
             $ref: "#/definitions/AccountsErrorResponse",
           },
+          402: {
+            $ref: "#/definitions/EnterpriseGateErrorResponse",
+          },
           403: {
             $ref: "#/definitions/AccountsErrorResponse",
           },
@@ -3325,6 +3361,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           401: {
             $ref: "#/definitions/AccountsErrorResponse",
           },
+          402: {
+            $ref: "#/definitions/EnterpriseGateErrorResponse",
+          },
           403: {
             $ref: "#/definitions/AccountsErrorResponse",
           },
@@ -3450,6 +3489,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           401: {
             $ref: "#/definitions/AccountsErrorResponse",
+          },
+          402: {
+            $ref: "#/definitions/EnterpriseGateErrorResponse",
           },
           403: {
             $ref: "#/definitions/AccountsErrorResponse",
@@ -3577,6 +3619,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           401: {
             $ref: "#/definitions/AccountsErrorResponse",
           },
+          402: {
+            $ref: "#/definitions/EnterpriseGateErrorResponse",
+          },
           403: {
             $ref: "#/definitions/AccountsErrorResponse",
           },
@@ -3670,6 +3715,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           401: {
             $ref: "#/definitions/AccountsErrorResponse",
+          },
+          402: {
+            $ref: "#/definitions/EnterpriseGateErrorResponse",
           },
           403: {
             $ref: "#/definitions/AccountsErrorResponse",
@@ -8738,6 +8786,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           500: {
             $ref: "#/definitions/ApiTextErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/api/edition/": {
+      get: {
+        operationId: "api_edition_list",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/EditionEnvelope",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -57260,6 +57325,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    EditionEnvelope: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/EditionResponse",
+        },
+      },
+    },
     EmbeddingsResponse: {
       required: ["status", "result"],
       type: "object",
@@ -57277,6 +57355,116 @@ export const OPENAPI_CONTRACT = Object.freeze({
       type: "object",
       properties: {},
       additionalProperties: false,
+    },
+    EnterpriseGateErrorResponse: {
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: false,
+        },
+        type: {
+          title: "Type",
+          type: "string",
+          enum: [
+            "validation_error",
+            "authentication_error",
+            "payment_required",
+            "entitlement_error",
+            "permission_error",
+            "not_found",
+            "conflict",
+            "client_error",
+            "rate_limit",
+            "server_error",
+            "service_unavailable",
+            "timeout",
+            "api_error",
+          ],
+          "x-nullable": true,
+        },
+        code: {
+          title: "Code",
+          type: "string",
+          "x-nullable": true,
+        },
+        detail: {
+          title: "Detail",
+          type: "string",
+          "x-nullable": true,
+        },
+        result: {
+          title: "Result",
+          type: "string",
+          "x-nullable": true,
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          "x-nullable": true,
+        },
+        error: {
+          title: "Error",
+          type: "object",
+          "x-nullable": true,
+          description:
+            "String error message, or the structured capability denial.",
+          "x-string-or-object": true,
+          required: ["code", "message", "detail"],
+          additionalProperties: false,
+          properties: {
+            code: {
+              type: "string",
+            },
+            message: {
+              type: "string",
+            },
+            detail: {
+              type: "object",
+              required: ["feature"],
+              additionalProperties: false,
+              properties: {
+                feature: {
+                  type: "string",
+                  enum: [
+                    "organizations",
+                    "workspaces",
+                    "members",
+                    "error_feed",
+                    "falcon_ai",
+                    "protect",
+                    "turing_models",
+                  ],
+                },
+              },
+            },
+          },
+        },
+        attr: {
+          title: "Attr",
+          type: "string",
+          "x-nullable": true,
+        },
+        details: {
+          title: "Details",
+          type: "object",
+          additionalProperties: {
+            type: "array",
+            items: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+        },
+        upgrade_required: {
+          title: "Upgrade required",
+          type: "boolean",
+        },
+        enterprise_gate: {
+          $ref: "#/definitions/EnterpriseGate",
+        },
+      },
     },
     EnterpriseHeartbeatResponse: {
       required: ["status"],
@@ -85757,6 +85945,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "NETWORK_REQUIRED",
             "USAGE_LIMIT_REACHED",
             "PLAN_FEATURE_MISSING",
+            "ENTERPRISE_FEATURE_REQUIRED",
             "LICENSE_VERSION_UNSUPPORTED",
           ],
           "x-nullable": true,
@@ -88613,6 +88802,48 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    EditionResponse: {
+      required: ["edition"],
+      type: "object",
+      properties: {
+        edition: {
+          title: "Edition",
+          type: "string",
+          enum: ["community", "enterprise", "cloud"],
+        },
+        deployment: {
+          title: "Deployment",
+          type: "string",
+          enum: ["self_hosted", "cloud"],
+        },
+        limits: {
+          $ref: "#/definitions/EditionLimits",
+        },
+        over_limit: {
+          title: "Over limit",
+          type: "boolean",
+        },
+        enterprise_features: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        contact: {
+          title: "Contact",
+          type: "string",
+          format: "email",
+          minLength: 1,
+        },
+        activation: {
+          $ref: "#/definitions/EditionActivation",
+        },
+        license: {
+          $ref: "#/definitions/EditionLicense",
+        },
+      },
+    },
     EmbeddingsResponseResult: {
       type: "object",
       properties: {
@@ -88625,6 +88856,79 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         embedding: {
           $ref: "#/definitions/EmbeddingProvider",
+        },
+      },
+    },
+    EnterpriseGate: {
+      required: [
+        "feature",
+        "edition",
+        "limit",
+        "current",
+        "requested",
+        "license_state",
+        "contact",
+        "activation_route",
+      ],
+      type: "object",
+      properties: {
+        feature: {
+          title: "Feature",
+          type: "string",
+          enum: [
+            "organizations",
+            "workspaces",
+            "members",
+            "error_feed",
+            "falcon_ai",
+            "protect",
+            "turing_models",
+          ],
+        },
+        edition: {
+          title: "Edition",
+          type: "string",
+          enum: ["community", "enterprise"],
+        },
+        limit: {
+          title: "Limit",
+          type: "integer",
+          "x-nullable": true,
+        },
+        current: {
+          title: "Current",
+          type: "integer",
+          "x-nullable": true,
+        },
+        requested: {
+          title: "Requested",
+          type: "integer",
+          "x-nullable": true,
+        },
+        license_state: {
+          title: "License state",
+          type: "string",
+          enum: [
+            "not_applicable",
+            "missing",
+            "invalid",
+            "active",
+            "grace",
+            "expired",
+            "trial_active",
+            "trial_expired",
+          ],
+        },
+        contact: {
+          title: "Contact",
+          type: "string",
+          format: "email",
+          minLength: 1,
+        },
+        activation_route: {
+          title: "Activation route",
+          type: "string",
+          minLength: 1,
         },
       },
     },
@@ -106606,6 +106910,95 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    EditionActivation: {
+      required: ["method"],
+      type: "object",
+      properties: {
+        method: {
+          title: "Method",
+          type: "string",
+          enum: ["env_restart"],
+        },
+      },
+    },
+    EditionLicense: {
+      required: [
+        "state",
+        "license_type",
+        "issued_to",
+        "expires_at",
+        "grace_ends_at",
+        "license_id_masked",
+        "key_fingerprint",
+      ],
+      type: "object",
+      properties: {
+        state: {
+          title: "State",
+          type: "string",
+          enum: [
+            "not_applicable",
+            "missing",
+            "invalid",
+            "active",
+            "grace",
+            "expired",
+            "trial_active",
+            "trial_expired",
+          ],
+        },
+        license_type: {
+          title: "License type",
+          type: "string",
+          enum: ["production", "trial"],
+          "x-nullable": true,
+        },
+        issued_to: {
+          title: "Issued to",
+          type: "string",
+          "x-nullable": true,
+        },
+        expires_at: {
+          title: "Expires at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        grace_ends_at: {
+          title: "Grace ends at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        license_id_masked: {
+          title: "License id masked",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        key_fingerprint: {
+          title: "Key fingerprint",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
+    EditionLimits: {
+      required: ["organizations", "workspaces", "members"],
+      type: "object",
+      properties: {
+        organizations: {
+          $ref: "#/definitions/EditionLimit",
+        },
+        workspaces: {
+          $ref: "#/definitions/EditionLimit",
+        },
+        members: {
+          $ref: "#/definitions/EditionLimit",
+        },
+      },
+    },
     EmbeddingProvider: {
       required: ["name", "description", "requires_api_key", "config_schema"],
       type: "object",
@@ -116107,6 +116500,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Percentage change",
           type: "number",
           "x-nullable": true,
+        },
+      },
+    },
+    EditionLimit: {
+      required: ["limit", "current"],
+      type: "object",
+      properties: {
+        limit: {
+          title: "Limit",
+          type: "integer",
+          "x-nullable": true,
+        },
+        current: {
+          title: "Current",
+          type: "integer",
+          minimum: 0,
         },
       },
     },

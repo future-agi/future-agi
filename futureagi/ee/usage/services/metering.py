@@ -19,6 +19,7 @@ import structlog
 from ee.usage.schemas.events import CheckResult, UpgradeCTA
 from ee.usage.services.config import BillingConfig
 from ee.usage.services.emitter import get_redis
+from tfc.capabilities import edition
 from redis.exceptions import RedisError
 
 logger = structlog.get_logger(__name__)
@@ -116,6 +117,12 @@ def check_usage(org_id: str, event_type: str, amount: float = 0) -> CheckResult:
     Returns:
         CheckResult with allowed=True/False and details.
     """
+    # Cloud billing only: carried-over billing status, plan, ``usage:`` and
+    # ``pause:`` keys never block a self-hosted install, even with a
+    # billing.yaml present.
+    if not edition.commercial_caps_apply():
+        return CheckResult(allowed=True)
+
     config = BillingConfig.get()
 
     # Resolve event_type → dimension + amount

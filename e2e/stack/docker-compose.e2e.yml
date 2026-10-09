@@ -1,4 +1,14 @@
 # Overlay on docker-compose.distributed.yml (the distributed topology) for the futureagi-e2e stack.
+
+# A test-signed Enterprise licence (README "Licences on the E2E stacks"):
+# bin/e2e writes EE_LICENSE_KEY and its public key into the stack's licence env
+# file. Every Django process validates it at start-up, so all three get it.
+# The licensed stack must never call Future AGI's licence service.
+x-e2e-licence: &e2e-licence
+  EE_LICENSE_PUBLIC_KEY: ${EE_LICENSE_PUBLIC_KEY:-}
+  FUTURE_AGI_ENTERPRISE_HEARTBEAT_DISABLED: "true"
+  FUTURE_AGI_LICENSE_URL: http://127.0.0.1:9
+
 services:
   clickhouse:
     # Seatbelt on 16GB CI runners: CH is the first OOM-kill victim otherwise.
@@ -16,16 +26,25 @@ services:
   backend:
     restart: "no"
     environment:
+      <<: *e2e-licence
       MODEL_SERVING_URL: http://mock-llm:8080
       FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      # The licensed backend limits login, token and signup requests per client
+      # IP (accounts/authentication.py AuthMonitoringMiddleware, default 10 an
+      # hour); every actor of the suite comes from the same address.
+      MAX_LOGIN_ATTEMPTS_PER_HOUR: "100000"
       # Request logs reach Django over this shared secret; without it the
       # webhook rejects every batch the gateway sends.
       AGENTCC_WEBHOOK_SECRET: ${AGENTCC_WEBHOOK_SECRET:-e2e-agentcc-webhook-secret}
   worker:
     restart: "no"
     environment:
+      <<: *e2e-licence
       MODEL_SERVING_URL: http://mock-llm:8080
       FUTURE_AGI_TELEMETRY_DISABLED: "true"
+  worker-exact-aggregation:
+    environment:
+      <<: *e2e-licence
   fi-collector:
     # Collector and consumer must run the same checked-out transport protocol.
     image: futureagi/fi-collector:${E2E_FI_COLLECTOR_VERSION:-latest}

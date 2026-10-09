@@ -53,6 +53,11 @@ auth:
   # unset). Only Future AGI Cloud drains it, so the self-hosted compose files
   # and Helm chart set USAGE_EVENTS_ENABLED=false; anywhere else it only grows.
   # usage_events: true
+  # Future AGI Cloud's free-tier caps and budget pauses (COMMERCIAL_QUOTAS_ENABLED,
+  # on when unset). Every self-hosted compose file, the Standalone image and the
+  # Helm chart set COMMERCIAL_QUOTAS_ENABLED=false; Redis keeps serving auth and
+  # key revocation.
+  # commercial_quotas: true
 
 # Observed attributes remain disabled unless enabled. FI_OBSERVED_CATALOG_MODE=kafka
 # publishes them for the separate fi-property-catalog-consumer, which owns index

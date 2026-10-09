@@ -246,7 +246,7 @@ async def call_generated_tool(name: str, arguments: dict):
         return _error_result(f"Tool not found: {name}", code="NOT_FOUND")
 
     from mcp_server.exceptions import RateLimitExceededError
-    from mcp_server.rate_limiter import check_rate_limit, get_rate_limit_tier
+    from mcp_server.rate_limiter import enforce_commercial_rate_limit
     from mcp_server.usage_helpers import (
         get_or_create_session,
         record_usage,
@@ -258,8 +258,7 @@ async def call_generated_tool(name: str, arguments: dict):
         return _error_result(f"Tool is disabled: {name}", code="FORBIDDEN")
 
     try:
-        tier = await sync_to_async(get_rate_limit_tier)(context.organization)
-        await sync_to_async(check_rate_limit)(str(context.organization.id), tier)
+        await sync_to_async(enforce_commercial_rate_limit)(context.organization)
     except RateLimitExceededError as exc:
         return _error_result(str(exc), code="RATE_LIMITED")
 
@@ -282,7 +281,15 @@ async def call_generated_tool(name: str, arguments: dict):
     except APIExecutionError as exc:
         is_error = True
         error_message = str(exc)
-        result = _error_result(str(exc), code=f"HTTP_{exc.status_code}", data=exc.data)
+        gate = exc.data.get("enterprise_gate") if isinstance(exc.data, dict) else None
+        if exc.status_code == 402 and gate is not None:
+            # Self-hosted Enterprise gate (TH-8084): keep its stable code.
+            code = exc.data.get("code") or "ENTERPRISE_FEATURE_REQUIRED"
+            result = _error_result(str(exc), code=code, data=gate)
+        else:
+            result = _error_result(
+                str(exc), code=f"HTTP_{exc.status_code}", data=exc.data
+            )
     except Exception as exc:
         logger.exception("mcp_generated_tool_failed", tool=name)
         is_error = True

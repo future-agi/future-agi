@@ -155,6 +155,20 @@ def _check_locked(minute_key, day_key, limits, now, day_ttl):
         return _ALLOWED, 0.0
 
 
+def enforce_commercial_rate_limit(organization) -> None:
+    """Apply the Future AGI Cloud plan's MCP call tier for ``organization``.
+
+    Self-hosted installs have no commercial MCP ceiling and their subscription
+    is never read; response size and depth bounds still apply everywhere.
+    Raises RateLimitExceededError on Cloud when the tier is exhausted.
+    """
+    from tfc.capabilities import edition
+
+    if not edition.commercial_caps_apply():
+        return
+    check_rate_limit(str(organization.id), get_rate_limit_tier(organization))
+
+
 def check_rate_limit(organization_id: str, tier: str) -> None:
     """Check sliding window rate limits. Raises RateLimitExceededError if exceeded."""
     limits = RATE_LIMITS.get(tier, RATE_LIMITS["free"])

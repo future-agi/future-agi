@@ -12,7 +12,7 @@ from rest_framework.views import APIView
 from mcp_server.api_executor import APIExecutionError, MCPRequestContext, executor
 from mcp_server.exceptions import RateLimitExceededError
 from mcp_server.generated_registry import registry
-from mcp_server.rate_limiter import check_rate_limit, get_rate_limit_tier
+from mcp_server.rate_limiter import enforce_commercial_rate_limit
 from mcp_server.serializers.contracts import (
     MCPErrorResponseSerializer,
     MCPToolCallRequestSerializer,
@@ -78,10 +78,9 @@ class MCPToolCallView(APIView):
         connection = get_or_create_connection(user, organization, workspace)
         session = get_or_create_session(connection, session_id)
 
-        # Rate limit check
-        tier = get_rate_limit_tier(organization)
+        # Commercial rate limit (Cloud plan tiers only)
         try:
-            check_rate_limit(str(organization.id), tier)
+            enforce_commercial_rate_limit(organization)
         except RateLimitExceededError as e:
             return Response(
                 build_error_envelope(

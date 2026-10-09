@@ -317,8 +317,24 @@ def _raise_denied(decision: CapabilityDecision, *, activity: bool) -> None:
 
     from tfc.capabilities.errors import CapabilityDenied
 
+    # Self-hosted Enterprise products render the same Enterprise gate as the
+    # Community edition rule; Cloud plan denials are unchanged.
+    enterprise_gate = None
+    feature = FEATURE_REGISTRY.get(decision.feature_id)
+    if (
+        _deployment_location != DeploymentLocation.CLOUD
+        and feature is not None
+        and feature.oss_locked
+    ):
+        from tfc.capabilities import edition
+
+        enterprise_gate = edition.product_gate_payload(
+            decision.feature_id, decision.license_state
+        )
+
     raise CapabilityDenied(
         feature_id=decision.feature_id,
         reason_code=decision.reason_code or "DENIED",
         upgrade_cta=decision.upgrade_cta,
+        enterprise_gate=enterprise_gate,
     )

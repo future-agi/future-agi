@@ -24,6 +24,7 @@ import { WorkspaceProvider } from "src/contexts/WorkspaceContext";
 import { OrganizationProvider } from "src/contexts/OrganizationContext";
 import { LocalizationProvider } from "./locales";
 import { SnackbarProvider } from "./components/snackbar";
+import EnterpriseGateHost from "./components/feature-gate/EnterpriseGateHost";
 import {
   MutationCache,
   QueryCache,
@@ -161,6 +162,7 @@ export default function App() {
                           >
                             <Router />
                             <UploadLimitNotification />
+                            <EnterpriseGateHost />
                           </ErrorBoundary>
                         </AudioPlaybackProvider>
                       </SnackbarProvider>

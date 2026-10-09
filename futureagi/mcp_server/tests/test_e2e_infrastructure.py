@@ -317,10 +317,13 @@ class TestRateLimitingE2E:
             response = _call_tool(auth_client, "whoami")
             assert response.status_code == 200
 
-    def test_rate_limit_returns_429(self, auth_client):
-        """When rate limit is exceeded, the endpoint should return 429 with Retry-After."""
+    def test_rate_limit_returns_429(self, auth_client, edition_cloud):
+        """When rate limit is exceeded, the endpoint should return 429 with Retry-After.
+
+        Commercial MCP tiers are Cloud-only (TH-8084).
+        """
         with patch(
-            "mcp_server.views.transport.check_rate_limit",
+            "mcp_server.rate_limiter.check_rate_limit",
             side_effect=RateLimitExceededError(
                 "Rate limit exceeded: 20 calls/minute", retry_after=42
             ),
