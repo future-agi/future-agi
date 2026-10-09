@@ -1,0 +1,67 @@
+eval_id: 204
+name: region_similarity
+description: "RegionSimilarity: crop-aware image similarity for a cited screen region. Uses PIL and numpy only."
+criteria: SSIM over the cropped region instead of the whole screenshot.
+eval_tags:
+- Multimodal
+- Grounding
+visible_ui: true
+permissions:
+  allow_edit: false
+  allow_copy: true
+output_type_normalized: percentage
+pass_threshold: 0.7
+config:
+  required_keys:
+  - output
+  - expected
+  output: score
+  eval_type_id: CustomCodeEval
+  config: {}
+  config_params_desc:
+    output: First image as path, bytes, PIL image, or base64
+    expected: Second image in the same shape
+  code: |
+    def evaluate(input, output, expected, context, **kwargs):
+        from PIL import Image
+        import io, base64, json
+        import numpy as np
+        def _load(value):
+            if isinstance(value, Image.Image): return value.convert("L")
+            if isinstance(value, bytes): return Image.open(io.BytesIO(value)).convert("L")
+            if isinstance(value, str):
+                import os
+                if os.path.isfile(value): return Image.open(value).convert("L")
+                return Image.open(io.BytesIO(base64.b64decode(value))).convert("L")
+            raise ValueError("bad image")
+        def _box(value):
+            if isinstance(value, str):
+                try: value = json.loads(value)
+                except Exception: return None
+            if isinstance(value, (list, tuple)) and len(value) == 4:
+                return [int(round(float(item))) for item in value]
+            return None
+        box = _box(kwargs.get("region", kwargs.get("bbox")))
+        if box is None:
+            return {"score": 0.0, "reason": "RegionSimilarity: 0.0000 (invalid region)"}
+        try:
+            img1 = _load(kwargs.get("output", output))
+            img2 = _load(kwargs.get("expected", expected))
+        except Exception as exc:
+            return {"score": 0.0, "reason": f"RegionSimilarity error: {exc}"}
+        if img1.size != img2.size:
+            img2 = img2.resize(img1.size)
+        width, height = img1.size
+        x1, y1, x2, y2 = max(0, box[0]), max(0, box[1]), min(width, box[2]), min(height, box[3])
+        if x2 <= x1 or y2 <= y1:
+            return {"score": 0.0, "reason": "RegionSimilarity: 0.0000 (empty crop)"}
+        arr1 = np.array(img1.crop((x1, y1, x2, y2)), dtype=np.float64)
+        arr2 = np.array(img2.crop((x1, y1, x2, y2)), dtype=np.float64)
+        c1 = (0.01 * 255) ** 2
+        c2 = (0.03 * 255) ** 2
+        mu1, mu2 = arr1.mean(), arr2.mean()
+        s1, s2 = arr1.var(), arr2.var()
+        cov = ((arr1 - mu1) * (arr2 - mu2)).mean()
+        score = ((2 * mu1 * mu2 + c1) * (2 * cov + c2)) / ((mu1 ** 2 + mu2 ** 2 + c1) * (s1 + s2 + c2))
+        score = max(0.0, min(1.0, float(score)))
+        return {"score": score, "reason": f"RegionSimilarity: {score:.4f}"}

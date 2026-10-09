@@ -1012,3 +1012,21 @@ class LatencyCheck(FunctionEvaluator):
 class FleissKappa(FunctionEvaluator):
     def __init__(self, display_name: str | None = None):
         super().__init__(function_name=FunctionEvalTypeId.FLEISS_KAPPA.value, function_arguments={}, display_name=display_name)
+
+
+class BoundingBoxIoU(FunctionEvaluator):
+    def __init__(self, box_format: str = "xyxy", display_name: str | None = None):
+        """Initialize BoundingBoxIoU: coordinate IoU for UI grounding."""
+        super().__init__(function_name=FunctionEvalTypeId.BOUNDING_BOX_IOU.value, function_arguments={"box_format": box_format}, display_name=display_name)
+
+
+class ElementGrounding(FunctionEvaluator):
+    def __init__(self, box_format: str = "xyxy", display_name: str | None = None):
+        """Initialize ElementGrounding: box overlap plus label match."""
+        super().__init__(function_name=FunctionEvalTypeId.ELEMENT_GROUNDING.value, function_arguments={"box_format": box_format}, display_name=display_name)
+
+
+class RegionSimilarity(FunctionEvaluator):
+    def __init__(self, display_name: str | None = None):
+        """Initialize RegionSimilarity: crop-aware image similarity."""
+        super().__init__(function_name=FunctionEvalTypeId.REGION_SIMILARITY.value, function_arguments={}, display_name=display_name)
