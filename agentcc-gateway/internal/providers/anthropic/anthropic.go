@@ -68,6 +68,15 @@ func New(id string, cfg config.ProviderConfig) (*Provider, error) {
 
 func (p *Provider) ID() string { return p.id }
 
+// endpoint builds an upstream URL for a versioned path such as
+// "/v1/messages". Anthropic has no configurable API path prefix, so this
+// uses the fixed default rather than cfg.EffectiveAPIPathPrefix() -- the
+// model-discovery call for this provider resolves against the same fixed
+// prefix, and the two layers must agree on one URL.
+func (p *Provider) endpoint(path string) string {
+	return config.JoinEndpoint(p.baseURL, config.DefaultAPIPathPrefix, path)
+}
+
 func (p *Provider) acquireSemaphore(ctx context.Context) error {
 	select {
 	case p.semaphore <- struct{}{}:
@@ -99,7 +108,7 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 		return nil, models.ErrInternal(fmt.Sprintf("anthropic: marshaling request: %v", err))
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v1/messages", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.endpoint("/v1/messages"), bytes.NewReader(body))
 	if err != nil {
 		return nil, models.ErrInternal(fmt.Sprintf("anthropic: creating request: %v", err))
 	}
@@ -160,7 +169,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 			return
 		}
 
-		httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v1/messages", bytes.NewReader(body))
+		httpReq, err := http.NewRequestWithContext(ctx, "POST", p.endpoint("/v1/messages"), bytes.NewReader(body))
 		if err != nil {
 			errs <- models.ErrInternal(fmt.Sprintf("anthropic: creating request: %v", err))
 			return
@@ -257,7 +266,7 @@ func (p *Provider) CreateAnthropicMessage(ctx context.Context, reqBody []byte, h
 	}
 	defer p.releaseSemaphore()
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v1/messages", bytes.NewReader(reqBody))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.endpoint("/v1/messages"), bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, 0, models.ErrInternal(fmt.Sprintf("creating anthropic native request: %v", err))
 	}
@@ -288,7 +297,7 @@ func (p *Provider) CountAnthropicTokens(ctx context.Context, reqBody []byte, hea
 	}
 	defer p.releaseSemaphore()
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v1/messages/count_tokens", bytes.NewReader(reqBody))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.endpoint("/v1/messages/count_tokens"), bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, 0, models.ErrInternal(fmt.Sprintf("creating anthropic count_tokens request: %v", err))
 	}
@@ -319,7 +328,7 @@ func (p *Provider) StreamAnthropicMessage(ctx context.Context, reqBody []byte, h
 	}
 	// Semaphore released when caller closes the stream.
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v1/messages", bytes.NewReader(reqBody))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.endpoint("/v1/messages"), bytes.NewReader(reqBody))
 	if err != nil {
 		p.releaseSemaphore()
 		return nil, 0, models.ErrInternal(fmt.Sprintf("creating streaming anthropic request: %v", err))

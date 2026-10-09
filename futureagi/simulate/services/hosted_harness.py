@@ -1411,14 +1411,13 @@ def record_cleanup(
         if attempt.state != HostedHarnessAttempt.State.SUPERSEDED:
             attempt.state = _attempt_terminal_state(attempt)
         attempt.save(update_fields=["cleanup_verified_at", "state", "updated_at"])
-        from simulate.services.harness_usage import (
-            record_sandbox_runtime,
-            replay_harness_usage,
-        )
+        from simulate.services.harness_usage import record_sandbox_runtime
+        from simulate.tasks.hosted_harness_usage import schedule_usage_seal
 
         record_sandbox_runtime(attempt, final=True)
-        # Teardown seals all measured authoring, even when no bundle was produced.
-        replay_harness_usage(attempt)
+        # Sealed after commit on the backend queue: the sandbox runner has no billing config.
+        sealed_attempt_id = str(attempt.id)
+        transaction.on_commit(lambda: schedule_usage_seal(sealed_attempt_id))
         job = HostedHarnessJob.no_workspace_objects.select_for_update().get(
             id=attempt.job_id
         )

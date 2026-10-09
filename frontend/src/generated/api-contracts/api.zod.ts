@@ -4137,11 +4137,17 @@ export const AgentccAnalyticsModelComparisonResponse = zod.object({
  * KPI cards with trend comparison.
  */
 
+export const agentccAnalyticsOverviewQueryApiKeyIdMax = 255;
+
 export const AgentccAnalyticsOverviewQueryParams = zod.object({
   start: zod.string().datetime({ offset: true }).optional(),
   end: zod.string().datetime({ offset: true }).optional(),
   granularity: zod.string().min(1).optional(),
-  api_key_id: zod.string().uuid().optional(),
+  api_key_id: zod
+    .string()
+    .max(agentccAnalyticsOverviewQueryApiKeyIdMax)
+    .optional()
+    .describe("Gateway key id (not the API key's UUID primary key)."),
 });
 
 export const AgentccAnalyticsOverviewResponseItem = zod.object({
@@ -7408,12 +7414,18 @@ export const AgentccProviderCredentialsRotateBody = zod.object({
   last_rotated_at: zod.string().datetime({ offset: true }).optional(),
 });
 
+export const agentccRequestLogsListQueryApiKeyIdMax = 255;
+
 export const AgentccRequestLogsListQueryParams = zod.object({
   page: zod.number().min(1).optional(),
   limit: zod.number().min(1).optional(),
   user_id: zod.string().optional(),
   session_id: zod.string().optional(),
-  api_key_id: zod.string().uuid().optional(),
+  api_key_id: zod
+    .string()
+    .max(agentccRequestLogsListQueryApiKeyIdMax)
+    .optional()
+    .describe("Gateway key id (not the API key's UUID primary key)."),
   request_id: zod.string().optional(),
   model: zod
     .string()
