@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import { Box, Chip } from "@mui/material";
 import {
@@ -9,6 +9,9 @@ import TagChip from "src/components/traceDetail/TagChip";
 import AddTagsPopover from "src/components/traceDetail/AddTagsPopover";
 
 const MAX_VISIBLE = 2;
+// Stable "no tags" value: AddTagsPopover resets its working tags whenever
+// currentTags changes, so a fresh [] per render would wipe a session's adds.
+const NO_TAGS = [];
 
 const TagsCell = ({
   value,
@@ -19,9 +22,10 @@ const TagsCell = ({
   onTagsUpdated,
 }) => {
   const [anchorEl, setAnchorEl] = useState(null);
-  // Trace-list rows can carry tags as the stored JSON string.
-  const storedTags = parseTagList(value);
-  const tags = storedTags ?? [];
+  // Trace-list rows can carry tags as the stored JSON string. Parse once per
+  // value so the popover gets the same array across re-renders.
+  const storedTags = useMemo(() => parseTagList(value), [value]);
+  const tags = storedTags ?? NO_TAGS;
 
   // Resolve which single entity this cell tags from the grid context (trace
   // grid vs span grid). A trace row can also carry its root span_id and the
