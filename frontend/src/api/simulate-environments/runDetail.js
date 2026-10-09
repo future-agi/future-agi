@@ -5,6 +5,7 @@ import { extractKpis } from "src/sections/test-detail/common";
 import { normalizeEvalResult } from "src/sections/develop-detail/DataTab/common";
 import {
   ACTIVE_EXECUTION_STATUSES,
+  SCORING_STATUS,
   STOPPABLE_EXECUTION_STATUSES,
   runColor,
   runStateFor,
@@ -424,10 +425,10 @@ export function callTranscript(raw) {
 // the failed-eval banner.
 // The `evaluations[]` statuses of an eval that has no verdict to show.
 const UNSCORED_EVAL_STATUSES = new Set([
-  "pending",
-  "failed",
-  "timed_out",
-  "skipped",
+  SCORING_STATUS.PENDING,
+  SCORING_STATUS.FAILED,
+  SCORING_STATUS.TIMED_OUT,
+  SCORING_STATUS.SKIPPED,
 ]);
 
 /**
@@ -455,8 +456,8 @@ export function withScoringStatus(evalMetrics, evaluations) {
       status: e.status,
       value: e.value ?? null,
       reason: e.reason || "",
-      error: e.status === "failed",
-      skipped: e.status === "skipped",
+      error: e.status === SCORING_STATUS.FAILED,
+      skipped: e.status === SCORING_STATUS.SKIPPED,
     };
   });
   return merged;
@@ -625,7 +626,7 @@ export function useCallExecutionV3Detail(callExecId, enabled = true, options) {
       const data = query.state.data;
       // An eval still being scored lands while the drawer is open.
       const isScoring = (data?.evaluations ?? []).some(
-        (evaluation) => evaluation?.status === "pending",
+        (evaluation) => evaluation?.status === SCORING_STATUS.PENDING,
       );
       const evalMetrics = data?.eval_metrics;
       const isLocalizing =

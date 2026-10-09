@@ -77,7 +77,10 @@ export default function VoiceCallDrawer({
             ...data,
             // The shared drawer reads stored `eval_metrics`; give each unscored
             // eval its status so it shows pending, failed or timed out.
-            eval_metrics: withScoringStatus(data.eval_metrics, data.evaluations),
+            eval_metrics: withScoringStatus(
+              data.eval_metrics,
+              data.evaluations,
+            ),
             transcript: callTranscript(data),
             module: "simulate",
             origin: "simulate",
