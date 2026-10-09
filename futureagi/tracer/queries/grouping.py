@@ -67,11 +67,13 @@ class GroupingSnapshotError(ValueError):
 def groupable_findings(
     report: TraceInvestigationReport,
 ) -> QuerySet[TraceInvestigationFinding]:
-    """Only unresolved, evidenced findings become Feed occurrences."""
+    """Only unresolved, evidenced task failures become Feed occurrences."""
     findings = TraceInvestigationFinding.no_workspace_objects.filter(report=report)
-    if report.execution_status != "completed":
+    if report.execution_status != "completed" or report.outcome != "failure":
         return findings.none()
-    return findings.filter(recovery__in=GROUPABLE_RECOVERY)
+    return findings.filter(
+        recovery__in=GROUPABLE_RECOVERY, requirement__status="violated"
+    )
 
 
 def canonical_snapshot_digest(value: Mapping[str, object]) -> str:

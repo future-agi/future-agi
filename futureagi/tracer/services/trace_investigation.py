@@ -1269,12 +1269,9 @@ def publish_investigation(
             grouping_status=grouping_status,
         )
         _persist_investigation_details(report, result)
-        if groupable_findings(report).exists():
-            # An unrecovered finding is an issue even when every requirement was met.
-            report.has_issues = True
-            if current:
-                report.grouping_status = TraceInvestigationGroupingStatus.PENDING
-            report.save(update_fields=["has_issues", "grouping_status", "updated_at"])
+        if current and groupable_findings(report).exists():
+            report.grouping_status = TraceInvestigationGroupingStatus.PENDING
+            report.save(update_fields=["grouping_status", "updated_at"])
         enqueue_grouping_features(report=report)
         transaction.on_commit(lambda report=report: charge_trace_investigation(report))
         if current:

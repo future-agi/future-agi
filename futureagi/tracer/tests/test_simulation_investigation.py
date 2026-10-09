@@ -330,46 +330,6 @@ def test_debug_publication_retains_scoped_findings_for_grouping(
     assert snapshot["report"]["trace_id"] is None
 
 
-def test_debug_finding_without_a_broken_goal_is_grouped(
-    auth_client, organization, workspace
-):
-    scenario = Scenarios.objects.create(
-        name="Refund",
-        source="Refund policy",
-        organization=organization,
-        workspace=workspace,
-    )
-    execution, call = _execution(
-        organization, workspace, scenario, "passing", CallExecution.CallStatus.COMPLETED
-    )
-    auth_client.post(f"/simulate/test-executions/{execution.id}/debug-analysis/")
-    claim = claim_due_investigations(
-        worker_id="test-worker", engine_version="omega-v1", limit=1
-    )["claims"][0]
-    result = _failure_result(claim, call)
-    result["outcome"] = "success"
-    result["requirement_checks"][0]["status"] = "satisfied"
-    result["findings"][0].update(requirement_id=None, recovery="unrecovered")
-    result["result_digest"] = canonical_wire_result_digest(result)
-
-    receipt = publish_investigation(
-        idempotency_key=str(claim["attempt_id"]),
-        lease_token=claim["lease_token"],
-        result=result,
-        wire_result_digest=result["result_digest"],
-    )
-
-    # A one-off no authored goal covers groups with the same one-off on other calls.
-    report = TraceInvestigationReport.no_workspace_objects.get(id=receipt["report_id"])
-    snapshot = export_grouping_snapshot(report=report)
-    assert receipt["grouping_status"] == "pending"
-    assert report.has_issues is True
-    assert [
-        finding["requirement_id"] for finding in snapshot["report"]["findings"]
-    ] == [None]
-    assert len(snapshot["occurrences"]) == 1
-
-
 def test_debug_evidence_carries_the_runs_live_eval_verdicts(
     auth_client, organization, workspace
 ):

@@ -453,65 +453,6 @@ def test_recovered_finding_is_retained_but_not_grouped(observe_project):
     assert receipt["grouping_status"] == "not_required"
     assert report.findings.count() == 1
     assert export_grouping_snapshot(report=report)["occurrences"] == []
-    # The violated requirement still makes the trace a failing one.
-    assert report.has_issues is True
-
-
-def _passing_result_with_finding(claim, *, recovery):
-    """Every requirement met, and one finding that no requirement covers."""
-    result = _result(claim)
-    result["outcome"] = "success"
-    result["requirement_checks"][0]["status"] = "satisfied"
-    result["findings"][0].update(requirement_id=None, recovery=recovery)
-    result["result_digest"] = canonical_wire_result_digest(result)
-    return result
-
-
-@override_settings(ERROR_FEED_OMEGA_DELAY_SECONDS=0)
-def test_unrecovered_finding_reaches_the_feed_without_a_violated_requirement(
-    observe_project,
-):
-    _configure(observe_project)
-    record_trace_notifications(deliveries=[_delivery(observe_project)])
-    claim = claim_due_investigations(
-        worker_id="node-1", engine_version="omega-v1", limit=1
-    )["claims"][0]
-
-    receipt = _publish(
-        idempotency_key="finding-only-publication",
-        lease_token=claim["lease_token"],
-        result=_passing_result_with_finding(claim, recovery="unrecovered"),
-    )
-
-    report = TraceInvestigationReport.no_workspace_objects.get(id=receipt["report_id"])
-    snapshot = export_grouping_snapshot(report=report)
-    assert receipt["grouping_status"] == "pending"
-    assert report.outcome == "success"
-    assert report.has_issues is True
-    assert [
-        finding["requirement_id"] for finding in snapshot["report"]["findings"]
-    ] == [None]
-    assert len(snapshot["occurrences"]) == 1
-
-
-@override_settings(ERROR_FEED_OMEGA_DELAY_SECONDS=0)
-def test_recovered_finding_on_a_passing_trace_is_not_an_issue(observe_project):
-    _configure(observe_project)
-    record_trace_notifications(deliveries=[_delivery(observe_project)])
-    claim = claim_due_investigations(
-        worker_id="node-1", engine_version="omega-v1", limit=1
-    )["claims"][0]
-
-    receipt = _publish(
-        idempotency_key="recovered-finding-publication",
-        lease_token=claim["lease_token"],
-        result=_passing_result_with_finding(claim, recovery="recovered"),
-    )
-
-    report = TraceInvestigationReport.no_workspace_objects.get(id=receipt["report_id"])
-    assert receipt["grouping_status"] == "not_required"
-    assert report.has_issues is None
-    assert export_grouping_snapshot(report=report)["occurrences"] == []
 
 
 @override_settings(ERROR_FEED_OMEGA_DELAY_SECONDS=0)
