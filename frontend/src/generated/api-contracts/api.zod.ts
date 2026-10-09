@@ -55536,6 +55536,61 @@ export const TracerInternalErrorFeedV2AttemptsPartialUpdateResponse =
     job_state: zod.string().min(1),
   });
 
+export const TracerInternalErrorFeedV2AttemptsConversationEvidenceCreateParams =
+  zod.object({
+    attempt_id: zod.string(),
+  });
+
+export const tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateBodyLeaseTokenMax = 255;
+
+export const TracerInternalErrorFeedV2AttemptsConversationEvidenceCreateBody =
+  zod.object({
+    lease_token: zod
+      .string()
+      .min(1)
+      .max(
+        tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateBodyLeaseTokenMax,
+      ),
+  });
+
+export const tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponseRowsItemIdMax = 64;
+
+export const TracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponse =
+  zod.object({
+    rows: zod.array(
+      zod.object({
+        project_id: zod.string().uuid(),
+        trace_id: zod.string().uuid(),
+        org_id: zod.string().uuid(),
+        id: zod
+          .string()
+          .min(1)
+          .max(
+            tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponseRowsItemIdMax,
+          ),
+        parent_span_id: zod.string(),
+        name: zod.string(),
+        observation_type: zod.string().min(1),
+        start_time: zod.string().datetime({ offset: true }),
+        end_time: zod.string().datetime({ offset: true }),
+        attrs_string: zod.record(zod.string(), zod.string().min(1)),
+        conversation: zod.object({
+          provider: zod.string().min(1),
+          agent_instructions: zod.string(),
+          call: zod.record(zod.string(), zod.string()),
+          variables: zod.record(zod.string(), zod.string()),
+          analysis: zod.record(zod.string(), zod.string()),
+          latency_ms: zod.record(zod.string(), zod.string()),
+          turns: zod.array(zod.record(zod.string(), zod.string())),
+          provider_log_issues: zod
+            .array(zod.record(zod.string(), zod.string()))
+            .optional(),
+          not_included: zod.array(zod.string().min(1)),
+        }),
+      }),
+    ),
+  });
+
 export const TracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateParams =
   zod.object({
     attempt_id: zod.string(),
@@ -55622,6 +55677,7 @@ export const TracerInternalErrorFeedV2ClaimsCreateResponse = zod.object({
           end: zod.string().datetime({ offset: true }),
         })
         .optional(),
+      evidence_source: zod.enum(["conversation"]).optional(),
       engine_version: zod
         .string()
         .min(1)

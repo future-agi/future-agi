@@ -109,6 +109,7 @@ class InvestigationClaimSerializer(serializers.Serializer):
     lease_expires_at = serializers.DateTimeField()
     read_cutoff = serializers.DateTimeField()
     evidence_window = InvestigationEvidenceWindowSerializer(required=False)
+    evidence_source = serializers.ChoiceField(choices=("conversation",), required=False)
     engine_version = serializers.CharField(max_length=20)
     contract_version = serializers.CharField()
     memory = InvestigationMemorySerializer()
@@ -333,6 +334,42 @@ class PublishInvestigationResponseSerializer(serializers.Serializer):
 class SimulationEvidenceRequestSerializer(StrictInputSerializer):
     lease_token = serializers.CharField(max_length=255)
     cursor = serializers.IntegerField(min_value=0)
+
+
+class ConversationEvidenceRequestSerializer(StrictInputSerializer):
+    lease_token = serializers.CharField(max_length=255)
+
+
+class ConversationDossierSerializer(serializers.Serializer):
+    provider = serializers.CharField()
+    agent_instructions = serializers.CharField(allow_null=True, allow_blank=True)
+    call = serializers.DictField()
+    variables = serializers.DictField()
+    analysis = serializers.DictField()
+    latency_ms = serializers.DictField()
+    turns = serializers.ListField(child=serializers.DictField())
+    provider_log_issues = serializers.ListField(
+        child=serializers.DictField(), required=False
+    )
+    not_included = serializers.ListField(child=serializers.CharField())
+
+
+class ConversationEvidenceRowSerializer(serializers.Serializer):
+    project_id = serializers.UUIDField()
+    trace_id = serializers.UUIDField()
+    org_id = serializers.UUIDField()
+    id = serializers.CharField(max_length=64)
+    parent_span_id = serializers.CharField(allow_blank=True)
+    name = serializers.CharField(allow_blank=True)
+    observation_type = serializers.CharField()
+    start_time = serializers.DateTimeField()
+    end_time = serializers.DateTimeField(allow_null=True)
+    attrs_string = serializers.DictField(child=serializers.CharField())
+    conversation = ConversationDossierSerializer()
+
+
+class ConversationEvidenceResponseSerializer(serializers.Serializer):
+    rows = ConversationEvidenceRowSerializer(many=True)
 
 
 class InvestigationControlErrorSerializer(ManagementAPIErrorResponseSerializer):
