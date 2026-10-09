@@ -2,29 +2,35 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen, userEvent } from "src/utils/test-utils";
 import TagsCell from "../TagsCell";
 
+// Every render's currentTags, to check the identity the popover sees.
+const popoverCurrentTags = vi.hoisted(() => []);
+
 // Stub the real popover (it depends on react-query / network) so these tests
 // stay focused on TagsCell wiring: the cell must open the popover and hand it
 // the row identity + current tags.
 vi.mock("src/components/traceDetail/AddTagsPopover", () => ({
-  default: ({ open, traceId, spanId, currentTags, onClose }) => (
-    <div
-      data-testid="add-tags-popover"
-      data-open={String(open)}
-      data-trace-id={traceId ?? ""}
-      data-span-id={spanId ?? ""}
-      data-current-tags={JSON.stringify(currentTags ?? [])}
-    >
-      {open && (
-        <button
-          type="button"
-          data-testid="popover-close"
-          onClick={() => onClose?.()}
-        >
-          close
-        </button>
-      )}
-    </div>
-  ),
+  default: ({ open, traceId, spanId, currentTags, onClose }) => {
+    popoverCurrentTags.push(currentTags);
+    return (
+      <div
+        data-testid="add-tags-popover"
+        data-open={String(open)}
+        data-trace-id={traceId ?? ""}
+        data-span-id={spanId ?? ""}
+        data-current-tags={JSON.stringify(currentTags ?? [])}
+      >
+        {open && (
+          <button
+            type="button"
+            data-testid="popover-close"
+            onClick={() => onClose?.()}
+          >
+            close
+          </button>
+        )}
+      </div>
+    );
+  },
 }));
 
 describe("TagsCell", () => {
@@ -248,5 +254,17 @@ describe("TagsCell", () => {
 
     expect(screen.queryByTestId("add-tags-popover")).not.toBeInTheDocument();
     expect(container.firstChild).toBeNull();
+  });
+
+  // The popover resets its working tags whenever currentTags changes, so a
+  // grid re-render with the same row value must not hand it a new array.
+  it.each([
+    ["a JSON-string list", '["production", "v2"]'],
+    ["no tags", undefined],
+  ])("keeps currentTags stable across re-renders for %s", (_label, value) => {
+    const { rerender } = render(<TagsCell value={value} traceId="trace-1" />);
+    const first = popoverCurrentTags.at(-1);
+    rerender(<TagsCell value={value} traceId="trace-1" />);
+    expect(popoverCurrentTags.at(-1)).toBe(first);
   });
 });
