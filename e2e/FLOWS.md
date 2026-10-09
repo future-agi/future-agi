@@ -722,6 +722,7 @@
 - each request stored in PG agentcc_request_log under the key's org with the caller metadata the gateway parsed
 - the list endpoint returns only the rows of the filtered application
 - two applications in one filter return both, a service filter and a team tag filter narrow the same way
+- filtering by the delivering key's gateway_key_id returns all rows stamped with that key, not a 400
 - metadata-values offers exactly the two applications the org sent
 - usage analytics grouped by application counts each application on its own
 - the filtered UI row set equals the API result for the same filter
