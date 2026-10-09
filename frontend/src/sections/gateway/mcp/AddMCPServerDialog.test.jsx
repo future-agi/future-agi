@@ -5,14 +5,35 @@ import userEvent from "@testing-library/user-event";
 import AddMCPServerDialog from "./AddMCPServerDialog";
 
 const mockMutate = vi.fn();
+let mockMutationState = {};
 
 vi.mock("./hooks/useMCPConfig", () => ({
-  useUpdateMCPServer: () => ({ mutate: mockMutate, isPending: false }),
+  useUpdateMCPServer: () => ({
+    mutate: mockMutate,
+    isPending: false,
+    ...mockMutationState,
+  }),
 }));
 
 describe("AddMCPServerDialog", () => {
   beforeEach(() => {
     mockMutate.mockClear();
+    mockMutationState = {};
+  });
+
+  it("shows the reason when the save is rejected", () => {
+    mockMutationState = {
+      isError: true,
+      error: {
+        message:
+          "The gateway cannot accept this config. mcp.servers.github.command: Extra inputs are not permitted",
+      },
+    };
+    render(<AddMCPServerDialog open onClose={vi.fn()} gatewayId="default" />);
+
+    expect(
+      screen.getByText(/mcp\.servers\.github\.command: Extra inputs/),
+    ).toBeInTheDocument();
   });
 
   it("saves an HTTP server with only the fields the gateway config has", async () => {

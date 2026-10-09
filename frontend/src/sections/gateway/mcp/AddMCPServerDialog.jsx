@@ -1,6 +1,7 @@
 /* eslint-disable react/prop-types */
 import React, { useState, useEffect } from "react";
 import {
+  Alert,
   Button,
   Dialog,
   DialogActions,
@@ -200,6 +201,13 @@ const AddMCPServerDialog = ({ open, onClose, gatewayId, editServer }) => {
             placeholder="5m"
             helperText="How long to cache the tool list (e.g., 5m, 1h)"
           />
+
+          {updateMutation.isError && (
+            <Alert severity="error">
+              {updateMutation.error?.message ||
+                "Failed to save server configuration"}
+            </Alert>
+          )}
         </Stack>
       </DialogContent>
       <DialogActions>

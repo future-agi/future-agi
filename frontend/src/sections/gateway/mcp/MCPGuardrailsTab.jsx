@@ -139,6 +139,12 @@ const MCPGuardrailsTab = ({ config, mcpStatus, gatewayId }) => {
         </Alert>
       )}
 
+      {updateMutation.isError && (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {updateMutation.error?.message || "Failed to update guardrails"}
+        </Alert>
+      )}
+
       <Stack spacing={3}>
         <Card>
           <CardContent>
