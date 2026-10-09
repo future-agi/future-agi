@@ -12,10 +12,12 @@ import { resolveBackendContainer } from './simulate-seed';
  * reads and writes `tracer_trace`. The collector this harness sends OTLP through
  * writes ClickHouse only, so a collector-seeded trace has no row there. The
  * Django ingestion path does create one (`tracer/utils/create_otel_span.py`,
- * `Trace.objects.get_or_create(id=..., defaults={"project": ...})`); this does
- * the same through the real Django ORM inside the running backend container,
- * the way `simulate-seed.ts` seeds call executions. CDC then mirrors the row
- * (and its tags) into ClickHouse `traces`, which the trace list reads.
+ * `Trace.objects.get_or_create(id=..., defaults={"project": ...})`) and then
+ * mirrors it into ClickHouse `traces` with
+ * `trace_writer.mirror_traces_to_clickhouse`, the table the trace list reads
+ * tags from. This does the same two steps through the real Django code inside
+ * the running backend container, the way `simulate-seed.ts` seeds call
+ * executions, and fails if the stack has that mirror switched off.
  *
  * Scoped per call to the caller's own project and organization.
  */
@@ -30,9 +32,15 @@ django.setup()
 
 from tracer.models.project import Project
 from tracer.models.trace import Trace
+from tracer.services.clickhouse.v2.trace_writer import (
+    dual_write_enabled,
+    mirror_traces_to_clickhouse,
+)
 
 
 def main():
+    if not dual_write_enabled():
+        raise SystemExit("trace mirror to ClickHouse is off in this stack (CH25_TRACE_DUAL_WRITE / CH25_DROP_LEGACY_CDC_CHAIN)")
     spec = json.loads(os.environ["SEED_TRACES"])
     project = Project.objects.get(
         id=spec["projectId"], organization_id=spec["organizationId"]
@@ -46,6 +54,7 @@ def main():
         if not created:
             raise SystemExit(f"trace {item['id']} already had a Postgres row")
         out.append({"id": str(trace.id), "tags": trace.tags})
+    mirror_traces_to_clickhouse([item["id"] for item in out])
     print(json.dumps(out))
 
 

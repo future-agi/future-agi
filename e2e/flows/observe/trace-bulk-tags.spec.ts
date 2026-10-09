@@ -33,18 +33,20 @@ test('OBS-E2E-037: bulk Add tags on selected traces adds the tag to each trace a
   annotation: flowAnnotation({
     id: 'OBS-E2E-037', area: 'observe',
     userGoal: 'A developer tags several traces at once from the Observe trace list',
-    steps: ['send two OTLP traces into one project and register both as Postgres traces (the Django ingestion path), one already tagged `prod`',
+    steps: ['send two OTLP traces into one project and register both as Postgres traces mirrored to ClickHouse (the Django ingestion path), one already tagged `prod`',
             "open the project's trace list and see the existing `prod` tag",
             'select both traces',
             'choose Actions → Add tags and add `need improvement`',
-            'see "Tags applied to 2 items"'],
+            'see "Tags applied to 2 items"',
+            'close the popover and see the new tag in the refreshed list'],
     backendChecks: ['every tag PATCH the page sends carries a list of tag-name strings, one per selected trace',
                     'Postgres tracer_trace.tags keeps `prod` and adds `need improvement` on the tagged trace',
-                    'Postgres tracer_trace.tags is exactly [`need improvement`] on the untagged trace'],
+                    'Postgres tracer_trace.tags is exactly [`need improvement`] on the untagged trace',
+                    'ClickHouse `traces` (what the trace list reads) carries the same saved tags for both traces'],
   }),
 }, async ({ page, actor, probe }, testInfo) => {
-  // CDC (up to POLL.CDC_VISIBLE) + span visibility + several UI waits.
-  test.setTimeout(420_000);
+  // Span visibility + mirror polls + several UI waits under parallel load.
+  test.setTimeout(300_000);
   const req = await request.newContext();
   const projectName = `e2e-obs37-${testInfo.workerIndex}-${Date.now().toString(36)}`;
   const tagged = await sendTrace(req, {
@@ -81,13 +83,13 @@ test('OBS-E2E-037: bulk Add tags on selected traces adds the tag to each trace a
       ],
     });
     // The trace list reads the latest `traces` row's tags (trace_list.py
-    // `argMax(tags, _version)`), fed from Postgres by CDC.
+    // `argMax(tags, _version)`), which the seed mirrored from Postgres.
     await expect.poll(async () => {
       const rows = await probe.ch<{ tags: string }>(
         'SELECT argMax(tags, _version) AS tags FROM traces WHERE id = {t:UUID} GROUP BY id',
         { t: tagged.traceId });
       return rows[0]?.tags ?? '';
-    }, POLL.CDC_VISIBLE).toContain(`"${KEPT_TAG}"`);
+    }, POLL.SPAN_VISIBLE).toContain(`"${KEPT_TAG}"`);
   });
 
   const patches: { traceId: string; body: unknown }[] = [];
@@ -154,5 +156,28 @@ test('OBS-E2E-037: bulk Add tags on selected traces adds the tag to each trace a
       [tagged.traceId]: [KEPT_TAG, NEW_TAG],
       [untagged.traceId]: [NEW_TAG],
     });
+  });
+
+  await test.step('storage: ClickHouse traces carries the saved tags (what the list reads)', async () => {
+    for (const [traceId, expected] of [
+      [tagged.traceId, [KEPT_TAG, NEW_TAG]],
+      [untagged.traceId, [NEW_TAG]],
+    ] as const) {
+      await expect.poll(async () => {
+        const rows = await probe.ch<{ tags: string }>(
+          'SELECT argMax(tags, _version) AS tags FROM traces WHERE id = {t:UUID} GROUP BY id',
+          { t: traceId });
+        return JSON.parse(rows[0]?.tags || '[]');
+      }, POLL.SPAN_VISIBLE).toEqual(expected);
+    }
+  });
+
+  await test.step('UI: after the popover closes, the refreshed list shows the new tag', async () => {
+    await page.keyboard.press('Escape');
+    for (const traceId of [tagged.traceId, untagged.traceId]) {
+      await expect(traceRow(page, traceId).locator('[col-id="tags"]'))
+        .toContainText(NEW_TAG, { timeout: UI_READY });
+    }
+    await expect(traceRow(page, tagged.traceId).locator('[col-id="tags"]')).toContainText(KEPT_TAG);
   });
 });

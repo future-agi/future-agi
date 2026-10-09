@@ -1235,17 +1235,19 @@
 
 **User steps:**
 
-1. send two OTLP traces into one project and register both as Postgres traces (the Django ingestion path), one already tagged `prod`
+1. send two OTLP traces into one project and register both as Postgres traces mirrored to ClickHouse (the Django ingestion path), one already tagged `prod`
 2. open the project's trace list and see the existing `prod` tag
 3. select both traces
 4. choose Actions → Add tags and add `need improvement`
 5. see "Tags applied to 2 items"
+6. close the popover and see the new tag in the refreshed list
 
 **Backend state verified:**
 
 - every tag PATCH the page sends carries a list of tag-name strings, one per selected trace
 - Postgres tracer_trace.tags keeps `prod` and adds `need improvement` on the tagged trace
 - Postgres tracer_trace.tags is exactly [`need improvement`] on the untagged trace
+- ClickHouse `traces` (what the trace list reads) carries the same saved tags for both traces
 
 ## prompts
 
