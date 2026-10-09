@@ -509,6 +509,7 @@ import type {
   FalconMemoryListResponseApi,
   FeedDetailApiResponseApi,
   FeedListApiResponseApi,
+  FeedRedirectApiResponseApi,
   FeedSidebarApiResponseApi,
   FeedStatsApiResponseApi,
   FeedUpdateBodyApi,
@@ -1288,6 +1289,7 @@ import type {
   TracerFeedIssuesListParams,
   TracerFeedIssuesOverviewListParams,
   TracerFeedIssuesReadParams,
+  TracerFeedIssuesRedirectListParams,
   TracerFeedIssuesRootCauseListParams,
   TracerFeedIssuesSidebarListParams,
   TracerFeedIssuesStatsListParams,
@@ -71185,6 +71187,94 @@ export const tracerFeedIssuesOverviewList = async (
 ): Promise<tracerFeedIssuesOverviewListResponse> => {
   return apiMutator<tracerFeedIssuesOverviewListResponse>(
     getTracerFeedIssuesOverviewListUrl(clusterId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerFeedIssuesRedirectListResponse200 = {
+  data: FeedRedirectApiResponseApi;
+  status: 200;
+};
+
+export type tracerFeedIssuesRedirectListResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerFeedIssuesRedirectListResponse403 = {
+  data: ApiErrorResponseApi;
+  status: 403;
+};
+
+export type tracerFeedIssuesRedirectListResponse404 = {
+  data: ApiErrorResponseApi;
+  status: 404;
+};
+
+export type tracerFeedIssuesRedirectListResponse500 = {
+  data: ApiErrorResponseApi;
+  status: 500;
+};
+
+export type tracerFeedIssuesRedirectListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 500>;
+};
+
+export type tracerFeedIssuesRedirectListResponseSuccess =
+  tracerFeedIssuesRedirectListResponse200 & {
+    headers: Headers;
+  };
+export type tracerFeedIssuesRedirectListResponseError = (
+  | tracerFeedIssuesRedirectListResponse400
+  | tracerFeedIssuesRedirectListResponse403
+  | tracerFeedIssuesRedirectListResponse404
+  | tracerFeedIssuesRedirectListResponse500
+  | tracerFeedIssuesRedirectListResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type tracerFeedIssuesRedirectListResponse =
+  | tracerFeedIssuesRedirectListResponseSuccess
+  | tracerFeedIssuesRedirectListResponseError;
+
+export const getTracerFeedIssuesRedirectListUrl = (
+  clusterId: string,
+  params?: TracerFeedIssuesRedirectListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/feed/issues/${clusterId}/redirect/?${stringifiedParams}`
+    : `/tracer/feed/issues/${clusterId}/redirect/`;
+};
+
+/**
+ * Resolve an old issue ID to its active redirect target.
+ */
+export const tracerFeedIssuesRedirectList = async (
+  clusterId: string,
+  params?: TracerFeedIssuesRedirectListParams,
+  options?: RequestInit,
+): Promise<tracerFeedIssuesRedirectListResponse> => {
+  return apiMutator<tracerFeedIssuesRedirectListResponse>(
+    getTracerFeedIssuesRedirectListUrl(clusterId, params),
     {
       ...options,
       method: "GET",
