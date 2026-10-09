@@ -19,6 +19,7 @@ from tracer.views.feed import (
     CreateLinearIssueView,
     FeedDeepAnalysisView,
     FeedDetailView,
+    FeedRedirectView,
     FeedListView,
     FeedOverviewView,
     FeedRootCauseView,
@@ -251,6 +252,11 @@ urlpatterns = [
         "feed/issues/<str:cluster_id>/",
         FeedDetailView.as_view(),
         name="feed-issue-detail",
+    ),
+    path(
+        "feed/issues/<str:cluster_id>/redirect/",
+        FeedRedirectView.as_view(),
+        name="feed-issue-redirect",
     ),
     path(
         "feed/issues/<str:cluster_id>/overview/",
