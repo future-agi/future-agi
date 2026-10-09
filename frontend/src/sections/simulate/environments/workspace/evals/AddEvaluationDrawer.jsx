@@ -22,6 +22,7 @@ import {
   harnessEnvironmentQuery,
 } from "src/api/simulate-environments/environment";
 import { useErrorLocalizationAvailable } from "src/hooks/useErrorLocalization";
+import { useFeatureLocked, CAPABILITY } from "src/hooks/useCapabilities";
 import SideDrawer from "../../components/SideDrawer";
 import EmptyState from "../../components/EmptyState";
 import { EVALS_COPY } from "./evals.constants";
@@ -44,9 +45,9 @@ const NO_CONFIGS = [];
 // picker neither lists nor creates one here.
 const SINGLE_EVALS_ONLY = { template_type: ["single"] };
 
-// Where error localization isn't available the picker's toggle is inert and
-// always reports it off, so a save would switch off what the environment
-// set. The row's own values go back instead — the config's copy too, since
+// Where error localization isn't available, or agentic evals are locked, the
+// picker's toggle is inert and always reports it off, so a save would switch
+// off what the environment set. The row's own values go back instead — the config's copy too, since
 // the server replaces the config whole.
 const withRowErrorLocalizer = (body, row) => {
   const { error_localizer: _sent, ...rest } = body;
@@ -125,6 +126,7 @@ export default function AddEvaluationDrawer({
   const gradeRun = useAddRunEvaluation();
   const editEval = useEditAppliedEvaluation();
   const errorLocalizationAvailable = useErrorLocalizationAvailable();
+  const { locked: agentEvalLocked } = useFeatureLocked(CAPABILITY.AGENTIC_EVAL);
 
   const refreshFailed =
     open && runTestQuery.isError && runTestQuery.data !== undefined;
@@ -212,9 +214,10 @@ export default function AddEvaluationDrawer({
       template_id: _templateId,
       ...sent
     } = serializeEvalConfig(config);
-    const body = errorLocalizationAvailable
-      ? sent
-      : withRowErrorLocalizer(sent, editTarget);
+    const body =
+      errorLocalizationAvailable && !agentEvalLocked
+        ? sent
+        : withRowErrorLocalizer(sent, editTarget);
     if (!Object.keys(body.mapping || {}).length) {
       enqueueSnackbar(NO_INPUTS, { variant: "error" });
       throw new Error(NO_INPUTS);

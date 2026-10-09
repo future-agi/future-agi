@@ -21,6 +21,12 @@ const errorLocalization = vi.hoisted(() => ({ available: true }));
 vi.mock("src/hooks/useErrorLocalization", () => ({
   useErrorLocalizationAvailable: () => errorLocalization.available,
 }));
+// The picker's localizer toggle is also inert while agentic evals are locked.
+const agentEval = vi.hoisted(() => ({ locked: false }));
+vi.mock("src/hooks/useCapabilities", async (importOriginal) => ({
+  ...(await importOriginal()),
+  useFeatureLocked: () => ({ locked: agentEval.locked }),
+}));
 
 vi.mock("src/sections/common/EvalPicker", async () => ({
   serializeEvalConfig: (
@@ -131,6 +137,7 @@ const detail = ({ agentType = "voice", runTestId = "rt-1" } = {}) => ({
 
 beforeEach(() => {
   errorLocalization.available = true;
+  agentEval.locked = false;
   picker.props = null;
   getHarnessEnvironment.mockReset();
   getHarnessEnvironment.mockResolvedValue(detail());
@@ -795,6 +802,27 @@ describe("AddEvaluationDrawer — editing an eval", () => {
     expect(body.config.run_config.error_localizer_enabled).toBe(true);
     expect(body.mapping).toEqual(EDITED.mapping);
     expect(body.model).toBe("turing_large");
+  });
+
+  it("sends the row's own error localizer back, not the inert toggle's, while agentic evals are locked", async () => {
+    agentEval.locked = true;
+    updateAppliedEvaluation.mockResolvedValue(EDITING);
+    renderEdit({
+      editingEval: {
+        ...EDITING,
+        error_localizer: true,
+        config: {
+          output: "Pass/Fail",
+          run_config: { error_localizer_enabled: true },
+        },
+      },
+    });
+    await screen.findByTestId("eval-picker");
+    await act(() => picker.props.onEvalAdded(EDITED));
+
+    const body = updateAppliedEvaluation.mock.calls[0][2];
+    expect(body.error_localizer).toBe(true);
+    expect(body.config.run_config.error_localizer_enabled).toBe(true);
   });
 
   it("says nothing about the error localizer where it isn't available and the row never set it", async () => {
