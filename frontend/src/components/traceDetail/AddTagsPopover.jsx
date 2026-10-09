@@ -10,6 +10,11 @@ import { serializeTraceTags } from "./traceTagPayload";
 import TagChip from "./TagChip";
 import TagInput from "./TagInput";
 
+// Bulk callers pass no currentTags. A fresh `[]` default would be a new
+// dependency on every render, so the reset effect below would set state and
+// re-render forever while the popover is open.
+const NO_TAGS = [];
+
 const AddTagsPopover = ({
   anchorEl,
   open,
@@ -17,7 +22,7 @@ const AddTagsPopover = ({
   traceId,
   spanId,
   bulkItems,
-  currentTags = [],
+  currentTags = NO_TAGS,
   onSuccess,
 }) => {
   const items = Array.isArray(bulkItems) ? bulkItems : [];
