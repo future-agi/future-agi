@@ -16,8 +16,8 @@ test(
         "open the retired issue URL",
         "follow its redirect to the active issue URL",
       ],
-      backendChecks: [
-        "the browser requests the redirect for the retired ID",
+      browserChecks: [
+        "the browser requests the redirect for the retired ID and receives a stubbed response",
         "the browser never requests the retired issue detail",
       ],
     }),

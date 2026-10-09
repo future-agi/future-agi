@@ -604,9 +604,9 @@
 1. open the retired issue URL
 2. follow its redirect to the active issue URL
 
-**Backend state verified:**
+**Browser observations:**
 
-- the browser requests the redirect for the retired ID
+- the browser requests the redirect for the retired ID and receives a stubbed response
 - the browser never requests the retired issue detail
 
 ## evals
