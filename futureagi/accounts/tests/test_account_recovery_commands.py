@@ -105,16 +105,15 @@ def test_a_blocked_command_still_fails_before_it_runs(transactional_db):
 
 @pytest.mark.parametrize("line_end", ["\n", "\r\n"], ids=["bash", "powershell"])
 def test_create_user_reads_the_password_the_installers_pipe_in(
-    transactional_db, line_end
+    empty_instance, line_end
 ):
     """bin/install and bin/install.ps1 pipe the first account's password in,
     so it never shows on a command line: without a terminal, getpass reads
     it from stdin. Windows PowerShell ends the line with \\r\\n, which the
     signup serializer trims.
 
-    Each variant uses its own address and passes whether or not an earlier
-    test left the install's organization behind: on Community a later
-    create_user joins that organization as a member (install notes step 3)."""
+    The subprocess sees every committed row and the Community rule counts the
+    whole install, so this starts from an empty one, as an installer does."""
     email = f"first-owner-{line_end.encode().hex()}@futureagi.com"
     result = _manage_py(
         "create_user",
@@ -131,12 +130,13 @@ def test_create_user_reads_the_password_the_installers_pipe_in(
 
 
 def test_installer_create_user_joins_an_organization_that_already_exists(
-    transactional_db,
+    empty_instance,
 ):
     """The CI failure mode: the install already has its one organization (a
     first account, or one an earlier test left behind). On Community the
     piped create_user still succeeds and the account joins that organization
-    as a member; on a licensed or Cloud install it gets its own, as before."""
+    as a member; on a licensed or Cloud install it gets its own, as before.
+    Starts from an empty install so only this organization exists."""
     from accounts.models.organization import Organization
     from tfc.capabilities import edition
 

@@ -100,7 +100,9 @@ def _no_lock():
 
 @pytest.mark.django_db(transaction=True)
 class TestCreationRace:
-    def test_concurrent_first_workspace_exactly_one_succeeds(self, community):
+    def test_concurrent_first_workspace_exactly_one_succeeds(
+        self, empty_instance, community
+    ):
         """AC-08 / R4: the advisory lock serialises count-then-insert."""
         org = make_org()
         owner = make_owner(org)
@@ -111,7 +113,7 @@ class TestCreationRace:
         assert len(refused) == 1
         assert Workspace.no_workspace_objects.filter(organization=org).count() == 1
 
-    def test_without_the_lock_the_race_is_real(self, community):
+    def test_without_the_lock_the_race_is_real(self, empty_instance, community):
         """Control for the case above: the harness does detect a lost update."""
         org = make_org()
         owner = make_owner(org)
