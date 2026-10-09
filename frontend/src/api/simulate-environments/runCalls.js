@@ -105,6 +105,8 @@ export function mapCallRow(row, evalColumns = []) {
       ? `${scenarioName} · Trial ${trialIndex}`
       : scenarioName,
     sourceScenario: scenarioName,
+    // The key a re-run sends; null on calls the harness never tagged.
+    sourceScenarioKey: row?.source_scenario_key ?? null,
     harnessOutcomeStatus: row?.harness_outcome_status ?? outcome ?? null,
     trialIndex,
     scenarioDetails: row?.scenario_details ?? null,

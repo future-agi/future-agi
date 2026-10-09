@@ -147,23 +147,32 @@ const TABLE_QUERY = {
   groupBy: "goal",
 };
 
+// Whether the stubbed table reports a call that can be ticked for a re-run.
+let stubTickable = true;
+
 // The per-call table owns its own network hook, so stub it to a marker that
 // reports its query, can open a call, and shows which call/page it follows.
 function RunTraceTableStub({
+  onTickableChange,
   onOpenCall,
   onQueryChange,
   activeCallId,
   activePage,
   initialFilters,
+  rerunDisabledReason,
 }) {
   useEffect(() => {
     onQueryChange?.(TABLE_QUERY);
     return () => onQueryChange?.(null);
   }, [onQueryChange]);
+  useEffect(() => {
+    onTickableChange?.(stubTickable);
+  }, [onTickableChange]);
   return (
     <div>
       run-trace-table:{JSON.stringify(initialFilters || {})}
       <span>{`active:${activeCallId ?? "-"}:${activePage ?? "-"}`}</span>
+      <span>{`rerun-off:${rerunDisabledReason ?? "-"}`}</span>
       <button
         type="button"
         onClick={() => onOpenCall({ id: "c1", simulationCallType: "voice" })}
@@ -174,11 +183,13 @@ function RunTraceTableStub({
   );
 }
 RunTraceTableStub.propTypes = {
+  onTickableChange: PropTypes.func,
   initialFilters: PropTypes.object,
   onOpenCall: PropTypes.func,
   onQueryChange: PropTypes.func,
   activeCallId: PropTypes.string,
   activePage: PropTypes.number,
+  rerunDisabledReason: PropTypes.string,
 };
 vi.mock("../trace/RunTraceTable", () => ({ default: RunTraceTableStub }));
 vi.mock("../CallDrawer", () => ({
@@ -455,7 +466,7 @@ describe("RunDetail", () => {
     renderDetail();
     expect(screen.getByText("Queued")).toBeInTheDocument();
     expect(screen.queryByText("Running")).toBeNull();
-    expect(screen.getByRole("button", { name: /Run again/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Debug failures/ })).toBeDisabled();
   });
 
   it("does not show a Failed verdict while the run is still loading", () => {
@@ -517,12 +528,7 @@ describe("RunDetail", () => {
       });
       renderDetail();
 
-      for (const name of [
-        /Run evals/,
-        /Export/,
-        /Run again/,
-        /Debug failures/,
-      ]) {
+      for (const name of [/Run evals/, /Export/, /Debug failures/]) {
         expect(screen.getByRole("button", { name })).toBeDisabled();
       }
       // Stop stays available — it is the one action a live run needs.
@@ -548,7 +554,7 @@ describe("RunDetail", () => {
     renderDetail();
 
     expect(screen.getByRole("button", { name: /Run evals/ })).toBeEnabled();
-    for (const name of [/Export/, /Run again/, /Debug failures/]) {
+    for (const name of [/Export/, /Debug failures/]) {
       expect(screen.getByRole("button", { name })).toBeDisabled();
     }
   });
@@ -561,7 +567,7 @@ describe("RunDetail", () => {
     });
     renderDetail();
 
-    for (const name of [/Run evals/, /Export/, /Run again/, /Debug failures/]) {
+    for (const name of [/Run evals/, /Export/, /Debug failures/]) {
       expect(screen.getByRole("button", { name })).toBeEnabled();
     }
   });
@@ -714,19 +720,58 @@ describe("RunDetail", () => {
     });
   });
 
-  it("submits the same immutable selection and trials on Run again", async () => {
+  // Re-running now starts from the calls ticked in the table, so the header
+  // has no whole-run Run again.
+  it("keeps the table's Re-run off while a run is starting", () => {
     useRunDetail.mockReturnValue({
       identity: IDENTITY,
       stats: STATS,
       isLoading: false,
     });
+    renderDetail({ onStartRun: vi.fn(), runStarting: true });
+
+    expect(screen.getByText("rerun-off:Starting the run…")).toBeInTheDocument();
+  });
+
+  it("has no Run again button when the table has calls to tick", () => {
+    stubTickable = true;
+    useRunDetail.mockReturnValue({
+      identity: IDENTITY,
+      stats: STATS,
+      isLoading: false,
+    });
+    renderDetail({ onStartRun: vi.fn() });
+
+    expect(screen.queryByRole("button", { name: /Run again/ })).toBeNull();
+  });
+
+  it("re-runs the whole run from the header when no call can be ticked", async () => {
+    stubTickable = false;
     const user = userEvent.setup();
     const onStartRun = vi.fn();
+    useRunDetail.mockReturnValue({
+      identity: IDENTITY,
+      stats: STATS,
+      isLoading: false,
+    });
     renderDetail({ onStartRun });
 
-    await user.click(screen.getByRole("button", { name: "Run again" }));
-
+    await user.click(screen.getByRole("button", { name: /Run again/ }));
     expect(onStartRun).toHaveBeenCalledWith(["scenario-a", "scenario-b"], 3);
+    stubTickable = true;
+  });
+
+  it("keeps the header Run again off while a run is starting", () => {
+    stubTickable = false;
+    useRunDetail.mockReturnValue({
+      identity: IDENTITY,
+      stats: STATS,
+      isLoading: false,
+    });
+    renderDetail({ onStartRun: vi.fn(), runStarting: true });
+
+    expect(screen.getByRole("button", { name: /Run again/ })).toBeDisabled();
+    stubTickable = true;
   });
 
   it("does not invent a critical-failure classification", () => {

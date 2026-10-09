@@ -303,7 +303,16 @@ export default function EnvironmentWorkspace() {
             `source === "harness"` test WorkspacePanels/EvalsStep use) rides
             along the same context route, so RunDetail can gate the real API
             picker on it. */}
-        <Outlet context={{ env, envState, backed, onStartRun: startRun, creditBanner }} />
+        <Outlet
+          context={{
+            env,
+            envState,
+            backed,
+            onStartRun: startRun,
+            runStarting: runMutation.isPending,
+            creditBanner,
+          }}
+        />
       </Box>
     );
   }

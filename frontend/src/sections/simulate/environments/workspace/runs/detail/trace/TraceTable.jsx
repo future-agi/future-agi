@@ -2,6 +2,7 @@ import PropTypes from "prop-types";
 import React, { useEffect, useRef, useState } from "react";
 import {
   Box,
+  Checkbox,
   Stack,
   Typography,
   Table,
@@ -30,6 +31,7 @@ import {
   bodyCellSx,
   runOutcome,
   CLOSED_GROUP_VIEW,
+  neutralCheckboxSx,
 } from "./traceTable.constants";
 import {
   SubTasksCell,
@@ -78,6 +80,23 @@ const textCellSx = (width) => ({
   typography: "s2",
   color: "text.secondary",
 });
+// The narrow first column that holds a call's tick when rows can be selected.
+const checkboxCellSx = {
+  ...bodyCellSx,
+  width: 44,
+  minWidth: 44,
+  px: 1,
+  textAlign: "center",
+};
+// The head row centres its labels, so its box is centred too, level with
+// "Use case" rather than at the top like the call rows' boxes.
+const checkboxHeadSx = {
+  width: 44,
+  minWidth: 44,
+  px: 1,
+  textAlign: "center",
+  verticalAlign: "middle",
+};
 const clampSx = {
   display: "-webkit-box",
   WebkitLineClamp: 4,
@@ -105,6 +124,7 @@ export default function TraceTable({
   onGroupViewChange,
   expandedForRef: expandedForRefProp,
   runActive = false,
+  selection = null,
 }) {
   // A parent that unmounts this table (a filter's loading or empty state)
   // passes the open/closed groups in, so they survive the remount. Without
@@ -212,6 +232,21 @@ export default function TraceTable({
           scrollMarginTop: GROUP_BAND_PX + HEAD_ROW_PX + GROUP_ROW_PX,
         }}
       >
+        {selection && (
+          // The tick is its own control: this cell has no open-the-call click,
+          // and a row click elsewhere opens the call without touching it.
+          <TableCell sx={checkboxCellSx}>
+            {selection.canSelect(t) && (
+              <Checkbox
+                size="small"
+                checked={selection.isSelected(t.id)}
+                onChange={() => selection.onToggle(t)}
+                inputProps={{ "aria-label": `Select ${t.scenario}` }}
+                sx={{ p: 0.25, ...neutralCheckboxSx }}
+              />
+            )}
+          </TableCell>
+        )}
         {show("callDetails") && (
           // Indented past the group row's chevron so a call reads as nested
           // under its group, lined up with the group name.
@@ -490,6 +525,7 @@ export default function TraceTable({
           <TableHead>
             {bandSegments.length > 0 && (
               <TableRow>
+                {selection && <TableCell sx={bandCellSx} />}
                 {bandSegments.map((segment) => (
                   <TableCell
                     key={segment.name}
@@ -502,6 +538,21 @@ export default function TraceTable({
               </TableRow>
             )}
             <TableRow>
+              {selection && (
+                <TableCell sx={{ ...headSx, ...checkboxHeadSx }}>
+                  <Checkbox
+                    size="small"
+                    checked={selection.pageChecked}
+                    indeterminate={selection.pageIndeterminate}
+                    disabled={!selection.pageSelectable}
+                    onChange={(e) => selection.onTogglePage(e.target.checked)}
+                    inputProps={{
+                      "aria-label": "Select all calls on this page",
+                    }}
+                    sx={{ p: 0.25, ...neutralCheckboxSx }}
+                  />
+                </TableCell>
+              )}
               {show("callDetails") && (
                 <TableCell sx={{ ...headSx, width: 200 }}>
                   {firstColumnLabel}
@@ -587,6 +638,13 @@ export default function TraceTable({
                       show={show}
                       showEvals={scoredColumns.length > 0}
                       evals={scoredColumns}
+                      leadingCell={!!selection}
+                      checkbox={
+                        selection && {
+                          ...selection.groupState(g),
+                          onChange: () => selection.onToggleGroup(g),
+                        }
+                      }
                     />
                     {isOpen(g.label) && g.rows.map(renderRow)}
                   </React.Fragment>
@@ -617,4 +675,17 @@ TraceTable.propTypes = {
   onGroupViewChange: PropTypes.func,
   expandedForRef: PropTypes.shape({ current: PropTypes.any }),
   runActive: PropTypes.bool,
+  // Present when calls can be ticked: adds a checkbox column. `canSelect`
+  // decides per call; the page box covers this page's selectable calls.
+  selection: PropTypes.shape({
+    isSelected: PropTypes.func.isRequired,
+    canSelect: PropTypes.func.isRequired,
+    onToggle: PropTypes.func.isRequired,
+    onTogglePage: PropTypes.func.isRequired,
+    groupState: PropTypes.func.isRequired,
+    onToggleGroup: PropTypes.func.isRequired,
+    pageChecked: PropTypes.bool,
+    pageIndeterminate: PropTypes.bool,
+    pageSelectable: PropTypes.bool,
+  }),
 };
