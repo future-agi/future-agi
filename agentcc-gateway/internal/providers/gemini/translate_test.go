@@ -910,6 +910,48 @@ func TestTranslateVisionContent_Gemini_FileIDWithDefaultMime(t *testing.T) {
 	}
 }
 
+func TestTranslateVisionContent_Gemini_FileID_GSURI(t *testing.T) {
+	content := json.RawMessage(`[
+		{"type":"file","file":{"file_id":"gs://my-bucket/doc.pdf","format":"application/pdf"}}
+	]`)
+	parts := translateVisionContent(content)
+	if len(parts) != 1 || parts[0].FileData == nil {
+		t.Fatalf("expected 1 fileData part, got %+v", parts)
+	}
+	if parts[0].FileData.FileURI != "gs://my-bucket/doc.pdf" {
+		t.Errorf("FileURI = %q, want gs URI", parts[0].FileData.FileURI)
+	}
+	if parts[0].FileData.MimeType != "application/pdf" {
+		t.Errorf("MimeType = %q, want application/pdf", parts[0].FileData.MimeType)
+	}
+}
+
+func TestTranslateVisionContent_Gemini_FileID_OpaqueIgnored(t *testing.T) {
+	content := json.RawMessage(`[
+		{"type":"file","file":{"file_id":"file-abc123"}}
+	]`)
+	parts := translateVisionContent(content)
+	if len(parts) != 0 {
+		t.Errorf("expected 0 parts for opaque file_id, got %d", len(parts))
+	}
+}
+
+func TestTranslateVisionContent_Gemini_FileDataBareBase64(t *testing.T) {
+	content := json.RawMessage(`[
+		{"type":"file","file":{"file_data":"JVBERi0x","format":"application/pdf"}}
+	]`)
+	parts := translateVisionContent(content)
+	if len(parts) != 1 || parts[0].InlineData == nil {
+		t.Fatalf("expected 1 inlineData part, got %+v", parts)
+	}
+	if parts[0].InlineData.MimeType != "application/pdf" {
+		t.Errorf("MimeType = %q, want application/pdf", parts[0].InlineData.MimeType)
+	}
+	if parts[0].InlineData.Data != "JVBERi0x" {
+		t.Errorf("Data = %q, want JVBERi0x", parts[0].InlineData.Data)
+	}
+}
+
 func TestTranslateVisionContent_Gemini_NoImages(t *testing.T) {
 	content := json.RawMessage(`[{"type":"text","text":"Just text"}]`)
 
