@@ -35,7 +35,8 @@ class CustomModelHandler(BaseModelHandler):
 
     Custom models are defined in the model_hub.CustomAIModel table with:
     - user_model_id: The model identifier used in requests
-    - key_config: JSON containing endpoint_url and authentication headers
+    - key_config: JSON containing the endpoint URL (endpoint_url, or api_base
+      as the create form saves it) and authentication headers
     - input_token_cost: Cost per million input tokens
     - output_token_cost: Cost per million output tokens
     - provider: Set to "custom" for custom models
@@ -76,7 +77,8 @@ class CustomModelHandler(BaseModelHandler):
             if not key_config:
                 raise ValueError(f"Custom model {self.context.model} has no key_config")
 
-            endpoint_url = key_config.get("endpoint_url")
+            # The create form (AddCustomModal) stores the URL as api_base.
+            endpoint_url = key_config.get("endpoint_url") or key_config.get("api_base")
             if not endpoint_url:
                 raise ValueError(
                     f"Custom model {self.context.model} missing endpoint_url in key_config"
