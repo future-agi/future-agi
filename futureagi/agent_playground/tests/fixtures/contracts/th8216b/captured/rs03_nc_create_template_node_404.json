@@ -1,0 +1,20 @@
+{
+  "body": {
+    "code": "not_found",
+    "detail": "Node not found.",
+    "error": "Node not found.",
+    "message": "Node not found.",
+    "result": "Node not found.",
+    "status": false,
+    "type": "not_found"
+  },
+  "label": "captured",
+  "method": "POST",
+  "note": "A system-template node reads like a missing node (was 400).",
+  "operation": "agent-playground_graphs_versions_node-connections_create",
+  "path": "/agent-playground/graphs/{id}/versions/{version_id}/node-connections/",
+  "request": {
+    "body": ["id", "source_node_id", "target_node_id(template)"]
+  },
+  "status": 404
+}

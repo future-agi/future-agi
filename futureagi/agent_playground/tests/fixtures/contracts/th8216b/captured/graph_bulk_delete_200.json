@@ -1,0 +1,17 @@
+{
+  "body": {
+    "result": {
+      "message": "Graphs deleted successfully"
+    },
+    "status": true
+  },
+  "label": "captured",
+  "method": "POST",
+  "note": "",
+  "operation": "agent-playground_graphs_bulk_delete",
+  "path": "/agent-playground/graphs/delete/",
+  "request": {
+    "body": ["ids[1]"]
+  },
+  "status": 200
+}

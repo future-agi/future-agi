@@ -1877,6 +1877,65 @@ export interface GraphCreateApi {
   description?: string;
 }
 
+export interface BulkDeleteApi {
+  /** List of graph UUIDs to delete */
+  ids?: string[];
+  select_all?: boolean;
+  /** Graph UUIDs to exclude when using select_all */
+  exclude_ids?: string[];
+}
+
+export interface AgentPlaygroundMessageApi {
+  /** @minLength 1 */
+  message: string;
+}
+
+export interface AgentPlaygroundMessageResponseApi {
+  status: boolean;
+  result: AgentPlaygroundMessageApi;
+}
+
+export type GraphBulkDeleteNotFoundResponseApiType =
+  (typeof GraphBulkDeleteNotFoundResponseApiType)[keyof typeof GraphBulkDeleteNotFoundResponseApiType];
+
+export const GraphBulkDeleteNotFoundResponseApiType = {
+  validation_error: "validation_error",
+  authentication_error: "authentication_error",
+  payment_required: "payment_required",
+  entitlement_error: "entitlement_error",
+  permission_error: "permission_error",
+  not_found: "not_found",
+  conflict: "conflict",
+  client_error: "client_error",
+  rate_limit: "rate_limit",
+  server_error: "server_error",
+  service_unavailable: "service_unavailable",
+  timeout: "timeout",
+  api_error: "api_error",
+} as const;
+
+export type GraphBulkDeleteNotFoundResponseApiDetails = {
+  [key: string]: string[];
+};
+
+export interface GraphBulkDeleteMissingApi {
+  /** @minLength 1 */
+  message: string;
+  missing_ids: string[];
+}
+
+export interface GraphBulkDeleteNotFoundResponseApi {
+  status?: boolean;
+  type?: GraphBulkDeleteNotFoundResponseApiType;
+  code?: string;
+  detail?: string;
+  result: GraphBulkDeleteMissingApi;
+  message?: string;
+  error?: string;
+  attr?: string;
+  details?: GraphBulkDeleteNotFoundResponseApiDetails;
+}
+
 export interface TraceToGraphRequestApi {
   trace_id: string;
 }
@@ -1983,86 +2042,13 @@ export interface GraphExecutionDetailResponseApi {
   result: GraphExecutionDetailResultApi;
 }
 
-export interface GraphDetailApi {
-  readonly id?: string;
-  /**
-   * Display name
-   * @minLength 1
-   */
-  readonly name?: string;
-  /** @minLength 1 */
-  readonly description?: string;
-  readonly is_template?: boolean;
-  readonly created_at?: string;
-  readonly updated_at?: string;
-  readonly active_version?: string;
-}
-
-export interface GraphUpdateApi {
-  /**
-   * @minLength 1
-   * @maxLength 255
-   */
-  name?: string;
-  description?: string;
-}
-
 /**
  * Version status (inactive for historical versions)
  */
-export type GraphVersionListApiStatus =
-  (typeof GraphVersionListApiStatus)[keyof typeof GraphVersionListApiStatus];
+export type GraphActiveVersionApiStatus =
+  (typeof GraphActiveVersionApiStatus)[keyof typeof GraphActiveVersionApiStatus];
 
-export const GraphVersionListApiStatus = {
-  draft: "draft",
-  active: "active",
-  inactive: "inactive",
-} as const;
-
-/**
- * Any valid JSON value.
- */
-export type GraphVersionListApiTags = { [key: string]: unknown };
-
-export interface GraphVersionListApi {
-  readonly id: string;
-  readonly version_number: number;
-  /** Version status (inactive for historical versions) */
-  readonly status: GraphVersionListApiStatus;
-  /** Any valid JSON value. */
-  readonly tags: GraphVersionListApiTags;
-  readonly commit_message: string;
-  readonly created_at: string;
-  readonly global_variables: readonly string[];
-}
-
-export interface GraphVersionPageMetadataApi {
-  total_count: number;
-  /** Page actually returned; out-of-range requests get the last page. */
-  page_number: number;
-  page_size: number;
-  total_pages: number;
-  next_page: number;
-  previous_page: number;
-}
-
-export interface GraphVersionListResultApi {
-  versions: GraphVersionListApi[];
-  metadata: GraphVersionPageMetadataApi;
-}
-
-export interface GraphVersionListResponseApi {
-  status: boolean;
-  result: GraphVersionListResultApi;
-}
-
-/**
- * Version status (inactive for historical versions)
- */
-export type GraphVersionDetailApiStatus =
-  (typeof GraphVersionDetailApiStatus)[keyof typeof GraphVersionDetailApiStatus];
-
-export const GraphVersionDetailApiStatus = {
+export const GraphActiveVersionApiStatus = {
   draft: "draft",
   active: "active",
   inactive: "inactive",
@@ -2326,42 +2312,151 @@ export interface NodeConnectionReadApi {
 /**
  * Any valid JSON value.
  */
-export type GraphVersionDetailApiTags = { [key: string]: unknown };
+export type GraphActiveVersionApiTags = { [key: string]: unknown };
 
-export interface GraphVersionDetailApi {
+/**
+ * Get the latest version (highest version_number) with full nested structure.
+ */
+export interface GraphActiveVersionApi {
   readonly id: string;
   readonly version_number: number;
   /** Version status (inactive for historical versions) */
-  readonly status: GraphVersionDetailApiStatus;
+  readonly status: GraphActiveVersionApiStatus;
   /** Any valid JSON value. */
-  readonly tags: GraphVersionDetailApiTags;
+  readonly tags: GraphActiveVersionApiTags;
   readonly commit_message: string;
   readonly created_at: string;
   readonly nodes: readonly NodeReadApi[];
   readonly node_connections: readonly NodeConnectionReadApi[];
 }
 
-export interface GraphVersionDetailResponseApi {
+export interface GraphDetailApi {
+  readonly id?: string;
+  /**
+   * Display name
+   * @minLength 1
+   */
+  readonly name?: string;
+  readonly description?: string | null;
+  readonly is_template?: boolean;
+  readonly created_at?: string;
+  readonly updated_at?: string;
+  active_version?: GraphActiveVersionApi | null;
+}
+
+export interface GraphDetailResponseApi {
   status: boolean;
-  result: GraphVersionDetailApi;
+  result: GraphDetailApi;
 }
 
-export interface CreateNodeConnectionApi {
-  /** FE-generated UUID */
-  id: string;
-  source_node_id: string;
-  target_node_id: string;
+export interface GraphUpdateApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  name?: string;
+  description?: string;
 }
 
-export type CreateNodeApiType =
-  (typeof CreateNodeApiType)[keyof typeof CreateNodeApiType];
+/**
+ * Version status (inactive for historical versions)
+ */
+export type GraphVersionListApiStatus =
+  (typeof GraphVersionListApiStatus)[keyof typeof GraphVersionListApiStatus];
 
-export const CreateNodeApiType = {
+export const GraphVersionListApiStatus = {
+  draft: "draft",
+  active: "active",
+  inactive: "inactive",
+} as const;
+
+/**
+ * Any valid JSON value.
+ */
+export type GraphVersionListApiTags = { [key: string]: unknown };
+
+export interface GraphVersionListApi {
+  readonly id: string;
+  readonly version_number: number;
+  /** Version status (inactive for historical versions) */
+  readonly status: GraphVersionListApiStatus;
+  /** Any valid JSON value. */
+  readonly tags: GraphVersionListApiTags;
+  readonly commit_message: string;
+  readonly created_at: string;
+  readonly global_variables: readonly string[];
+}
+
+export interface GraphVersionPageMetadataApi {
+  total_count: number;
+  /** Page actually returned; out-of-range requests get the last page. */
+  page_number: number;
+  page_size: number;
+  total_pages: number;
+  next_page: number;
+  previous_page: number;
+}
+
+export interface GraphVersionListResultApi {
+  versions: GraphVersionListApi[];
+  metadata: GraphVersionPageMetadataApi;
+}
+
+export interface GraphVersionListResponseApi {
+  status: boolean;
+  result: GraphVersionListResultApi;
+}
+
+export type VersionCreateApiStatus =
+  (typeof VersionCreateApiStatus)[keyof typeof VersionCreateApiStatus];
+
+export const VersionCreateApiStatus = {
+  draft: "draft",
+  active: "active",
+} as const;
+
+export type NodeWriteApiType =
+  (typeof NodeWriteApiType)[keyof typeof NodeWriteApiType];
+
+export const NodeWriteApiType = {
   subgraph: "subgraph",
   atomic: "atomic",
 } as const;
 
-export type CreateNodeApiPosition = { [key: string]: unknown };
+export type PortWriteApiDirection =
+  (typeof PortWriteApiDirection)[keyof typeof PortWriteApiDirection];
+
+export const PortWriteApiDirection = {
+  input: "input",
+  output: "output",
+} as const;
+
+export type PortWriteApiDataSchema = { [key: string]: unknown };
+
+export type PortWriteApiDefaultValue = { [key: string]: unknown };
+
+export type PortWriteApiMetadata = { [key: string]: unknown };
+
+export interface PortWriteApi {
+  /** Frontend-generated UUID for the port */
+  id: string;
+  /**
+   * @minLength 1
+   * @maxLength 100
+   */
+  key: string;
+  /**
+   * @minLength 1
+   * @maxLength 100
+   */
+  display_name: string;
+  direction: PortWriteApiDirection;
+  data_schema?: PortWriteApiDataSchema;
+  required?: boolean;
+  default_value?: PortWriteApiDefaultValue;
+  metadata?: PortWriteApiMetadata;
+  ref_port_id?: string;
+}
 
 /**
  * Type of content item
@@ -2468,6 +2563,128 @@ export interface PromptTemplateDataApi {
   save_prompt_version?: boolean;
 }
 
+/**
+ * List of input mappings from port display_name to source reference
+ */
+export interface InputMappingApi {
+  /**
+   * Input port display_name
+   * @minLength 1
+   */
+  key: string;
+  /**
+   * Source reference in format "NodeName.port_display_name" or null
+   * @minLength 1
+   */
+  value?: string;
+}
+
+export type NodeWriteApiConfig = { [key: string]: unknown };
+
+export type NodeWriteApiPosition = { [key: string]: unknown };
+
+export interface NodeWriteApi {
+  /** Frontend-generated UUID for the node */
+  id: string;
+  type: NodeWriteApiType;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  name: string;
+  node_template_id?: string;
+  ref_graph_version_id?: string;
+  config?: NodeWriteApiConfig;
+  position?: NodeWriteApiPosition;
+  ports?: PortWriteApi[];
+  prompt_template?: PromptTemplateDataApi;
+  /** List of input mappings from port display_name to source reference */
+  input_mappings?: InputMappingApi[];
+}
+
+export interface NodeConnectionWriteApi {
+  /** UUID of the source node */
+  source_node_id: string;
+  /** UUID of the target node */
+  target_node_id: string;
+}
+
+export interface VersionCreateApi {
+  status?: VersionCreateApiStatus;
+  commit_message?: string;
+  nodes?: NodeWriteApi[];
+  node_connections?: NodeConnectionWriteApi[];
+}
+
+/**
+ * Version status (inactive for historical versions)
+ */
+export type GraphVersionDetailApiStatus =
+  (typeof GraphVersionDetailApiStatus)[keyof typeof GraphVersionDetailApiStatus];
+
+export const GraphVersionDetailApiStatus = {
+  draft: "draft",
+  active: "active",
+  inactive: "inactive",
+} as const;
+
+/**
+ * Any valid JSON value.
+ */
+export type GraphVersionDetailApiTags = { [key: string]: unknown };
+
+export interface GraphVersionDetailApi {
+  readonly id: string;
+  readonly version_number: number;
+  /** Version status (inactive for historical versions) */
+  readonly status: GraphVersionDetailApiStatus;
+  /** Any valid JSON value. */
+  readonly tags: GraphVersionDetailApiTags;
+  readonly commit_message: string;
+  readonly created_at: string;
+  readonly nodes: readonly NodeReadApi[];
+  readonly node_connections: readonly NodeConnectionReadApi[];
+}
+
+export interface GraphVersionDetailResponseApi {
+  status: boolean;
+  result: GraphVersionDetailApi;
+}
+
+export type VersionMetadataUpdateApiStatus =
+  (typeof VersionMetadataUpdateApiStatus)[keyof typeof VersionMetadataUpdateApiStatus];
+
+export const VersionMetadataUpdateApiStatus = {
+  draft: "draft",
+  active: "active",
+} as const;
+
+export interface VersionMetadataUpdateApi {
+  status?: VersionMetadataUpdateApiStatus;
+  commit_message?: string;
+}
+
+export interface EmptyRequestApi {
+  [key: string]: unknown;
+}
+
+export interface CreateNodeConnectionApi {
+  /** FE-generated UUID */
+  id: string;
+  source_node_id: string;
+  target_node_id: string;
+}
+
+export type CreateNodeApiType =
+  (typeof CreateNodeApiType)[keyof typeof CreateNodeApiType];
+
+export const CreateNodeApiType = {
+  subgraph: "subgraph",
+  atomic: "atomic",
+} as const;
+
+export type CreateNodeApiPosition = { [key: string]: unknown };
+
 export type PortCreateApiDirection =
   (typeof PortCreateApiDirection)[keyof typeof PortCreateApiDirection];
 
@@ -2494,22 +2711,6 @@ export interface PortCreateApi {
   direction: PortCreateApiDirection;
   data_schema?: PortCreateApiDataSchema;
   ref_port_id?: string;
-}
-
-/**
- * List of input mappings from port display_name to source reference
- */
-export interface InputMappingApi {
-  /**
-   * Input port display_name
-   * @minLength 1
-   */
-  key: string;
-  /**
-   * Source reference in format "NodeName.port_display_name" or null
-   * @minLength 1
-   */
-  value?: string;
 }
 
 export interface CreateNodeApi {
@@ -6688,10 +6889,6 @@ export interface QueueRemoveLabelResultApi {
 export interface QueueRemoveLabelResponseApi {
   status?: boolean;
   result: QueueRemoveLabelResultApi;
-}
-
-export interface EmptyRequestApi {
-  [key: string]: unknown;
 }
 
 export interface QueueStatusResponseApi {
@@ -32709,6 +32906,13 @@ export type AgentPlaygroundGraphsExecutionsListParams = {
   limit?: number;
 };
 
+export type AgentPlaygroundGraphsReadParams = {
+  /**
+   * 'true' (any case) resolves the graph among system graph templates instead of the caller's own graphs; other values are ignored. Templates are read-only: write operations do not accept this flag.
+   */
+  is_template?: string;
+};
+
 export type AgentPlaygroundGraphsVersionsListParams = {
   /**
    * 1-based page number (default 1).
@@ -32723,14 +32927,14 @@ export type AgentPlaygroundGraphsVersionsListParams = {
    */
   search?: string;
   /**
-   * 'true' (any case) resolves the graph among system graph templates instead of the caller's own graphs; other values are ignored.
+   * 'true' (any case) resolves the graph among system graph templates instead of the caller's own graphs; other values are ignored. Templates are read-only: write operations do not accept this flag.
    */
   is_template?: string;
 };
 
 export type AgentPlaygroundGraphsVersionsReadParams = {
   /**
-   * 'true' (any case) resolves the graph among system graph templates instead of the caller's own graphs; other values are ignored.
+   * 'true' (any case) resolves the graph among system graph templates instead of the caller's own graphs; other values are ignored. Templates are read-only: write operations do not accept this flag.
    */
   is_template?: string;
 };

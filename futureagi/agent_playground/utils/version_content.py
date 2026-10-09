@@ -23,9 +23,9 @@ from agent_playground.services.engine.utils.json_path import parse_variable
 from agent_playground.services.node_crud import (
     _create_default_output_port_from_prompt,
     _create_input_ports_from_prompt,
-    _create_ports_from_prompt,
     _default_prompt_data,
     _resolve_or_create_pt_ptv,
+    referenceable_graph_q,
 )
 
 logger = structlog.get_logger(__name__)
@@ -96,7 +96,13 @@ def update_version_content(
 
     node_id_to_node: dict[UUID, Node] = {}
     for node_data in nodes_data:
-        node = create_node(version, node_data, skip_validation=skip_validation)
+        node = create_node(
+            version,
+            node_data,
+            skip_validation=skip_validation,
+            organization=organization,
+            workspace=workspace,
+        )
         node_id_to_node[node.id] = node
 
         prompt_data = node_data.get("prompt_template")
@@ -115,7 +121,13 @@ def update_version_content(
             # Use FE-supplied output ports if provided, otherwise create default output
             if fe_ports:
                 for port_data in fe_ports:
-                    create_port(node, port_data, skip_validation=skip_validation)
+                    create_port(
+                        node,
+                        port_data,
+                        skip_validation=skip_validation,
+                        organization=organization,
+                        workspace=workspace,
+                    )
             else:
                 effective_prompt = prompt_data or _default_prompt_data()
                 _create_default_output_port_from_prompt(node, effective_prompt)
@@ -134,12 +146,24 @@ def update_version_content(
 
             # Create output ports from FE data
             for port_data in fe_ports:
-                create_port(node, port_data, skip_validation=skip_validation)
+                create_port(
+                    node,
+                    port_data,
+                    skip_validation=skip_validation,
+                    organization=organization,
+                    workspace=workspace,
+                )
 
         # 3. Use FE ports if provided (fixes the bug - FE ports were being ignored)
         elif fe_ports:
             for port_data in fe_ports:
-                create_port(node, port_data, skip_validation=skip_validation)
+                create_port(
+                    node,
+                    port_data,
+                    skip_validation=skip_validation,
+                    organization=organization,
+                    workspace=workspace,
+                )
 
         # 4. Fallback: template-based auto-creation (preserves backward compatibility)
         elif node.node_template:
@@ -315,25 +339,32 @@ def _resolve_node_template(node_template_id: str | None) -> NodeTemplate | None:
     try:
         return NodeTemplate.no_workspace_objects.get(id=node_template_id)
     except NodeTemplate.DoesNotExist:
-        raise ValidationError(f"Node template '{node_template_id}' not found")
+        raise ValidationError(f"Node template '{node_template_id}' not found") from None
 
 
-def _resolve_ref_graph_version(ref_graph_version_id: str | None) -> GraphVersion | None:
-    """Fetch a GraphVersion by ID, raising ValidationError if not found."""
+def _resolve_ref_graph_version(
+    ref_graph_version_id: str | None, organization: Any, workspace: Any
+) -> GraphVersion | None:
+    """Fetch a GraphVersion the caller may reference, raising ValidationError if
+    not found. Another tenant's version answers exactly like a missing one."""
     if not ref_graph_version_id:
         return None
     try:
-        return GraphVersion.no_workspace_objects.get(id=ref_graph_version_id)
+        return GraphVersion.no_workspace_objects.filter(
+            referenceable_graph_q(organization, workspace)
+        ).get(id=ref_graph_version_id)
     except GraphVersion.DoesNotExist:
         raise ValidationError(
             f"Referenced graph version '{ref_graph_version_id}' not found"
-        )
+        ) from None
 
 
 def create_node(
     version: GraphVersion,
     node_data: dict[str, Any],
     skip_validation: bool = False,
+    organization: Any = None,
+    workspace: Any = None,
 ) -> Node:
     """
     Create a node from node_data dictionary.
@@ -341,6 +372,8 @@ def create_node(
     Args:
         version: The GraphVersion this node belongs to.
         node_data: Dictionary containing node fields (must include 'id' field).
+        organization: Caller's organization; scopes ref_graph_version_id.
+        workspace: Caller's workspace; scopes ref_graph_version_id.
 
     Returns:
         The created Node instance.
@@ -350,7 +383,7 @@ def create_node(
     """
     node_template = _resolve_node_template(node_data.get("node_template_id"))
     ref_graph_version = _resolve_ref_graph_version(
-        node_data.get("ref_graph_version_id")
+        node_data.get("ref_graph_version_id"), organization, workspace
     )
 
     node = Node(
@@ -368,20 +401,30 @@ def create_node(
     return node
 
 
-def _resolve_ref_port(ref_port_id: str | None) -> Port | None:
-    """Fetch a Port by ID for ref_port, raising ValidationError if not found."""
+def _resolve_ref_port(
+    ref_port_id: str | None, organization: Any, workspace: Any
+) -> Port | None:
+    """Fetch a Port the caller may reference for ref_port, raising
+    ValidationError if not found. Another tenant's port answers exactly like a
+    missing one."""
     if not ref_port_id:
         return None
     try:
-        return Port.no_workspace_objects.get(id=ref_port_id)
+        return Port.no_workspace_objects.filter(
+            referenceable_graph_q(
+                organization, workspace, graph_path="node__graph_version__graph"
+            )
+        ).get(id=ref_port_id)
     except Port.DoesNotExist:
-        raise ValidationError(f"Referenced port '{ref_port_id}' not found")
+        raise ValidationError(f"Referenced port '{ref_port_id}' not found") from None
 
 
 def create_port(
     node: Node,
     port_data: dict[str, Any],
     skip_validation: bool = False,
+    organization: Any = None,
+    workspace: Any = None,
 ) -> Port:
     """
     Create a port from port_data dictionary.
@@ -390,11 +433,13 @@ def create_port(
         node: The Node this port belongs to.
         port_data: Dictionary containing port fields.
         skip_validation: If True, skip model-level validation (for drafts).
+        organization: Caller's organization; scopes ref_port_id.
+        workspace: Caller's workspace; scopes ref_port_id.
 
     Returns:
         The created Port instance.
     """
-    ref_port = _resolve_ref_port(port_data.get("ref_port_id"))
+    ref_port = _resolve_ref_port(port_data.get("ref_port_id"), organization, workspace)
 
     port = Port(
         node=node,

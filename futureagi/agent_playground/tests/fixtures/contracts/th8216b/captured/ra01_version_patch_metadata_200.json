@@ -1,0 +1,43 @@
+{
+  "body": {
+    "result": {
+      "commit_message": "meta only",
+      "created_at": "2026-01-01T00:00:00Z",
+      "id": "00000000-0000-4000-8000-000000000001",
+      "node_connections": [],
+      "nodes": [
+        {
+          "config": {},
+          "id": "00000000-0000-4000-8000-000000000002",
+          "input_mappings": null,
+          "name": "Test Node",
+          "node_connection": null,
+          "node_template_id": "00000000-0000-4000-8000-000000000003",
+          "ports": [],
+          "position": {
+            "x": 100,
+            "y": 100
+          },
+          "prompt_template": null,
+          "ref_graph_id": null,
+          "ref_graph_name": null,
+          "ref_graph_version_id": null,
+          "type": "atomic"
+        }
+      ],
+      "status": "draft",
+      "tags": [],
+      "version_number": 1
+    },
+    "status": true
+  },
+  "label": "captured",
+  "method": "PATCH",
+  "note": "Content keys are ignored; the existing node is returned unchanged.",
+  "operation": "agent-playground_graphs_versions_partial_update",
+  "path": "/agent-playground/graphs/{id}/versions/{version_id}/",
+  "request": {
+    "body": ["commit_message", "nodes(ignored)", "node_connections(ignored)"]
+  },
+  "status": 200
+}

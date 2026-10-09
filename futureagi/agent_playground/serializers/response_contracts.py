@@ -10,6 +10,10 @@ swagger.json. Graph version pages use ``common.utils.pagination``
 from drf_yasg import openapi
 from rest_framework import serializers
 
+from agent_playground.serializers.contracts import (
+    AgentPlaygroundErrorResponseSerializer,
+)
+from agent_playground.serializers.graph import GraphDetailSerializer
 from agent_playground.serializers.graph_version import (
     GraphVersionDetailSerializer,
     GraphVersionListSerializer,
@@ -43,9 +47,36 @@ class GraphVersionDetailResponseSerializer(serializers.Serializer):
     result = GraphVersionDetailSerializer()
 
 
+class GraphDetailResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = GraphDetailSerializer()
+
+
 class NodeReadResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField()
     result = NodeReadSerializer()
+
+
+class AgentPlaygroundMessageSerializer(serializers.Serializer):
+    message = serializers.CharField()
+
+
+class AgentPlaygroundMessageResponseSerializer(serializers.Serializer):
+    """``{"status": true, "result": {"message": ...}}`` from graph/version deletes."""
+
+    status = serializers.BooleanField()
+    result = AgentPlaygroundMessageSerializer()
+
+
+class GraphBulkDeleteMissingSerializer(serializers.Serializer):
+    message = serializers.CharField()
+    missing_ids = serializers.ListField(child=serializers.UUIDField())
+
+
+class GraphBulkDeleteNotFoundResponseSerializer(AgentPlaygroundErrorResponseSerializer):
+    """404 from bulk delete: ``result`` echoes the requested ids that were not found."""
+
+    result = GraphBulkDeleteMissingSerializer()
 
 
 IS_TEMPLATE_QUERY_PARAMETER = openapi.Parameter(
@@ -53,7 +84,8 @@ IS_TEMPLATE_QUERY_PARAMETER = openapi.Parameter(
     openapi.IN_QUERY,
     description=(
         "'true' (any case) resolves the graph among system graph templates "
-        "instead of the caller's own graphs; other values are ignored."
+        "instead of the caller's own graphs; other values are ignored. "
+        "Templates are read-only: write operations do not accept this flag."
     ),
     type=openapi.TYPE_STRING,
 )

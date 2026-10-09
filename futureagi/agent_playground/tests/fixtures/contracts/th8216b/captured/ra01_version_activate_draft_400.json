@@ -1,0 +1,18 @@
+{
+  "body": {
+    "code": "invalid",
+    "detail": "Only inactive versions can be activated.",
+    "error": "Only inactive versions can be activated.",
+    "message": "Only inactive versions can be activated.",
+    "result": "Only inactive versions can be activated.",
+    "status": false,
+    "type": "validation_error"
+  },
+  "label": "captured",
+  "method": "POST",
+  "note": "",
+  "operation": "agent-playground_graphs_versions_activate_version",
+  "path": "/agent-playground/graphs/{id}/versions/{version_id}/activate/",
+  "request": {},
+  "status": 400
+}

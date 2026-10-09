@@ -103,17 +103,40 @@ def annotate_graph_list_fields(queryset):
 
 
 def get_graph_and_version(request, pk, version_id):
-    """Look up graph + version, raising DoesNotExist on miss."""
+    """Look up graph + version, raising DoesNotExist on miss.
+
+    System templates are never resolved here: they have no organization, so a
+    caller without one (organization None) would otherwise match them.
+    """
     organization = request.organization
     workspace = request.workspace
 
-    qs = Graph.no_workspace_objects.filter(organization=organization)
+    qs = Graph.no_workspace_objects.filter(organization=organization, is_template=False)
     if workspace:
         qs = qs.filter(workspace=workspace)
     graph = qs.get(id=pk)
 
     version = GraphVersion.no_workspace_objects.get(id=version_id, graph=graph)
     return graph, version
+
+
+def require_visible_nodes(request, node_ids):
+    """Raise Node.DoesNotExist unless every node is in the caller's scope.
+
+    Same org/workspace scope as ``get_graph_and_version``, so another tenant's
+    node id answers exactly like a missing one.
+    """
+    from agent_playground.models.node import Node
+
+    qs = Node.no_workspace_objects.filter(
+        id__in=set(node_ids),
+        graph_version__graph__organization=request.organization,
+        graph_version__graph__is_template=False,
+    )
+    if request.workspace:
+        qs = qs.filter(graph_version__graph__workspace=request.workspace)
+    if qs.count() != len(set(node_ids)):
+        raise Node.DoesNotExist
 
 
 def require_draft(version):

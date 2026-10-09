@@ -1,0 +1,15 @@
+{
+  "body": {
+    "result": {
+      "message": "Version deleted successfully"
+    },
+    "status": true
+  },
+  "label": "captured",
+  "method": "DELETE",
+  "note": "The graph is left with no active version; nothing is promoted.",
+  "operation": "agent-playground_graphs_versions_delete",
+  "path": "/agent-playground/graphs/{id}/versions/{version_id}/",
+  "request": {},
+  "status": 200
+}

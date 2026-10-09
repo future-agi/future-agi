@@ -224,7 +224,7 @@ def create_node(
             _create_input_ports_from_prompt(node, prompt_data)
         # Use FE-supplied output ports if provided, otherwise auto-create default
         if ports_data:
-            _create_ports_from_fe_array(node, ports_data)
+            _create_ports_from_fe_array(node, ports_data, organization, workspace)
         else:
             _create_default_output_port_from_prompt(node, effective_prompt)
 
@@ -242,13 +242,13 @@ def create_node(
         # Use FE-supplied ports if provided, otherwise auto-create output ports
         if ports_data:
             _validate_subgraph_fe_ports(ports_data, ref_graph_version)
-            _create_ports_from_fe_array(node, ports_data)
+            _create_ports_from_fe_array(node, ports_data, organization, workspace)
         else:
             _create_subgraph_output_ports(node, ref_graph_version)
 
     # Handle explicit FE ports (used for non-LLM atomic nodes or when FE sends ports)
     elif ports_data:
-        _create_ports_from_fe_array(node, ports_data)
+        _create_ports_from_fe_array(node, ports_data, organization, workspace)
 
     # Create NodeConnection if source_node_id provided
     nc = None
@@ -317,7 +317,7 @@ def update_node(
 
     # Handle ports update (output ports only)
     if "ports" in data:
-        _replace_output_ports(node, data["ports"])
+        _replace_output_ports(node, data["ports"], organization, workspace)
 
     # Sync name to linked PromptTemplate (if any)
     if prompt_template_for_name_sync is not None:
@@ -413,28 +413,37 @@ def _resolve_node_template(node_template_id: UUID) -> NodeTemplate:
     return NodeTemplate.no_workspace_objects.get(id=node_template_id)
 
 
+def referenceable_graph_q(
+    organization: Any, workspace: Any, graph_path: str = "graph"
+) -> Q:
+    """Graphs a caller may reference as a subgraph: system templates, or graphs
+    in the caller's organization and workspace. ``graph_path`` is the lookup
+    path from the filtered model to its Graph."""
+    organization_id = getattr(organization, "id", None)
+    workspace_id = getattr(workspace, "id", None)
+
+    is_template = Q(**{f"{graph_path}__is_template": True})
+    accessible_graphs = is_template
+    if organization_id:
+        accessible_graphs |= Q(**{f"{graph_path}__organization_id": organization_id})
+    if workspace_id:
+        accessible_graphs &= is_template | Q(
+            **{f"{graph_path}__workspace_id": workspace_id}
+        )
+    return accessible_graphs
+
+
 def _resolve_ref_graph_version(
     ref_graph_version_id: UUID,
     owner_version: GraphVersion,
     organization: Any,
     workspace: Any,
 ) -> GraphVersion:
-    organization_id = getattr(organization, "id", None)
-    workspace_id = getattr(workspace, "id", None)
-
-    queryset = GraphVersion.no_workspace_objects.select_related("graph").filter(
-        id=ref_graph_version_id
+    ref_version = (
+        GraphVersion.no_workspace_objects.select_related("graph")
+        .filter(referenceable_graph_q(organization, workspace))
+        .get(id=ref_graph_version_id)
     )
-    accessible_graphs = Q(graph__is_template=True)
-    if organization_id:
-        accessible_graphs |= Q(graph__organization_id=organization_id)
-    queryset = queryset.filter(accessible_graphs)
-    if workspace_id:
-        queryset = queryset.filter(
-            Q(graph__is_template=True) | Q(graph__workspace_id=workspace_id)
-        )
-
-    ref_version = queryset.get()
     ref_graph = ref_version.graph
 
     if ref_version.status not in (
@@ -859,8 +868,30 @@ def _create_default_output_port_from_prompt(
     ).save(skip_validation=True)
 
 
-def _create_ports_from_fe_array(node: Node, ports_data: list[dict]) -> None:
-    """Create ports using FE-provided IDs."""
+def _resolve_fe_ref_port_id(ref_port_id: Any, organization: Any, workspace: Any) -> Any:
+    """Resolve a body ``ref_port_id`` among ports the caller may reference
+    (system templates, or the caller's organization and workspace). Another
+    tenant's port answers exactly like a missing one."""
+    if not ref_port_id:
+        return None
+    if not Port.no_workspace_objects.filter(
+        referenceable_graph_q(
+            organization, workspace, graph_path="node__graph_version__graph"
+        ),
+        id=ref_port_id,
+    ).exists():
+        raise ValidationError(f"Referenced port '{ref_port_id}' not found")
+    return ref_port_id
+
+
+def _create_ports_from_fe_array(
+    node: Node,
+    ports_data: list[dict],
+    organization: Any = None,
+    workspace: Any = None,
+) -> None:
+    """Create ports using FE-provided IDs. ``ref_port_id`` is tenant-scoped;
+    with no organization/workspace only system-template ports resolve."""
     for pd in ports_data:
         Port(
             id=pd["id"],
@@ -869,7 +900,9 @@ def _create_ports_from_fe_array(node: Node, ports_data: list[dict]) -> None:
             display_name=pd["display_name"],
             direction=pd["direction"],
             data_schema=pd.get("data_schema", {}),
-            ref_port_id=pd.get("ref_port_id"),
+            ref_port_id=_resolve_fe_ref_port_id(
+                pd.get("ref_port_id"), organization, workspace
+            ),
         ).save(skip_validation=True)
 
 
@@ -1159,7 +1192,12 @@ def _update_subgraph_input_mappings(
     _create_edges_from_input_mappings(node, input_mappings)
 
 
-def _replace_output_ports(node: Node, ports_data: list[dict]) -> None:
+def _replace_output_ports(
+    node: Node,
+    ports_data: list[dict],
+    organization: Any = None,
+    workspace: Any = None,
+) -> None:
     """
     Replace ONLY output ports on a node, preserving input ports.
 
@@ -1204,7 +1242,7 @@ def _replace_output_ports(node: Node, ports_data: list[dict]) -> None:
 
     # Step 4: Create new output ports from FE-provided data
     # Note: Frontend should only send output ports in this array
-    _create_ports_from_fe_array(node, ports_data)
+    _create_ports_from_fe_array(node, ports_data, organization, workspace)
 
 
 def _extract_variables(

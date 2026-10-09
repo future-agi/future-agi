@@ -121,7 +121,12 @@ class TestCreateNode:
             "ref_graph_version_id": str(active_referenced_graph_version.id),
         }
 
-        node = create_node(graph_version, node_data)
+        node = create_node(
+            graph_version,
+            node_data,
+            organization=graph_version.graph.organization,
+            workspace=graph_version.graph.workspace,
+        )
 
         assert node.type == NodeType.SUBGRAPH
         assert node.ref_graph_version == active_referenced_graph_version
@@ -240,7 +245,12 @@ class TestCreatePort:
             "ref_port_id": str(child_port.id),
         }
 
-        port = create_port(subgraph_node, port_data)
+        port = create_port(
+            subgraph_node,
+            port_data,
+            organization=graph_version.graph.organization,
+            workspace=graph_version.graph.workspace,
+        )
 
         assert port.ref_port == child_port
         assert port.ref_port_id == child_port.id
@@ -662,6 +672,8 @@ class TestUpdateVersionContent:
             new_status=GraphVersionStatus.DRAFT,
             commit_message=None,
             node_connections_data=node_connections_data,
+            organization=graph.organization,
+            workspace=graph.workspace,
         )
 
         nodes = Node.no_workspace_objects.filter(graph_version=graph_version)
@@ -727,6 +739,8 @@ class TestUpdateVersionContent:
             new_status=GraphVersionStatus.DRAFT,
             commit_message=None,
             node_connections_data=node_connections_data,
+            organization=graph.organization,
+            workspace=graph.workspace,
         )
 
         edges = Edge.no_workspace_objects.filter(graph_version=graph_version)
@@ -775,6 +789,8 @@ class TestUpdateVersionContent:
             new_status=GraphVersionStatus.DRAFT,
             commit_message=None,
             node_connections_data=node_connections_data,
+            organization=graph.organization,
+            workspace=graph.workspace,
         )
 
         edges = Edge.no_workspace_objects.filter(graph_version=graph_version)
@@ -1297,6 +1313,8 @@ class TestInputMappingsEndToEnd:
             new_status=GraphVersionStatus.DRAFT,
             commit_message=None,
             node_connections_data=node_connections_data,
+            organization=graph.organization,
+            workspace=graph.workspace,
         )
 
         prefetched = prefetch_version_detail(graph_version)
