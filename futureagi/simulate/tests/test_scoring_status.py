@@ -2020,17 +2020,7 @@ def _drive_ai_rerun_test(ctx):
         pytest.param(_drive_call_rerun_view, "runnable", id="call-rerun-view"),
         pytest.param(_drive_bulk_rerun_view, "runnable", id="bulk-rerun-view"),
         pytest.param(_drive_run_new_evals_view, "edited", id="run-new-evals-view"),
-        pytest.param(
-            _drive_ai_run_new_evals,
-            "edited",
-            id="ai-run-new-evals",
-            marks=pytest.mark.xfail(
-                raises=ModuleNotFoundError,
-                strict=True,
-                reason="the tool imports simulate.models.call_execution, "
-                "which does not exist, so it cannot run today",
-            ),
-        ),
+        pytest.param(_drive_ai_run_new_evals, "edited", id="ai-run-new-evals"),
         pytest.param(_drive_ai_rerun_call, "runnable", id="ai-rerun-call"),
         pytest.param(_drive_ai_rerun_test, "runnable", id="ai-rerun-test"),
     ],
