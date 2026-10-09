@@ -369,7 +369,16 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
         name = (provider_name or "").lower()
 
         if name == "anthropic" or api_format == "anthropic":
-            url = f"{base_url or 'https://api.anthropic.com'}/v1/models"
+            # Anthropic's catalogue is always at /v1/models, so state "/v1" as
+            # the prefix rather than concatenating it: a base URL that already
+            # carries one must not produce "/v1/v1/models", and a trailing
+            # slash must not produce "//v1/models". Reachable from a custom
+            # provider, which can select the anthropic API format.
+            url = _join_api_endpoint(
+                base_url or "https://api.anthropic.com",
+                _DEFAULT_API_PATH_PREFIX,
+                "/models",
+            )
             resp = http.get(
                 url,
                 headers={
@@ -402,12 +411,15 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
             return sorted(models)
 
         if name == "cohere":
-            # Cohere native: /v1/models with Bearer auth.
-            base = (base_url or "https://api.cohere.com").rstrip("/")
-            if base.endswith("/compatibility/v1"):
-                url = f"{base}/models"
-            else:
-                url = f"{base}/v1/models"
+            # Cohere native: /v1/models with Bearer auth. Stating "/v1" as the
+            # prefix subsumes the old "/compatibility/v1" special case — that
+            # base already ends in the prefix, so it lands on the identical URL
+            # — and stops any other base ending in "/v1" from doubling it.
+            url = _join_api_endpoint(
+                base_url or "https://api.cohere.com",
+                _DEFAULT_API_PATH_PREFIX,
+                "/models",
+            )
             resp = http.get(
                 url,
                 headers={"Authorization": f"Bearer {api_key}"},

@@ -22,7 +22,8 @@ import { Helmet } from "react-helmet-async";
 import GridTable from "./GridTable";
 import { getWorkspaceQueryOptions } from "./getWorkspaceQueryOptions";
 import { useQueryClient } from "@tanstack/react-query";
-import { format } from "date-fns";
+import { fDateTimeLocal } from "src/utils/format-time";
+import { LocalDateTime } from "src/components/date-time/LocalDateTime";
 import AllActionForm from "./AllActionForm";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import Iconify from "src/components/iconify";
@@ -157,19 +158,27 @@ const WorkSpaceManagement = () => {
         headerName: "Start date",
         field: "start_data",
         flex: 1,
-        valueFormatter: (params) =>
-          params?.value
-            ? format(new Date(params?.value), "dd/MM/yyyy, h:mm aaa")
-            : "",
+        valueFormatter: (params) => fDateTimeLocal(params.value),
+        cellRenderer: (params) => (
+          <LocalDateTime
+            value={params.value}
+            withTime
+            emptyText="No start date recorded"
+          />
+        ),
       },
       {
         headerName: "Last updated date",
         field: "last_update_date",
         flex: 1,
-        valueFormatter: (params) =>
-          params?.value
-            ? format(new Date(params?.value), "dd/MM/yyyy, h:mm aaa")
-            : "",
+        valueFormatter: (params) => fDateTimeLocal(params.value),
+        cellRenderer: (params) => (
+          <LocalDateTime
+            value={params.value}
+            withTime
+            emptyText="No update date recorded"
+          />
+        ),
       },
     ],
     [],
