@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1056,
+  endpointCount: 1057,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -34413,6 +34413,43 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/tracer/feed/issues/{cluster_id}/redirect/": {
+      get: {
+        operationId: "tracer_feed_issues_redirect_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          project_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/FeedRedirectApiResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/tracer/feed/issues/{cluster_id}/root-cause/": {
       get: {
         operationId: "tracer_feed_issues_root-cause_list",
@@ -60351,6 +60388,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         result: {
           $ref: "#/definitions/FeedListResponse",
+        },
+      },
+    },
+    FeedRedirectApiResponse: {
+      required: ["result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: true,
+        },
+        result: {
+          $ref: "#/definitions/FeedRedirect",
         },
       },
     },
@@ -90289,6 +90340,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         offset: {
           title: "Offset",
           type: "integer",
+        },
+      },
+    },
+    FeedRedirect: {
+      required: ["requested_cluster_id", "resolved_cluster_id"],
+      type: "object",
+      properties: {
+        requested_cluster_id: {
+          title: "Requested cluster id",
+          type: "string",
+          minLength: 1,
+        },
+        resolved_cluster_id: {
+          title: "Resolved cluster id",
+          type: "string",
+          minLength: 1,
         },
       },
     },
