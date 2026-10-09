@@ -72,6 +72,7 @@ export default function RunTraceTable({
   onRerunScenarios = null,
   runTrials = 1,
   rerunDisabledReason = null,
+  onTickableChange,
 }) {
   const [groupBy, setGroupBy] = useState("goal");
   const [statusChip, setStatusChip] = useState("all");
@@ -219,6 +220,20 @@ export default function RunTraceTable({
     () => tasks.filter((t) => t.sourceScenarioKey).map((t) => t.id),
     [tasks],
   );
+  // Whether this run has a call that can be ticked. Only the unfiltered, loaded
+  // list can say: a filter matching nothing proves nothing. A run's calls are
+  // all tagged or all untagged, so one page answers for the run, and the
+  // answer holds while a filter is on.
+  const tickable =
+    isLoading || error || Object.keys(serverFilters).length
+      ? null
+      : pageIds.length > 0;
+  const [runTickable, setRunTickable] = useState(null);
+  useEffect(() => {
+    if (tickable === null) return;
+    setRunTickable(tickable);
+    onTickableChange?.(tickable);
+  }, [tickable, onTickableChange]);
   const { allChecked: pageChecked, someChecked: pageIndeterminate } =
     selection.pageState(pageIds);
   const allMatching = selection.mode === "all";
@@ -230,34 +245,32 @@ export default function RunTraceTable({
           sourceScenarioKey: keyByIdRef.current.get(id),
         })),
       );
-  const tableSelection = canRerun
-    ? {
-        isSelected: selection.isSelected,
-        canSelect: (t) => !!t.sourceScenarioKey,
-        onToggle: (t) => selection.toggle(t.id),
-        // In "all matching" the set holds exceptions, so the page box flips
-        // each call that differs instead of adding the page to the set.
-        onTogglePage: (checked) => {
-          if (!allMatching) {
-            selection.setPage(pageIds, checked);
-            return;
-          }
-          pageIds.forEach((id) => {
-            if (selection.isSelected(id) !== checked) selection.toggle(id);
-          });
-        },
-        pageChecked,
-        pageIndeterminate,
-        pageSelectable: pageIds.length > 0,
-      }
-    : null;
+  const tableSelection =
+    canRerun && runTickable !== false
+      ? {
+          isSelected: selection.isSelected,
+          canSelect: (t) => !!t.sourceScenarioKey,
+          onToggle: (t) => selection.toggle(t.id),
+          // In "all matching" the set holds exceptions, so the page box flips
+          // each call that differs instead of adding the page to the set.
+          onTogglePage: (checked) => {
+            if (!allMatching) {
+              selection.setPage(pageIds, checked);
+              return;
+            }
+            pageIds.forEach((id) => {
+              if (selection.isSelected(id) !== checked) selection.toggle(id);
+            });
+          },
+          pageChecked,
+          pageIndeterminate,
+          pageSelectable: pageIds.length > 0,
+        }
+      : null;
   const resolveScenarioKeys = () =>
     allMatching
       ? listMatchingScenarioKeys(executionId, serverFilters, selection.idList)
       : Promise.resolve(tickedKeys);
-  // The selection stays until the new run opens (the run page starts fresh
-  // there), so a refused start leaves the ticks in place to try again.
-  const rerun = (keys, trials) => onRerunScenarios(keys, trials);
   const banner = !hasSelection ? null : allMatching ? (
     <>
       <span>
@@ -580,7 +593,10 @@ export default function RunTraceTable({
           runTrials={runTrials}
           disabledReason={rerunDisabledReason}
           resolveScenarioKeys={resolveScenarioKeys}
-          onRerun={rerun}
+          // The selection stays until the new run opens (the run page starts
+          // fresh there), so a refused start leaves the ticks in place to try
+          // again.
+          onRerun={onRerunScenarios}
           onClear={selection.clear}
         />
       )}
@@ -739,4 +755,6 @@ RunTraceTable.propTypes = {
   onRerunScenarios: PropTypes.func,
   runTrials: PropTypes.number,
   rerunDisabledReason: PropTypes.string,
+  // Told whether the run has any call that can be ticked for a re-run.
+  onTickableChange: PropTypes.func,
 };
