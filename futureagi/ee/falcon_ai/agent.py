@@ -1111,6 +1111,11 @@ class AgentLoop:
                 "action_label": "Go to alerts",
                 "path_prefix": "/dashboard/alerts/",
             },
+            "create_error_feed_alert_rule": {
+                "title": "Error Feed alert created",
+                "action_label": "Go to Error Feed alerts",
+                "path_prefix": "/dashboard/error-feed/alerts",
+            },
             "create_api_key": {
                 "title": "API key created",
                 "action_label": "Go to keys",

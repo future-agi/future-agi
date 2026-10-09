@@ -191,6 +191,9 @@ import type {
   AgentccWebhookEventsListParams,
   AgentccWebhooksList200,
   AgentccWebhooksListParams,
+  AlertTestRequestApi,
+  AlertTestResponseApi,
+  AlertWriteRequestApi,
   AllActiveTestsApi,
   AnnotationActionMessageResponseApi,
   AnnotationLabelCreateResponseApi,
@@ -1167,6 +1170,7 @@ import type {
   SkillDetailResponseApi,
   SkillListResponseApi,
   SkillUpdateRequestApi,
+  SlackInstallApi,
   SpanAttributeDetailResponseApi,
   SpanAttributeKeysResponseApi,
   SpanAttributeValuesResponseApi,
@@ -90758,6 +90762,372 @@ export const v1SelfHostedActivationsCreate = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(activationRequestApi),
+    },
+  );
+};
+
+export type integrationsConnectionsSlackChannelsListResponse200 = {
+  data: void;
+  status: 200;
+};
+
+export type integrationsConnectionsSlackChannelsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type integrationsConnectionsSlackChannelsListResponseSuccess =
+  integrationsConnectionsSlackChannelsListResponse200 & {
+    headers: Headers;
+  };
+export type integrationsConnectionsSlackChannelsListResponseError =
+  integrationsConnectionsSlackChannelsListResponseDefault & {
+    headers: Headers;
+  };
+
+export type integrationsConnectionsSlackChannelsListResponse =
+  | integrationsConnectionsSlackChannelsListResponseSuccess
+  | integrationsConnectionsSlackChannelsListResponseError;
+
+export const getIntegrationsConnectionsSlackChannelsListUrl = (
+  connectionId: string,
+) => {
+  return `/integrations/connections/${connectionId}/slack/channels/`;
+};
+
+export const integrationsConnectionsSlackChannelsList = async (
+  connectionId: string,
+  options?: RequestInit,
+): Promise<integrationsConnectionsSlackChannelsListResponse> => {
+  return apiMutator<integrationsConnectionsSlackChannelsListResponse>(
+    getIntegrationsConnectionsSlackChannelsListUrl(connectionId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type integrationsSlackInstallCreateResponse201 = {
+  data: SlackInstallApi;
+  status: 201;
+};
+
+export type integrationsSlackInstallCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201>;
+};
+
+export type integrationsSlackInstallCreateResponseSuccess =
+  integrationsSlackInstallCreateResponse201 & {
+    headers: Headers;
+  };
+export type integrationsSlackInstallCreateResponseError =
+  integrationsSlackInstallCreateResponseDefault & {
+    headers: Headers;
+  };
+
+export type integrationsSlackInstallCreateResponse =
+  | integrationsSlackInstallCreateResponseSuccess
+  | integrationsSlackInstallCreateResponseError;
+
+export const getIntegrationsSlackInstallCreateUrl = () => {
+  return `/integrations/slack/install/`;
+};
+
+export const integrationsSlackInstallCreate = async (
+  slackInstallApi: SlackInstallApi,
+  options?: RequestInit,
+): Promise<integrationsSlackInstallCreateResponse> => {
+  return apiMutator<integrationsSlackInstallCreateResponse>(
+    getIntegrationsSlackInstallCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(slackInstallApi),
+    },
+  );
+};
+
+export type tracerAlertsListResponse200 = {
+  data: void;
+  status: 200;
+};
+
+export type tracerAlertsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerAlertsListResponseSuccess = tracerAlertsListResponse200 & {
+  headers: Headers;
+};
+export type tracerAlertsListResponseError = tracerAlertsListResponseDefault & {
+  headers: Headers;
+};
+
+export type tracerAlertsListResponse =
+  | tracerAlertsListResponseSuccess
+  | tracerAlertsListResponseError;
+
+export const getTracerAlertsListUrl = () => {
+  return `/tracer/alerts/`;
+};
+
+export const tracerAlertsList = async (
+  options?: RequestInit,
+): Promise<tracerAlertsListResponse> => {
+  return apiMutator<tracerAlertsListResponse>(getTracerAlertsListUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export type tracerAlertsCreateResponse201 = {
+  data: AlertWriteRequestApi;
+  status: 201;
+};
+
+export type tracerAlertsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201>;
+};
+
+export type tracerAlertsCreateResponseSuccess =
+  tracerAlertsCreateResponse201 & {
+    headers: Headers;
+  };
+export type tracerAlertsCreateResponseError =
+  tracerAlertsCreateResponseDefault & {
+    headers: Headers;
+  };
+
+export type tracerAlertsCreateResponse =
+  | tracerAlertsCreateResponseSuccess
+  | tracerAlertsCreateResponseError;
+
+export const getTracerAlertsCreateUrl = () => {
+  return `/tracer/alerts/`;
+};
+
+export const tracerAlertsCreate = async (
+  alertWriteRequestApi: AlertWriteRequestApi,
+  options?: RequestInit,
+): Promise<tracerAlertsCreateResponse> => {
+  return apiMutator<tracerAlertsCreateResponse>(getTracerAlertsCreateUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(alertWriteRequestApi),
+  });
+};
+
+export type tracerAlertsErrorFeedTestCreateResponse200 = {
+  data: AlertTestResponseApi;
+  status: 200;
+};
+
+export type tracerAlertsErrorFeedTestCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerAlertsErrorFeedTestCreateResponseSuccess =
+  tracerAlertsErrorFeedTestCreateResponse200 & {
+    headers: Headers;
+  };
+export type tracerAlertsErrorFeedTestCreateResponseError =
+  tracerAlertsErrorFeedTestCreateResponseDefault & {
+    headers: Headers;
+  };
+
+export type tracerAlertsErrorFeedTestCreateResponse =
+  | tracerAlertsErrorFeedTestCreateResponseSuccess
+  | tracerAlertsErrorFeedTestCreateResponseError;
+
+export const getTracerAlertsErrorFeedTestCreateUrl = (alertId: string) => {
+  return `/tracer/alerts/error_feed/${alertId}/test/`;
+};
+
+export const tracerAlertsErrorFeedTestCreate = async (
+  alertId: string,
+  alertTestRequestApi: AlertTestRequestApi,
+  options?: RequestInit,
+): Promise<tracerAlertsErrorFeedTestCreateResponse> => {
+  return apiMutator<tracerAlertsErrorFeedTestCreateResponse>(
+    getTracerAlertsErrorFeedTestCreateUrl(alertId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(alertTestRequestApi),
+    },
+  );
+};
+
+export type tracerAlertsOptionsListResponse200 = {
+  data: void;
+  status: 200;
+};
+
+export type tracerAlertsOptionsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerAlertsOptionsListResponseSuccess =
+  tracerAlertsOptionsListResponse200 & {
+    headers: Headers;
+  };
+export type tracerAlertsOptionsListResponseError =
+  tracerAlertsOptionsListResponseDefault & {
+    headers: Headers;
+  };
+
+export type tracerAlertsOptionsListResponse =
+  | tracerAlertsOptionsListResponseSuccess
+  | tracerAlertsOptionsListResponseError;
+
+export const getTracerAlertsOptionsListUrl = () => {
+  return `/tracer/alerts/options/`;
+};
+
+export const tracerAlertsOptionsList = async (
+  options?: RequestInit,
+): Promise<tracerAlertsOptionsListResponse> => {
+  return apiMutator<tracerAlertsOptionsListResponse>(
+    getTracerAlertsOptionsListUrl(),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerAlertsReadResponse200 = {
+  data: void;
+  status: 200;
+};
+
+export type tracerAlertsReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerAlertsReadResponseSuccess = tracerAlertsReadResponse200 & {
+  headers: Headers;
+};
+export type tracerAlertsReadResponseError = tracerAlertsReadResponseDefault & {
+  headers: Headers;
+};
+
+export type tracerAlertsReadResponse =
+  | tracerAlertsReadResponseSuccess
+  | tracerAlertsReadResponseError;
+
+export const getTracerAlertsReadUrl = (kind: string, alertId: string) => {
+  return `/tracer/alerts/${kind}/${alertId}/`;
+};
+
+export const tracerAlertsRead = async (
+  kind: string,
+  alertId: string,
+  options?: RequestInit,
+): Promise<tracerAlertsReadResponse> => {
+  return apiMutator<tracerAlertsReadResponse>(
+    getTracerAlertsReadUrl(kind, alertId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerAlertsPartialUpdateResponse200 = {
+  data: AlertWriteRequestApi;
+  status: 200;
+};
+
+export type tracerAlertsPartialUpdateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerAlertsPartialUpdateResponseSuccess =
+  tracerAlertsPartialUpdateResponse200 & {
+    headers: Headers;
+  };
+export type tracerAlertsPartialUpdateResponseError =
+  tracerAlertsPartialUpdateResponseDefault & {
+    headers: Headers;
+  };
+
+export type tracerAlertsPartialUpdateResponse =
+  | tracerAlertsPartialUpdateResponseSuccess
+  | tracerAlertsPartialUpdateResponseError;
+
+export const getTracerAlertsPartialUpdateUrl = (
+  kind: string,
+  alertId: string,
+) => {
+  return `/tracer/alerts/${kind}/${alertId}/`;
+};
+
+export const tracerAlertsPartialUpdate = async (
+  kind: string,
+  alertId: string,
+  alertWriteRequestApi: AlertWriteRequestApi,
+  options?: RequestInit,
+): Promise<tracerAlertsPartialUpdateResponse> => {
+  return apiMutator<tracerAlertsPartialUpdateResponse>(
+    getTracerAlertsPartialUpdateUrl(kind, alertId),
+    {
+      ...options,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(alertWriteRequestApi),
+    },
+  );
+};
+
+export type tracerAlertsDeleteResponse204 = {
+  data: void;
+  status: 204;
+};
+
+export type tracerAlertsDeleteResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 204>;
+};
+
+export type tracerAlertsDeleteResponseSuccess =
+  tracerAlertsDeleteResponse204 & {
+    headers: Headers;
+  };
+export type tracerAlertsDeleteResponseError =
+  tracerAlertsDeleteResponseDefault & {
+    headers: Headers;
+  };
+
+export type tracerAlertsDeleteResponse =
+  | tracerAlertsDeleteResponseSuccess
+  | tracerAlertsDeleteResponseError;
+
+export const getTracerAlertsDeleteUrl = (kind: string, alertId: string) => {
+  return `/tracer/alerts/${kind}/${alertId}/`;
+};
+
+export const tracerAlertsDelete = async (
+  kind: string,
+  alertId: string,
+  options?: RequestInit,
+): Promise<tracerAlertsDeleteResponse> => {
+  return apiMutator<tracerAlertsDeleteResponse>(
+    getTracerAlertsDeleteUrl(kind, alertId),
+    {
+      ...options,
+      method: "DELETE",
     },
   );
 };

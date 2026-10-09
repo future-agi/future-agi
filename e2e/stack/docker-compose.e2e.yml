@@ -21,11 +21,22 @@ services:
       # Request logs reach Django over this shared secret; without it the
       # webhook rejects every batch the gateway sends.
       AGENTCC_WEBHOOK_SECRET: ${AGENTCC_WEBHOOK_SECRET:-e2e-agentcc-webhook-secret}
+      E2E_ERROR_FEED_ENABLED: "true"
+      # The app and worker must share one key to decrypt OAuth credentials.
+      INTEGRATION_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      SLACK_CLIENT_ID: e2e-client
+      SLACK_CLIENT_SECRET: e2e-secret
+      SLACK_OAUTH_AUTHORIZE_URL: http://localhost:28081/oauth/v2/authorize
+      SLACK_REDIRECT_URI: http://localhost:8100/integrations/slack/callback/
+      SLACK_API_URL: http://mock-slack:8080/api
   worker:
     restart: "no"
     environment:
       MODEL_SERVING_URL: http://mock-llm:8080
       FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      E2E_ERROR_FEED_ENABLED: "true"
+      INTEGRATION_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      SLACK_API_URL: http://mock-slack:8080/api
   fi-collector:
     # Collector and consumer must run the same checked-out transport protocol.
     image: futureagi/fi-collector:${E2E_FI_COLLECTOR_VERSION:-latest}
@@ -43,4 +54,12 @@ services:
       # Compose resolves paths in an override file against the project
       # directory (the first -f file's dir = repo root), not this file's dir.
       - ./e2e/stack/mock-llm/server.mjs:/srv/server.mjs:ro
+    restart: "no"
+  mock-slack:
+    image: node:22-alpine
+    command: ["node", "/srv/server.mjs"]
+    volumes:
+      - ./e2e/stack/mock-slack/server.mjs:/srv/server.mjs:ro
+    ports:
+      - "127.0.0.1:28081:8080"
     restart: "no"

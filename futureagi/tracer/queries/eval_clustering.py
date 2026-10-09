@@ -554,6 +554,13 @@ def create_cluster(
         trace_session_id=result.session_id,
         eval_logger_id=result.eval_logger_id,
     )
+    from tracer.services.feed_alerts.events import record_issue_event
+
+    record_issue_event(
+        cluster=cluster,
+        before=None,
+        source_key=f"eval-create:{result.eval_logger_id}",
+    )
 
     # Store centroid in ClickHouse
     family = _eval_family(result.eval_name, result.target_type)
@@ -602,6 +609,9 @@ def assign_to_cluster(
 ) -> None:
     """Assign an eval result to an existing cluster and update centroid."""
     cluster = TraceErrorGroup.objects.get(cluster_id=cluster_id, project_id=project_id)
+    from tracer.services.feed_alerts.events import issue_snapshot, record_issue_event
+
+    alert_before = issue_snapshot(cluster)
 
     # One junction row per eval result — ALWAYS. The row is what marks the eval
     # as processed: ``get_unclustered_eval_results`` excludes on the presence of
@@ -670,6 +680,11 @@ def assign_to_cluster(
                 "combined_impact",
                 "updated_at",
             ]
+        )
+        record_issue_event(
+            cluster=cluster,
+            before=alert_before,
+            source_key=f"eval-assign:{result.eval_logger_id}:{cluster.pk}",
         )
 
     # Incrementally update centroid in ClickHouse

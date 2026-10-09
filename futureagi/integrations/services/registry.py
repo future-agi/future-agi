@@ -18,3 +18,4 @@ def ensure_services_loaded():
     import integrations.services.pagerduty_service  # noqa: F401
     import integrations.services.posthog_service  # noqa: F401
     import integrations.services.queue_service  # noqa: F401
+    import integrations.services.slack_service  # noqa: F401

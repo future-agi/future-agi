@@ -24,6 +24,7 @@ Playwright config — and it imports nothing from `frontend/` or `futureagi/`.
 │    postgres · clickhouse · redis · minio · temporal                              │
 │    backend · worker (ALL_QUEUES) · frontend · fi-collector · observation consumer                       │
 │    agentcc-gateway ──► mock-llm (OpenAI-compatible, deterministic, no host port) │
+│    backend / worker ─► mock-slack (OAuth and chat, host :28081)                  │
 │    peerdb (catalog · temporal · flow-api · flow-workers · server · minio · init) │
 │      └── CDC mirrors PG→CH: tracer_eval_logger, model_hub_score, datasets,       │
 │          prompts, simulate, usage_apicalllog …                                   │
@@ -34,6 +35,12 @@ Playwright config — and it imports nothing from `frontend/` or `futureagi/`.
 
 Because code-executor is not started, `e2e/stack/e2e.env` sets `CODE_EXECUTOR_LOCAL_FALLBACK=true` so
 code evals run in the worker instead of failing with "Code executor unavailable".
+
+Error Feed flows use the local mock Slack OAuth/API service and inspect its captured messages at
+`http://localhost:28081/messages`. They seed issue transitions through the authenticated
+`POST /tracer/e2e/feed-issue/` route, which is registered only in local mode with
+`E2E_ERROR_FEED_ENABLED=true`. The E2E API and worker share a test-only integration encryption key
+so the worker can decrypt the connection created during OAuth.
 
 Eval results, annotation scores and the dataset/simulation dashboards reach ClickHouse **only**
 through the PeerDB mirrors — Django writes those rows to Postgres alone. That is why PeerDB is part
@@ -53,13 +60,16 @@ bin/e2e up                   # boot the isolated futureagi-e2e stack
 bin/e2e test                 # run the whole suite against it
 bin/e2e test flows/observe/  # or one area
 bin/e2e test --grep @smoke   # or one tag
+bin/e2e test flows/error-feed/  # Slack alert creation, delivery, and management
+E2E_RECORD_VIDEO=1 bin/e2e test flows/error-feed/  # save browser recordings in test-results
 ```
 
 `bin/e2e up` composes `docker-compose.distributed.yml` (the distributed topology) with `e2e/stack/docker-compose.e2e.yml`, using
-`e2e/stack/e2e.env` and the Compose project name `futureagi-e2e`. It starts an explicit service
+`e2e/stack/e2e.env` and the Compose project name `futureagi-e2e` (override with
+`E2E_COMPOSE_PROJECT` to keep a separate test volume). It starts an explicit service
 list — kept in `SERVICES` in `bin/e2e` so the trimmed set is visible in one place, with
 `COMPOSE_PROFILES=peerdb` in the env file making the profile-gated PeerDB services startable by
-name. The overlay itself is thin: it adds the `mock-llm` service, caps ClickHouse at 3 GB (it is the
+name. The overlay itself is thin: it adds the `mock-llm` and `mock-slack` services, caps ClickHouse at 3 GB (it is the
 first thing an out-of-memory runner kills), sets `restart: "no"` on backend and worker so a crash
 loop fails the run loudly instead of hiding, and gives collector and observation consumer the same image tag. `up` returns
 only after this readiness sequence passes:

@@ -203,7 +203,7 @@ from ai_tools.tools.simulation import update_simulate_eval_config  # noqa: F401
 from ai_tools.tools.simulation import update_simulator_agent  # noqa: F401
 
 # Visualization tools (1)
-# Tracing tools (42) + Error Feed tools (7 — tagged category="error_feed")
+# Tracing tools (42) + Error Feed tools (16 — tagged category="error_feed")
 from ai_tools.tools.tracing import add_trace_tags  # noqa: F401
 from ai_tools.tools.tracing import analyze_error_cluster  # noqa: F401
 from ai_tools.tools.tracing import analyze_errors  # noqa: F401
@@ -224,6 +224,7 @@ from ai_tools.tools.tracing import create_score  # noqa: F401
 # ``list_trace_scores`` instead. Tool files remain on disk pending Phase 4
 # deletion of the model itself.
 from ai_tools.tools.tracing import delete_alert_monitor  # noqa: F401
+from ai_tools.tools.tracing import error_feed_alert_rules  # noqa: F401
 from ai_tools.tools.tracing import delete_eval_tasks  # noqa: F401
 from ai_tools.tools.tracing import delete_project  # noqa: F401
 # tracing/explore_trace.py now registers as ``explore_trace_legacy`` (the
