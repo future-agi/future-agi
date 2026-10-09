@@ -17,7 +17,12 @@ from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.eval_task import EvalTask, EvalTaskLogger, EvalTaskStatus
 from tracer.models.observation_span import EvalLogger
 from tracer.models.project import Project
-from tracer.tests.eval_task_factories import make_sibling_project, refusal_without_id
+from tracer.tests.eval_task_factories import (
+    OUT_OF_SCOPE_KINDS,
+    make_out_of_scope_project,
+    make_sibling_project,
+    refusal_without_id,
+)
 from tracer.views import eval_task as eval_task_views
 from tracer.views.eval_task import EvalTaskView
 
@@ -74,40 +79,13 @@ def linked_eval_ids(task):
     return set(task.evals.values_list("id", flat=True))
 
 
-OUT_OF_SCOPE_CONFIG_KINDS = ["other_organization", "other_workspace", "deleted_project"]
-
-
 def make_out_of_scope_eval_config(kind, project, user, custom_eval_config):
-    """A live eval config the caller cannot use: one of another organization,
-    of another workspace of the caller's organization, or of a deleted
-    project."""
-    if kind == "other_organization":
-        organization = Organization.objects.create(name="Other Organization")
-        owner = Project.objects.create(
-            name="Other Organization Project",
-            organization=organization,
-            workspace=Workspace.objects.create(
-                name="Other Organization Workspace",
-                organization=organization,
-                is_default=True,
-                is_active=True,
-                created_by=user,
-            ),
-            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
-            trace_type="observe",
-        )
-    elif kind == "other_workspace":
-        owner = make_other_workspace_eval_task(
-            project, user, custom_eval_config
-        ).project
-    else:
-        owner = make_sibling_project(project, "Deleted Sibling Project")
-    config = make_custom_eval_config_for_project(
-        owner, custom_eval_config, "Out Of Scope Config"
+    """A live eval config of a project the caller cannot use."""
+    return make_custom_eval_config_for_project(
+        make_out_of_scope_project(kind, project, user),
+        custom_eval_config,
+        "Out Of Scope Config",
     )
-    if kind == "deleted_project":
-        Project.all_objects.filter(id=owner.id).update(deleted=True)
-    return config
 
 
 _PRIVATE_DB_ERROR = "Code: 159. DB::Exception: private stack and query text"
@@ -247,7 +225,7 @@ class TestEvalTaskCreateAPI:
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
-    @pytest.mark.parametrize("kind", OUT_OF_SCOPE_CONFIG_KINDS)
+    @pytest.mark.parametrize("kind", OUT_OF_SCOPE_KINDS)
     def test_create_answers_an_out_of_scope_eval_config_as_unknown(
         self, auth_client, project, user, custom_eval_config, kind
     ):
@@ -1196,7 +1174,7 @@ class TestEvalTaskUpdateAPI:
         assert eval_task.name == "Replaced In Place"
         assert linked_eval_ids(eval_task) == {own_config.id}
 
-    @pytest.mark.parametrize("kind", OUT_OF_SCOPE_CONFIG_KINDS)
+    @pytest.mark.parametrize("kind", OUT_OF_SCOPE_KINDS)
     @pytest.mark.parametrize("method", ["patch", "put"])
     def test_detail_update_answers_an_out_of_scope_eval_config_as_unknown(
         self, auth_client, project, user, eval_task, custom_eval_config, method, kind

@@ -12,12 +12,13 @@ import pytest
 from django.core.management import call_command
 from rest_framework import status
 
-from accounts.models import Organization
-from accounts.models.workspace import Workspace
-from model_hub.models.ai_model import AIModel
 from tracer.models.custom_eval_config import CustomEvalConfig
-from tracer.models.project import Project
-from tracer.tests.eval_task_factories import make_sibling_project, refusal_without_id
+from tracer.tests.eval_task_factories import (
+    OUT_OF_SCOPE_KINDS,
+    make_out_of_scope_project,
+    make_sibling_project,
+    refusal_without_id,
+)
 
 AUTH_REQUIRED_STATUS_CODES = (
     status.HTTP_401_UNAUTHORIZED,
@@ -272,42 +273,6 @@ class TestCustomEvalConfigProjectIsFixed:
         assert custom_eval_config.name == "Replaced In Place"
 
 
-OUT_OF_SCOPE_KINDS = ["other_organization", "other_workspace", "deleted_project"]
-
-
-def _project_out_of_scope(kind, project, user):
-    """A project the caller cannot use: one of another organization that sits
-    in no workspace, one in another workspace of the caller's organization, or
-    a deleted project of the caller's own workspace."""
-    if kind == "other_organization":
-        other = Project.objects.create(
-            name="Other Organization Project",
-            organization=Organization.objects.create(name="Other Organization"),
-            workspace=None,
-            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
-            trace_type="observe",
-        )
-        assert other.workspace_id is None
-        return other
-    if kind == "other_workspace":
-        return Project.objects.create(
-            name="Other Workspace Project",
-            organization=project.organization,
-            workspace=Workspace.objects.create(
-                name="Other Workspace",
-                organization=project.organization,
-                is_default=False,
-                is_active=True,
-                created_by=user,
-            ),
-            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
-            trace_type="observe",
-        )
-    deleted = make_sibling_project(project)
-    Project.all_objects.filter(id=deleted.id).update(deleted=True)
-    return deleted
-
-
 @pytest.mark.integration
 @pytest.mark.api
 class TestCustomEvalConfigDetailScope:
@@ -321,7 +286,7 @@ class TestCustomEvalConfigDetailScope:
     ):
         config = CustomEvalConfig.objects.create(
             name="Out Of Scope Config",
-            project=_project_out_of_scope(kind, project, user),
+            project=make_out_of_scope_project(kind, project, user),
             eval_template=eval_template,
             config={},
             mapping={"input": "input", "output": "output"},
@@ -366,7 +331,7 @@ class TestCustomEvalConfigDetailScope:
             str(
                 CustomEvalConfig.objects.create(
                     name=f"Out Of Scope Config ({kind})",
-                    project=_project_out_of_scope(kind, project, user),
+                    project=make_out_of_scope_project(kind, project, user),
                     eval_template=eval_template,
                     config={},
                     mapping={},
@@ -394,7 +359,7 @@ class TestCustomEvalConfigProjectScope:
     def test_a_project_out_of_scope_is_answered_as_unknown(
         self, auth_client, project, user, eval_template, custom_eval_config, kind
     ):
-        other = _project_out_of_scope(kind, project, user)
+        other = make_out_of_scope_project(kind, project, user)
         unknown_id = uuid.uuid4()
         url = f"/tracer/custom-eval-config/{custom_eval_config.id}/"
 

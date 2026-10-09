@@ -4,7 +4,9 @@
 build the same EvalTemplate -> CustomEvalConfig -> EvalTask -> EvalLogger
 chain. They had grown separate copies that then drifted -- one parameterised
 the template's output type, the other backdated ``created_at`` -- so these are
-the superset: every caller passes what it needs and ignores the rest.
+the superset: every caller passes what it needs and ignores the rest. The
+eval-task, eval-config and AI-tool scope suites share the project and config
+builders here, including the projects a caller cannot use.
 
 A plain module rather than ``conftest.py`` fixtures: these are constructors
 taking keyword arguments that vary per call, which a fixture would have to
@@ -14,6 +16,8 @@ pytest discourages.
 
 import uuid
 
+from accounts.models import Organization
+from accounts.models.workspace import Workspace
 from model_hub.models.ai_model import AIModel
 from model_hub.models.evals_metric import EvalTemplate
 from tracer.models.custom_eval_config import CustomEvalConfig
@@ -67,6 +71,41 @@ def make_sibling_project(project, name="Sibling Project"):
         model_type=AIModel.ModelTypes.GENERATIVE_LLM,
         trace_type="observe",
     )
+
+
+OUT_OF_SCOPE_KINDS = ["other_organization", "other_workspace", "deleted_project"]
+
+
+def make_out_of_scope_project(kind, project, user):
+    """A project a caller of ``project``'s workspace cannot use: one of another
+    organization in no workspace, so only the organization filter keeps it
+    out; one in another workspace of the same organization; or a deleted
+    project of the caller's own workspace."""
+    if kind == "other_organization":
+        return Project.objects.create(
+            name="Other Organization Project",
+            organization=Organization.objects.create(name="Other Organization"),
+            workspace=None,
+            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+            trace_type="observe",
+        )
+    if kind == "other_workspace":
+        return Project.objects.create(
+            name="Other Workspace Project",
+            organization=project.organization,
+            workspace=Workspace.objects.create(
+                name="Other Workspace",
+                organization=project.organization,
+                is_default=False,
+                is_active=True,
+                created_by=user,
+            ),
+            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+            trace_type="observe",
+        )
+    deleted = make_sibling_project(project, "Deleted Sibling Project")
+    Project.all_objects.filter(id=deleted.id).update(deleted=True)
+    return deleted
 
 
 def refusal_without_id(response, named_id):

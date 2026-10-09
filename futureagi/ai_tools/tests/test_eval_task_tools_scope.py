@@ -17,7 +17,12 @@ from ai_tools.tests.conftest import run_tool
 from ai_tools.tests.fixtures import make_eval_template, make_project
 from tracer.models.eval_task import EvalTask, EvalTaskStatus, RunType
 from tracer.models.project import Project
-from tracer.tests.eval_task_factories import make_config
+from tracer.tests.eval_task_factories import (
+    OUT_OF_SCOPE_KINDS,
+    make_config,
+    make_out_of_scope_project,
+    make_sibling_project,
+)
 
 CONFIG_NOT_ON_PROJECT = "CustomEvalConfig(s) not found on the task's project"
 
@@ -254,37 +259,6 @@ class TestUpdateEvalTaskScope:
         )
 
 
-def _out_of_scope_config(kind, tool_context, template):
-    """A config the caller may not link to a task of its own project."""
-    if kind == "other_project":
-        project = make_project(tool_context, name="Sibling Project")
-    elif kind == "other_workspace":
-        workspace = Workspace.objects.create(
-            name="Other Workspace",
-            organization=tool_context.organization,
-            is_default=False,
-            is_active=True,
-            created_by=tool_context.user,
-        )
-        project = make_project(tool_context, name="Elsewhere", workspace=workspace)
-    else:
-        organization = Organization.objects.create(name="Other Organization")
-        workspace = Workspace.objects.create(
-            name="Other Organization Workspace",
-            organization=organization,
-            is_default=True,
-            is_active=True,
-            created_by=tool_context.user,
-        )
-        project = make_project(
-            tool_context,
-            name="Elsewhere",
-            organization=organization,
-            workspace=workspace,
-        )
-    return make_config(project=project, template=template, name="Foreign")
-
-
 class TestCreateEvalTaskScope:
     @pytest.fixture
     def create(self, django_capture_on_commit_callbacks):
@@ -315,15 +289,21 @@ class TestCreateEvalTaskScope:
         assert _linked_ids(task) == {own.id}
         assert starts == [(str(task.id), {})]
 
-    @pytest.mark.parametrize(
-        "kind", ["other_project", "other_workspace", "other_organization"]
-    )
+    @pytest.mark.parametrize("kind", ["other_project", *OUT_OF_SCOPE_KINDS])
     def test_an_out_of_scope_config_is_refused(
         self, tool_context, template, starts, create, kind
     ):
         project = make_project(tool_context)
         own = make_config(project=project, template=template, name="Own")
-        foreign = _out_of_scope_config(kind, tool_context, template)
+        foreign = make_config(
+            project=(
+                make_sibling_project(project)
+                if kind == "other_project"
+                else make_out_of_scope_project(kind, project, tool_context.user)
+            ),
+            template=template,
+            name="Foreign",
+        )
 
         result = create(tool_context, project, [own, foreign])
 
