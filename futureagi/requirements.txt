@@ -139,14 +139,16 @@ cryptography==46.0.5
 dacite==1.9.2
     # via traceai-bedrock
 defusedxml==0.7.1
-    # via pysaml2
+    # via
+    #   nltk
+    #   pysaml2
 distro==1.9.0
     # via
     #   anthropic
     #   google-genai
     #   openai
     #   posthog
-django==5.1.8
+django==5.1.15
     # via
     #   channels
     #   core-backend
@@ -371,12 +373,13 @@ lark==1.3.1
     # via django-socio-grpc
 levenshtein==0.27.3
     # via python-levenshtein
-litellm==1.81.11
+litellm==1.84.10
     # via
     #   core-backend
     #   traceai-litellm
-lxml==6.0.2
+lxml==6.1.3
     # via
+    #   core-backend
     #   python-docx
     #   xmlsec
 lz4==4.4.5
@@ -385,7 +388,7 @@ lz4==4.4.5
     #   core-backend
 markupsafe==3.0.3
     # via jinja2
-mcp==1.26.0
+mcp==1.30.0
     # via core-backend
 minio==7.2.20
     # via core-backend
@@ -400,7 +403,7 @@ multidict==6.7.0
     #   yarl
 nexus-rpc==1.3.0
     # via temporalio
-nltk==3.9.2
+nltk==3.10.3
     # via
     #   core-backend
     #   rouge-score
@@ -411,7 +414,7 @@ numpy==2.3.5
     #   rouge-score
     #   scikit-learn
     #   scipy
-openai==2.15.0
+openai==2.54.0
     # via
     #   core-backend
     #   litellm
@@ -585,13 +588,13 @@ pandas==2.3.3
     # via core-backend
 partial-json-parser==0.2.1.1.post7
     # via core-backend
-pdfminer-six==20231228
+pdfminer-six==20260107
     # via
     #   core-backend
     #   pdfplumber
-pdfplumber==0.11.5
+pdfplumber==0.11.10
     # via core-backend
-pillow==12.1.0
+pillow==12.3.0
     # via
     #   core-backend
     #   pdfplumber
@@ -660,7 +663,7 @@ pydantic-settings==2.12.0
     # via mcp
 pydub==0.25.1
     # via core-backend
-pyjwt==2.10.1
+pyjwt==2.15.1
     # via
     #   core-backend
     #   djangorestframework-simplejwt
@@ -673,9 +676,9 @@ pyotp==2.9.0
     # via core-backend
 pyparsing==3.3.2
     # via httplib2
-pypdf==6.6.0
+pypdf==6.19.0
     # via core-backend
-pypdfium2==5.6.0
+pypdfium2==5.14.0
     # via pdfplumber
 pysaml2==7.5.0
     # via core-backend
