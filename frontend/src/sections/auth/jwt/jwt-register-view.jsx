@@ -45,11 +45,15 @@ export default function JwtRegisterView() {
   const [registerSuccess, setRegisterSuccess] = useState(false);
   // Confirmed read only: the hook falls back to "oss" when deployment-info
   // errors, and a cloud user must never be shown the password fields.
+  // Self-hosted means "not Cloud", licensed ("ee") or not ("oss"): a
+  // self-hoster who activates Enterprise keeps password signup (TH-8084).
   const {
     isOSS: ossMode,
     isCloud: cloudMode,
     isSuccess: modeConfirmed,
   } = useDeploymentMode();
+  const isSelfHosted = modeConfirmed && !cloudMode;
+  // Social and SSO sign-up stay as they were: hidden only without a licence.
   const isOSS = modeConfirmed && ossMode;
   const requireWorkEmail = modeConfirmed && cloudMode;
   const postLoginPath = usePostLoginPath();
@@ -73,9 +77,9 @@ export default function JwtRegisterView() {
         "Please sign up with your work email address",
         (value) => !requireWorkEmail || isWorkEmail(value),
       ),
-    // OSS sets the password here at sign-up (name → email → password →
+    // Self-hosted sets the password here at sign-up (name → email → password →
     // confirm, one screen). Cloud still sets it via an emailed link.
-    password: isOSS
+    password: isSelfHosted
       ? Yup.string()
           .required("Password is required")
           .min(8, "Password must be at least 8 characters")
@@ -84,7 +88,7 @@ export default function JwtRegisterView() {
           then: (schema) => schema.required("Password is required"),
           otherwise: (schema) => schema.notRequired(),
         }),
-    confirmPassword: isOSS
+    confirmPassword: isSelfHosted
       ? Yup.string()
           .required("Please confirm your password")
           .oneOf([Yup.ref("password")], "Passwords do not match")
@@ -157,7 +161,7 @@ export default function JwtRegisterView() {
     persistReturnTo();
     // No site key on self-hosted, and the backend skips verification there.
     let token = "";
-    if (!isOSS) {
+    if (!isSelfHosted) {
       try {
         token = await getRecaptchaToken("signup");
       } catch (err) {
@@ -177,8 +181,8 @@ export default function JwtRegisterView() {
         company_name: "",
         recaptcha_response: token,
         allow_email: true,
-        // OSS: password chosen on this screen, no emailed set-password link.
-        ...(isOSS ? { password: data?.password } : {}),
+        // Self-hosted: password chosen on this screen, no emailed set-password link.
+        ...(isSelfHosted ? { password: data?.password } : {}),
       };
       let response;
       const marketplaceToken = onboarding_gcp_token || onboarding_token;
@@ -200,7 +204,7 @@ export default function JwtRegisterView() {
         response = await register(payload);
       }
       if (response?.result) {
-        if (!isOSS) {
+        if (!isSelfHosted) {
           // Cloud: the password is set via an emailed link.
           enqueueSnackbar({
             variant: "success",
@@ -235,7 +239,7 @@ export default function JwtRegisterView() {
           userId: response?.result?.user_id,
         });
 
-        if (isOSS) {
+        if (isSelfHosted) {
           try {
             if (!response.result?.access) {
               throw new Error("signup response carried no access token");
@@ -457,7 +461,7 @@ export default function JwtRegisterView() {
         name="email"
         label={requireWorkEmail ? "Business Email ID" : "Email ID"}
       />
-      {isOSS && (
+      {isSelfHosted && (
         <>
           <RHFTextField
             placeholder="Enter password"

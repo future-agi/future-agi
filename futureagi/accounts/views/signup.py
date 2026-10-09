@@ -68,7 +68,6 @@ from tfc.capabilities.edition import EditionResource
 from tfc.capabilities.errors import EnterpriseFeatureRequired
 from tfc.constants.levels import Level
 from tfc.constants.roles import OrganizationRoles
-from tfc.ee_gating import is_oss
 from tfc.permissions.rbac import IsOrganizationAdmin
 from tfc.permissions.utils import get_org_membership
 from tfc.settings.settings import RECAPTCHA_ENABLED, RECAPTCHA_SECRET_KEY, ssl
@@ -87,6 +86,18 @@ except ImportError:
 
 logger = structlog.get_logger(__name__)
 _gm = GeneralMethods()
+
+
+def is_self_hosted() -> bool:
+    """Whether this install is self-hosted rather than Future AGI Cloud.
+
+    Signup, activation and password reset follow where the install runs, not
+    whether it holds a licence: is_oss() is False on a licensed self-hosted
+    install, and keying on it sent that install down the Cloud path (no
+    password, an inactive account, "check your email", reCAPTCHA). Only Cloud
+    (CLOUD_DEPLOYMENT with its validated secret) gets those (TH-8084).
+    """
+    return not edition.is_cloud()
 
 
 def oss_reset_unavailable_message() -> str:
@@ -230,10 +241,10 @@ def user_signup(request):
 
         is_local = os.getenv("ENV_TYPE") == "local"
 
-        if is_local or is_oss():
+        if is_local or is_self_hosted():
             logger.debug(
                 "recaptcha verification skipped",
-                reason="local environment" if is_local else "oss deployment",
+                reason="local environment" if is_local else "self-hosted deployment",
             )
         elif not verify_recaptcha(recaptcha_token):
             logger.error("recaptcha verification failed")
@@ -246,7 +257,7 @@ def user_signup(request):
             return _gm.bad_request("User with this email already exists.")
 
         # Allowlist fields to prevent hidden-parameter attacks
-        if is_oss():
+        if is_self_hosted():
             allowed_fields = {
                 "email",
                 "full_name",
@@ -264,7 +275,7 @@ def user_signup(request):
         sanitized_data = {k: v for k, v in data.items() if k in allowed_fields}
         user = first_signup(sanitized_data)
 
-        if is_oss():
+        if is_self_hosted():
             logger.info("signup_auto_login", email=email, user_id=str(user.id))
             return _gm.success_response(_login_payload(user), status=status.HTTP_200_OK)
 
@@ -355,9 +366,10 @@ def user_logout(request):
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def activate_account(request, uidb64, token):
-    # Rate-limit by IP: 10 requests per minute. Skipped in OSS mode where all
-    # traffic shares a single IP (localhost / Docker gateway).
-    if not is_oss():
+    # Rate-limit by IP: 10 requests per minute. Skipped on self-hosted installs
+    # (licensed or not), where all traffic can share a single IP (localhost /
+    # Docker gateway).
+    if not is_self_hosted():
         ip = request.META.get(
             "HTTP_X_FORWARDED_FOR", request.META.get("REMOTE_ADDR", "")
         )
@@ -487,7 +499,7 @@ def initiate_password_reset(request):
                 # email delivery is configured; without it there is no way to
                 # hand the link over short of the opt-in below.
                 if (
-                    is_oss()
+                    is_self_hosted()
                     and not oss_reset_link_in_response()
                     and not email_delivery_configured()
                 ):
@@ -514,7 +526,7 @@ def initiate_password_reset(request):
 
                 if settings.DEBUG:
                     logger.info(f"Password reset link {reset_link}")
-                if is_oss() and oss_reset_link_in_response():
+                if is_self_hosted() and oss_reset_link_in_response():
                     return _gm.success_response(
                         {
                             "message": "Use the link below to reset your password.",
@@ -540,7 +552,7 @@ def initiate_password_reset(request):
                     }
                 )
         except User.DoesNotExist:
-            if is_oss():
+            if is_self_hosted():
                 # Naming the address only helps where the caller can act on the
                 # answer. With the link withheld the response is identical for
                 # every address, so the endpoint tells an anonymous caller

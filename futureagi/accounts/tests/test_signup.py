@@ -1057,7 +1057,7 @@ class TestActivateAccountRateLimit:
         # The IP rate limit is skipped entirely in OSS mode (TH-7179), and
         # this repo's test environment defaults to OSS — pin non-OSS so the
         # blocking behavior stays exercised.
-        with patch("accounts.views.signup.is_oss", return_value=False):
+        with patch("accounts.views.signup.is_self_hosted", return_value=False):
             yield
 
     @pytest.fixture(autouse=True)
@@ -1156,7 +1156,7 @@ class TestActivateAccountRateLimit:
         ip = "10.20.30.1"
         cache.set(f"activate_account_rate:{ip}", 10, timeout=60)
 
-        with patch("accounts.views.signup.is_oss", return_value=True):
+        with patch("accounts.views.signup.is_self_hosted", return_value=True):
             response = api_client.get(url, REMOTE_ADDR=ip)
 
         assert response.status_code == status.HTTP_200_OK
@@ -1612,7 +1612,7 @@ OSS_SIGNUP_PASSWORD = "Futureagi@45xyz"
 
 
 def _oss(enabled=True):
-    return patch("accounts.views.signup.is_oss", return_value=enabled)
+    return patch("accounts.views.signup.is_self_hosted", return_value=enabled)
 
 
 def _oss_signup_payload(email, **overrides):
@@ -2436,3 +2436,222 @@ class TestInviteLinkOnInviteCreate:
         result = response.json()["result"]
         assert set(result["invited"]) == {FRESH_INVITEE, second_user.email}
         assert [i["email"] for i in result["invites"]] == [FRESH_INVITEE]
+
+
+# ---------------------------------------------------------------------------
+# Signup follows where the install runs, not whether it holds a licence
+# (TH-8084). A licensed self-hosted install computes is_oss() == False, which
+# used to send signup down the Cloud path: no password, an inactive account,
+# "check your email", and reCAPTCHA outside ENV_TYPE=local. The e2e stacks
+# run with a test-signed licence and every actor's login then failed.
+# ---------------------------------------------------------------------------
+
+try:
+    from ee.licensing.tests.fixtures import (  # noqa: F401
+        install_license,
+        test_signing_keypair,
+    )
+except ImportError:  # OSS lane: these cases carry requires_ee and are skipped
+    pass
+
+
+@pytest.fixture
+def deployment_mode(monkeypatch):
+    """Make the real detection (ee.usage.deployment) see a licensed
+    self-hosted install ("ee") or Future AGI Cloud ("cloud")."""
+    from ee.usage import deployment
+
+    from tfc import ee_gating
+
+    def _set(mode):
+        monkeypatch.setattr(
+            settings, "CLOUD_DEPLOYMENT", "US" if mode == "cloud" else ""
+        )
+        monkeypatch.setattr(
+            settings, "EE_LICENSE_KEY", "test-signed-licence" if mode == "ee" else ""
+        )
+        monkeypatch.setattr(
+            deployment, "_validate_cloud_secret", lambda secret: mode == "cloud"
+        )
+        deployment._detect_mode.cache_clear()
+        ee_gating.is_oss.cache_clear()
+        assert deployment._detect_mode() == mode
+
+    yield _set
+    deployment._detect_mode.cache_clear()
+    ee_gating.is_oss.cache_clear()
+
+
+def _login(api_client, email, password=OSS_SIGNUP_PASSWORD):
+    return api_client.post(
+        "/accounts/token/",
+        {"email": email, "password": password, "recaptcha_response": ""},
+        format="json",
+    )
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.requires_ee
+class TestLicensedSelfHostedSignup:
+    """A self-hoster who activates Enterprise keeps password signup."""
+
+    @pytest.fixture(autouse=True)
+    def _licensed_self_hosted(self, deployment_mode, monkeypatch):
+        deployment_mode("ee")
+        # Outside ENV_TYPE=local, as a real install runs: reCAPTCHA must not
+        # be asked for at all on a self-hosted install.
+        monkeypatch.setenv("ENV_TYPE", "production")
+        with patch(
+            "accounts.views.signup.verify_recaptcha",
+            side_effect=AssertionError("reCAPTCHA is Cloud-only"),
+        ):
+            yield
+
+    def test_password_signup_logs_in_and_the_password_works(
+        self, db, api_client, no_outbound_email
+    ):
+        from accounts.models import User
+
+        email = "licensed-owner@futureagi.com"
+        response = api_client.post(
+            "/accounts/signup/", _oss_signup_payload(email), format="json"
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        assert response.json()["result"]["access"]
+        user = User.objects.get(email=email)
+        assert user.is_active
+        assert user.check_password(OSS_SIGNUP_PASSWORD)
+        login = _login(api_client, email)
+        assert login.status_code == status.HTTP_200_OK, login.content
+        assert login.json()["access"]
+
+    def test_with_a_usable_licence_a_second_signup_gets_its_own_organization(
+        self, db, api_client, no_outbound_email, install_license
+    ):
+        """Subject to the edition rules: licensed means unlimited orgs."""
+        from accounts.models.organization import Organization
+
+        install_license("active")
+        for email in ("licensed-a@futureagi.com", "licensed-b@futureagi.com"):
+            response = api_client.post(
+                "/accounts/signup/", _oss_signup_payload(email), format="json"
+            )
+            assert response.status_code == status.HTTP_200_OK, response.content
+            assert _login(api_client, email).status_code == status.HTTP_200_OK
+        assert Organization.objects.count() == 2
+
+    def test_activation_is_not_rate_limited_per_ip(self, db, api_client):
+        """All self-hosted traffic can share one IP (TH-7179), licence or not."""
+        from django.core.cache import cache
+        from django.utils.encoding import force_bytes
+        from django.utils.http import urlsafe_base64_encode
+
+        from accounts.models import User
+        from accounts.views.signup import account_activation_token
+
+        user = User.objects.create_user(
+            email="licensed-activate@futureagi.com",
+            password="testpassword123",
+            name="Licensed Activate",
+            is_active=False,
+        )
+        ip = "10.20.31.1"
+        cache.set(f"activate_account_rate:{ip}", 10, timeout=60)
+        try:
+            uid = urlsafe_base64_encode(force_bytes(user.pk))
+            token = account_activation_token.make_token(user)
+            response = api_client.get(
+                f"/accounts/activate/{uid}/{token}/", REMOTE_ADDR=ip
+            )
+            assert response.status_code == status.HTTP_200_OK, response.content
+            assert cache.get(f"activate_account_rate:{ip}") == 10
+        finally:
+            cache.delete(f"activate_account_rate:{ip}")
+
+    @override_settings(EMAIL_BACKEND=CONSOLE_EMAIL_BACKEND)
+    def test_password_reset_without_email_names_the_recovery_command(
+        self, api_client, user, no_outbound_email
+    ):
+        response = api_client.post(
+            "/accounts/password-reset-initiate/",
+            {"email": user.email},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert "reset_password --email <address>" in response.json()["result"][
+            "message"
+        ]
+        no_outbound_email.assert_not_called()
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.requires_ee
+class TestCloudSignupUnchanged:
+    """Cloud keeps reCAPTCHA, password-less signup and email activation."""
+
+    @pytest.fixture(autouse=True)
+    def _cloud(self, deployment_mode, monkeypatch):
+        deployment_mode("cloud")
+        monkeypatch.setenv("ENV_TYPE", "production")
+
+    def test_signup_ignores_a_password_and_asks_for_email_activation(
+        self, db, api_client, no_outbound_email
+    ):
+        from accounts.models import User
+
+        email = "cloud-owner@futureagi.com"
+        with patch("accounts.views.signup.verify_recaptcha", return_value=True):
+            response = api_client.post(
+                "/accounts/signup/", _oss_signup_payload(email), format="json"
+            )
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        assert "Please Check your email" in response.json()["result"]["message"]
+        assert "access" not in response.json()["result"]
+        user = User.objects.get(email=email)
+        assert not user.check_password(OSS_SIGNUP_PASSWORD)
+
+    def test_signup_requires_recaptcha(self, db, api_client, no_outbound_email):
+        from accounts.models import User
+
+        with patch("accounts.views.signup.verify_recaptcha", return_value=False):
+            response = api_client.post(
+                "/accounts/signup/",
+                _oss_signup_payload("cloud-bot@futureagi.com"),
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert not User.objects.filter(email="cloud-bot@futureagi.com").exists()
+
+    def test_activation_stays_rate_limited_per_ip(self, db, api_client):
+        from django.core.cache import cache
+        from django.utils.encoding import force_bytes
+        from django.utils.http import urlsafe_base64_encode
+
+        from accounts.models import User
+        from accounts.views.signup import account_activation_token
+
+        user = User.objects.create_user(
+            email="cloud-activate@futureagi.com",
+            password="testpassword123",
+            name="Cloud Activate",
+            is_active=False,
+        )
+        ip = "10.20.31.2"
+        cache.set(f"activate_account_rate:{ip}", 10, timeout=60)
+        try:
+            uid = urlsafe_base64_encode(force_bytes(user.pk))
+            token = account_activation_token.make_token(user)
+            response = api_client.get(
+                f"/accounts/activate/{uid}/{token}/", REMOTE_ADDR=ip
+            )
+            assert response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
+            user.refresh_from_db()
+            assert user.is_active is False
+        finally:
+            cache.delete(f"activate_account_rate:{ip}")

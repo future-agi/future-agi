@@ -80,7 +80,7 @@ def oss_signup(monkeypatch):
     """Self-hosted signup: password accepted, no reCAPTCHA, auto-login."""
     import accounts.views.signup as signup_views
 
-    monkeypatch.setattr(signup_views, "is_oss", lambda: True)
+    monkeypatch.setattr(signup_views, "is_self_hosted", lambda: True)
 
 
 def assert_gate(response, feature):
