@@ -30,7 +30,6 @@ function isTraceList(r: Response, expected: Record<string, string | number>): bo
   const sent = listParams(r.request());
   return Object.entries(expected).every(([key, value]) => String(sent[key]) === String(value));
 }
-
 const PAGE_SIZE = 10;
 // 4 full pages of PAGE_SIZE plus a 5-row remainder page, so the walk crosses
 // the point where the pager's window first opens a leading gap (page 4, by
