@@ -352,9 +352,12 @@ async def finalize_hosted_execution(input: FinalizeRunnerInput) -> str:
                 completed_at=timezone.now(),
             )
             return "cancelled"
+        # A run already scoring had its transport completed by the roll-up; a
+        # failed runner child must not turn it failed.
         if execution.status not in (
             TestExecution.ExecutionStatus.COMPLETED,
             TestExecution.ExecutionStatus.CANCELLED,
+            TestExecution.ExecutionStatus.EVALUATING,
         ):
             execution.status = TestExecution.ExecutionStatus.FAILED
             execution.save(update_fields=["status"])
@@ -759,7 +762,7 @@ async def _terminate(proc: asyncio.subprocess.Process) -> None:
             return
         try:
             await asyncio.wait_for(proc.wait(), timeout=5)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             try:
                 proc.kill()
             except ProcessLookupError:

@@ -47,12 +47,16 @@ class RerunCallExecutionTool(BaseTool):
     def execute(
         self, params: RerunCallExecutionInput, context: ToolContext
     ) -> ToolResult:
+        from django.utils import timezone
+
         from simulate.models.agent_definition import AgentDefinition
         from simulate.models.test_execution import (
             CallExecution,
             CallExecutionSnapshot,
             TestExecution,
         )
+        from simulate.services.harness_evals import runnable_eval_config_ids
+        from simulate.services.harness_run_evals import stamp_eval_queued
         from simulate.temporal.client import rerun_call_executions
 
         try:
@@ -130,6 +134,12 @@ class RerunCallExecutionTool(BaseTool):
             call.call_metadata = call.call_metadata or {}
             call.call_metadata["eval_started"] = False
             call.call_metadata["eval_completed"] = False
+            # The rerun grades every runnable config; its clock starts here.
+            stamp_eval_queued(
+                call.call_metadata,
+                runnable_eval_config_ids(call.test_execution.run_test_id),
+                now=timezone.now(),
+            )
             call.save()
             new_status = call.status  # Keep current status
         else:

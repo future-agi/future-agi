@@ -52274,6 +52274,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "cost_breakdown_cents",
         "evaluations",
         "function_calls",
+        "scoring_status",
+        "csat_status",
+        "csat_reason",
       ],
       type: "object",
       properties: {
@@ -52742,6 +52745,35 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/SimulateRunV3FunctionCall",
           },
+        },
+        scoring_status: {
+          title: "Scoring status",
+          type: "string",
+          enum: [
+            "not_applicable",
+            "pending",
+            "succeeded",
+            "failed",
+            "timed_out",
+          ],
+        },
+        csat_status: {
+          title: "Csat status",
+          type: "string",
+          enum: [
+            "not_applicable",
+            "pending",
+            "succeeded",
+            "failed",
+            "timed_out",
+            "skipped",
+          ],
+        },
+        csat_reason: {
+          title: "Csat reason",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
         },
       },
     },
@@ -72816,7 +72848,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           $ref: "#/definitions/RunExecution",
         },
         summary: {
-          $ref: "#/definitions/RunSummary",
+          $ref: "#/definitions/SimulateRunV3CallsSummary",
         },
         count: {
           title: "Count",
@@ -85599,7 +85631,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         status: {
           title: "Status",
           type: "string",
-          minLength: 1,
+          enum: ["pending", "succeeded", "failed", "timed_out", "skipped"],
         },
       },
     },
@@ -99195,6 +99227,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "ended_reason",
         "error_message",
         "evaluations",
+        "scoring_status",
+        "csat_status",
+        "csat_reason",
       ],
       type: "object",
       properties: {
@@ -99373,6 +99408,35 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/SimulateRunV3EvaluationResult",
           },
         },
+        scoring_status: {
+          title: "Scoring status",
+          type: "string",
+          enum: [
+            "not_applicable",
+            "pending",
+            "succeeded",
+            "failed",
+            "timed_out",
+          ],
+        },
+        csat_status: {
+          title: "Csat status",
+          type: "string",
+          enum: [
+            "not_applicable",
+            "pending",
+            "succeeded",
+            "failed",
+            "timed_out",
+            "skipped",
+          ],
+        },
+        csat_reason: {
+          title: "Csat reason",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
       },
     },
     RunExecution: {
@@ -99548,7 +99612,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    RunSummary: {
+    SimulateRunV3CallsSummary: {
       required: [
         "total",
         "outcomes",
@@ -99558,6 +99622,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "latency",
         "tokens",
         "cost_cents",
+        "scoring",
       ],
       type: "object",
       properties: {
@@ -99588,6 +99653,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         cost_cents: {
           $ref: "#/definitions/TotalMetricStats",
+        },
+        scoring: {
+          $ref: "#/definitions/SimulateRunV3ScoringCounts",
         },
       },
     },
@@ -113054,6 +113122,49 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    RunSummary: {
+      required: [
+        "total",
+        "outcomes",
+        "measured",
+        "pass_rate",
+        "duration",
+        "latency",
+        "tokens",
+        "cost_cents",
+      ],
+      type: "object",
+      properties: {
+        total: {
+          title: "Total",
+          type: "integer",
+        },
+        outcomes: {
+          $ref: "#/definitions/OutcomeCounts",
+        },
+        measured: {
+          title: "Measured",
+          type: "integer",
+        },
+        pass_rate: {
+          title: "Pass rate",
+          type: "number",
+          "x-nullable": true,
+        },
+        duration: {
+          $ref: "#/definitions/MetricStats",
+        },
+        latency: {
+          $ref: "#/definitions/MetricStats",
+        },
+        tokens: {
+          $ref: "#/definitions/TotalMetricStats",
+        },
+        cost_cents: {
+          $ref: "#/definitions/TotalMetricStats",
+        },
+      },
+    },
     FacetValue: {
       required: ["value", "count"],
       type: "object",
@@ -113118,6 +113229,43 @@ export const OPENAPI_CONTRACT = Object.freeze({
         evaluations: {
           title: "Evaluations",
           type: "object",
+        },
+      },
+    },
+    SimulateRunV3ScoringCounts: {
+      required: [
+        "not_applicable",
+        "pending",
+        "succeeded",
+        "failed",
+        "timed_out",
+      ],
+      type: "object",
+      properties: {
+        not_applicable: {
+          title: "Not applicable",
+          type: "integer",
+          minimum: 0,
+        },
+        pending: {
+          title: "Pending",
+          type: "integer",
+          minimum: 0,
+        },
+        succeeded: {
+          title: "Succeeded",
+          type: "integer",
+          minimum: 0,
+        },
+        failed: {
+          title: "Failed",
+          type: "integer",
+          minimum: 0,
+        },
+        timed_out: {
+          title: "Timed out",
+          type: "integer",
+          minimum: 0,
         },
       },
     },

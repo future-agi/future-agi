@@ -25,7 +25,7 @@ def projected_call(monkeypatch):
         alk_simulate_ingestion, "_apply_harness_evaluation_outputs", lambda _: None
     )
     monkeypatch.setattr(
-        hosted_harness_ingestion.transaction, "on_commit", lambda _: None
+        hosted_harness_ingestion.transaction, "on_commit", lambda *_, **__: None
     )
     return SimpleNamespace(
         call_metadata={},

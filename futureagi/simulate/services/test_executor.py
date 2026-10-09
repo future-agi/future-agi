@@ -1,13 +1,12 @@
+# ruff: noqa: E402 -- imports follow the try/except stub blocks that define their fallbacks
 import gc
 import json
 import os
 import re
 import traceback
-from datetime import datetime, timedelta
 from decimal import Decimal
-from difflib import SequenceMatcher
 from itertools import chain
-from typing import Any, Dict, Optional
+from typing import Any
 from uuid import UUID, uuid4
 
 import structlog
@@ -20,7 +19,8 @@ except ImportError:
     ToolEvalAgent = _ee_stub("ToolEvalAgent")
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import close_old_connections, transaction
-from django.db.models import Q, Sum
+from django.db.models import DateTimeField, F, Sum, Value
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from simulate.models.call_log_entry import CallLogEntry
@@ -32,9 +32,8 @@ try:
 except ImportError:
     FAGICallData = None
     VoiceServiceManager = None
-from tracer.models.observability_provider import ProviderChoices
-
 from tfc.utils.storage_client import server_reachable_url
+from tracer.models.observability_provider import ProviderChoices
 
 logger = structlog.get_logger(__name__)
 
@@ -112,6 +111,7 @@ from simulate.constants.persona_prompt_guides import (
     VOICE_COMMUNICATION_STYLE_GUIDES,
     VOICE_PERSONALITY_GUIDES,
 )
+
 try:
     from ee.voice.constants.voice_mapper import (
         select_voice_id,
@@ -135,6 +135,7 @@ from simulate.models.test_execution import EvalExplanationSummaryStatus
 from simulate.pydantic_schemas.chat import SimulationCallType
 from simulate.services.branch_deviation_analyzer import BranchDeviationAnalyzer
 from simulate.services.harness_evals import is_harness_run_test, regrade_mapping
+
 try:
     from ee.voice.services.conversation_metrics import ConversationMetricsCalculator
     from ee.voice.services.phone_number_service import PhoneNumberService
@@ -158,16 +159,17 @@ from simulate.utils.processing_outcomes import (
 )
 from simulate.utils.test_execution_utils import generate_simulator_agent_prompt
 from simulate.utils.verdicts import has_stored_verdict
+from tfc.constants.api_calls import APICallStatusChoices
 from tfc.settings.settings import VAPI_INDIAN_PHONE_NUMBER_ID
 from tfc.temporal.drop_in import temporal_activity
 
 # Note: run_eval_summary_task imported lazily to avoid circular imports
 from tfc.utils.error_codes import get_specific_error_message
-from tfc.constants.api_calls import APICallStatusChoices
 
 try:
     from ee.usage.models.usage import APICallType
 except ImportError:
+
     class APICallType:
         class objects:
             @classmethod
@@ -175,16 +177,25 @@ except ImportError:
                 from types import SimpleNamespace
 
                 return SimpleNamespace(id=f"oss-noop-{name or 'unspecified'}"), False
+
+
 try:
     from ee.usage.services.metering import check_usage
 except ImportError:
+
     def check_usage(*args, **kwargs):
         from types import SimpleNamespace
 
         return SimpleNamespace(allowed=True, reason=None)
+
+
 try:
-    from ee.usage.utils.usage_entries import deduct_cost_for_request, log_and_deduct_cost_for_api_request
+    from ee.usage.utils.usage_entries import (
+        deduct_cost_for_request,
+        log_and_deduct_cost_for_api_request,
+    )
 except ImportError:
+
     def deduct_cost_for_request(*args, **kwargs):
         return None
 
@@ -921,9 +932,9 @@ class TestExecutor:
 
     def _format_persona_voice_text(
         self,
-        persona_data: Dict[str, Any],
+        persona_data: dict[str, Any],
         agent_version: AgentVersion | None,
-        row_data: Dict[str, Any] = None,
+        row_data: dict[str, Any] = None,
         call_type: str = "inbound",
     ) -> str:
         """
@@ -1062,7 +1073,7 @@ class TestExecutor:
                 # Personality-specific guidance
                 guidance = VOICE_PERSONALITY_GUIDES.get(
                     personality_lower,
-                    f"Let this personality trait guide your reactions, responses, and overall demeanor.",
+                    "Let this personality trait guide your reactions, responses, and overall demeanor.",
                 )
                 personality_section += f"{guidance}\n\n"
 
@@ -1081,7 +1092,7 @@ class TestExecutor:
                 # Communication style-specific guidance
                 guidance = VOICE_COMMUNICATION_STYLE_GUIDES.get(
                     comm_style_lower,
-                    f"Let this style guide how you express yourself throughout the conversation.",
+                    "Let this style guide how you express yourself throughout the conversation.",
                 )
                 personality_section += f"{guidance}\n\n"
 
@@ -1117,7 +1128,7 @@ class TestExecutor:
                     else [language_data]
                 )
                 lang_str = (
-                    ", ".join(str(l) for l in langs)
+                    ", ".join(str(lang) for lang in langs)
                     if isinstance(langs, list)
                     else str(language_data)
                 )
@@ -1126,7 +1137,7 @@ class TestExecutor:
 
                 # Special handling for multilingual contexts
                 if persona_data.get("multilingual"):
-                    language_section += f"You are multilingual. Switch languages naturally based on context while maintaining your persona traits in all languages.\n"
+                    language_section += "You are multilingual. Switch languages naturally based on context while maintaining your persona traits in all languages.\n"
 
                 # Special handling for Hinglish speakers
                 # if (accent and "indian" in accent.lower()) or any("hindi" in str(l).lower() for l in langs): # operator precedence
@@ -1147,7 +1158,7 @@ class TestExecutor:
                         else [language_data]
                     )
                     lang_str_check = (
-                        ", ".join(str(l) for l in langs)
+                        ", ".join(str(lang) for lang in langs)
                         if isinstance(langs, list)
                         else str(language_data)
                     )
@@ -1284,9 +1295,9 @@ class TestExecutor:
 
     def _format_persona_chat_text(
         self,
-        persona_data: Dict[str, Any],
+        persona_data: dict[str, Any],
         agent_version: AgentVersion | None,
-        row_data: Dict[str, Any] = None,
+        row_data: dict[str, Any] = None,
         call_type: str = "inbound",
     ) -> str:
         """
@@ -1416,7 +1427,7 @@ class TestExecutor:
                 # Personality-specific guidance
                 guidance = CHAT_PERSONALITY_GUIDES.get(
                     personality_lower,
-                    f"Let this personality trait guide your reactions, responses, and overall messaging style.",
+                    "Let this personality trait guide your reactions, responses, and overall messaging style.",
                 )
                 personality_section += f"{guidance}\n\n"
 
@@ -1435,7 +1446,7 @@ class TestExecutor:
                 # Communication style-specific guidance
                 guidance = CHAT_COMMUNICATION_STYLE_GUIDES.get(
                     comm_style_lower,
-                    f"Let this style guide how you express yourself throughout the chat conversation.",
+                    "Let this style guide how you express yourself throughout the chat conversation.",
                 )
                 personality_section += f"{guidance}\n\n"
 
@@ -1654,7 +1665,7 @@ class TestExecutor:
                 language_data if isinstance(language_data, list) else [language_data]
             )
             lang_str = (
-                ", ".join(str(l) for l in langs)
+                ", ".join(str(lang) for lang in langs)
                 if isinstance(langs, list)
                 else str(language_data)
             )
@@ -1664,7 +1675,7 @@ class TestExecutor:
 
             # Special handling for multilingual contexts
             if persona_data.get("multilingual"):
-                language_section += f"You are multilingual. Switch languages naturally based on context while maintaining your persona traits in all languages.\n"
+                language_section += "You are multilingual. Switch languages naturally based on context while maintaining your persona traits in all languages.\n"
 
             language_section += "\n"
             sections.append(language_section)
@@ -1770,7 +1781,7 @@ class TestExecutor:
     def _generate_dynamic_prompt(
         self,
         prompt_template: str,
-        row_data: Dict[str, Any],
+        row_data: dict[str, Any],
         agent_version: AgentVersion | None,
         call_type: str | None = None,
     ) -> str:
@@ -2030,7 +2041,7 @@ class TestExecutor:
     def _check_call_balance(
         self,
         organization,
-        call_type: Optional[str] = SimulationCallType.VOICE,
+        call_type: str | None = SimulationCallType.VOICE,
     ):
         """Check whether an organization is allowed to run a simulation call.
 
@@ -2067,9 +2078,7 @@ class TestExecutor:
         """
         try:
             event_type = (
-                "text_call"
-                if call_type == SimulationCallType.TEXT
-                else "voice_call"
+                "text_call" if call_type == SimulationCallType.TEXT else "voice_call"
             )
             result = check_usage(str(organization.id), event_type)
 
@@ -2196,11 +2205,11 @@ class TestExecutor:
         self,
         run_test: RunTest,
         scenario: Scenarios,
-        call_data: Dict[str, Any],
+        call_data: dict[str, Any],
         test_execution_record: TestExecution,
         user_id: str,
         simulator_id=None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Execute an inbound call where simulation agent calls user's agent (existing logic)
 
@@ -3164,7 +3173,7 @@ class TestExecutor:
                                     time_window_seconds=10,
                                 )
                             )
-                        except Exception as e:
+                        except Exception:
                             logger.warning("Unable to locate matching customer call ID")
 
                     if customer_call_id:
@@ -3172,7 +3181,7 @@ class TestExecutor:
                             customer_call_data = voice_service_manager.get_call(
                                 customer_call_id, True
                             )
-                        except Exception as e:
+                        except Exception:
                             logger.warning("Failed to fetch customer call data")
 
                 if customer_call_data:
@@ -3995,6 +4004,13 @@ class TestExecutor:
 
             # Only update eval_completed if all configs are done and it's not already set
             if all_configs_completed:
+                from simulate.services.harness_evals import runnable_eval_config_ids
+                from simulate.services.scoring_status import pending_eval_ids
+
+                # A placeholder or dispatch stamp for another live config (a
+                # second job on this call) must hold the call open; a config
+                # removed since it was stamped must not.
+                live = runnable_eval_config_ids(run_test.id)
                 if not call_execution.call_metadata:
                     call_execution.call_metadata = {}
 
@@ -4032,7 +4048,11 @@ class TestExecutor:
                                     all_configs_still_completed = False
                                     break
 
-                            if all_configs_still_completed:
+                            if all_configs_still_completed and not pending_eval_ids(
+                                call_execution_locked.call_metadata,
+                                eval_outputs_locked,
+                                live_ids=live,
+                            ):
                                 call_execution_locked.call_metadata[
                                     "eval_completed"
                                 ] = True
@@ -4076,7 +4096,11 @@ class TestExecutor:
                             and eval_outputs_final.get(str(ec.id)) is not None
                             for ec in expected_eval_configs
                         )
-                        if all_still_completed:
+                        if all_still_completed and not pending_eval_ids(
+                            call_execution.call_metadata,
+                            eval_outputs_final,
+                            live_ids=live,
+                        ):
                             call_execution.call_metadata["eval_completed"] = True
                             # Also mark call as COMPLETED if it's still in ANALYZING state
                             update_fields = ["call_metadata"]
@@ -4114,15 +4138,23 @@ class TestExecutor:
     def _check_and_update_test_execution_completion(self, test_execution_id):
         """
         Mark an execution completed once all calls are terminal and every
-        successful call has finished evaluation.
+        successful call has finished scoring: its evaluations and its CSAT.
 
         Failed and cancelled calls do not run evaluations, so requiring an
         ``eval_completed`` flag on them leaves mixed-result executions stuck in
-        EVALUATING forever.
+        EVALUATING forever. A ``cancelling`` run ends ``cancelled`` here once
+        its open scoring is closed. A ``failed``, ``cancelled`` or already
+        ``completed`` run is never moved, and its ``completed_at`` never
+        re-stamped.
 
         Args:
             test_execution_id: TestExecution ID to check
         """
+        from simulate.services.scoring_status import (
+            CALL_SCORING_OPEN_Q,
+            SETTLE_FROM_STATUSES,
+        )
+
         try:
             calls = CallExecution.objects.filter(
                 test_execution_id=test_execution_id, deleted=False
@@ -4137,10 +4169,28 @@ class TestExecutor:
             completed_calls = calls.filter(status=CallExecution.CallStatus.COMPLETED)
             has_completed_calls = completed_calls.exists()
             has_incomplete_evaluations = completed_calls.filter(
-                Q(call_metadata__isnull=True)
-                | Q(call_metadata__eval_completed__isnull=True)
-                | Q(call_metadata__eval_completed=False)
+                CALL_SCORING_OPEN_Q
             ).exists()
+
+            if not has_non_terminal_calls and not has_incomplete_evaluations:
+                # Nothing else finishes a run stopped mid-scoring once its
+                # scoring is closed; a completed_at it already has is kept.
+                cancelled = TestExecution.objects.filter(
+                    id=test_execution_id,
+                    status=TestExecution.ExecutionStatus.CANCELLING,
+                ).update(
+                    status=TestExecution.ExecutionStatus.CANCELLED,
+                    completed_at=Coalesce(
+                        F("completed_at"),
+                        Value(timezone.now(), output_field=DateTimeField()),
+                    ),
+                )
+                if cancelled:
+                    logger.info(
+                        "simulate_run_cancel_settled",
+                        test_execution_id=str(test_execution_id),
+                    )
+                    return
 
             if (
                 not has_non_terminal_calls
@@ -4152,22 +4202,63 @@ class TestExecutor:
                 failed_call_count = calls.filter(
                     status=CallExecution.CallStatus.FAILED
                 ).count()
-                updated = TestExecution.objects.filter(id=test_execution_id).update(
+                updated = TestExecution.objects.filter(
+                    id=test_execution_id, status__in=SETTLE_FROM_STATUSES
+                ).update(
                     status=TestExecution.ExecutionStatus.COMPLETED,
                     completed_at=timezone.now(),
                     total_calls=total_call_count,
                     completed_calls=completed_call_count,
                     failed_calls=failed_call_count,
+                    eval_explanation_summary_status=EvalExplanationSummaryStatus.PENDING,
                 )
                 if updated:
                     logger.info(
                         f"Test execution {test_execution_id} marked as completed - all evaluations done"
                     )
+
+                    # After commit, so the summary reads the completed run.
+                    def _after_completion():
+                        self._after_run_completed(test_execution_id)
+
+                    transaction.on_commit(_after_completion, robust=True)
         except Exception as e:
             logger.error(
                 f"Error checking test execution completion for {test_execution_id}: {str(e)}"
             )
             traceback.print_exc()
+
+    def _after_run_completed(self, test_execution_id):
+        """Summary and live update for a run the settle just completed."""
+        try:
+            from simulate.tasks.eval_summary_tasks import run_eval_summary_task
+
+            run_eval_summary_task.apply_async(args=(str(test_execution_id),))
+        except Exception:
+            logger.exception(
+                "simulate_run_completed_hooks_failed",
+                test_execution_id=str(test_execution_id),
+                hook="summary",
+            )
+        try:
+            from simulate.utils.websocket_notifications import (
+                notify_simulation_update,
+            )
+
+            execution = TestExecution.objects.select_related("run_test").get(
+                id=test_execution_id
+            )
+            notify_simulation_update(
+                organization_id=execution.run_test.organization_id,
+                run_test_id=str(execution.run_test_id),
+                test_execution_id=str(execution.id),
+            )
+        except Exception:
+            logger.exception(
+                "simulate_run_completed_hooks_failed",
+                test_execution_id=str(test_execution_id),
+                hook="notify",
+            )
 
     def _run_simulate_evaluations(
         self,
@@ -4206,6 +4297,11 @@ class TestExecutor:
                 call_execution.call_metadata = {}
             call_execution.call_metadata["eval_started"] = True
             call_execution.save(update_fields=["call_metadata"])
+            from simulate.services.scoring_status import mark_eval_progress
+
+            # The job clock runs from the last step this job started, so the
+            # start and every long step below refresh it.
+            mark_eval_progress(call_execution)
             logger.info(f"Starting evaluations for call {call_execution.id}")
 
             # Get eval configs - either specific ones or all for the run test.
@@ -4232,6 +4328,7 @@ class TestExecutor:
                 # undispatched call.
                 if run_test.enable_tool_evaluation and eval_config_ids is not None:
                     try:
+                        mark_eval_progress(call_execution)
                         self._run_tool_evaluation(
                             call_execution, call_execution.test_execution
                         )
@@ -4345,6 +4442,7 @@ class TestExecutor:
                             )
                             continue
                         extra = {"harness_run": True} if harness_run else {}
+                        mark_eval_progress(call_execution)
                         self._run_single_simulate_evaluation(
                             eval_config, call_execution, transcript_data, **extra
                         )
@@ -4359,6 +4457,7 @@ class TestExecutor:
             # Run tool evaluation before marking as completed (only if enabled)
             if test_execution.run_test.enable_tool_evaluation:
                 try:
+                    mark_eval_progress(call_execution)
                     self._run_tool_evaluation(call_execution, test_execution)
                 except Exception as e:
                     logger.error(
@@ -4716,9 +4815,7 @@ class TestExecutor:
                                 provider=eval_provider,
                                 is_outbound=eval_is_outbound,
                             )
-                            transcript_text.append(
-                                f"{eval_role}: {transcript.content}"
-                            )
+                            transcript_text.append(f"{eval_role}: {transcript.content}")
                     transcript_data["transcript"] = "\n".join(transcript_text)
                     transcript_data["user_chat_transcript"] = "\n".join(
                         user_chat_transcript_text
@@ -5107,9 +5204,9 @@ class TestExecutor:
                             "output_type": derive_kpi_output_type(eval_template),
                         }
                         call_execution.eval_outputs[str(eval_config.id)] = error_result
-                        call_execution.eval_outputs[str(eval_config.id)][
-                            "status"
-                        ] = StatusType.FAILED.value
+                        call_execution.eval_outputs[str(eval_config.id)]["status"] = (
+                            StatusType.FAILED.value
+                        )
                         call_execution.save(update_fields=["eval_outputs"])
                         raise ValueError(error_message)
 
@@ -5145,15 +5242,21 @@ class TestExecutor:
                     "call_type": call_execution.call_type,
                     "simulation_call_type": call_execution.simulation_call_type,
                     "phone_number": call_execution.phone_number,
-                    "started_at": str(call_execution.started_at) if call_execution.started_at else None,
-                    "ended_at": str(call_execution.ended_at) if call_execution.ended_at else None,
+                    "started_at": str(call_execution.started_at)
+                    if call_execution.started_at
+                    else None,
+                    "ended_at": str(call_execution.ended_at)
+                    if call_execution.ended_at
+                    else None,
                     "duration_seconds": call_execution.duration_seconds,
                     "recording_url": call_execution.recording_url,
                     "call_summary": call_execution.call_summary,
                     "ended_reason": call_execution.ended_reason,
                     "error_message": call_execution.error_message,
                     "message_count": call_execution.message_count,
-                    "overall_score": float(call_execution.overall_score) if call_execution.overall_score is not None else None,
+                    "overall_score": float(call_execution.overall_score)
+                    if call_execution.overall_score is not None
+                    else None,
                 }
 
             # Run the evaluation
@@ -5233,7 +5336,27 @@ class TestExecutor:
 
                 logger.info(f"Successfully completed evaluation {eval_config.id}")
             else:
-                logger.info(f"Evaluation {eval_config.id} returned no result")
+                from simulate.services.scoring_status import REASON_EVAL_NO_RESULT
+
+                # No result is a failed grading, not a missing one: the call
+                # must still close, and the person must see why.
+                if not call_execution.eval_outputs:
+                    call_execution.eval_outputs = {}
+                call_execution.eval_outputs[str(eval_config.id)] = {
+                    "reason": REASON_EVAL_NO_RESULT,
+                    "error": "error",
+                    "name": eval_config.name,
+                    "timestamp": timezone.now().isoformat(),
+                    "output": None,
+                    "output_type": derive_kpi_output_type(eval_template),
+                    "status": StatusType.FAILED.value,
+                }
+                call_execution.save(update_fields=["eval_outputs"])
+                logger.warning(
+                    "simulate_eval_no_result",
+                    call_execution_id=str(call_execution.id),
+                    eval_config_id=str(eval_config.id),
+                )
 
         except Exception as e:
             logger.error(f"Error running evaluation {eval_config.id}: {str(e)}")
@@ -5251,9 +5374,9 @@ class TestExecutor:
                 "output_type": derive_kpi_output_type(eval_config.eval_template),
             }
             call_execution.eval_outputs[str(eval_config.id)] = error_result
-            call_execution.eval_outputs[str(eval_config.id)][
-                "status"
-            ] = StatusType.FAILED.value
+            call_execution.eval_outputs[str(eval_config.id)]["status"] = (
+                StatusType.FAILED.value
+            )
             call_execution.save(update_fields=["eval_outputs"])
 
             eval_config.status = StatusType.FAILED.value
@@ -5609,9 +5732,7 @@ class TestExecutor:
             call_column_order = []
             tool_eval_ids_map = {}  # Map idx to tool_eval_id for the second phase
             columns_updated = False
-            tool_name_counts = (
-                {}
-            )  # tool_name -> occurrence count (per-call) for stable column naming
+            tool_name_counts = {}  # tool_name -> occurrence count (per-call) for stable column naming
 
             for idx, tool_call in enumerate(tool_calls_data):
                 try:

@@ -9,6 +9,7 @@ raises a typed exception for every refusal.
 
 import structlog
 from django.db import transaction
+from django.utils import timezone
 
 from simulate.models import (
     CallExecution,
@@ -17,6 +18,7 @@ from simulate.models import (
     TestExecution,
 )
 from simulate.services.harness_evals import regrade_mapping
+from simulate.services.harness_run_evals import EVAL_QUEUED_KEY, stamp_eval_queued
 from simulate.services.test_executor import run_new_evals_on_call_executions_task
 
 logger = structlog.get_logger(__name__)
@@ -309,14 +311,26 @@ def regrade_run_evals(
         # And whether its own evaluations had finished: adding an eval to
         # the run later queues only calls that say so.
         previous_eval_completed = {}
+        # And its dispatch stamps, so a failed dispatch leaves no stamp that
+        # would read a restored call as still scoring.
+        previous_eval_queued = {}
+        stamped_at = timezone.now()
         for call_execution in call_executions_to_update:
             # Provider-agnostic eval flags live in call_metadata
             call_execution.call_metadata = call_execution.call_metadata or {}
             previous_eval_completed[call_execution.id] = (
                 call_execution.call_metadata.get("eval_completed", no_output)
             )
+            previous_eval_queued[call_execution.id] = call_execution.call_metadata.get(
+                EVAL_QUEUED_KEY, no_output
+            )
             call_execution.call_metadata["eval_started"] = True
             call_execution.call_metadata["eval_completed"] = False
+            # The placeholders' scoring clock starts at this dispatch, not
+            # at the call's own, possibly old, completion.
+            stamp_eval_queued(
+                call_execution.call_metadata, eval_config_ids_str, now=stamped_at
+            )
 
             # Initialize eval_outputs for the new eval configs
             if not call_execution.eval_outputs:
@@ -366,6 +380,11 @@ def regrade_run_evals(
                 call_execution.call_metadata.pop("eval_completed", None)
             else:
                 call_execution.call_metadata["eval_completed"] = eval_completed
+            eval_queued = previous_eval_queued[call_execution.id]
+            if eval_queued is no_output:
+                call_execution.call_metadata.pop(EVAL_QUEUED_KEY, None)
+            else:
+                call_execution.call_metadata[EVAL_QUEUED_KEY] = eval_queued
             for config_id, previous in previous_outputs[call_execution.id].items():
                 if previous is no_output:
                     call_execution.eval_outputs.pop(config_id, None)

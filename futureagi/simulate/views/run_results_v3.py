@@ -12,6 +12,7 @@ from typing import Any
 
 from django.http import StreamingHttpResponse
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import serializers, status
@@ -22,6 +23,7 @@ from rest_framework.views import APIView
 from simulate.models import CallExecution, TestExecution
 from simulate.serializers.run_dashboard_v3 import RunDashboardV3Serializer
 from simulate.serializers.test_execution import CallExecutionDetailSerializer
+from simulate.services.harness_evals import runnable_eval_config_ids
 from simulate.services.run_dashboard_v3 import GOAL_OUTCOMES
 from simulate.services.run_results_v3 import (
     OUTCOME_LABELS,
@@ -42,6 +44,12 @@ from simulate.services.run_results_v3_queries import (
     run_call_facets,
     run_call_rows_queryset,
     run_calls_queryset,
+)
+from simulate.services.scoring_status import (
+    CSAT_STATUSES,
+    EVAL_STATUSES,
+    SCORING_STATUSES,
+    scoring_counts,
 )
 from simulate.services.test_executor import build_eval_configs_map
 from simulate.views.scoping import run_test_workspace_filter
@@ -177,6 +185,24 @@ class RunSummarySerializer(serializers.Serializer):
     cost_cents = TotalMetricStatsSerializer()
 
 
+class ScoringCountsSerializer(serializers.Serializer):
+    not_applicable = serializers.IntegerField(min_value=0)
+    pending = serializers.IntegerField(min_value=0)
+    succeeded = serializers.IntegerField(min_value=0)
+    failed = serializers.IntegerField(min_value=0)
+    timed_out = serializers.IntegerField(min_value=0)
+
+    class Meta:
+        ref_name = "SimulateRunV3ScoringCounts"
+
+
+class RunCallsSummarySerializer(RunSummarySerializer):
+    scoring = ScoringCountsSerializer()
+
+    class Meta:
+        ref_name = "SimulateRunV3CallsSummary"
+
+
 class RunExecutionSerializer(serializers.Serializer):
     id = serializers.UUIDField()
     run_test_id = serializers.UUIDField()
@@ -209,7 +235,7 @@ class EvaluationResultSerializer(serializers.Serializer):
     score = serializers.FloatField(allow_null=True)
     passed = serializers.BooleanField(allow_null=True)
     reason = serializers.CharField(allow_blank=True)
-    status = serializers.CharField()
+    status = serializers.ChoiceField(choices=EVAL_STATUSES)
 
     class Meta:
         ref_name = "SimulateRunV3EvaluationResult"
@@ -263,6 +289,9 @@ class RunCallSerializer(serializers.Serializer):
     ended_reason = serializers.CharField(allow_null=True)
     error_message = serializers.CharField(allow_null=True)
     evaluations = EvaluationResultSerializer(many=True)
+    scoring_status = serializers.ChoiceField(choices=SCORING_STATUSES)
+    csat_status = serializers.ChoiceField(choices=CSAT_STATUSES)
+    csat_reason = serializers.CharField(allow_null=True)
 
 
 class FacetValueSerializer(serializers.Serializer):
@@ -307,7 +336,7 @@ class RunGroupSerializer(RunSummarySerializer):
 
 class RunCallsV3ResponseSerializer(serializers.Serializer):
     execution = RunExecutionSerializer()
-    summary = RunSummarySerializer()
+    summary = RunCallsSummarySerializer()
     count = serializers.IntegerField()
     page = serializers.IntegerField()
     page_size = serializers.IntegerField()
@@ -463,6 +492,9 @@ class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
     cost_breakdown_cents = CostBreakdownSerializer()
     evaluations = EvaluationResultSerializer(many=True)
     function_calls = FunctionCallSerializer(many=True)
+    scoring_status = serializers.ChoiceField(choices=SCORING_STATUSES)
+    csat_status = serializers.ChoiceField(choices=CSAT_STATUSES)
+    csat_reason = serializers.CharField(allow_null=True)
 
     class Meta(CallExecutionDetailSerializer.Meta):
         fields = [
@@ -479,6 +511,9 @@ class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
             "cost_breakdown_cents",
             "evaluations",
             "function_calls",
+            "scoring_status",
+            "csat_status",
+            "csat_reason",
         ]
 
 
@@ -547,8 +582,18 @@ class RunCallsV3View(APIView):
         columns, live_eval_ids = build_evaluation_catalog(execution)
         calls_page = run_calls_page(execution, query, columns, base_queryset)
         count = calls_page["count"]
+        # One clock and one runnable set per request, shared by the rows and the
+        # scoring counts. A finished run's pass can be minutes old, but it holds
+        # stored state only, so both still read the scoring clocks as of now.
+        now = timezone.now()
+        runnable_ids = set(runnable_eval_config_ids(execution.run_test_id))
         page_rows, columns = build_call_rows(
-            execution, page_calls(calls_page), columns, live_eval_ids
+            execution,
+            page_calls(calls_page),
+            columns,
+            live_eval_ids,
+            runnable_ids=runnable_ids,
+            now=now,
         )
         facets_cache_key = None
         # Facets span the whole run so filter options never vanish, except under
@@ -567,7 +612,20 @@ class RunCallsV3View(APIView):
             )
         response = {
             "execution": _execution_payload(execution, calls_page["execution_summary"]),
-            "summary": calls_page["summary"],
+            "summary": {
+                **calls_page["summary"],
+                # Counted over the pass the rest of the summary reads, so the
+                # counts add up to its total. A call on this page counts as its
+                # row reads, so no row of a response disagrees with the counts.
+                "scoring": scoring_counts(
+                    calls_page["rows"],
+                    visible_ids=live_eval_ids,
+                    runnable_ids=runnable_ids,
+                    run_status=execution.status,
+                    now=now,
+                    derived={row["id"]: row["scoring_status"] for row in page_rows},
+                ),
+            },
             "count": count,
             "page": page,
             "page_size": page_size,
@@ -625,6 +683,9 @@ def build_call_execution_detail(
             "cost_breakdown_cents": normalized["cost_breakdown_cents"],
             "evaluations": normalized["evaluations"],
             "function_calls": function_calls(call),
+            "scoring_status": normalized["scoring_status"],
+            "csat_status": normalized["csat_status"],
+            "csat_reason": normalized["csat_reason"],
         }
     )
     return data
@@ -717,7 +778,9 @@ def _csv_rows(
             verdict = (
                 "passed"
                 if goal["passed"] is True
-                else "failed" if goal["passed"] is False else "inconclusive"
+                else "failed"
+                if goal["passed"] is False
+                else "inconclusive"
             )
             sub_goals.append(f"{goal['name']} ({OUTCOME_LABELS[verdict]})")
         yield writer.writerow(
@@ -752,10 +815,20 @@ def _csv_rows(
 
 def _csv_rows_from_queryset(execution: TestExecution, queryset) -> Iterator[str]:
     columns, live_eval_ids = build_evaluation_catalog(execution)
+    # Read once for the whole export, not once per 500-row chunk.
+    runnable_ids = set(runnable_eval_config_ids(execution.run_test_id))
+    now = timezone.now()
     yield from _csv_rows([], columns)
     iterator = run_call_rows_queryset(queryset).iterator(chunk_size=500)
     while chunk := list(islice(iterator, 500)):
-        rows, _ = build_call_rows(execution, chunk, columns, live_eval_ids)
+        rows, _ = build_call_rows(
+            execution,
+            chunk,
+            columns,
+            live_eval_ids,
+            runnable_ids=runnable_ids,
+            now=now,
+        )
         chunk_rows = _csv_rows(rows, columns)
         next(chunk_rows)
         yield from chunk_rows

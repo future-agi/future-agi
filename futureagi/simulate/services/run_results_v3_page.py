@@ -33,6 +33,7 @@ from simulate.services.run_results_v3_queries import (
     _summary_from_values,
     apply_run_call_query,
 )
+from simulate.services.scoring_status import scoring_values
 
 logger = logging.getLogger(__name__)
 
@@ -90,8 +91,12 @@ def _call_values(
     queryset: QuerySet, columns: list[dict[str, str]], scores: dict[str, Any]
 ) -> list[dict[str, Any]]:
     rows = []
-    for values in queryset.annotate(**scores).values(*CALL_VALUE_FIELDS, *scores):
-        row = {field: values[field] for field in CALL_VALUE_FIELDS}
+    # The same query reads each call's stored scoring state, so the scoring
+    # counts cost no second pass. A cached row holds that state, never a status:
+    # the scoring clocks move with no write, so each request derives from it.
+    fields = [field for field in CALL_VALUE_FIELDS if field != "id"]
+    for values in scoring_values(queryset.annotate(**scores), *fields, *scores):
+        row = {key: value for key, value in values.items() if key not in scores}
         row["id"] = str(row["id"])
         row["scores"] = {
             str(column["id"]): values[f"score_{index}"]
@@ -131,8 +136,8 @@ def _cache_key(
             default=str,
         ).encode()
     ).hexdigest()
-    # v1 names the shape of a cached row; an entry written in another shape must miss.
-    return f"simulate:v3:calls:v1:{execution.id}:{version.timestamp()}:{fingerprint}"
+    # v2 names the shape of a cached row; an entry written in another shape must miss.
+    return f"simulate:v3:calls:v2:{execution.id}:{version.timestamp()}:{fingerprint}"
 
 
 def _cached_call_values(

@@ -322,11 +322,15 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         queued or stamped.
 
         A call is queued for grading unless it already holds a verdict for
-        this eval, its own evaluations have not finished, or it was queued
+        this eval, its own evaluations are still being graded (and the
+        scoring clock does not yet count them as stuck), or it was queued
         for this eval within the last ten minutes; the rest are stamped and
         scheduled for dispatch, one grading job each, after this transaction
-        commits. The answer is the five counts, not the environment detail --
-        the client refetches that itself.
+        commits. Each queued call reads as pending until its verdict lands,
+        and a completed run goes back to ``evaluating`` until every call is
+        scored again; a failed run stays failed. The answer is the five
+        counts, not the environment detail -- the client refetches that
+        itself.
 
         The bind can return an eval config whose ``mapping`` is empty: one
         of the harness's own result columns, bound by ingestion under the

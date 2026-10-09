@@ -32,6 +32,10 @@ from simulate.services.alk_simulate_ingestion import (
     precreate_alk_sim_call_executions,
     provision_alk_sim_run_test,
 )
+from simulate.services.scoring_status import (
+    TRANSPORT_RUN_STATUSES,
+    settle_run_after_commit,
+)
 
 _CAPABILITY_SCHEMA_VERSION = "futureagi.harness-capabilities.v1"
 _JOB_SCHEMA_VERSION = "futureagi.harness-job.v1"
@@ -781,17 +785,13 @@ def delete_environment(job: HostedHarnessJob) -> None:
                 )
 
                 cancel_job = HostedHarnessJob.no_workspace_objects.get(id=job_id)
-                HostedHarnessGateway().cancel(
-                    cancel_job, reason=DELETE_CANCEL_REASON
-                )
+                HostedHarnessGateway().cancel(cancel_job, reason=DELETE_CANCEL_REASON)
             except Exception:
                 logger.exception(
                     "hosted_harness_delete_direct_cancel_failed", job_id=job_id
                 )
                 if job_id == parent_cancel_id:
-                    _soft_delete(
-                        HostedHarnessJob.no_workspace_objects.get(id=job_id)
-                    )
+                    _soft_delete(HostedHarnessJob.no_workspace_objects.get(id=job_id))
 
 
 def _soft_delete(job: HostedHarnessJob) -> None:
@@ -1482,15 +1482,37 @@ def record_cleanup(
                 HostedHarnessJob.State.CANCELED: TestExecution.ExecutionStatus.CANCELLED,
                 HostedHarnessJob.State.FAILED: TestExecution.ExecutionStatus.FAILED,
             }[job.state]
-            TestExecution.no_workspace_objects.filter(id=job.test_execution_id).update(
-                status=execution_status,
-                completed_at=now,
-                error_reason=(
-                    (attempt.terminal_failure or {}).get("message")
-                    if job.state == HostedHarnessJob.State.FAILED
-                    else None
-                ),
-            )
+            if execution_status == TestExecution.ExecutionStatus.COMPLETED:
+                # Transport finished, scoring may not have: only a run still in
+                # transport is moved, and only the settle decides it is done.
+                in_transport = TestExecution.no_workspace_objects.filter(
+                    id=job.test_execution_id, status__in=TRANSPORT_RUN_STATUSES
+                )
+                if CallExecution.no_workspace_objects.filter(
+                    test_execution_id=job.test_execution_id,
+                    status=CallExecution.CallStatus.COMPLETED,
+                ).exists():
+                    in_transport.update(
+                        status=TestExecution.ExecutionStatus.EVALUATING,
+                        error_reason=None,
+                    )
+                    settle_run_after_commit(job.test_execution_id)
+                else:
+                    in_transport.update(
+                        status=execution_status, completed_at=now, error_reason=None
+                    )
+            else:
+                TestExecution.no_workspace_objects.filter(
+                    id=job.test_execution_id
+                ).update(
+                    status=execution_status,
+                    completed_at=now,
+                    error_reason=(
+                        (attempt.terminal_failure or {}).get("message")
+                        if job.state == HostedHarnessJob.State.FAILED
+                        else None
+                    ),
+                )
             remaining_status = (
                 CallExecution.CallStatus.CANCELLED
                 if job.state == HostedHarnessJob.State.CANCELED

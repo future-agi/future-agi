@@ -1,4 +1,3 @@
-from typing import Optional
 from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
@@ -20,7 +19,7 @@ class RunNewEvalsOnSimulationInput(PydanticBaseModel):
         ),
         min_length=1,
     )
-    test_execution_ids: Optional[list[UUID]] = Field(
+    test_execution_ids: list[UUID] | None = Field(
         default=None,
         description=(
             "Specific test execution IDs to evaluate. "
@@ -34,7 +33,7 @@ class RunNewEvalsOnSimulationInput(PydanticBaseModel):
             "When combined with test_execution_ids, those IDs are excluded."
         ),
     )
-    enable_tool_evaluation: Optional[bool] = Field(
+    enable_tool_evaluation: bool | None = Field(
         default=None,
         description="Enable or disable tool evaluation for the run test. If omitted, no change.",
     )
@@ -56,11 +55,12 @@ class RunNewEvalsOnSimulationTool(BaseTool):
         self, params: RunNewEvalsOnSimulationInput, context: ToolContext
     ) -> ToolResult:
         import structlog
+        from django.utils import timezone
 
-        from simulate.models.call_execution import CallExecution
+        from simulate.models.eval_config import SimulateEvalConfig
         from simulate.models.run_test import RunTest
-        from simulate.models.simulate_eval_config import SimulateEvalConfig
-        from simulate.models.test_execution import TestExecution
+        from simulate.models.test_execution import CallExecution, TestExecution
+        from simulate.services.harness_run_evals import stamp_eval_queued
         from simulate.services.test_executor import (
             run_new_evals_on_call_executions_task,
         )
@@ -184,10 +184,16 @@ class RunNewEvalsOnSimulationTool(BaseTool):
             id__in=call_execution_ids
         )
         call_executions_list = []
+        placeholder_ids = [str(eval_config.id) for eval_config in eval_configs]
+        stamped_at = timezone.now()
         for call_execution in call_executions_to_update:
             call_execution.call_metadata = call_execution.call_metadata or {}
             call_execution.call_metadata["eval_started"] = True
             call_execution.call_metadata["eval_completed"] = False
+            # The placeholders' scoring clock starts at this dispatch.
+            stamp_eval_queued(
+                call_execution.call_metadata, placeholder_ids, now=stamped_at
+            )
 
             if not call_execution.eval_outputs:
                 call_execution.eval_outputs = {}

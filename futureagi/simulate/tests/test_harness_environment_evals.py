@@ -249,9 +249,9 @@ def test_available_sorted_and_excludes_selected(env_client, environment, workspa
     names = [entry["name"] for entry in entries]
     assert names == ["audio_quality", "conversation_coherence", "no_misselling"]
     assert names == sorted(names)
-    assert (
-        "conversation_hallucination" not in names
-    ), "an unfillable eval must not be offered"
+    assert "conversation_hallucination" not in names, (
+        "an unfillable eval must not be offered"
+    )
     for entry in entries:
         assert entry["agent_type"] == "voice"
         assert {row["key"] for row in entry["inputs"]} == set(entry["required_keys"])
@@ -353,7 +353,7 @@ def test_add_idempotent(env_client, environment, workspace):
     )
 
     _assert_catalog_key("no_misselling", listed=True)
-    template = _template("no_misselling", ["conversation"], tags=("Conversation",))
+    _template("no_misselling", ["conversation"], tags=("Conversation",))
 
     first = _add(env_client, environment, workspace, "no_misselling")
     assert first.status_code == 201, first.content
@@ -715,6 +715,11 @@ def test_run_add_counts(
     already_graded.save(update_fields=["eval_outputs"])
     for call_execution in (in_flight, eligible, pending):
         call_execution.refresh_from_db()
+    # The first add reopened every call it queued. `in_flight`'s job then
+    # finished without a sealed verdict: the call is closed again while its
+    # stamp is still inside the window.
+    in_flight.call_metadata["eval_completed"] = True
+    in_flight.save(update_fields=["call_metadata"])
     # `eligible` was stamped by the first add; clear it so it is eligible again,
     # and leave `in_flight`'s stamp in place.
     eligible.call_metadata = _graded()
@@ -787,9 +792,9 @@ def test_run_add_touches_only_the_run_it_was_posted_to(
     assert dispatch.call_count == 1
     assert dispatch.call_args.kwargs["args"] == (str(mine.id),)
     theirs.refresh_from_db()
-    assert (
-        "eval_queued" not in theirs.call_metadata
-    ), "a sibling run's call is never stamped by another run's add"
+    assert "eval_queued" not in theirs.call_metadata, (
+        "a sibling run's call is never stamped by another run's add"
+    )
 
 
 @pytest.mark.django_db
@@ -859,9 +864,10 @@ def test_run_add_stamps_every_call_it_queues(
     stamped = timezone.datetime.fromisoformat(stamps[str(config.id)])
     assert before <= stamped <= after
     assert after - stamped < EVAL_QUEUE_STAMP_WINDOW
-    # The flags the eval pipeline owns are untouched.
-    assert call_execution.call_metadata["eval_completed"] is True
+    # The queued call is scoring again until its job lands a verdict.
+    assert call_execution.call_metadata["eval_completed"] is False
     assert call_execution.call_metadata["eval_started"] is True
+    assert call_execution.eval_outputs == {str(config.id): {"status": "pending"}}
 
 
 @pytest.mark.django_db
@@ -951,8 +957,7 @@ def test_a_broker_failure_stops_further_dispatch_and_clears_the_remaining_stamps
         q["sql"] for q in captured.captured_queries if "FOR UPDATE" in q["sql"]
     )
     assert "analysis_data" not in select_sql, (
-        "the unstamp path must not fetch the wide row for every call in a "
-        "failed batch"
+        "the unstamp path must not fetch the wide row for every call in a failed batch"
     )
 
     assert response.json()["queued"] == 3, (
@@ -968,9 +973,9 @@ def test_a_broker_failure_stops_further_dispatch_and_clears_the_remaining_stamps
     first_call.refresh_from_db()
     second_call.refresh_from_db()
     third_call.refresh_from_db()
-    assert set(first_call.call_metadata.get("eval_queued", {})) == {
-        str(config.id)
-    }, "the one call whose job actually reached the broker keeps its stamp"
+    assert set(first_call.call_metadata.get("eval_queued", {})) == {str(config.id)}, (
+        "the one call whose job actually reached the broker keeps its stamp"
+    )
     for call_execution in (second_call, third_call):
         assert str(config.id) not in call_execution.call_metadata.get(
             "eval_queued", {}
@@ -1034,6 +1039,11 @@ def test_run_add_skips_existing_pending_in_flight(
         )
     assert first.status_code == 202, first.content
     config = _bound_config(environment)
+    # `in_flight`'s job finished without a sealed verdict: the call is closed
+    # again while its stamp is still inside the window.
+    in_flight.refresh_from_db()
+    in_flight.call_metadata["eval_completed"] = True
+    in_flight.save(update_fields=["call_metadata"])
     graded.call_metadata = _graded()
     graded.eval_outputs = {str(config.id): _verdict()}
     graded.save(update_fields=["call_metadata", "eval_outputs"])
@@ -1061,13 +1071,13 @@ def test_run_add_skips_existing_pending_in_flight(
     assert dispatch.call_count == 1
     assert dispatch.call_args.kwargs["args"] == (str(placeholder.id),)
     pending.refresh_from_db()
-    assert (
-        "eval_queued" not in pending.call_metadata
-    ), "F3: a call whose evaluations have not finished is never stamped either"
+    assert "eval_queued" not in pending.call_metadata, (
+        "F3: a call whose evaluations have not finished is never stamped either"
+    )
     graded.refresh_from_db()
-    assert graded.eval_outputs == {
-        str(config.id): _verdict()
-    }, "P20/F1: the stored verdict is untouched"
+    assert graded.eval_outputs == {str(config.id): _verdict()}, (
+        "P20/F1: the stored verdict is untouched"
+    )
     in_flight.refresh_from_db()
     assert set(in_flight.call_metadata["eval_queued"]) == {str(config.id)}
 
@@ -1118,7 +1128,7 @@ def test_run_add_repeated_within_ten_minutes_queues_nothing_new(
     django_capture_on_commit_callbacks,
 ):
     """Repeating the call within ten minutes queues nothing new; once the
-    window lapses the same calls are eligible again."""
+    window lapses a call its job closed without a verdict is eligible again."""
     template = _template("no_misselling", ["conversation"], tags=("Conversation",))
     call_execution = _call(finished_run, metadata=_graded())
 
@@ -1128,6 +1138,11 @@ def test_run_add_repeated_within_ten_minutes_queues_nothing_new(
         )
     assert first.json()["queued"] == 1
     assert dispatch.call_count == 1
+    # The first job finished without a sealed verdict, so the call is closed
+    # again while its stamp is still inside the window.
+    call_execution.refresh_from_db()
+    call_execution.call_metadata["eval_completed"] = True
+    call_execution.save(update_fields=["call_metadata"])
 
     with django_capture_on_commit_callbacks(execute=True):
         second = _run_add(
@@ -1143,8 +1158,9 @@ def test_run_add_repeated_within_ten_minutes_queues_nothing_new(
     }
     assert dispatch.call_count == 1, "the second add dispatched nothing"
 
-    # Age the stamp past the window; the call becomes eligible again, which is
-    # what makes a genuinely lost job recoverable.
+    # Age the stamp past the window; the closed call becomes eligible again.
+    # A job lost while the call is still open is recovered by the scoring
+    # clock instead (test_scoring_status.py).
     config = _bound_config(environment)
     call_execution.refresh_from_db()
     stale = timezone.now() - EVAL_QUEUE_STAMP_WINDOW - timedelta(seconds=1)
@@ -1184,9 +1200,9 @@ def test_run_add_returns_the_environment_refusal_and_queues_nothing(
         "no_such_eval: not an eval this environment can be graded by"
     )
 
-    assert (
-        len(CAP_FILLERS) == MOST_SELECTED_EVALS
-    ), "the cap must be filled exactly, so the next name is the one too many"
+    assert len(CAP_FILLERS) == MOST_SELECTED_EVALS, (
+        "the cap must be filled exactly, so the next name is the one too many"
+    )
     for index, name in enumerate(CAP_FILLERS):
         _assert_catalog_key(name, listed=True)
         _template(name, ["conversation"], tags=("Conversation",), eval_id=index + 1)
@@ -1504,9 +1520,9 @@ def test_run_add_refuses_a_cancelled_run_before_binding_or_stamping(
         == bound_before
     ), "the refusal must come before the bind"
     call.refresh_from_db()
-    assert (
-        "eval_queued" not in call.call_metadata
-    ), "the refusal must come before the stamp"
+    assert "eval_queued" not in call.call_metadata, (
+        "the refusal must come before the stamp"
+    )
 
 
 @pytest.mark.django_db
@@ -1593,9 +1609,9 @@ def test_run_add_moves_the_environment_clock_only_when_something_changed(
     assert second.status_code == 202, second.content
     assert second.json() == first.json()
     environment.refresh_from_db()
-    assert (
-        environment.content_updated_at == after_first_add
-    ), "a bind that saved nothing and queued nothing must not bump the clock"
+    assert environment.content_updated_at == after_first_add, (
+        "a bind that saved nothing and queued nothing must not bump the clock"
+    )
 
     # (c) remove the eval, then re-add it from this run with its only
     # completed call already holding the verdict: `bind_eval_config` revives
@@ -1651,14 +1667,89 @@ def test_run_add_moves_the_environment_clock_only_when_something_changed(
     assert fourth.status_code == 202, fourth.content
     assert fourth.json()["queued"] == 1
     environment.refresh_from_db()
-    assert (
-        environment.content_updated_at > after_c_clock
-    ), "an idempotent bind that queues a call is still content movement"
+    assert environment.content_updated_at > after_c_clock, (
+        "an idempotent bind that queues a call is still content movement"
+    )
     assert environment.content_updated_at >= before_d
     newly_eligible.refresh_from_db()
     assert "eval_queued" in newly_eligible.call_metadata
 
     assert dispatch.call_count == 1
+
+
+@pytest.mark.django_db
+def test_run_level_add_eval_reopens_finished_run(
+    env_client,
+    environment,
+    finished_run,
+    workspace,
+    dispatch,
+    django_capture_on_commit_callbacks,
+):
+    """Adding an eval to a finished run marks each queued call pending and the
+    run scoring again; once the job's verdict lands the run completes with a
+    new `completed_at`. A failed run keeps its status. The queued event says
+    which of the two happened."""
+    from structlog.testing import capture_logs
+
+    from simulate.services.test_executor import TestExecutor
+
+    def reopened(logs):
+        return [
+            entry["run_reopened"]
+            for entry in logs
+            if entry["event"] == "harness_run_eval_queued"
+        ]
+
+    template = _template("no_misselling", ["conversation"], tags=("Conversation",))
+    finished_at = timezone.now() - timedelta(hours=1)
+    TestExecution.objects.filter(id=finished_run.id).update(completed_at=finished_at)
+    call_execution = _call(finished_run, metadata=_graded())
+
+    with capture_logs() as logs, django_capture_on_commit_callbacks(execute=True):
+        response = _run_add(
+            env_client, environment, finished_run, workspace, template.name
+        )
+
+    assert response.status_code == 202, response.content
+    assert response.json()["queued"] == 1
+    assert reopened(logs) == [True]
+    config = _bound_config(environment)
+    call_execution.refresh_from_db()
+    finished_run.refresh_from_db()
+    assert call_execution.eval_outputs == {str(config.id): {"status": "pending"}}
+    assert call_execution.call_metadata["eval_started"] is True
+    assert call_execution.call_metadata["eval_completed"] is False
+    assert set(call_execution.call_metadata[EVAL_QUEUED_KEY]) == {str(config.id)}
+    assert finished_run.status == TestExecution.ExecutionStatus.EVALUATING
+    assert finished_run.completed_at == finished_at
+
+    call_execution.eval_outputs = {str(config.id): _verdict()}
+    call_execution.save(update_fields=["eval_outputs"])
+    TestExecutor(initialize_voice_service=False)._check_and_update_eval_completion(
+        call_execution, eval_config_ids=[str(config.id)]
+    )
+    call_execution.refresh_from_db()
+    finished_run.refresh_from_db()
+    assert call_execution.call_metadata["eval_completed"] is True
+    assert finished_run.status == TestExecution.ExecutionStatus.COMPLETED
+    assert finished_run.completed_at > finished_at
+
+    failed_run = TestExecution.objects.create(
+        run_test=environment.run_test,
+        status=TestExecution.ExecutionStatus.FAILED,
+        total_scenarios=1,
+        scenario_ids=list(finished_run.scenario_ids),
+    )
+    _call(failed_run, metadata=_graded())
+    with capture_logs() as logs, django_capture_on_commit_callbacks(execute=True):
+        response = _run_add(
+            env_client, environment, failed_run, workspace, template.name
+        )
+    assert response.json()["queued"] == 1
+    assert reopened(logs) == [False]
+    failed_run.refresh_from_db()
+    assert failed_run.status == TestExecution.ExecutionStatus.FAILED
 
 
 # --- TH-8055: the tool-call evaluation switch --------------------------------
@@ -2001,18 +2092,18 @@ def test_a_custom_eval_may_not_shadow_a_catalog_name(
     entries = available.json()["evaluations"]
     matches = [entry for entry in entries if entry["name"] == "conversation_coherence"]
     assert len(matches) == 1, "one name, one addable thing"
-    assert (
-        matches[0]["source"] == "custom"
-    ), "the tenant's own row must be the one listed"
+    assert matches[0]["source"] == "custom", (
+        "the tenant's own row must be the one listed"
+    )
 
     added = _add(env_client, environment, workspace, "conversation_coherence")
     assert added.status_code == 201, added.content
     (row,) = SimulateEvalConfig.objects.filter(
         run_test=environment.run_test, deleted=False
     )
-    assert (
-        row.eval_template_id == mine.id
-    ), "add must bind the same row available listed"
+    assert row.eval_template_id == mine.id, (
+        "add must bind the same row available listed"
+    )
     assert row.eval_template_id != system.id
 
 
@@ -2093,9 +2184,9 @@ def test_selected_and_available_agree_on_required_keys_order(
     detail = _detail(env_client, environment, workspace)
     assert detail.status_code == 200, detail.content
     (row,) = detail.json()["evaluations"]["selected"]
-    assert (
-        row["required_keys"] == offer["required_keys"]
-    ), "selected[] must report the same order available[] did"
+    assert row["required_keys"] == offer["required_keys"], (
+        "selected[] must report the same order available[] did"
+    )
     assert len(row["inputs"]) == len(row["required_keys"]), "L6's own invariant, kept"
 
 
