@@ -107,8 +107,9 @@ const AllActionForm = ({
   const theme = useTheme();
   const queryClient = useQueryClient();
   // Opt-in, for mounts with no member list behind them to read links off.
-  const { isOSS, isSuccess: modeConfirmed } = useDeploymentMode();
-  const revealInviteLinks = showInviteLinks && modeConfirmed && isOSS;
+  // Self-hosted, licensed or not (TH-8084): no mail delivery is assumed.
+  const { isSelfHosted, isSuccess: modeConfirmed } = useDeploymentMode();
+  const revealInviteLinks = showInviteLinks && modeConfirmed && isSelfHosted;
   const [inviteLinks, setInviteLinks] = useState(null);
   // The request outlives a close, so the next open would show the old batch.
   const awaitingInviteRef = useRef(false);

@@ -147,6 +147,11 @@ validator:
 - Licensed, the API limits login, token and signup requests per client IP
   (`MAX_LOGIN_ATTEMPTS_PER_HOUR`, default 10 an hour). Every actor reaches the stack from one
   address, so the E2E overlays raise it.
+- A licence does not change onboarding: a self-hosted install, licensed or not, signs up with a
+  password and logs straight in, returns invite links to the inviting admin and runs the first-run
+  checks at `/setup` (TH-8084). Only Cloud uses emailed activation and email-only invites. So the
+  suite's signup, invite-link (`lib/scope-actors.ts`) and first-run flows run unchanged on the
+  licensed stacks.
 
 The backend trusts `EE_LICENSE_PUBLIC_KEY` only while `_BUNDLED_KEYS` in
 `futureagi/ee/licensing/keyring.py` is empty (the pre-GA trust path). Once a production key is

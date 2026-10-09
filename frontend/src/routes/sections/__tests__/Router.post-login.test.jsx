@@ -255,3 +255,21 @@ describe("Router post-login landing is one-shot (R4)", () => {
     expect(navigation.location).toBe(RESOURCE);
   });
 });
+
+// TH-8084 option 1: "/" sends every self-hosted install, licensed or not, to
+// the first-run checks until they have run; Cloud never goes there.
+describe("Router first run", () => {
+  it.each(["oss", "ee"])("%s: / goes to the first-run checks", async (mode) => {
+    h.mode = mode;
+    localStorage.removeItem("oss_validation_done");
+    mount("/");
+    expect(await screen.findByText("OSS setup")).toBeTruthy();
+  });
+
+  it("cloud: / goes to the app", async () => {
+    h.mode = "cloud";
+    localStorage.removeItem("oss_validation_done");
+    mount("/");
+    expect(await screen.findByText("Falcon AI")).toBeTruthy();
+  });
+});

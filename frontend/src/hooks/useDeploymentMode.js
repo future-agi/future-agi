@@ -5,7 +5,7 @@
  * No Context/Provider needed.
  *
  * Usage:
- *   const { isOSS, isCloud, isEE } = useDeploymentMode();
+ *   const { isOSS, isCloud, isEE, isSelfHosted } = useDeploymentMode();
  */
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -32,6 +32,9 @@ export function useDeploymentMode() {
     isCloud: mode === "cloud",
     isOSS: mode === "oss",
     isEE: mode === "ee",
+    // Where the install runs, licensed or not (TH-8084). Onboarding (signup,
+    // invite links, the first-run checks) follows this, not the licence.
+    isSelfHosted: mode !== "cloud",
     isLoading,
     isSuccess,
   };

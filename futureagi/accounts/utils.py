@@ -542,8 +542,9 @@ def persist_pending_org_invite(
 def build_invite_accept_link(user):
     """Build the accept-invite link for an inactive invited user.
 
-    Same URL that goes out in invite_user.html — OSS deployments surface it in
-    the API so an admin can share it manually when SMTP isn't configured.
+    Same URL that goes out in invite_user.html. Self-hosted installs (licensed
+    or not) surface it in the API so an admin can share it manually when mail
+    delivery isn't configured.
     """
     uid = urlsafe_base64_encode(force_bytes(user.pk))
     token = default_token_generator.make_token(user)
@@ -551,14 +552,15 @@ def build_invite_accept_link(user):
 
 
 def build_invite_links(emails):
-    """Map lowercased email -> accept-invite link, OSS only.
+    """Map lowercased email -> accept-invite link, self-hosted only.
 
     Shared by invite creation and both member lists so they cannot disagree
-    about who gets a link.
+    about who gets a link. Keyed on where the install runs, not on its
+    licence: Enterprise lifts the member limit, and a licensed self-hosted
+    install still often has no mail delivery (TH-8084). Cloud invites stay
+    email-only.
     """
-    from tfc.ee_gating import is_oss
-
-    if not emails or not is_oss():
+    if not emails or edition.is_cloud():
         return {}
 
     lowered = {email.lower() for email in emails}

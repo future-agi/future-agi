@@ -1213,3 +1213,47 @@ def make_label(auth_client):
         return create_categorical_label(auth_client, name=name)
 
     return _make
+
+
+@pytest.fixture
+def deployment_mode():
+    """Shared by the signup, invite-link and setup-check tests (TH-8084).
+
+    Make the real detection (ee.usage.deployment) see a licensed
+    self-hosted install ("ee") or Future AGI Cloud ("cloud").
+
+    Both answers are cached for the process (``_detect_mode``, ``is_oss``) and
+    were computed at start-up from the real settings. Leave them that way:
+    restore the settings first, then recompute both. Left empty, the next test
+    to ask would cache whatever settings it had patched for the rest of the run
+    (seen in CI: ``is_oss()`` stuck True switched Error Feed grouping off).
+    """
+    from django.conf import settings
+
+    from ee.usage import deployment
+    from tfc import ee_gating
+
+    with pytest.MonkeyPatch.context() as patcher:
+
+        def _set(mode):
+            patcher.setattr(
+                settings, "CLOUD_DEPLOYMENT", "US" if mode == "cloud" else ""
+            )
+            patcher.setattr(
+                settings,
+                "EE_LICENSE_KEY",
+                "test-signed-licence" if mode == "ee" else "",
+            )
+            patcher.setattr(
+                deployment, "_validate_cloud_secret", lambda secret: mode == "cloud"
+            )
+            deployment._detect_mode.cache_clear()
+            ee_gating.is_oss.cache_clear()
+            assert deployment._detect_mode() == mode
+
+        yield _set
+    # Settings are real again here.
+    deployment._detect_mode.cache_clear()
+    ee_gating.is_oss.cache_clear()
+    deployment._detect_mode()
+    ee_gating.is_oss()

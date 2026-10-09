@@ -2103,7 +2103,9 @@ class TestOssPasswordResetByEmail:
 
 
 def _oss_gate(enabled=True):
-    return patch("tfc.ee_gating.is_oss", return_value=enabled)
+    """Self-hosted (True) or Cloud (False), as build_invite_links reads it:
+    by where the install runs, not by licence (TH-8084)."""
+    return patch("tfc.capabilities.edition.is_cloud", return_value=not enabled)
 
 
 def _first_signup_payload(email):
@@ -2455,47 +2457,6 @@ except ImportError:  # OSS lane: these cases carry requires_ee and are skipped
     pass
 
 
-@pytest.fixture
-def deployment_mode():
-    """Make the real detection (ee.usage.deployment) see a licensed
-    self-hosted install ("ee") or Future AGI Cloud ("cloud").
-
-    Both answers are cached for the process (``_detect_mode``, ``is_oss``) and
-    were computed at start-up from the real settings. Leave them that way:
-    restore the settings first, then recompute both. Left empty, the next test
-    to ask would cache whatever settings it had patched for the rest of the run
-    (seen in CI: ``is_oss()`` stuck True switched Error Feed grouping off).
-    """
-    from ee.usage import deployment
-
-    from tfc import ee_gating
-
-    with pytest.MonkeyPatch.context() as patcher:
-
-        def _set(mode):
-            patcher.setattr(
-                settings, "CLOUD_DEPLOYMENT", "US" if mode == "cloud" else ""
-            )
-            patcher.setattr(
-                settings,
-                "EE_LICENSE_KEY",
-                "test-signed-licence" if mode == "ee" else "",
-            )
-            patcher.setattr(
-                deployment, "_validate_cloud_secret", lambda secret: mode == "cloud"
-            )
-            deployment._detect_mode.cache_clear()
-            ee_gating.is_oss.cache_clear()
-            assert deployment._detect_mode() == mode
-
-        yield _set
-    # Settings are real again here.
-    deployment._detect_mode.cache_clear()
-    ee_gating.is_oss.cache_clear()
-    deployment._detect_mode()
-    ee_gating.is_oss()
-
-
 def _login(api_client, email, password=OSS_SIGNUP_PASSWORD):
     return api_client.post(
         "/accounts/token/",
@@ -2669,3 +2630,63 @@ class TestCloudSignupUnchanged:
             assert user.is_active is False
         finally:
             cache.delete(f"activate_account_rate:{ip}")
+
+
+# ---------------------------------------------------------------------------
+# Invite links follow where the install runs, too (TH-8084, approved: Nikhil
+# 2026-10-03 blanket, option 1). Enterprise lifts the member limit, and a
+# self-hosted install often has no mail delivery, so the inviting admin gets
+# the link with or without a licence. Cloud keeps invites email-only.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.requires_ee
+class TestLicensedSelfHostedInviteLinks:
+    @pytest.fixture(autouse=True)
+    def _licensed_self_hosted(self, deployment_mode, no_outbound_email):
+        deployment_mode("ee")
+
+    def test_invite_create_returns_the_link(self, auth_client):
+        response = _invite(auth_client, [FRESH_INVITEE])
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        result = response.json()["result"]
+        assert result["invited"] == [FRESH_INVITEE]
+        (invite,) = result["invites"]
+        assert invite["email"] == FRESH_INVITEE
+        assert "/auth/jwt/invitation/accept/" in invite["invite_link"]
+
+    def test_member_list_exposes_the_link_on_pending_invites(
+        self, auth_client, pending_invite
+    ):
+        rows = _member_rows(auth_client)
+
+        invite = next(r for r in rows if r.get("type") == "invite")
+        assert "/auth/jwt/invitation/accept/" in invite["invite_link"]
+
+
+@pytest.mark.unit
+class TestInviteLinkDeploymentGate:
+    """build_invite_links asks where the install runs, not whether it holds a
+    licence."""
+
+    def test_self_hosted_with_a_licence_gets_links(self, pending_invite):
+        from accounts.utils import build_invite_links
+
+        with patch("tfc.ee_gating.is_oss", return_value=False), patch(
+            "tfc.capabilities.edition.is_cloud", return_value=False
+        ):
+            links = build_invite_links([pending_invite.email])
+
+        assert "/auth/jwt/invitation/accept/" in links[pending_invite.email]
+
+    def test_cloud_gets_none(self, pending_invite):
+        from accounts.utils import build_invite_links
+
+        with patch("tfc.ee_gating.is_oss", return_value=False), patch(
+            "tfc.capabilities.edition.is_cloud", return_value=True
+        ):
+            assert build_invite_links([pending_invite.email]) == {}
+

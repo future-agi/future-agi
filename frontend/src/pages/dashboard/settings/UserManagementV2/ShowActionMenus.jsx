@@ -17,8 +17,9 @@ const ShowActionMenus = ({
   menusByStatus,
 }) => {
   const popperRef = useRef(null);
-  const { isOSS, isSuccess: modeConfirmed } = useDeploymentMode();
-  const hidesInviteEmail = modeConfirmed && isOSS;
+  // Self-hosted, licensed or not (TH-8084): invites are shared as links.
+  const { isSelfHosted, isSuccess: modeConfirmed } = useDeploymentMode();
+  const hidesInviteEmail = modeConfirmed && isSelfHosted;
 
   useEffect(() => {
     function handleClickOutside(event) {

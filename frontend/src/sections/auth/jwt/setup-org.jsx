@@ -252,10 +252,12 @@ const SetupOrganization = ({ getStarted = false }) => {
   const isOwner = user?.organization_role === "Owner";
   // Confirmed reads only — a failed deployment-info probe must not hide the
   // invite step from a cloud user.
-  const { isOSS: ossMode, isSuccess: modeConfirmed } = useDeploymentMode();
-  const isOSS = modeConfirmed && ossMode;
+  // Self-hosted, licensed or not (TH-8084).
+  const { isSelfHosted: selfHostedMode, isSuccess: modeConfirmed } =
+    useDeploymentMode();
+  const isSelfHosted = modeConfirmed && selfHostedMode;
   const { initialData, isLoading: isFetchingInitialData } =
-    useOrganizationInitialData(isOwner, !isOSS);
+    useOrganizationInitialData(isOwner, !isSelfHosted);
 
   const { data: invitesData, refetch: refetchInvites } = useQuery({
     queryKey: ["owner-org-invites"],
@@ -610,7 +612,7 @@ const SetupOrganization = ({ getStarted = false }) => {
 
           {/* Hidden on self-hosted: invites need email delivery, so teammates
               are added later from inside the product. */}
-          {!isOSS && (
+          {!isSelfHosted && (
             <>
               <Typography variant="m2" fontWeight="fontWeightMedium">
                 Invite people to collaborate in FutureAGI
