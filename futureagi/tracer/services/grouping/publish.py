@@ -8,7 +8,12 @@ from django.db import transaction
 from django.db.models import Count, F, Max, Min, Q
 from django.utils import timezone
 
-from tracer.models.trace_error_analysis import ErrorClusterTraces, TraceErrorGroup
+from tracer.constants.grouping_versions import SAMPLED_GROUPING_POLICY_VERSION
+from tracer.models.trace_error_analysis import (
+    ErrorClusterTraces,
+    FeedIssueStatus,
+    TraceErrorGroup,
+)
 from tracer.models.trace_grouping import (
     GroupingAttemptState,
     GroupingWorkState,
@@ -38,10 +43,13 @@ from tracer.services.grouping.control import (
     lock_attempt_scope,
     require_attempt,
 )
+from tracer.services.grouping.sampling import (
+    membership_binding,
+    sample_issue_metadata,
+)
 
 MAX_COMMANDS = 150
 MAX_PROPOSAL_BYTES = 2 * 1024 * 1024
-MAX_RECONCILIATION_MEMBERS = 16
 MECHANISM_KEYS = {"mechanism", "fix_hypothesis", "falsifier"}
 TITLE_KEYS = MECHANISM_KEYS | {"title"}
 COMMAND_FIELDS = {
@@ -74,7 +82,7 @@ COMMAND_FIELDS = {
         "type",
         "source_issue_ids",
         "expected_revisions",
-        "temporary_id",
+        "survivor_issue_id",
         "mechanism",
         "prototype_occurrence_ids",
         "citations",
@@ -146,10 +154,18 @@ def _mechanism(value: object) -> dict:
     return value
 
 
-def _command_shape(command: object) -> dict:
+def _command_shape(command: object, *, sampled: bool = False) -> dict:
     if not isinstance(command, dict) or command.get("type") not in COMMAND_FIELDS:
         raise GroupingControlError("unsupported grouping command")
-    if set(command) != COMMAND_FIELDS[command["type"]]:
+    fields = COMMAND_FIELDS[command["type"]]
+    if sampled and command["type"] == "merge":
+        fields = fields | {"reviewed_occurrence_ids"}
+    legacy_merge_fields = (
+        (fields - {"survivor_issue_id"}) | {"temporary_id"}
+        if command["type"] == "merge"
+        else None
+    )
+    if set(command) != fields and set(command) != legacy_merge_fields:
         raise GroupingControlError("grouping command has unknown or missing fields")
     return command
 
@@ -475,55 +491,85 @@ def _admitted_removal(
         raise GroupingConflict("stored reconciliation did not authorize exact removal")
 
 
-def _issue_members(state: TraceGroupingIssueState) -> list[str]:
+def _issue_member_metadata(
+    state: TraceGroupingIssueState, *, for_sampling=False
+) -> list[dict]:
+    fields = [
+        "id",
+        "report_id",
+        "report__trace_id",
+        "report__test_execution_id",
+        "report__deleted",
+        "report__is_current",
+        "report__source",
+        "report__execution_status",
+        "report__job__current_report_id",
+        "report__project_id",
+        "report__organization_id",
+        "report__workspace_id",
+    ]
+    if for_sampling:
+        fields.extend(["statement", "report__recorded_at"])
     rows = list(
         TraceInvestigationFinding.no_workspace_objects.filter(
             cluster_id=state.cluster_id
         )
-        .select_related("report__job")
-        .order_by("id")[: MAX_RECONCILIATION_MEMBERS + 1]
+        .order_by("id")
+        .values(*fields)
     )
-    if not rows or len(rows) > MAX_RECONCILIATION_MEMBERS:
-        raise GroupingConflict(
-            "issue full membership is empty or exceeds reconciliation bound"
-        )
+    if not rows:
+        raise GroupingConflict("issue full membership is empty")
     junctions = list(
         ErrorClusterTraces.no_workspace_objects.filter(
             cluster=state.cluster,
             finding__isnull=False,
         )
         .order_by("finding_id")
-        .values_list("finding_id", "trace_id", "span_id", "trace_session_id")[
-            : MAX_RECONCILIATION_MEMBERS + 1
-        ]
+        .values_list("finding_id", "trace_id", "span_id", "trace_session_id")
     )
     if len(junctions) != len(rows) or {item[0] for item in junctions} != {
-        item.id for item in rows
+        item["id"] for item in rows
     }:
         raise GroupingConflict("issue finding and junction membership disagree")
-    traces = {item.id: item.report.trace_id for item in rows}
+    traces = {item["id"]: item["report__trace_id"] for item in rows}
     if any(
         item[1] != traces[item[0]] or item[2] is not None or item[3] is not None
         for item in junctions
     ):
         raise GroupingConflict("issue junction provenance is not canonical Omega")
     if any(
-        finding.report.test_execution_id != state.cluster.test_execution_id
+        finding["report__test_execution_id"] != state.cluster.test_execution_id
         for finding in rows
     ):
         raise GroupingConflict("issue contains cross-execution membership")
     for finding in rows:
-        report = finding.report
         if (
-            report.deleted
-            or not report.is_current
-            or report.source != "omega"
-            or report.execution_status != "completed"
-            or report.job.current_report_id != report.id
-            or report.project_id != state.scope.project_id
+            finding["report__deleted"]
+            or not finding["report__is_current"]
+            or finding["report__source"] != "omega"
+            or finding["report__execution_status"] != "completed"
+            or finding["report__job__current_report_id"] != finding["report_id"]
+            or finding["report__project_id"] != state.scope.project_id
+            or finding["report__organization_id"] != state.scope.organization_id
+            or finding["report__workspace_id"] != state.scope.workspace_id
         ):
             raise GroupingConflict("issue has stale or cross-scope membership")
-    return [str(item.id) for item in rows]
+    return rows
+
+
+def _issue_members(state: TraceGroupingIssueState) -> list[str]:
+    return [str(item["id"]) for item in _issue_member_metadata(state)]
+
+
+def _issue_evidence(state: TraceGroupingIssueState, *, sampled: bool):
+    rows = _issue_member_metadata(state, for_sampling=sampled)
+    member_ids = [str(item["id"]) for item in rows]
+    if not sampled:
+        return member_ids, member_ids
+    try:
+        return member_ids, sample_issue_metadata(rows, state.prototype_occurrence_ids)
+    except ValueError as exc:
+        raise GroupingConflict(str(exc)) from exc
 
 
 def _protected(state: TraceGroupingIssueState) -> bool:
@@ -535,6 +581,31 @@ def _protected(state: TraceGroupingIssueState) -> bool:
         or cluster.external_issue_id
         or cluster.status not in {"escalating", "for_review"}
     )
+
+
+def _refresh_prototypes(
+    state: TraceGroupingIssueState | None, command: dict, members: list[str]
+) -> list[str]:
+    if (
+        state is None
+        or state.retired
+        or state.revision != command["expected_issue_revision"]
+    ):
+        raise GroupingConflict("refresh target is stale or not offered")
+    if _mechanism(command["mechanism"]) != state.mechanism:
+        raise GroupingConflict("refresh cannot silently relabel the issue")
+    prototypes = _ids(
+        command["prototype_occurrence_ids"], limit=5, label="refreshed prototypes"
+    )
+    if not set(prototypes).issubset(members):
+        raise GroupingConflict("refreshed prototype is not a current member")
+    if _protected(state):
+        if set(prototypes) != set(state.prototype_occurrence_ids):
+            raise GroupingConflict("refresh target is stale or not offered")
+        # Old checkpoints may contain a refresh caused only by ID sorting.
+        # Accept it without changing the human-owned issue's order or revision.
+        return state.prototype_occurrence_ids
+    return prototypes
 
 
 def _hard_safe(
@@ -556,16 +627,6 @@ def _hard_safe(
         ).exists()
     ):
         raise GroupingConflict("hard issue exclusion forbids membership")
-
-
-def _clear_rca(cluster: TraceErrorGroup) -> None:
-    cluster.rca_synthesis = None
-    cluster.rca_fix = None
-    cluster.rca_confidence = None
-    cluster.rca_evidence_trace_ids = []
-    cluster.rca_at = None
-    cluster.rca_failures_at_run = None
-    cluster.rca_trace = None
 
 
 def _recount(state: TraceGroupingIssueState) -> None:
@@ -604,7 +665,6 @@ def _recount(state: TraceGroupingIssueState) -> None:
     cluster.error_ids = []
     cluster.first_seen = totals["first"]
     cluster.last_seen = totals["last"]
-    _clear_rca(cluster)
     cluster.save(
         update_fields=[
             "error_count",
@@ -613,13 +673,6 @@ def _recount(state: TraceGroupingIssueState) -> None:
             "error_ids",
             "first_seen",
             "last_seen",
-            "rca_synthesis",
-            "rca_fix",
-            "rca_confidence",
-            "rca_evidence_trace_ids",
-            "rca_at",
-            "rca_failures_at_run",
-            "rca_trace",
             "updated_at",
         ]
     )
@@ -631,8 +684,8 @@ def _new_issue(
     cluster_id = uuid.uuid4()
     for width in (8, 12, 16):
         display_id = f"S-{cluster_id.hex[:width].upper()}"
-        if not TraceErrorGroup.no_workspace_objects.filter(
-            project_id=scope.project_id, cluster_id=display_id, deleted=False
+        if not TraceErrorGroup.all_objects.filter(
+            project_id=scope.project_id, cluster_id=display_id
         ).exists():
             break
     else:
@@ -737,7 +790,12 @@ def _unassign(
         finding=finding,
         defaults={
             "scope": scope,
-            "disposition": "deferred",
+            "disposition": (
+                "waiting_budget"
+                if scope.policy_version == SAMPLED_GROUPING_POLICY_VERSION
+                and reason.startswith("budget_exhausted:")
+                else "deferred"
+            ),
             "reason": reason[:255],
             "source_digest": canonical_grouping_source_digest(
                 export_grouping_snapshot(report=finding.report)
@@ -764,6 +822,60 @@ def _move(
     finding.cluster = None
     finding.save(update_fields=["cluster", "updated_at"])
     _assign(finding, target, scope)
+
+
+def _move_merge_members(
+    findings: list[TraceInvestigationFinding],
+    source_ids: set[uuid.UUID],
+    target: TraceGroupingIssueState,
+    scope: TraceGroupingScope,
+) -> None:
+    """Move full membership without one snapshot export/write per unseen call.
+
+    Caller holds scope, source and finding locks, and has validated the entire
+    source membership. Moving between issues preserves the assigned disposition
+    and immutable report fingerprint in the existing finding-state rows.
+    """
+    ids = [item.id for item in findings]
+    if any(item.cluster_id not in source_ids for item in findings):
+        raise GroupingConflict("merge source membership changed")
+    if (
+        ErrorClusterTraces.no_workspace_objects.filter(finding_id__in=ids)
+        .exclude(cluster_id__in=source_ids)
+        .exists()
+    ):
+        raise GroupingConflict("merge member has another active junction")
+    if TraceGroupingFindingState.no_workspace_objects.filter(
+        finding_id__in=ids, scope=scope, disposition="assigned"
+    ).count() != len(ids):
+        raise GroupingConflict("merge member lacks assigned grouping state")
+    now = timezone.now()
+    ErrorClusterTraces.no_workspace_objects.filter(
+        finding_id__in=ids, cluster_id__in=source_ids
+    ).update(deleted=True, deleted_at=now, updated_at=now)
+    moved = TraceInvestigationFinding.no_workspace_objects.filter(
+        id__in=ids, cluster_id__in=source_ids
+    ).update(cluster=target.cluster, updated_at=now)
+    if moved != len(ids):
+        raise GroupingConflict("merge did not move every authoritative member")
+    ErrorClusterTraces.no_workspace_objects.bulk_create(
+        [
+            ErrorClusterTraces(
+                cluster=target.cluster,
+                finding=item,
+                trace_id=item.report.trace_id,
+                span_id=None,
+                trace_session_id=None,
+            )
+            for item in findings
+        ],
+        batch_size=500,
+    )
+    TraceGroupingFindingState.no_workspace_objects.filter(
+        finding_id__in=ids, scope=scope, disposition="assigned"
+    ).update(reason="", updated_at=now)
+    for item in findings:
+        item.cluster = target.cluster
 
 
 def publish_grouping(
@@ -878,6 +990,13 @@ def publish_grouping(
             for snap in ordered_snapshots
             for item in snap["occurrences"]
         }
+        if (
+            scope.policy_version == SAMPLED_GROUPING_POLICY_VERSION
+            and attempt.pending_occurrence_ids
+        ):
+            if not set(attempt.pending_occurrence_ids).issubset(pending_ids):
+                raise GroupingConflict("claimed pending finding disappeared")
+            pending_ids = set(attempt.pending_occurrence_ids)
         states = {
             str(item.cluster_id): item
             for item in TraceGroupingIssueState.no_workspace_objects.select_for_update()
@@ -891,19 +1010,51 @@ def publish_grouping(
         }
         if set(states) != set(attempt.offered_issue_ids):
             raise GroupingConflict("offered issue changed")
-        membership = {key: _issue_members(state) for key, state in states.items()}
-        relevant_ids = pending_ids | {
-            item for values in membership.values() for item in values
+        sampled = scope.policy_version == SAMPLED_GROUPING_POLICY_VERSION
+        membership = {}
+        evidence_members = {}
+        for key, state in states.items():
+            membership[key], evidence_members[key] = _issue_evidence(
+                state, sampled=sampled
+            )
+        evidence_ids = pending_ids | {
+            item for values in evidence_members.values() for item in values
+        }
+        # Scope and issue locks fence grouping mutations. Unchanged candidates
+        # need membership metadata and sampled evidence, not full finding locks.
+        # Operations that move existing members still lock every affected row.
+        moving_sources = set()
+        for original in commands:
+            command = _command_shape(original, sampled=sampled)
+            if command["type"] == "merge":
+                moving_sources.update(
+                    _ids(command["source_issue_ids"], limit=2, label="merge sources")
+                )
+            elif command["type"] in {"split", "remove"}:
+                moving_sources.update(
+                    _ids([command["issue_id"]], limit=1, label="source issue")
+                )
+        relevant_ids = evidence_ids | {
+            item
+            for key in moving_sources
+            if key in membership
+            for item in membership[key]
         }
         finding_rows = list(
-            TraceInvestigationFinding.no_workspace_objects.select_for_update()
+            TraceInvestigationFinding.no_workspace_objects.select_for_update(
+                of=("self",)
+            )
+            .select_related("report__job")
             .filter(id__in=relevant_ids)
             .order_by("id")
         )
         findings = {str(item.id): item for item in finding_rows}
         if len(findings) != len(relevant_ids):
             raise GroupingConflict("member finding disappeared")
-        all_reports = {str(item.report_id): item.report for item in finding_rows}
+        all_reports = {
+            str(findings[item].report_id): findings[item].report
+            for item in evidence_ids
+        }
         snapshots = {
             **pending_snapshots,
             **_report_snapshots(list(all_reports.values())),
@@ -947,9 +1098,11 @@ def publish_grouping(
                                 str(findings[item].report_id)
                             ]["report"]["evidence_digest"],
                         }
-                        for item in membership[key]
+                        for item in evidence_members[key]
                     ],
-                    "membership_complete": True,
+                    "membership_complete": len(evidence_members[key])
+                    == len(membership[key]),
+                    **(membership_binding(state, membership[key]) if sampled else {}),
                 }
             )
         report_digests = {
@@ -974,8 +1127,10 @@ def publish_grouping(
             raise GroupingConflict("pending finding is already owned")
         assigned_pending = set()
         deferred_pending = set()
+        reopened_issues = []
         touched = set()
         new_ids = {}
+        redirects = {}
         if (
             any(
                 item.get("type") in {"create", "attach", "merge", "split", "remove"}
@@ -987,7 +1142,7 @@ def publish_grouping(
                 "model-backed issue mutation requires durable call receipts"
             )
         for original in commands:
-            command = _command_shape(original)
+            command = _command_shape(original, sampled=sampled)
             kind = command["type"]
             if kind == "defer":
                 ids = _ids(
@@ -1010,15 +1165,14 @@ def publish_grouping(
                     _unassign(findings[item], scope, command["reason"])
                 deferred_pending.update(ids)
                 continue
-            if kind in {"create", "merge", "split"}:
-                if kind != "split":
-                    temporary_id = command["temporary_id"]
-                    if (
-                        not isinstance(temporary_id, str)
-                        or not temporary_id
-                        or temporary_id in states
-                    ):
-                        raise GroupingControlError("duplicate temporary issue ID")
+            if kind == "create":
+                temporary_id = command["temporary_id"]
+                if (
+                    not isinstance(temporary_id, str)
+                    or not temporary_id
+                    or temporary_id in states
+                ):
+                    raise GroupingControlError("duplicate temporary issue ID")
             if kind == "create":
                 ids = _ids(
                     command["occurrence_ids"], limit=100, label="new issue members"
@@ -1064,7 +1218,7 @@ def publish_grouping(
                 if (
                     state is None
                     or state.retired
-                    or _protected(state)
+                    or (_protected(state) and not sampled)
                     or state.revision != command["expected_issue_revision"]
                 ):
                     raise GroupingConflict("attach target is stale or not offered")
@@ -1097,30 +1251,36 @@ def publish_grouping(
                 for item in ids:
                     _assign(findings[item], state, scope)
                 membership[command["issue_id"]] = combined
+                if sampled and state.cluster.status == FeedIssueStatus.RESOLVED:
+                    # Recurrence changes workflow, not the reviewed issue identity.
+                    state.cluster.status = FeedIssueStatus.FOR_REVIEW
+                    state.cluster.save(update_fields=["status", "updated_at"])
+                    state.protected = True
+                    reopened_issues.append(
+                        {
+                            "issue_id": str(state.cluster_id),
+                            "from_status": FeedIssueStatus.RESOLVED,
+                            "to_status": FeedIssueStatus.FOR_REVIEW,
+                            "reason": "new_occurrence",
+                            "occurrence_ids": ids,
+                            "reopened_at": timezone.now().isoformat(),
+                        }
+                    )
                 state.membership_revision += 1
-                state.save(update_fields=["membership_revision", "updated_at"])
+                state.save(
+                    update_fields=["membership_revision", "protected", "updated_at"]
+                )
                 assigned_pending.update(ids)
                 touched.add(str(state.cluster_id))
             elif kind == "refresh":
                 state = states.get(command["issue_id"])
-                if (
-                    state is None
-                    or state.retired
-                    or _protected(state)
-                    or state.revision != command["expected_issue_revision"]
-                ):
-                    raise GroupingConflict("refresh target is stale or not offered")
-                if _mechanism(command["mechanism"]) != state.mechanism:
-                    raise GroupingConflict("refresh cannot silently relabel the issue")
-                prototypes = _ids(
-                    command["prototype_occurrence_ids"],
-                    limit=5,
-                    label="refreshed prototypes",
+                prototypes = _refresh_prototypes(
+                    state, command, membership.get(command["issue_id"], [])
                 )
-                if not set(prototypes).issubset(membership[command["issue_id"]]):
-                    raise GroupingConflict(
-                        "refreshed prototype is not a current member"
-                    )
+                if _protected(state):
+                    # The validated protected refresh is a no-op, including
+                    # recounting and enqueueing another severity assessment.
+                    continue
                 if prototypes != state.prototype_occurrence_ids:
                     state.prototype_occurrence_ids = prototypes
                     state.revision += 1
@@ -1140,6 +1300,15 @@ def publish_grouping(
                     key not in states or states[key].retired for key in source_ids
                 ):
                     raise GroupingConflict("merge sources were not both offered")
+                survivor_id = command.get("survivor_issue_id")
+                if survivor_id is not None and survivor_id not in source_ids:
+                    raise GroupingControlError("merge survivor must be a source issue")
+                if survivor_id is None and (
+                    not isinstance(command["temporary_id"], str)
+                    or not command["temporary_id"]
+                    or command["temporary_id"] in states
+                ):
+                    raise GroupingControlError("invalid temporary merge issue identity")
                 if not isinstance(command["expected_revisions"], dict) or set(
                     command["expected_revisions"]
                 ) != set(source_ids):
@@ -1164,14 +1333,61 @@ def publish_grouping(
                 )
                 if not set(prototypes).issubset(ids):
                     raise GroupingConflict("merge prototype is not a source member")
+                reviewed_ids = ids
+                if sampled:
+                    reviewed_ids = _ids(
+                        command["reviewed_occurrence_ids"],
+                        limit=16,
+                        label="merge evidence sample",
+                    )
+                    if not set(reviewed_ids).issubset(set(ids) & evidence_ids) or any(
+                        not min(2, len(set(membership[key]) & evidence_ids))
+                        <= len(set(reviewed_ids) & set(membership[key]))
+                        <= 8
+                        for key in source_ids
+                    ):
+                        raise GroupingConflict(
+                            "merge sample does not cover both current sources"
+                        )
+                    primary = (
+                        receipt_map.get(
+                            _uuid(
+                                command["admission"].get("primary_receipt_id"),
+                                "merge receipt",
+                            )
+                        )
+                        if isinstance(command["admission"], dict)
+                        else None
+                    )
+                    if primary is None or not primary.request_key.startswith(
+                        "merge-review:"
+                    ):
+                        raise GroupingConflict(
+                            "sampled merge lacks a budgeted review receipt"
+                        )
+                    if not set(prototypes).issubset(reviewed_ids):
+                        raise GroupingConflict("merge prototypes were not reviewed")
+                identities = {
+                    (
+                        findings[item].report.workload_type,
+                        findings[item].report.test_execution_id,
+                    )
+                    for item in ids
+                }
+                if len(identities) != 1:
+                    raise GroupingConflict(
+                        "merge sources have incompatible execution scopes"
+                    )
+                for source in sources:
+                    _hard_safe(scope, ids, str(source.cluster_id))
                 admitted = _admitted_group(
                     admission=command["admission"],
                     receipt_map=receipt_map,
-                    member_ids=ids,
+                    member_ids=reviewed_ids,
                     target_issue_id=None,
                     mechanism=_mechanism(command["mechanism"]),
                     expected_action="merge",
-                    required_own_ids=set(ids),
+                    required_own_ids=set(reviewed_ids),
                 )
                 if _canonical_citations(command["citations"]) != _canonical_citations(
                     admitted
@@ -1179,15 +1395,55 @@ def publish_grouping(
                     raise GroupingConflict(
                         "merge citations differ from stored reconciliation"
                     )
-                _validate_citations(command, set(ids), snapshots, findings)
-                target = _new_issue(scope, _mechanism(command["mechanism"]), prototypes)
-                new_ids[command["temporary_id"]] = str(target.cluster_id)
-                states[command["temporary_id"]] = target
-                membership[command["temporary_id"]] = list(ids)
+                _validate_citations(command, set(reviewed_ids), snapshots, findings)
+                if survivor_id is None:
+                    target = _new_issue(
+                        scope, _mechanism(command["mechanism"]), prototypes
+                    )
+                    new_ids[command["temporary_id"]] = str(target.cluster_id)
+                    states[command["temporary_id"]] = target
+                    membership[command["temporary_id"]] = list(ids)
+                else:
+                    target = states[survivor_id]
+                    target.mechanism = _mechanism(command["mechanism"])
+                    target.prototype_occurrence_ids = prototypes
+                    target.revision += 1
+                    target.membership_revision += 1
+                    target.save(
+                        update_fields=[
+                            "mechanism",
+                            "prototype_occurrence_ids",
+                            "revision",
+                            "membership_revision",
+                            "updated_at",
+                        ]
+                    )
+                    target.cluster.title = target.mechanism.get(
+                        "title", target.mechanism["mechanism"]
+                    )[:1000]
+                    target.cluster.error_type = target.mechanism["mechanism"][:200]
+                    target.cluster.combined_description = target.mechanism["mechanism"]
+                    target.cluster.save(
+                        update_fields=[
+                            "title",
+                            "error_type",
+                            "combined_description",
+                            "updated_at",
+                        ]
+                    )
+                    membership[survivor_id] = list(ids)
                 old_uuid = {state.cluster_id for state in sources}
-                for item in ids:
-                    _move(findings[item], old_uuid, target, scope)
+                if sampled:
+                    _move_merge_members(
+                        [findings[item] for item in ids], old_uuid, target, scope
+                    )
+                else:
+                    for item in ids:
+                        _move(findings[item], old_uuid, target, scope)
                 for state in sources:
+                    if state.cluster_id == target.cluster_id:
+                        continue
+                    redirects[state.cluster_id] = target.cluster_id
                     state.retired = True
                     state.revision += 1
                     state.membership_revision += 1
@@ -1279,8 +1535,11 @@ def publish_grouping(
                         "split citations differ from stored reconciliation"
                     )
                 _validate_citations(command, set(all_ids), snapshots, findings)
+                redirect_part = max(part_specs, key=lambda part: len(part[1]))[0]
                 for temp, ids, mechanism, prototypes in part_specs:
                     target = _new_issue(scope, mechanism, prototypes)
+                    if temp == redirect_part:
+                        redirects[state.cluster_id] = target.cluster_id
                     new_ids[temp] = str(target.cluster_id)
                     states[temp] = target
                     membership[temp] = list(ids)
@@ -1375,6 +1634,23 @@ def publish_grouping(
             raise GroupingConflict(
                 "proposal silently dropped or duplicated pending findings"
             )
+        for name, state in states.items():
+            if str(state.cluster_id) not in touched:
+                continue
+            if state.retired:
+                if (
+                    TraceInvestigationFinding.no_workspace_objects.filter(
+                        cluster_id=state.cluster_id
+                    ).exists()
+                    or ErrorClusterTraces.no_workspace_objects.filter(
+                        cluster_id=state.cluster_id, finding__isnull=False
+                    ).exists()
+                ):
+                    raise GroupingConflict("retired issue retains active members")
+            elif _issue_members(state) != sorted(membership[name]):
+                raise GroupingConflict(
+                    "published membership differs from approved commands"
+                )
         for key in touched:
             state = TraceGroupingIssueState.no_workspace_objects.select_related(
                 "cluster"
@@ -1383,10 +1659,37 @@ def publish_grouping(
             from tracer.services.grouping.severity import enqueue_severity
 
             enqueue_severity(issue=state, attempt=attempt)
+        now = timezone.now()
+        for source_id, target_id in redirects.items():
+            TraceErrorGroup.no_workspace_objects.filter(pk=source_id).update(
+                redirect_to_id=target_id,
+                deleted=True,
+                deleted_at=now,
+                updated_at=now,
+            )
+            TraceGroupingIssueState.no_workspace_objects.filter(
+                cluster_id=source_id
+            ).update(deleted=True, deleted_at=now, updated_at=now)
+        waiting_reports = set(
+            TraceGroupingFindingState.no_workspace_objects.filter(
+                scope=scope,
+                finding_id__in=deferred_pending,
+                disposition="waiting_budget",
+            ).values_list("finding__report_id", flat=True)
+        )
         for work in works:
-            work.state = GroupingWorkState.COMPLETED
-            work.save(update_fields=["state", "updated_at"])
-            work.report.grouping_status = TraceInvestigationGroupingStatus.COMPLETED
+            work.state = (
+                GroupingWorkState.WAITING_BUDGET
+                if work.report_id in waiting_reports
+                else GroupingWorkState.COMPLETED
+            )
+            work.failure_code = ""
+            work.save(update_fields=["state", "failure_code", "updated_at"])
+            work.report.grouping_status = (
+                TraceInvestigationGroupingStatus.PENDING
+                if work.report_id in waiting_reports
+                else TraceInvestigationGroupingStatus.COMPLETED
+            )
             work.report.save(update_fields=["grouping_status", "updated_at"])
         attempt.state = GroupingAttemptState.COMPLETED
         attempt.save(update_fields=["state", "updated_at"])
@@ -1397,8 +1700,16 @@ def publish_grouping(
             "status": "completed",
             "registry_revision": scope.registry_revision,
             "created_issue_ids": new_ids,
+            "reopened_issues": reopened_issues,
             "assigned": len(assigned_pending),
             "deferred": len(deferred_pending),
+            "waiting_for_budget": len(
+                TraceGroupingFindingState.no_workspace_objects.filter(
+                    scope=scope,
+                    finding_id__in=deferred_pending,
+                    disposition="waiting_budget",
+                )
+            ),
         }
         TraceGroupingDecision.no_workspace_objects.create(
             scope=scope,

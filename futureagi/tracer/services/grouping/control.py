@@ -2,16 +2,20 @@
 
 import hashlib
 import secrets
+import traceback
 import uuid
 from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 
+import structlog
+from clickhouse_driver.errors import NetworkError, SocketTimeoutError
 from django.conf import settings
-from django.db import transaction
+from django.db import InterfaceError, OperationalError, transaction
 from django.db.models import F, Q
 from django.utils import timezone
 
 from tfc.ee_gating import is_oss
+from tracer.constants.grouping_versions import SAMPLED_GROUPING_POLICY_VERSION
 from tracer.models.trace_grouping import (
     GroupingAttemptState,
     GroupingFeatureState,
@@ -25,6 +29,7 @@ from tracer.models.trace_grouping import (
 )
 from tracer.models.trace_investigation import (
     InvestigationWorkload,
+    TraceInvestigationFinding,
     TraceInvestigationJob,
     TraceInvestigationJobState,
     TraceInvestigationReport,
@@ -45,6 +50,7 @@ SIMULATION_SETTLE_SECONDS = 15
 # request envelope while allowing lossless multi-cohort receipts and Registry
 # history to remain durable across worker restarts.
 MAX_CHECKPOINT_BYTES = 7 * 1024 * 1024
+logger = structlog.get_logger(__name__)
 
 
 class GroupingControlError(ValueError):
@@ -359,6 +365,13 @@ def claim_grouping_work(*, worker_id: str, limit: int) -> dict:
         raise GroupingControlError("invalid grouping claim request")
     if is_oss() or not getattr(settings, "ERROR_FEED_GROUPING_ENABLED", False):
         return {"claims": []}
+    from tracer.services.grouping.failure import (
+        park_work,
+        reconcile_dead_attempts,
+        retry_exhausted,
+    )
+
+    reconcile_dead_attempts()
     now = timezone.now()
     claimed = []
     with transaction.atomic():
@@ -409,7 +422,10 @@ def claim_grouping_work(*, worker_id: str, limit: int) -> dict:
                 # The run has settled, so all of its works are due: this claim
                 # takes them as one cohort, not whichever came due first.
                 TraceGroupingWork.no_workspace_objects.filter(
-                    scope=scope, state=GroupingWorkState.PENDING, not_before__gt=now
+                    scope=scope,
+                    state=GroupingWorkState.PENDING,
+                    not_before__gt=now,
+                    failure_code="",
                 ).update(not_before=now)
             if TraceGroupingAttempt.no_workspace_objects.filter(
                 work__scope=scope,
@@ -417,13 +433,13 @@ def claim_grouping_work(*, worker_id: str, limit: int) -> dict:
                 lease_expires_at__gte=now,
             ).exists():
                 continue
-            if work.attempt_number >= MAX_ATTEMPTS:
-                work.state = GroupingWorkState.FAILED
-                work.save(update_fields=["state", "updated_at"])
+            if retry_exhausted(work):
+                park_work(work, work.failure_code or "attempts_exhausted")
                 continue
             pending_snapshots = []
             peer_works = []
             pending_count = 0
+            pending_occurrence_ids = []
             previous = work.attempts.order_by("-attempt_number").first()
             try:
                 if previous and previous.claimed_work_ids:
@@ -481,8 +497,26 @@ def claim_grouping_work(*, worker_id: str, limit: int) -> dict:
                         or peer.feature_job.state != GroupingFeatureState.READY
                     ):
                         continue
-                    candidate = export_grouping_snapshot(report=peer.report)
-                    count = len(candidate["occurrences"])
+                    if retry_exhausted(peer):
+                        park_work(peer, peer.failure_code or "attempts_exhausted")
+                        continue
+                    try:
+                        candidate = export_grouping_snapshot(report=peer.report)
+                    except GroupingSnapshotError:
+                        if peer.id == work.id:
+                            raise
+                        # An invalid peer must not fail the healthy batch lead.
+                        park_work(peer, "snapshot_invalid")
+                        continue
+                    ids = [item["occurrence_id"] for item in candidate["occurrences"]]
+                    if scope.policy_version == SAMPLED_GROUPING_POLICY_VERSION:
+                        ids = list(
+                            TraceInvestigationFinding.no_workspace_objects.filter(
+                                pk__in=ids, cluster__isnull=True
+                            ).values_list("id", flat=True)
+                        )
+                        ids = sorted(str(item) for item in ids)
+                    count = len(ids)
                     if not count or pending_count + count > 100:
                         if peer.id == work.id:
                             raise GroupingSnapshotError(
@@ -492,9 +526,9 @@ def claim_grouping_work(*, worker_id: str, limit: int) -> dict:
                     pending_snapshots.append(candidate)
                     peer_works.append(peer)
                     pending_count += count
+                    pending_occurrence_ids.extend(ids)
             except GroupingSnapshotError:
-                work.state = GroupingWorkState.FAILED
-                work.save(update_fields=["state", "updated_at"])
+                park_work(work, "snapshot_invalid")
                 continue
             snapshot = pending_snapshots[0]
             cohort_digest = canonical_snapshot_digest(
@@ -513,14 +547,20 @@ def claim_grouping_work(*, worker_id: str, limit: int) -> dict:
             scope.lease_fence = F("lease_fence") + 1
             scope.save(update_fields=["lease_fence", "updated_at"])
             scope.refresh_from_db(fields=["lease_fence"])
-            work.attempt_number += 1
             for peer in peer_works:
+                if (
+                    scope.policy_version == SAMPLED_GROUPING_POLICY_VERSION
+                    and not peer.budget_work_id
+                    and peer.id != (work.budget_work_id or work.id)
+                ):
+                    peer.budget_work_id = work.budget_work_id or work.id
+                    peer.save(update_fields=["budget_work", "updated_at"])
                 peer.state = GroupingWorkState.RUNNING
+                # Each peer consumes its own allowance even when histories differ.
+                peer.attempt_number += 1
+                peer.save(update_fields=["attempt_number", "state", "updated_at"])
                 if peer.id == work.id:
-                    peer.attempt_number = work.attempt_number
-                    peer.save(update_fields=["attempt_number", "state", "updated_at"])
-                else:
-                    peer.save(update_fields=["state", "updated_at"])
+                    work.attempt_number = peer.attempt_number
             attempt = TraceGroupingAttempt.no_workspace_objects.create(
                 work=work,
                 attempt_number=work.attempt_number,
@@ -531,6 +571,7 @@ def claim_grouping_work(*, worker_id: str, limit: int) -> dict:
                 snapshot_digest=cohort_digest,
                 registry_revision=scope.registry_revision,
                 claimed_work_ids=[str(item.id) for item in peer_works],
+                pending_occurrence_ids=pending_occurrence_ids,
                 checkpoint=previous.checkpoint if reusable_checkpoint else {},
                 checkpoint_revision=(
                     previous.checkpoint_revision if reusable_checkpoint else 0
@@ -542,9 +583,68 @@ def claim_grouping_work(*, worker_id: str, limit: int) -> dict:
 
     claims = []
     for attempt, token, snapshot, pending_snapshots in claimed:
-        context = build_claim_context(
-            attempt=attempt, pending_snapshots=pending_snapshots
-        )
+        try:
+            context = build_claim_context(
+                attempt=attempt, pending_snapshots=pending_snapshots
+            )
+        except Exception as error:
+            # The claim was already committed, but no worker has its token.
+            # Record and release it instead of leaving a silently dead lease.
+            from tracer.services.grouping.failure import fail_grouping_attempt
+
+            code = "grouping_worker_error"
+            if isinstance(error, GroupingConflict):
+                reason = str(error)
+                if reason in {
+                    "candidate context exceeds response bound",
+                    "candidate index exceeds bounded window",
+                    "candidate constraint window exceeds bound",
+                    "candidate hard-constraint window exceeds bound",
+                }:
+                    code = "context_budget"
+                elif reason in {
+                    "candidate registry changed while building claim",
+                    "candidate issue full membership changed",
+                    "candidate evidence sample changed",
+                }:
+                    code = "grouping_conflict"
+                else:
+                    code = "control_rejected"
+            elif isinstance(error, GroupingSnapshotError):
+                code = "snapshot_invalid"
+            elif isinstance(
+                error,
+                (
+                    InterfaceError,
+                    OperationalError,
+                    ConnectionError,
+                    TimeoutError,
+                    NetworkError,
+                    SocketTimeoutError,
+                ),
+            ):
+                code = "control_server_error"
+            # Keep diagnostic frames without exception text, SQL, or locals
+            # that may contain source evidence or credentials.
+            logger.error(
+                "grouping_claim_context_failed",
+                attempt_id=str(attempt.id),
+                work_id=str(attempt.work_id),
+                failure_code=code,
+                exception_type=type(error).__name__,
+                error_traceback=[
+                    {
+                        "file": frame.filename.rsplit("/", 1)[-1],
+                        "function": frame.name,
+                        "line": frame.lineno,
+                    }
+                    for frame in traceback.extract_tb(error.__traceback__)
+                ],
+            )
+            fail_grouping_attempt(
+                attempt_id=attempt.id, lease_token=token, failure_code=code
+            )
+            continue
         attempt.refresh_from_db(
             fields=["checkpoint", "checkpoint_revision", "candidate_digest"]
         )
@@ -573,11 +673,7 @@ def claim_grouping_work(*, worker_id: str, limit: int) -> dict:
                 "snapshot": snapshot,
                 "snapshot_digest": attempt.snapshot_digest,
                 "pending_snapshots": pending_snapshots,
-                "pending_ids": [
-                    item["occurrence_id"]
-                    for snap in pending_snapshots
-                    for item in snap["occurrences"]
-                ],
+                "pending_ids": attempt.pending_occurrence_ids,
                 "checkpoint": attempt.checkpoint,
                 "checkpoint_revision": attempt.checkpoint_revision,
                 "receipt_ids": [
@@ -598,9 +694,15 @@ def claim_grouping_work(*, worker_id: str, limit: int) -> dict:
 
 
 def update_grouping_attempt(
-    *, attempt_id: uuid.UUID, lease_token: str, action: str
+    *, attempt_id: uuid.UUID, lease_token: str, action: str, failure_code: str = ""
 ) -> dict:
-    if action not in {"renew", "cancel"}:
+    if action == "fail":
+        from tracer.services.grouping.failure import fail_grouping_attempt
+
+        return fail_grouping_attempt(
+            attempt_id=attempt_id, lease_token=lease_token, failure_code=failure_code
+        )
+    if failure_code or action not in {"renew", "cancel"}:
         raise GroupingControlError("unsupported grouping attempt action")
     with transaction.atomic():
         _, attempt = lock_attempt_scope(attempt_id=attempt_id, lease_token=lease_token)

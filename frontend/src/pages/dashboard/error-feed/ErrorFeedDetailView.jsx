@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Box,
   Button,
@@ -17,6 +17,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import Iconify from "src/components/iconify";
 import {
   useErrorFeedDetail,
+  useErrorFeedRedirect,
   useUpdateErrorFeedIssue,
 } from "src/api/errorFeed/error-feed";
 import ErrorStatusChip from "./components/ErrorStatusChip";
@@ -102,7 +103,21 @@ export default function ErrorFeedDetailView() {
   const setAnalyzePendingStart = useErrorFeedStore(
     (s) => s.setAnalyzePendingStart,
   );
-  const { data: detail, isLoading } = useErrorFeedDetail(id);
+  const {
+    data: redirect,
+    isLoading: redirectLoading,
+    isError: redirectError,
+  } = useErrorFeedRedirect(id);
+  const resolvedId = redirect?.resolved_cluster_id;
+  useEffect(() => {
+    if (resolvedId && resolvedId !== id) {
+      navigate(`/dashboard/error-feed/${resolvedId}`, { replace: true });
+    }
+  }, [id, navigate, resolvedId]);
+  const { data: detail, isLoading } = useErrorFeedDetail(id, {
+    enabled: resolvedId === id,
+    retry: false,
+  });
   const updateIssue = useUpdateErrorFeedIssue();
 
   const currentError = useMemo(() => {
@@ -118,8 +133,17 @@ export default function ErrorFeedDetailView() {
 
   useAnalyzeRunner(currentError?.cluster_id, currentError);
 
-  if (isLoading || !currentError) {
+  if (redirectLoading || (resolvedId === id && isLoading)) {
     return <DetailSkeleton />;
+  }
+  if (redirectError || !redirect) {
+    return <Box p={3}>This group could not be found.</Box>;
+  }
+  if (resolvedId !== id) {
+    return <DetailSkeleton />;
+  }
+  if (!currentError) {
+    return <Box p={3}>This group could not be loaded.</Box>;
   }
 
   const tabIndex = TABS.findIndex((t) => t.key === activeTab);
