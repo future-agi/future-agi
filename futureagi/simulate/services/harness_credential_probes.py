@@ -17,6 +17,7 @@ from urllib.parse import quote, urlparse
 
 import requests
 import structlog
+from google.protobuf import json_format
 
 from tfc.utils.lazy_extras import load_extra
 
@@ -227,10 +228,16 @@ def probe_all(values: Mapping[str, str]) -> list[ProbeResult]:
     ]
 
 
-def _is_livekit_agent(participant: Mapping[str, Any]) -> bool:
-    return participant.get("kind") == "AGENT" or str(
-        participant.get("identity") or ""
-    ).startswith("agent-")
+def _dispatched_identities(livekit_api: Any, listing: dict[str, Any]) -> set[str]:
+    response = json_format.ParseDict(
+        listing, livekit_api.ListAgentDispatchResponse(), ignore_unknown_fields=True
+    )
+    return {
+        job.state.participant_identity
+        for dispatch in response.agent_dispatches
+        for job in dispatch.state.jobs
+        if job.state.participant_identity
+    }
 
 
 def probe_livekit_agent(
@@ -290,19 +297,31 @@ def probe_livekit_agent(
             {"name": room, "empty_timeout": LIVEKIT_AGENT_JOIN_TIMEOUT_SECONDS + 15},
         )
         try:
-            call(
+            dispatch = call(
                 "AgentDispatchService",
                 "CreateDispatch",
                 {"agent_name": agent_name, "room": room},
             )
+            dispatch_id = dispatch.get("id") or ""
             deadline = time.monotonic() + LIVEKIT_AGENT_JOIN_TIMEOUT_SECONDS
-            while time.monotonic() < deadline:
-                listing = call("RoomService", "ListParticipants", {"room": room})
-                participants = listing.get("participants") or []
-                if any(_is_livekit_agent(item) for item in participants):
-                    return result(
-                        True, f"LiveKit agent '{agent_name}' joined a test room"
-                    )
+            while dispatch_id and time.monotonic() < deadline:
+                identities = _dispatched_identities(
+                    livekit_api,
+                    call(
+                        "AgentDispatchService",
+                        "ListDispatch",
+                        {"dispatch_id": dispatch_id, "room": room},
+                    ),
+                )
+                if identities:
+                    listing = call("RoomService", "ListParticipants", {"room": room})
+                    if any(
+                        item.get("identity") in identities
+                        for item in listing.get("participants") or []
+                    ):
+                        return result(
+                            True, f"LiveKit agent '{agent_name}' joined a test room"
+                        )
                 time.sleep(LIVEKIT_AGENT_POLL_SECONDS)
         finally:
             try:

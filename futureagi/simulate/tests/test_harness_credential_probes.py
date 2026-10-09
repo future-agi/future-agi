@@ -62,9 +62,37 @@ def test_target_probe_waits_for_the_dedicated_provider_key():
     assert probe_provider_target("retell", "agent", {}) is None
 
 
-def _livekit_server(polls=(), status=200, error=None):
+TARGET_IDENTITY = "agent-AJ_target"
+UNRELATED_AGENT = {"identity": "agent-default-worker", "kind": "AGENT"}
+
+
+def _dispatch_listing(identities, camel=False):
+    dispatches, identity = (
+        ("agentDispatches", "participantIdentity")
+        if camel
+        else ("agent_dispatches", "participant_identity")
+    )
+    return {
+        dispatches: [
+            {
+                "id": "AD_1",
+                "state": {
+                    "jobs": [
+                        {"id": f"AJ_{index}", "state": {identity: value}}
+                        for index, value in enumerate(identities)
+                    ]
+                },
+            }
+        ]
+    }
+
+
+def _livekit_server(
+    jobs=(), participants=(), status=200, error=None, dispatch_id="AD_1", camel=False
+):
     calls = []
-    remaining = iter(polls)
+    job_polls = iter(jobs)
+    participant_polls = iter(participants)
 
     def post(url, headers, json, timeout):
         method = url.rsplit("/", 1)[-1]
@@ -78,26 +106,25 @@ def _livekit_server(polls=(), status=200, error=None):
             )
             return response
         response.raise_for_status.return_value = None
-        response.json.return_value = (
-            {"participants": next(remaining, [])}
-            if method == "ListParticipants"
-            else {}
-        )
+        responses = {
+            "CreateDispatch": lambda: {"id": dispatch_id} if dispatch_id else {},
+            "ListDispatch": lambda: _dispatch_listing(next(job_polls, []), camel),
+            "ListParticipants": lambda: {"participants": next(participant_polls, [])},
+        }
+        response.json.return_value = responses.get(method, dict)()
         return response
 
     return post, calls
 
 
-@pytest.mark.parametrize(
-    "agent",
-    [
-        {"identity": "agent-AJ_1", "kind": "AGENT"},
-        {"identity": "agent-AJ_2"},
-    ],
-)
+@pytest.mark.parametrize("camel", [False, True])
 @patch("simulate.services.harness_credential_probes.time.sleep")
-def test_livekit_target_probe_passes_once_the_agent_joins(sleep, agent):
-    post, calls = _livekit_server(polls=[[], [agent]])
+def test_livekit_target_probe_passes_once_the_dispatched_agent_joins(sleep, camel):
+    post, calls = _livekit_server(
+        jobs=[[], [TARGET_IDENTITY]],
+        participants=[[UNRELATED_AGENT, {"identity": TARGET_IDENTITY}]],
+        camel=camel,
+    )
 
     with patch("simulate.services.harness_credential_probes.requests.post", post):
         result = probe_provider_target("livekit", " returns-agent ", LIVEKIT_VALUES)
@@ -110,31 +137,62 @@ def test_livekit_target_probe_passes_once_the_agent_joins(sleep, agent):
     assert methods == [
         "CreateRoom",
         "CreateDispatch",
-        "ListParticipants",
+        "ListDispatch",
+        "ListDispatch",
         "ListParticipants",
         "DeleteRoom",
     ]
     room = calls[0][1]["name"]
     assert calls[0][1]["empty_timeout"] > LIVEKIT_AGENT_JOIN_TIMEOUT_SECONDS
     assert calls[1][1] == {"agent_name": "returns-agent", "room": room}
+    assert calls[2][1] == {"dispatch_id": "AD_1", "room": room}
     assert calls[-1][1] == {"room": room}
 
 
-def test_livekit_target_probe_ignores_participants_that_are_not_agents():
-    post, calls = _livekit_server(polls=[[{"identity": "caller", "kind": "STANDARD"}]])
-
+def _probe_until_deadline(post, ticks):
     with (
         patch("simulate.services.harness_credential_probes.requests.post", post),
         patch("simulate.services.harness_credential_probes.time.sleep"),
         patch(
             "simulate.services.harness_credential_probes.time.monotonic",
-            side_effect=[0.0, 0.0, 9.0],
+            side_effect=ticks,
         ),
     ):
-        result = probe_provider_target("livekit", "returns-agent", LIVEKIT_VALUES)
+        return probe_provider_target("livekit", "typo-agent", LIVEKIT_VALUES)
+
+
+def test_livekit_target_probe_ignores_an_unrelated_agent_while_unassigned():
+    post, calls = _livekit_server(participants=[[UNRELATED_AGENT]])
+
+    result = _probe_until_deadline(post, [0.0, 0.0, 9.0])
+
+    assert result is not None and result.ok is False
+    assert "ListParticipants" not in [method for method, _ in calls]
+
+
+def test_livekit_target_probe_waits_for_the_assigned_identity_to_join():
+    post, calls = _livekit_server(
+        jobs=[[TARGET_IDENTITY]], participants=[[UNRELATED_AGENT]]
+    )
+
+    result = _probe_until_deadline(post, [0.0, 0.0, 9.0])
 
     assert result is not None and result.ok is False
     assert [method for method, _ in calls].count("ListParticipants") == 1
+
+
+def test_livekit_target_probe_fails_without_a_dispatch_id():
+    post, calls = _livekit_server(dispatch_id="")
+
+    with patch("simulate.services.harness_credential_probes.requests.post", post):
+        result = probe_provider_target("livekit", "returns-agent", LIVEKIT_VALUES)
+
+    assert result is not None and result.ok is False
+    assert [method for method, _ in calls] == [
+        "CreateRoom",
+        "CreateDispatch",
+        "DeleteRoom",
+    ]
 
 
 def test_livekit_target_probe_fails_when_no_agent_joins_in_time():
@@ -157,7 +215,7 @@ def test_livekit_target_probe_fails_when_no_agent_joins_in_time():
         f"{LIVEKIT_AGENT_JOIN_TIMEOUT_SECONDS}s; check the agent name and that "
         "the agent is running on this LiveKit project"
     )
-    assert [method for method, _ in calls].count("ListParticipants") == 2
+    assert [method for method, _ in calls].count("ListDispatch") == 2
     assert calls[-1][0] == "DeleteRoom"
 
 
@@ -201,7 +259,9 @@ def test_livekit_target_probe_reports_an_unreachable_server():
 
 @patch("simulate.services.harness_credential_probes.time.sleep")
 def test_livekit_target_probe_still_reports_the_join_when_cleanup_fails(sleep):
-    post, calls = _livekit_server(polls=[[{"identity": "agent-AJ_1"}]])
+    post, calls = _livekit_server(
+        jobs=[[TARGET_IDENTITY]], participants=[[{"identity": TARGET_IDENTITY}]]
+    )
 
     def post_with_failing_delete(url, headers, json, timeout):
         if url.endswith("/DeleteRoom"):
