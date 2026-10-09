@@ -61780,6 +61780,72 @@
                 }
             ]
         },
+        "/tracer/feed/issues/{cluster_id}/redirect/": {
+            "get": {
+                "operationId": "tracer_feed_issues_redirect_list",
+                "description": "Resolve an old issue ID to its active redirect target.",
+                "parameters": [
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/FeedRedirectApiResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "cluster_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/tracer/feed/issues/{cluster_id}/root-cause/": {
             "get": {
                 "operationId": "tracer_feed_issues_root-cause_list",
@@ -142924,6 +142990,41 @@
                 }
             }
         },
+        "FeedRedirect": {
+            "required": [
+                "requested_cluster_id",
+                "resolved_cluster_id"
+            ],
+            "type": "object",
+            "properties": {
+                "requested_cluster_id": {
+                    "title": "Requested cluster id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "resolved_cluster_id": {
+                    "title": "Resolved cluster id",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "FeedRedirectApiResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "$ref": "#/definitions/FeedRedirect"
+                }
+            }
+        },
         "RootCause": {
             "required": [
                 "rank",
@@ -144187,8 +144288,15 @@
                     "type": "string",
                     "enum": [
                         "renew",
-                        "cancel"
+                        "cancel",
+                        "fail"
                     ]
+                },
+                "failure_code": {
+                    "title": "Failure code",
+                    "type": "string",
+                    "default": "",
+                    "maxLength": 100
                 }
             }
         },
@@ -144197,6 +144305,11 @@
             "properties": {
                 "state": {
                     "title": "State",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "failure_code": {
+                    "title": "Failure code",
                     "type": "string",
                     "minLength": 1
                 },
