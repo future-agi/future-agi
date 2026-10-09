@@ -3,7 +3,8 @@ export interface FlowMeta {
   area: string;          // catalog grouping = flows/<area>/
   userGoal: string;
   steps: string[];       // the user actions, in order
-  backendChecks: string[];
+  backendChecks?: string[];
+  browserChecks?: string[]; // browser observations; no backend state verified
 }
 
 export function flowAnnotation(meta: FlowMeta): { type: 'flow'; description: string } {

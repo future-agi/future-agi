@@ -25592,6 +25592,18 @@ export interface OverviewApiResponseApi {
   result: OverviewResponseApi;
 }
 
+export interface FeedRedirectApi {
+  /** @minLength 1 */
+  requested_cluster_id: string;
+  /** @minLength 1 */
+  resolved_cluster_id: string;
+}
+
+export interface FeedRedirectApiResponseApi {
+  status?: boolean;
+  result: FeedRedirectApi;
+}
+
 export interface RootCauseApi {
   rank: number;
   /** @minLength 1 */
@@ -35190,6 +35202,10 @@ export type TracerFeedIssuesOverviewListParams = {
    * @maximum 200
    */
   rep_limit?: number;
+};
+
+export type TracerFeedIssuesRedirectListParams = {
+  project_id?: string;
 };
 
 export type TracerFeedIssuesRootCauseListParams = {
