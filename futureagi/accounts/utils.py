@@ -384,12 +384,8 @@ COMMUNITY_OWNER_ACCOUNT_REFUSAL = (
 )
 
 
-def create_owner_account(email, full_name, password):
-    """An account that owns a new organization, as a first signup creates it:
-    ``manage.py create_user`` and the Helm chart's first admin
-    (``bootstrap_install``). Raises ValidationError, with messages for the
-    operator, for a missing field, a malformed or taken email, a password
-    AUTH_PASSWORD_VALIDATORS reject, or a second organization on Community,
+def _validate_new_account(email, full_name, password):
+    """The operator-facing checks every command-line account shares, run
     before anything is created."""
     if not email or not full_name or not password:
         raise ValidationError("Email, name, and password are all required.")
@@ -399,6 +395,16 @@ def create_owner_account(email, full_name, password):
         raise ValidationError(f"A user with the email {email} already exists.")
     # UserSignupSerializer trims the password before it validates and stores it.
     validate_password(password.strip())
+
+
+def create_owner_account(email, full_name, password):
+    """An account that owns a new organization, as a first signup creates it:
+    the Helm chart's first admin (``bootstrap_install``), and
+    ``manage.py create_user`` while the install has no organization yet.
+    Raises ValidationError, with messages for the operator, for a missing
+    field, a malformed or taken email, a password AUTH_PASSWORD_VALIDATORS
+    reject, or a second organization on Community, before anything is created."""
+    _validate_new_account(email, full_name, password)
     try:
         return first_signup(
             {
@@ -410,6 +416,97 @@ def create_owner_account(email, full_name, password):
         )
     except EnterpriseFeatureRequired:
         raise ValidationError(COMMUNITY_OWNER_ACCOUNT_REFUSAL) from None
+
+
+def create_install_account(email, full_name, password):
+    """``manage.py create_user`` (install notes step 3; bin/install and
+    bin/install.ps1 pipe the first account's password into it).
+
+    The first account on an install owns its new organization, as before.
+    On Community, once the install has its one organization, a later account
+    joins that organization and its workspace as a member, under the same
+    locked seat check as the invite endpoints; a 4th member is refused with
+    the member gate's text. Licensed and Cloud installs are unchanged: every
+    account owns a new organization.
+    """
+    if not edition.edition_rule_applies() or not Organization.objects.exists():
+        return create_owner_account(email, full_name, password)
+    _validate_new_account(email, full_name, password)
+    try:
+        return _join_community_organization(email, full_name, password.strip())
+    except EnterpriseFeatureRequired as exc:
+        raise ValidationError(str(exc.detail)) from None
+
+
+def _join_community_organization(email, full_name, password):
+    from accounts.models.workspace import Workspace
+    from accounts.services.workspace_membership import create_workspace_membership
+    from tfc.constants.roles import OrganizationRoles
+
+    email = email.strip().lower()
+    with edition.creation_lock():
+        # Community has one organization; an install already over the limit
+        # (grandfathered) uses its oldest, the one the first account created.
+        organization = Organization.objects.order_by("created_at").first()
+        edition.assert_can_create(
+            EditionResource.MEMBER,
+            organization=organization,
+            new_member_emails=[email],
+        )
+        user = User.objects.create_user(
+            email=email,
+            password=password,
+            name=full_name,
+            organization=organization,
+            organization_role=OrganizationRoles.MEMBER,
+            is_active=True,
+        )
+        membership, _ = OrganizationMembership.all_objects.update_or_create(
+            user=user,
+            organization=organization,
+            defaults={
+                "level": Level.MEMBER,
+                "role": Level.to_org_string(Level.MEMBER),
+                "is_active": True,
+                "deleted": False,
+                "deleted_at": None,
+            },
+        )
+        workspace = (
+            Workspace.no_workspace_objects.filter(
+                organization=organization, is_active=True
+            )
+            .order_by("-is_default", "created_at")
+            .first()
+        )
+        if workspace is None:
+            # The owner has not signed in yet, so the organization has no
+            # workspace. Create its default one here: otherwise this member's
+            # first sign-in would create it and make them its admin.
+            owner = (
+                OrganizationMembership.no_workspace_objects.filter(
+                    organization=organization, level=Level.OWNER, is_active=True
+                )
+                .select_related("user")
+                .order_by("joined_at")
+                .first()
+            )
+            workspace = Workspace.objects.create(
+                name="Default Workspace",
+                organization=organization,
+                is_default=True,
+                is_active=True,
+                created_by=owner.user if owner else user,
+            )
+        create_workspace_membership(
+            workspace=workspace,
+            user=user,
+            role=OrganizationRoles.WORKSPACE_MEMBER,
+            level=Level.WORKSPACE_MEMBER,
+            organization_membership=membership,
+            is_active=True,
+        )
+    return user
 
 
 def persist_pending_org_invite(

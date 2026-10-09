@@ -5,7 +5,11 @@ from django.core.management.base import BaseCommand, CommandError
 
 
 class Command(BaseCommand):
-    help = "Create a new user account"
+    help = (
+        "Create a user account. The first account owns the install's new "
+        "organization; on Community a later account joins that organization "
+        "as a member (up to 3 members)."
+    )
 
     def add_arguments(self, parser):
         parser.add_argument("--email", help="User email address")
@@ -17,10 +21,10 @@ class Command(BaseCommand):
         name = options["name"] or input("Full name: ").strip()
         password = options["password"] or getpass.getpass("Password: ")
 
-        from accounts.utils import create_owner_account
+        from accounts.utils import create_install_account
 
         try:
-            user = create_owner_account(email, name, password)
+            user = create_install_account(email, name, password)
         except ValidationError as exc:
             raise CommandError("\n".join(exc.messages)) from None
         self.stdout.write(

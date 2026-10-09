@@ -22,7 +22,7 @@ from accounts.models.organization import Organization
 from accounts.models.organization_invite import OrganizationInvite
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import User
-from accounts.models.workspace import Workspace
+from accounts.models.workspace import Workspace, WorkspaceMembership
 from tfc.capabilities import edition
 from tfc.capabilities.errors import EnterpriseFeatureRequired
 from tfc.capabilities.tests.edition_factories import (
@@ -102,6 +102,19 @@ def fill_seats(organization, total=3):
     return [make_member(organization) for _ in range(total - current)]
 
 
+def _create_user(email):
+    """``manage.py create_user`` as install notes step 3 shows it."""
+    call_command(
+        "create_user",
+        "--email",
+        email,
+        "--name",
+        "Edition Person",
+        "--password",
+        "Edition-Passw0rd!9",
+    )
+
+
 def _signup_payload(email):
     return {
         "email": email,
@@ -156,20 +169,72 @@ class TestSignupAndBootstrap:
         )
         assert Organization.objects.count() == 1
 
-    def test_second_create_user_gives_an_operator_error(self, community, organization):
-        """AC-08 / O8 (C1): a second create_user is a readable CommandError."""
+    def test_second_create_user_joins_the_organization_as_member(self, community):
+        """AC-08 / O8: install notes step 3 (a second account with
+        manage.py create_user) works on Community. The account joins the
+        install's one organization and workspace as a member, under the same
+        locked seat check as invites, instead of needing a second organization."""
+        _create_user("admin@example.com")
+        organization = Organization.objects.get()
+        owner = User.objects.get(email="admin@example.com")
+
+        _create_user("second@example.com")
+
+        assert Organization.objects.count() == 1
+        member = User.objects.get(email="second@example.com")
+        assert member.check_password("Edition-Passw0rd!9")
+        assert member.is_active
+        assert member.organization_id == organization.id
+        assert member.organization_role == OrganizationRoles.MEMBER
+        membership = OrganizationMembership.no_workspace_objects.get(
+            user=member, organization=organization
+        )
+        assert (membership.level, membership.is_active) == (Level.MEMBER, True)
+        workspace = Workspace.no_workspace_objects.get(organization=organization)
+        assert workspace.is_default and workspace.is_active
+        ws_membership = WorkspaceMembership.no_workspace_objects.get(
+            user=member, workspace=workspace
+        )
+        assert (ws_membership.level, ws_membership.is_active) == (
+            Level.WORKSPACE_MEMBER,
+            True,
+        )
+        assert ws_membership.organization_membership_id == membership.id
+        # The first account is still the only owner.
+        assert OrganizationMembership.no_workspace_objects.get(
+            user=owner, organization=organization
+        ).level == Level.OWNER
+        assert edition.count(edition.EditionResource.MEMBER, organization=organization) == 2
+
+    def test_create_user_past_three_members_gives_the_enterprise_message(
+        self, community
+    ):
+        """AC-08 / O8: the 4th account is refused with the member gate's text
+        and nothing is created."""
+        for email in ("admin@example.com", "second@example.com", "third@example.com"):
+            _create_user(email)
+        organization = Organization.objects.get()
+
         with pytest.raises(CommandError) as exc_info:
-            call_command(
-                "create_user",
-                "--email",
-                "second-admin@example.com",
-                "--name",
-                "Second",
-                "--password",
-                "Edition-Passw0rd!9",
-            )
-        assert str(exc_info.value) == COMMUNITY_ORG_REFUSAL
-        assert not User.objects.filter(email="second-admin@example.com").exists()
+            _create_user("fourth@example.com")
+
+        assert str(exc_info.value) == edition.refusal_message(
+            edition.EditionResource.MEMBER
+        )
+        assert not User.objects.filter(email="fourth@example.com").exists()
+        assert edition.count(edition.EditionResource.MEMBER, organization=organization) == 3
+        assert Organization.objects.count() == 1
+
+    def test_create_user_counts_pending_invites_as_seats(self, community):
+        """A pending invite holds a seat, as it does for the invite endpoints."""
+        _create_user("admin@example.com")
+        organization = Organization.objects.get()
+        make_invite(organization, "pending-1@example.com")
+        make_invite(organization, "pending-2@example.com")
+
+        with pytest.raises(CommandError):
+            _create_user("fourth@example.com")
+        assert not User.objects.filter(email="fourth@example.com").exists()
 
     def test_bootstrap_install_first_admin_reports_the_rule(
         self, community, organization
@@ -873,8 +938,11 @@ _CREATION_PATTERN = (
 _ALLOWED_CREATION_SITES = {
     # O1/O8 first_signup + create_owner_account (gated) and the new owner's
     # membership; pending-invite persistence for invited users (seat counted
-    # by the calling view).
-    "accounts/utils.py": 3,
+    # by the calling view); manage.py create_user joining the Community
+    # organization (member seat gated under creation_lock) with its
+    # membership and, when the owner has not signed in yet, the org's one
+    # default workspace (the workspace count is 0 there).
+    "accounts/utils.py": 5,
     # O3/O4 (gated) incl. their owner membership and default workspace (W5).
     "accounts/views/organization_views.py": 6,
     # O2 activation (gated) and its owner membership.

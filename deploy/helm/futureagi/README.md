@@ -283,6 +283,8 @@ kubectl -n futureagi exec deploy/futureagi-backend -c backend -- python manage.p
 The password must pass the sign-up rules: 8+ characters, not a common
 password, not all digits. Or let the bootstrap job create the first admin
 from a Secret (`bootstrap.admin.existingSecret`), which suits GitOps.
+Running `create_user` again adds more accounts: on the Community edition each
+joins the first account's organization as a member (up to 3 members).
 
 Traces go to fi-collector over OpenTelemetry, with the API keys from the UI;
 [OTLP](#otlp) lists the endpoints. `helm test futureagi -n futureagi`
