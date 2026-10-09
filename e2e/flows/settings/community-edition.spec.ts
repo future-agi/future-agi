@@ -13,7 +13,10 @@ const SETUP = '/setup';
 const REGISTER = /\/auth\/jwt\/register/;
 const SETUP_ORG = /\/auth\/jwt\/setup-org/;
 const GET_STARTED_PATH = '/dashboard/get-started';
-const GET_STARTED = /\/dashboard\/get-started$/;
+// GetStartedView.jsx writes ?tab=<first unfinished step> once the onboarding
+// status loads, so a slower browser sees /dashboard/get-started?tab=addKeys.
+// Anchoring on the bare path raced that write (failed under slowMo).
+const GET_STARTED = /\/dashboard\/get-started(\?.*)?$/;
 const PLAN_LICENSE = '/dashboard/settings/ee-licenses';
 const USERS = '/dashboard/settings/user-management';
 const WORKSPACES = '/dashboard/settings/workspace';
