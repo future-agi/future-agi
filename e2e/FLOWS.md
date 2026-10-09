@@ -32,6 +32,30 @@
 - the header button carries the window spanning every fire
 - the monitor’s span-type filter travels in the link and renders as a chip
 
+### ALERT-E2E-002 — a scoring-eval alert measures the score while a labelled eval alerts on a chosen label
+
+**Goal:** A user sets up an alert on a scoring evaluation and it measures the score itself, while a labelled evaluation still alerts on a chosen label  
+**Spec:** `flows/alerts/scoring-eval-alert.spec.ts:26`  
+**Tags:** —
+
+**User steps:**
+
+1. seed a scoring eval (with labels) and a choices eval on a new project
+2. create an alert on the scoring eval with no chosen label
+3. try to create an alert on the scoring eval with a label
+4. try to create an alert on the choices eval with no label
+5. create an alert on the choices eval with a valid label
+6. open the alerts list and read each alert’s Alert Type
+
+**Backend state verified:**
+
+- scoring-eval alert with no label is created (POST /tracer/user-alerts/ 201)
+- scoring-eval alert with a label is rejected: must be empty for evals without predefined choices
+- choices-eval alert with no label is rejected: required for evals with predefined choices
+- choices-eval alert with a valid label is created
+- PG tracer_useralertmonitor: the scoring monitor’s threshold_metric_value is NULL, the choices monitor’s is the label, both org-scoped
+- alerts list shows the scoring alert’s Alert Type as the bare eval name and the choices alert’s as "name (label)"
+
 ## annotations
 
 ### ANNOT-E2E-001 — workspace annotation choices follow UI edits without scores
@@ -448,6 +472,81 @@
 - This flow's exact publicly produced source identities and typed latest facts are present and unchanged outside its authorized UI actions.
 - The preview, saved binding and reopened widget equal this flow's independently specified filtered and grouped result.
 
+### DASH-E2E-013 — widget y-axis fits its data unless a bound is typed
+
+**Goal:** A user reading a dashboard widget gets a y-axis sized to the data, and can override it by typing a Threshold Bound  
+**Spec:** `flows/dashboards/widget-y-axis.spec.ts:450`  
+**Tags:** —
+
+**User steps:**
+
+1. seed traces whose per-minute latency peaks are 7043 ms and 219 ms
+2. create a dashboard holding one latency widget with no typed bounds
+3. open the dashboard and read the rendered y-axis
+4. save a Threshold Bound maximum of 10000 on the widget and re-read the axis
+5. save a non-numeric maximum and re-read the axis
+
+**Backend state verified:**
+
+- the widget query returns exactly the seeded per-bucket peaks (7043, 219) for latency/max
+- chart_config.axis_config.left_y round-trips each typed maximum through the widget detail endpoint
+
+### DASH-E2E-014 — Out of Bounds decides whether a typed bound clips the data
+
+**Goal:** A user who typed a Threshold Bound tighter than their data chooses whether the chart widens to keep every point visible or clips at the bound  
+**Spec:** `flows/dashboards/widget-y-axis.spec.ts:531`  
+**Tags:** —
+
+**User steps:**
+
+1. seed traces whose per-minute latency peaks are 7043 ms and 219 ms
+2. create a dashboard holding one latency widget whose maximum is 5000 and Out of Bounds is Visible
+3. open the dashboard and read the axis and the plotted points
+4. save the same maximum with Out of Bounds set to Hidden and re-read
+5. clear the maximum, save a minimum of 1000, and re-read
+
+**Backend state verified:**
+
+- the widget query returns exactly the seeded per-bucket peaks (7043, 219) for latency/max
+- chart_config.axis_config.left_y round-trips out_of_bounds and the typed min/max for each setting
+
+### DASH-E2E-015 — a dual-axis widget keeps one scale per side and keeps it when a series is hidden
+
+**Goal:** A user plotting a large and a small metric together assigns one of them to the right axis, reads both off their own scale, and keeps that layout after hiding a series  
+**Spec:** `flows/dashboards/widget-y-axis.spec.ts:612`  
+**Tags:** —
+
+**User steps:**
+
+1. seed traces giving a 7043 ms latency peak alongside per-minute counts of 9 and 2
+2. create a dashboard holding one widget over latency, span count and trace count
+3. assign the trace-count series to the right axis
+4. open the dashboard and read both axes and where every series is plotted
+5. save a visible-series list that hides the latency series, and re-read both axes
+
+**Backend state verified:**
+
+- the widget query returns all three metrics in the configured order with the seeded values
+- chart_config.axis_config.series_axis and chart_config.visible_series round-trip through the widget detail endpoint
+
+### DASH-E2E-016 — a column widget keeps its bars proportional while a line widget fits the band
+
+**Goal:** A user switching a widget to columns reads bar heights that are true to their values, while the same data on a line widget still gets the tight fitted axis  
+**Spec:** `flows/dashboards/widget-y-axis.spec.ts:715`  
+**Tags:** —
+
+**User steps:**
+
+1. seed traces whose per-minute latency maxima form a narrow band above zero — 190, 250 and 210 ms
+2. create a dashboard holding one column widget over that latency metric, with no typed bounds
+3. open the dashboard and read the rendered y-axis and every bar height
+4. switch the same widget to a line chart and re-read the axis
+
+**Backend state verified:**
+
+- the widget query returns exactly the seeded per-bucket maxima (190, 250, 210) for latency/max
+- chart_config.chart_type round-trips as column and then as line through the widget detail endpoint
+
 ## datasets
 
 ### DATA-E2E-001 — uploaded dataset values can be discovered and filtered
@@ -623,6 +722,7 @@
 - each request stored in PG agentcc_request_log under the key's org with the caller metadata the gateway parsed
 - the list endpoint returns only the rows of the filtered application
 - two applications in one filter return both, a service filter and a team tag filter narrow the same way
+- filtering by the delivering key's gateway_key_id returns all rows stamped with that key, not a 400
 - metadata-values offers exactly the two applications the org sent
 - usage analytics grouped by application counts each application on its own
 - the filtered UI row set equals the API result for the same filter
@@ -873,6 +973,40 @@
 - the dropdown excludes the sibling value and the request preserves the typed custom predicate
 - list and detail return only the matching session and its two source traces
 
+### OBS-E2E-012 — an unreachable recording shows an error, not an endless loader
+
+**Goal:** A user opens a voice call whose recording cannot be fetched and learns that, instead of watching a spinner forever  
+**Spec:** `flows/observe/voice-recording-error.spec.ts:51`  
+**Tags:** —
+
+**User steps:**
+
+1. seed a voice call whose recording URLs 404
+2. open Voice Observe
+3. open the call detail drawer
+4. see "Recording unavailable", with no retry offered
+
+**Backend state verified:**
+
+- the seeded conversation span is queryable in CH
+- voice_call_detail returns the recording URLs unchanged
+
+### OBS-E2E-013 — a voice call with no recording says so
+
+**Goal:** A user opens a voice call that has no recording at all and sees a plain explanation  
+**Spec:** `flows/observe/voice-recording-error.spec.ts:116`  
+**Tags:** —
+
+**User steps:**
+
+1. seed a voice call with no recording attributes
+2. open the call detail drawer
+3. see "No recording found"
+
+**Backend state verified:**
+
+- voice_call_detail reports recording_available false
+
 ### OBS-E2E-020 — duplicate saved-view names are rejected
 
 **Goal:** A user cannot silently overwrite an existing observability view by reusing its name  
@@ -891,6 +1025,189 @@
 - first create returns 200 and persists the view
 - second create with the same (project, user, name) returns 400, not a silent upsert
 - renaming another view onto the taken name returns 400
+
+### OBS-E2E-027 — trace list pager windows forward without an endless page count
+
+**Goal:** A developer paging through a large trace list always knows where they are and when they have reached the end  
+**Spec:** `flows/observe/list-pagination.spec.ts:297`  
+**Tags:** —
+
+**User steps:**
+
+1. seed 45 traces into one project over OTLP
+2. open the project's trace list
+3. set page size to 10 through the pager control
+4. walk forward one page at a time via Next to the true last page
+5. read the page-number window, ellipses and Next/Previous state at every page
+6. step back from the last page and walk forward again
+7. change the page size and confirm the API and the pager both follow
+
+**Backend state verified:**
+
+- all 45 seeded trace_ids present in CH `spans` (FINAL) under the auto-created project
+- project row auto-created in PG tracer_project, scoped to the actor org
+
+### OBS-E2E-028 — Next stays usable through a full Back-Back-Next-Next round trip from the terminal page
+
+**Goal:** A developer bouncing back and forth near the end of a trace list never loses forward navigation  
+**Spec:** `flows/observe/list-pagination.spec.ts:524`  
+**Tags:** —
+
+**User steps:**
+
+1. seed 25 traces into one project over OTLP
+2. open the project's trace list at page size 10 (3 pages)
+3. walk forward to the true last page
+4. step back twice, then forward twice
+5. confirm Next stays enabled throughout and the terminal page looks the same either way it was reached
+
+**Backend state verified:**
+
+- all 25 seeded trace_ids present in CH `spans` (FINAL) under the auto-created project
+
+### OBS-E2E-029 — an exactly-full final page ends pagination without offering a phantom next page
+
+**Goal:** A developer whose trace count divides evenly by the page size sees a real last page, not an empty page N+1  
+**Spec:** `flows/observe/list-pagination.spec.ts:616`  
+**Tags:** —
+
+**User steps:**
+
+1. seed 30 traces (exactly 3 full pages of 10) into one project over OTLP
+2. open the project's trace list at page size 10
+3. walk forward to the third page
+4. confirm no fourth page is offered, Next is disabled, and the grid is not empty
+
+**Backend state verified:**
+
+- all 30 seeded trace_ids present in CH `spans` (FINAL) under the auto-created project
+
+### OBS-E2E-030 — has_more without a strictly greater total promises no page number, but keeps Next enabled
+
+**Goal:** A developer searching a sparse cursor window is never shown a page number the transport cannot prove exists  
+**Spec:** `flows/observe/list-pagination.spec.ts:670`  
+**Tags:** —
+
+**User steps:**
+
+1. seed 25 traces into one project over OTLP
+2. open the project's trace list at page size 10
+3. intercept the page-2 response to report has_more=true with a total equal to the rows already seen
+4. walk to page 2
+5. confirm no cur+1 page number is offered, while Next stays enabled
+
+**Backend state verified:**
+
+- all 25 seeded trace_ids present in CH `spans` (FINAL) under the auto-created project
+
+### OBS-E2E-031 — the Next label DOM node survives ~1.5s of ancestor re-render churn
+
+**Goal:** A developer's pointer never lands on a button whose label React just tore down and rebuilt underneath it  
+**Spec:** `flows/observe/list-pagination.spec.ts:746`  
+**Tags:** —
+
+**User steps:**
+
+1. seed 15 traces into one project over OTLP
+2. open the project's trace list at page size 10 (Next enabled)
+3. confirm the pager's ancestor is actually re-rendering rapidly (INT-06 guard)
+4. capture the Next label's DOM node and watch the pager subtree for ~1.5s
+5. confirm the node is never removed from the DOM and stays connected
+
+**Backend state verified:**
+
+- all 15 seeded trace_ids present in CH `spans` (FINAL) under the auto-created project
+
+### OBS-E2E-032 — a real dwell-click on Next/Back actually fires a click, not just a press
+
+**Goal:** A developer's mouse press on Back/Next always produces a click, even while the ancestor is mid-re-render  
+**Spec:** `flows/observe/list-pagination.spec.ts:812`  
+**Tags:** —
+
+**User steps:**
+
+1. seed 15 traces into one project over OTLP
+2. open the project's trace list at page size 10
+3. confirm the pager's ancestor is actually re-rendering rapidly (INT-06 guard)
+4. install capture-phase pointer/click counters on the pager root
+5. press-dwell-release on Next and confirm the page advanced with pointerdown === click === 1
+6. repeat the same dwell-click on Back
+
+**Backend state verified:**
+
+- all 15 seeded trace_ids present in CH `spans` (FINAL) under the auto-created project
+
+### OBS-E2E-033 — changing page size changes the outbound page_size, the rendered row count, and resets to page 1
+
+**Goal:** A developer who changes results-per-page gets exactly that many rows and starts back at page 1, not a stale mid-list position  
+**Spec:** `flows/observe/list-pagination.spec.ts:881`  
+**Tags:** —
+
+**User steps:**
+
+1. seed 60 traces into one project over OTLP
+2. open the project's trace list at the default page size
+3. change the page size control to 10
+4. confirm the outbound request carries page_size=10, the grid renders 10 rows, and the pager is back on page 1
+
+**Backend state verified:**
+
+- all 60 seeded trace_ids present in CH `spans` (FINAL) under the auto-created project
+
+### OBS-E2E-034 — the agent call-log pager (a plain DRF-paginated, non-cursor screen) still paginates and reaches its last row
+
+**Goal:** A developer browsing an agent version's call logs gets a working pager even though this screen has no cursor `has_more` contract  
+**Spec:** `flows/observe/list-pagination.spec.ts:921`  
+**Tags:** —
+
+**User steps:**
+
+1. seed 12 completed CallExecution rows for one fresh AgentDefinition/AgentVersion directly through the backend (no simulate/voice infra runs in this harness — see e2e/lib/simulate-seed.ts)
+2. open the agent's Call Logs tab for that version
+3. see all 12 calls on one page at the default 25 per page
+4. switch to 10 per page and confirm more than one page is offered
+5. walk forward to the last page
+
+**Backend state verified:**
+
+- the seeded CallExecution rows are scoped to the seeded AgentVersion, status=completed, non-empty eval_outputs — exactly what AgentVersionCallExecutionView filters for
+- AgentVersionCallExecutionView honours the page_size the grid sends
+
+### OBS-E2E-035 — changing the date filter resets pagination to page 1 and drops the old cursor
+
+**Goal:** A developer who narrows the date range never sees stale rows or a stale page position from the filter they just replaced  
+**Spec:** `flows/observe/list-pagination.spec.ts:979`  
+**Tags:** —
+
+**User steps:**
+
+1. seed 45 traces into one project over OTLP
+2. open the project's trace list at page size 10, date range Past 12M
+3. walk forward three pages (into the window where a leading ellipsis has opened)
+4. switch the date filter to Past 30D
+5. confirm the pager resets to page 1 with its page-1 shape, and the resulting request carries no stale cursor
+
+**Backend state verified:**
+
+- all 45 seeded trace_ids present in CH `spans` (FINAL) under the auto-created project
+
+### OBS-E2E-036 — the furthest-visited page reappears as a boundary after walking back to page 1
+
+**Goal:** A developer who has already paged deep into a trace list and jumps back to page 1 can still return straight to the page they left off on  
+**Spec:** `flows/observe/list-pagination.spec.ts:1066`  
+**Tags:** —
+
+**User steps:**
+
+1. seed 45 traces into one project over OTLP
+2. open the project's trace list at page size 10 (5 pages)
+3. walk forward via Next to the true last page (page 5)
+4. jump directly back to page 1 via the pager
+5. confirm page 5 is offered as a right-hand boundary button, is clickable, and navigating to it lands on the true last page again
+
+**Backend state verified:**
+
+- all 45 seeded trace_ids present in CH `spans` (FINAL) under the auto-created project
 
 ## prompts
 

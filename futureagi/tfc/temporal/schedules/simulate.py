@@ -38,6 +38,13 @@ SIMULATE_SCHEDULES: list[ScheduleConfig] = [
         description="Monitor all active chat call executions that have been in ONGOING status for >30 minutes and update their status",
     ),
     ScheduleConfig(
+        schedule_id="sweep-stuck-scoring",
+        activity_name="sweep_stuck_scoring",
+        interval_seconds=60,  # Every minute
+        queue="tasks_s",
+        description="Time out stuck eval/CSAT scoring in evaluating/cancelling simulate runs",
+    ),
+    ScheduleConfig(
         schedule_id="process-prompt-based-chat-simulations",
         activity_name="process_prompt_based_chat_simulations",
         interval_seconds=30,  # Every 30 seconds
@@ -50,5 +57,12 @@ SIMULATE_SCHEDULES: list[ScheduleConfig] = [
         interval_seconds=15,
         queue="default",
         description="Restart hosted environment chat runtimes that died with messages waiting",
+    ),
+    ScheduleConfig(
+        schedule_id="seal-unsealed-hosted-harness-usage",
+        activity_name="seal_unsealed_hosted_harness_usage",
+        interval_seconds=600,
+        queue="default",
+        description="Re-enqueue usage sealing for hosted sandbox cleanups whose seal never ran",
     ),
 ]

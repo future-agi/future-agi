@@ -13,18 +13,20 @@ const to01 = (n) => (n == null ? null : n <= 1 ? n : n / 100);
 // v3 run-results contract sends, where the server has already scored the eval.
 function liveEvalCell(col, data) {
   const stored =
-    data.value && typeof data.value === "object" ? storedEvalCell(col, data) : null;
+    data.value && typeof data.value === "object"
+      ? storedEvalCell(col, data)
+      : null;
   return {
     id: col.id,
     kind: col.kind ?? "evaluation",
     name: data.name || col.name || col.column_name || col.id,
     score: data.score ?? stored?.score ?? to01(data.value?.score) ?? null,
     passed: data.passed ?? stored?.passed ?? null,
-    label: typeof data.value === "string" ? data.value : (stored?.label ?? null),
+    label: typeof data.value === "string" ? data.value : stored?.label ?? null,
     reason: data.reason || "",
-    // "completed", "failed", "error", "skipped" or "pending" — lets an
+    // "pending", "succeeded", "failed", "timed_out" or "skipped" — lets an
     // unscored cell say why.
-    status: String(data.status || "completed").toLowerCase(),
+    status: String(data.status || "succeeded").toLowerCase(),
     threshold: 0.5,
     removed: data.removed === true,
   };
@@ -36,7 +38,10 @@ function liveEvalCell(col, data) {
 // drawer's list-derived fallback (while `useCallDetail` is loading or errored)
 // can mark it too — same expression as `runDetail.js`'s `callEvalResult`.
 function storedEvalCell(col, data) {
-  const norm = normalizeEvalResult(data.value, data.type ?? col.eval_config?.output);
+  const norm = normalizeEvalResult(
+    data.value,
+    data.type ?? col.eval_config?.output,
+  );
   if (norm.kind === "empty") return null;
   let score = null;
   let passed = null;
@@ -177,15 +182,15 @@ export function taskFromCallDetail(detail) {
  * @returns {import("./runDetail").TraceColumn[]}
  */
 export function buildTraceColumns(columnOrder = []) {
-  const staticCols = TRACE_COLUMNS.filter(
-    (c) => c.key !== "evals" && c.key !== "subGoalEvals",
-  ).map((c) => ({
-    key: c.key,
-    label: c.label,
-    defaultOn: c.defaultOn,
-    width: c.width,
-    group: c.group,
-  }));
+  const staticCols = TRACE_COLUMNS.filter((c) => c.key !== "subGoalEvals").map(
+    (c) => ({
+      key: c.key,
+      label: c.label,
+      defaultOn: c.defaultOn,
+      width: c.width,
+      group: c.group,
+    }),
+  );
   const evalCols = (columnOrder || []).map((c) => ({
     key: c.id,
     label: c.name || c.id,
@@ -299,7 +304,8 @@ export function useRunCalls(executionId, opts = {}) {
             csat: group.aggregates?.csat ?? null,
             turns: group.aggregates?.turns ?? null,
             latency: group.aggregates?.latency_ms ?? null,
-            stopLatency: group.aggregates?.avg_stop_time_after_interruption ?? null,
+            stopLatency:
+              group.aggregates?.avg_stop_time_after_interruption ?? null,
             aiInterruptions: group.aggregates?.ai_interruptions ?? null,
             tokens: group.aggregates?.tokens ?? null,
             evals,

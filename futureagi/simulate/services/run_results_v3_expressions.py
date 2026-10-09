@@ -1,6 +1,5 @@
 """PostgreSQL expressions shared by simulation result read models."""
 
-from django.contrib.postgres.fields import ArrayField
 from django.db.models import (
     Case,
     Expression,
@@ -103,34 +102,6 @@ class NormalizedEvalNumber(Func):
             output_field=FloatField(),
         )
         return compiler.compile(expression)
-
-
-class MatchingListGroups(Func):
-    """Emit each requested JSON-list membership once, including the empty group."""
-
-    output_field = TextField()
-    set_returning = True
-
-    def __init__(self, expression, keys: list[str], empty_label: str):
-        super().__init__(
-            expression,
-            Value(keys, output_field=ArrayField(TextField())),
-            Value(empty_label),
-        )
-
-    def as_sql(self, compiler, connection, **extra_context):
-        value, keys, empty = [
-            compiler.compile(expression) for expression in self.source_expressions
-        ]
-        sql = (
-            "unnest(ARRAY(SELECT candidate.key "
-            f"FROM (VALUES ({value[0]})) AS membership(value) "
-            f"CROSS JOIN unnest({keys[0]}) AS candidate(key) "
-            f"WHERE CASE WHEN candidate.key = {empty[0]} "
-            "THEN membership.value = '[]'::jsonb "
-            "ELSE membership.value @> jsonb_build_array(candidate.key) END))"
-        )
-        return sql, [*value[1], *keys[1], *empty[1]]
 
 
 class PercentileCont(Aggregate):

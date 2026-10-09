@@ -22,6 +22,22 @@ from simulate.pydantic_schemas.chat import (
     ChatMessage,
     ChatRole,
 )
+from simulate.services.scoring_status import (
+    CALL_SCORING_OPEN_Q,
+    SCORING_SWEEP_BATCH_SIZE,
+    SCORING_SWEEP_TIME_LIMIT_SECONDS,
+    SWEEP_COUNT_KEYS,
+    SWEEP_RUN_STATUSES,
+    TRANSPORT_RUN_STATUSES,
+    close_due_scoring,
+    needs_write,
+    runnable_eval_names,
+    scoring_due,
+    scoring_input_from_values,
+    scoring_values,
+    settle_run,
+    settleable_run_ids,
+)
 from simulate.services.test_executor import (
     TestExecutor,
     _run_simulate_evaluations_task,
@@ -366,6 +382,14 @@ def monitor_test_execution_for_chat(test_execution_id: str):
     try:
         test_execution = TestExecution.objects.get(id=test_execution_id)
 
+        # A stopped run is finished by the settle once its scoring is closed,
+        # never moved from here.
+        if test_execution.status in (
+            TestExecution.ExecutionStatus.CANCELLED,
+            TestExecution.ExecutionStatus.CANCELLING,
+        ):
+            return None
+
         call_executions = CallExecution.objects.filter(
             test_execution=test_execution
         ).exclude(status=CallExecution.CallStatus.CANCELLED)
@@ -390,9 +414,7 @@ def monitor_test_execution_for_chat(test_execution_id: str):
 
             return
 
-        is_evaluating = False
         all_terminal = True
-        runs_all_done = True
         has_any_completed = False
         has_any_failed = False
 
@@ -403,13 +425,6 @@ def monitor_test_execution_for_chat(test_execution_id: str):
                 CallExecution.CallStatus.CANCELLED,
             ]:
                 all_terminal = False
-                # A call whose run is not finished keeps the whole execution in
-                # RUNNING — matching the native rollup, which only advances to
-                # EVALUATING once every call has left the voice leg. Without this
-                # the execution flips to EVALUATING while other calls still run.
-                runs_all_done = False
-
-            call_metadata = call_execution.call_metadata or {}
 
             if call_execution.status == CallExecution.CallStatus.FAILED:
                 has_any_failed = True
@@ -417,54 +432,38 @@ def monitor_test_execution_for_chat(test_execution_id: str):
             if call_execution.status == CallExecution.CallStatus.COMPLETED:
                 has_any_completed = True
 
-                eval_started = call_metadata.get("eval_started")
-                eval_completed = call_metadata.get("eval_completed")
-
-                if eval_started and not eval_completed:
-                    is_evaluating = True
-                    all_terminal = False
-
-                if not eval_started:
-                    # Evals haven't started yet for this completed call
-                    all_terminal = False
-
-        status_changed = False
-
-        if is_evaluating and runs_all_done:
-            test_execution.status = TestExecution.ExecutionStatus.EVALUATING
-            test_execution.save(update_fields=["status"])
-            status_changed = True
+        if all_terminal and has_any_completed:
+            # Every call has left transport, but scoring may still be open: the
+            # run is evaluating until the native settle says it is done.
+            moved = TestExecution.objects.filter(
+                id=test_execution.id, status__in=TRANSPORT_RUN_STATUSES
+            ).update(status=TestExecution.ExecutionStatus.EVALUATING)
+            settle_run(test_execution.id)
+            if moved:
+                notify_simulation_update(
+                    organization_id=test_execution.run_test.organization_id,
+                    run_test_id=str(test_execution.run_test_id),
+                    test_execution_id=str(test_execution.id),
+                )
 
         # All calls reached a terminal state but none completed successfully
         elif all_terminal and not has_any_completed and has_any_failed:
-            test_execution.status = TestExecution.ExecutionStatus.FAILED
-            test_execution.save(update_fields=["status"])
-            status_changed = True
-            logger.info(
-                f"Test execution {test_execution.id} marked as FAILED (all calls failed)"
-            )
+            # A transport verdict, so only a run still in transport takes it:
+            # the status read above may be stale, and a run since stopped or
+            # scoring must not be overwritten.
+            moved = TestExecution.objects.filter(
+                id=test_execution.id, status__in=TRANSPORT_RUN_STATUSES
+            ).update(status=TestExecution.ExecutionStatus.FAILED)
+            if moved:
+                logger.info(
+                    f"Test execution {test_execution.id} marked as FAILED (all calls failed)"
+                )
+                notify_simulation_update(
+                    organization_id=test_execution.run_test.organization_id,
+                    run_test_id=str(test_execution.run_test_id),
+                    test_execution_id=str(test_execution.id),
+                )
 
-        elif all_terminal and has_any_completed:
-            test_execution.status = TestExecution.ExecutionStatus.COMPLETED
-            test_execution.eval_explanation_summary_status = (
-                EvalExplanationSummaryStatus.PENDING
-            )
-            test_execution.save(
-                update_fields=["status", "eval_explanation_summary_status"]
-            )
-            status_changed = True
-
-            # Lazy import to avoid circular dependency
-            from simulate.tasks.eval_summary_tasks import run_eval_summary_task
-
-            run_eval_summary_task.apply_async(args=(str(test_execution.id),))
-
-        if status_changed:
-            notify_simulation_update(
-                organization_id=test_execution.run_test.organization_id,
-                run_test_id=str(test_execution.run_test_id),
-                test_execution_id=str(test_execution.id),
-            )
         else:
             logger.info(
                 f"Test execution {test_execution.id} set to {test_execution.status} status"
@@ -514,6 +513,113 @@ def monitor_chat_timeout_call_executions():
     except Exception as e:
         logger.exception(f"Error monitoring chat call executions: {str(e)}")
         return
+
+
+_SWEEP_CALL_FIELDS = (
+    "id",
+    "status",
+    "call_metadata",
+    "eval_outputs",
+    "conversation_metrics_data",
+    "overall_score",
+    "completed_at",
+    "ended_at",
+    "created_at",
+    "test_execution",
+    "test_execution__status",
+    "test_execution__run_test",
+)
+
+
+def _sweep_stuck_scoring_pass(now: datetime) -> dict[str, int]:
+    """One pass of the scoring sweeper at ``now``; returns the sweep counts."""
+    counts = dict.fromkeys(SWEEP_COUNT_KEYS, 0)
+    # Runs are chosen by status alone, with no age limit, so a run stuck
+    # since any date is still reached.
+    open_calls = CallExecution.objects.filter(
+        CALL_SCORING_OPEN_Q,
+        test_execution__status__in=SWEEP_RUN_STATUSES,
+        status=CallExecution.CallStatus.COMPLETED,
+        deleted=False,
+    )
+    rows = list(
+        scoring_values(
+            open_calls.order_by("created_at", "id"),
+            "test_execution__status",
+            "test_execution__run_test_id",
+        )
+    )
+    counts["scanned"] = len(rows)
+    names = runnable_eval_names({row["test_execution__run_test_id"] for row in rows})
+    # Due calls are picked unlocked, before the batch cut, so open calls that
+    # are not due never take a slot from calls that are.
+    due_ids = []
+    for row in rows:
+        inp = scoring_input_from_values(row)
+        due = scoring_due(
+            inp,
+            runnable_ids=names.get(row["test_execution__run_test_id"], {}).keys(),
+            cancelled=row["test_execution__status"] == "cancelling",
+            now=now,
+        )
+        if needs_write(inp, due):
+            due_ids.append(row["id"])
+    counts["due"] = len(due_ids)
+    if due_ids:
+        with transaction.atomic():
+            locked = (
+                open_calls.select_for_update(skip_locked=True, of=("self",))
+                .select_related("test_execution")
+                .filter(id__in=due_ids[:SCORING_SWEEP_BATCH_SIZE])
+                .only(*_SWEEP_CALL_FIELDS)
+                .order_by("created_at", "id")
+            )
+            for call in locked:
+                try:
+                    # A savepoint per row, so one bad row cannot sink the
+                    # batch; the locked copy is decided again, not trusted.
+                    with transaction.atomic():
+                        key = close_due_scoring(
+                            call, names.get(call.test_execution.run_test_id, {}), now
+                        )
+                except Exception:
+                    counts["errors"] += 1
+                    logger.exception(
+                        "simulate_scoring_sweep_call_failed",
+                        call_execution_id=str(call.id),
+                    )
+                    continue
+                if key:
+                    counts[key] += 1
+    # Retries every settle that was missed: two calls closing in parallel,
+    # a settle that swallowed an error, or this pass dying after its commit.
+    # One run that raises must not starve the runs after it.
+    for test_execution_id in list(settleable_run_ids()[:SCORING_SWEEP_BATCH_SIZE]):
+        try:
+            settle_run(test_execution_id)
+        except Exception:
+            counts["errors"] += 1
+            logger.exception(
+                "simulate_scoring_sweep_settle_failed",
+                test_execution_id=str(test_execution_id),
+            )
+            continue
+        counts["settled"] += 1
+    logger.info("simulate_scoring_sweep_finished", **counts)
+    return counts
+
+
+@temporal_activity(
+    time_limit=SCORING_SWEEP_TIME_LIMIT_SECONDS,
+    queue="tasks_s",
+)
+def sweep_stuck_scoring() -> dict[str, int]:
+    """Time out stuck eval and CSAT scoring in evaluating and cancelling runs."""
+    try:
+        return _sweep_stuck_scoring_pass(timezone.now())
+    except Exception:
+        logger.exception("simulate_scoring_sweep_failed")
+        return dict.fromkeys(SWEEP_COUNT_KEYS, 0)
 
 
 @temporal_activity(

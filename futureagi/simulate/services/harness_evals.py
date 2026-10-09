@@ -18,7 +18,12 @@ from django.db.models import Q
 
 from model_hub.models.choices import OwnerChoices
 from model_hub.models.evals_metric import EvalTemplate
-from simulate.models import RunTest, SimulateEvalConfig
+from simulate.models import (
+    HostedHarnessJob,
+    RunTest,
+    SimulateEvalConfig,
+    TestExecution,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -168,6 +173,79 @@ def _required_keys(template: EvalTemplate) -> list[str]:
     config = template.config or {}
     keys = config.get("required_keys")
     return [str(key) for key in keys] if isinstance(keys, list) else []
+
+
+# What the harness hands its built-in suite evals, by the template's own key:
+# the spoken transcript and the agent's instructions. A finished run's calls
+# still hold both, so the platform can grade these again by itself.
+_SUITE_EVAL_REGRADE_SOURCES = {
+    "conversation": "transcript",
+    "agent_prompt": "agent_prompt",
+}
+
+
+def regrade_mapping(config: SimulateEvalConfig) -> dict[str, str] | None:
+    """The mapping a finished run's calls are graded again with, or None when the platform can't.
+
+    A config with a mapping of its own uses it. A config with none is a
+    result column the harness filled; of those, only a built-in suite eval
+    asks for nothing but the transcript and the agent's instructions, so only
+    it gets a mapping here. A per-scenario claim is judged on a record only
+    the harness has, so it stays None, as does anything else.
+    """
+    mapping = config.mapping if isinstance(config.mapping, dict) else {}
+    if mapping:
+        return dict(mapping)
+    template = config.eval_template
+    if template.owner != OwnerChoices.SYSTEM.value:
+        return None
+    keys = _required_keys(template)
+    if not keys or any(key not in _SUITE_EVAL_REGRADE_SOURCES for key in keys):
+        return None
+    return {key: _SUITE_EVAL_REGRADE_SOURCES[key] for key in keys}
+
+
+def is_harness_run_test(run_test_id) -> bool:
+    """Whether a harness environment owns this run test.
+
+    Only then can one of its configs be a result column the harness fills
+    itself; on any other run test the platform grades every config, as it
+    always has. Registering an environment's scenarios links its run test to
+    the job, and each run of that environment shares the link.
+    """
+    return HostedHarnessJob.no_workspace_objects.filter(
+        run_test_id=run_test_id
+    ).exists()
+
+
+def harness_run_test_ids(run_test_ids) -> set:
+    """The run tests among ``run_test_ids`` a harness environment owns, in one query.
+
+    The same test as ``is_harness_run_test``, for a list page that would
+    otherwise ask once per run test.
+    """
+    ids = list(run_test_ids)
+    if not ids:
+        return set()
+    return set(
+        HostedHarnessJob.no_workspace_objects.filter(run_test_id__in=ids)
+        .order_by()
+        .values_list("run_test_id", flat=True)
+    )
+
+
+def is_regrading_a_finished_harness_run(test_execution) -> bool:
+    """Whether a harness run's evals are being graded again after its calls finished.
+
+    A harness run in EVALUATING is being graded again after its calls
+    finished; cancelling would leave the graders that have not started
+    skipping their evals, so those results would stay pending. "Harness run"
+    is asked of the run test, as re-grading asks it, so the two never disagree
+    about a run whose execution has no job of its own.
+    """
+    if test_execution.status != TestExecution.ExecutionStatus.EVALUATING:
+        return False
+    return is_harness_run_test(test_execution.run_test_id)
 
 
 def _visible_templates(organization, workspace):

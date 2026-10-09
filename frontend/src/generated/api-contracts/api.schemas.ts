@@ -17431,6 +17431,7 @@ export interface HarnessEnvironmentSelectedEvalApi {
   inputs: HarnessEnvironmentEvalInputApi[];
   id: string;
   runnable: boolean;
+  editable: boolean;
 }
 
 export type HarnessEnvironmentResultApiEvaluationsItem = {
@@ -17570,6 +17571,138 @@ export interface HarnessEnvironmentToolCallEvaluationApi {
   enable_tool_evaluation: boolean;
 }
 
+/**
+ * Updated evaluation configuration parameters.
+ */
+export type HarnessEnvironmentEvalEditApiConfig = { [key: string]: unknown };
+
+/**
+ * Updated field mapping between test data and evaluation inputs.
+ */
+export type HarnessEnvironmentEvalEditApiMapping = { [key: string]: unknown };
+
+export type HarnessEnvironmentEvalEditApiFiltersItemFilterConfigAttributeValueTypesItem =
+  (typeof HarnessEnvironmentEvalEditApiFiltersItemFilterConfigAttributeValueTypesItem)[keyof typeof HarnessEnvironmentEvalEditApiFiltersItemFilterConfigAttributeValueTypesItem];
+
+export const HarnessEnvironmentEvalEditApiFiltersItemFilterConfigAttributeValueTypesItem =
+  {
+    string: "string",
+    number: "number",
+    boolean: "boolean",
+  } as const;
+
+export type HarnessEnvironmentEvalEditApiFiltersItemFilterConfig = {
+  /** Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map. */
+  filter_type: string;
+  /** Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null. */
+  filter_op: string;
+  /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
+  filter_value?: unknown;
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  col_type?: string;
+  /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
+  attribute_value_types?: HarnessEnvironmentEvalEditApiFiltersItemFilterConfigAttributeValueTypesItem[];
+};
+
+export type HarnessEnvironmentEvalEditApiFiltersItem = {
+  /** Column or attribute id to filter on. */
+  column_id: string;
+  /** Optional stable namespaced Property Registry identity. */
+  property_id?: string;
+  /** Optional UI label for chips and saved views. */
+  display_name?: string;
+  /** Optional source surface for mixed-source filters, for example traces, datasets, or simulation. */
+  source?: string;
+  /** Optional metric output type metadata used by eval and annotation filters. */
+  output_type?: string;
+  filter_config: HarnessEnvironmentEvalEditApiFiltersItemFilterConfig;
+};
+
+export interface HarnessEnvironmentEvalEditApi {
+  /** Updated evaluation configuration parameters. */
+  config?: HarnessEnvironmentEvalEditApiConfig;
+  /** Updated field mapping between test data and evaluation inputs. */
+  mapping?: HarnessEnvironmentEvalEditApiMapping;
+  /**
+   * Model to use for evaluations.
+   * @minLength 1
+   */
+  model?: string;
+  /** Enable granular error localization in evaluation results. */
+  error_localizer?: boolean;
+  /** UUID of a knowledge base to use for grounding. Pass null to clear. Switching template_id without providing an explicit kb_id will clear the KB association. */
+  kb_id?: string;
+  /** Updated canonical filter list to restrict which test results are evaluated. */
+  filters?: HarnessEnvironmentEvalEditApiFiltersItem[];
+  /**
+   * Updated name for the evaluation configuration.
+   * @minLength 1
+   */
+  name?: string;
+}
+
+export type SimulateEvalConfigResponseApiConfig = { [key: string]: unknown };
+
+export type SimulateEvalConfigResponseApiMapping = { [key: string]: unknown };
+
+export type SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem =
+  (typeof SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem)[keyof typeof SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem];
+
+export const SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem =
+  {
+    string: "string",
+    number: "number",
+    boolean: "boolean",
+  } as const;
+
+export type SimulateEvalConfigResponseApiFiltersItemFilterConfig = {
+  /** Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map. */
+  filter_type: string;
+  /** Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null. */
+  filter_op: string;
+  /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
+  filter_value?: unknown;
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  col_type?: string;
+  /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
+  attribute_value_types?: SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem[];
+};
+
+export type SimulateEvalConfigResponseApiFiltersItem = {
+  /** Column or attribute id to filter on. */
+  column_id: string;
+  /** Optional stable namespaced Property Registry identity. */
+  property_id?: string;
+  /** Optional UI label for chips and saved views. */
+  display_name?: string;
+  /** Optional source surface for mixed-source filters, for example traces, datasets, or simulation. */
+  source?: string;
+  /** Optional metric output type metadata used by eval and annotation filters. */
+  output_type?: string;
+  filter_config: SimulateEvalConfigResponseApiFiltersItemFilterConfig;
+};
+
+export interface SimulateEvalConfigResponseApi {
+  readonly id?: string;
+  /** @minLength 1 */
+  readonly name?: string;
+  readonly config?: SimulateEvalConfigResponseApiConfig;
+  readonly mapping?: SimulateEvalConfigResponseApiMapping;
+  readonly filters?: readonly SimulateEvalConfigResponseApiFiltersItem[];
+  readonly error_localizer?: boolean;
+  /** @minLength 1 */
+  readonly model?: string;
+  /** @minLength 1 */
+  readonly status?: string;
+  /** @minLength 1 */
+  readonly eval_group?: string;
+  readonly template_id?: string;
+  /** @minLength 1 */
+  readonly eval_type?: string;
+  readonly regradable?: boolean;
+  readonly editable?: boolean;
+}
+
 export interface HarnessRunCreateApi {
   /** @maxItems 1000 */
   scenario_ids: string[];
@@ -17608,6 +17741,18 @@ export interface HarnessEnvironmentRunEvaluationQueuedApi {
   skipped_in_flight: number;
   skipped_pending: number;
   completed_calls: number;
+}
+
+export interface HarnessEnvironmentRunEvaluationsApi {
+  /** @minItems 1 */
+  eval_config_ids: string[];
+  /** Saved on the environment before grading starts; left as it is when absent. */
+  enable_tool_evaluation?: boolean;
+}
+
+export interface HarnessEnvironmentRunEvaluationsQueuedApi {
+  /** How many of the run's calls were queued for grading. */
+  call_execution_count: number;
 }
 
 export type HarnessJobReadApiReceiptsItem = { [key: string]: unknown };
@@ -19724,64 +19869,6 @@ export type RunTestResponseApiScenariosDetailItem = { [key: string]: unknown };
 
 export type RunTestResponseApiSimulatorAgentDetail = { [key: string]: unknown };
 
-export type SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem =
-  (typeof SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem)[keyof typeof SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem];
-
-export const SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem =
-  {
-    string: "string",
-    number: "number",
-    boolean: "boolean",
-  } as const;
-
-export type SimulateEvalConfigResponseApiConfig = { [key: string]: unknown };
-
-export type SimulateEvalConfigResponseApiMapping = { [key: string]: unknown };
-
-export type SimulateEvalConfigResponseApiFiltersItemFilterConfig = {
-  /** Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map. */
-  filter_type: string;
-  /** Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null. */
-  filter_op: string;
-  /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
-  filter_value?: unknown;
-  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
-  col_type?: string;
-  /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
-  attribute_value_types?: SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem[];
-};
-
-export type SimulateEvalConfigResponseApiFiltersItem = {
-  /** Column or attribute id to filter on. */
-  column_id: string;
-  /** Optional stable namespaced Property Registry identity. */
-  property_id?: string;
-  /** Optional UI label for chips and saved views. */
-  display_name?: string;
-  /** Optional source surface for mixed-source filters, for example traces, datasets, or simulation. */
-  source?: string;
-  /** Optional metric output type metadata used by eval and annotation filters. */
-  output_type?: string;
-  filter_config: SimulateEvalConfigResponseApiFiltersItemFilterConfig;
-};
-
-export interface SimulateEvalConfigResponseApi {
-  readonly id?: string;
-  /** @minLength 1 */
-  readonly name?: string;
-  readonly config?: SimulateEvalConfigResponseApiConfig;
-  readonly mapping?: SimulateEvalConfigResponseApiMapping;
-  readonly filters?: readonly SimulateEvalConfigResponseApiFiltersItem[];
-  readonly error_localizer?: boolean;
-  /** @minLength 1 */
-  readonly model?: string;
-  /** @minLength 1 */
-  readonly status?: string;
-  /** @minLength 1 */
-  readonly eval_group?: string;
-  readonly template_id?: string;
-}
-
 export interface RunTestResponseApi {
   readonly id?: string;
   /**
@@ -20848,6 +20935,10 @@ export interface EvalConfigResponseApi {
   status?: EvalConfigResponseApiStatus;
   readonly eval_group?: string;
   readonly template_id?: string;
+  /** @minLength 1 */
+  readonly eval_type?: string;
+  readonly regradable?: boolean;
+  readonly editable?: boolean;
 }
 
 export interface AddEvalConfigsResponseApi {
@@ -21184,6 +21275,7 @@ export interface RunNewEvalsResponseApi {
   message: string;
   run_test_id: string;
   call_execution_count: number;
+  dispatched: boolean;
 }
 
 export interface RunTestScenarioItemResponseApi {
@@ -22228,6 +22320,29 @@ export const CallExecutionV3DetailResponseApiOutcome = {
   error: "error",
 } as const;
 
+export type CallExecutionV3DetailResponseApiScoringStatus =
+  (typeof CallExecutionV3DetailResponseApiScoringStatus)[keyof typeof CallExecutionV3DetailResponseApiScoringStatus];
+
+export const CallExecutionV3DetailResponseApiScoringStatus = {
+  not_applicable: "not_applicable",
+  pending: "pending",
+  succeeded: "succeeded",
+  failed: "failed",
+  timed_out: "timed_out",
+} as const;
+
+export type CallExecutionV3DetailResponseApiCsatStatus =
+  (typeof CallExecutionV3DetailResponseApiCsatStatus)[keyof typeof CallExecutionV3DetailResponseApiCsatStatus];
+
+export const CallExecutionV3DetailResponseApiCsatStatus = {
+  not_applicable: "not_applicable",
+  pending: "pending",
+  succeeded: "succeeded",
+  failed: "failed",
+  timed_out: "timed_out",
+  skipped: "skipped",
+} as const;
+
 export interface PersonaDetailsApi {
   /** @minLength 1 */
   name: string;
@@ -22252,6 +22367,17 @@ export interface CostBreakdownApi {
   customer: number;
 }
 
+export type SimulateRunV3EvaluationResultApiStatus =
+  (typeof SimulateRunV3EvaluationResultApiStatus)[keyof typeof SimulateRunV3EvaluationResultApiStatus];
+
+export const SimulateRunV3EvaluationResultApiStatus = {
+  pending: "pending",
+  succeeded: "succeeded",
+  failed: "failed",
+  timed_out: "timed_out",
+  skipped: "skipped",
+} as const;
+
 export type SimulateRunV3EvaluationResultApiValue = { [key: string]: unknown };
 
 export interface SimulateRunV3EvaluationResultApi {
@@ -22265,8 +22391,7 @@ export interface SimulateRunV3EvaluationResultApi {
   score: number;
   passed: boolean;
   reason: string;
-  /** @minLength 1 */
-  status: string;
+  status: SimulateRunV3EvaluationResultApiStatus;
 }
 
 export type SimulateRunV3FunctionCallApiArguments = { [key: string]: unknown };
@@ -22436,6 +22561,10 @@ export interface CallExecutionV3DetailResponseApi {
   cost_breakdown_cents: CostBreakdownApi;
   evaluations: SimulateRunV3EvaluationResultApi[];
   function_calls: SimulateRunV3FunctionCallApi[];
+  scoring_status: CallExecutionV3DetailResponseApiScoringStatus;
+  csat_status: CallExecutionV3DetailResponseApiCsatStatus;
+  /** @minLength 1 */
+  csat_reason: string;
 }
 
 export type RunDashboardMetricApiUnit =
@@ -22933,6 +23062,31 @@ export interface RunExecutionApi {
   summary: RunSummaryApi;
 }
 
+export interface SimulateRunV3ScoringCountsApi {
+  /** @minimum 0 */
+  not_applicable: number;
+  /** @minimum 0 */
+  pending: number;
+  /** @minimum 0 */
+  succeeded: number;
+  /** @minimum 0 */
+  failed: number;
+  /** @minimum 0 */
+  timed_out: number;
+}
+
+export interface SimulateRunV3CallsSummaryApi {
+  total: number;
+  outcomes: OutcomeCountsApi;
+  measured: number;
+  pass_rate: number;
+  duration: MetricStatsApi;
+  latency: MetricStatsApi;
+  tokens: TotalMetricStatsApi;
+  cost_cents: TotalMetricStatsApi;
+  scoring: SimulateRunV3ScoringCountsApi;
+}
+
 export type RunCallApiOutcome =
   (typeof RunCallApiOutcome)[keyof typeof RunCallApiOutcome];
 
@@ -22943,6 +23097,29 @@ export const RunCallApiOutcome = {
   failed: "failed",
   inconclusive: "inconclusive",
   error: "error",
+} as const;
+
+export type RunCallApiScoringStatus =
+  (typeof RunCallApiScoringStatus)[keyof typeof RunCallApiScoringStatus];
+
+export const RunCallApiScoringStatus = {
+  not_applicable: "not_applicable",
+  pending: "pending",
+  succeeded: "succeeded",
+  failed: "failed",
+  timed_out: "timed_out",
+} as const;
+
+export type RunCallApiCsatStatus =
+  (typeof RunCallApiCsatStatus)[keyof typeof RunCallApiCsatStatus];
+
+export const RunCallApiCsatStatus = {
+  not_applicable: "not_applicable",
+  pending: "pending",
+  succeeded: "succeeded",
+  failed: "failed",
+  timed_out: "timed_out",
+  skipped: "skipped",
 } as const;
 
 export interface RunCallApi {
@@ -22991,6 +23168,10 @@ export interface RunCallApi {
   /** @minLength 1 */
   error_message: string;
   evaluations: SimulateRunV3EvaluationResultApi[];
+  scoring_status: RunCallApiScoringStatus;
+  csat_status: RunCallApiCsatStatus;
+  /** @minLength 1 */
+  csat_reason: string;
 }
 
 export type GroupAggregatesApiEvaluations = { [key: string]: unknown };
@@ -23054,7 +23235,7 @@ export interface EvaluationColumnApi {
 
 export interface RunCallsV3ResponseApi {
   execution: RunExecutionApi;
-  summary: RunSummaryApi;
+  summary: SimulateRunV3CallsSummaryApi;
   count: number;
   page: number;
   page_size: number;
@@ -29884,6 +30065,8 @@ export interface UsersTableRowApi {
   avg_output_float?: number;
   project_id?: string;
   /** @minLength 1 */
+  project_name?: string;
+  /** @minLength 1 */
   user_id_type?: string;
   /** @minLength 1 */
   user_id_hash?: string;
@@ -31980,6 +32163,10 @@ export type AgentccAnalyticsOverviewParams = {
    * @minLength 1
    */
   granularity?: string;
+  /**
+   * Gateway key id (not the API key's UUID primary key).
+   * @maxLength 255
+   */
   api_key_id?: string;
 };
 
@@ -32214,6 +32401,10 @@ export type AgentccRequestLogsListParams = {
   limit?: number;
   user_id?: string;
   session_id?: string;
+  /**
+   * Gateway key id (not the API key's UUID primary key).
+   * @maxLength 255
+   */
   api_key_id?: string;
   request_id?: string;
   /**

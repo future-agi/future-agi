@@ -25,6 +25,7 @@ dispatch with nothing to do.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -34,6 +35,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
 from simulate.models import CallExecution, SimulateEvalConfig, TestExecution
+from simulate.services.harness_evals import regrade_mapping
 
 # The one predicate for "this call already holds a sealed verdict for this
 # config" (``simulate/utils/verdicts.py::has_stored_verdict``).
@@ -86,17 +88,55 @@ def _metadata(call_execution: CallExecution) -> dict[str, Any]:
     return result
 
 
+def parse_stamp(value: Any) -> datetime | None:
+    """A stored ISO stamp as an aware datetime, or ``None`` when it is unusable.
+
+    An absent, unparseable, or invalid stamp reads as ``None`` rather than
+    raising -- including a well-formed but impossible date like
+    ``"2026-02-30T00:00:00"``, where ``parse_datetime`` raises ``ValueError``
+    instead of returning ``None``. A naive stamp is read in the default time
+    zone, as the add-eval window has always read it.
+    """
+    try:
+        stamped = parse_datetime(str(value or ""))
+    except ValueError:
+        return None
+    if stamped is None:
+        return None
+    if timezone.is_naive(stamped):
+        stamped = timezone.make_aware(stamped, timezone.get_default_timezone())
+    return stamped
+
+
+def stamp_eval_queued(
+    metadata: dict[str, Any], eval_config_ids: Iterable[Any], *, now: datetime
+) -> dict[str, Any]:
+    """Stamp each config in ``eval_config_ids`` as dispatched at ``now``.
+
+    Every other config's stamp is kept, and the stamps dict is copied rather
+    than changed in place, so a caller still holding the old dict never sees
+    the write. Changes and returns ``metadata``; no ids changes nothing.
+    """
+    ids = [str(eval_config_id) for eval_config_id in eval_config_ids]
+    if not ids:
+        return metadata
+    stamps = metadata.get(EVAL_QUEUED_KEY)
+    stamps = dict(stamps) if isinstance(stamps, dict) else {}
+    for eval_config_id in ids:
+        stamps[eval_config_id] = now.isoformat()
+    metadata[EVAL_QUEUED_KEY] = stamps
+    return metadata
+
+
 def _queued_within_window(
     metadata: dict[str, Any], eval_config_id: str, *, now: datetime
 ) -> bool:
     """Whether this call was stamped for this config inside the window.
 
     An absent, non-dict, unparseable, or invalid stamp reads as "not queued"
-    rather than raising -- including a well-formed but impossible date like
-    ``"2026-02-30T00:00:00"``, where ``parse_datetime`` raises
-    ``ValueError`` instead of returning ``None``. The config id is looked up
-    as ``str(eval_config_id)``, matching how the stamp is written and
-    cleared, so a raw ``UUID`` still hits it.
+    (see ``parse_stamp``). The config id is looked up as
+    ``str(eval_config_id)``, matching how the stamp is written and cleared,
+    so a raw ``UUID`` still hits it.
 
     The window is bounded on both sides:
     ``-EVAL_QUEUE_STAMP_SKEW <= now - stamped < window`` -- a stamp up to a
@@ -108,14 +148,9 @@ def _queued_within_window(
     stamps = metadata.get(EVAL_QUEUED_KEY)
     if not isinstance(stamps, dict):
         return False
-    try:
-        stamped = parse_datetime(str(stamps.get(eval_config_id) or ""))
-    except ValueError:
-        return False
+    stamped = parse_stamp(stamps.get(eval_config_id))
     if stamped is None:
         return False
-    if timezone.is_naive(stamped):
-        stamped = timezone.make_aware(stamped, timezone.get_default_timezone())
     elapsed = now - stamped
     return -EVAL_QUEUE_STAMP_SKEW <= elapsed < EVAL_QUEUE_STAMP_WINDOW
 
@@ -221,8 +256,11 @@ def _dispatch_batch_after_commit(
     response -- but ``queued`` means "stamped and scheduled for dispatch",
     not "reached the broker", so every call in this batch stays counted in
     ``queued`` regardless of where dispatch stops -- the calls past the
-    failure are logged and unstamped instead, so the next click is free to
-    retry them.
+    failure are logged and unstamped instead. Their placeholders still hold
+    them as being graded, so a later click queues them again once the
+    scoring clock counts them as stuck; with the stamp gone that clock falls
+    back to the call's own completion and grading times, so for a call
+    finished and graded over half an hour ago that is the next click.
 
     A dispatch that fails *after* the broker already accepted the message is
     indistinguishable here from one that never reached the broker at all --
@@ -270,9 +308,9 @@ def queue_eval_for_finished_calls(
       batch) but the returned count is not corrected.
 
     Backstops for any other caller: ``eval_config`` must be this run's own and
-    carry a non-empty ``mapping``, and the run must not be cancelled or
-    cancelling (the worker never grades those); the endpoint refuses each of
-    these itself with its own status.
+    have something to grade (``regrade_mapping``), and the run must not be
+    cancelled or cancelling (the worker never grades those); the endpoint
+    refuses each of these itself with its own status.
     """
     if eval_config.run_test_id != test_execution.run_test_id:
         raise ValueError(
@@ -280,11 +318,11 @@ def queue_eval_for_finished_calls(
             f"{eval_config.run_test_id!r}, not test_execution "
             f"{test_execution.id}'s run test {test_execution.run_test_id!r}"
         )
-    if not eval_config.mapping:
+    if regrade_mapping(eval_config) is None:
         raise ValueError(
-            f"eval_config {eval_config.id} has an empty mapping -- it is a "
-            "harness result column ingestion bound, not a selected eval, "
-            "and cannot be queued for grading"
+            f"eval_config {eval_config.id} has an empty mapping and is not a "
+            "harness suite eval -- it is a result column only the harness "
+            "fills, and cannot be queued for grading"
         )
     if test_execution.status in (
         TestExecution.ExecutionStatus.CANCELLED,
@@ -304,6 +342,11 @@ def queue_eval_for_finished_calls(
         "completed_calls": 0,
     }
 
+    # Local imports: `scoring_status` imports this module.
+    from simulate.services.harness_evals import runnable_eval_config_ids
+    from simulate.services.scoring_status import scoring_due, scoring_input_from_call
+
+    runnable_ids = runnable_eval_config_ids(test_execution.run_test_id)
     with transaction.atomic():
         finished_calls = list(
             CallExecution.objects.select_for_update(of=("self",))
@@ -311,7 +354,18 @@ def queue_eval_for_finished_calls(
                 test_execution_id=test_execution.id,
                 status=CallExecution.CallStatus.COMPLETED,
             )
-            .only("id", "call_metadata", "eval_outputs", "status")
+            # The anchor and CSAT columns are what the scoring clock reads.
+            .only(
+                "id",
+                "call_metadata",
+                "eval_outputs",
+                "status",
+                "completed_at",
+                "ended_at",
+                "created_at",
+                "conversation_metrics_data",
+                "overall_score",
+            )
             .order_by("id")
         )
         # Captured only once the lock above is held -- the SELECT `list()`
@@ -343,17 +397,36 @@ def queue_eval_for_finished_calls(
             #    the same flag unconditionally when it runs, so queueing here
             #    before the call's own evaluations finish would close the latch
             #    ahead of the receipt and leave its dispatch with nothing to do.
-            if not metadata.get(EVAL_COMPLETED_KEY):
+            #    A call the scoring clock already counts as stuck (no progress
+            #    for 10 minutes, or no start within 30) is not waited on: its
+            #    job is lost, and in a run the sweeper never visits nothing
+            #    else would ever close it.
+            if (
+                not metadata.get(EVAL_COMPLETED_KEY)
+                and not scoring_due(
+                    scoring_input_from_call(call_execution),
+                    runnable_ids=runnable_ids,
+                    cancelled=False,
+                    now=now,
+                ).eval_side
+            ):
                 counts["skipped_pending"] += 1
                 continue
             # 3. Already queued minutes ago -- a double click, or a retry.
             if _queued_within_window(metadata, config_id, now=now):
                 counts["skipped_in_flight"] += 1
                 continue
-            stamps = metadata.get(EVAL_QUEUED_KEY)
-            stamps = dict(stamps) if isinstance(stamps, dict) else {}
-            stamps[config_id] = now.isoformat()
-            metadata[EVAL_QUEUED_KEY] = stamps
+            stamp_eval_queued(metadata, [config_id], now=now)
+            # The call is being graded again: its placeholder and open eval
+            # side hold it, and its run, as scoring until this job's verdict
+            # lands, the way the native rerun views mark theirs.
+            metadata["eval_started"] = True
+            metadata[EVAL_COMPLETED_KEY] = False
+            outputs = call_execution.eval_outputs
+            call_execution.eval_outputs = {
+                **(outputs if isinstance(outputs, dict) else {}),
+                config_id: {"status": "pending"},
+            }
             call_execution.call_metadata = metadata
             # `bulk_update` does not run `auto_now`'s pre-save logic, so
             # `updated_at` is set by hand here, the same `now` every stamped
@@ -366,9 +439,21 @@ def queue_eval_for_finished_calls(
         # One UPDATE for every eligible call, not one per row: the lock above
         # is held for this single statement, not N of them.
         if to_stamp:
-            CallExecution.objects.bulk_update(to_stamp, ["call_metadata", "updated_at"])
+            CallExecution.objects.bulk_update(
+                to_stamp, ["call_metadata", "eval_outputs", "updated_at"]
+            )
 
         counts["queued"] = len(to_stamp)
+
+        # A finished run goes back to scoring while these calls are graded;
+        # the settle completes it again, with a new `completed_at`, once the
+        # last one closes. A failed run keeps its status.
+        run_reopened = bool(to_stamp) and bool(
+            TestExecution.objects.filter(
+                id=test_execution.id,
+                status=TestExecution.ExecutionStatus.COMPLETED,
+            ).update(status=TestExecution.ExecutionStatus.EVALUATING)
+        )
 
         # Scheduled here, while the stamp is still inside this transaction,
         # but not RUN here: `transaction.on_commit` defers this until the
@@ -392,6 +477,7 @@ def queue_eval_for_finished_calls(
         "harness_run_eval_queued",
         test_execution_id=str(test_execution.id),
         eval_config_id=config_id,
+        run_reopened=run_reopened,
         **counts,
     )
     return counts

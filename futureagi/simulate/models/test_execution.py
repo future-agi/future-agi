@@ -608,6 +608,10 @@ class CallExecution(BaseModel):
             self.call_metadata = {}
         self.call_metadata.pop("eval_started", None)
         self.call_metadata.pop("eval_completed", None)
+        # The previous result's dispatch stamps and dispatch failure; the
+        # rerun's dispatch writes its own.
+        self.call_metadata.pop("eval_queued", None)
+        self.call_metadata.pop("eval_dispatch_failed", None)
         self.call_metadata.pop("processing_skipped", None)
         self.call_metadata.pop("processing_skip_reason", None)
 
