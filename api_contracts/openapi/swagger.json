@@ -15689,7 +15689,7 @@
             "get": {
                 "operationId": "api_setup-checks_list",
                 "summary": "Public infrastructure probe for the OSS first-run setup screen.",
-                "description": "Returns ``{\"status\": \"ok\"|\"issues\", \"mode\": ..., \"setup\":\n\"standalone\"|\"distributed\"|\"helm\", \"collector_http_url\": ...,\n\"account_exists\": true|false, \"checks\": [...]}``. No auth — it runs\nbefore anyone can sign in. Self-hosted only:\non cloud and EE the route answers 404, so neither the internal service\ntopology nor the outbound probes it triggers are reachable by an\nanonymous caller.",
+                "description": "Returns ``{\"status\": \"ok\"|\"issues\", \"mode\": ..., \"setup\":\n\"standalone\"|\"distributed\"|\"helm\", \"collector_http_url\": ...,\n\"account_exists\": true|false, \"checks\": [...]}``. No auth — it runs\nbefore anyone can sign in. Self-hosted only, licensed or not (TH-8084):\non Cloud the route answers 404, so neither the internal service topology\nnor the outbound probes it triggers are reachable by an anonymous caller\nthere. A self-hosted operator already controls who can reach the install.",
                 "parameters": [],
                 "responses": {
                     "200": {

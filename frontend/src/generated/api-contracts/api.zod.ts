@@ -9565,10 +9565,10 @@ export const ApiPublicTracesListResponse = zod.object({
  * Returns ``{"status": "ok"|"issues", "mode": ..., "setup":
 "standalone"|"distributed"|"helm", "collector_http_url": ...,
 "account_exists": true|false, "checks": [...]}``. No auth — it runs
-before anyone can sign in. Self-hosted only:
-on cloud and EE the route answers 404, so neither the internal service
-topology nor the outbound probes it triggers are reachable by an
-anonymous caller.
+before anyone can sign in. Self-hosted only, licensed or not (TH-8084):
+on Cloud the route answers 404, so neither the internal service topology
+nor the outbound probes it triggers are reachable by an anonymous caller
+there. A self-hosted operator already controls who can reach the install.
  * @summary Public infrastructure probe for the OSS first-run setup screen.
  */
 export const apiSetupChecksListResponseStatusDefault = true;
