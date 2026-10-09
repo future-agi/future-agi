@@ -548,6 +548,8 @@ def _get_shared_call_execution(resource_id, organization, workspace):
             "scenario",
             "test_execution__run_test",
             "test_execution__agent_definition",
+            "test_execution__agent_version",
+            "agent_version",
             "test_execution__simulator_agent",
         )
         .prefetch_related("transcripts", "chat_messages", "snapshots")

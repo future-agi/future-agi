@@ -25,6 +25,7 @@ from simulate.services.run_results_v3_scoring import (
     judge_stored_eval,
     resolve_eval_scoring_spec,
 )
+from simulate.utils.call_provider import call_provider
 from simulate.utils.eval_summary import iter_live_eval_outputs
 
 OUTCOME_LABELS = {
@@ -117,9 +118,7 @@ def call_outcome(
         for eval_id, data in iter_live_eval_outputs(
             call.eval_outputs, set(live_eval_configs)
         )
-        if (
-            verdict := _eval_outcome(data, live_eval_configs.get(str(eval_id)))
-        )
+        if (verdict := _eval_outcome(data, live_eval_configs.get(str(eval_id))))
         is not None
     ]
     if harness_outcome in {"failed", "fail", "failure"} or "failed" in verdicts:
@@ -133,15 +132,6 @@ def call_outcome(
     if "passed" in verdicts:
         return "passed"
     return "inconclusive"
-
-
-def _provider(call: CallExecution) -> str | None:
-    if isinstance(call.provider_call_data, dict):
-        for name, payload in call.provider_call_data.items():
-            if isinstance(payload, dict) and payload:
-                return str(name)
-    agent = call.test_execution.agent_definition
-    return getattr(agent, "provider", None) if agent else None
 
 
 def function_calls(call: CallExecution) -> list[dict[str, Any]]:
@@ -421,7 +411,12 @@ def build_call_rows(
     if calls is None:
         calls = list(
             CallExecution.objects.filter(test_execution=execution)
-            .select_related("scenario", "test_execution__agent_definition")
+            .select_related(
+                "scenario",
+                "test_execution__agent_definition",
+                "test_execution__agent_version",
+                "agent_version",
+            )
             .order_by("-updated_at")
         )
     if columns is None or live_eval_ids is None:
@@ -560,7 +555,7 @@ def build_call_rows(
                 "source_scenario_key": metadata.get("harness_scenario_key"),
                 "trial_index": metadata.get("harness_trial_index"),
                 "modality": call.simulation_call_type,
-                "provider": _provider(call),
+                "provider": call_provider(call),
                 "started_at": call.started_at,
                 "completed_at": call.completed_at,
                 "duration_seconds": call.duration_seconds,

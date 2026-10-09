@@ -646,6 +646,8 @@ class CallExecutionV3DetailView(APIView):
                 "scenario",
                 "test_execution__run_test",
                 "test_execution__agent_definition",
+                "test_execution__agent_version",
+                "agent_version",
                 "test_execution__simulator_agent",
             ).prefetch_related("transcripts", "chat_messages", "snapshots"),
             run_test_workspace_filter(request, "test_execution__run_test"),

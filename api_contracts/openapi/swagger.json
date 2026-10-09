@@ -129218,6 +129218,11 @@
                     "type": "string",
                     "readOnly": true
                 },
+                "transport": {
+                    "title": "Transport",
+                    "type": "string",
+                    "readOnly": true
+                },
                 "phone_number": {
                     "title": "Phone number",
                     "description": "Phone number called (null for TEXT/chat simulations)",
@@ -135080,6 +135085,11 @@
                 },
                 "provider": {
                     "title": "Provider",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "transport": {
+                    "title": "Transport",
                     "type": "string",
                     "readOnly": true
                 },
