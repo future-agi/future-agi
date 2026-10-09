@@ -1,7 +1,7 @@
 import { request, type Page } from '@playwright/test';
 import { test, expect } from '../../lib/fixtures';
 import { sendTrace } from '../../lib/otlp';
-import { POLL } from '../../lib/state-probe';
+import { POLL, type StateProbe } from '../../lib/state-probe';
 import { E2E } from '../../lib/env';
 import { flowAnnotation } from '../../lib/flow-meta';
 import { seedPgTraces } from '../../lib/trace-seed';
@@ -27,6 +27,23 @@ async function openTraceList(page: Page, projectId: string) {
 // Primary and compare grids stay mounted; only the visible one is the user's.
 const traceRow = (page: Page, traceId: string) =>
   page.locator(`.clean-data-table:visible .ag-row[row-id="${traceId}"]`);
+
+// The latest `traces` row's tags, as the trace list reads them (trace_list.py
+// `argMax(tags, _version)`), or null on a transport error. ClickHouse can close
+// the probe's idle keep-alive socket while the seed runs in the backend
+// container, and fetch does not retry a POST, so a dropped socket would end
+// expect.poll instead of polling again.
+async function latestTraceTags(probe: StateProbe, traceId: string): Promise<string | null> {
+  try {
+    const rows = await probe.ch<{ tags: string }>(
+      'SELECT argMax(tags, _version) AS tags FROM traces WHERE id = {t:UUID} GROUP BY id',
+      { t: traceId });
+    return rows[0]?.tags ?? '';
+  } catch (err) {
+    if (err instanceof TypeError) return null; // "fetch failed": poll again
+    throw err;
+  }
+}
 
 test('OBS-E2E-037: bulk Add tags on selected traces adds the tag to each trace and keeps its existing tags', {
   tag: ['@flow'],
@@ -82,14 +99,10 @@ test('OBS-E2E-037: bulk Add tags on selected traces adds the tag to each trace a
         { id: untagged.traceId, name: 'e2e.obs37.untagged', tags: [] },
       ],
     });
-    // The trace list reads the latest `traces` row's tags (trace_list.py
-    // `argMax(tags, _version)`), which the seed mirrored from Postgres.
-    await expect.poll(async () => {
-      const rows = await probe.ch<{ tags: string }>(
-        'SELECT argMax(tags, _version) AS tags FROM traces WHERE id = {t:UUID} GROUP BY id',
-        { t: tagged.traceId });
-      return rows[0]?.tags ?? '';
-    }, POLL.SPAN_VISIBLE).toContain(`"${KEPT_TAG}"`);
+    // The trace list reads the latest `traces` row's tags, which the seed
+    // mirrored from Postgres.
+    await expect.poll(() => latestTraceTags(probe, tagged.traceId), POLL.SPAN_VISIBLE)
+      .toContain(`"${KEPT_TAG}"`);
   });
 
   const patches: { traceId: string; body: unknown }[] = [];
@@ -164,10 +177,8 @@ test('OBS-E2E-037: bulk Add tags on selected traces adds the tag to each trace a
       [untagged.traceId, [NEW_TAG]],
     ] as const) {
       await expect.poll(async () => {
-        const rows = await probe.ch<{ tags: string }>(
-          'SELECT argMax(tags, _version) AS tags FROM traces WHERE id = {t:UUID} GROUP BY id',
-          { t: traceId });
-        return JSON.parse(rows[0]?.tags || '[]');
+        const tags = await latestTraceTags(probe, traceId);
+        return tags === null ? null : JSON.parse(tags || '[]');
       }, POLL.SPAN_VISIBLE).toEqual(expected);
     }
   });
