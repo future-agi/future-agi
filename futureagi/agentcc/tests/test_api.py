@@ -531,6 +531,34 @@ class TestAgentccGatewayAPI:
         assert new_active.routing == {"strategy": "round_robin"}
         assert new_active.version == 2
 
+    @patch("agentcc.views.gateway.push_org_config", return_value=True)
+    def test_update_config_after_rollback_takes_the_next_free_version(
+        self, mock_push, auth_client, gateway_id, organization
+    ):
+        # State after a rollback from v3 to v1: the active version is not the
+        # highest one.
+        AgentccOrgConfig.no_workspace_objects.create(
+            organization=organization, version=1, is_active=True
+        )
+        for version in (2, 3):
+            AgentccOrgConfig.no_workspace_objects.create(
+                organization=organization, version=version, is_active=False
+            )
+
+        response = auth_client.post(
+            f"/agentcc/gateways/{gateway_id}/update-config/",
+            {"cache": {"enabled": True}},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.json()
+        assert response.json()["result"]["version"] == 4
+        active = AgentccOrgConfig.no_workspace_objects.get(
+            organization=organization, is_active=True, deleted=False
+        )
+        assert active.version == 4
+        assert active.cache == {"enabled": True}
+
     def test_update_config_rejects_unknown_field(
         self, auth_client, gateway_id, organization
     ):
@@ -557,22 +585,21 @@ class TestAgentccGatewayAPI:
         response = auth_client.post(
             f"/agentcc/gateways/{gateway_id}/set-budget/",
             {
-                "level": "organization",
-                "config": {"limit_usd": 100, "action_mode": "hard"},
+                "level": "org_limit",
+                "config": {"limit": 100, "alert_threshold": 80, "on_exceed": "warn"},
             },
             format="json",
         )
 
         assert response.status_code == status.HTTP_200_OK, response.json()
         result = response.json()["result"]
-        assert result["budget"] == "organization"
+        assert result["budget"] == "org_limit"
         assert result["action"] == "set"
         assert result["gateway_synced"] is True
 
         new_active = AgentccOrgConfig.no_workspace_objects.get(
             organization=organization, is_active=True, deleted=False
         )
-        # Budget should be present under the "organization" level in some form.
         assert new_active.budgets  # not empty
         assert new_active.version == 2
 
@@ -600,27 +627,27 @@ class TestAgentccGatewayAPI:
             version=1,
             is_active=True,
             budgets={
-                "organization": {"limit_usd": 100, "action_mode": "hard"},
-                "user": {"limit_usd": 20, "action_mode": "warn"},
+                "org_limit": {"limit": 100, "on_exceed": "warn"},
+                "hard_limit": {"limit": 150, "on_exceed": "block"},
             },
         )
 
         response = auth_client.post(
             f"/agentcc/gateways/{gateway_id}/remove-budget/",
-            {"level": "organization"},
+            {"level": "org_limit"},
             format="json",
         )
 
         assert response.status_code == status.HTTP_200_OK, response.json()
         result = response.json()["result"]
-        assert result["budget"] == "organization"
+        assert result["budget"] == "org_limit"
         assert result["action"] == "removed"
 
         new_active = AgentccOrgConfig.no_workspace_objects.get(
             organization=organization, is_active=True, deleted=False
         )
-        assert "organization" not in new_active.budgets
-        assert "user" in new_active.budgets  # other levels preserved
+        assert "org_limit" not in new_active.budgets
+        assert "hard_limit" in new_active.budgets  # other levels preserved
         assert new_active.version == 2
 
 

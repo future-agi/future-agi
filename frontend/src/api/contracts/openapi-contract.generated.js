@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1057,
+  endpointCount: 1058,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -34740,6 +34740,30 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/tracer/internal/error-feed-v2/attempts/{attempt_id}/conversation-evidence/":
+      {
+        post: {
+          operationId:
+            "tracer_internal_error-feed-v2_attempts_conversation-evidence_create",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: {
+            $ref: "#/definitions/ConversationEvidenceRequest",
+          },
+          queryParameters: {},
+          responses: {
+            200: {
+              $ref: "#/definitions/ConversationEvidenceResponse",
+            },
+            409: {
+              $ref: "#/definitions/InvestigationControlError",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
     "/tracer/internal/error-feed-v2/attempts/{attempt_id}/simulation-evidence/":
       {
         post: {
@@ -54078,6 +54102,30 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         result: {
           $ref: "#/definitions/FalconConversationDetail",
+        },
+      },
+    },
+    ConversationEvidenceRequest: {
+      required: ["lease_token"],
+      type: "object",
+      properties: {
+        lease_token: {
+          title: "Lease token",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+      },
+    },
+    ConversationEvidenceResponse: {
+      required: ["rows"],
+      type: "object",
+      properties: {
+        rows: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/ConversationEvidenceRow",
+          },
         },
       },
     },
@@ -86603,6 +86651,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "date-time",
         },
+        evidence_window: {
+          $ref: "#/definitions/InvestigationEvidenceWindow",
+        },
+        evidence_source: {
+          title: "Evidence source",
+          type: "string",
+          enum: ["conversation"],
+        },
         engine_version: {
           title: "Engine version",
           type: "string",
@@ -87137,6 +87193,80 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "date-time",
           readOnly: true,
+        },
+      },
+    },
+    ConversationEvidenceRow: {
+      required: [
+        "project_id",
+        "trace_id",
+        "org_id",
+        "id",
+        "parent_span_id",
+        "name",
+        "observation_type",
+        "start_time",
+        "end_time",
+        "attrs_string",
+        "conversation",
+      ],
+      type: "object",
+      properties: {
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        trace_id: {
+          title: "Trace id",
+          type: "string",
+          format: "uuid",
+        },
+        org_id: {
+          title: "Org id",
+          type: "string",
+          format: "uuid",
+        },
+        id: {
+          title: "Id",
+          type: "string",
+          maxLength: 64,
+          minLength: 1,
+        },
+        parent_span_id: {
+          title: "Parent span id",
+          type: "string",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+        },
+        observation_type: {
+          title: "Observation type",
+          type: "string",
+          minLength: 1,
+        },
+        start_time: {
+          title: "Start time",
+          type: "string",
+          format: "date-time",
+        },
+        end_time: {
+          title: "End time",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        attrs_string: {
+          title: "Attrs string",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        conversation: {
+          $ref: "#/definitions/ConversationDossier",
         },
       },
     },
@@ -106239,6 +106369,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    InvestigationEvidenceWindow: {
+      required: ["start", "end"],
+      type: "object",
+      properties: {
+        start: {
+          title: "Start",
+          type: "string",
+          format: "date-time",
+        },
+        end: {
+          title: "End",
+          type: "string",
+          format: "date-time",
+        },
+      },
+    },
     InvestigationLimits: {
       required: [
         "deadline_seconds",
@@ -106556,6 +106702,66 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "date-time",
           readOnly: true,
+        },
+      },
+    },
+    ConversationDossier: {
+      required: [
+        "provider",
+        "agent_instructions",
+        "call",
+        "variables",
+        "analysis",
+        "latency_ms",
+        "turns",
+        "not_included",
+      ],
+      type: "object",
+      properties: {
+        provider: {
+          title: "Provider",
+          type: "string",
+          minLength: 1,
+        },
+        agent_instructions: {
+          title: "Agent instructions",
+          type: "string",
+          "x-nullable": true,
+        },
+        call: {
+          $ref: "#/definitions/ConversationCall",
+        },
+        variables: {
+          $ref: "#/definitions/ConversationVariables",
+        },
+        analysis: {
+          $ref: "#/definitions/ConversationAnalysis",
+        },
+        latency_ms: {
+          title: "Latency ms",
+          type: "object",
+          additionalProperties: {
+            $ref: "#/definitions/ConversationLatency",
+          },
+        },
+        turns: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/ConversationTurn",
+          },
+        },
+        provider_log_issues: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/ConversationProviderLogIssue",
+          },
+        },
+        not_included: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
         },
       },
     },
@@ -117056,6 +117262,284 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    ConversationAnalysis: {
+      required: ["summary", "successful", "in_voicemail", "sentiment", "flags"],
+      type: "object",
+      properties: {
+        summary: {
+          title: "Summary",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        successful: {
+          title: "Successful",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        in_voicemail: {
+          title: "In voicemail",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        sentiment: {
+          title: "Sentiment",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        flags: {
+          title: "Flags",
+          type: "object",
+          additionalProperties: {
+            type: "object",
+            "x-nullable": true,
+            "x-json-value": true,
+            description: "Any valid JSON value.",
+          },
+        },
+      },
+    },
+    ConversationCall: {
+      required: [
+        "status",
+        "direction",
+        "duration_seconds",
+        "ended_reason",
+        "agent",
+      ],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        direction: {
+          title: "Direction",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        duration_seconds: {
+          title: "Duration seconds",
+          type: "number",
+          "x-nullable": true,
+        },
+        ended_reason: {
+          title: "Ended reason",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        agent: {
+          $ref: "#/definitions/ConversationCallAgent",
+        },
+      },
+    },
+    ConversationLatency: {
+      required: ["p50", "p90", "max", "num"],
+      type: "object",
+      properties: {
+        p50: {
+          title: "P50",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        p90: {
+          title: "P90",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        max: {
+          title: "Max",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        num: {
+          title: "Num",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+      },
+    },
+    ConversationProviderLogIssue: {
+      required: ["at", "level", "message"],
+      type: "object",
+      properties: {
+        at: {
+          title: "At",
+          type: "number",
+        },
+        level: {
+          title: "Level",
+          type: "string",
+          enum: ["warn", "error"],
+        },
+        message: {
+          title: "Message",
+          type: "string",
+        },
+      },
+    },
+    ConversationTurn: {
+      required: ["i", "role"],
+      type: "object",
+      properties: {
+        i: {
+          title: "I",
+          type: "integer",
+          minimum: 0,
+        },
+        role: {
+          title: "Role",
+          type: "string",
+          minLength: 1,
+        },
+        start: {
+          title: "Start",
+          type: "number",
+          "x-nullable": true,
+        },
+        end: {
+          title: "End",
+          type: "number",
+          "x-nullable": true,
+        },
+        text: {
+          title: "Text",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        spoken: {
+          title: "Spoken",
+          type: "boolean",
+        },
+        at: {
+          title: "At",
+          type: "number",
+          "x-nullable": true,
+        },
+        id: {
+          title: "Id",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        name: {
+          title: "Name",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        arguments: {
+          title: "Arguments",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        ok: {
+          title: "Ok",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        content: {
+          title: "Content",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        to: {
+          title: "To",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        type: {
+          title: "Type",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        digit: {
+          title: "Digit",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        media: {
+          type: "array",
+          items: {
+            type: "object",
+            "x-nullable": true,
+            "x-json-value": true,
+            description: "Any valid JSON value.",
+          },
+        },
+        from: {
+          title: "From",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+      },
+    },
+    ConversationVariables: {
+      required: ["configured", "collected"],
+      type: "object",
+      properties: {
+        configured: {
+          title: "Configured",
+          type: "object",
+          additionalProperties: {
+            type: "object",
+            "x-nullable": true,
+            "x-json-value": true,
+            description: "Any valid JSON value.",
+          },
+        },
+        collected: {
+          title: "Collected",
+          type: "object",
+          additionalProperties: {
+            type: "object",
+            "x-nullable": true,
+            "x-json-value": true,
+            description: "Any valid JSON value.",
+          },
+        },
+      },
+    },
     MessageContentItem: {
       description: "Array of content items",
       required: ["type"],
@@ -118284,6 +118768,33 @@ export const OPENAPI_CONTRACT = Object.freeze({
           additionalProperties: {
             $ref: "#/definitions/AgentPromptOptimiserComponentEvalResult",
           },
+        },
+      },
+    },
+    ConversationCallAgent: {
+      required: ["id", "version", "name"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        version: {
+          title: "Version",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        name: {
+          title: "Name",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
         },
       },
     },

@@ -702,6 +702,43 @@ export type ${jsonAlias} = JsonValueApi;`,
       "GraphDetailApi.description nullable",
     );
 
+    // The compact conversation record passes provider values on as they were
+    // logged, and the times it computes are null when the provider gave none.
+    schemas = assertReplaceRegex(
+      schemas,
+      /(export type Conversation(?:CallAgent|Call|Analysis|Latency|Turn)Api\w+ = )\{ \[key: string\]: unknown \};/g,
+      "$1JsonValueApi;",
+      "conversation record JSON values → recursive JSON value",
+    );
+    for (const recordType of [
+      "ConversationVariablesApiConfigured",
+      "ConversationVariablesApiCollected",
+      "ConversationAnalysisApiFlags",
+    ]) {
+      schemas = assertReplace(
+        schemas,
+        `export type ${recordType} = {[key: string]: { [key: string]: unknown }};`,
+        `export type ${recordType} = { [key: string]: JsonValueApi };`,
+        `${recordType} → recursive JSON values`,
+      );
+    }
+    for (const [typeName, field] of [
+      ["ConversationEvidenceRowApi", "end_time"],
+      ["ConversationDossierApi", "agent_instructions"],
+      ["ConversationCallApi", "duration_seconds"],
+      ["ConversationTurnApi", "start"],
+      ["ConversationTurnApi", "end"],
+      ["ConversationTurnApi", "at"],
+    ]) {
+      schemas = assertReplaceRegexInNamedBlock(
+        schemas,
+        `export interface ${typeName} {`,
+        new RegExp(`(^\\s*${field}\\??: [^;]+)(;)$`, "m"),
+        "$1 | null$2",
+        `${typeName}.${field} nullable`,
+      );
+    }
+
     fs.writeFileSync(schemasOutputPath, schemas);
   }
 
@@ -799,6 +836,31 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
         /zod\.object\(\{\n\n\}\)\.passthrough\(\)(?=(?:\.(?:optional|nullish|nullable)\(\)|\.default\([^)]*\))*\.describe\('Any valid JSON value\.'\))/g,
         "jsonValueSchema",
         `${exportName} JSON cells → recursive JSON value`,
+      );
+    }
+    const conversationEvidenceResponse =
+      "export const TracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponse = zod.object({";
+    zod = assertReplaceRegexInNamedBlock(
+      zod,
+      conversationEvidenceResponse,
+      /zod\.object\(\{\n\n\}\)\.passthrough\(\)(?=(?:\.(?:optional|nullish|nullable)\(\)|\.default\([^)]*\))*\.describe\('Any valid JSON value\.'\))/g,
+      "jsonValueSchema",
+      "conversation evidence JSON values → recursive JSON value",
+    );
+    for (const [anchor, label] of [
+      [/("end_time": zod\.string\(\)\.datetime\([^)]*\))/, "end_time"],
+      [/("agent_instructions": zod\.string\(\))/, "agent_instructions"],
+      [/("duration_seconds": zod\.number\(\))/, "duration_seconds"],
+      [/("start": zod\.number\(\))/, "turn start"],
+      [/("end": zod\.number\(\))/, "turn end"],
+      [/("at": zod\.number\(\))/, "turn at"],
+    ]) {
+      zod = assertReplaceRegexInNamedBlock(
+        zod,
+        conversationEvidenceResponse,
+        anchor,
+        "$1.nullable()",
+        `conversation evidence ${label} nullable`,
       );
     }
     zod = assertReplaceRegexInNamedBlock(
