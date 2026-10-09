@@ -1,9 +1,10 @@
 import React from "react";
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "src/utils/test-utils";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { userEvent, render, screen } from "src/utils/test-utils";
 import OrgConfigSection from "./OrgConfigSection";
 
 const mockMutate = vi.fn();
+const NativeDateTimeFormat = Intl.DateTimeFormat;
 
 let mockOrgConfigReturn = {
   data: null,
@@ -38,6 +39,11 @@ vi.mock("./ConfigHistoryDrawer", () => ({
 
 describe("OrgConfigSection", () => {
   beforeEach(() => {
+    vi.spyOn(Intl, "DateTimeFormat").mockImplementation((locale, options) =>
+      locale === undefined
+        ? { resolvedOptions: () => ({ timeZone: "Asia/Kolkata" }) }
+        : new NativeDateTimeFormat(locale, options),
+    );
     mockMutate.mockReset();
     mockOrgConfigReturn = {
       data: null,
@@ -47,6 +53,19 @@ describe("OrgConfigSection", () => {
     mockProviderHealthReturn = {
       data: { providers: [] },
     };
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it("discloses the full instant for the local Last Updated time", async () => {
+    mockOrgConfigReturn.data = { created_at: "2025-10-31T00:00:00Z" };
+    render(<OrgConfigSection />);
+    const updated = screen.getByText("31 Oct 2025, 5:30 AM");
+    expect(screen.getByText(/Last Updated:/)).toContainElement(updated);
+    await userEvent.setup().tab();
+    expect(updated).toHaveFocus();
+    const tooltip = await screen.findByRole("tooltip");
+    expect(tooltip).toHaveTextContent("Asia/Kolkata (UTC+05:30)");
+    expect(tooltip).toHaveTextContent("2025-10-31T00:00:00.000Z");
   });
 
   it("renders snake_case metadata and guardrail count from rules fallback", () => {
