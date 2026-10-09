@@ -65,3 +65,21 @@ def test_start_graph_execution_async_marks_failed_when_temporal_start_raises(
     assert graph_execution.completed_at is not None
     assert "Failed to start graph execution workflow" in graph_execution.error_message
     assert "temporal unavailable" in graph_execution.error_message
+
+
+@pytest.mark.unit
+def test_start_graph_execution_rejects_non_positive_concurrency(
+    active_graph_version,
+):
+    """Invalid concurrency is refused before a GraphExecution is created."""
+    from agent_playground.models import GraphExecution
+
+    with pytest.raises(ValueError, match="greater than zero"):
+        start_graph_execution(
+            graph_version_id=str(active_graph_version.id),
+            input_payload={"topic": "hello"},
+            max_concurrent_nodes=0,
+        )
+
+    assert GraphExecution.no_workspace_objects.count() == 0
+
