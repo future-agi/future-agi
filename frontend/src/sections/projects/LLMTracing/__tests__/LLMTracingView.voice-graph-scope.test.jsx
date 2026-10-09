@@ -523,7 +523,7 @@ describe("LLMTracingView trace grid bulk tags", () => {
 
     await waitFor(() =>
       expect(harness.snackbar).toHaveBeenCalledWith(
-        "Couldn't read the current tags of 1 of 2 selected rows. No tags were changed.",
+        "Couldn't load the current tags of 1 of 2 selected rows. No tags were changed.",
         { variant: "error" },
       ),
     );

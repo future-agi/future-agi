@@ -230,6 +230,7 @@ import { REPLAY_TYPES } from "../SessionsView/ReplaySessions/constants";
 import { filtersContentEqual } from "../saved-view-utils";
 import { useCreateReplaySessions } from "src/api/project/replay-sessions";
 import { enqueueSnackbar } from "notistack";
+import { parseTagList } from "src/components/traceDetail/tagUtils";
 import {
   useUpdateSavedView,
   useCreateSavedView,
@@ -4384,18 +4385,30 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                         : primarySpanGridRef,
                     );
                     const nodes = grid?.getSelectedNodes?.() || [];
-                    setTagsBulkItems(
-                      nodes
-                        .map((n) => ({
-                          id:
-                            selectedTab === "trace"
-                              ? n.data?.trace_id
-                              : n.data?.span_id,
-                          type: selectedTab === "trace" ? "trace" : "span",
-                          currentTags: n.data?.tags || [],
-                        }))
-                        .filter((i) => i.id),
-                    );
+                    const items = nodes
+                      .map((n) => ({
+                        id:
+                          selectedTab === "trace"
+                            ? n.data?.trace_id
+                            : n.data?.span_id,
+                        type: selectedTab === "trace" ? "trace" : "span",
+                        // Trace-list rows can carry the stored JSON string.
+                        currentTags: parseTagList(n.data?.tags),
+                      }))
+                      .filter((i) => i.id);
+                    // The tag PATCH replaces each row's list, so merging into
+                    // a list we couldn't read would drop it.
+                    const unread = items.filter(
+                      (i) => i.currentTags === null,
+                    ).length;
+                    if (unread > 0) {
+                      enqueueSnackbar(
+                        `Couldn't load the current tags of ${unread} of ${items.length} selected rows. No tags were changed.`,
+                        { variant: "error" },
+                      );
+                      break;
+                    }
+                    setTagsBulkItems(items);
                     setTagsAnchorEl(anchor);
                     break;
                   }
