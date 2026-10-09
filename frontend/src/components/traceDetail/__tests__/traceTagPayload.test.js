@@ -15,4 +15,17 @@ describe("serializeTraceTags", () => {
     expect(serializeTraceTags(["existing-tag"])).toEqual(["existing-tag"]);
     expect(serializeTraceTags([])).toEqual([]);
   });
+
+  // TraceTagsUpdate items are non-blank strings; one blank legacy tag must
+  // not make the API reject the whole list.
+  it("drops blank names", () => {
+    expect(
+      serializeTraceTags([
+        "",
+        "   ",
+        { name: "", color: "#8B5CF6" },
+        { name: "prod", color: "#3B82F6" },
+      ]),
+    ).toEqual(["prod"]);
+  });
 });
