@@ -1,3 +1,4 @@
+from drf_yasg.utils import swagger_serializer_method
 from rest_framework import serializers
 
 from agent_playground.models.choices import (
@@ -12,7 +13,53 @@ from agent_playground.serializers.port import (
     PortReadSerializer,
     PortWriteSerializer,
 )
-from tfc.utils.serializer_fields import StringOrObjectField
+from tfc.utils.serializer_fields import JsonValueField, StringOrObjectField
+
+
+class LinkedPromptTemplateReadSerializer(serializers.Serializer):
+    """Projection of a linked PromptVersion snapshot on node reads.
+
+    Known config keys are read from ``configuration`` first, then the snapshot
+    root; other provider keys in the snapshot are not projected. A legacy list
+    snapshot contributes only its first entry.
+
+    Snapshot values are copied without validation and model_hub writers store
+    ``prompt_config`` entries as untyped dicts, so every snapshot-derived key
+    is open JSON. Tighten these once TH-6029 types the writer.
+    """
+
+    prompt_template_id = serializers.UUIDField()
+    prompt_version_id = serializers.UUIDField()
+    messages = JsonValueField(allow_null=True)
+    response_format = JsonValueField(allow_null=True)
+    response_schema = JsonValueField(allow_null=True)
+    model = JsonValueField(allow_null=True)
+    temperature = JsonValueField(allow_null=True)
+    max_tokens = JsonValueField(allow_null=True)
+    top_p = JsonValueField(allow_null=True)
+    frequency_penalty = JsonValueField(allow_null=True)
+    presence_penalty = JsonValueField(allow_null=True)
+    output_format = JsonValueField(allow_null=True)
+    tools = JsonValueField(allow_null=True)
+    tool_choice = JsonValueField(allow_null=True)
+    model_detail = JsonValueField(allow_null=True)
+    template_format = JsonValueField(allow_null=True)
+    variable_names = JsonValueField(allow_null=True)
+    metadata = JsonValueField(allow_null=True)
+    is_draft = serializers.BooleanField()
+    # From the PromptVersion column, not the snapshot.
+    template_version = serializers.CharField(allow_blank=True)
+
+
+class NodeConnectionSummarySerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    source_node_id = serializers.UUIDField()
+    target_node_id = serializers.UUIDField()
+
+
+class InputMappingReadSerializer(serializers.Serializer):
+    key = serializers.CharField()
+    value = serializers.CharField(allow_null=True)
 
 
 class NodeReadSerializer(serializers.ModelSerializer):
@@ -59,7 +106,11 @@ class NodeReadSerializer(serializers.ModelSerializer):
             "ports",
         ]
         read_only_fields = fields
+        swagger_schema_fields = {"required": fields}
 
+    @swagger_serializer_method(
+        serializer_or_field=LinkedPromptTemplateReadSerializer(allow_null=True)
+    )
     def get_prompt_template(self, obj):
         """Read from obj.prompt_template_node → PTV.prompt_config_snapshot."""
         ptn = getattr(obj, "prompt_template_node", None)
@@ -103,6 +154,9 @@ class NodeReadSerializer(serializers.ModelSerializer):
             "template_version": pv.template_version,
         }
 
+    @swagger_serializer_method(
+        serializer_or_field=NodeConnectionSummarySerializer(allow_null=True)
+    )
     def get_node_connection(self, obj):
         """Return NodeConnection context set by the view (create response only)."""
         nc = self.context.get("node_connection")
@@ -114,6 +168,11 @@ class NodeReadSerializer(serializers.ModelSerializer):
             "target_node_id": nc.target_node_id,
         }
 
+    @swagger_serializer_method(
+        serializer_or_field=serializers.ListField(
+            child=InputMappingReadSerializer(), allow_null=True
+        )
+    )
     def get_input_mappings(self, obj):
         """Reconstruct input_mappings as list of key-value objects.
 
@@ -349,7 +408,10 @@ class PromptTemplateDataSerializer(serializers.Serializer):
         required=False, allow_null=True, allow_blank=True, default=None
     )
     template_format = serializers.CharField(
-        required=False, allow_null=True, allow_blank=True, default=None,
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+        default=None,
         help_text="Template format: 'mustache' or 'jinja'",
     )
     save_prompt_version = serializers.BooleanField(required=False, default=False)

@@ -1,0 +1,18 @@
+{
+  "body": {
+    "code": "server_error",
+    "detail": "'NoneType' object has no attribute 'copy'",
+    "error": "'NoneType' object has no attribute 'copy'",
+    "message": "'NoneType' object has no attribute 'copy'",
+    "result": "'NoneType' object has no attribute 'copy'",
+    "status": false,
+    "type": "server_error"
+  },
+  "label": "captured",
+  "method": "GET",
+  "note": "legacy: one null variable_names row fails the whole page",
+  "operation": "OP-099",
+  "path": "/model-hub/prompt-templates/{id}/versions/",
+  "request": {},
+  "status": 500
+}

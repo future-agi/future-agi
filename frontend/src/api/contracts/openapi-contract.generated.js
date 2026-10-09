@@ -4198,49 +4198,39 @@ export const OPENAPI_CONTRACT = Object.freeze({
     },
     "/agent-playground/graphs/{id}/versions/": {
       get: {
-        operationId: "agent-playground_graphs_versions_read",
+        operationId: "agent-playground_graphs_versions_list",
         runtimeRequestValidation: false,
         runtimeResponseValidation: false,
         requestBody: null,
         queryParameters: {
-          page: {
+          page_number: {
             required: false,
             schema: {
               type: "integer",
             },
           },
-          limit: {
+          page_size: {
             required: false,
             schema: {
               type: "integer",
+            },
+          },
+          search: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          is_template: {
+            required: false,
+            schema: {
+              type: "string",
             },
           },
         },
         responses: {
           200: {
-            required: ["count", "results"],
-            type: "object",
-            properties: {
-              count: {
-                type: "integer",
-              },
-              next: {
-                type: "string",
-                format: "uri",
-                "x-nullable": true,
-              },
-              previous: {
-                type: "string",
-                format: "uri",
-                "x-nullable": true,
-              },
-              results: {
-                type: "array",
-                items: {
-                  $ref: "#/definitions/GraphList",
-                },
-              },
-            },
+            $ref: "#/definitions/GraphVersionListResponse",
           },
           400: {
             $ref: "#/definitions/AgentPlaygroundErrorResponse",
@@ -4290,44 +4280,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: false,
         requestBody: null,
         queryParameters: {
-          page: {
+          is_template: {
             required: false,
             schema: {
-              type: "integer",
-            },
-          },
-          limit: {
-            required: false,
-            schema: {
-              type: "integer",
+              type: "string",
             },
           },
         },
         responses: {
           200: {
-            required: ["count", "results"],
-            type: "object",
-            properties: {
-              count: {
-                type: "integer",
-              },
-              next: {
-                type: "string",
-                format: "uri",
-                "x-nullable": true,
-              },
-              previous: {
-                type: "string",
-                format: "uri",
-                "x-nullable": true,
-              },
-              results: {
-                type: "array",
-                items: {
-                  $ref: "#/definitions/GraphList",
-                },
-              },
-            },
+            $ref: "#/definitions/GraphVersionDetailResponse",
           },
           400: {
             $ref: "#/definitions/AgentPlaygroundErrorResponse",
@@ -4509,7 +4471,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         queryParameters: {},
         responses: {
           201: {
-            $ref: "#/definitions/CreateNode",
+            $ref: "#/definitions/NodeReadResponse",
           },
           400: {
             $ref: "#/definitions/AgentPlaygroundErrorResponse",
@@ -4535,7 +4497,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         queryParameters: {},
         responses: {
           200: {
-            $ref: "#/definitions/NodeRead",
+            $ref: "#/definitions/NodeReadResponse",
           },
           400: {
             $ref: "#/definitions/AgentPlaygroundErrorResponse",
@@ -13098,7 +13060,26 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeRequestValidation: false,
         runtimeResponseValidation: false,
         requestBody: null,
-        queryParameters: {},
+        queryParameters: {
+          model: {
+            required: true,
+            schema: {
+              type: "string",
+            },
+          },
+          provider: {
+            required: true,
+            schema: {
+              type: "string",
+            },
+          },
+          model_type: {
+            required: true,
+            schema: {
+              type: "string",
+            },
+          },
+        },
         responses: {
           200: {
             $ref: "#/definitions/ModelParametersResponse",
@@ -13162,10 +13143,50 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeRequestValidation: false,
         runtimeResponseValidation: false,
         requestBody: null,
-        queryParameters: {},
+        queryParameters: {
+          name: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          search: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          model_type: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          exclude_providers: {
+            required: false,
+            schema: {
+              type: "array",
+              items: {
+                type: "string",
+              },
+            },
+          },
+          page: {
+            required: false,
+            schema: {
+              type: "integer",
+            },
+          },
+          limit: {
+            required: false,
+            schema: {
+              type: "integer",
+            },
+          },
+        },
         responses: {
           200: {
-            $ref: "#/definitions/ModelHubPaginatedResponse",
+            $ref: "#/definitions/ModelCatalogPage",
           },
           400: {
             $ref: "#/definitions/ModelHubErrorResponse",
@@ -23513,29 +23534,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         responses: {
           200: {
-            required: ["count", "results"],
-            type: "object",
-            properties: {
-              count: {
-                type: "integer",
-              },
-              next: {
-                type: "string",
-                format: "uri",
-                "x-nullable": true,
-              },
-              previous: {
-                type: "string",
-                format: "uri",
-                "x-nullable": true,
-              },
-              results: {
-                type: "array",
-                items: {
-                  $ref: "#/definitions/PromptLabel",
-                },
-              },
-            },
+            $ref: "#/definitions/PromptLabelPage",
           },
           400: {
             $ref: "#/definitions/ModelHubTextErrorResponse",
@@ -23665,44 +23664,28 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: false,
         requestBody: null,
         queryParameters: {
-          page: {
-            required: false,
+          name: {
+            required: true,
             schema: {
-              type: "integer",
+              type: "string",
             },
           },
-          limit: {
+          version: {
             required: false,
             schema: {
-              type: "integer",
+              type: "string",
+            },
+          },
+          label: {
+            required: false,
+            schema: {
+              type: "string",
             },
           },
         },
         responses: {
           200: {
-            required: ["count", "results"],
-            type: "object",
-            properties: {
-              count: {
-                type: "integer",
-              },
-              next: {
-                type: "string",
-                format: "uri",
-                "x-nullable": true,
-              },
-              previous: {
-                type: "string",
-                format: "uri",
-                "x-nullable": true,
-              },
-              results: {
-                type: "array",
-                items: {
-                  $ref: "#/definitions/PromptLabel",
-                },
-              },
-            },
+            $ref: "#/definitions/PromptLabelLookupResponse",
           },
           400: {
             $ref: "#/definitions/ModelHubTextErrorResponse",
@@ -23800,44 +23783,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: false,
         requestBody: null,
         queryParameters: {
-          page: {
+          template_id: {
             required: false,
             schema: {
-              type: "integer",
+              type: "string",
             },
           },
-          limit: {
+          template_name: {
             required: false,
             schema: {
-              type: "integer",
+              type: "string",
             },
           },
         },
         responses: {
           200: {
-            required: ["count", "results"],
-            type: "object",
-            properties: {
-              count: {
-                type: "integer",
-              },
-              next: {
-                type: "string",
-                format: "uri",
-                "x-nullable": true,
-              },
-              previous: {
-                type: "string",
-                format: "uri",
-                "x-nullable": true,
-              },
-              results: {
-                type: "array",
-                items: {
-                  $ref: "#/definitions/PromptLabel",
-                },
-              },
-            },
+            $ref: "#/definitions/PromptTemplateLabelsResponse",
           },
           400: {
             $ref: "#/definitions/ModelHubTextErrorResponse",
@@ -24021,7 +23982,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       get: {
         operationId: "model-hub_prompt-templates_list",
         runtimeRequestValidation: true,
-        runtimeResponseValidation: false,
+        runtimeResponseValidation: true,
         requestBody: null,
         queryParameters: {
           name: {
@@ -24079,29 +24040,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         responses: {
           200: {
-            required: ["count", "results"],
-            type: "object",
-            properties: {
-              count: {
-                type: "integer",
-              },
-              next: {
-                type: "string",
-                format: "uri",
-                "x-nullable": true,
-              },
-              previous: {
-                type: "string",
-                format: "uri",
-                "x-nullable": true,
-              },
-              results: {
-                type: "array",
-                items: {
-                  $ref: "#/definitions/PromptTemplate",
-                },
-              },
-            },
+            $ref: "#/definitions/PromptTemplatePage",
+          },
+          400: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          409: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ModelHubErrorResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -24366,7 +24320,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         queryParameters: {},
         responses: {
           200: {
-            $ref: "#/definitions/PromptTemplate",
+            $ref: "#/definitions/PromptTemplateDetailResponse",
+          },
+          400: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          409: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ModelHubErrorResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -24751,7 +24720,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       get: {
         operationId: "model-hub_prompt-templates_versions",
         runtimeRequestValidation: true,
-        runtimeResponseValidation: false,
+        runtimeResponseValidation: true,
         requestBody: null,
         queryParameters: {
           page: {
@@ -24771,7 +24740,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         responses: {
           200: {
-            $ref: "#/definitions/PromptTemplate",
+            $ref: "#/definitions/PromptVersionHistoryPage",
+          },
+          400: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          409: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ModelHubErrorResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -47661,6 +47645,36 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "boolean",
           default: false,
         },
+        type: {
+          title: "Type",
+          type: "string",
+          enum: [
+            "validation_error",
+            "authentication_error",
+            "payment_required",
+            "entitlement_error",
+            "permission_error",
+            "not_found",
+            "conflict",
+            "client_error",
+            "rate_limit",
+            "server_error",
+            "service_unavailable",
+            "timeout",
+            "api_error",
+          ],
+          "x-nullable": true,
+        },
+        code: {
+          title: "Code",
+          type: "string",
+          "x-nullable": true,
+        },
+        detail: {
+          title: "Detail",
+          type: "string",
+          "x-nullable": true,
+        },
         result: {
           title: "Result",
           type: "string",
@@ -47675,6 +47689,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Error",
           type: "string",
           "x-nullable": true,
+        },
+        attr: {
+          title: "Attr",
+          type: "string",
+          "x-nullable": true,
+        },
+        details: {
+          title: "Details",
+          type: "object",
+          additionalProperties: {
+            type: "array",
+            items: {
+              type: "string",
+              minLength: 1,
+            },
+          },
         },
       },
     },
@@ -61825,6 +61855,32 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    GraphVersionDetailResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/GraphVersionDetail",
+        },
+      },
+    },
+    GraphVersionListResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/GraphVersionListResult",
+        },
+      },
+    },
     GroundTruthDataResponse: {
       required: ["status", "result"],
       type: "object",
@@ -66525,6 +66581,51 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    ModelCatalogPage: {
+      required: [
+        "count",
+        "next",
+        "previous",
+        "total_pages",
+        "current_page",
+        "results",
+      ],
+      type: "object",
+      properties: {
+        count: {
+          title: "Count",
+          type: "integer",
+        },
+        next: {
+          title: "Next",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+          format: "uri",
+        },
+        previous: {
+          title: "Previous",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+          format: "uri",
+        },
+        total_pages: {
+          title: "Total pages",
+          type: "integer",
+        },
+        current_page: {
+          title: "Current page",
+          type: "integer",
+        },
+        results: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/ModelCatalogEntry",
+          },
+        },
+      },
+    },
     ModelHubEmptyRequest: {
       type: "object",
       properties: {},
@@ -66873,19 +66974,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "x-nullable": true,
         },
         prompt_template: {
-          title: "Prompt template",
-          type: "string",
-          readOnly: true,
+          $ref: "#/definitions/LinkedPromptTemplateRead",
         },
         node_connection: {
-          title: "Node connection",
-          type: "string",
-          readOnly: true,
+          $ref: "#/definitions/NodeConnectionSummary",
         },
         input_mappings: {
-          title: "Input mappings",
-          type: "string",
+          description:
+            'Reconstruct input_mappings as list of key-value objects.\n\n        Returns a list like [\n            {"key": "context", "value": "DataLoader.output"},\n            {"key": "question", "value": None}\n        ] for subgraph nodes, or None for atomic nodes.\n\n        Uses prefetched ``ports`` and ``incoming_edges`` when available\n        (see ``prefetch_version_detail``) to avoid N+1 queries.\n',
+          type: "array",
+          items: {
+            $ref: "#/definitions/InputMappingRead",
+          },
           readOnly: true,
+          "x-nullable": true,
         },
         ports: {
           type: "array",
@@ -66893,6 +66995,34 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/PortRead",
           },
           readOnly: true,
+        },
+      },
+      required: [
+        "id",
+        "type",
+        "name",
+        "config",
+        "position",
+        "node_template_id",
+        "ref_graph_version_id",
+        "ref_graph_name",
+        "ref_graph_id",
+        "prompt_template",
+        "node_connection",
+        "input_mappings",
+        "ports",
+      ],
+    },
+    NodeReadResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/NodeRead",
         },
       },
     },
@@ -70970,7 +71100,26 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     PromptHistoryExecution: {
-      required: ["template_version"],
+      required: [
+        "id",
+        "template_version",
+        "output",
+        "prompt_config_snapshot",
+        "template_name",
+        "original_template",
+        "metadata",
+        "variable_names",
+        "evaluation_results",
+        "evaluation_configs",
+        "created_at",
+        "is_default",
+        "commit_message",
+        "updated_at",
+        "is_draft",
+        "labels",
+        "placeholders",
+        "prompt_base_template",
+      ],
       type: "object",
       properties: {
         id: {
@@ -70990,13 +71139,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           readOnly: true,
           "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
         },
         prompt_config_snapshot: {
           title: "Prompt config snapshot",
-          description:
-            "\nGet prompt_config_snapshot with backward compatibility for modelDetail.\nIf modelDetail is missing from configuration, generate it from the model name.\n",
+          description: "Any valid JSON value.",
           type: "object",
           readOnly: true,
+          "x-nullable": true,
+          "x-json-value": true,
         },
         template_name: {
           title: "Template name",
@@ -71031,6 +71183,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           readOnly: true,
           "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
         },
         created_at: {
           title: "Created at",
@@ -71058,8 +71212,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "boolean",
         },
         labels: {
-          title: "Labels",
-          type: "object",
+          type: "array",
+          items: {
+            $ref: "#/definitions/PromptVersionLabel",
+          },
           readOnly: true,
         },
         placeholders: {
@@ -71090,6 +71246,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "uuid",
           readOnly: true,
+          "x-nullable": true,
         },
         name: {
           title: "Name",
@@ -71118,6 +71275,64 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "date-time",
           readOnly: true,
+        },
+      },
+    },
+    PromptLabelLookupResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/PromptLabelledVersion",
+        },
+      },
+    },
+    PromptLabelPage: {
+      required: [
+        "count",
+        "next",
+        "previous",
+        "total_pages",
+        "current_page",
+        "results",
+      ],
+      type: "object",
+      properties: {
+        count: {
+          title: "Count",
+          type: "integer",
+        },
+        next: {
+          title: "Next",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+          format: "uri",
+        },
+        previous: {
+          title: "Previous",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+          format: "uri",
+        },
+        total_pages: {
+          title: "Total pages",
+          type: "integer",
+        },
+        current_page: {
+          title: "Current page",
+          type: "integer",
+        },
+        results: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/PromptLabel",
+          },
         },
       },
     },
@@ -71354,6 +71569,188 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    PromptTemplateDetailResponse: {
+      required: [
+        "id",
+        "name",
+        "description",
+        "variable_names",
+        "organization",
+        "prompt_folder",
+        "placeholders",
+        "created_by",
+        "prompt_config",
+        "version",
+        "output",
+        "is_draft",
+        "metadata",
+        "last_saved",
+        "error_message",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        description: {
+          title: "Description",
+          type: "string",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        variable_names: {
+          title: "Variable names",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        organization: {
+          title: "Organization",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        prompt_folder: {
+          title: "Prompt folder",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        placeholders: {
+          title: "Placeholders",
+          type: "object",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        created_by: {
+          title: "Created by",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        prompt_config: {
+          title: "Prompt config",
+          description: "Any valid JSON value.",
+          type: "object",
+          "x-json-value": true,
+        },
+        version: {
+          title: "Version",
+          type: "string",
+          minLength: 1,
+        },
+        output: {
+          title: "Output",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        is_draft: {
+          title: "Is draft",
+          type: "boolean",
+        },
+        metadata: {
+          title: "Metadata",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        last_saved: {
+          title: "Last saved",
+          type: "string",
+          format: "date-time",
+        },
+        error_message: {
+          title: "Error message",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        last_chunk_pos: {
+          title: "Last chunk pos",
+          description: "Any valid JSON value.",
+          type: "object",
+          "x-json-value": true,
+        },
+      },
+    },
+    PromptTemplateLabelsResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/PromptTemplateVersionLabels",
+          },
+        },
+      },
+    },
+    PromptTemplatePage: {
+      required: [
+        "count",
+        "next",
+        "previous",
+        "total_pages",
+        "current_page",
+        "results",
+      ],
+      type: "object",
+      properties: {
+        count: {
+          title: "Count",
+          type: "integer",
+        },
+        next: {
+          title: "Next",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+          format: "uri",
+        },
+        previous: {
+          title: "Previous",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+          format: "uri",
+        },
+        total_pages: {
+          title: "Total pages",
+          type: "integer",
+        },
+        current_page: {
+          title: "Current page",
+          type: "integer",
+        },
+        results: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/PromptTemplate",
+          },
+          readOnly: true,
+        },
+      },
+    },
     PromptTemplatePatch: {
       type: "object",
       properties: {
@@ -71403,6 +71800,52 @@ export const OPENAPI_CONTRACT = Object.freeze({
           format: "uuid",
           readOnly: true,
           "x-nullable": true,
+        },
+      },
+    },
+    PromptVersionHistoryPage: {
+      required: [
+        "count",
+        "next",
+        "previous",
+        "total_pages",
+        "current_page",
+        "results",
+      ],
+      type: "object",
+      properties: {
+        count: {
+          title: "Count",
+          type: "integer",
+        },
+        next: {
+          title: "Next",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+          format: "uri",
+        },
+        previous: {
+          title: "Previous",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+          format: "uri",
+        },
+        total_pages: {
+          title: "Total pages",
+          type: "integer",
+        },
+        current_page: {
+          title: "Current page",
+          type: "integer",
+        },
+        results: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/PromptHistoryExecution",
+          },
+          readOnly: true,
         },
       },
     },
@@ -91269,6 +91712,87 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    GraphVersionDetail: {
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        version_number: {
+          title: "Version number",
+          type: "integer",
+          readOnly: true,
+        },
+        status: {
+          title: "Status",
+          description: "Version status (inactive for historical versions)",
+          type: "string",
+          enum: ["draft", "active", "inactive"],
+          readOnly: true,
+        },
+        tags: {
+          title: "Tags",
+          type: "object",
+          readOnly: true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        commit_message: {
+          title: "Commit message",
+          type: "string",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+        nodes: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/NodeRead",
+          },
+          readOnly: true,
+        },
+        node_connections: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/NodeConnectionRead",
+          },
+          readOnly: true,
+        },
+      },
+      required: [
+        "id",
+        "version_number",
+        "status",
+        "tags",
+        "commit_message",
+        "created_at",
+        "nodes",
+        "node_connections",
+      ],
+    },
+    GraphVersionListResult: {
+      required: ["versions", "metadata"],
+      type: "object",
+      properties: {
+        versions: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/GraphVersionList",
+          },
+        },
+        metadata: {
+          $ref: "#/definitions/GraphVersionPageMetadata",
+        },
+      },
+    },
     GroundTruthDataResponseResult: {
       required: [
         "id",
@@ -95052,6 +95576,93 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    ModelCatalogEntry: {
+      required: [
+        "model_name",
+        "providers",
+        "is_available",
+        "logo_url",
+        "best_for",
+        "use_case",
+        "cutoff",
+        "rate_limits",
+        "latency",
+        "pricing",
+        "type",
+      ],
+      type: "object",
+      properties: {
+        model_name: {
+          title: "Model name",
+          type: "string",
+          minLength: 1,
+        },
+        providers: {
+          title: "Providers",
+          type: "string",
+        },
+        is_available: {
+          title: "Is available",
+          description:
+            "Whether the organisation has a configured key for the provider.",
+          type: "boolean",
+        },
+        logo_url: {
+          title: "Logo url",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        best_for: {
+          title: "Best for",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        use_case: {
+          title: "Use case",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        cutoff: {
+          title: "Cutoff",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        rate_limits: {
+          title: "Rate limits",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        latency: {
+          title: "Latency",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        pricing: {
+          title: "Pricing",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        type: {
+          title: "Type",
+          description: "Model mode, 'text' when unknown.",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
     ModelHubEvalConfigResponseResult: {
       required: ["eval"],
       type: "object",
@@ -95250,6 +95861,207 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    InputMappingRead: {
+      required: ["key", "value"],
+      type: "object",
+      properties: {
+        key: {
+          title: "Key",
+          type: "string",
+          minLength: 1,
+        },
+        value: {
+          title: "Value",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
+    LinkedPromptTemplateRead: {
+      description:
+        "Read from obj.prompt_template_node → PTV.prompt_config_snapshot.",
+      required: [
+        "prompt_template_id",
+        "prompt_version_id",
+        "messages",
+        "response_format",
+        "response_schema",
+        "model",
+        "temperature",
+        "max_tokens",
+        "top_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "output_format",
+        "tools",
+        "tool_choice",
+        "model_detail",
+        "template_format",
+        "variable_names",
+        "metadata",
+        "is_draft",
+        "template_version",
+      ],
+      type: "object",
+      properties: {
+        prompt_template_id: {
+          title: "Prompt template id",
+          type: "string",
+          format: "uuid",
+        },
+        prompt_version_id: {
+          title: "Prompt version id",
+          type: "string",
+          format: "uuid",
+        },
+        messages: {
+          title: "Messages",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        response_format: {
+          title: "Response format",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        response_schema: {
+          title: "Response schema",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        model: {
+          title: "Model",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        temperature: {
+          title: "Temperature",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        max_tokens: {
+          title: "Max tokens",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        top_p: {
+          title: "Top p",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        frequency_penalty: {
+          title: "Frequency penalty",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        presence_penalty: {
+          title: "Presence penalty",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        output_format: {
+          title: "Output format",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        tools: {
+          title: "Tools",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        tool_choice: {
+          title: "Tool choice",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        model_detail: {
+          title: "Model detail",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        template_format: {
+          title: "Template format",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        variable_names: {
+          title: "Variable names",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        metadata: {
+          title: "Metadata",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        is_draft: {
+          title: "Is draft",
+          type: "boolean",
+        },
+        template_version: {
+          title: "Template version",
+          type: "string",
+        },
+      },
+      "x-nullable": true,
+    },
+    NodeConnectionSummary: {
+      description:
+        "Return NodeConnection context set by the view (create response only).",
+      required: ["id", "source_node_id", "target_node_id"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        source_node_id: {
+          title: "Source node id",
+          type: "string",
+          format: "uuid",
+        },
+        target_node_id: {
+          title: "Target node id",
+          type: "string",
+          format: "uuid",
+        },
+      },
+      "x-nullable": true,
+    },
     PortRead: {
       type: "object",
       properties: {
@@ -95295,6 +96107,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           readOnly: true,
           "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
         },
         metadata: {
           title: "Metadata",
@@ -95306,8 +96120,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "uuid",
           readOnly: true,
+          "x-nullable": true,
         },
       },
+      required: [
+        "id",
+        "key",
+        "display_name",
+        "direction",
+        "data_schema",
+        "required",
+        "default_value",
+        "metadata",
+        "ref_port_id",
+      ],
     },
     ObservationSpanDetailResult: {
       required: ["observation_span", "evals_metrics"],
@@ -97085,6 +97911,135 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    PromptVersionLabel: {
+      required: ["id", "name", "type"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        type: {
+          title: "Type",
+          type: "string",
+          enum: ["system", "custom"],
+        },
+      },
+    },
+    PromptLabelledVersion: {
+      required: [
+        "id",
+        "name",
+        "description",
+        "variable_names",
+        "organization",
+        "prompt_folder",
+        "placeholders",
+        "created_by",
+        "prompt_config",
+        "version",
+        "output",
+        "is_draft",
+        "metadata",
+        "labels",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        description: {
+          title: "Description",
+          type: "string",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        variable_names: {
+          title: "Variable names",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        organization: {
+          title: "Organization",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        prompt_folder: {
+          title: "Prompt folder",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        placeholders: {
+          title: "Placeholders",
+          type: "object",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        created_by: {
+          title: "Created by",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        prompt_config: {
+          title: "Prompt config",
+          description: "Any valid JSON value.",
+          type: "object",
+          "x-json-value": true,
+        },
+        version: {
+          title: "Version",
+          type: "string",
+          minLength: 1,
+        },
+        output: {
+          title: "Output",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        is_draft: {
+          title: "Is draft",
+          type: "boolean",
+        },
+        metadata: {
+          title: "Metadata",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        labels: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/PromptVersionLabel",
+          },
+        },
+      },
+    },
     PromptMetricsEmptyScreenResult: {
       required: ["python", "typescript"],
       type: "object",
@@ -97220,6 +98175,32 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/PromptSimulationScenarioItem",
           },
           readOnly: true,
+        },
+      },
+    },
+    PromptTemplateVersionLabels: {
+      required: ["version", "labels", "is_default", "is_draft"],
+      type: "object",
+      properties: {
+        version: {
+          title: "Version",
+          type: "string",
+          minLength: 1,
+        },
+        labels: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        is_default: {
+          title: "Is default",
+          type: "boolean",
+        },
+        is_draft: {
+          title: "Is draft",
+          type: "boolean",
         },
       },
     },
@@ -108987,6 +109968,130 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         next_page: {
           title: "Next page",
+          type: "integer",
+          "x-nullable": true,
+        },
+      },
+    },
+    NodeConnectionRead: {
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        source_node_id: {
+          title: "Source node id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        target_node_id: {
+          title: "Target node id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+      },
+      required: ["id", "source_node_id", "target_node_id"],
+    },
+    GraphVersionList: {
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        version_number: {
+          title: "Version number",
+          type: "integer",
+          readOnly: true,
+        },
+        status: {
+          title: "Status",
+          description: "Version status (inactive for historical versions)",
+          type: "string",
+          enum: ["draft", "active", "inactive"],
+          readOnly: true,
+        },
+        tags: {
+          title: "Tags",
+          type: "object",
+          readOnly: true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        commit_message: {
+          title: "Commit message",
+          type: "string",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+        global_variables: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          readOnly: true,
+        },
+      },
+      required: [
+        "id",
+        "version_number",
+        "status",
+        "tags",
+        "commit_message",
+        "created_at",
+        "global_variables",
+      ],
+    },
+    GraphVersionPageMetadata: {
+      required: [
+        "total_count",
+        "page_number",
+        "page_size",
+        "total_pages",
+        "next_page",
+        "previous_page",
+      ],
+      type: "object",
+      properties: {
+        total_count: {
+          title: "Total count",
+          type: "integer",
+        },
+        page_number: {
+          title: "Page number",
+          description:
+            "Page actually returned; out-of-range requests get the last page.",
+          type: "integer",
+        },
+        page_size: {
+          title: "Page size",
+          type: "integer",
+        },
+        total_pages: {
+          title: "Total pages",
+          type: "integer",
+        },
+        next_page: {
+          title: "Next page",
+          type: "integer",
+          "x-nullable": true,
+        },
+        previous_page: {
+          title: "Previous page",
           type: "integer",
           "x-nullable": true,
         },

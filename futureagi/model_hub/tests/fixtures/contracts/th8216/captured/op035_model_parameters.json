@@ -1,0 +1,39 @@
+{
+  "body": {
+    "result": {
+      "responseFormat": [
+        {
+          "value": "<str>"
+        }
+      ],
+      "sliders": [
+        {
+          "default": null,
+          "label": "<str>",
+          "max": "<float>",
+          "min": "<float>",
+          "step": "<float>"
+        },
+        {
+          "default": null,
+          "label": "<str>",
+          "max": "<int>",
+          "min": "<int>",
+          "step": "<int>"
+        }
+      ]
+    },
+    "status": true
+  },
+  "label": "captured",
+  "method": "GET",
+  "note": "catalogue values reduced to their JSON types",
+  "operation": "OP-035",
+  "path": "/model-hub/api/model_parameters/",
+  "request": {
+    "model": "gpt-4o-mini",
+    "model_type": "llm",
+    "provider": "openai"
+  },
+  "status": 200
+}

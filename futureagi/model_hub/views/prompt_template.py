@@ -34,6 +34,7 @@ from django.http import Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework import filters, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import APIException
@@ -103,6 +104,11 @@ from model_hub.serializers.contracts import (
     UploadFileResponseSerializer,
 )
 from model_hub.serializers.prompt_folder import PromptFolderSerializer
+from model_hub.serializers.prompt_read_contracts import (
+    PromptTemplateDetailResponseSerializer,
+    PromptTemplatePageSerializer,
+    PromptVersionHistoryPageSerializer,
+)
 from model_hub.serializers.prompt_template import (
     CommitSerializer,
     CompareVersionsSerializer,
@@ -715,10 +721,19 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
             created_by=self.request.user,
         )
 
-    @validated_request(query_serializer=PromptTemplateListQuerySerializer)
+    @validated_request(
+        query_serializer=PromptTemplateListQuerySerializer,
+        responses={200: PromptTemplatePageSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def list(self, request, *args, **kwargs):
         return super().list(request, *args, **kwargs)
 
+    @swagger_auto_schema(
+        responses={
+            200: PromptTemplateDetailResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        }
+    )
     def retrieve(self, request, *args, **kwargs):
         """
         Retrieve a prompt template with version history and execution data.
@@ -3264,7 +3279,13 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
         except Exception as e:
             logger.exception(f"Error in run method: {e}")
 
-    @validated_request(query_serializer=PromptVersionsQuerySerializer)
+    @validated_request(
+        query_serializer=PromptVersionsQuerySerializer,
+        responses={
+            200: PromptVersionHistoryPageSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+    )
     @action(detail=True, methods=["get"])
     def versions(self, request, pk=None):
         try:

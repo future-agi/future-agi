@@ -1,0 +1,58 @@
+{
+  "body": {
+    "created_by": "00000000-0000-4000-8000-000000000003",
+    "description": null,
+    "error_message": null,
+    "id": "00000000-0000-4000-8000-000000000001",
+    "is_draft": true,
+    "last_saved": "2026-01-01T00:00:00Z",
+    "metadata": {},
+    "name": "TH8216 contract prompt",
+    "organization": "00000000-0000-4000-8000-000000000002",
+    "output": [],
+    "placeholders": {},
+    "prompt_config": [
+      {
+        "configuration": {
+          "model": "gpt-4o-mini",
+          "temperature": 0.2,
+          "template_format": "mustache"
+        },
+        "messages": [
+          {
+            "content": [
+              {
+                "text": "Be brief.",
+                "type": "text"
+              }
+            ],
+            "role": "system"
+          },
+          {
+            "content": [
+              {
+                "text": "Version 3 {{name}}",
+                "type": "text"
+              }
+            ],
+            "role": "user"
+          }
+        ]
+      }
+    ],
+    "prompt_folder": null,
+    "variable_names": {
+      "name": [
+        "Ada"
+      ]
+    },
+    "version": "v3"
+  },
+  "label": "captured",
+  "method": "GET",
+  "note": "",
+  "operation": "OP-078",
+  "path": "/model-hub/prompt-templates/{id}/",
+  "request": {},
+  "status": 200
+}

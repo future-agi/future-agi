@@ -1,0 +1,36 @@
+{
+  "body": {
+    "result": [
+      {
+        "is_default": true,
+        "is_draft": false,
+        "labels": [
+          "th8216-staging"
+        ],
+        "version": "v1"
+      },
+      {
+        "is_default": false,
+        "is_draft": false,
+        "labels": [],
+        "version": "v2"
+      },
+      {
+        "is_default": false,
+        "is_draft": true,
+        "labels": [],
+        "version": "v3"
+      }
+    ],
+    "status": true
+  },
+  "label": "captured",
+  "method": "GET",
+  "note": "",
+  "operation": "OP-062",
+  "path": "/model-hub/prompt-labels/template-labels/",
+  "request": {
+    "template_id": "<template>"
+  },
+  "status": 200
+}

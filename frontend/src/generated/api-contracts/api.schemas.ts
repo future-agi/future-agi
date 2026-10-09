@@ -1806,11 +1806,39 @@ export interface NodeExecutionDetailResponseApi {
   result: NodeExecutionDetailResultApi;
 }
 
+export type AgentPlaygroundErrorResponseApiType =
+  (typeof AgentPlaygroundErrorResponseApiType)[keyof typeof AgentPlaygroundErrorResponseApiType];
+
+export const AgentPlaygroundErrorResponseApiType = {
+  validation_error: "validation_error",
+  authentication_error: "authentication_error",
+  payment_required: "payment_required",
+  entitlement_error: "entitlement_error",
+  permission_error: "permission_error",
+  not_found: "not_found",
+  conflict: "conflict",
+  client_error: "client_error",
+  rate_limit: "rate_limit",
+  server_error: "server_error",
+  service_unavailable: "service_unavailable",
+  timeout: "timeout",
+  api_error: "api_error",
+} as const;
+
+export type AgentPlaygroundErrorResponseApiDetails = {
+  [key: string]: string[];
+};
+
 export interface AgentPlaygroundErrorResponseApi {
   status?: boolean;
+  type?: AgentPlaygroundErrorResponseApiType;
+  code?: string;
+  detail?: string;
   result?: string;
   message?: string;
   error?: string;
+  attr?: string;
+  details?: AgentPlaygroundErrorResponseApiDetails;
 }
 
 export interface UserBriefApi {
@@ -1977,6 +2005,345 @@ export interface GraphUpdateApi {
    */
   name?: string;
   description?: string;
+}
+
+/**
+ * Version status (inactive for historical versions)
+ */
+export type GraphVersionListApiStatus =
+  (typeof GraphVersionListApiStatus)[keyof typeof GraphVersionListApiStatus];
+
+export const GraphVersionListApiStatus = {
+  draft: "draft",
+  active: "active",
+  inactive: "inactive",
+} as const;
+
+/**
+ * Any valid JSON value.
+ */
+export type GraphVersionListApiTags = { [key: string]: unknown };
+
+export interface GraphVersionListApi {
+  readonly id: string;
+  readonly version_number: number;
+  /** Version status (inactive for historical versions) */
+  readonly status: GraphVersionListApiStatus;
+  /** Any valid JSON value. */
+  readonly tags: GraphVersionListApiTags;
+  readonly commit_message: string;
+  readonly created_at: string;
+  readonly global_variables: readonly string[];
+}
+
+export interface GraphVersionPageMetadataApi {
+  total_count: number;
+  /** Page actually returned; out-of-range requests get the last page. */
+  page_number: number;
+  page_size: number;
+  total_pages: number;
+  next_page: number;
+  previous_page: number;
+}
+
+export interface GraphVersionListResultApi {
+  versions: GraphVersionListApi[];
+  metadata: GraphVersionPageMetadataApi;
+}
+
+export interface GraphVersionListResponseApi {
+  status: boolean;
+  result: GraphVersionListResultApi;
+}
+
+/**
+ * Version status (inactive for historical versions)
+ */
+export type GraphVersionDetailApiStatus =
+  (typeof GraphVersionDetailApiStatus)[keyof typeof GraphVersionDetailApiStatus];
+
+export const GraphVersionDetailApiStatus = {
+  draft: "draft",
+  active: "active",
+  inactive: "inactive",
+} as const;
+
+/**
+ * 'subgraph' for subgraph nodes, 'atomic' for nodes using a NodeTemplate
+ */
+export type NodeReadApiType =
+  (typeof NodeReadApiType)[keyof typeof NodeReadApiType];
+
+export const NodeReadApiType = {
+  subgraph: "subgraph",
+  atomic: "atomic",
+} as const;
+
+/**
+ * Any valid JSON value.
+ */
+export type LinkedPromptTemplateReadApiMessages = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type LinkedPromptTemplateReadApiResponseFormat = {
+  [key: string]: unknown;
+};
+
+/**
+ * Any valid JSON value.
+ */
+export type LinkedPromptTemplateReadApiResponseSchema = {
+  [key: string]: unknown;
+};
+
+/**
+ * Any valid JSON value.
+ */
+export type LinkedPromptTemplateReadApiModel = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type LinkedPromptTemplateReadApiTemperature = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type LinkedPromptTemplateReadApiMaxTokens = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type LinkedPromptTemplateReadApiTopP = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type LinkedPromptTemplateReadApiFrequencyPenalty = {
+  [key: string]: unknown;
+};
+
+/**
+ * Any valid JSON value.
+ */
+export type LinkedPromptTemplateReadApiPresencePenalty = {
+  [key: string]: unknown;
+};
+
+/**
+ * Any valid JSON value.
+ */
+export type LinkedPromptTemplateReadApiOutputFormat = {
+  [key: string]: unknown;
+};
+
+/**
+ * Any valid JSON value.
+ */
+export type LinkedPromptTemplateReadApiTools = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type LinkedPromptTemplateReadApiToolChoice = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type LinkedPromptTemplateReadApiModelDetail = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type LinkedPromptTemplateReadApiTemplateFormat = {
+  [key: string]: unknown;
+};
+
+/**
+ * Any valid JSON value.
+ */
+export type LinkedPromptTemplateReadApiVariableNames = {
+  [key: string]: unknown;
+};
+
+/**
+ * Any valid JSON value.
+ */
+export type LinkedPromptTemplateReadApiMetadata = { [key: string]: unknown };
+
+/**
+ * Read from obj.prompt_template_node → PTV.prompt_config_snapshot.
+ */
+export interface LinkedPromptTemplateReadApi {
+  prompt_template_id: string;
+  prompt_version_id: string;
+  /** Any valid JSON value. */
+  messages: LinkedPromptTemplateReadApiMessages;
+  /** Any valid JSON value. */
+  response_format: LinkedPromptTemplateReadApiResponseFormat;
+  /** Any valid JSON value. */
+  response_schema: LinkedPromptTemplateReadApiResponseSchema;
+  /** Any valid JSON value. */
+  model: LinkedPromptTemplateReadApiModel;
+  /** Any valid JSON value. */
+  temperature: LinkedPromptTemplateReadApiTemperature;
+  /** Any valid JSON value. */
+  max_tokens: LinkedPromptTemplateReadApiMaxTokens;
+  /** Any valid JSON value. */
+  top_p: LinkedPromptTemplateReadApiTopP;
+  /** Any valid JSON value. */
+  frequency_penalty: LinkedPromptTemplateReadApiFrequencyPenalty;
+  /** Any valid JSON value. */
+  presence_penalty: LinkedPromptTemplateReadApiPresencePenalty;
+  /** Any valid JSON value. */
+  output_format: LinkedPromptTemplateReadApiOutputFormat;
+  /** Any valid JSON value. */
+  tools: LinkedPromptTemplateReadApiTools;
+  /** Any valid JSON value. */
+  tool_choice: LinkedPromptTemplateReadApiToolChoice;
+  /** Any valid JSON value. */
+  model_detail: LinkedPromptTemplateReadApiModelDetail;
+  /** Any valid JSON value. */
+  template_format: LinkedPromptTemplateReadApiTemplateFormat;
+  /** Any valid JSON value. */
+  variable_names: LinkedPromptTemplateReadApiVariableNames;
+  /** Any valid JSON value. */
+  metadata: LinkedPromptTemplateReadApiMetadata;
+  is_draft: boolean;
+  template_version: string;
+}
+
+/**
+ * Return NodeConnection context set by the view (create response only).
+ */
+export interface NodeConnectionSummaryApi {
+  id: string;
+  source_node_id: string;
+  target_node_id: string;
+}
+
+export interface InputMappingReadApi {
+  /** @minLength 1 */
+  key: string;
+  /** @minLength 1 */
+  value: string;
+}
+
+export type PortReadApiDirection =
+  (typeof PortReadApiDirection)[keyof typeof PortReadApiDirection];
+
+export const PortReadApiDirection = {
+  input: "input",
+  output: "output",
+} as const;
+
+/**
+ * JSON Schema for validation
+ */
+export type PortReadApiDataSchema = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type PortReadApiDefaultValue = { [key: string]: unknown };
+
+export type PortReadApiMetadata = { [key: string]: unknown };
+
+export interface PortReadApi {
+  readonly id: string;
+  /**
+   * Identifier (e.g., 'prompt', 'result')
+   * @minLength 1
+   */
+  readonly key: string;
+  /**
+   * User-facing name for the port
+   * @minLength 1
+   */
+  readonly display_name: string;
+  readonly direction: PortReadApiDirection;
+  /** JSON Schema for validation */
+  readonly data_schema: PortReadApiDataSchema;
+  readonly required: boolean;
+  /** Any valid JSON value. */
+  readonly default_value: PortReadApiDefaultValue;
+  readonly metadata: PortReadApiMetadata;
+  readonly ref_port_id: string;
+}
+
+/**
+ * Node-specific configuration (validated against node_template.config_schema for atomic nodes)
+ */
+export type NodeReadApiConfig = { [key: string]: unknown };
+
+/**
+ * UI coordinates {"x": 0, "y": 0}
+ */
+export type NodeReadApiPosition = { [key: string]: unknown };
+
+export interface NodeReadApi {
+  readonly id: string;
+  /** 'subgraph' for subgraph nodes, 'atomic' for nodes using a NodeTemplate */
+  readonly type: NodeReadApiType;
+  /**
+   * Display name
+   * @minLength 1
+   */
+  readonly name: string;
+  /** Node-specific configuration (validated against node_template.config_schema for atomic nodes) */
+  readonly config: NodeReadApiConfig;
+  /** UI coordinates {"x": 0, "y": 0} */
+  readonly position: NodeReadApiPosition;
+  readonly node_template_id: string;
+  readonly ref_graph_version_id: string;
+  /** @minLength 1 */
+  readonly ref_graph_name: string;
+  readonly ref_graph_id: string;
+  prompt_template: LinkedPromptTemplateReadApi;
+  node_connection: NodeConnectionSummaryApi;
+  /** Reconstruct input_mappings as list of key-value objects.
+
+          Returns a list like [
+              {"key": "context", "value": "DataLoader.output"},
+              {"key": "question", "value": None}
+          ] for subgraph nodes, or None for atomic nodes.
+
+          Uses prefetched ``ports`` and ``incoming_edges`` when available
+          (see ``prefetch_version_detail``) to avoid N+1 queries.
+   */
+  readonly input_mappings: readonly InputMappingReadApi[];
+  readonly ports: readonly PortReadApi[];
+}
+
+export interface NodeConnectionReadApi {
+  readonly id: string;
+  readonly source_node_id: string;
+  readonly target_node_id: string;
+}
+
+/**
+ * Any valid JSON value.
+ */
+export type GraphVersionDetailApiTags = { [key: string]: unknown };
+
+export interface GraphVersionDetailApi {
+  readonly id: string;
+  readonly version_number: number;
+  /** Version status (inactive for historical versions) */
+  readonly status: GraphVersionDetailApiStatus;
+  /** Any valid JSON value. */
+  readonly tags: GraphVersionDetailApiTags;
+  readonly commit_message: string;
+  readonly created_at: string;
+  readonly nodes: readonly NodeReadApi[];
+  readonly node_connections: readonly NodeConnectionReadApi[];
+}
+
+export interface GraphVersionDetailResponseApi {
+  status: boolean;
+  result: GraphVersionDetailApi;
 }
 
 export interface CreateNodeConnectionApi {
@@ -2164,87 +2531,9 @@ export interface CreateNodeApi {
   input_mappings?: InputMappingApi[];
 }
 
-/**
- * 'subgraph' for subgraph nodes, 'atomic' for nodes using a NodeTemplate
- */
-export type NodeReadApiType =
-  (typeof NodeReadApiType)[keyof typeof NodeReadApiType];
-
-export const NodeReadApiType = {
-  subgraph: "subgraph",
-  atomic: "atomic",
-} as const;
-
-/**
- * Node-specific configuration (validated against node_template.config_schema for atomic nodes)
- */
-export type NodeReadApiConfig = { [key: string]: unknown };
-
-/**
- * UI coordinates {"x": 0, "y": 0}
- */
-export type NodeReadApiPosition = { [key: string]: unknown };
-
-export type PortReadApiDirection =
-  (typeof PortReadApiDirection)[keyof typeof PortReadApiDirection];
-
-export const PortReadApiDirection = {
-  input: "input",
-  output: "output",
-} as const;
-
-/**
- * JSON Schema for validation
- */
-export type PortReadApiDataSchema = { [key: string]: unknown };
-
-export type PortReadApiDefaultValue = { [key: string]: unknown };
-
-export type PortReadApiMetadata = { [key: string]: unknown };
-
-export interface PortReadApi {
-  readonly id?: string;
-  /**
-   * Identifier (e.g., 'prompt', 'result')
-   * @minLength 1
-   */
-  readonly key?: string;
-  /**
-   * User-facing name for the port
-   * @minLength 1
-   */
-  readonly display_name?: string;
-  readonly direction?: PortReadApiDirection;
-  /** JSON Schema for validation */
-  readonly data_schema?: PortReadApiDataSchema;
-  readonly required?: boolean;
-  readonly default_value?: PortReadApiDefaultValue;
-  readonly metadata?: PortReadApiMetadata;
-  readonly ref_port_id?: string;
-}
-
-export interface NodeReadApi {
-  readonly id?: string;
-  /** 'subgraph' for subgraph nodes, 'atomic' for nodes using a NodeTemplate */
-  readonly type?: NodeReadApiType;
-  /**
-   * Display name
-   * @minLength 1
-   */
-  readonly name?: string;
-  /** Node-specific configuration (validated against node_template.config_schema for atomic nodes) */
-  readonly config?: NodeReadApiConfig;
-  /** UI coordinates {"x": 0, "y": 0} */
-  readonly position?: NodeReadApiPosition;
-  readonly node_template_id?: string;
-  readonly ref_graph_version_id?: string;
-  /** @minLength 1 */
-  readonly ref_graph_name?: string;
-  readonly ref_graph_id?: string;
-  readonly prompt_template?: string;
-  readonly node_connection?: string;
-  readonly input_mappings?: string;
-  readonly ports?: readonly PortReadApi[];
+export interface NodeReadResponseApi {
+  status: boolean;
+  result: NodeReadApi;
 }
 
 export type UpdateNodeApiPosition = { [key: string]: unknown };
@@ -7618,15 +7907,72 @@ export interface LiteLLMModelVoicesResponseApi {
   result: LiteLLMModelVoicesResultApi;
 }
 
-export type ModelHubPaginatedResponseApiResultsItem = {
-  [key: string]: unknown;
-};
+/**
+ * Any valid JSON value.
+ */
+export type ModelCatalogEntryApiBestFor = { [key: string]: unknown };
 
-export interface ModelHubPaginatedResponseApi {
+/**
+ * Any valid JSON value.
+ */
+export type ModelCatalogEntryApiUseCase = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type ModelCatalogEntryApiCutoff = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type ModelCatalogEntryApiRateLimits = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type ModelCatalogEntryApiLatency = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type ModelCatalogEntryApiPricing = { [key: string]: unknown };
+
+export interface ModelCatalogEntryApi {
+  /** @minLength 1 */
+  model_name: string;
+  providers: string;
+  /** Whether the organisation has a configured key for the provider. */
+  is_available: boolean;
+  /** @minLength 1 */
+  logo_url: string;
+  /** Any valid JSON value. */
+  best_for: ModelCatalogEntryApiBestFor;
+  /** Any valid JSON value. */
+  use_case: ModelCatalogEntryApiUseCase;
+  /** Any valid JSON value. */
+  cutoff: ModelCatalogEntryApiCutoff;
+  /** Any valid JSON value. */
+  rate_limits: ModelCatalogEntryApiRateLimits;
+  /** Any valid JSON value. */
+  latency: ModelCatalogEntryApiLatency;
+  /** Any valid JSON value. */
+  pricing: ModelCatalogEntryApiPricing;
+  /**
+   * Model mode, 'text' when unknown.
+   * @minLength 1
+   */
+  type: string;
+}
+
+export interface ModelCatalogPageApi {
   count: number;
-  next?: string;
-  previous?: string;
-  results: ModelHubPaginatedResponseApiResultsItem[];
+  /** @minLength 1 */
+  next: string;
+  /** @minLength 1 */
+  previous: string;
+  total_pages: number;
+  current_page: number;
+  results: ModelCatalogEntryApi[];
 }
 
 export type CellErrorLocalizerResultApiErrorAnalysis = {
@@ -7856,6 +8202,17 @@ export interface CustomMetricTestResponseApi {
   /** @minLength 1 */
   status: string;
   prompts?: CustomMetricTestResponseApiPrompts;
+}
+
+export type ModelHubPaginatedResponseApiResultsItem = {
+  [key: string]: unknown;
+};
+
+export interface ModelHubPaginatedResponseApi {
+  count: number;
+  next?: string;
+  previous?: string;
+  results: ModelHubPaginatedResponseApiResultsItem[];
 }
 
 export interface CustomAIModelApi {
@@ -13864,13 +14221,13 @@ export interface PromptFolderApi {
   readonly created_by?: string;
 }
 
+/**
+ * Any valid JSON value.
+ */
 export type PromptHistoryExecutionApiOutput = { [key: string]: unknown };
 
 /**
- *
-Get prompt_config_snapshot with backward compatibility for modelDetail.
-If modelDetail is missing from configuration, generate it from the model name.
-
+ * Any valid JSON value.
  */
 export type PromptHistoryExecutionApiPromptConfigSnapshot = {
   [key: string]: unknown;
@@ -13884,42 +14241,57 @@ export type PromptHistoryExecutionApiEvaluationResults = {
   [key: string]: unknown;
 };
 
+/**
+ * Any valid JSON value.
+ */
 export type PromptHistoryExecutionApiEvaluationConfigs = {
   [key: string]: unknown;
 };
 
-export type PromptHistoryExecutionApiLabels = { [key: string]: unknown };
-
 export type PromptHistoryExecutionApiPlaceholders = { [key: string]: unknown };
 
+export type PromptVersionLabelApiType =
+  (typeof PromptVersionLabelApiType)[keyof typeof PromptVersionLabelApiType];
+
+export const PromptVersionLabelApiType = {
+  system: "system",
+  custom: "custom",
+} as const;
+
+export interface PromptVersionLabelApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  type: PromptVersionLabelApiType;
+}
+
 export interface PromptHistoryExecutionApi {
-  readonly id?: string;
+  readonly id: string;
   /**
    * @minLength 1
    * @maxLength 50
    */
   template_version: string;
-  readonly output?: PromptHistoryExecutionApiOutput;
-  /**
-  Get prompt_config_snapshot with backward compatibility for modelDetail.
-  If modelDetail is missing from configuration, generate it from the model name.
-   */
-  readonly prompt_config_snapshot?: PromptHistoryExecutionApiPromptConfigSnapshot;
+  /** Any valid JSON value. */
+  readonly output: PromptHistoryExecutionApiOutput;
+  /** Any valid JSON value. */
+  readonly prompt_config_snapshot: PromptHistoryExecutionApiPromptConfigSnapshot;
   /** @minLength 1 */
-  readonly template_name?: string;
-  original_template?: string;
-  readonly metadata?: PromptHistoryExecutionApiMetadata;
-  readonly variable_names?: PromptHistoryExecutionApiVariableNames;
-  evaluation_results?: PromptHistoryExecutionApiEvaluationResults;
-  readonly evaluation_configs?: PromptHistoryExecutionApiEvaluationConfigs;
-  readonly created_at?: string;
-  is_default?: boolean;
-  commit_message?: string;
-  readonly updated_at?: string;
-  is_draft?: boolean;
-  readonly labels?: PromptHistoryExecutionApiLabels;
-  placeholders?: PromptHistoryExecutionApiPlaceholders;
-  prompt_base_template?: string;
+  readonly template_name: string;
+  original_template: string;
+  readonly metadata: PromptHistoryExecutionApiMetadata;
+  readonly variable_names: PromptHistoryExecutionApiVariableNames;
+  evaluation_results: PromptHistoryExecutionApiEvaluationResults;
+  /** Any valid JSON value. */
+  readonly evaluation_configs: PromptHistoryExecutionApiEvaluationConfigs;
+  readonly created_at: string;
+  is_default: boolean;
+  commit_message: string;
+  readonly updated_at: string;
+  is_draft: boolean;
+  readonly labels: readonly PromptVersionLabelApi[];
+  placeholders: PromptHistoryExecutionApiPlaceholders;
+  prompt_base_template: string;
 }
 
 export type PromptLabelApiType =
@@ -13944,6 +14316,17 @@ export interface PromptLabelApi {
   metadata?: PromptLabelApiMetadata;
   readonly created_at?: string;
   readonly updated_at?: string;
+}
+
+export interface PromptLabelPageApi {
+  count: number;
+  /** @minLength 1 */
+  next: string;
+  /** @minLength 1 */
+  previous: string;
+  total_pages: number;
+  current_page: number;
+  results: PromptLabelApi[];
 }
 
 export type ModelHubTextErrorResponseApiType =
@@ -13979,6 +14362,69 @@ export interface ModelHubTextErrorResponseApi {
   details?: ModelHubTextErrorResponseApiDetails;
 }
 
+/**
+ * Any valid JSON value.
+ */
+export type PromptLabelledVersionApiVariableNames = { [key: string]: unknown };
+
+export type PromptLabelledVersionApiPlaceholders = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type PromptLabelledVersionApiPromptConfig = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type PromptLabelledVersionApiOutput = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type PromptLabelledVersionApiMetadata = { [key: string]: unknown };
+
+export interface PromptLabelledVersionApi {
+  readonly id: string;
+  /** @minLength 1 */
+  readonly name: string;
+  readonly description: string;
+  /** Any valid JSON value. */
+  variable_names: PromptLabelledVersionApiVariableNames;
+  readonly organization: string;
+  readonly prompt_folder: string;
+  readonly placeholders: PromptLabelledVersionApiPlaceholders;
+  readonly created_by: string;
+  /** Any valid JSON value. */
+  prompt_config: PromptLabelledVersionApiPromptConfig;
+  /** @minLength 1 */
+  version: string;
+  /** Any valid JSON value. */
+  output: PromptLabelledVersionApiOutput;
+  is_draft: boolean;
+  /** Any valid JSON value. */
+  metadata: PromptLabelledVersionApiMetadata;
+  labels: PromptVersionLabelApi[];
+}
+
+export interface PromptLabelLookupResponseApi {
+  status: boolean;
+  result: PromptLabelledVersionApi;
+}
+
+export interface PromptTemplateVersionLabelsApi {
+  /** @minLength 1 */
+  version: string;
+  labels: string[];
+  is_default: boolean;
+  is_draft: boolean;
+}
+
+export interface PromptTemplateLabelsResponseApi {
+  status: boolean;
+  result: PromptTemplateVersionLabelsApi[];
+}
+
 export type PromptTemplateApiVariableNames = { [key: string]: unknown };
 
 export type PromptTemplateApiPlaceholders = { [key: string]: unknown };
@@ -13998,6 +14444,17 @@ export interface PromptTemplateApi {
   readonly created_by?: string;
 }
 
+export interface PromptTemplatePageApi {
+  count: number;
+  /** @minLength 1 */
+  next: string;
+  /** @minLength 1 */
+  previous: string;
+  total_pages: number;
+  current_page: number;
+  readonly results: readonly PromptTemplateApi[];
+}
+
 export type DerivedVariablePreviewRequestApiContent = {
   [key: string]: unknown;
 };
@@ -14011,6 +14468,70 @@ export interface DerivedVariablePreviewRequestApi {
 export interface DerivedVariableDetailResponseApi {
   status: boolean;
   result: DerivedVariableDetailApi;
+}
+
+/**
+ * Any valid JSON value.
+ */
+export type PromptTemplateDetailResponseApiVariableNames = {
+  [key: string]: unknown;
+};
+
+export type PromptTemplateDetailResponseApiPlaceholders = {
+  [key: string]: unknown;
+};
+
+/**
+ * Any valid JSON value.
+ */
+export type PromptTemplateDetailResponseApiPromptConfig = {
+  [key: string]: unknown;
+};
+
+/**
+ * Any valid JSON value.
+ */
+export type PromptTemplateDetailResponseApiOutput = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type PromptTemplateDetailResponseApiMetadata = {
+  [key: string]: unknown;
+};
+
+/**
+ * Any valid JSON value.
+ */
+export type PromptTemplateDetailResponseApiLastChunkPos = {
+  [key: string]: unknown;
+};
+
+export interface PromptTemplateDetailResponseApi {
+  readonly id: string;
+  /** @minLength 1 */
+  readonly name: string;
+  readonly description: string;
+  /** Any valid JSON value. */
+  variable_names: PromptTemplateDetailResponseApiVariableNames;
+  readonly organization: string;
+  readonly prompt_folder: string;
+  readonly placeholders: PromptTemplateDetailResponseApiPlaceholders;
+  readonly created_by: string;
+  /** Any valid JSON value. */
+  prompt_config: PromptTemplateDetailResponseApiPromptConfig;
+  /** @minLength 1 */
+  version: string;
+  /** Any valid JSON value. */
+  output: PromptTemplateDetailResponseApiOutput;
+  is_draft: boolean;
+  /** Any valid JSON value. */
+  metadata: PromptTemplateDetailResponseApiMetadata;
+  last_saved: string;
+  /** @minLength 1 */
+  error_message: string;
+  /** Any valid JSON value. */
+  last_chunk_pos?: PromptTemplateDetailResponseApiLastChunkPos;
 }
 
 export type PromptTemplatePatchApiVariableNames = { [key: string]: unknown };
@@ -14136,6 +14657,17 @@ export interface PromptRunRequestApi {
   is_sdk?: boolean;
   /** @minimum 0 */
   run_index?: number;
+}
+
+export interface PromptVersionHistoryPageApi {
+  count: number;
+  /** @minLength 1 */
+  next: string;
+  /** @minLength 1 */
+  previous: string;
+  total_pages: number;
+  current_page: number;
+  readonly results: readonly PromptHistoryExecutionApi[];
 }
 
 export type PromptDerivedVariablesResultApiDerivedVariables = {
@@ -32177,40 +32709,30 @@ export type AgentPlaygroundGraphsExecutionsListParams = {
   limit?: number;
 };
 
+export type AgentPlaygroundGraphsVersionsListParams = {
+  /**
+   * 1-based page number (default 1).
+   */
+  page_number?: number;
+  /**
+   * Versions per page (default 10).
+   */
+  page_size?: number;
+  /**
+   * Version number filter: 'v3', 'V3' or '3'; other text is ignored.
+   */
+  search?: string;
+  /**
+   * 'true' (any case) resolves the graph among system graph templates instead of the caller's own graphs; other values are ignored.
+   */
+  is_template?: string;
+};
+
 export type AgentPlaygroundGraphsVersionsReadParams = {
   /**
-   * A page number within the paginated result set.
+   * 'true' (any case) resolves the graph among system graph templates instead of the caller's own graphs; other values are ignored.
    */
-  page?: number;
-  /**
-   * Number of results to return per page.
-   */
-  limit?: number;
-};
-
-export type AgentPlaygroundGraphsVersionsRead200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: GraphListApi[];
-};
-
-export type AgentPlaygroundGraphsVersionsReadParams = {
-  /**
-   * A page number within the paginated result set.
-   */
-  page?: number;
-  /**
-   * Number of results to return per page.
-   */
-  limit?: number;
-};
-
-export type AgentPlaygroundGraphsVersionsRead200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: GraphListApi[];
+  is_template?: string;
 };
 
 export type AgentPlaygroundGraphsVersionsNodesPossibleEdgeMappingsParams = {
@@ -33208,6 +33730,48 @@ export type ModelHubApiKeysListParams = {
   limit?: number;
 };
 
+export type ModelHubApiModelParametersListParams = {
+  /**
+   * Model name.
+   */
+  model: string;
+  /**
+   * Provider name.
+   */
+  provider: string;
+  /**
+   * One of llm, stt, tts, image.
+   */
+  model_type: string;
+};
+
+export type ModelHubApiModelsListListParams = {
+  /**
+   * Return only the model with this exact (case-insensitive) name.
+   */
+  name?: string;
+  /**
+   * Case-insensitive substring filter on model_name.
+   */
+  search?: string;
+  /**
+   * One of llm, stt, tts, image; other values do not filter.
+   */
+  model_type?: string;
+  /**
+   * Providers to leave out; repeat the parameter for several.
+   */
+  exclude_providers?: string[];
+  /**
+   * Page number.
+   */
+  page?: number;
+  /**
+   * Page size (default 10).
+   */
+  limit?: number;
+};
+
 export type ModelHubDatasetOptimizationListParams = {
   dataset_id?: string;
   column_id?: string;
@@ -33959,47 +34523,30 @@ export type ModelHubPromptLabelsListParams = {
   limit?: number;
 };
 
-export type ModelHubPromptLabelsList200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: PromptLabelApi[];
-};
-
 export type ModelHubPromptLabelsGetByNameParams = {
   /**
-   * A page number within the paginated result set.
+   * Template name.
    */
-  page?: number;
+  name: string;
   /**
-   * Number of results to return per page.
+   * Version name such as v1; wins over label.
    */
-  limit?: number;
-};
-
-export type ModelHubPromptLabelsGetByName200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: PromptLabelApi[];
+  version?: string;
+  /**
+   * Label name, matched case-insensitively.
+   */
+  label?: string;
 };
 
 export type ModelHubPromptLabelsTemplateLabelsParams = {
   /**
-   * A page number within the paginated result set.
+   * Template UUID; one of template_id/template_name.
    */
-  page?: number;
+  template_id?: string;
   /**
-   * Number of results to return per page.
+   * Template name; one of template_id/template_name.
    */
-  limit?: number;
-};
-
-export type ModelHubPromptLabelsTemplateLabels200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: PromptLabelApi[];
+  template_name?: string;
 };
 
 export type ModelHubPromptTemplatesListParams = {
@@ -34023,13 +34570,6 @@ export type ModelHubPromptTemplatesListParams = {
    */
   limit?: number;
   modality?: string[];
-};
-
-export type ModelHubPromptTemplatesList200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: PromptTemplateApi[];
 };
 
 export type ModelHubPromptTemplatesGetTemplateByNameParams = {
