@@ -56,11 +56,10 @@ class RunNewEvalsOnSimulationTool(BaseTool):
     ) -> ToolResult:
         import structlog
         from django.utils import timezone
-        from simulate.models.call_execution import CallExecution
-        from simulate.models.simulate_eval_config import SimulateEvalConfig
 
+        from simulate.models.eval_config import SimulateEvalConfig
         from simulate.models.run_test import RunTest
-        from simulate.models.test_execution import TestExecution
+        from simulate.models.test_execution import CallExecution, TestExecution
         from simulate.services.harness_run_evals import stamp_eval_queued
         from simulate.services.test_executor import (
             run_new_evals_on_call_executions_task,
