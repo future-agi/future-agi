@@ -29,6 +29,10 @@ services:
       <<: *e2e-licence
       MODEL_SERVING_URL: http://mock-llm:8080
       FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      # The licensed backend limits login, token and signup requests per client
+      # IP (accounts/authentication.py AuthMonitoringMiddleware, default 10 an
+      # hour); every actor of the suite comes from the same address.
+      MAX_LOGIN_ATTEMPTS_PER_HOUR: "100000"
       # Request logs reach Django over this shared secret; without it the
       # webhook rejects every batch the gateway sends.
       AGENTCC_WEBHOOK_SECRET: ${AGENTCC_WEBHOOK_SECRET:-e2e-agentcc-webhook-secret}

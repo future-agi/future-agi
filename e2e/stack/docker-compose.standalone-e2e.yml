@@ -27,6 +27,9 @@ services:
       EE_LICENSE_PUBLIC_KEY: ${EE_LICENSE_PUBLIC_KEY:-}
       FUTURE_AGI_ENTERPRISE_HEARTBEAT_DISABLED: "true"
       FUTURE_AGI_LICENSE_URL: http://127.0.0.1:9
+      # Licensed, the API limits login, token and signup requests per client IP
+      # (default 10 an hour); every actor of the suite comes from one address.
+      MAX_LOGIN_ATTEMPTS_PER_HOUR: "100000"
     # A crash should fail the run loudly instead of restarting quietly.
     restart: "no"
   postgres:
