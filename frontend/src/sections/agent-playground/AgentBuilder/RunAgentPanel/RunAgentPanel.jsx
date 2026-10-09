@@ -1,13 +1,15 @@
 import { Box } from "@mui/material";
-import React, { useCallback, useRef, useState, useEffect } from "react";
+import React, { useCallback, useRef, useState, useEffect, useMemo } from "react";
 import PropTypes from "prop-types";
 import { AgentGraph } from "src/components/AgentGraph";
 import { START_ID, END_ID } from "src/components/AgentGraph/layoutUtils";
 import useResolvedExecution from "../../hooks/useResolvedExecution";
 import { useWorkflowRunStoreShallow } from "../../store";
 import NodeOutputDetail from "./NodeOutputDetail";
+import NodeOutputListView from "./NodeOutputListView";
 import ResizablePanels from "src/components/resizablePanels/ResizablePanels";
 import PanelErrorBoundary from "../../components/PanelErrorBoundary";
+import { mapExecutionNodesToTreeNodes } from "./nodeExecutionAdapter";
 
 const MIN_PANEL_HEIGHT = 200;
 const MAX_PANEL_HEIGHT = 600;
@@ -111,6 +113,24 @@ export default function RunAgentPanel({
     setSelectedNodeId(node.id);
   }, []);
 
+  // Map the raw execution-detail payload into the shape consumed by
+  // NodeOutputListView. Memoised on the upstream nodes array so the
+  // inner TreeView does not re-render unless the run changes.
+  const listNodes = useMemo(
+    () => mapExecutionNodesToTreeNodes(executionData?.nodes),
+    [executionData?.nodes],
+  );
+
+  // Two-way binding: clicking a node in the list keeps the canvas and
+  // the detail panel pointing at the same node. The list accepts only
+  // top-level ids, so we strip the `parent__child` prefix that the
+  // canvas uses for inner subgraph nodes.
+  const handleListNodeSelect = useCallback((nodeId) => {
+    if (typeof nodeId !== "string") return;
+    const rootId = nodeId.split("__")[0];
+    setSelectedNodeId(rootId);
+  }, []);
+
   return (
     <Box
       sx={{
@@ -152,10 +172,26 @@ export default function RunAgentPanel({
         minLeftWidth={15}
         maxLeftWidth={80}
         leftPanel={
-          <AgentGraph
-            executionData={executionData}
-            onNodeClick={handleGraphNodeClick}
-            selectedNodeId={selectedNodeId}
+          <ResizablePanels
+            initialLeftWidth={28}
+            minLeftWidth={15}
+            maxLeftWidth={45}
+            leftPanel={
+              <NodeOutputListView
+                showTitle
+                showSearch
+                nodes={listNodes}
+                selectedNodeId={selectedNodeId}
+                onNodeSelect={handleListNodeSelect}
+              />
+            }
+            rightPanel={
+              <AgentGraph
+                executionData={executionData}
+                onNodeClick={handleGraphNodeClick}
+                selectedNodeId={selectedNodeId}
+              />
+            }
           />
         }
         rightPanel={
