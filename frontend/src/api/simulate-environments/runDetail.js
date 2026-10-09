@@ -269,6 +269,9 @@ export function useRunDetail(runTestId, executionId, { envName } = {}) {
  * @property {boolean} critical    Whether the scenario is a release blocker.
  * @property {?number} csat        Per-call CSAT, on the product's 0–10 scale
  *                                 (`overall_score`); null when absent.
+ * @property {?string} scoringStatus The call's overall scoring state.
+ * @property {?string} csatStatus  CSAT's scoring state.
+ * @property {?string} csatReason  Why CSAT failed, timed out or was skipped.
  * @property {?number} turns       Turn count.
  * @property {?number} latencyMs   Mean latency, ms.
  * @property {?number} stopLatencyMs Mean stop time after interruption, ms.
@@ -419,12 +422,53 @@ export function callTranscript(raw) {
 // `normalizeEvalResult` (the same path `runCalls` uses for the table). Pending /
 // skipped / errored evals carry no verdict (`passed: null`) so they never feed
 // the failed-eval banner.
+// The `evaluations[]` statuses of an eval that has no verdict to show.
+const UNSCORED_EVAL_STATUSES = new Set([
+  "pending",
+  "failed",
+  "timed_out",
+  "skipped",
+]);
+
+/**
+ * Puts each unscored eval's current state from the v3 `evaluations[]` list onto
+ * its stored `eval_metrics` row, adding the row when there is none, so the
+ * drawers can say an eval is pending, failed, timed out or skipped instead of
+ * leaving it out. A stored row can hold an earlier grade's verdict, error flag
+ * and reason, so all of those come from the current entry. Scored evals keep
+ * their stored row as is.
+ * @param {?Object} evalMetrics  `eval_metrics`, keyed by eval config id.
+ * @param {?Array} evaluations   The call's `evaluations[]`.
+ * @returns {?Object}
+ */
+export function withScoringStatus(evalMetrics, evaluations) {
+  const unscored = (Array.isArray(evaluations) ? evaluations : []).filter(
+    (e) => e?.id && UNSCORED_EVAL_STATUSES.has(e.status),
+  );
+  if (!unscored.length) return evalMetrics;
+  const merged = { ...evalMetrics };
+  unscored.forEach((e) => {
+    const stored = merged[e.id] ?? {};
+    merged[e.id] = {
+      ...stored,
+      name: stored.name || e.name,
+      status: e.status,
+      value: e.value ?? null,
+      reason: e.reason || "",
+      error: e.status === "failed",
+      skipped: e.status === "skipped",
+    };
+  });
+  return merged;
+}
+
 function callEvalResult(evalId, data) {
   if (!data || typeof data !== "object") return null;
   const norm = normalizeEvalResult(data.value, data.type);
-  // Pending evals serialise as `{}` and errored ones may carry no value — both
-  // normalise to "empty" and have no cell to show.
-  if (norm.kind === "empty") return null;
+  // An empty row is shown only when it carries a scoring status that explains
+  // it; a bare `{}` (or an errored row with no value) has no cell to show.
+  if (norm.kind === "empty" && !UNSCORED_EVAL_STATUSES.has(data.status))
+    return null;
   const inertStatus =
     data.status === "pending" ||
     data.status === "skipped" ||
@@ -519,10 +563,12 @@ export function mapCallDetail(raw) {
   );
 
   const aiPct = raw.agent_talk_percentage ?? null;
-  const evalMetrics =
+  const evalMetrics = withScoringStatus(
     raw.eval_metrics && typeof raw.eval_metrics === "object"
       ? raw.eval_metrics
-      : {};
+      : {},
+    raw.evaluations,
+  );
   // A sub-goal check is the scenario's, not an eval: the evals tab skips it.
   const evalResults = Object.entries(evalMetrics)
     .filter(([, data]) => data?.kind !== "sub_goal")
@@ -576,12 +622,19 @@ export function useCallExecutionV3Detail(callExecId, enabled = true, options) {
     enabled: enabled && !!callExecId,
     staleTime: 1000 * 60 * 5,
     refetchInterval: (query) => {
-      const evalMetrics = query.state.data?.eval_metrics;
-      if (!evalMetrics || typeof evalMetrics !== "object") return false;
-      const isLocalizing = Object.values(evalMetrics).some((metric) =>
-        ["pending", "running"].includes(metric?.error_localizer_status),
+      const data = query.state.data;
+      // An eval still being scored lands while the drawer is open.
+      const isScoring = (data?.evaluations ?? []).some(
+        (evaluation) => evaluation?.status === "pending",
       );
-      return isLocalizing ? 3000 : false;
+      const evalMetrics = data?.eval_metrics;
+      const isLocalizing =
+        !!evalMetrics &&
+        typeof evalMetrics === "object" &&
+        Object.values(evalMetrics).some((metric) =>
+          ["pending", "running"].includes(metric?.error_localizer_status),
+        );
+      return isScoring || isLocalizing ? 3000 : false;
     },
   });
 }

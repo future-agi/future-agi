@@ -119,8 +119,15 @@ export default function ChatCallDrawer({
     []
   ).filter((r) => r.kind !== "sub_goal");
   const failed = evalResults.filter((r) => r.passed === false);
+  // The list row's cells carry only a status; the drawer's error and skipped
+  // states read flags, so set them from it.
   const drawerEvals = evalResults.map((result) => ({
     ...result,
+    error:
+      result.error === true ||
+      result.status === "failed" ||
+      result.status === "error",
+    skipped: result.skipped === true || result.status === "skipped",
     eval_name: result.name,
     score: result.score == null ? null : Math.round(result.score * 100),
     score_label:

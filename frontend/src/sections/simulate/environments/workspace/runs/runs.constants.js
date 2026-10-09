@@ -4,7 +4,8 @@ import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 const RUN_STATE = {
   pending: "queued",
   running: "running",
-  evaluating: "running",
+  // Every call has ended and their evals are still grading.
+  evaluating: "grading",
   cancelling: "cancelling",
   completed: "finished",
   failed: "failed",

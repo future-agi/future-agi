@@ -35,7 +35,13 @@ import {
   SubTasksCell,
   TruncTooltip,
 } from "../../../scenarios/ScenarioTableCells";
-import { MetricValue, Score, Field, UnscoredEval } from "./traceCells";
+import {
+  CsatValue,
+  MetricValue,
+  Score,
+  Field,
+  UnscoredEval,
+} from "./traceCells";
 import TraceGroupHeaderRow from "./TraceGroupHeaderRow";
 
 // The theme hides every border on a table's last row, which here is the head
@@ -414,7 +420,12 @@ export default function TraceTable({
 
         {show("csat") && (
           <TableCell sx={numCellSx} onClick={() => onOpen(t)}>
-            <MetricValue metric="csat" value={t.csat} loading={callLive} />
+            <CsatValue
+              value={t.csat}
+              status={t.csatStatus}
+              reason={t.csatReason}
+              callLive={callLive}
+            />
           </TableCell>
         )}
         {show("turns") && (

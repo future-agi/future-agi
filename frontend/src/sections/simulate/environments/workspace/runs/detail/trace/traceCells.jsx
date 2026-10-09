@@ -1,3 +1,4 @@
+import { useState } from "react";
 import PropTypes from "prop-types";
 import { Box, Skeleton, Stack, Typography } from "@mui/material";
 
@@ -8,16 +9,29 @@ import { interpolateColorBasedOnScore } from "src/utils/utils";
 import { BUILD_TONES } from "../../../../buildEnvironment/buildTones";
 import { PENDING_EVAL_STATUS, isBad } from "./traceTable.constants";
 
+// MUI's wave shimmer: one 2s cycle, counted from when each bar mounts.
+const SHIMMER_CYCLE_MS = 2000;
+
 // The loading bar a cell shows in place of its value while the call runs: one
 // text line tall, the full width of the cell's content, sitting where the
-// value's text will land so every loading cell in a row lines up.
+// value's text will land so every loading cell in a row lines up. Bars mount at
+// different times (a group opened, a page loaded), so each starts its shimmer
+// as far into the cycle as the page clock is, keeping every bar in step.
 export function CellSkeleton() {
+  const [phase] = useState(
+    () => `-${Math.round(performance.now() % SHIMMER_CYCLE_MS)}ms`,
+  );
   return (
     <Skeleton
       variant="rounded"
       width="100%"
       height={12}
-      sx={{ my: "4px", bgcolor: "background.neutral" }}
+      style={{ "--skeleton-phase": phase }}
+      sx={{
+        my: "4px",
+        bgcolor: "background.neutral",
+        "&::after": { animationDelay: "var(--skeleton-phase)" },
+      }}
     />
   );
 }
@@ -86,12 +100,57 @@ export function Score({ result }) {
 }
 Score.propTypes = { result: PropTypes.object };
 
+// How a scoring state that ended without a value reads in a cell, and the tip
+// to fall back on when the server sent no reason.
+const ENDED_UNSCORED = {
+  failed: { text: "Failed", color: BUILD_TONES.red },
+  timed_out: { text: "Timed out", color: BUILD_TONES.amber },
+  skipped: { text: "Not scored", color: "text.disabled" },
+};
+
+// A cell for a score that will not come: a word in the state's tone, the reason
+// on hover.
+export function EndedUnscored({ state, tip, sx }) {
+  const { text, color } = ENDED_UNSCORED[state];
+  return (
+    <CustomTooltip show arrow size="small" title={tip}>
+      <Box component="span" sx={{ typography: "s2", color, ...sx }}>
+        {text}
+      </Box>
+    </CustomTooltip>
+  );
+}
+EndedUnscored.propTypes = {
+  state: PropTypes.oneOf(Object.keys(ENDED_UNSCORED)).isRequired,
+  tip: PropTypes.string.isRequired,
+  sx: PropTypes.object,
+};
+
+// The CSAT cell. With a CSAT status from the server it says whether CSAT is
+// still scoring, failed, timed out or was skipped; without one (an older
+// payload) it loads while the call is live, as the other metric cells do.
+export function CsatValue({ value, status, reason, callLive }) {
+  if (status === "pending") return <CellSkeleton />;
+  if (status === "failed")
+    return <EndedUnscored state="failed" tip={reason || "CSAT could not be scored."} />;
+  if (status === "timed_out")
+    return <EndedUnscored state="timed_out" tip={reason || "CSAT timed out."} />;
+  if (status === "skipped")
+    return <EndedUnscored state="skipped" tip={reason || "CSAT was not scored."} />;
+  return <MetricValue metric="csat" value={value} loading={!status && callLive} />;
+}
+CsatValue.propTypes = {
+  value: PropTypes.number,
+  status: PropTypes.string,
+  reason: PropTypes.string,
+  callLive: PropTypes.bool,
+};
+
 // An eval cell with no score, and why. A call still running, or an eval the
-// backend marks pending, shows the loading bar;
-// a failed, errored or skipped eval, or a cancelled or failed call that was
-// never scored, shows a dash with why; anything else reads N/A — the table
-// can't tell a check that doesn't apply to this scenario from one not graded
-// yet.
+// backend marks pending, shows the loading bar. A failed, timed-out or skipped
+// eval says so, with the reason on hover. A cancelled or failed call that was
+// never scored, or an eval with no entry on a finished call (it doesn't apply
+// to this scenario), shows a dash with why.
 export function UnscoredEval({ result, callLive, callStatus }) {
   if ((!result && callLive) || result?.status === PENDING_EVAL_STATUS) {
     // The metric cells' top padding, so the row's loading bars line up.
@@ -101,24 +160,23 @@ export function UnscoredEval({ result, callLive, callStatus }) {
       </Box>
     );
   }
-  let text = "N/A";
-  let tip = "Not applicable to this scenario";
-  if (!result && callStatus === "cancelled") {
-    text = "-";
-    tip = "Not evaluated: the call was cancelled";
-  } else if (!result && callStatus === "failed") {
-    text = "-";
-    tip = "Not evaluated: the call failed";
-  } else if (result?.status === "failed" || result?.status === "error") {
-    text = "-";
-    tip = result.reason ? `Evaluation failed: ${result.reason}` : "Evaluation failed";
-  } else if (result?.status === "skipped") {
-    text = "-";
-    tip = result.reason ? `Skipped: ${result.reason}` : "Skipped";
+  const status = result?.status;
+  const reason = result?.reason;
+  if (status === "failed" || status === "error") {
+    const tip = reason ? `Evaluation failed: ${reason}` : "Evaluation failed";
+    return <EndedUnscored state="failed" tip={tip} sx={{ display: "block", p: 2 }} />;
   }
+  if (status === "timed_out" || status === "skipped") {
+    const tip = reason || (status === "skipped" ? "Not scored" : "Scoring timed out");
+    return <EndedUnscored state={status} tip={tip} sx={{ display: "block", p: 2 }} />;
+  }
+  let tip = "Not applicable to this scenario";
+  if (result) tip = "Scored, but no value came back";
+  else if (callStatus === "cancelled") tip = "Not evaluated: the call was cancelled";
+  else if (callStatus === "failed") tip = "Not evaluated: the call failed";
   return (
     <CustomTooltip show arrow size="small" title={tip}>
-      <Box sx={{ p: 2, typography: "s2", color: "text.disabled" }}>{text}</Box>
+      <Box sx={{ p: 2, typography: "s2", color: "text.disabled" }}>-</Box>
     </CustomTooltip>
   );
 }

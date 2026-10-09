@@ -131,7 +131,7 @@ describe("executionToRun", () => {
     const state = (status) => executionToRun({ id: "x", status, total_chats: 1 }).runState;
     expect(state("Pending")).toBe("queued");
     expect(state("Running")).toBe("running");
-    expect(state("Evaluating")).toBe("running");
+    expect(state("Evaluating")).toBe("grading");
     // Its own state so a stopped run reads as cancelling, not still running.
     expect(state("Cancelling")).toBe("cancelling");
     // Its own key so the table can show a finished run green without recolouring

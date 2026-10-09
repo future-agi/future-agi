@@ -222,6 +222,29 @@ describe("mapCallRow", () => {
     expect(scored.score).toBe(0.4);
   });
 
+  it("carries the call's scoring and CSAT status, with its CSAT reason", () => {
+    const t = mapCallRow(
+      {
+        scoring_status: "timed_out",
+        csat_status: "timed_out",
+        csat_reason: "CSAT timed out: scoring did not start within 30 minutes.",
+      },
+      [],
+    );
+    expect(t.scoringStatus).toBe("timed_out");
+    expect(t.csatStatus).toBe("timed_out");
+    expect(t.csatReason).toBe(
+      "CSAT timed out: scoring did not start within 30 minutes.",
+    );
+  });
+
+  it("leaves the scoring fields null when the row has none", () => {
+    const t = mapCallRow({ csat_reason: null }, []);
+    expect(t.scoringStatus).toBeNull();
+    expect(t.csatStatus).toBeNull();
+    expect(t.csatReason).toBeNull();
+  });
+
   it("maps a passing completed call: real metrics, CSAT on the 0–10 scale, ms duration", () => {
     const t = mapCallRow(payload().results[0], evalCols);
     expect(t.id).toBe("c1");
@@ -515,6 +538,51 @@ describe("useRunCalls", () => {
       ...payload(),
       execution: { status: "completed" },
     });
+    expect(query.options.refetchInterval(query)).toBe(false);
+    unmount();
+  });
+
+  it("keeps polling a finished run while some calls are still being scored", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const Wrapper = ({ children }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    Wrapper.propTypes = { children: PropTypes.node };
+    const scoring = (pending) => ({
+      ...payload(),
+      execution: { status: "failed" },
+      summary: {
+        total: 2,
+        scoring: {
+          not_applicable: 0,
+          pending,
+          succeeded: 2 - pending,
+          failed: 0,
+          timed_out: 0,
+        },
+      },
+    });
+    axios.get.mockResolvedValue({ data: scoring(1) });
+
+    const { unmount } = renderHook(() => useRunCalls("ex2"), {
+      wrapper: Wrapper,
+    });
+    await waitFor(() =>
+      expect(
+        queryClient
+          .getQueryCache()
+          .findAll({ queryKey: ["simulation-run-results-v3", "ex2"] })[0]?.state
+          .data?.summary?.scoring?.pending,
+      ).toBe(1),
+    );
+    const query = queryClient
+      .getQueryCache()
+      .findAll({ queryKey: ["simulation-run-results-v3", "ex2"] })[0];
+
+    expect(query.options.refetchInterval(query)).toBe(3000);
+    queryClient.setQueryData(query.queryKey, scoring(0));
     expect(query.options.refetchInterval(query)).toBe(false);
     unmount();
   });
