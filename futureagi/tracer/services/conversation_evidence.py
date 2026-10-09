@@ -12,6 +12,7 @@ import uuid
 from collections.abc import Callable, Mapping
 from typing import Any
 
+import structlog
 from django.utils import timezone
 
 from tracer.models.observability_provider import ProviderChoices
@@ -27,6 +28,8 @@ from tracer.services.trace_investigation import InvestigationConflict, _token_di
 from tracer.utils.attribute_accessor import span_raw_log
 from tracer.utils.otel import ConversationAttributes
 
+logger = structlog.get_logger(__name__)
+
 # The audio tool of the investigator finds the recording under these keys.
 _RECORDING_KEYS = ("conversation.recording.mono.combined", "gen_ai.voice.recording.url")
 _LATENCY_STATS = ("p50", "p90", "max", "num")
@@ -34,6 +37,7 @@ _LATENCY_STATS = ("p50", "p90", "max", "num")
 _RECORDING_AUDIO = "recording_audio"
 _PROVIDER_LOG = "provider_log"
 _CALL_NUMBER = "[number of a call participant]"
+_SPEAKER_ROLES = ("agent", "user", "transfer_target")
 
 
 def _seconds(value: object) -> float | None:
@@ -42,13 +46,14 @@ def _seconds(value: object) -> float | None:
     return round(float(value), 2)
 
 
-def _retell_turns(entries: object) -> list[dict[str, Any]]:
+def _retell_turns(entries: object) -> list[dict[str, Any]] | None:
+    """The transcript as turns; None when it holds an event this module cannot keep."""
     turns: list[dict[str, Any]] = []
     for index, entry in enumerate(entries if isinstance(entries, list) else []):
         if not isinstance(entry, Mapping):
             continue
         role = entry.get("role")
-        if role in ("agent", "user"):
+        if role in _SPEAKER_ROLES:
             words = [
                 word
                 for word in entry.get("words") or []
@@ -101,6 +106,33 @@ def _retell_turns(entries: object) -> list[dict[str, Any]]:
                     "type": entry.get("transition_type"),
                 }
             )
+        elif role == "dtmf":
+            turns.append(
+                {
+                    "i": index,
+                    "role": role,
+                    "at": _seconds(entry.get("time_sec")),
+                    "digit": entry.get("digit"),
+                }
+            )
+        elif role in ("sms", "injected"):
+            turn = {
+                "i": index,
+                "role": role,
+                "at": _seconds(entry.get("time_sec")),
+                "text": entry.get("content"),
+            }
+            if role == "sms" and isinstance(entry.get("multimedia"), list):
+                turn["media"] = [
+                    item.get("summary")
+                    for item in entry["multimedia"]
+                    if isinstance(item, Mapping)
+                ]
+            turns.append(turn)
+        else:
+            # A record that leaves an event out reads as if it never happened.
+            logger.warning("conversation_dossier_unknown_event", role=str(role)[:64])
+            return None
     return turns
 
 
@@ -120,7 +152,10 @@ def _without_call_numbers(variables: object, numbers: set[object]) -> dict[str, 
     }
 
 
-def _retell_dossier(raw_log: Mapping[str, Any]) -> dict[str, Any]:
+def _retell_dossier(raw_log: Mapping[str, Any]) -> dict[str, Any] | None:
+    turns = _retell_turns(raw_log.get("transcript_with_tool_calls"))
+    if turns is None:
+        return None
     analysis = _mapping(raw_log.get("call_analysis"))
     numbers = {raw_log.get("from_number"), raw_log.get("to_number")} - {None, ""}
     duration_ms = _seconds(raw_log.get("duration_ms"))
@@ -158,11 +193,11 @@ def _retell_dossier(raw_log: Mapping[str, Any]) -> dict[str, Any]:
             for name, stats in _mapping(raw_log.get("latency")).items()
             if isinstance(stats, Mapping)
         },
-        "turns": _retell_turns(raw_log.get("transcript_with_tool_calls")),
+        "turns": turns,
     }
 
 
-_PROVIDER_DOSSIERS: dict[str, Callable[[Mapping[str, Any]], dict[str, Any]]] = {
+_PROVIDER_DOSSIERS: dict[str, Callable[[Mapping[str, Any]], dict[str, Any] | None]] = {
     ProviderChoices.RETELL.value: _retell_dossier,
 }
 
@@ -179,15 +214,16 @@ def _provider_log_issues(attrs: Mapping[str, str]) -> list[Any] | None:
 def conversation_dossier(span: CHSpan) -> dict[str, Any] | None:
     """The compact call record of a provider conversation span.
 
-    None when the span is not a provider call log this module can read; the
-    investigator then reads the span as it is stored.
+    None when the span is not a provider call log this module can read in
+    full; the investigator then reads the span as it is stored.
     """
     if span.observation_type != ObservationType.CONVERSATION:
         return None
     attrs = span.attrs_string
     build = _PROVIDER_DOSSIERS.get(attrs.get("gen_ai.system") or span.provider)
     raw_log = span_raw_log(attrs, span_id=span.id)
-    if build is None or not raw_log:
+    call = build(raw_log) if build is not None and raw_log else None
+    if call is None:
         return None
     system_prompt = (
         attrs.get("llm.input_messages.0.message.content")
@@ -197,7 +233,7 @@ def conversation_dossier(span: CHSpan) -> dict[str, Any] | None:
     dossier = {
         "provider": attrs.get("gen_ai.system") or span.provider,
         "agent_instructions": system_prompt,
-        **build(raw_log),
+        **call,
     }
     issues = _provider_log_issues(attrs)
     if issues is None:
@@ -215,7 +251,8 @@ def conversation_evidence_rows(
 
     The rows have the shape the investigator indexes for stored spans, so its
     evidence ids, citations and coverage work unchanged. No rows means the
-    trace is not a provider call log: the caller reads the stored spans.
+    trace is not a provider call log, or its call log was rewritten after the
+    attempt's read cutoff: the caller reads the stored spans, under that cutoff.
     """
     attempt = (
         TraceInvestigationAttempt.no_workspace_objects.select_related("job")
@@ -233,7 +270,9 @@ def conversation_evidence_rows(
     job = attempt.job
     with get_reader() as reader:
         roots = reader.roots_by_trace_ids(
-            [str(job.trace_id)], project_id=str(job.project_id)
+            [str(job.trace_id)],
+            project_id=str(job.project_id),
+            cutoff=attempt.read_cutoff,
         )
     if len(roots) != 1:
         return {"rows": []}

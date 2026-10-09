@@ -283,6 +283,82 @@ def test_agent_turn_without_word_timings_is_not_spoken():
     ]
 
 
+def test_dossier_keeps_the_events_that_are_not_agent_or_user_turns():
+    transcript = [
+        {
+            "role": "agent",
+            "content": "I am transferring you now.",
+            "words": [{"word": "I", "start": 1.0, "end": 2.0}],
+        },
+        {
+            "role": "transfer_target",
+            "content": "We do not take this call.",
+            "words": [
+                {"word": "We", "start": 3.0, "end": 3.2},
+                {"word": "call.", "start": 4.0, "end": 4.4},
+            ],
+        },
+        {"role": "dtmf", "digit": "2"},
+        {
+            "role": "sms",
+            "content": "Your code is 1234",
+            "multimedia": [{"url": "https://media.example.test/a", "summary": "a map"}],
+            "time_sec": 6.5,
+        },
+        {
+            "role": "injected",
+            "content": "The caller is a returning customer.",
+            "time_sec": 7,
+        },
+    ]
+    raw_log = {"transcript_with_tool_calls": transcript}
+
+    dossier = conversation_dossier(_span(attrs={"raw_log": json.dumps(raw_log)}))
+
+    assert dossier["turns"][1:] == [
+        {
+            "i": 1,
+            "role": "transfer_target",
+            "start": 3.0,
+            "end": 4.4,
+            "text": "We do not take this call.",
+        },
+        {"i": 2, "role": "dtmf", "at": None, "digit": "2"},
+        {
+            "i": 3,
+            "role": "sms",
+            "at": 6.5,
+            "text": "Your code is 1234",
+            "media": ["a map"],
+        },
+        {
+            "i": 4,
+            "role": "injected",
+            "at": 7.0,
+            "text": "The caller is a returning customer.",
+        },
+    ]
+    # Each event alone is kept too: none is dropped without notice.
+    for index, entry in enumerate(transcript):
+        alone = {"transcript_with_tool_calls": [entry]}
+        (turn,) = conversation_dossier(_span(attrs={"raw_log": json.dumps(alone)}))[
+            "turns"
+        ]
+        assert turn["role"] == entry["role"], index
+
+
+def test_transcript_with_an_event_the_record_cannot_keep_has_no_dossier():
+    # The investigator then reads the stored span, which holds the event.
+    raw_log = {
+        "transcript_with_tool_calls": [
+            {"role": "agent", "content": "Hi"},
+            {"role": "a_role_added_later", "content": "something happened"},
+        ]
+    }
+
+    assert conversation_dossier(_span(attrs={"raw_log": json.dumps(raw_log)})) is None
+
+
 @pytest.mark.parametrize(
     "span",
     [
@@ -340,8 +416,14 @@ def test_claimed_provider_call_gets_one_evidence_row_in_the_stored_span_shape(
 
     rows, reader = _rows(claim, [_span()])
 
+    # The read stops at the attempt's cutoff: a call log rewritten after the
+    # claim is not this attempt's evidence.
     reader.roots_by_trace_ids.assert_called_once_with(
-        [str(claim["trace_id"])], project_id=str(claim["project_id"])
+        [str(claim["trace_id"])],
+        project_id=str(claim["project_id"]),
+        cutoff=TraceInvestigationAttempt.no_workspace_objects.get(
+            id=claim["attempt_id"]
+        ).read_cutoff,
     )
     assert rows == [
         {
