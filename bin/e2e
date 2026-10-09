@@ -186,11 +186,12 @@ lane_env() {
 }
 
 cmd="${1:-}"; shift || true
+# `up` boots on the lane's licence: write its env file before Compose reads it.
+if [[ "$cmd" == up ]]; then ensure_licence "$BOOT_LICENCE"; fi
 case "$cmd" in
   # PG migrations and initial snapshots precede backend readiness. No hidden
   # force-recreate/retry loop: failed or uncertain setup must be inspected.
-  up)      ensure_licence "$BOOT_LICENCE"
-           "${COMPOSE[@]}" up -d --wait --wait-timeout 1200 "${SERVICES[@]}"; wait_ready
+  up)      "${COMPOSE[@]}" up -d --wait --wait-timeout 1200 "${SERVICES[@]}"; wait_ready
            check_licence "$BOOT_LICENCE" ;;
   down)    need_licence_env; "${COMPOSE[@]}" down "$@"
            for arg in "$@"; do [[ "$arg" == -v || "$arg" == --volumes ]] && delete_licence; done ;;
