@@ -33,7 +33,8 @@ base('AUTH-E2E-001: user signs in with email and password', {
   // only their growth proves the browser login persisted its own.
   const before = (await activeTokens()).length;
   const tokenResp = page.waitForResponse(r => r.url().includes('/accounts/token/') && r.status() === 200);
-  await page.getByRole('button', { name: 'Continue' }).click();
+  // Exact: a licensed install also offers "Continue with Google/Microsoft/Github/SSO" (jwt-login-view.jsx showSocial).
+  await page.getByRole('button', { name: 'Continue', exact: true }).click();
   const pair: Tokens = await (await tokenResp).json();
   expect(pair.access).toMatch(/.+/);
   expect(pair.refresh).toMatch(/.+/);
