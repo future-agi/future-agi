@@ -98,6 +98,28 @@ const rowBox = (name) =>
   screen.getByRole("checkbox", { name: `Select ${name}` });
 const pageBox = () =>
   screen.getByRole("checkbox", { name: "Select all calls on this page" });
+const groupBox = (label) =>
+  screen.getByRole("checkbox", { name: `Select calls in ${label}` });
+// The page's calls split into groups, each `count` long in the whole run.
+const mockGroups = (groups) =>
+  useRunCalls.mockImplementation(() => {
+    const tasks = groups.flatMap((g) => g.rows);
+    return {
+      tasks,
+      columns: [],
+      groups: groups.map((g) => ({
+        measured: g.rows.length,
+        passed: 0,
+        agg: { evals: {} },
+        count: g.rows.length,
+        ...g,
+      })),
+      facets: {},
+      count: tasks.length,
+      totalPages: 1,
+      isLoading: false,
+    };
+  });
 
 describe("RunTraceTable — selecting calls to re-run", () => {
   it("ticks a call without opening it", async () => {
@@ -328,6 +350,103 @@ describe("RunTraceTable — selecting calls to re-run", () => {
     await user.click(screen.getByRole("button", { name: /Failed/ }));
 
     expect(screen.queryByText(/selected/)).not.toBeInTheDocument();
+  });
+});
+
+describe("RunTraceTable — ticking a whole group", () => {
+  it("ticks every call in a folded group without opening it", async () => {
+    const user = userEvent.setup();
+    renderTable();
+
+    await user.click(groupBox("Refunds"));
+
+    expect(groupBox("Refunds")).toBeChecked();
+    expect(
+      screen.getByText("6 calls selected · 2 scenarios"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("checkbox", { name: "Select refund · Trial 1" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows a group as partly ticked once folded", async () => {
+    const user = userEvent.setup();
+    renderTable();
+    await openRows(user);
+    await user.click(rowBox("refund · Trial 1"));
+    await openRows(user);
+
+    expect(groupBox("Refunds")).not.toBeChecked();
+    expect(groupBox("Refunds")).toHaveAttribute("data-indeterminate", "true");
+  });
+
+  it("clears a group from its checkbox", async () => {
+    const user = userEvent.setup();
+    renderTable();
+
+    await user.click(groupBox("Refunds"));
+    await user.click(groupBox("Refunds"));
+
+    expect(groupBox("Refunds")).not.toBeChecked();
+    expect(screen.queryByText(/calls? selected/)).not.toBeInTheDocument();
+  });
+
+  it("ticks a group that goes on to another page once its calls here are", async () => {
+    const user = userEvent.setup();
+    mockGroups([{ label: "Refunds", rows: TASKS.slice(0, 3), count: 9 }]);
+    renderTable();
+
+    await user.click(groupBox("Refunds"));
+
+    expect(screen.getByText("3 calls selected · 1 scenario")).toBeInTheDocument();
+    expect(groupBox("Refunds")).toBeChecked();
+    expect(groupBox("Refunds")).toHaveAttribute("data-indeterminate", "false");
+  });
+
+  it("clears a group that goes on to another page from its box", async () => {
+    const user = userEvent.setup();
+    mockGroups([{ label: "Refunds", rows: TASKS.slice(0, 3), count: 9 }]);
+    renderTable();
+
+    await user.click(groupBox("Refunds"));
+    await user.click(groupBox("Refunds"));
+
+    expect(screen.queryByText(/calls? selected/)).not.toBeInTheDocument();
+    expect(groupBox("Refunds")).toHaveAttribute("data-indeterminate", "false");
+  });
+
+  it("leaves a group out of every matching call when unticked", async () => {
+    const user = userEvent.setup();
+    total = 120;
+    renderTable();
+    await openRows(user);
+    await user.click(pageBox());
+    await user.click(
+      screen.getByRole("button", { name: "Select all 120 matching calls" }),
+    );
+    expect(groupBox("Refunds")).toBeChecked();
+
+    await user.click(groupBox("Refunds"));
+
+    expect(
+      screen.getByText(
+        "All 120 matching calls are selected except 6 you unticked.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("114 calls selected")).toBeInTheDocument();
+  });
+
+  it("gives a group of untagged calls no checkbox", () => {
+    mockGroups([
+      { label: "Refunds", rows: TASKS.slice(0, 3) },
+      { label: "Untagged", rows: [task("u1", null, null), task("u2", null, null)] },
+    ]);
+    renderTable();
+
+    expect(groupBox("Refunds")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("checkbox", { name: "Select calls in Untagged" }),
+    ).not.toBeInTheDocument();
   });
 });
 

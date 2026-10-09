@@ -1,6 +1,13 @@
 import PropTypes from "prop-types";
 import { alpha } from "@mui/material/styles";
-import { Box, Stack, Typography, TableCell, TableRow } from "@mui/material";
+import {
+  Box,
+  Checkbox,
+  Stack,
+  Typography,
+  TableCell,
+  TableRow,
+} from "@mui/material";
 
 import Iconify from "src/components/iconify";
 import { interpolateColorBasedOnScore } from "src/utils/utils";
@@ -9,6 +16,7 @@ import {
   HEAD_ROW_PX,
   PENDING_EVAL_STATUS,
   isBad,
+  neutralCheckboxSx,
 } from "./traceTable.constants";
 import { CellSkeleton } from "./traceCells";
 
@@ -42,6 +50,7 @@ export default function TraceGroupHeaderRow({
   top = HEAD_ROW_PX,
   loading = false,
   leadingCell = false,
+  checkbox = null,
 }) {
   // Pinned under the head row while its group's calls scroll past; the next
   // group's row slides over it. Opaque for that, so the hover tint layers over
@@ -180,7 +189,22 @@ export default function TraceGroupHeaderRow({
   return (
     <TableRow onClick={onToggle}>
       {/* Keeps the grid aligned under the call rows' checkbox column. */}
-      {leadingCell && <TableCell sx={{ ...cellSx, px: 1, width: 44 }} />}
+      {leadingCell && (
+        <TableCell sx={{ ...cellSx, px: 1, width: 44, textAlign: "center" }}>
+          {checkbox?.selectable && (
+            <Checkbox
+              size="small"
+              checked={checkbox.checked}
+              indeterminate={checkbox.indeterminate}
+              // Ticks the group's calls; folding is the rest of the row's job.
+              onClick={(e) => e.stopPropagation()}
+              onChange={checkbox.onChange}
+              inputProps={{ "aria-label": `Select calls in ${group.label}` }}
+              sx={{ p: 0.25, ...neutralCheckboxSx }}
+            />
+          )}
+        </TableCell>
+      )}
       {descColumns.length === 0 ? (
         <TableCell sx={{ ...cellSx, pl: 2, overflow: "hidden" }}>
           {label}
@@ -277,4 +301,11 @@ TraceGroupHeaderRow.propTypes = {
   top: PropTypes.number,
   loading: PropTypes.bool,
   leadingCell: PropTypes.bool,
+  // The group's tick: whether it has calls to tick, and their state.
+  checkbox: PropTypes.shape({
+    selectable: PropTypes.bool,
+    checked: PropTypes.bool,
+    indeterminate: PropTypes.bool,
+    onChange: PropTypes.func,
+  }),
 };

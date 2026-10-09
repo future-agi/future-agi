@@ -639,6 +639,12 @@ export default function TraceTable({
                       showEvals={scoredColumns.length > 0}
                       evals={scoredColumns}
                       leadingCell={!!selection}
+                      checkbox={
+                        selection && {
+                          ...selection.groupState(g),
+                          onChange: () => selection.onToggleGroup(g),
+                        }
+                      }
                     />
                     {isOpen(g.label) && g.rows.map(renderRow)}
                   </React.Fragment>
@@ -676,6 +682,8 @@ TraceTable.propTypes = {
     canSelect: PropTypes.func.isRequired,
     onToggle: PropTypes.func.isRequired,
     onTogglePage: PropTypes.func.isRequired,
+    groupState: PropTypes.func.isRequired,
+    onToggleGroup: PropTypes.func.isRequired,
     pageChecked: PropTypes.bool,
     pageIndeterminate: PropTypes.bool,
     pageSelectable: PropTypes.bool,

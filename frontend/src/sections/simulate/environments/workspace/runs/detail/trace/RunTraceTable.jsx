@@ -60,6 +60,10 @@ const BELOW_TABLE_PX = 88;
 const PAGER_ROW_PX = 57;
 const MIN_TABLE_PX = 360;
 
+// The calls a re-run can take: only those that carry their scenario.
+const tickableIds = (rows) =>
+  rows.filter((t) => t.sourceScenarioKey).map((t) => t.id);
+
 // The per-call table owns server-backed grouping, filtering, columns and paging
 // for read-only execution results.
 export default function RunTraceTable({
@@ -216,10 +220,7 @@ export default function RunTraceTable({
   useEffect(() => {
     selection.clearRef.current();
   }, [serverFilters, selection.clearRef]);
-  const pageIds = useMemo(
-    () => tasks.filter((t) => t.sourceScenarioKey).map((t) => t.id),
-    [tasks],
-  );
+  const pageIds = useMemo(() => tickableIds(tasks), [tasks]);
   // Whether this run has a call that can be ticked. Only the unfiltered, loaded
   // list can say: a filter matching nothing proves nothing. A run's calls are
   // all tagged or all untagged, so one page answers for the run, and the
@@ -245,22 +246,39 @@ export default function RunTraceTable({
           sourceScenarioKey: keyByIdRef.current.get(id),
         })),
       );
+  // In "all matching" the set holds exceptions, so ticking calls flips each
+  // one that differs instead of adding them to the set.
+  const setCalls = (ids, checked) => {
+    if (!allMatching) {
+      selection.setPage(ids, checked);
+      return;
+    }
+    ids.forEach((id) => {
+      if (selection.isSelected(id) !== checked) selection.toggle(id);
+    });
+  };
   const tableSelection =
     canRerun && runTickable !== false
       ? {
           isSelected: selection.isSelected,
           canSelect: (t) => !!t.sourceScenarioKey,
           onToggle: (t) => selection.toggle(t.id),
-          // In "all matching" the set holds exceptions, so the page box flips
-          // each call that differs instead of adding the page to the set.
-          onTogglePage: (checked) => {
-            if (!allMatching) {
-              selection.setPage(pageIds, checked);
-              return;
-            }
-            pageIds.forEach((id) => {
-              if (selection.isSelected(id) !== checked) selection.toggle(id);
-            });
+          onTogglePage: (checked) => setCalls(pageIds, checked),
+          // A group's box covers its calls on this page, like the header's.
+          groupState: (g) => {
+            const ids = tickableIds(g.rows);
+            const { allChecked, someChecked } = selection.pageState(ids);
+            return {
+              selectable: ids.length > 0,
+              checked: allChecked,
+              indeterminate: someChecked,
+            };
+          },
+          // Ticks the group's calls on this page, or clears them once they are
+          // all ticked.
+          onToggleGroup: (g) => {
+            const ids = tickableIds(g.rows);
+            setCalls(ids, !ids.every((id) => selection.isSelected(id)));
           },
           pageChecked,
           pageIndeterminate,
