@@ -25824,6 +25824,10 @@ export type ConversationDossierApiLatencyMs = { [key: string]: string };
 
 export type ConversationDossierApiTurnsItem = { [key: string]: string };
 
+export type ConversationDossierApiProviderLogIssuesItem = {
+  [key: string]: string;
+};
+
 export interface ConversationDossierApi {
   /** @minLength 1 */
   provider: string;
@@ -25833,6 +25837,7 @@ export interface ConversationDossierApi {
   analysis: ConversationDossierApiAnalysis;
   latency_ms: ConversationDossierApiLatencyMs;
   turns: ConversationDossierApiTurnsItem[];
+  provider_log_issues?: ConversationDossierApiProviderLogIssuesItem[];
   not_included: string[];
 }
 

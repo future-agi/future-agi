@@ -7,6 +7,7 @@ module turns that span into one small row: the call facts, the agent's own
 instructions, the configured lines, and the turn list with tool activity.
 """
 
+import json
 import uuid
 from collections.abc import Callable, Mapping
 from typing import Any
@@ -24,12 +25,14 @@ from tracer.services.clickhouse.v2 import get_reader
 from tracer.services.clickhouse.v2.span_reader import CHSpan
 from tracer.services.trace_investigation import InvestigationConflict, _token_digest
 from tracer.utils.attribute_accessor import span_raw_log
+from tracer.utils.otel import ConversationAttributes
 
 # The audio tool of the investigator finds the recording under these keys.
 _RECORDING_KEYS = ("conversation.recording.mono.combined", "gen_ai.voice.recording.url")
 _LATENCY_STATS = ("p50", "p90", "max", "num")
 # What the dossier leaves out, so the reader does not take silence for absence.
-_NOT_INCLUDED = ["provider_log", "recording_audio"]
+_RECORDING_AUDIO = "recording_audio"
+_PROVIDER_LOG = "provider_log"
 _CALL_NUMBER = "[number of a call participant]"
 
 
@@ -164,6 +167,15 @@ _PROVIDER_DOSSIERS: dict[str, Callable[[Mapping[str, Any]], dict[str, Any]]] = {
 }
 
 
+def _provider_log_issues(attrs: Mapping[str, str]) -> list[Any] | None:
+    """The provider log's warning and error lines; None when it was never read."""
+    try:
+        issues = json.loads(attrs.get(ConversationAttributes.PROVIDER_LOG_ISSUES) or "")
+    except json.JSONDecodeError:
+        return None
+    return issues if isinstance(issues, list) else None
+
+
 def conversation_dossier(span: CHSpan) -> dict[str, Any] | None:
     """The compact call record of a provider conversation span.
 
@@ -182,12 +194,18 @@ def conversation_dossier(span: CHSpan) -> dict[str, Any] | None:
         if attrs.get("llm.input_messages.0.message.role") == "system"
         else None
     )
-    return {
+    dossier = {
         "provider": attrs.get("gen_ai.system") or span.provider,
         "agent_instructions": system_prompt,
         **build(raw_log),
-        "not_included": _NOT_INCLUDED,
     }
+    issues = _provider_log_issues(attrs)
+    if issues is None:
+        dossier["not_included"] = [_PROVIDER_LOG, _RECORDING_AUDIO]
+    else:
+        dossier["provider_log_issues"] = issues
+        dossier["not_included"] = [_RECORDING_AUDIO]
+    return dossier
 
 
 def conversation_evidence_rows(
