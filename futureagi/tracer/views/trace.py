@@ -10,7 +10,7 @@ from uuid import UUID
 import structlog
 from django.conf import settings
 from django.contrib.postgres.aggregates import ArrayAgg
-from django.db import models
+from django.db import models, transaction
 from django.db.models import (
     Avg,
     BooleanField,
@@ -2536,6 +2536,17 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             tags = request.validated_data["tags"]
             trace.tags = tags
             trace.save(update_fields=["tags", "updated_at"])
+            # The trace list reads tags from CH `traces`; mirror the saved row
+            # there like every other Trace write (trace_writer docstring).
+            # Without it the list keeps the old tags, and the next bulk add
+            # merges into them and drops these.
+            from tracer.services.clickhouse.v2.trace_writer import (
+                mirror_traces_to_clickhouse,
+            )
+
+            transaction.on_commit(
+                lambda tid=str(trace.id): mirror_traces_to_clickhouse([tid])
+            )
             return self._gm.success_response({"id": str(trace.id), "tags": trace.tags})
         except Trace.DoesNotExist:
             return self._gm.bad_request("Trace not found")
