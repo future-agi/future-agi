@@ -112,6 +112,9 @@ export function scoreColor(score) {
   };
 }
 
+// Score plus the 25% the action column would take.
+const SCORE_WIDTH_WITHOUT_ACTIONS = "40%";
+
 /** Single eval row with collapsible explanation + optional "View span" */
 const EvalTableRow = ({
   ev,
@@ -121,6 +124,7 @@ const EvalTableRow = ({
   showFixWithFalcon,
 }) => {
   const [expanded, setExpanded] = useState(false);
+  const showActions = !!onSelectSpan;
   const isSkipped = ev?.skipped === true;
   const hasError = ev?.error === true && !isSkipped;
   // Every non-score state (queued / evaluating / skipped / errored) renders
@@ -259,8 +263,9 @@ const EvalTableRow = ({
             the shared indicator; choices render as violet chips; else a
             colored badge */}
         <Box
+          data-testid="eval-score-cell"
           sx={{
-            width: "15%",
+            width: showActions ? "15%" : SCORE_WIDTH_WITHOUT_ACTIONS,
             minHeight: 22,
             display: "flex",
             flexWrap: "wrap",
@@ -316,43 +321,46 @@ const EvalTableRow = ({
           </Typography>
         )}
 
-        {/* Action buttons */}
-        <Box
-          sx={{
-            width: "25%",
-            display: "flex",
-            gap: 0.5,
-            justifyContent: "flex-end",
-            flexShrink: 0,
-          }}
-        >
-          {ev.spanId && onSelectSpan && (
-            <Box
-              onClick={(e) => {
-                e.stopPropagation();
-                onSelectSpan(ev.spanId);
-              }}
-              sx={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "3px",
-                px: 0.5,
-                py: 0.15,
-                borderRadius: "3px",
-                cursor: "pointer",
-                fontSize: 10,
-                color: "text.disabled",
-                "&:hover": {
-                  color: "primary.main",
-                  bgcolor: "rgba(120,87,252,0.06)",
-                },
-              }}
-            >
-              <Iconify icon="mdi:eye-outline" width={12} />
-              <span>View span</span>
-            </Box>
-          )}
-        </Box>
+        {/* Action buttons — only where an eval can jump to its span */}
+        {showActions && (
+          <Box
+            data-testid="eval-actions-column"
+            sx={{
+              width: "25%",
+              display: "flex",
+              gap: 0.5,
+              justifyContent: "flex-end",
+              flexShrink: 0,
+            }}
+          >
+            {ev.spanId && (
+              <Box
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSelectSpan(ev.spanId);
+                }}
+                sx={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "3px",
+                  px: 0.5,
+                  py: 0.15,
+                  borderRadius: "3px",
+                  cursor: "pointer",
+                  fontSize: 10,
+                  color: "text.disabled",
+                  "&:hover": {
+                    color: "primary.main",
+                    bgcolor: "rgba(120,87,252,0.06)",
+                  },
+                }}
+              >
+                <Iconify icon="mdi:eye-outline" width={12} />
+                <span>View span</span>
+              </Box>
+            )}
+          </Box>
+        )}
       </Box>
 
       {/* Expanded area — markdown explanation + error localization +
@@ -481,6 +489,9 @@ const EvalsTabView = ({
   showAddEvals = true,
 }) => {
   const [search, setSearch] = useState("");
+  // The action column only holds "View span", so a drawer that can't jump to
+  // a span gives its width to Score instead.
+  const showActions = !!onSelectSpan;
   const list = useMemo(() => (Array.isArray(evals) ? evals : []), [evals]);
 
   const totalPass = useMemo(
@@ -678,48 +689,50 @@ const EvalsTabView = ({
             }}
           />
         </Box>
-        {showAddEvals && <Box
-          sx={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 0.5,
-            px: 1,
-            py: 0.35,
-            border: "1px dashed",
-            borderColor: "divider",
-            borderRadius: "4px",
-            bgcolor: "background.paper",
-            flexShrink: 0,
-            opacity: 0.7,
-          }}
-        >
-          <Iconify
-            icon="mdi:plus-circle-outline"
-            width={13}
-            color="text.disabled"
-          />
-          <Typography
-            sx={{ fontSize: 11, fontWeight: 500, color: "text.disabled" }}
-          >
-            Add Evals
-          </Typography>
+        {showAddEvals && (
           <Box
             sx={{
-              px: 0.6,
-              py: 0.1,
-              borderRadius: "3px",
-              bgcolor: (theme) => alpha(theme.palette.success.main, 0.16),
-              color: "success.dark",
-              fontSize: 9,
-              fontWeight: 700,
-              letterSpacing: 0.2,
-              lineHeight: 1.5,
-              whiteSpace: "nowrap",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 0.5,
+              px: 1,
+              py: 0.35,
+              border: "1px dashed",
+              borderColor: "divider",
+              borderRadius: "4px",
+              bgcolor: "background.paper",
+              flexShrink: 0,
+              opacity: 0.7,
             }}
           >
-            Coming soon
+            <Iconify
+              icon="mdi:plus-circle-outline"
+              width={13}
+              color="text.disabled"
+            />
+            <Typography
+              sx={{ fontSize: 11, fontWeight: 500, color: "text.disabled" }}
+            >
+              Add Evals
+            </Typography>
+            <Box
+              sx={{
+                px: 0.6,
+                py: 0.1,
+                borderRadius: "3px",
+                bgcolor: (theme) => alpha(theme.palette.success.main, 0.16),
+                color: "success.dark",
+                fontSize: 9,
+                fontWeight: 700,
+                letterSpacing: 0.2,
+                lineHeight: 1.5,
+                whiteSpace: "nowrap",
+              }}
+            >
+              Coming soon
+            </Box>
           </Box>
-        </Box>}
+        )}
       </Box>
 
       {/* Table */}
@@ -754,7 +767,7 @@ const EvalsTabView = ({
           </Typography>
           <Typography
             sx={{
-              width: "15%",
+              width: showActions ? "15%" : SCORE_WIDTH_WITHOUT_ACTIONS,
               fontSize: 11,
               fontWeight: 600,
               color: "text.secondary",
@@ -774,7 +787,9 @@ const EvalsTabView = ({
               Span
             </Typography>
           )}
-          <Box sx={{ width: "25%" }} />
+          {showActions && (
+            <Box data-testid="eval-actions-column" sx={{ width: "25%" }} />
+          )}
         </Box>
 
         {filtered.map((ev) => (

@@ -26,6 +26,7 @@ const {
   callTranscript,
   useCallDetail,
   useCallExecutionV3Detail,
+  withScoringStatus,
 } = await import("../runDetail");
 const { RUN_COLORS } = await import(
   "src/sections/simulate/environments/workspace/runs/runs.constants"
@@ -716,6 +717,36 @@ describe("useCallDetail", () => {
     expect(query.options.refetchInterval(query)).toBe(false);
     unmount();
   });
+
+  it("polls while an eval is still being scored and stops once none is", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const Wrapper = ({ children }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    Wrapper.propTypes = { children: PropTypes.node };
+    const withEval = (status) => ({
+      ...callDetailPayload(),
+      evaluations: [{ id: "cfg-1", name: "Tone", value: null, status }],
+    });
+    axios.get.mockResolvedValue({ data: withEval("pending") });
+
+    const { unmount } = renderHook(
+      () => useCallExecutionV3Detail("call-scoring"),
+      { wrapper: Wrapper },
+    );
+    const queryKey = ["simulation-call-detail-v3", "call-scoring"];
+    await waitFor(() =>
+      expect(queryClient.getQueryData(queryKey)?.evaluations).toHaveLength(1),
+    );
+    const query = queryClient.getQueryCache().find({ queryKey });
+
+    expect(query.options.refetchInterval(query)).toBe(3000);
+    queryClient.setQueryData(queryKey, withEval("timed_out"));
+    expect(query.options.refetchInterval(query)).toBe(false);
+    unmount();
+  });
 });
 
 describe("useRunDetail", () => {
@@ -774,7 +805,7 @@ describe("useRunDetail", () => {
   it.each([
     ["Pending", "queued"],
     ["Running", "running"],
-    ["Evaluating", "running"],
+    ["Evaluating", "grading"],
     ["Completed", "finished"],
     ["Failed", "failed"],
     ["Cancelling", "cancelling"],
@@ -787,7 +818,10 @@ describe("useRunDetail", () => {
       wrapper: makeWrapper(),
     });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
-    const [listRow] = mapExecutions({ results: [{ id: "ex-state", status }], count: 1 });
+    const [listRow] = mapExecutions({
+      results: [{ id: "ex-state", status }],
+      count: 1,
+    });
     expect(listRow.runState).toBe(expected);
     expect(result.current.identity.runState).toBe(listRow.runState);
   });
@@ -926,5 +960,162 @@ describe("useRunDetail", () => {
     });
     expect(query.options.refetchInterval(query)).toBe(false);
     unmount();
+  });
+});
+
+describe("call detail evals carry their scoring status", () => {
+  const detail = (eval_metrics, evaluations) =>
+    mapCallDetail({
+      id: "call-s",
+      simulation_call_type: "text",
+      transcript: [],
+      recordings: {},
+      eval_metrics,
+      evaluations,
+    });
+
+  it("lists a timed-out eval the stored metrics hold as an empty row", () => {
+    const d = detail({ "cfg-a": {} }, [
+      {
+        id: "cfg-a",
+        name: "Resolution",
+        type: "",
+        value: null,
+        score: null,
+        passed: null,
+        reason: "Scoring timed out: no progress for 10 minutes.",
+        status: "timed_out",
+      },
+    ]);
+    expect(d.evalResults).toHaveLength(1);
+    expect(d.evalResults[0]).toMatchObject({
+      id: "cfg-a",
+      name: "Resolution",
+      score: null,
+      passed: null,
+      status: "timed_out",
+      reason: "Scoring timed out: no progress for 10 minutes.",
+    });
+  });
+
+  it("lists a pending eval that has no stored row yet", () => {
+    const d = detail({}, [
+      {
+        id: "cfg-b",
+        name: "Tone",
+        type: "",
+        value: null,
+        reason: "",
+        status: "pending",
+      },
+    ]);
+    expect(d.evalResults).toEqual([
+      expect.objectContaining({ id: "cfg-b", name: "Tone", status: "pending" }),
+    ]);
+  });
+
+  it("marks a failed eval as an error, with its reason", () => {
+    const d = detail({ "cfg-c": {} }, [
+      {
+        id: "cfg-c",
+        name: "Policy",
+        value: null,
+        reason: "Model quota hit",
+        status: "failed",
+      },
+    ]);
+    expect(d.evalResults[0]).toMatchObject({
+      status: "failed",
+      error: true,
+      reason: "Model quota hit",
+    });
+  });
+
+  it("leaves a scored eval's stored verdict as it is", () => {
+    const stored = {
+      name: "Policy",
+      value: "Passed",
+      type: "Pass/Fail",
+      reason: "ok",
+    };
+    const d = detail({ "cfg-d": stored }, [
+      {
+        id: "cfg-d",
+        name: "Policy",
+        value: "Passed",
+        reason: "ok",
+        status: "succeeded",
+      },
+    ]);
+    expect(d.evalResults[0]).toMatchObject({ passed: true, reason: "ok" });
+  });
+
+  it("keeps a removed, never-scored eval out when the evaluations list doesn't name it", () => {
+    const d = detail({ "cfg-gone": { removed: true } }, []);
+    expect(d.evalResults).toHaveLength(0);
+  });
+
+  it("drops an old verdict once its re-grade timed out", () => {
+    const d = detail(
+      {
+        "cfg-r": {
+          name: "Policy",
+          value: "Failed",
+          type: "Pass/Fail",
+          reason: "oversold",
+          error: false,
+          status: "completed",
+        },
+      },
+      [
+        {
+          id: "cfg-r",
+          name: "Policy",
+          value: null,
+          reason: "Scoring timed out: no progress for 10 minutes.",
+          status: "timed_out",
+        },
+      ],
+    );
+    expect(d.evalResults[0]).toMatchObject({
+      status: "timed_out",
+      score: null,
+      passed: null,
+      error: false,
+      reason: "Scoring timed out: no progress for 10 minutes.",
+    });
+  });
+
+  it("clears an old error flag and reason while the eval is re-grading", () => {
+    const d = detail(
+      {
+        "cfg-q": {
+          name: "Tone",
+          value: null,
+          reason: "Model quota hit",
+          error: true,
+          status: "failed",
+        },
+      },
+      [
+        {
+          id: "cfg-q",
+          name: "Tone",
+          value: null,
+          reason: "",
+          status: "pending",
+        },
+      ],
+    );
+    expect(d.evalResults[0]).toMatchObject({
+      status: "pending",
+      error: false,
+      reason: "",
+    });
+  });
+
+  it("returns the stored metrics untouched when there is no evaluations list", () => {
+    const metrics = { "cfg-e": { name: "x", value: 1 } };
+    expect(withScoringStatus(metrics, undefined)).toBe(metrics);
   });
 });

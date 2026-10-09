@@ -12,6 +12,7 @@ import Iconify from "src/components/iconify";
 import {
   callTranscript,
   useCallExecutionV3Detail,
+  withScoringStatus,
 } from "src/api/simulate-environments/runDetail";
 import VoiceDetailDrawerV2 from "src/components/VoiceDetailDrawerV2";
 
@@ -74,6 +75,12 @@ export default function VoiceCallDrawer({
       data
         ? {
             ...data,
+            // The shared drawer reads stored `eval_metrics`; give each unscored
+            // eval its status so it shows pending, failed or timed out.
+            eval_metrics: withScoringStatus(
+              data.eval_metrics,
+              data.evaluations,
+            ),
             transcript: callTranscript(data),
             module: "simulate",
             origin: "simulate",
