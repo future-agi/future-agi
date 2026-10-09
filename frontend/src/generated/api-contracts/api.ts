@@ -288,6 +288,8 @@ import type {
   ConditionalColumnRequestApi,
   ConversationCreateRequestApi,
   ConversationDetailResponseApi,
+  ConversationEvidenceRequestApi,
+  ConversationEvidenceResponseApi,
   ConversationListResponseApi,
   ConversationUpdateRequestApi,
   CreateDatasetFromExperimentRequestApi,
@@ -72047,6 +72049,65 @@ export const tracerInternalErrorFeedV2AttemptsPartialUpdate = async (
     },
   );
 };
+
+export type tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponse200 =
+  {
+    data: ConversationEvidenceResponseApi;
+    status: 200;
+  };
+
+export type tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponse409 =
+  {
+    data: InvestigationControlErrorApi;
+    status: 409;
+  };
+
+export type tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 200 | 409>;
+  };
+
+export type tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponseSuccess =
+  tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponse200 & {
+    headers: Headers;
+  };
+export type tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponseError =
+  (
+    | tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponse409
+    | tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponseDefault
+  ) & {
+    headers: Headers;
+  };
+
+export type tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponse =
+
+    | tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponseSuccess
+    | tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponseError;
+
+export const getTracerInternalErrorFeedV2AttemptsConversationEvidenceCreateUrl =
+  (attemptId: string) => {
+    return `/tracer/internal/error-feed-v2/attempts/${attemptId}/conversation-evidence/`;
+  };
+
+export const tracerInternalErrorFeedV2AttemptsConversationEvidenceCreate =
+  async (
+    attemptId: string,
+    conversationEvidenceRequestApi: ConversationEvidenceRequestApi,
+    options?: RequestInit,
+  ): Promise<tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponse> => {
+    return apiMutator<tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponse>(
+      getTracerInternalErrorFeedV2AttemptsConversationEvidenceCreateUrl(
+        attemptId,
+      ),
+      {
+        ...options,
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...options?.headers },
+        body: JSON.stringify(conversationEvidenceRequestApi),
+      },
+    );
+  };
 
 export type tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponse201 =
   {
