@@ -347,6 +347,7 @@ import type {
   DatasetCopyResponseApi,
   DatasetCreateStartedResponseApi,
   DatasetCreationProgressResponseApi,
+  DatasetDeleteApi,
   DatasetDerivedVariablesResponseApi,
   DatasetEvalStatsResponseApi,
   DatasetExplanationSummaryResponseApi,
@@ -1364,7 +1365,6 @@ import type {
   TracerUserAlertLogsListAllParams,
   TracerUserAlertLogsListParams,
   TracerUserAlertsList200,
-  TracerUserAlertsListMonitors200,
   TracerUserAlertsListMonitorsParams,
   TracerUserAlertsListParams,
   TracerUserAlertsMetricOptionsParams,
@@ -1434,6 +1434,7 @@ import type {
   UserAlertMonitorDuplicateApi,
   UserAlertMonitorDuplicateResponseApi,
   UserAlertMonitorGraphResponseApi,
+  UserAlertMonitorListResponseApi,
   UserAlertMonitorLogApi,
   UserAlertMonitorLogResolveRequestApi,
   UserAlertMonitorLogResolveResponseApi,
@@ -33896,24 +33897,55 @@ export const modelHubDevelopsDatasetCreationProgressRead = async (
   );
 };
 
-export type modelHubDevelopsDeleteDatasetDeleteResponse204 = {
-  data: void;
-  status: 204;
+export type modelHubDevelopsDeleteDatasetDeleteResponse200 = {
+  data: DevelopDatasetMessageResponseApi;
+  status: 200;
+};
+
+export type modelHubDevelopsDeleteDatasetDeleteResponse400 = {
+  data: ModelHubErrorResponseApi;
+  status: 400;
+};
+
+export type modelHubDevelopsDeleteDatasetDeleteResponse403 = {
+  data: ModelHubErrorResponseApi;
+  status: 403;
+};
+
+export type modelHubDevelopsDeleteDatasetDeleteResponse404 = {
+  data: ModelHubErrorResponseApi;
+  status: 404;
+};
+
+export type modelHubDevelopsDeleteDatasetDeleteResponse409 = {
+  data: ModelHubErrorResponseApi;
+  status: 409;
+};
+
+export type modelHubDevelopsDeleteDatasetDeleteResponse500 = {
+  data: ModelHubErrorResponseApi;
+  status: 500;
 };
 
 export type modelHubDevelopsDeleteDatasetDeleteResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 204>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
 };
 
 export type modelHubDevelopsDeleteDatasetDeleteResponseSuccess =
-  modelHubDevelopsDeleteDatasetDeleteResponse204 & {
+  modelHubDevelopsDeleteDatasetDeleteResponse200 & {
     headers: Headers;
   };
-export type modelHubDevelopsDeleteDatasetDeleteResponseError =
-  modelHubDevelopsDeleteDatasetDeleteResponseDefault & {
-    headers: Headers;
-  };
+export type modelHubDevelopsDeleteDatasetDeleteResponseError = (
+  | modelHubDevelopsDeleteDatasetDeleteResponse400
+  | modelHubDevelopsDeleteDatasetDeleteResponse403
+  | modelHubDevelopsDeleteDatasetDeleteResponse404
+  | modelHubDevelopsDeleteDatasetDeleteResponse409
+  | modelHubDevelopsDeleteDatasetDeleteResponse500
+  | modelHubDevelopsDeleteDatasetDeleteResponseDefault
+) & {
+  headers: Headers;
+};
 
 export type modelHubDevelopsDeleteDatasetDeleteResponse =
   | modelHubDevelopsDeleteDatasetDeleteResponseSuccess
@@ -33924,6 +33956,7 @@ export const getModelHubDevelopsDeleteDatasetDeleteUrl = () => {
 };
 
 export const modelHubDevelopsDeleteDatasetDelete = async (
+  datasetDeleteApi: DatasetDeleteApi,
   options?: RequestInit,
 ): Promise<modelHubDevelopsDeleteDatasetDeleteResponse> => {
   return apiMutator<modelHubDevelopsDeleteDatasetDeleteResponse>(
@@ -33931,6 +33964,8 @@ export const modelHubDevelopsDeleteDatasetDelete = async (
     {
       ...options,
       method: "DELETE",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(datasetDeleteApi),
     },
   );
 };
@@ -81472,23 +81507,30 @@ export const tracerUserAlertsDuplicate = async (
 };
 
 export type tracerUserAlertsListMonitorsResponse200 = {
-  data: TracerUserAlertsListMonitors200;
+  data: UserAlertMonitorListResponseApi;
   status: 200;
+};
+
+export type tracerUserAlertsListMonitorsResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
 };
 
 export type tracerUserAlertsListMonitorsResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 200 | 400>;
 };
 
 export type tracerUserAlertsListMonitorsResponseSuccess =
   tracerUserAlertsListMonitorsResponse200 & {
     headers: Headers;
   };
-export type tracerUserAlertsListMonitorsResponseError =
-  tracerUserAlertsListMonitorsResponseDefault & {
-    headers: Headers;
-  };
+export type tracerUserAlertsListMonitorsResponseError = (
+  | tracerUserAlertsListMonitorsResponse400
+  | tracerUserAlertsListMonitorsResponseDefault
+) & {
+  headers: Headers;
+};
 
 export type tracerUserAlertsListMonitorsResponse =
   | tracerUserAlertsListMonitorsResponseSuccess

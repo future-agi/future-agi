@@ -1,5 +1,4 @@
 import structlog
-
 from ai_tools.registry import registry as tool_registry
 
 logger = structlog.get_logger(__name__)
@@ -21,12 +20,12 @@ COMMON_TOOLS = [
     "search_traces",
     "get_trace",
     "list_eval_templates",
-    "list_evaluations",
     "list_prompt_templates",
     "get_prompt_template",
     "list_agents",
     "list_experiments",
-    "get_cost_breakdown",
+    "list_dashboards",
+    "list_dashboard_metrics",
     "list_users",
     "get_user",
     "save_memory",
@@ -34,21 +33,28 @@ COMMON_TOOLS = [
     "delete_memory",
 ]
 
-# Categories for auto/general mode; "visualization" draws on the Imagine canvas only
+# All categories for auto/general mode. API-backed categories come from the
+# generated MCP catalog (see ai_tools.generated); the rest are native tools.
 ALL_CATEGORIES = [
     "context",
     "datasets",
     "annotations",
     "evaluations",
     "tracing",
+    "error_feed",
+    "dashboards",
     "experiments",
-    "agents",
     "simulation",
     "prompts",
     "optimization",
+    "gateway",
     "users",
     "usage",
     "docs",
+    # `agents` holds run_simulation, get_test_execution, list_test_executions and
+    # list_scenarios. Without it here the agent/simulation surface is read-only in
+    # auto mode — a simulation can be built but never executed.
+    "agents",
 ]
 
 MODES = {
@@ -65,7 +71,7 @@ MODES = {
         "description": "Evaluation analysis",
     },
     "tracing": {
-        "categories": ["context", "tracing"],
+        "categories": ["context", "tracing", "error_feed", "dashboards"],
         "description": "Trace debugging",
     },
     "experiments": {
@@ -73,19 +79,26 @@ MODES = {
         "description": "Experiment management",
     },
     "agents": {
-        "categories": ["context", "agents", "simulation"],
+        # `agents` as well as `simulation`: the catalog splits the surface across
+        # both groups, and run_simulation lives in `agents`. Listing only
+        # `simulation` left the dedicated agents mode unable to run a test.
+        "categories": ["context", "simulation", "agents"],
         "description": "Agent testing",
     },
     "prompts": {
         "categories": ["context", "prompts", "optimization"],
         "description": "Prompt engineering",
     },
+    "gateway": {
+        "categories": ["context", "gateway", "usage"],
+        "description": "AI gateway configuration, request logs, and analytics",
+    },
     "admin": {
-        "categories": ["context", "users", "usage"],
+        "categories": ["context", "users", "usage", "gateway"],
         "description": "Administration",
     },
     "imagine": {
-        "categories": ["context", "tracing", "visualization"],
+        "categories": ["context", "tracing", "dashboards", "visualization"],
         "description": "AI-powered trace visualization builder",
     },
 }
@@ -102,8 +115,13 @@ PAGE_TO_MODE = {
     "simulation": "agents",
     "prompts": "prompts",
     "develop": "prompts",
+    "annotations": "datasets",
+    "annotation_queues": "datasets",
+    "annotation_labels": "datasets",
+    "gateway": "gateway",
     "settings": "admin",
     "users": "admin",
+    "admin": "admin",
     "imagine": "imagine",
 }
 
@@ -128,6 +146,7 @@ KEYWORDS = {
     "experiments": ["experiment", "a/b test", "variant"],
     "agents": ["agent", "simulation", "scenario", "persona"],
     "prompts": ["prompt engineering", "prompt version", "optimize prompt"],
+    "gateway": ["gateway", "request log", "provider key", "routing"],
     "admin": ["user", "api key", "cost", "billing", "member"],
 }
 
@@ -195,13 +214,13 @@ def filter_tools_for_message(tools, user_message, recent_tool_names=None, max_to
         "list_experiments",
         "list_prompt_templates",
         "list_eval_templates",
-        "get_cost_breakdown",
+        "get_usage_overview",
+        "list_dashboard_metrics",
         "search_docs",
         "ask_docs",
         "list_agents",
-        "list_annotation_labels",
         "list_annotation_queues",
-        "list_alert_monitors",
+        "list_dashboards",
         "list_knowledge_bases",
     }
 

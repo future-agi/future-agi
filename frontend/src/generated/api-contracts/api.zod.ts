@@ -19879,6 +19879,19 @@ export const ModelHubDevelopsDatasetCreationProgressReadResponse = zod.object({
   }),
 });
 
+export const modelHubDevelopsDeleteDatasetDeleteBodyDatasetIdsMax = 50;
+
+export const ModelHubDevelopsDeleteDatasetDeleteBody = zod.object({
+  dataset_ids: zod
+    .array(zod.string().uuid())
+    .max(modelHubDevelopsDeleteDatasetDeleteBodyDatasetIdsMax),
+});
+
+export const ModelHubDevelopsDeleteDatasetDeleteResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.string().min(1),
+});
+
 export const modelHubDevelopsEditRunPromptColumnCreateBodyConfigModelMax = 255;
 
 export const modelHubDevelopsEditRunPromptColumnCreateBodyConfigTemperatureMin = 0;
@@ -66703,143 +66716,86 @@ export const TracerUserAlertsDuplicateResponse = zod.object({
   }),
 });
 
+export const tracerUserAlertsListMonitorsQueryPageNumberDefault = 0;
+export const tracerUserAlertsListMonitorsQueryPageNumberMin = 0;
+
+export const tracerUserAlertsListMonitorsQueryPageSizeDefault = 30;
+export const tracerUserAlertsListMonitorsQueryPageSizeMax = 100;
+
 export const TracerUserAlertsListMonitorsQueryParams = zod.object({
-  page: zod
+  page_number: zod
     .number()
-    .optional()
-    .describe("A page number within the paginated result set."),
-  limit: zod
+    .min(tracerUserAlertsListMonitorsQueryPageNumberMin)
+    .default(tracerUserAlertsListMonitorsQueryPageNumberDefault)
+    .describe("Zero-based page number."),
+  page_size: zod
     .number()
-    .optional()
-    .describe("Number of results to return per page."),
+    .min(1)
+    .max(tracerUserAlertsListMonitorsQueryPageSizeMax)
+    .default(tracerUserAlertsListMonitorsQueryPageSizeDefault),
+  search_text: zod.string().optional(),
+  project_id: zod.array(zod.string().uuid()).optional(),
+  status: zod.array(zod.enum(["triggered", "healthy"])).optional(),
+  metric_type: zod.array(zod.string().min(1)).optional(),
+  sort_by: zod.string().min(1).optional(),
+  sort_direction: zod.enum(["asc", "desc"]).optional(),
 });
 
-export const tracerUserAlertsListMonitorsResponseResultsItemMetricMax = 2556;
+export const tracerUserAlertsListMonitorsResponseResultTableItemNoOfAlertsMin = 0;
 
-export const tracerUserAlertsListMonitorsResponseResultsItemThresholdMetricValueMax = 255;
+export const tracerUserAlertsListMonitorsResponseResultTableItemTrendsItemCountMin = 0;
 
-export const tracerUserAlertsListMonitorsResponseResultsItemCriticalThresholdValueMin = 0;
+export const tracerUserAlertsListMonitorsResponseResultMetadataTotalRowsMin = 0;
 
-export const tracerUserAlertsListMonitorsResponseResultsItemWarningThresholdValueMin = 0;
-
-export const tracerUserAlertsListMonitorsResponseResultsItemAlertFrequencyMin = 5;
-export const tracerUserAlertsListMonitorsResponseResultsItemAlertFrequencyMax = 2147483647;
-
-export const tracerUserAlertsListMonitorsResponseResultsItemAutoThresholdTimeWindowMin = 0;
-export const tracerUserAlertsListMonitorsResponseResultsItemAutoThresholdTimeWindowMax = 2147483647;
-
-export const tracerUserAlertsListMonitorsResponseResultsItemNotificationEmailsItemMax = 254;
-
-export const tracerUserAlertsListMonitorsResponseResultsItemSlackWebhookUrlMax = 200;
+export const tracerUserAlertsListMonitorsResponseResultMetadataTotalPagesMin = 0;
 
 export const TracerUserAlertsListMonitorsResponse = zod.object({
-  count: zod.number(),
-  next: zod.string().url().optional(),
-  previous: zod.string().url().optional(),
-  results: zod.array(
-    zod.object({
-      id: zod.string().uuid().optional(),
-      project: zod.string().uuid(),
-      name: zod.string().min(1),
-      metric_name: zod.string().optional(),
-      created_at: zod.string().datetime({ offset: true }).optional(),
-      updated_at: zod.string().datetime({ offset: true }).optional(),
-      deleted: zod.boolean().optional(),
-      deleted_at: zod.string().datetime({ offset: true }).optional(),
-      metric_type: zod.enum([
-        "count_of_errors",
-        "error_rates_for_function_calling",
-        "error_free_session_rates",
-        "service_provider_error_rates",
-        "llm_api_failure_rates",
-        "span_response_time",
-        "llm_response_time",
-        "token_usage",
-        "daily_tokens_spent",
-        "monthly_tokens_spent",
-        "evaluation_metrics",
-      ]),
-      metric: zod
-        .string()
-        .max(tracerUserAlertsListMonitorsResponseResultsItemMetricMax)
-        .optional()
-        .describe("Id of the evaluation template."),
-      threshold_operator: zod.enum(["greater_than", "less_than"]),
-      threshold_type: zod
-        .enum(["static", "percentage_change"])
-        .optional()
-        .describe(
-          "Method to set the threshold for the monitor (Static or Percentage change).",
+  status: zod.boolean(),
+  result: zod.object({
+    column_config: zod.array(
+      zod.object({
+        id: zod.string().min(1),
+        name: zod.string().min(1),
+        is_visible: zod.boolean(),
+      }),
+    ),
+    table: zod.array(
+      zod.object({
+        id: zod.string().uuid(),
+        name: zod.string().min(1),
+        created_at: zod.string().datetime({ offset: true }),
+        updated_at: zod.string().datetime({ offset: true }),
+        metric_type: zod.string().min(1),
+        filters: zod.object({}).passthrough(),
+        status: zod.enum(["triggered", "healthy"]),
+        no_of_alerts: zod
+          .number()
+          .min(
+            tracerUserAlertsListMonitorsResponseResultTableItemNoOfAlertsMin,
+          ),
+        last_triggered: zod.string().datetime({ offset: true }),
+        is_mute: zod.boolean(),
+        trends: zod.array(
+          zod.object({
+            timestamp: zod.string().datetime({ offset: true }),
+            count: zod
+              .number()
+              .min(
+                tracerUserAlertsListMonitorsResponseResultTableItemTrendsItemCountMin,
+              ),
+          }),
         ),
-      threshold_metric_value: zod
-        .string()
-        .max(
-          tracerUserAlertsListMonitorsResponseResultsItemThresholdMetricValueMax,
-        )
-        .optional()
-        .describe(
-          "For choice and pass/fail evals, the specific metric value to monitor.",
-        ),
-      critical_threshold_value: zod
+      }),
+    ),
+    metadata: zod.object({
+      total_rows: zod
         .number()
-        .min(
-          tracerUserAlertsListMonitorsResponseResultsItemCriticalThresholdValueMin,
-        )
-        .optional(),
-      warning_threshold_value: zod
+        .min(tracerUserAlertsListMonitorsResponseResultMetadataTotalRowsMin),
+      total_pages: zod
         .number()
-        .min(
-          tracerUserAlertsListMonitorsResponseResultsItemWarningThresholdValueMin,
-        )
-        .optional(),
-      alert_frequency: zod
-        .number()
-        .min(tracerUserAlertsListMonitorsResponseResultsItemAlertFrequencyMin)
-        .max(tracerUserAlertsListMonitorsResponseResultsItemAlertFrequencyMax)
-        .optional()
-        .describe("Frequency of alert checks in minutes."),
-      auto_threshold_time_window: zod
-        .number()
-        .min(
-          tracerUserAlertsListMonitorsResponseResultsItemAutoThresholdTimeWindowMin,
-        )
-        .max(
-          tracerUserAlertsListMonitorsResponseResultsItemAutoThresholdTimeWindowMax,
-        )
-        .optional()
-        .describe(
-          "For auto-thresholding. The time window in minutes to calculate the historical mean",
-        ),
-      last_checked_at: zod
-        .string()
-        .datetime({ offset: true })
-        .optional()
-        .describe("The last time the monitor was checked for alerts."),
-      notification_emails: zod
-        .array(
-          zod
-            .string()
-            .email()
-            .min(1)
-            .max(
-              tracerUserAlertsListMonitorsResponseResultsItemNotificationEmailsItemMax,
-            ),
-        )
-        .optional(),
-      slack_webhook_url: zod
-        .string()
-        .url()
-        .max(tracerUserAlertsListMonitorsResponseResultsItemSlackWebhookUrlMax)
-        .optional(),
-      slack_notes: zod.string().optional(),
-      is_mute: zod.boolean().optional(),
-      filters: zod.object({}).passthrough().optional(),
-      logs: zod.array(zod.object({}).passthrough()).optional(),
-      organization: zod.string().uuid(),
-      workspace: zod.string().uuid().optional(),
-      created_by: zod.string().uuid().optional(),
+        .min(tracerUserAlertsListMonitorsResponseResultMetadataTotalPagesMin),
     }),
-  ),
+  }),
 });
 
 export const TracerUserAlertsMetricOptionsQueryParams = zod.object({

@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "source_contract_sha256": "687d0a76a7f3dc97d285dae3de561b0ab3afff413f8cfe58ff9f7e83844df99b",
-  "tool_count": 92,
+  "source_contract_sha256": "f8289956f3cb10c148efa9b7b3e3f42b4d1ff7e7a277d3f5dc7bb8983aded078",
+  "tool_count": 105,
   "tools": [
     {
       "name": "whoami",
@@ -1392,6 +1392,119 @@
       },
       "source": {
         "operationId": "model-hub_dataset_run-prompt-stats_list"
+      }
+    },
+    {
+      "name": "update_dataset_cell",
+      "description": "Set the value of a single dataset cell. Use this to correct one value; add_dataset_rows only appends and cannot edit an existing row.",
+      "group": "datasets",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "dataset_id": {
+            "type": "string"
+          },
+          "row_id": {
+            "title": "Row id",
+            "type": "string",
+            "format": "uuid"
+          },
+          "column_id": {
+            "title": "Column id",
+            "type": "string",
+            "format": "uuid"
+          },
+          "new_value": {
+            "anyOf": [
+              {
+                "title": "New value",
+                "type": "string",
+                "description": "New cell value. Accepts JSON primitives or multipart file uploads."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "dataset_id",
+          "row_id",
+          "column_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/model-hub/develops/{dataset_id}/update_cell_value/",
+        "parameters": {
+          "path": [
+            "dataset_id"
+          ],
+          "query": [],
+          "body": [
+            "row_id",
+            "column_id",
+            "new_value"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_develops_update_cell_value_create"
+      }
+    },
+    {
+      "name": "delete_datasets",
+      "description": "Soft-delete one or more datasets by passing dataset_ids. This is the only way to remove a dataset created earlier; deletion cascades to the dataset's rows, columns and attached evaluations.",
+      "group": "datasets",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "dataset_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "maxItems": 50
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "dataset_ids"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "DELETE",
+        "path": "/model-hub/develops/delete_dataset/",
+        "parameters": {
+          "path": [],
+          "query": [],
+          "body": [
+            "dataset_ids"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_develops_delete_dataset_delete"
       }
     },
     {
@@ -4916,6 +5029,444 @@
       }
     },
     {
+      "name": "list_eval_configs",
+      "description": "List the custom evaluation configurations available for online evaluation tasks. The ids returned here are what create_eval_task takes in its `evals` argument - eval templates are a different object and their ids are not accepted there.",
+      "group": "observability",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": "integer",
+            "description": "A page number within the paginated result set."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of results to return per page.",
+            "minimum": 1,
+            "maximum": 100
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/tracer/custom-eval-config/",
+        "parameters": {
+          "path": [],
+          "query": [
+            "page",
+            "limit"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "tracer_custom-eval-config_list"
+      }
+    },
+    {
+      "name": "create_eval_config",
+      "description": "Create a custom evaluation configuration from an eval template so it can be attached to an online evaluation task. Use when list_eval_configs has no entry for the template you want to run over spans.",
+      "group": "observability",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "eval_template": {
+            "title": "Eval template",
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "title": "Name",
+                "type": "string",
+                "maxLength": 255
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "config": {
+            "anyOf": [
+              {
+                "title": "Config",
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mapping": {
+            "anyOf": [
+              {
+                "title": "Mapping",
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "project": {
+            "title": "Project",
+            "type": "string",
+            "format": "uuid"
+          },
+          "filters": {
+            "anyOf": [
+              {
+                "title": "Filters",
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "error_localizer": {
+            "title": "Error localizer",
+            "type": "boolean"
+          },
+          "kb_id": {
+            "anyOf": [
+              {
+                "title": "Kb id",
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "model": {
+            "anyOf": [
+              {
+                "title": "Model",
+                "type": "string",
+                "maxLength": 255
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "eval_template",
+          "project"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/tracer/custom-eval-config/",
+        "parameters": {
+          "path": [],
+          "query": [],
+          "body": [
+            "eval_template",
+            "name",
+            "config",
+            "mapping",
+            "project",
+            "filters",
+            "error_localizer",
+            "kb_id",
+            "model"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "tracer_custom-eval-config_create"
+      }
+    },
+    {
+      "name": "list_trace_properties",
+      "description": "Discover filter properties from the shared metrics catalog. Pass cursor_mode=true, page_size (at most 50), source=traces (search_traces) or source=spans (list_spans), per_eval_config=true and project_ids when known. Use role=dimension to narrow to dimensions. Use name as column_id; set filter_config.col_type by mapping category system_metric to SYSTEM_METRIC, custom_attribute to SPAN_ATTRIBUTE, eval_metric to EVAL_METRIC, and annotation_metric to ANNOTATION. Preserve property_id and source for typed attribute bindings. Follow has_more/next_cursor by passing cursor; omit page and exclude_custom_attributes in cursor mode.",
+      "group": "observability",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "workflow": {
+            "type": "string",
+            "enum": [
+              "observability",
+              "dataset",
+              "simulation"
+            ]
+          },
+          "project_ids": {
+            "type": "string",
+            "default": []
+          },
+          "agent_definition_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "per_eval_config": {
+            "type": "boolean",
+            "default": false
+          },
+          "exclude_custom_attributes": {
+            "type": "boolean",
+            "default": false
+          },
+          "search": {
+            "type": "string",
+            "default": "",
+            "maxLength": 256
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "system_metric",
+              "eval_metric",
+              "annotation_metric",
+              "custom_attribute",
+              "custom_column"
+            ],
+            "default": ""
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "metric",
+              "dimension"
+            ],
+            "default": ""
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "traces",
+              "spans",
+              "sessions",
+              "users",
+              "voice_calls",
+              "prompts",
+              "datasets",
+              "simulation",
+              "both",
+              "all"
+            ],
+            "default": ""
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50
+          },
+          "cursor_mode": {
+            "type": "boolean",
+            "default": false
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 262144
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/tracer/dashboard/metrics/",
+        "parameters": {
+          "path": [],
+          "query": [
+            "workflow",
+            "project_ids",
+            "agent_definition_id",
+            "per_eval_config",
+            "exclude_custom_attributes",
+            "search",
+            "category",
+            "role",
+            "source",
+            "page",
+            "page_size",
+            "cursor_mode",
+            "cursor"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "tracer_dashboard_metrics"
+      }
+    },
+    {
+      "name": "list_fired_alerts",
+      "description": "List alerts that have fired in numbered pages. Use this to find out what the platform has already flagged before digging into traces or error clusters.",
+      "group": "observability",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": "integer",
+            "description": "A page number within the paginated result set."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of results to return per page.",
+            "minimum": 1,
+            "maximum": 100
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/tracer/user-alert-logs/",
+        "parameters": {
+          "path": [],
+          "query": [
+            "page",
+            "limit"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "tracer_user-alert-logs_list"
+      }
+    },
+    {
+      "name": "list_alert_rules",
+      "description": "List the configured alert monitors - what each one watches, its threshold and its project. Pair with list_fired_alerts to explain why an alert fired, or to see that no monitor covers a condition the user expected to be caught.",
+      "group": "observability",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "page_number": {
+            "type": "integer",
+            "default": 0,
+            "minimum": 0,
+            "description": "Zero-based page number."
+          },
+          "page_size": {
+            "type": "integer",
+            "default": 30,
+            "minimum": 1,
+            "maximum": 100
+          },
+          "search_text": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "status": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "triggered",
+                "healthy"
+              ]
+            }
+          },
+          "metric_type": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "sort_by": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sort_direction": {
+            "type": "string",
+            "enum": [
+              "asc",
+              "desc"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/tracer/user-alerts/list_monitors/",
+        "parameters": {
+          "path": [],
+          "query": [
+            "page_number",
+            "page_size",
+            "search_text",
+            "project_id",
+            "status",
+            "metric_type",
+            "sort_by",
+            "sort_direction"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "tracer_user-alerts_list_monitors"
+      }
+    },
+    {
       "name": "pause_eval_task",
       "description": "Pause a running online evaluation task by eval_task_id. Already-launched evaluations may finish before the worker stops.",
       "group": "observability",
@@ -5356,8 +5907,85 @@
       }
     },
     {
+      "name": "get_annotation_item_detail",
+      "description": "Return everything needed to annotate one queue item; reserve=true acquires an editing reservation for the caller. Includes its source content, the queue instructions, every label with its settings (the allowed values a submitted value must match), any annotations already recorded, and the next/previous item ids. Call this before submit_annotation; the label settings are not available anywhere else.",
+      "group": "annotations",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "queue_id": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "A UUID string identifying this queue item."
+          },
+          "annotator_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "include_completed": {
+            "type": "boolean"
+          },
+          "view_mode": {
+            "type": "string"
+          },
+          "review_status": {
+            "type": "string"
+          },
+          "exclude_review_status": {
+            "type": "string"
+          },
+          "include_all_annotations": {
+            "type": "boolean"
+          },
+          "reserve": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "queue_id",
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/model-hub/annotation-queues/{queue_id}/items/{id}/annotate-detail/",
+        "parameters": {
+          "path": [
+            "queue_id",
+            "id"
+          ],
+          "query": [
+            "annotator_id",
+            "include_completed",
+            "view_mode",
+            "review_status",
+            "exclude_review_status",
+            "include_all_annotations",
+            "reserve"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_annotation-queues_items_annotate_detail"
+      }
+    },
+    {
       "name": "submit_annotation",
-      "description": "Submit annotation values for an item in an annotation queue.",
+      "description": "Submit annotation values for an item in an annotation queue. The value shape must match the label's settings from get_annotation_item_detail. Submitting moves the item to in_progress only; call complete_annotation_item to finish it.",
       "group": "annotations",
       "inputSchema": {
         "type": "object",
@@ -5451,6 +6079,73 @@
       },
       "source": {
         "operationId": "model-hub_annotation-queues_items_annotations_submit_annotations"
+      }
+    },
+    {
+      "name": "complete_annotation_item",
+      "description": "Mark an annotated queue item complete and return the next item to work on. Required to finish an item - submit_annotation alone leaves it in_progress and the queue never closes.",
+      "group": "annotations",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "queue_id": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "A UUID string identifying this queue item."
+          },
+          "exclude": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          },
+          "exclude_review_status": {
+            "title": "Exclude review status",
+            "type": "string"
+          },
+          "include_completed": {
+            "title": "Include completed",
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "queue_id",
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/model-hub/annotation-queues/{queue_id}/items/{id}/complete/",
+        "parameters": {
+          "path": [
+            "queue_id",
+            "id"
+          ],
+          "query": [],
+          "body": [
+            "exclude",
+            "exclude_review_status",
+            "include_completed"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_annotation-queues_items_complete_item"
       }
     },
     {
@@ -5562,7 +6257,7 @@
     },
     {
       "name": "create_experiment",
-      "description": "Create and start an experiment.",
+      "description": "Create and start an experiment. The new experiment's id is returned inside the `result` message as `experiment_id=<uuid>`; pass it to get_experiment to follow the run.",
       "group": "experiments",
       "inputSchema": {
         "type": "object",
@@ -8538,6 +9233,138 @@
       }
     },
     {
+      "name": "list_guardrail_rules",
+      "description": "Per-rule guardrail trigger breakdown - which guardrail rules exist and how often each has fired. Request logs report guardrail_triggered but not which rule caused it; this is what turns \"the request was blocked\" into \"the PII rule blocked it\".",
+      "group": "gateway",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": "integer",
+            "description": "A page number within the paginated result set."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of results to return per page.",
+            "minimum": 1,
+            "maximum": 100
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/agentcc/analytics/guardrail-rules/",
+        "parameters": {
+          "path": [],
+          "query": [
+            "page",
+            "limit"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "agentcc_analytics_guardrail_rules"
+      }
+    },
+    {
+      "name": "list_gateway_sessions",
+      "description": "List AI gateway sessions with their stats. These are gateway sessions, distinct from the tracing sessions returned by list_sessions. Use this to obtain a session id for list_gateway_session_requests.",
+      "group": "gateway",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": "integer",
+            "description": "A page number within the paginated result set."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of results to return per page.",
+            "minimum": 1,
+            "maximum": 100
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/agentcc/sessions/",
+        "parameters": {
+          "path": [],
+          "query": [
+            "page",
+            "limit"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "agentcc_sessions_list"
+      }
+    },
+    {
+      "name": "list_gateway_session_requests",
+      "description": "List every request log belonging to one gateway session. Request logs carry no trace id, so grouping by session is the way to see what else happened around a failed request.",
+      "group": "gateway",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "A UUID string identifying this agentcc session."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/agentcc/sessions/{id}/requests/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "agentcc_sessions_requests"
+      }
+    },
+    {
       "name": "get_gateway_analytics",
       "description": "Return overview usage, latency, error, and cost analytics for the AI gateway.",
       "group": "gateway",
@@ -9187,6 +10014,46 @@
       },
       "source": {
         "operationId": "tracer_dashboard_widgets_execute_query"
+      }
+    },
+    {
+      "name": "delete_dashboard",
+      "description": "Delete a dashboard and the widgets on it. This is the only way to remove a dashboard created earlier.",
+      "group": "dashboards",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "DELETE",
+        "path": "/tracer/dashboard/{id}/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "tracer_dashboard_delete"
       }
     },
     {

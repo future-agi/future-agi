@@ -9208,6 +9208,11 @@ export interface DatasetCreationProgressResponseApi {
   result: DatasetCreationProgressResultApi;
 }
 
+export interface DatasetDeleteApi {
+  /** @maxItems 50 */
+  dataset_ids: string[];
+}
+
 export interface EditRunPromptColumnApi {
   dataset_id: string;
   column_id: string;
@@ -29826,6 +29831,65 @@ export interface UserAlertMonitorDuplicateResponseApi {
   result: UserAlertMonitorDuplicateResultApi;
 }
 
+export interface UserAlertMonitorListColumnApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  is_visible: boolean;
+}
+
+export type UserAlertMonitorListItemApiStatus =
+  (typeof UserAlertMonitorListItemApiStatus)[keyof typeof UserAlertMonitorListItemApiStatus];
+
+export const UserAlertMonitorListItemApiStatus = {
+  triggered: "triggered",
+  healthy: "healthy",
+} as const;
+
+export interface UserAlertMonitorTrendApi {
+  timestamp: string;
+  /** @minimum 0 */
+  count: number;
+}
+
+export type UserAlertMonitorListItemApiFilters = { [key: string]: unknown };
+
+export interface UserAlertMonitorListItemApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  created_at: string;
+  updated_at: string;
+  /** @minLength 1 */
+  metric_type: string;
+  filters: UserAlertMonitorListItemApiFilters;
+  status: UserAlertMonitorListItemApiStatus;
+  /** @minimum 0 */
+  no_of_alerts: number;
+  last_triggered: string;
+  is_mute: boolean;
+  trends: UserAlertMonitorTrendApi[];
+}
+
+export interface UserAlertMonitorListMetadataApi {
+  /** @minimum 0 */
+  total_rows: number;
+  /** @minimum 0 */
+  total_pages: number;
+}
+
+export interface UserAlertMonitorListResultApi {
+  column_config: UserAlertMonitorListColumnApi[];
+  table: UserAlertMonitorListItemApi[];
+  metadata: UserAlertMonitorListMetadataApi;
+}
+
+export interface UserAlertMonitorListResponseApi {
+  status: boolean;
+  result: UserAlertMonitorListResultApi;
+}
+
 export interface UserAlertMonitorMetricOptionApi {
   /** @minLength 1 */
   readonly id?: string;
@@ -36205,21 +36269,41 @@ export type TracerUserAlertsList200 = {
 
 export type TracerUserAlertsListMonitorsParams = {
   /**
-   * A page number within the paginated result set.
+   * Zero-based page number.
+   * @minimum 0
    */
-  page?: number;
+  page_number?: number;
   /**
-   * Number of results to return per page.
+   * @minimum 1
+   * @maximum 100
    */
-  limit?: number;
+  page_size?: number;
+  search_text?: string;
+  project_id?: string[];
+  status?: TracerUserAlertsListMonitorsStatusItem[];
+  metric_type?: string[];
+  /**
+   * @minLength 1
+   */
+  sort_by?: string;
+  sort_direction?: TracerUserAlertsListMonitorsSortDirection;
 };
 
-export type TracerUserAlertsListMonitors200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: UserAlertMonitorApi[];
-};
+export type TracerUserAlertsListMonitorsStatusItem =
+  (typeof TracerUserAlertsListMonitorsStatusItem)[keyof typeof TracerUserAlertsListMonitorsStatusItem];
+
+export const TracerUserAlertsListMonitorsStatusItem = {
+  triggered: "triggered",
+  healthy: "healthy",
+} as const;
+
+export type TracerUserAlertsListMonitorsSortDirection =
+  (typeof TracerUserAlertsListMonitorsSortDirection)[keyof typeof TracerUserAlertsListMonitorsSortDirection];
+
+export const TracerUserAlertsListMonitorsSortDirection = {
+  asc: "asc",
+  desc: "desc",
+} as const;
 
 export type TracerUserAlertsMetricOptionsParams = {
   /**
