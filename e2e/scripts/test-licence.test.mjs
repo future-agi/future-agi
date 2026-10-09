@@ -7,6 +7,7 @@ import {
   readFileSync,
   rmdirSync,
   statSync,
+  symlinkSync,
   unlinkSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -132,6 +133,32 @@ test("an unknown state is refused", () => {
     encoding: "utf8",
   });
   assert.equal(run.status, 1);
+});
+
+// A checkout reached through a symlink (here: a workspace moved to another
+// volume) must still write the file. Node resolves import.meta.url to the real
+// path while argv[1] keeps the link, and a bare string compare turned the CLI
+// into a silent exit-0 no-op, so bin/e2e restarted the app on the old licence.
+test("the CLI writes the licence when run through a symlinked path", () => {
+  const linkParent = mkdtempSync(path.join(tmpdir(), "e2e-licence-link-"));
+  const link = path.join(linkParent, "scripts");
+  symlinkSync(path.dirname(SCRIPT), link);
+  try {
+    const dir = mkdtempSync(path.join(tmpdir(), "e2e-licence-"));
+    const run = spawnSync(
+      process.execPath,
+      [path.join(link, path.basename(SCRIPT)), "write-env", dir, "expired"],
+      { encoding: "utf8" },
+    );
+    assert.equal(run.status, 0, run.stderr);
+    assert.equal(run.stdout, "test licence: expired\n");
+    assert.match(
+      readFileSync(path.join(dir, "licence.env"), "utf8"),
+      /^E2E_LICENCE_STATE=expired$/m,
+    );
+  } finally {
+    unlinkSync(link);
+  }
 });
 
 test("claims are deterministic for a fixed clock", () => {

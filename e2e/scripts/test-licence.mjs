@@ -24,10 +24,12 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 // futureagi/ee/licensing/keyring.py REQUIRED_ISSUER / _AUDIENCE / _TYPE, and
 // validator.py REQUIRED_SCHEMA_VERSION.
@@ -142,7 +144,20 @@ export function writeLicenceEnv(dir, state, now) {
   return envFile;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Run as a CLI? Compare real paths: Node resolves import.meta.url through
+// symlinks but leaves argv[1] as typed, so a checkout reached through a
+// symlink would otherwise skip this block and exit 0 having written nothing.
+function invokedAsCli() {
+  try {
+    return (
+      import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href
+    );
+  } catch {
+    return false; // no argv[1] (REPL, `node -e`) or it is not a file
+  }
+}
+
+if (invokedAsCli()) {
   const [command, dir, state] = process.argv.slice(2);
   if (command !== "write-env" || !dir || !state) {
     console.error(
