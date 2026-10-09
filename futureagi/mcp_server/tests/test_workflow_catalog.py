@@ -61,6 +61,17 @@ OPERATIONS = [
     ("update_eval_task", "PATCH", "/tracer/eval-task/update_eval_task/"),
     ("pause_eval_task", "POST", "/tracer/eval-task/pause_eval_task/"),
     ("resume_eval_task", "POST", "/tracer/eval-task/unpause_eval_task/"),
+    (
+        "list_custom_eval_configs",
+        "GET",
+        "/tracer/custom-eval-config/list_custom_eval_configs/",
+    ),
+    ("create_custom_eval_config", "POST", "/tracer/custom-eval-config/"),
+    (
+        "check_eval_config_exists",
+        "POST",
+        "/tracer/custom-eval-config/check_exists/",
+    ),
 ]
 
 
