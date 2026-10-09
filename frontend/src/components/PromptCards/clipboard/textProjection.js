@@ -1,4 +1,4 @@
-// TH-150: text projection of a Quill Delta for the OS clipboard.
+// Text projection of a Delta for the OS clipboard.
 //
 // Rules mirror getBlocks' text assembly (common.js): string inserts verbatim,
 // an EditVariable embed that replaced a "}" contributes "}", a Jinja

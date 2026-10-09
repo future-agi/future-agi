@@ -1,4 +1,3 @@
-// TH-150: Quill index helpers for atomic media embeds.
 import Quill from "quill";
 import { MEDIA_BLOT_NAMES } from "../Blots/mediaValue";
 
@@ -8,8 +7,7 @@ export function selectAllRange(quill) {
 }
 
 /**
- * Media embeds whose index lies inside `range`, walking the Delta with the same
- * arithmetic PromptEditor's handleRemoveX helpers use (1 index per embed).
+ * Media embeds whose index lies inside `range` (every embed is 1 index long).
  */
 export function embedIndicesInRange(delta, range) {
   const ops = (Array.isArray(delta) ? delta : delta?.ops) || [];

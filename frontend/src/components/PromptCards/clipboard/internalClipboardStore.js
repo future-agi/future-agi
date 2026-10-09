@@ -1,5 +1,3 @@
-// TH-150: in-memory store for the rich half of a prompt-editor copy/cut.
-//
 // Holds at most one record (latest copy/cut wins) in module memory, so it is
 // per tab by construction and dies on reload. The OS clipboard only carries an
 // opaque handle; everything else stays here and is re-validated on paste
@@ -72,16 +70,16 @@ function sameProvenance(recorded, live) {
   return true;
 }
 
-/**
- * Returns `{ ok: true }` or `{ ok: false, reason }` without throwing.
- * `clipboardText` is the text/plain the OS clipboard currently holds; a
- * mismatch means the clipboard moved on since the record was written.
- */
 // A platform may hand back CRLF for text written as LF; the comparison is an
 // integrity cross-check, not a security boundary, so line endings are folded.
 const normalizeLineEndings = (s) =>
   typeof s === "string" ? s.replace(/\r\n?/g, "\n") : s;
 
+/**
+ * Returns `{ ok: true }` or `{ ok: false, reason }` without throwing.
+ * `clipboardText` is the text/plain the OS clipboard currently holds; a
+ * mismatch means the clipboard moved on since the record was written.
+ */
 export function validateRecord(record, { clipboardText, live }) {
   if (!record || typeof record !== "object") {
     return { ok: false, reason: OMISSION_REASONS.OTHER_CONTEXT };

@@ -1,14 +1,18 @@
-// TH-150: per-editor callback registry for React-backed Quill embeds.
-//
-// Functions cannot survive a blot's value() round-trip (history replay, paste),
-// so the blots resolve their delete/magnify/replace/edit callbacks from the
-// owning Quill instance at attach() time instead of trusting the insert value.
+// Functions cannot survive a blot's value() round trip (history replay, paste),
+// so React-backed embeds look their callbacks up from the owning Quill
+// instance at attach() time.
 import Quill from "quill";
 
 const REGISTRY = new WeakMap(); // Quill instance -> callbacks object
 
+// Undefined entries are dropped so they cannot shadow a callback carried in
+// an inserted value (the blots fall back to those).
 export function setEmbedCallbacks(quill, callbacks) {
-  if (quill) REGISTRY.set(quill, callbacks || {});
+  if (!quill) return;
+  const defined = Object.fromEntries(
+    Object.entries(callbacks || {}).filter(([, value]) => value !== undefined),
+  );
+  REGISTRY.set(quill, defined);
 }
 
 export function getEmbedCallbacksForQuill(quill) {

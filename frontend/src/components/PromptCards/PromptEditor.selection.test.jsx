@@ -1,7 +1,6 @@
-// TH-150 regression tests for PromptEditor with image/audio/PDF attachments.
-// PRD r1.2 (company-brain bd2bf50a67307e4f348571e1e64709687f793435), AC ids in test names.
-// Written before the fix; the "must fail before fix" subset is marked [RED@dev].
-import { describe, it, expect, vi } from "vitest";
+// Regression tests for PromptEditor with image/audio/PDF attachments.
+// The cases that failed before the fix are marked [RED@dev].
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React from "react";
 import Quill from "quill";
 import { getBlocks } from "./common";
@@ -24,6 +23,10 @@ import {
   DOC_HELLO_IMG_WORLD,
   DOC_IMG_AUDIO,
   DOC_PDF_ONLY,
+  DOC_IMG_WORLD,
+  DOC_HELLO_IMG,
+  imageBlock,
+  pdfOp,
   PDF_1P,
   PNG_1x1,
   WAV_1S,
@@ -265,6 +268,130 @@ describe("TH-150 deletion semantics (REQ-7, REQ-13)", () => {
   });
 });
 
+// A card as the first or last line of a range: Quill's range delete diffs the
+// formats of the range's first and last lines, and its Backspace at the start
+// of a line diffs that line's formats, so a card line there has to report
+// formats Quill can diff. Exceptions thrown inside a keydown listener never
+// reach the test, so they are recorded from window "error" events.
+describe("cards on the first or last line of a deleted range", () => {
+  let uncaught;
+  const onUncaught = (event) => {
+    uncaught.push(String(event.error));
+    event.preventDefault();
+  };
+  beforeEach(() => {
+    uncaught = [];
+    window.addEventListener("error", onUncaught);
+  });
+  afterEach(() => {
+    window.removeEventListener("error", onUncaught);
+  });
+
+  const EDGE_SHAPES = [
+    ["the card is the first line", DOC_IMG_WORLD],
+    ["the card is the last line", DOC_HELLO_IMG],
+  ];
+
+  describe.each(EDGE_SHAPES)("%s", (_title, doc) => {
+    it.each(["Backspace", "Delete"])(
+      "select-all + %s empties the message and one undo restores text and a working card",
+      async (key) => {
+        const onPromptChange = vi.fn();
+        const { quill } = mountEditor(doc, { onPromptChange });
+        const before = getBlocks(quill);
+        expect(before).toContainEqual(imageBlock);
+        selectAll(quill);
+        keydown(quill.root, key);
+        expect(uncaught).toEqual([]);
+        expect(quill.getContents().ops).toEqual([{ insert: "\n" }]);
+        expect(embedNodes(quill)).toHaveLength(0);
+        expect(onPromptChange).toHaveBeenLastCalledWith([
+          { type: "text", text: "\n" },
+        ]);
+        expect(quill.getSelection()).toEqual({ index: 0, length: 0 });
+
+        quill.history.undo();
+        await flush();
+        expect(getBlocks(quill)).toEqual(before);
+        const [node] = embedNodes(quill);
+        expect(JSON.parse(node.getAttribute("data-image-data"))).toEqual({
+          url: PNG_1x1.url,
+          img_name: PNG_1x1.name,
+          img_size: PNG_1x1.size,
+        });
+        node.querySelector('img[alt="delete"]').closest("button").click();
+        await flush();
+        expect(embedNodes(quill)).toHaveLength(0);
+        expect(uncaught).toEqual([]);
+      },
+    );
+  });
+
+  it.each([
+    ["Backspace", "the card ends the range", DOC_HELLO_IMG, [2, 5], "he\n"],
+    ["Delete", "the card ends the range", DOC_HELLO_IMG, [2, 5], "he\n"],
+    [
+      "Backspace",
+      "the card ends the range before more text",
+      DOC_HELLO_IMG_WORLD,
+      [2, 5],
+      "heworld\n",
+    ],
+    [
+      "Delete",
+      "the card ends the range before more text",
+      DOC_HELLO_IMG_WORLD,
+      [2, 5],
+      "heworld\n",
+    ],
+    ["Backspace", "the card starts the range", DOC_IMG_WORLD, [0, 3], "rld\n"],
+    ["Delete", "the card starts the range", DOC_IMG_WORLD, [0, 3], "rld\n"],
+  ])(
+    "%s over a partial range where %s removes exactly that range",
+    (key, _title, doc, [index, length], remaining) => {
+      const { quill } = mountEditor(doc);
+      quill.setSelection(index, length, "silent");
+      keydown(quill.root, key);
+      expect(uncaught).toEqual([]);
+      expect(embedNodes(quill)).toHaveLength(0);
+      expect(quill.getContents().ops).toEqual([{ insert: remaining }]);
+      expect(quill.getSelection()).toEqual({ index, length: 0 });
+    },
+  );
+
+  it.each([
+    ["between two text lines", DOC_TEXT_PDF_TEXT, "hello\nworld\n"],
+    ["as the last line", DOC_HELLO_IMG, "hello\n\n"],
+  ])(
+    "caret at the card's own index %s, Backspace removes only that card",
+    (_title, doc, remaining) => {
+      const { quill } = mountEditor(doc);
+      quill.setSelection(6, 0, "silent");
+      keydown(quill.root, "Backspace");
+      expect(uncaught).toEqual([]);
+      expect(embedNodes(quill)).toHaveLength(0);
+      expect(quill.getContents().ops).toEqual([{ insert: remaining }]);
+      expect(quill.getSelection()).toEqual({ index: 6, length: 0 });
+    },
+  );
+
+  it("caret at the card's own index after an empty line, Backspace removes the empty line as Quill does", () => {
+    const { quill } = mountEditor([textBlock("x")]);
+    quill.setContents(
+      [{ insert: "hello\n\n" }, pdfOp(), { insert: "world\n" }],
+      "api",
+    );
+    quill.history.clear();
+    quill.setSelection(7, 0, "silent"); // hello\n 0-5, empty line 6, pdf 7
+    keydown(quill.root, "Backspace");
+    expect(uncaught).toEqual([]);
+    expect(embedNodes(quill)).toHaveLength(1);
+    expect(quill.getText()).toBe("hello\nworld\n");
+    expect(quill.getContents(6, 1).ops[0].insert.PdfBlot).toBeTruthy();
+    expect(quill.getSelection()).toEqual({ index: 6, length: 0 });
+  });
+});
+
 describe("TH-150 undo/redo restores attachments (REQ-8)", () => {
   it("AC-8.1 [RED@dev]: undo after select-all + Backspace restores text, PDF metadata and a usable delete control", async () => {
     const { quill } = mountEditor(DOC_TEXT_PDF_TEXT);
@@ -313,6 +440,76 @@ describe("TH-150 read-only editors (REQ-11)", () => {
       quill.root.querySelector('[data-image-data] img[alt="delete"]'),
     ).toBeNull();
     expect(onPromptChange).not.toHaveBeenCalled();
+  });
+});
+
+describe("embed callbacks: the editor's registry first, the inserted value as fallback", () => {
+  const insertImageWithCallback = async (quill, setSelectedImage) => {
+    quill.insertEmbed(
+      1,
+      "ImageBlot",
+      {
+        url: PNG_1x1.url,
+        name: PNG_1x1.name,
+        size: PNG_1x1.size,
+        id: "v1",
+        setSelectedImage,
+      },
+      "api",
+    );
+    await flush();
+    return embedNodes(quill)[0].querySelector('img[alt="magnify"]');
+  };
+
+  it("a mount without setSelectedImage keeps the callback carried in the inserted value", async () => {
+    const { quill } = mountEditor([textBlock("x")], {
+      setSelectedImage: undefined,
+    });
+    const fromValue = vi.fn();
+    const magnify = await insertImageWithCallback(quill, fromValue);
+    expect(magnify).not.toBeNull();
+    magnify.closest("button").click();
+    expect(fromValue).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "v1", url: PNG_1x1.url }),
+    );
+  });
+
+  it("a mount with setSelectedImage uses its own callback over the value's", async () => {
+    const fromEditor = vi.fn();
+    const fromValue = vi.fn();
+    const { quill } = mountEditor([textBlock("x")], {
+      setSelectedImage: fromEditor,
+    });
+    const magnify = await insertImageWithCallback(quill, fromValue);
+    magnify.closest("button").click();
+    expect(fromEditor).toHaveBeenCalledTimes(1);
+    expect(fromValue).not.toHaveBeenCalled();
+  });
+
+  const insertVariableChip = async (quill, openVariableEditor) => {
+    quill.insertEmbed(1, "EditVariable", { openVariableEditor }, "api");
+    await flush();
+    return quill.root.querySelector(".edit-variable-button");
+  };
+
+  it("a variable chip opens the editor's openVariableEditor over the value's", async () => {
+    const fromEditor = vi.fn();
+    const fromValue = vi.fn();
+    const { quill } = mountEditor([textBlock("x")], {
+      openVariableEditor: fromEditor,
+    });
+    (await insertVariableChip(quill, fromValue)).click();
+    expect(fromEditor).toHaveBeenCalledTimes(1);
+    expect(fromValue).not.toHaveBeenCalled();
+  });
+
+  it("a mount without openVariableEditor keeps the chip's value callback", async () => {
+    const fromValue = vi.fn();
+    const { quill } = mountEditor([textBlock("x")], {
+      openVariableEditor: undefined,
+    });
+    (await insertVariableChip(quill, fromValue)).click();
+    expect(fromValue).toHaveBeenCalledTimes(1);
   });
 });
 

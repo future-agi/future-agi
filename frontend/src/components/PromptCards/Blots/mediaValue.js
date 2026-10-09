@@ -1,5 +1,3 @@
-// TH-150: shared helpers for the image/audio/PDF Quill block embeds.
-//
 // The blots' static create(value) historically expected the flat shape that
 // PromptEditor builds ({ url, name, size, mimeType, id, ...callbacks }), while
 // their static value(node) returns the nested shape stored on the DOM

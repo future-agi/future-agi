@@ -1,13 +1,7 @@
-// TH-150: shared base for the image/audio/PDF block embeds.
-//
-// Behaviour common to all three media blots:
-// - create(value) accepts both the flat PromptEditor shape and the nested
-//   value() shape (history replay / paste), via normalizeMediaValue.
-// - The React card is rendered in attach(), when the blot already belongs to
-//   a Quill instance, so delete/magnify/replace callbacks come from the owning
-//   editor's registry (embedCallbacks) and never from serialized data.
-// - detach() unmounts the React root (previously leaked on every removal).
-// - html() returns "" so getSemanticHTML never serializes card markup.
+// Base for the image/audio/PDF block embeds. The React card is rendered in
+// attach(), once the blot belongs to a Quill instance, so its callbacks come
+// from the owning editor's registry: blots re-created by undo/redo or paste
+// carry no functions in their value.
 import Quill from "quill";
 import { createRoot } from "react-dom/client";
 import "../PromptCardEditor.css";
@@ -40,8 +34,10 @@ export default class MediaBlockEmbed extends BlockEmbed {
     return node;
   }
 
+  // Quill diffs a line's formats when a delete starts or ends on it, and
+  // AttributeMap.diff throws on null. {} also survives callers that index it.
   static formats() {
-    return null;
+    return {};
   }
 
   attach() {
@@ -81,6 +77,7 @@ export default class MediaBlockEmbed extends BlockEmbed {
     this.reactRoot.render(this.statics.renderCard(normalized, callbacks));
   }
 
+  // Card markup must never reach getSemanticHTML or the HTML clipboard.
   html() {
     return "";
   }

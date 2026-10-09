@@ -1,5 +1,3 @@
-// TH-150: constants for the prompt editor clipboard path.
-
 // Custom DataTransfer type carrying an opaque handle into the in-memory store.
 // The handle confers nothing by itself: no URL, name, size or credential ever
 // reaches the OS clipboard through this type.

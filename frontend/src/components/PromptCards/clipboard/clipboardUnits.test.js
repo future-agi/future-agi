@@ -1,4 +1,4 @@
-// TH-150 unit tests for the pure clipboard helpers.
+// Unit tests for the pure clipboard helpers.
 import { describe, it, expect, beforeEach } from "vitest";
 import {
   normalizeMediaValue,

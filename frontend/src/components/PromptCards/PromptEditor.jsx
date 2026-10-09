@@ -31,13 +31,11 @@ import { MEDIA_EMBED_CLASS } from "./Blots/MediaBlockEmbed";
 import { createPromptClipboardHandlers } from "./clipboard/promptClipboardHandlers";
 import { useClipboardProvenance } from "./clipboard/useClipboardProvenance";
 import {
-  EMBED_CONTROL_SELECTOR,
-  EMBED_NODE_SELECTOR,
-  embedIndexForNode,
-  embedIndicesInRange,
-  leafIsMediaEmbed,
-  selectAllRange,
-} from "./clipboard/selectionHelpers";
+  attachCardSelection,
+  createKeyboardBindings,
+  removeMediaEmbedById,
+  syncSelectedEmbeds,
+} from "./editorBindings";
 import {
   ALL_MEDIA_KINDS,
   NO_MEDIA_KINDS,
@@ -80,8 +78,8 @@ const PromptEditor = React.forwardRef(
       variableValidator,
       jinjaMode = false,
       // Fail closed: a mount that never opts in cannot receive attachment
-      // references by paste (REQ-12). PromptCard/ExpandedPrompt pass the
-      // kinds their attach menu allows.
+      // references by paste. PromptCard/ExpandedPrompt pass the kinds their
+      // attach menu allows.
       allowedMediaTypes = NO_MEDIA_KINDS,
     },
     quillRef,
@@ -90,96 +88,17 @@ const PromptEditor = React.forwardRef(
 
     const containerRef = useRef(null);
 
-    // TH-150: removing an attachment card edits only this editor's document
-    // (no storage request), is a single undoable user step, leaves the caret
-    // where the card was, and is refused in read-only editors.
-    const removeEmbedAt = useCallback((quill, index) => {
-      if (!quill || !quill.isEnabled()) return;
-      quill.deleteText(index, 1, "user");
-      quill.setSelection(index, 0, "silent");
-    }, []);
-
     const handleRemoveImage = useCallback(
-      (imageId) => {
-        const quill = quillRef.current;
-        if (!quill) return;
-        const delta = quill.getContents();
-        let index = 0;
-        let found = false;
-
-        for (let i = 0; i < delta.ops.length; i++) {
-          const op = delta.ops[i];
-          if (op.insert?.ImageBlot && op.insert.ImageBlot.id === imageId) {
-            found = true;
-            break;
-          } else if (typeof op.insert === "string") {
-            index += op.insert.length;
-          } else {
-            index += 1;
-          }
-        }
-
-        if (found) {
-          removeEmbedAt(quill, index);
-        }
-      },
-      [quillRef, removeEmbedAt],
+      (id) => removeMediaEmbedById(quillRef.current, "ImageBlot", id),
+      [quillRef],
     );
-
     const handleRemoveAudio = useCallback(
-      (audioId) => {
-        const quill = quillRef.current;
-        if (!quill) return;
-
-        const delta = quill.getContents();
-        let index = 0;
-        let found = false;
-
-        for (let i = 0; i < delta.ops.length; i++) {
-          const op = delta.ops[i];
-          if (op.insert?.AudioBlot && op.insert.AudioBlot.id === audioId) {
-            found = true;
-            break;
-          } else if (typeof op.insert === "string") {
-            index += op.insert.length;
-          } else {
-            index += 1;
-          }
-        }
-
-        if (found) {
-          removeEmbedAt(quill, index);
-        }
-      },
-      [quillRef, removeEmbedAt],
+      (id) => removeMediaEmbedById(quillRef.current, "AudioBlot", id),
+      [quillRef],
     );
-
     const handleRemovePdf = useCallback(
-      (pdfId) => {
-        const quill = quillRef.current;
-        if (!quill) return;
-
-        const delta = quill.getContents();
-        let index = 0;
-        let found = false;
-
-        for (let i = 0; i < delta.ops.length; i++) {
-          const op = delta.ops[i];
-          if (op.insert?.PdfBlot && op.insert.PdfBlot.id === pdfId) {
-            found = true;
-            break;
-          } else if (typeof op.insert === "string") {
-            index += op.insert.length;
-          } else {
-            index += 1;
-          }
-        }
-
-        if (found) {
-          removeEmbedAt(quill, index);
-        }
-      },
-      [quillRef, removeEmbedAt],
+      (id) => removeMediaEmbedById(quillRef.current, "PdfBlot", id),
+      [quillRef],
     );
 
     const defaultValue = useMemo(() => {
@@ -417,9 +336,8 @@ const PromptEditor = React.forwardRef(
       onTextChangeRef.current = onTextChange;
     });
 
-    // TH-150: clipboard provenance, omission notices and per-editor embed
-    // callbacks. The Quill handlers live outside React render, so they read
-    // the latest values through refs.
+    // The Quill handlers live outside React render, so they read the latest
+    // values through refs.
     const getProvenance = useClipboardProvenance();
     const { enqueueSnackbar } = useSnackbar();
     const notifyRef = useRef(null);
@@ -446,7 +364,7 @@ const PromptEditor = React.forwardRef(
 
     // `readOnly` is only read by the Quill constructor; keep the instance in
     // sync when the prop changes and re-render cards so mutating controls
-    // appear/disappear with it (REQ-11).
+    // appear/disappear with it.
     useEffect(() => {
       const quill = quillRef.current;
       if (!quill) return;
@@ -482,63 +400,7 @@ const PromptEditor = React.forwardRef(
         readOnly: disabled,
         modules: {
           toolbar: false,
-          // TH-150: select-all scoped to this editor; one key removes exactly
-          // one adjacent attachment. Custom bindings run before Quill's
-          // defaults for the same key; returning true falls through to them.
-          keyboard: {
-            bindings: {
-              selectAll: {
-                key: "a",
-                shortKey: true,
-                handler() {
-                  const range = selectAllRange(this.quill);
-                  this.quill.setSelection(range.index, range.length, "user");
-                  return false;
-                },
-              },
-              deleteEmbedBackward: {
-                key: "Backspace",
-                collapsed: true,
-                handler(range) {
-                  if (!this.quill.isEnabled()) return false;
-                  if (range.index === 0) return true;
-                  if (!leafIsMediaEmbed(this.quill, range.index - 1))
-                    return true;
-                  this.quill.deleteText(range.index - 1, 1, "user");
-                  this.quill.setSelection(range.index - 1, 0, "silent");
-                  return false;
-                },
-              },
-              deleteEmbedForward: {
-                key: "Delete",
-                collapsed: true,
-                handler(range) {
-                  if (!this.quill.isEnabled()) return false;
-                  let target = -1;
-                  if (leafIsMediaEmbed(this.quill, range.index)) {
-                    target = range.index;
-                  } else {
-                    // Caret at the end of the text line just before a card:
-                    // the next character is that line's newline, so Quill's
-                    // own handler would try to merge the line into the card.
-                    // Remove the card instead, keep the line.
-                    const [line, offset] = this.quill.getLine(range.index);
-                    if (
-                      line &&
-                      offset === line.length() - 1 &&
-                      leafIsMediaEmbed(this.quill, range.index + 1)
-                    ) {
-                      target = range.index + 1;
-                    }
-                  }
-                  if (target < 0) return true;
-                  this.quill.deleteText(target, 1, "user");
-                  this.quill.setSelection(range.index, 0, "silent");
-                  return false;
-                },
-              },
-            },
-          },
+          keyboard: { bindings: createKeyboardBindings() },
           clipboard: {
             matchers: [
               [
@@ -663,7 +525,6 @@ const PromptEditor = React.forwardRef(
       quillRef.current = quill;
       setEmbedCallbacks(quill, embedCallbacksRef.current);
 
-      // TH-150: own copy/cut/paste on this editor (capture phase, see module).
       const clipboardHandlers = createPromptClipboardHandlers({
         quill,
         getProvenance,
@@ -673,34 +534,7 @@ const PromptEditor = React.forwardRef(
       });
       clipboardHandlers.attach();
 
-      // Clicking an attachment card (not its buttons) selects it as one block
-      // and keeps focus inside the editor, so a following Cmd/Ctrl+A,
-      // Backspace or Cmd/Ctrl+C acts on this editor rather than the page.
-      const onEmbedMouseDown = (event) => {
-        const target = event.target;
-        if (!target || typeof target.closest !== "function") return;
-        const embedNode = target.closest(EMBED_NODE_SELECTOR);
-        if (!embedNode || !quill.root.contains(embedNode)) return;
-        if (target.closest(EMBED_CONTROL_SELECTOR)) return;
-        const index = embedIndexForNode(quill, embedNode);
-        if (index < 0) return;
-        event.preventDefault();
-        quill.focus();
-        quill.setSelection(index, 1, "user");
-      };
-      quill.root.addEventListener("mousedown", onEmbedMouseDown);
-
-      // Visual selected state for atomic cards (their text is not selectable).
-      const syncSelectedEmbeds = (range) => {
-        quill.root
-          .querySelectorAll(`.${MEDIA_EMBED_CLASS}.is-selected`)
-          .forEach((node) => node.classList.remove("is-selected"));
-        if (!range || range.length === 0) return;
-        embedIndicesInRange(quill.getContents(), range).forEach(({ index }) => {
-          const [leaf] = quill.getLeaf(index);
-          leaf?.domNode?.classList?.add("is-selected");
-        });
-      };
+      const detachCardSelection = attachCardSelection(quill);
 
       if (typeof inputRef === "function") {
         setTimeout(() => {
@@ -743,11 +577,11 @@ const PromptEditor = React.forwardRef(
       quill.on(Quill.events.TEXT_CHANGE, (...args) => {
         onTextChangeRef.current?.(...args);
         // silent caret moves after delete/paste emit no selection-change
-        syncSelectedEmbeds(quill.getSelection());
+        syncSelectedEmbeds(quill, quill.getSelection());
       });
 
       quill.on(Quill.events.SELECTION_CHANGE, (...args) => {
-        syncSelectedEmbeds(args[0]);
+        syncSelectedEmbeds(quill, args[0]);
         onSelectionChangeRef.current?.(...args);
       });
 
@@ -772,7 +606,7 @@ const PromptEditor = React.forwardRef(
         }
 
         clipboardHandlers.detach();
-        quill.root.removeEventListener("mousedown", onEmbedMouseDown);
+        detachCardSelection();
 
         // Unmount the React roots of cards and variable chips still in the
         // document; clearing innerHTML alone never detaches their blots.

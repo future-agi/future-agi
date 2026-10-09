@@ -1,9 +1,7 @@
-// TH-150: copy / cut / paste for PromptEditor with atomic media embeds.
-//
 // Attached in the capture phase on quill.root so they run before Quill's own
-// clipboard listeners (which bail on e.defaultPrevented). OS clipboard gets
-// text/plain only (plus an opaque handle when attachments were copied); the
-// attachment references live in tab memory and are re-validated on paste.
+// clipboard listeners (which bail on e.defaultPrevented). Any application can
+// read the OS clipboard, so it only gets text/plain plus an opaque handle; the
+// attachment references stay in tab memory and are re-validated on paste.
 import Quill from "quill";
 import {
   buildClipboardItems,

@@ -1,4 +1,4 @@
-// Shared jsdom harness for PromptEditor tests (TH-150).
+// Shared jsdom harness for PromptEditor tests.
 // jsdom has no layout, so Quill's focus()/scrollSelectionIntoView needs Range rects.
 import React from "react";
 import { render, act } from "@testing-library/react";

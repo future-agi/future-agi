@@ -1,4 +1,4 @@
-// Synthetic fixtures for TH-150 prompt-editor media tests. Never customer content.
+// Synthetic fixtures for prompt-editor media tests. Never customer content.
 // jsdom never fetches these URLs; they are opaque strings for component tests.
 
 export const PNG_1x1 = {
@@ -91,7 +91,7 @@ export const pdfBlock = {
 };
 export const textBlock = (text) => ({ type: "text", text });
 // What getBlocks emits for the PDF block today: the stored pdfData spread plus
-// file_name (common.js keeps pdf_name alongside; unchanged by TH-150).
+// file_name (common.js keeps pdf_name alongside).
 export const pdfBlockEmitted = {
   type: "pdf_url",
   pdf_url: {
@@ -125,6 +125,12 @@ export const DOC_IMG_AUDIO = [
 ];
 //   DOC_PDF_ONLY: [pdf]0 \n1 -> length 2
 export const DOC_PDF_ONLY = [pdfBlock];
+// A card as the first or last line of the document, so a full or partial range
+// starts or ends on the card's line rather than on text.
+//   DOC_IMG_WORLD: [img]0, world\n 1..6 -> length 7
+export const DOC_IMG_WORLD = [imageBlock, textBlock("world")];
+//   DOC_HELLO_IMG: hello\n 0..5, [img]6, \n7 -> length 8
+export const DOC_HELLO_IMG = [textBlock("hello"), imageBlock];
 
 export const PROVENANCE_O1 = {
   userId: "user-1",

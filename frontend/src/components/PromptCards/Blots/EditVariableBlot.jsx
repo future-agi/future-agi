@@ -17,7 +17,7 @@ class EditVariableBolt extends BlockEmbed {
     }
     // The React control is rendered in attach(): value() cannot carry
     // openVariableEditor, so history replay / paste resolve it from the owning
-    // editor's callback registry (TH-150).
+    // editor's callback registry.
     node[VALUE_KEY] = {
       fromBlock: !!value.fromBlock,
       openVariableEditor: value.openVariableEditor,
@@ -29,7 +29,7 @@ class EditVariableBolt extends BlockEmbed {
     super.attach();
     const v = this.domNode[VALUE_KEY] || {};
     const open =
-      v.openVariableEditor || getEmbedCallbacks(this).openVariableEditor;
+      getEmbedCallbacks(this).openVariableEditor ?? v.openVariableEditor;
     if (!this.reactRoot) {
       this.reactRoot = createRoot(this.domNode);
     }

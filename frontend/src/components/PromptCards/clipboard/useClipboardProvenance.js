@@ -1,9 +1,7 @@
-// TH-150: provenance for rich clipboard transfer, read from app-held auth state.
-//
 // Rich (attachment-reference) paste is only honoured within the same tab, the
-// same signed-in user and the same organization. At this commit the frontend
-// has no workspace id in AuthContext, so `workspaceId` is null and the
-// organization is the boundary. Clipboard bytes never contribute provenance.
+// same signed-in user and the same organization. AuthContext has no workspace
+// id, so `workspaceId` is null and the organization is the boundary.
+// Provenance comes from app state, never from clipboard bytes.
 import { useCallback, useEffect, useRef } from "react";
 import { useSafeAuthContext } from "src/auth/hooks/use-auth-context";
 import { TAB_ID } from "./constants";

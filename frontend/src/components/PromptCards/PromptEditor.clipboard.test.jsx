@@ -1,5 +1,5 @@
-// TH-150: rich (attachment-reference) copy/cut/paste between editors, bounded to
-// the same tab, signed-in user and organization. AC ids from PRD r1.2.
+// Rich (attachment-reference) copy/cut/paste between editors, bounded to the
+// same tab, signed-in user and organization.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import React from "react";
 import { render } from "@testing-library/react";

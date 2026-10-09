@@ -1,8 +1,8 @@
-// TH-150 / AC-14.1 — characterization of text-only PromptEditor behaviour.
+// Characterization of text-only PromptEditor behaviour.
 //
 // Written against unmodified dev (ce6af27f) BEFORE any product change. Every
 // expectation below is the value the editor produced at that commit; the fix
-// must keep this file green. Pinned choices (engineering design §3):
+// must keep this file green. Pinned choices:
 //   P1 empty document after full delete  -> ops [{insert:"\n"}], getBlocks []
 //   P3 history: one user edit after placeEditBolt still needs ONE undo
 //   P4 external HTML paste: placeEditBolt strips `bold` on the next user change,
