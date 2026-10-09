@@ -1230,7 +1230,7 @@
 ### OBS-E2E-037 — bulk Add tags on selected traces adds the tag to each trace and keeps its existing tags
 
 **Goal:** A developer tags several traces at once from the Observe trace list  
-**Spec:** `flows/observe/trace-bulk-tags.spec.ts:48`  
+**Spec:** `flows/observe/trace-bulk-tags.spec.ts:57`  
 **Tags:** —
 
 **User steps:**

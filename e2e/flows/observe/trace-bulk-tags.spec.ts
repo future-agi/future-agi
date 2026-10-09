@@ -28,6 +28,15 @@ async function openTraceList(page: Page, projectId: string) {
 const traceRow = (page: Page, traceId: string) =>
   page.locator(`.clean-data-table:visible .ag-row[row-id="${traceId}"]`);
 
+// The trace list's default visible columns (tracer.utils.helper
+// get_default_trace_config, sized by LLMTracing/common.js COLUMN_SIZE_MAP) need
+// about 1,860 px. AG Grid virtualises columns, so at the default 1280 px
+// viewport (a ~1,050 px grid) it never renders Tags, the 10th of 11. A 2400 px
+// viewport gives the grid ~2,170 px: every default column renders, no scrolling.
+test.use({ viewport: { width: 2400, height: 1000 } });
+const tagsHeader = (page: Page) =>
+  page.locator('.clean-data-table:visible .ag-header-cell[col-id="tags"]');
+
 // The latest `traces` row's tags, as the trace list reads them (trace_list.py
 // `argMax(tags, _version)`), or null on a transport error. ClickHouse can close
 // the probe's idle keep-alive socket while the seed runs in the backend
@@ -128,6 +137,7 @@ test('OBS-E2E-037: bulk Add tags on selected traces adds the tag to each trace a
 
     await expect(traceRow(page, tagged.traceId).first()).toBeVisible({ timeout: UI_READY });
     await expect(traceRow(page, untagged.traceId).first()).toBeVisible({ timeout: UI_READY });
+    await expect(tagsHeader(page), 'the Tags column is rendered').toBeVisible({ timeout: UI_READY });
     await expect(traceRow(page, tagged.traceId).locator('[col-id="tags"]'))
       .toContainText(KEPT_TAG, { timeout: UI_READY });
   });
