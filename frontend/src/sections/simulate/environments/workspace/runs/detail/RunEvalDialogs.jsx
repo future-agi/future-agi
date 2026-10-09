@@ -21,8 +21,7 @@ export default function RunEvalDialogs({
   return (
     <>
       {/* No executionId: given one, the drawer would grade the run by name
-          itself. Here a saved edit only saves; grading again goes through
-          the confirm below. */}
+          itself; here the confirm below does it. */}
       <AddEvaluationDrawer
         open={Boolean(editing)}
         env={env}

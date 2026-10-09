@@ -21,9 +21,9 @@ const ITEM_SX = {
 
 /**
  * The menu behind an eval column header's ⋮ on a run's table: re-run that eval
- * on this run, or edit it. Same rules as the run's All Evaluations drawer, and
- * the run page answers both through the same confirm dialog and edit form
- * (`onRerun`, `onEdit`).
+ * on this run, or edit it and then re-run it. Same rules as the run's All
+ * Evaluations drawer, and the run page answers both through the same edit form
+ * and confirm dialog (`onRerun`, `onEdit`).
  *
  * One instance serves every column; `menuFor` says which column's menu is
  * open.

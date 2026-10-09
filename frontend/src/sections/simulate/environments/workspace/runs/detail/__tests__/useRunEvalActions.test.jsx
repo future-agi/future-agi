@@ -70,7 +70,10 @@ function Host({ onSuccess }) {
       <button type="button" onClick={() => actions.requestRerun([SUITE])}>
         rerun suite
       </button>
-      <button type="button" onClick={() => actions.requestEdit(MAPPED)}>
+      <button
+        type="button"
+        onClick={() => actions.requestEdit(MAPPED, { onSuccess })}
+      >
         edit mapped
       </button>
       <RunEvalDialogs env={{ id: "env-1" }} {...actions.dialogProps} />
@@ -222,40 +225,49 @@ describe("useRunEvalActions — editing an eval", () => {
     expect(mutate).not.toHaveBeenCalled();
   });
 
-  it("only saves: closes the edit form and grades nothing", () => {
+  it("opens no confirm when the save hands back no eval", () => {
+    setup();
+    fireEvent.click(screen.getByText("edit mapped"));
+    fireEvent.click(screen.getByText("save edit"));
+
+    expect(screen.queryByTestId("edit-drawer")).toBeNull();
+    expect(screen.queryByText(CONFIRM_BODY)).toBeNull();
+    expect(mutate).not.toHaveBeenCalled();
+  });
+
+  it("offers to grade the edited eval again once it is saved, and tells whoever asked", () => {
     editor.updated = {
       ...MAPPED,
       mapping: { conversation: "call.transcript" },
     };
-    setup();
+    mutate.mockImplementation((_v, o) =>
+      o.onSuccess({ call_execution_count: 4 }),
+    );
+    const { onSuccess } = setup();
 
     fireEvent.click(screen.getByText("edit mapped"));
     fireEvent.click(screen.getByText("save edit"));
 
     expect(screen.queryByTestId("edit-drawer")).toBeNull();
-    expect(
-      screen.getByText("pending:false:edit-open:false"),
-    ).toBeInTheDocument();
-    expect(screen.queryByText(CONFIRM_BODY)).toBeNull();
-    expect(mutate).not.toHaveBeenCalled();
+    expect(screen.getByText(CONFIRM_BODY)).toBeInTheDocument();
+    expect(screen.queryByText(HARNESS_NOTE)).toBeNull();
+
+    fireEvent.click(screen.getByText("Run Evaluations"));
+    expect(mutate).toHaveBeenCalledWith(
+      { id: "env-1", executionId: "ex1", evalConfigIds: ["c1"] },
+      expect.any(Object),
+    );
+    expect(onSuccess).toHaveBeenCalledTimes(1);
   });
 
-  it("leaves the confirm closed after a save", () => {
-    const { result } = renderHook(() =>
-      useRunEvalActions({ envId: "env-1", executionId: "ex1" }),
-    );
-    act(() => result.current.requestEdit(MAPPED));
-    act(() =>
-      result.current.dialogProps.onEdited({
-        ...MAPPED,
-        mapping: { conversation: "call.transcript" },
-      }),
-    );
+  it("warns that harness scores are replaced when the saved eval has no mapping of its own", () => {
+    editor.updated = { ...MAPPED, mapping: {} };
+    setup();
 
-    expect(result.current.editOpen).toBe(false);
-    expect(result.current.dialogProps.editing).toBeNull();
-    expect(result.current.dialogProps.confirming).toBeNull();
-    expect(mutate).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText("edit mapped"));
+    fireEvent.click(screen.getByText("save edit"));
+
+    expect(screen.getByText(HARNESS_NOTE)).toBeInTheDocument();
   });
 });
 
