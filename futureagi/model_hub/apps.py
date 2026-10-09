@@ -50,6 +50,7 @@ OPERATOR_STARTUP_MUTATION_COMMANDS = frozenset(
         "provision_grouping_features",
         "enable_sampled_grouping",
         "requeue_budget_grouping",
+        "requeue_failed_grouping",
         "requeue_investigations",
         "register_temporal_schedules",
         "seed_system_evals",

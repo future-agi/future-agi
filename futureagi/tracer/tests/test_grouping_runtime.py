@@ -49,6 +49,7 @@ from tracer.services.grouping.feature_completion import (
 from tracer.services.grouping.lifecycle import deproject_superseded_report
 from tracer.services.grouping.publish import (
     _admitted_group,
+    _assign,
     _mechanism,
     _new_issue,
     publish_grouping,
@@ -688,4 +689,75 @@ def test_source_replacement_recounts_large_protected_issue_without_review_cap(
     assert state.cluster.error_count == 0
     assert not ErrorClusterTraces.no_workspace_objects.filter(
         cluster=state.cluster
+    ).exists()
+
+
+@override_settings(
+    ERROR_FEED_GROUPING_ENABLED=True,
+    ERROR_FEED_GROUPING_ALL_PROJECTS=True,
+    ERROR_FEED_GROUPING_DEBOUNCE_SECONDS=0,
+    ERROR_FEED_GROUPING_PROJECT_BUDGET_USD="10",
+    ERROR_FEED_GROUPING_WORK_BUDGET_USD="10",
+    ERROR_FEED_GROUPING_TENANT_BUDGET_USD="10",
+)
+def test_protected_checkpoint_refresh_does_not_block_publication(
+    observe_project, monkeypatch
+):
+    first = _prepare_runtime(observe_project, monkeypatch, identity=uuid.uuid4())
+    second = _prepare_runtime(observe_project, monkeypatch, identity=uuid.uuid4())
+    scope = TraceGroupingScope.no_workspace_objects.get(project=observe_project)
+    ids = [str(second.findings.get().id), str(first.findings.get().id)]
+    mechanism = {
+        "mechanism": "Wrong refund amount",
+        "fix_hypothesis": "Use requested amount",
+        "falsifier": "Executed amount matches",
+    }
+    issue = _new_issue(scope, mechanism, ids)
+    issue.protected = True
+    issue.save(update_fields=["protected"])
+    for report in (first, second):
+        _assign(report.findings.get(), issue, scope)
+        report.grouping_status = TraceInvestigationGroupingStatus.COMPLETED
+        report.save(update_fields=["grouping_status"])
+        TraceGroupingWork.no_workspace_objects.filter(report=report).update(
+            state="completed"
+        )
+    pending = _prepare_runtime(observe_project, monkeypatch, identity=uuid.uuid4())
+    monkeypatch.setattr(
+        FakeFeatureStore, "candidate_occurrences", lambda self, **kwargs: ids
+    )
+    claim = claim_grouping_work(worker_id="refresh-recovery", limit=1)["claims"][0]
+    attempt = TraceGroupingAttempt.no_workspace_objects.get(pk=claim["attempt_id"])
+    assert attempt.offered_issue_ids == [str(issue.cluster_id)]
+    publish_grouping(
+        attempt_id=attempt.id,
+        lease_token=claim["lease_token"],
+        idempotency_key="protected-refresh-recovery",
+        snapshot_digest=claim["snapshot_digest"],
+        registry_revision=claim["registry_revision"],
+        commands=[
+            {
+                "type": "refresh",
+                "issue_id": str(issue.cluster_id),
+                "expected_issue_revision": issue.revision,
+                "mechanism": mechanism,
+                "prototype_occurrence_ids": list(reversed(ids)),
+            },
+            {
+                "type": "defer",
+                "occurrence_ids": [str(pending.findings.get().id)],
+                "reason": "No supported assignment",
+            },
+        ],
+        receipt_ids=[],
+    )
+    issue.refresh_from_db()
+    pending.refresh_from_db()
+    attempt.refresh_from_db()
+    assert issue.prototype_occurrence_ids == ids
+    assert issue.revision == 1 and issue.protected
+    assert pending.grouping_status == TraceInvestigationGroupingStatus.COMPLETED
+    assert attempt.state == "completed"
+    assert not TraceGroupingSeverityJob.no_workspace_objects.filter(
+        issue=issue
     ).exists()
