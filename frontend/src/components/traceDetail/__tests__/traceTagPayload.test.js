@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { serializeTraceTags } from "../traceTagPayload";
+import { normalizeTags } from "../tagUtils";
 
 describe("serializeTraceTags", () => {
   it("converts rich trace tags to the string payload expected by the API", () => {
@@ -27,5 +28,13 @@ describe("serializeTraceTags", () => {
         { name: "prod", color: "#3B82F6" },
       ]),
     ).toEqual(["prod"]);
+  });
+
+  // The call sites pass normalizeTags() output, so pin the pair together:
+  // stored trace tags are strings, and a blank one is dropped on the next save.
+  it("drops blank stored tags after normalizeTags", () => {
+    expect(serializeTraceTags(normalizeTags(["", "prod", "  "]))).toEqual([
+      "prod",
+    ]);
   });
 });

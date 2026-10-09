@@ -163,6 +163,31 @@ describe("AddTagsPopover trace tag payload", () => {
     ]);
   });
 
+  // The bulk bar offers Add tags for any selection, including one call. The
+  // caller passes no traceId, so a one-item selection must still take the
+  // bulk path (merge into that call's tags) rather than the single-trace one.
+  it("tags exactly one selected call", async () => {
+    renderPopover({
+      bulkItems: [{ id: traceUuid(9), type: "trace", currentTags: ["prod"] }],
+    });
+
+    await addTag("need improvement");
+
+    await waitFor(() =>
+      expect(snackbar).toHaveBeenCalledWith("Tags applied to 1 item", {
+        variant: "success",
+      }),
+    );
+    expect(sentRequests()).toEqual([
+      {
+        method: "patch",
+        url: `/tracer/trace/${traceUuid(9)}/tags/`,
+        body: { tags: ["prod", "need improvement"] },
+      },
+    ]);
+    expect(screen.getByText("Add tags to 1 item")).toBeInTheDocument();
+  });
+
   it("saves a single trace's tags as names", async () => {
     renderPopover({
       traceId: traceUuid(7),
