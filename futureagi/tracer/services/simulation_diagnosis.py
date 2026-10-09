@@ -1,9 +1,4 @@
-"""What the Debug failures drawer tells a user about one simulation run.
-
-The run's evals decide which goals broke on which calls; Omega explains how.
-Every count here comes from those verdicts and cluster sizes, never from a
-model, so a card's number always matches the calls its View link opens.
-"""
+"""Combine harness goal verdicts with independently investigated call issues."""
 
 from __future__ import annotations
 
@@ -52,7 +47,7 @@ def build_diagnosis(
     clusters: dict,
     unanalyzed: frozenset = frozenset(),
 ) -> dict[str, Any]:
-    """Goals the evals say broke, how they broke, and one-off agent issues."""
+    """Measured failures and independently observed issues on other calls."""
     calls = list(
         CallExecution.no_workspace_objects.filter(
             test_execution=execution, deleted=False
@@ -78,15 +73,12 @@ def build_diagnosis(
             and goal.get("held") is not None
         ]
     broken: dict[str, list] = defaultdict(list)
-    passed: dict = defaultdict(set)
     tested: dict[str, int] = defaultdict(int)
     for call_id, goals in verdicts.items():
         for name, held in goals:
             tested[name] += 1
             if held is False:
                 broken[name].append(call_id)
-            else:
-                passed[call_id].add(name)
     broken_calls = {call_id for call_ids in broken.values() for call_id in call_ids}
 
     by_goal: dict[str, list] = defaultdict(list)
@@ -100,10 +92,9 @@ def build_diagnosis(
         goal = finding_goal.get(finding.id)
         if goal and call_id in broken.get(goal, []):
             by_goal[goal].append(finding)
-        elif goal in passed[call_id]:
-            # The eval is the verdict; disagreeing with it is ours to fix, not the user's.
-            continue
-        elif finding.recovery not in _RECOVERED:
+        elif goal or finding.recovery not in _RECOVERED:
+            # An authored-goal finding remains visible even if the harness
+            # passed it or the call later recovered. Neither is a veto.
             one_offs.append(finding)
 
     def ways(members: list) -> list[dict[str, Any]]:
