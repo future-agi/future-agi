@@ -67723,6 +67723,7 @@ export const TracerUsersListResponse = zod.object({
         bool_eval_pass_rate: zod.number().optional(),
         avg_output_float: zod.number().optional(),
         project_id: zod.string().uuid().optional(),
+        project_name: zod.string().min(1).optional(),
         user_id_type: zod.string().min(1).optional(),
         user_id_hash: zod.string().min(1).optional(),
         end_user_id: zod.string().uuid().optional(),
