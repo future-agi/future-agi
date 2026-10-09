@@ -574,9 +574,11 @@ def build_claim_context(
         current.omitted_candidate_ids = [issue["issue_id"] for issue in omitted]
         current.omitted_candidates = omitted
         current.candidate_digest = candidate_digest
-        previous = current.work.attempts.filter(
-            attempt_number=current.attempt_number - 1
-        ).first()
+        previous = (
+            current.work.attempts.filter(attempt_number__lt=current.attempt_number)
+            .order_by("-attempt_number")
+            .first()
+        )
         if previous and previous.candidate_digest != candidate_digest:
             current.checkpoint = {}
             current.checkpoint_revision = 0

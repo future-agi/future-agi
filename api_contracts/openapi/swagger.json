@@ -9407,9 +9407,10 @@
                     {
                         "name": "api_key_id",
                         "in": "query",
+                        "description": "Gateway key id (not the API key's UUID primary key).",
                         "required": false,
                         "type": "string",
-                        "format": "uuid"
+                        "maxLength": 255
                     }
                 ],
                 "responses": {
@@ -13165,9 +13166,10 @@
                     {
                         "name": "api_key_id",
                         "in": "query",
+                        "description": "Gateway key id (not the API key's UUID primary key).",
                         "required": false,
                         "type": "string",
-                        "format": "uuid"
+                        "maxLength": 255
                     },
                     {
                         "name": "request_id",
@@ -145713,8 +145715,15 @@
                     "type": "string",
                     "enum": [
                         "renew",
-                        "cancel"
+                        "cancel",
+                        "fail"
                     ]
+                },
+                "failure_code": {
+                    "title": "Failure code",
+                    "type": "string",
+                    "default": "",
+                    "maxLength": 100
                 }
             }
         },
@@ -145723,6 +145732,11 @@
             "properties": {
                 "state": {
                     "title": "State",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "failure_code": {
+                    "title": "Failure code",
                     "type": "string",
                     "minLength": 1
                 },

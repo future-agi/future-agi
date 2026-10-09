@@ -26664,6 +26664,7 @@ export type UpdateGroupingAttemptApiAction =
 export const UpdateGroupingAttemptApiAction = {
   renew: "renew",
   cancel: "cancel",
+  fail: "fail",
 } as const;
 
 export interface UpdateGroupingAttemptApi {
@@ -26673,11 +26674,15 @@ export interface UpdateGroupingAttemptApi {
    */
   lease_token: string;
   action: UpdateGroupingAttemptApiAction;
+  /** @maxLength 100 */
+  failure_code?: string;
 }
 
 export interface GroupingControlResponseApi {
   /** @minLength 1 */
   state?: string;
+  /** @minLength 1 */
+  failure_code?: string;
   /** @minLength 1 */
   status?: string;
   checkpoint_revision?: number;
@@ -32800,6 +32805,10 @@ export type AgentccAnalyticsOverviewParams = {
    * @minLength 1
    */
   granularity?: string;
+  /**
+   * Gateway key id (not the API key's UUID primary key).
+   * @maxLength 255
+   */
   api_key_id?: string;
 };
 
@@ -33034,6 +33043,10 @@ export type AgentccRequestLogsListParams = {
   limit?: number;
   user_id?: string;
   session_id?: string;
+  /**
+   * Gateway key id (not the API key's UUID primary key).
+   * @maxLength 255
+   */
   api_key_id?: string;
   request_id?: string;
   /**
