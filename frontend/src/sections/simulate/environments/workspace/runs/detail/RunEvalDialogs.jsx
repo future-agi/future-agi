@@ -1,7 +1,11 @@
 import PropTypes from "prop-types";
 import ConfirmRunEvaluations from "src/sections/common/EvaluationDrawer/ConfirmRunEvaluations";
 import AddEvaluationDrawer from "../../evals/AddEvaluationDrawer";
-import { HARNESS_NOTE } from "./allEvaluationsDrawer.constants";
+import {
+  EDITED_RERUN_BODY,
+  EDITED_RERUN_TITLE,
+  HARNESS_NOTE,
+} from "./allEvaluationsDrawer.constants";
 
 /**
  * The edit form and the re-run confirm behind `useRunEvalActions`, rendered
@@ -12,6 +16,7 @@ export default function RunEvalDialogs({
   env,
   editing = null,
   confirming = null,
+  afterEdit = false,
   loading = false,
   onEditClose,
   onEdited,
@@ -36,6 +41,12 @@ export default function RunEvalDialogs({
         onConfirm={onConfirm}
         selectedUserEvalList={confirming || []}
         loading={loading}
+        {...(afterEdit && {
+          title: EDITED_RERUN_TITLE,
+          description: EDITED_RERUN_BODY,
+          cancelLabel: "Not now",
+          confirmLabel: "Re-run",
+        })}
         // Only runnable configs ever reach the dialog, so an empty mapping
         // there means one of the harness's built-in suite evals; its score
         // came from the harness and will be replaced by the platform's.
@@ -53,6 +64,7 @@ RunEvalDialogs.propTypes = {
   env: PropTypes.shape({ id: PropTypes.string }),
   editing: PropTypes.shape({ id: PropTypes.string }),
   confirming: PropTypes.arrayOf(PropTypes.shape({ id: PropTypes.string })),
+  afterEdit: PropTypes.bool,
   loading: PropTypes.bool,
   onEditClose: PropTypes.func,
   onEdited: PropTypes.func,

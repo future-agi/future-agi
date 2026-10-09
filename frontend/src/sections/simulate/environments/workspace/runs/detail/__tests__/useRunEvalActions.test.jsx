@@ -6,13 +6,18 @@ import {
   renderHook,
   screen,
   fireEvent,
+  waitFor,
 } from "@testing-library/react";
 import { useRunNewEvals } from "src/api/simulate-environments/runEvals";
 import { enqueueSnackbar } from "notistack";
 import RunEvalDialogs from "../RunEvalDialogs";
 import { useRunEvalActions } from "../useRunEvalActions";
 import { RUN_FALLBACK } from "../useRegradeEvals";
-import { HARNESS_NOTE } from "../allEvaluationsDrawer.constants";
+import {
+  EDITED_RERUN_BODY,
+  EDITED_RERUN_TITLE,
+  HARNESS_NOTE,
+} from "../allEvaluationsDrawer.constants";
 
 vi.mock("notistack", () => ({ enqueueSnackbar: vi.fn() }));
 vi.mock("src/api/simulate-environments/runEvals", () => ({
@@ -249,15 +254,40 @@ describe("useRunEvalActions — editing an eval", () => {
     fireEvent.click(screen.getByText("save edit"));
 
     expect(screen.queryByTestId("edit-drawer")).toBeNull();
-    expect(screen.getByText(CONFIRM_BODY)).toBeInTheDocument();
+    expect(screen.getByText(EDITED_RERUN_TITLE)).toBeInTheDocument();
+    expect(screen.getByText(EDITED_RERUN_BODY)).toBeInTheDocument();
+    expect(screen.queryByText(CONFIRM_BODY)).toBeNull();
     expect(screen.queryByText(HARNESS_NOTE)).toBeNull();
 
-    fireEvent.click(screen.getByText("Run Evaluations"));
+    fireEvent.click(screen.getByRole("button", { name: "Re-run" }));
     expect(mutate).toHaveBeenCalledWith(
       { id: "env-1", executionId: "ex1", evalConfigIds: ["c1"] },
       expect.any(Object),
     );
     expect(onSuccess).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves the run's scores alone when the person says not now", async () => {
+    editor.updated = MAPPED;
+    const { onSuccess } = setup();
+    fireEvent.click(screen.getByText("edit mapped"));
+    fireEvent.click(screen.getByText("save edit"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Not now" }));
+    // The dialog fades out with the copy it opened with, never the plain one.
+    expect(screen.queryByText(CONFIRM_BODY)).toBeNull();
+    await waitFor(() =>
+      expect(screen.queryByText(EDITED_RERUN_TITLE)).toBeNull(),
+    );
+    expect(mutate).not.toHaveBeenCalled();
+    expect(onSuccess).not.toHaveBeenCalled();
+  });
+
+  it("asks the plain question when a re-run is asked for without an edit", () => {
+    setup();
+    fireEvent.click(screen.getByText("rerun mapped"));
+    expect(screen.getByText(CONFIRM_BODY)).toBeInTheDocument();
+    expect(screen.queryByText(EDITED_RERUN_TITLE)).toBeNull();
   });
 
   it("warns that harness scores are replaced when the saved eval has no mapping of its own", () => {

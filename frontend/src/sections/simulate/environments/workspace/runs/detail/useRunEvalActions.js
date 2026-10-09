@@ -10,14 +10,17 @@ import { useRegradeEvals } from "./useRegradeEvals";
  *
  * `requestRerun(configs, { onSuccess })` opens the confirm on those evals.
  * `requestEdit(config, { onSuccess })` opens the edit form; saving it opens
- * the confirm on the edited eval. Either `onSuccess` runs once the grading
- * is queued. `dialogProps` go to `RunEvalDialogs`.
+ * the confirm on the edited eval, worded for a save that already happened.
+ * Either `onSuccess` runs once the grading is queued. `dialogProps` go to `RunEvalDialogs`.
  */
 export function useRunEvalActions({ envId, executionId }) {
   // The eval open for editing and who asked, or null.
   const [editing, setEditing] = useState(null);
   // The evals the confirm dialog is about and who asked, or null.
   const [confirming, setConfirming] = useState(null);
+  // Whether the confirm follows a saved edit. Set only when it opens, so the
+  // dialog keeps its wording while it fades out after closing.
+  const [afterEdit, setAfterEdit] = useState(false);
   // Both dialogs are about one run. They close in the render that first sees
   // another run, rather than in an effect, so the old run's dialog is never
   // painted over the new one.
@@ -29,8 +32,10 @@ export function useRunEvalActions({ envId, executionId }) {
   }
   const { regrade, isPending } = useRegradeEvals({ envId, executionId });
 
-  const requestRerun = (configs, { onSuccess } = {}) =>
+  const requestRerun = (configs, { onSuccess } = {}) => {
+    setAfterEdit(false);
     setConfirming({ configs, onSuccess });
+  };
   const requestEdit = (config, { onSuccess } = {}) =>
     setEditing({ config, onSuccess });
 
@@ -42,10 +47,12 @@ export function useRunEvalActions({ envId, executionId }) {
     dialogProps: {
       editing: editing?.config ?? null,
       confirming: confirming?.configs ?? null,
+      afterEdit,
       loading: isPending,
       onEditClose: () => setEditing(null),
       onEdited: (updated) => {
         setEditing(null);
+        if (updated) setAfterEdit(true);
         setConfirming(
           updated
             ? { configs: [updated], onSuccess: editing?.onSuccess }

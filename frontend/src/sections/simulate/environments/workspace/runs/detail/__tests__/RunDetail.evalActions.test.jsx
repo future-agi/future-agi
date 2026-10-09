@@ -245,9 +245,11 @@ describe("RunDetail — editing from a column menu", () => {
       expect(screen.queryByText("edit-drawer:c1")).toBeNull(),
     );
 
-    await user.click(
-      within(confirm).getByRole("button", { name: "Run Evaluations" }),
-    );
+    expect(
+      within(confirm).getByText("Changes saved. Re-run this evaluation?"),
+    ).toBeInTheDocument();
+
+    await user.click(within(confirm).getByRole("button", { name: "Re-run" }));
     expect(runEvaluationsAgain).toHaveBeenCalledWith("env-1", "ex1", ["c1"]);
   });
 });

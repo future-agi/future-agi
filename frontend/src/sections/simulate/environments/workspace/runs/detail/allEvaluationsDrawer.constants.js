@@ -19,3 +19,8 @@ export const EVAL_GONE_TOOLTIP =
 // there, so it must not be mistaken for a removed eval.
 export const EVALS_LOAD_FAILED_TOOLTIP =
   "Couldn’t load this run's evaluations. Try again.";
+// The re-run confirm that follows a saved edit. The edit is already saved, so
+// the dialog says so and leaves the run's scores alone unless asked.
+export const EDITED_RERUN_TITLE = "Changes saved. Re-run this evaluation?";
+export const EDITED_RERUN_BODY =
+  "Scores on this run still use the old settings.";
