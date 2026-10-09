@@ -5173,7 +5173,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              format: "uuid",
+              maxLength: 255,
             },
           },
         },
@@ -7342,7 +7342,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              format: "uuid",
+              maxLength: 255,
             },
           },
           request_id: {
