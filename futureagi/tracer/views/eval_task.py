@@ -50,6 +50,7 @@ from tfc.utils.api_serializers import (
     EmptyRequestSerializer,
 )
 from tfc.utils.base_viewset import BaseModelViewSetMixin
+from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
 from tracer.models.custom_eval_config import CustomEvalConfig
@@ -64,8 +65,10 @@ from tracer.models.eval_task import (
 from tracer.models.observation_span import EvalEntryStatus, EvalLogger, ObservationSpan
 from tracer.models.project import Project
 from tracer.selectors.eval_tasks.scope import (
+    eval_config_ids_outside_project,
+    eval_configs_in_scope,
     eval_tasks_in_scope,
-    project_workspace_scope_q,
+    projects_in_scope,
 )
 from tracer.serializers.eval_task import (
     EVAL_TASK_USAGE_MAX_PAGE,
@@ -1677,11 +1680,6 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             return None
         return getattr(user, "organization", None)
 
-    def _project_workspace_scope_q(self, organization_id):
-        return project_workspace_scope_q(
-            organization_id, getattr(self.request, "workspace", None)
-        )
-
     def _scope_eval_task_queryset(self, queryset):
         # Shared with the AI tool's Resume, so a task id resolves to the same
         # task, or to none, whichever surface asks.
@@ -1692,52 +1690,31 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
         )
 
     def _scope_project_queryset(self, queryset):
-        organization = self._get_request_organization()
-        if organization is None:
-            return queryset.none()
-        organization_id = organization.id
-        workspace = getattr(self.request, "workspace", None)
-        queryset = queryset.filter(organization_id=organization_id, deleted=False)
-        if not workspace:
-            return queryset
-        if getattr(workspace, "is_default", False):
-            return queryset.filter(
-                Q(workspace=workspace)
-                | Q(
-                    workspace__is_default=True,
-                    workspace__organization_id=organization_id,
-                )
-                | Q(workspace__isnull=True, organization_id=organization_id)
-            )
-        return queryset.filter(workspace=workspace)
+        # Shared with the eval-config endpoints, so a project id resolves the
+        # same way for a task and for the configs it runs.
+        return projects_in_scope(
+            queryset,
+            organization=self._get_request_organization(),
+            workspace=getattr(self.request, "workspace", None),
+        )
 
     def _scope_custom_eval_config_queryset(self, queryset, project_id=None):
-        organization = self._get_request_organization()
-        if organization is None:
-            return queryset.none()
-        organization_id = organization.id
-        queryset = queryset.filter(
-            deleted=False,
-            project__organization_id=organization_id,
-            project__deleted=False,
-        ).filter(self._project_workspace_scope_q(organization_id))
-        if project_id:
-            queryset = queryset.filter(project_id=project_id)
-        return queryset
+        # Shared with the AI tools, so an eval config id resolves the same
+        # way whichever surface links it to a task.
+        return eval_configs_in_scope(
+            queryset,
+            organization=self._get_request_organization(),
+            workspace=getattr(self.request, "workspace", None),
+            project_id=project_id,
+        )
 
     def _invalid_eval_ids_for_project(self, eval_ids, project_id):
-        requested_ids = {str(eval_id) for eval_id in (eval_ids or [])}
-        if not requested_ids:
-            return []
-        visible_ids = {
-            str(eval_id)
-            for eval_id in self._scope_custom_eval_config_queryset(
-                CustomEvalConfig.objects.all(), project_id=project_id
-            )
-            .filter(id__in=requested_ids)
-            .values_list("id", flat=True)
-        }
-        return sorted(requested_ids - visible_ids)
+        return eval_config_ids_outside_project(
+            eval_ids,
+            project_id=project_id,
+            organization=self._get_request_organization(),
+            workspace=getattr(self.request, "workspace", None),
+        )
 
     def get_serializer(self, *args, **kwargs):
         serializer = super().get_serializer(*args, **kwargs)
@@ -1751,7 +1728,12 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 Project.objects.all()
             )
         if "evals" in fields:
-            fields["evals"].queryset = self._scope_custom_eval_config_queryset(
+            # ``evals`` is many=True: DRF resolves each id through the field's
+            # child relation, so the scope belongs there. An id outside it then
+            # reads as unknown, and ``perform_update`` (or create) checks that
+            # each config is the task project's own.
+            evals_relation = fields["evals"].child_relation
+            evals_relation.queryset = self._scope_custom_eval_config_queryset(
                 CustomEvalConfig.objects.all()
             )
         return serializer
@@ -1863,6 +1845,28 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
         kwargs["partial"] = True
         return super().update(request, *args, **kwargs)
 
+    def perform_update(self, serializer):
+        # A task keeps its project, and runs only that project's eval configs:
+        # the reads find a task's results through each config's project.
+        eval_task = serializer.instance
+        project = serializer.validated_data.get("project")
+        if project is not None and project.pk != eval_task.project_id:
+            raise ValidationError(
+                {"project": [get_error_message("EVAL_TASK_CANNOT_CHANGE_PROJECT")]}
+            )
+        eval_configs = serializer.validated_data.get("evals")
+        if eval_configs is not None:
+            invalid_eval_ids = self._invalid_eval_ids_for_project(
+                [eval_config.pk for eval_config in eval_configs],
+                eval_task.project_id,
+            )
+            if invalid_eval_ids:
+                message = get_error_message("EVAL_CONFIGS_NOT_IN_TASK_PROJECT")
+                raise ValidationError(
+                    {"evals": [message.format(", ".join(invalid_eval_ids))]}
+                )
+        serializer.save()
+
     def perform_destroy(self, instance):
         # Cascade soft-delete to the task's loggers and eval results so they
         # don't outlive the deleted task (mirrors mark_eval_tasks_deleted).
@@ -1909,7 +1913,9 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             )
             if invalid_eval_ids:
                 return self._gm.bad_request(
-                    "Eval configs not found for project: " + ", ".join(invalid_eval_ids)
+                    get_error_message("EVAL_CONFIGS_NOT_IN_TASK_PROJECT").format(
+                        ", ".join(invalid_eval_ids)
+                    )
                 )
             eval_task = serializer.save()
 
@@ -3054,8 +3060,9 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                     )
                     if invalid_eval_ids:
                         return self._gm.bad_request(
-                            "Eval configs not found for task project: "
-                            + ", ".join(invalid_eval_ids)
+                            get_error_message(
+                                "EVAL_CONFIGS_NOT_IN_TASK_PROJECT"
+                            ).format(", ".join(invalid_eval_ids))
                         )
 
                 new_evals = (

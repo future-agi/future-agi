@@ -35,13 +35,23 @@ def test_ai_create_commits_complete_task_before_ensure_active(monkeypatch):
     )
     starts = []
     callbacks = []
+    config_lookups = []
+
+    def eval_configs_in_scope(_queryset, **scope):
+        config_lookups.append(scope)
+
+        def filter_ids(**lookup):
+            config_lookups.append(lookup)
+            return [eval_config]
+
+        return SimpleNamespace(filter=filter_ids)
 
     monkeypatch.setattr(
         "tracer.models.project.Project.objects.get", lambda **_kwargs: project
     )
     monkeypatch.setattr(
-        "tracer.models.custom_eval_config.CustomEvalConfig.objects.filter",
-        lambda **_kwargs: [eval_config],
+        "tracer.selectors.eval_tasks.scope.eval_configs_in_scope",
+        eval_configs_in_scope,
     )
     monkeypatch.setattr(
         "tracer.models.eval_task.EvalTask.objects.create", lambda **_kwargs: task
@@ -59,16 +69,26 @@ def test_ai_create_commits_complete_task_before_ensure_active(monkeypatch):
         lambda value, **kwargs: starts.append((value, kwargs)),
     )
 
+    context = ToolContext(user=object(), organization=object(), workspace=object())
     result = CreateEvalTaskTool().execute(
         CreateEvalTaskInput(
             project_id="00000000-0000-0000-0000-000000000001",
             name="Task",
             eval_config_ids=[eval_id],
         ),
-        ToolContext(user=object(), organization=object(), workspace=object()),
+        context,
     )
 
     assert not result.is_error
+    # The configs come from the shared selector, scoped to the task's project.
+    assert config_lookups == [
+        {
+            "organization": context.organization,
+            "workspace": context.workspace,
+            "project_id": project.id,
+        },
+        {"id__in": [eval_id]},
+    ]
     assert starts == []
     assert len(callbacks) == 1
     callbacks[0]()

@@ -6,21 +6,23 @@ from django.db import close_old_connections
 from django.db.models import Q
 from django.utils import timezone
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
-logger = structlog.get_logger(__name__)
 from model_hub.models.choices import OwnerChoices
 from model_hub.models.evals_metric import EvalTemplate
 from model_hub.serializers.develop_optimisation import EvalTemplateSerializer
 from tfc.routers import uses_db
 from tfc.utils.base_viewset import BaseModelViewSetMixin
+from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tracer.db_routing import DATABASE_FOR_CUSTOM_EVAL_CONFIG_LIST
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.observation_span import EvalLogger
 from tracer.models.project import Project
 from tracer.models.project_version import ProjectVersion
+from tracer.selectors.eval_tasks.scope import eval_configs_in_scope, projects_in_scope
 from tracer.serializers.custom_eval_config import (
     CustomEvalConfigListQuerySerializer,
     CustomEvalConfigSerializer,
@@ -28,6 +30,9 @@ from tracer.serializers.custom_eval_config import (
     RunEvaluationSerializer,
 )
 from tracer.utils.eval import evaluate_observation_span
+from tracer.utils.workspace_scope import get_request_organization
+
+logger = structlog.get_logger(__name__)
 
 
 class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
@@ -37,8 +42,14 @@ class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
 
     def get_queryset(self):
         custom_eval_config_id = self.kwargs.get("pk")
-        # Get base queryset with automatic filtering from mixin
-        queryset = super().get_queryset()
+        # The mixin cannot scope this model by organization (it has none), so
+        # the eval-task scope does: the caller's organization and workspace,
+        # live configs of live projects only.
+        queryset = eval_configs_in_scope(
+            super().get_queryset(),
+            organization=get_request_organization(self.request),
+            workspace=getattr(self.request, "workspace", None),
+        )
 
         if custom_eval_config_id:
             queryset = queryset.filter(id=custom_eval_config_id)
@@ -56,6 +67,19 @@ class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
             queryset = queryset.filter(project_id=project_id)
 
         return queryset
+
+    def get_serializer(self, *args, **kwargs):
+        serializer = super().get_serializer(*args, **kwargs)
+        fields = getattr(serializer, "fields", None)
+        if fields and "project" in fields:
+            # A config may name only a project the caller can use; any other
+            # project id reads as unknown.
+            fields["project"].queryset = projects_in_scope(
+                Project.objects.all(),
+                organization=get_request_organization(self.request),
+                workspace=getattr(self.request, "workspace", None),
+            )
+        return serializer
 
     def create(self, request, *args, **kwargs):
         try:
@@ -103,12 +127,9 @@ class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
         try:
             custom_eval_config_id = kwargs.get("pk")
             try:
-                custom_eval_config = CustomEvalConfig.objects.get(
-                    id=custom_eval_config_id,
-                    project__organization=getattr(request, "organization", None)
-                    or request.user.organization,
-                    deleted=False,
-                )
+                # The detail routes' own lookup, so PATCH reaches exactly the
+                # configs GET, PUT and DELETE do.
+                custom_eval_config = self.get_queryset().get(id=custom_eval_config_id)
             except CustomEvalConfig.DoesNotExist:
                 return self._gm.bad_request(
                     f"Custom eval config with id {custom_eval_config_id} does not exist."
@@ -150,16 +171,32 @@ class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
                         mapping.pop(key)
                 serializer.validated_data["mapping"] = mapping
 
-            serializer.save()
+            self.perform_update(serializer)
 
             return self._gm.success_response({"id": str(custom_eval_config.id)})
 
+        except ValidationError as e:
+            return self._gm.bad_request(e.detail)
         except Exception as e:
             traceback.print_exc()
             logger.exception(f"Error in updating custom eval config: {str(e)}")
             return self._gm.bad_request(
                 f"Error in updating custom eval config: {str(e)}"
             )
+
+    def perform_update(self, serializer):
+        # A config stays in its project: an eval task runs only its own
+        # project's configs, and the reads find their results through it.
+        project = serializer.validated_data.get("project")
+        if project is not None and project.pk != serializer.instance.project_id:
+            raise ValidationError(
+                {
+                    "project": [
+                        get_error_message("CUSTOM_EVAL_CONFIG_CANNOT_CHANGE_PROJECT")
+                    ]
+                }
+            )
+        serializer.save()
 
     @action(detail=False, methods=["post"])
     def check_exists(self, request, *args, **kwargs):

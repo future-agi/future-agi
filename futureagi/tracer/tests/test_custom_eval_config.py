@@ -13,6 +13,12 @@ from django.core.management import call_command
 from rest_framework import status
 
 from tracer.models.custom_eval_config import CustomEvalConfig
+from tracer.tests.eval_task_factories import (
+    OUT_OF_SCOPE_KINDS,
+    make_out_of_scope_project,
+    make_sibling_project,
+    refusal_without_id,
+)
 
 AUTH_REQUIRED_STATUS_CODES = (
     status.HTTP_401_UNAUTHORIZED,
@@ -187,6 +193,212 @@ class TestCustomEvalConfigPartialUpdateAPI:
             "input": "input.value",
             "output": "output",
         }
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestCustomEvalConfigProjectIsFixed:
+    """An eval config stays in the project it was created in: eval tasks run
+    only their own project's configs, and the task reads find a config's
+    results through its project."""
+
+    def _put(self, auth_client, config, project, name):
+        return auth_client.put(
+            f"/tracer/custom-eval-config/{config.id}/",
+            {
+                "eval_template": str(config.eval_template_id),
+                "project": str(project.id),
+                "name": name,
+                "mapping": {"input": "input", "output": "output"},
+            },
+            format="json",
+        )
+
+    def test_partial_update_rejects_moving_the_config(
+        self, auth_client, project, custom_eval_config
+    ):
+        response = auth_client.patch(
+            f"/tracer/custom-eval-config/{custom_eval_config.id}/",
+            {"project": str(make_sibling_project(project).id), "name": "Moved"},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        body = response.json()
+        assert body["attr"] == "project"
+        assert "cannot be moved to another project" in body["message"]
+        assert "ErrorDetail" not in json.dumps(body)
+        custom_eval_config.refresh_from_db()
+        assert custom_eval_config.project_id == project.id
+        assert custom_eval_config.name == "Test Custom Eval"
+
+    def test_update_rejects_moving_the_config(
+        self, auth_client, project, custom_eval_config
+    ):
+        response = self._put(
+            auth_client, custom_eval_config, make_sibling_project(project), "Moved"
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json()["attr"] == "project"
+        assert "cannot be moved to another project" in response.json()["message"]
+        custom_eval_config.refresh_from_db()
+        assert custom_eval_config.project_id == project.id
+        assert custom_eval_config.name == "Test Custom Eval"
+
+    def test_partial_update_within_the_project_still_saves(
+        self, auth_client, project, custom_eval_config
+    ):
+        response = auth_client.patch(
+            f"/tracer/custom-eval-config/{custom_eval_config.id}/",
+            {"project": str(project.id), "name": "Renamed In Place"},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        custom_eval_config.refresh_from_db()
+        assert custom_eval_config.project_id == project.id
+        assert custom_eval_config.name == "Renamed In Place"
+
+    def test_update_within_the_project_still_saves(
+        self, auth_client, project, custom_eval_config
+    ):
+        response = self._put(
+            auth_client, custom_eval_config, project, "Replaced In Place"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        custom_eval_config.refresh_from_db()
+        assert custom_eval_config.project_id == project.id
+        assert custom_eval_config.name == "Replaced In Place"
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestCustomEvalConfigDetailScope:
+    """The detail routes reach only live configs of the caller's live
+    projects, in the caller's organization and workspace; every other config
+    is answered as one that does not exist."""
+
+    @pytest.mark.parametrize("kind", OUT_OF_SCOPE_KINDS)
+    def test_an_out_of_scope_config_is_answered_as_unknown(
+        self, auth_client, project, user, eval_template, kind
+    ):
+        config = CustomEvalConfig.objects.create(
+            name="Out Of Scope Config",
+            project=make_out_of_scope_project(kind, project, user),
+            eval_template=eval_template,
+            config={},
+            mapping={"input": "input", "output": "output"},
+            filters={},
+        )
+        unknown_id = uuid.uuid4()
+        put_body = {
+            "eval_template": str(eval_template.id),
+            "project": str(config.project_id),
+            "name": "Changed",
+            "mapping": {"input": "input"},
+        }
+        routes = {
+            "GET": lambda url: auth_client.get(url),
+            "PUT": lambda url: auth_client.put(url, put_body, format="json"),
+            "PATCH": lambda url: auth_client.patch(
+                url, {"name": "Changed"}, format="json"
+            ),
+            "DELETE": lambda url: auth_client.delete(url),
+        }
+
+        for method, send in routes.items():
+            refused = send(f"/tracer/custom-eval-config/{config.id}/")
+            unknown = send(f"/tracer/custom-eval-config/{unknown_id}/")
+
+            assert refused.status_code in (
+                status.HTTP_400_BAD_REQUEST,
+                status.HTTP_404_NOT_FOUND,
+            ), method
+            assert refusal_without_id(refused, config.id) == refusal_without_id(
+                unknown, unknown_id
+            ), method
+
+        config = CustomEvalConfig.all_objects.get(id=config.id)
+        assert config.name == "Out Of Scope Config"
+        assert config.deleted is False
+
+    def test_the_list_holds_only_in_scope_configs(
+        self, auth_client, project, user, eval_template, custom_eval_config
+    ):
+        hidden = {
+            str(
+                CustomEvalConfig.objects.create(
+                    name=f"Out Of Scope Config ({kind})",
+                    project=make_out_of_scope_project(kind, project, user),
+                    eval_template=eval_template,
+                    config={},
+                    mapping={},
+                    filters={},
+                ).id
+            )
+            for kind in OUT_OF_SCOPE_KINDS
+        }
+
+        response = auth_client.get("/tracer/custom-eval-config/")
+
+        assert response.status_code == status.HTTP_200_OK
+        listed = {row["id"] for row in response.json()["results"]}
+        assert str(custom_eval_config.id) in listed
+        assert not listed & hidden
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestCustomEvalConfigProjectScope:
+    """A config may name only a project the caller can use: any other project
+    id is answered as one that does not exist, on create and on update."""
+
+    @pytest.mark.parametrize("kind", OUT_OF_SCOPE_KINDS)
+    def test_a_project_out_of_scope_is_answered_as_unknown(
+        self, auth_client, project, user, eval_template, custom_eval_config, kind
+    ):
+        other = make_out_of_scope_project(kind, project, user)
+        unknown_id = uuid.uuid4()
+        url = f"/tracer/custom-eval-config/{custom_eval_config.id}/"
+
+        def body(project_id, name):
+            return {
+                "eval_template": str(eval_template.id),
+                "project": str(project_id),
+                "name": name,
+                "mapping": {"input": "input", "output": "output"},
+            }
+
+        routes = {
+            "POST": lambda project_id: auth_client.post(
+                "/tracer/custom-eval-config/",
+                body(project_id, "Created Elsewhere"),
+                format="json",
+            ),
+            "PUT": lambda project_id: auth_client.put(
+                url, body(project_id, "Moved"), format="json"
+            ),
+            "PATCH": lambda project_id: auth_client.patch(
+                url, {"project": str(project_id), "name": "Moved"}, format="json"
+            ),
+        }
+
+        for method, send in routes.items():
+            refused = send(other.id)
+            unknown = send(unknown_id)
+
+            assert refused.status_code == status.HTTP_400_BAD_REQUEST, method
+            assert refused.json()["attr"] == "project", method
+            assert refusal_without_id(refused, other.id) == refusal_without_id(
+                unknown, unknown_id
+            ), method
+
+        assert not CustomEvalConfig.all_objects.filter(project_id=other.id).exists()
+        custom_eval_config.refresh_from_db()
+        assert custom_eval_config.project_id == project.id
+        assert custom_eval_config.name == "Test Custom Eval"
 
 
 @pytest.mark.integration
