@@ -1093,21 +1093,28 @@ class TestEvalTaskUpdateAPI:
         assert response.status_code == status.HTTP_200_OK
         assert linked_eval_ids(eval_task) == {own_config.id}
 
-    def test_detail_patch_rejects_an_eval_config_of_another_project(
-        self, auth_client, project, eval_task, custom_eval_config
+    @pytest.mark.parametrize("method", ["patch", "put"])
+    def test_detail_update_rejects_an_eval_config_of_another_project(
+        self, auth_client, project, eval_task, custom_eval_config, method
     ):
         """Eval configs must belong to the task's project on the detail route
         too, as on create and ``update_eval_task``."""
         other_config = make_custom_eval_config_for_project(
-            make_sibling_project(project, "Sibling Project For Detail Patch"),
+            make_sibling_project(project, "Sibling Project For Detail Update"),
             custom_eval_config,
-            "Sibling Project Config For Detail Patch",
+            "Sibling Project Config For Detail Update",
         )
+        payload = {"evals": [str(other_config.id)]}
+        if method == "put":
+            payload.update(
+                project=str(project.id),
+                name="Kept In Place",
+                sampling_rate=100,
+                run_type="continuous",
+            )
 
-        response = auth_client.patch(
-            f"/tracer/eval-task/{eval_task.id}/",
-            {"evals": [str(other_config.id)]},
-            format="json",
+        response = getattr(auth_client, method)(
+            f"/tracer/eval-task/{eval_task.id}/", payload, format="json"
         )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST

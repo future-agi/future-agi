@@ -359,6 +359,30 @@ class TestCustomEvalConfigDetailScope:
         assert config.name == "Out Of Scope Config"
         assert config.deleted is False
 
+    def test_the_list_holds_only_in_scope_configs(
+        self, auth_client, project, user, eval_template, custom_eval_config
+    ):
+        hidden = {
+            str(
+                CustomEvalConfig.objects.create(
+                    name=f"Out Of Scope Config ({kind})",
+                    project=_project_out_of_scope(kind, project, user),
+                    eval_template=eval_template,
+                    config={},
+                    mapping={},
+                    filters={},
+                ).id
+            )
+            for kind in OUT_OF_SCOPE_KINDS
+        }
+
+        response = auth_client.get("/tracer/custom-eval-config/")
+
+        assert response.status_code == status.HTTP_200_OK
+        listed = {row["id"] for row in response.json()["results"]}
+        assert str(custom_eval_config.id) in listed
+        assert not listed & hidden
+
 
 @pytest.mark.integration
 @pytest.mark.api

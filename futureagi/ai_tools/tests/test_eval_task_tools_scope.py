@@ -1,8 +1,9 @@
-"""The AI tool's Update links only eval configs of the task's own project.
+"""The AI tools' Create and Update link only eval configs of the task's own
+project.
 
 Every read of an eval task's results finds its eval configs through the
 config's project, so a task linked to another project's config spends
-evaluations nobody can see. The tool resolves the task and checks the configs
+evaluations nobody can see. The tools resolve the task and check the configs
 through ``tracer.selectors.eval_tasks.scope``, the scope the eval-task
 endpoints use, and a refusal writes nothing and starts no run.
 """
@@ -230,7 +231,7 @@ class TestUpdateEvalTaskScope:
             result, task, {current.id}, starts, soft_deletes, _task_not_found(task)
         )
 
-    def test_a_caller_without_a_workspace_is_scoped_by_organization(
+    def test_a_caller_without_a_workspace_still_refuses_another_projects_config(
         self, tool_context, template, starts, soft_deletes, update
     ):
         """A context without a workspace still refuses another project's
@@ -251,3 +252,83 @@ class TestUpdateEvalTaskScope:
         _assert_nothing_written(
             result, task, {current.id}, starts, soft_deletes, CONFIG_NOT_ON_PROJECT
         )
+
+
+def _out_of_scope_config(kind, tool_context, template):
+    """A config the caller may not link to a task of its own project."""
+    if kind == "other_project":
+        project = make_project(tool_context, name="Sibling Project")
+    elif kind == "other_workspace":
+        workspace = Workspace.objects.create(
+            name="Other Workspace",
+            organization=tool_context.organization,
+            is_default=False,
+            is_active=True,
+            created_by=tool_context.user,
+        )
+        project = make_project(tool_context, name="Elsewhere", workspace=workspace)
+    else:
+        organization = Organization.objects.create(name="Other Organization")
+        workspace = Workspace.objects.create(
+            name="Other Organization Workspace",
+            organization=organization,
+            is_default=True,
+            is_active=True,
+            created_by=tool_context.user,
+        )
+        project = make_project(
+            tool_context,
+            name="Elsewhere",
+            organization=organization,
+            workspace=workspace,
+        )
+    return make_config(project=project, template=template, name="Foreign")
+
+
+class TestCreateEvalTaskScope:
+    @pytest.fixture
+    def create(self, django_capture_on_commit_callbacks):
+        def run(context, project, configs):
+            with django_capture_on_commit_callbacks(execute=True):
+                return run_tool(
+                    "create_eval_task",
+                    {
+                        "project_id": str(project.id),
+                        "name": "Created Task",
+                        "eval_config_ids": _ids(configs),
+                    },
+                    context,
+                )
+
+        return run
+
+    def test_a_config_of_the_projects_own_is_linked(
+        self, tool_context, template, starts, create
+    ):
+        project = make_project(tool_context)
+        own = make_config(project=project, template=template, name="Own")
+
+        result = create(tool_context, project, [own])
+
+        assert not result.is_error, result.content
+        task = EvalTask.objects.get(project=project, name="Created Task")
+        assert _linked_ids(task) == {own.id}
+        assert starts == [(str(task.id), {})]
+
+    @pytest.mark.parametrize(
+        "kind", ["other_project", "other_workspace", "other_organization"]
+    )
+    def test_an_out_of_scope_config_is_refused(
+        self, tool_context, template, starts, create, kind
+    ):
+        project = make_project(tool_context)
+        own = make_config(project=project, template=template, name="Own")
+        foreign = _out_of_scope_config(kind, tool_context, template)
+
+        result = create(tool_context, project, [own, foreign])
+
+        assert result.is_error
+        assert "not found on project" in result.content
+        assert str(foreign.id) in result.content
+        assert not EvalTask.objects.filter(name="Created Task").exists()
+        assert starts == []
