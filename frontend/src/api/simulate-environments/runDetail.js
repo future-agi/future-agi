@@ -278,6 +278,9 @@ export function useRunDetail(runTestId, executionId, { envName } = {}) {
  * @property {?string} simulationCallType  "voice" | "text" — routes the call
  *                                 drawer to the voice vs chat branch.
  * @property {?string} provider    Call provider (vapi/retell/livekit/…).
+ * @property {?{ key: string, label: string }} backgroundNoise  Where the
+ *                                 scenario puts the caller ("quiet line" when
+ *                                 there's no noise); null when unknown.
  * @property {Array<{ id: string, name: string, score: number, passed: boolean,
  *   threshold?: number }>} evalResults  Per-eval cells for this call.
  */

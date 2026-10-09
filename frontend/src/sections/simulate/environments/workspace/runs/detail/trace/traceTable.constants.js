@@ -63,6 +63,13 @@ export const TRACE_COLUMNS = [
     group: "Scenario details",
   },
   {
+    key: "backgroundNoise",
+    label: "Background",
+    defaultOn: false,
+    width: 160,
+    group: "Scenario details",
+  },
+  {
     key: "csat",
     label: "CSAT",
     defaultOn: true,
@@ -112,8 +119,13 @@ export const TRACE_COLUMNS = [
   },
 ];
 
-// Columns a chat run has no data for: interruptions only happen on a voice call.
-export const VOICE_ONLY_COLUMNS = new Set(["aiInterruptions", "stopLatency"]);
+// Columns a chat run has no data for: interruptions and background noise only
+// happen on a voice call.
+export const VOICE_ONLY_COLUMNS = new Set([
+  "aiInterruptions",
+  "stopLatency",
+  "backgroundNoise",
+]);
 
 // An eval result's status while its grade is still on the way.
 export const PENDING_EVAL_STATUS = "pending";

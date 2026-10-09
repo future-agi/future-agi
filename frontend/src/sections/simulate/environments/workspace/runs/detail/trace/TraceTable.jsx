@@ -17,6 +17,8 @@ import {
 
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
+import BackgroundNoiseLabel from "src/components/background-noise/BackgroundNoiseLabel";
+import { BACKGROUND_NOISE_HINT } from "src/components/background-noise/backgroundNoise";
 import { BUILD_TONES } from "../../../../buildEnvironment/buildTones";
 import {
   defaultTraceColumns,
@@ -62,6 +64,7 @@ const lastRowDividersSx = {
 // The free-text columns stay narrow so a collapsed table (one count per group)
 // doesn't stretch; long text is cut at four lines — the drawer has the rest.
 const TEXT_COL_WIDTH = { long: 260, short: 200 };
+const BACKGROUND_COL_WIDTH = 160;
 // A call still in flight — its eval cells can only be waiting. `analyzing`
 // is a finished conversation whose evals are grading (the chat path).
 const LIVE_CALL_STATUSES = new Set([
@@ -412,6 +415,15 @@ export default function TraceTable({
           </TableCell>
         )}
 
+        {show("backgroundNoise") && (
+          <TableCell
+            sx={textCellSx(BACKGROUND_COL_WIDTH)}
+            onClick={() => onOpen(t)}
+          >
+            <BackgroundNoiseLabel noise={t.backgroundNoise} />
+          </TableCell>
+        )}
+
         {show("csat") && (
           <TableCell sx={numCellSx} onClick={() => onOpen(t)}>
             <MetricValue metric="csat" value={t.csat} loading={callLive} />
@@ -533,6 +545,19 @@ export default function TraceTable({
               {show("conversationBranch") && (
                 <TableCell sx={{ ...headSx, width: TEXT_COL_WIDTH.short }}>
                   Conversation branch
+                </TableCell>
+              )}
+              {show("backgroundNoise") && (
+                <TableCell sx={{ ...headSx, width: BACKGROUND_COL_WIDTH }}>
+                  <CustomTooltip
+                    show
+                    arrow
+                    describeChild
+                    placement="top"
+                    title={BACKGROUND_NOISE_HINT}
+                  >
+                    <Box component="span">Background</Box>
+                  </CustomTooltip>
                 </TableCell>
               )}
               {show("csat") && (

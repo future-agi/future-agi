@@ -1207,6 +1207,22 @@ describe("RunTraceTable", () => {
       renderTable();
       headers().forEach((h) => expect(h).toBeInTheDocument());
     });
+
+    it.each([
+      ["voice", true],
+      ["text", false],
+    ])(
+      "offers Background in the picker on a %s run: %s",
+      async (type, offered) => {
+        const user = userEvent.setup();
+        withRun(type, type);
+        renderTable();
+        await user.click(screen.getByRole("button", { name: /Columns/ }));
+        const item = screen.queryByRole("menuitem", { name: "Background" });
+        if (offered) expect(item).toBeInTheDocument();
+        else expect(item).toBeNull();
+      },
+    );
   });
 
   it("re-buckets the rows when the group-by axis changes to Status", async () => {

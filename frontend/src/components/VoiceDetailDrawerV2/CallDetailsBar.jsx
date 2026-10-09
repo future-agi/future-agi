@@ -11,6 +11,12 @@ import TagChip from "src/components/traceDetail/TagChip";
 import TagInput from "src/components/traceDetail/TagInput";
 import { normalizeTags } from "src/components/traceDetail/tagUtils";
 import { useGetTraceDetail } from "src/api/project/trace-detail";
+import CustomTooltip from "src/components/tooltip";
+import BackgroundNoiseLabel from "src/components/background-noise/BackgroundNoiseLabel";
+import {
+  BACKGROUND_NOISE_HINT,
+  backgroundNoiseFrom,
+} from "src/components/background-noise/backgroundNoise";
 import VoiceActionsDropdown, { VOICE_ACTIONS } from "./VoiceActionsDropdown";
 
 // Action ids that operate strictly on the trace record (and therefore
@@ -22,32 +28,35 @@ const TRACE_GATED_ACTION_IDS = new Set(["tags", "dataset"]);
  * MetricChip exactly (plain text, no Typography wrappers) so the voice
  * drawer looks identical to the trace drawer's metric row.
  */
-const MetricChip = ({ label, value }) => (
-  <Box
-    sx={{
-      display: "inline-flex",
-      alignItems: "center",
-      gap: 0.5,
-      px: 1,
-      py: 0.25,
-      bgcolor: "background.neutral",
-      border: "1px solid",
-      borderColor: "divider",
-      borderRadius: "2px",
-      minWidth: 64,
-      fontSize: 11,
-      color: "text.primary",
-      lineHeight: "16px",
-      whiteSpace: "nowrap",
-    }}
-  >
-    {label} : {value}
-  </Box>
+const MetricChip = ({ label, value, tooltip }) => (
+  <CustomTooltip show={!!tooltip} describeChild arrow title={tooltip}>
+    <Box
+      sx={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 0.5,
+        px: 1,
+        py: 0.25,
+        bgcolor: "background.neutral",
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: "2px",
+        minWidth: 64,
+        fontSize: 11,
+        color: "text.primary",
+        lineHeight: "16px",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {label} : {value}
+    </Box>
+  </CustomTooltip>
 );
 
 MetricChip.propTypes = {
   label: PropTypes.string.isRequired,
   value: PropTypes.node.isRequired,
+  tooltip: PropTypes.string,
 };
 
 const formatDuration = (seconds) => {
@@ -211,6 +220,16 @@ const CallDetailsBar = ({ data, onAction, hiddenActionIds = [] }) => {
     const provider = data?.provider || data?.call_metadata?.provider;
     if (provider) out.push({ label: "Provider", value: String(provider) });
 
+    // Only simulate calls carry it, so other drawers sharing this bar skip it.
+    const noise = backgroundNoiseFrom(data);
+    if (noise) {
+      out.push({
+        label: "Background",
+        value: <BackgroundNoiseLabel noise={noise} />,
+        tooltip: BACKGROUND_NOISE_HINT,
+      });
+    }
+
     const cost = formatCost(data?.cost ?? data?.total_cost);
     if (cost) out.push({ label: "Cost", value: cost });
 
@@ -288,7 +307,12 @@ const CallDetailsBar = ({ data, onAction, hiddenActionIds = [] }) => {
           sx={{ flexWrap: "wrap" }}
         >
           {chips.map((c) => (
-            <MetricChip key={c.label} label={c.label} value={c.value} />
+            <MetricChip
+              key={c.label}
+              label={c.label}
+              value={c.value}
+              tooltip={c.tooltip}
+            />
           ))}
         </Stack>
       )}

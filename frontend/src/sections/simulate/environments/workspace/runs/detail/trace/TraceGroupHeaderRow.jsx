@@ -3,6 +3,7 @@ import { alpha } from "@mui/material/styles";
 import { Box, Stack, Typography, TableCell, TableRow } from "@mui/material";
 
 import Iconify from "src/components/iconify";
+import { QUIET_LINE } from "src/components/background-noise/backgroundNoise";
 import { interpolateColorBasedOnScore } from "src/utils/utils";
 import { BUILD_TONES } from "../../../../buildEnvironment/buildTones";
 import {
@@ -20,6 +21,7 @@ const DESC_KEYS = [
   "subGoals",
   "idealOutcome",
   "conversationBranch",
+  "backgroundNoise",
 ];
 const rowHover = (t) => {
   const tint = alpha(
@@ -97,6 +99,20 @@ export default function TraceGroupHeaderRow({
       return `${group.count} outcome${group.count === 1 ? "" : "s"}`;
     if (key === "conversationBranch")
       return `${group.count} branch${group.count === 1 ? "" : "es"}`;
+    if (key === "backgroundNoise") {
+      // Like sub-goals, counted only once the whole group is on this page.
+      if (group.rows.length < group.count) return "-";
+      const known = group.rows.filter((t) => t.backgroundNoise);
+      const quiet = known.filter(
+        (t) => t.backgroundNoise.key === QUIET_LINE,
+      ).length;
+      const noisy = known.length - quiet;
+      const parts = [
+        noisy && `${noisy} noisy`,
+        quiet && `${quiet} quiet`,
+      ].filter(Boolean);
+      return parts.length ? parts.join(", ") : "-";
+    }
     return "-";
   };
 

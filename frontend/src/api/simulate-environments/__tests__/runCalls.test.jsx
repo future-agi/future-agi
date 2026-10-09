@@ -288,6 +288,30 @@ describe("mapCallRow", () => {
     expect(t.sourceScenario).toBe("refund-double-charge");
     expect(t.trialIndex).toBe(2);
   });
+
+  it("carries the call's background noise key and label", () => {
+    const t = mapCallRow(
+      {
+        id: "c-noise",
+        status: "completed",
+        background_noise: "vehicle",
+        background_noise_label: "In a car",
+        eval_metrics: {},
+      },
+      evalCols,
+    );
+
+    expect(t.backgroundNoise).toEqual({ key: "vehicle", label: "In a car" });
+  });
+
+  it("has no background noise when the API sends none", () => {
+    const t = mapCallRow(
+      { id: "c-none", status: "completed", eval_metrics: {} },
+      evalCols,
+    );
+
+    expect(t.backgroundNoise).toBeNull();
+  });
 });
 
 describe("buildTraceColumns", () => {

@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, within } from "src/utils/test-utils";
+import {
+  render,
+  screen,
+  fireEvent,
+  within,
+  userEvent,
+} from "src/utils/test-utils";
 
 import TraceTable from "../TraceTable";
 
@@ -657,5 +663,85 @@ describe("TraceTable — persona cell", () => {
     );
     expect(screen.getByText("Indian male")).toBeInTheDocument();
     expect(screen.getByText("Anxious")).toBeInTheDocument();
+  });
+});
+
+describe("TraceTable — background noise", () => {
+  const columns = new Set(["callDetails", "backgroundNoise"]);
+  const noisy = (id, key, label) => ({
+    ...row(id),
+    backgroundNoise: { key, label },
+  });
+  const calls = [
+    noisy("n1", "vehicle", "In a car"),
+    noisy("n2", "street", "Street"),
+    noisy("n3", "quiet line", "Quiet line"),
+    { ...row("n4"), backgroundNoise: null },
+  ];
+  const headings = () =>
+    [...document.querySelectorAll("thead tr:last-of-type th")].map((th) =>
+      th.textContent.trim(),
+    );
+  const cellUnder = (rowEl, heading) =>
+    rowEl.children[headings().indexOf(heading)];
+
+  it("shows each call's place under a Background column", () => {
+    render(table({ rows: calls, columns }));
+
+    expect(
+      screen.getByRole("columnheader", { name: "Background" }),
+    ).toBeInTheDocument();
+    const cellOf = (id) =>
+      cellUnder(screen.getByText(`Scenario ${id}`).closest("tr"), "Background");
+    expect(cellOf("n1")).toHaveTextContent("In a car");
+    expect(cellOf("n3")).toHaveTextContent("Quiet line");
+    expect(cellOf("n4")).toHaveTextContent("-");
+  });
+
+  it("leaves the column out until it's picked", () => {
+    render(table({ rows: calls }));
+
+    expect(
+      screen.queryByRole("columnheader", { name: "Background" }),
+    ).toBeNull();
+  });
+
+  it("explains the column on hover", async () => {
+    const user = userEvent.setup();
+    render(table({ rows: calls, columns }));
+
+    await user.hover(
+      screen.getByRole("columnheader", { name: "Background" }).firstChild,
+    );
+
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "Where the scenario puts the caller",
+    );
+  });
+
+  const renderGroup = (count) =>
+    render(
+      table({
+        groups: [{ label: "G", count, rows: calls, agg: {} }],
+        columns,
+      }),
+    );
+
+  it("counts noisy and quiet calls on the group row once every call is on the page", () => {
+    renderGroup(4);
+    const groupRow = screen.getByText("G").closest("tr");
+
+    expect(groupRow.children).toHaveLength(headings().length);
+    expect(cellUnder(groupRow, "Background")).toHaveTextContent(
+      "2 noisy, 1 quiet",
+    );
+  });
+
+  it("hides the count while some of the group's calls are on another page", () => {
+    renderGroup(6);
+
+    expect(
+      cellUnder(screen.getByText("G").closest("tr"), "Background"),
+    ).toHaveTextContent("-");
   });
 });

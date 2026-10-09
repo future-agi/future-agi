@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { normalizeEvalResult } from "src/sections/develop-detail/DataTab/common";
+import { backgroundNoiseFrom } from "src/components/background-noise/backgroundNoise";
 import { TRACE_COLUMNS } from "src/sections/simulate/environments/workspace/runs/detail/trace/traceTable.constants";
 import { ACTIVE_EXECUTION_STATUSES } from "src/sections/simulate/environments/workspace/runs/runs.constants";
 
@@ -135,6 +136,7 @@ export function mapCallRow(row, evalColumns = []) {
     // Routing hints for the call drawer.
     simulationCallType: row?.modality ?? row?.simulation_call_type ?? null,
     provider: row?.provider ?? null,
+    backgroundNoise: backgroundNoiseFrom(row),
     evalResults,
   };
 }

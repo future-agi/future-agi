@@ -66,4 +66,69 @@ describe("CallDetailsBar", () => {
       within(menu).getByRole("menuitem", { name: /download raw data/i }),
     ).toBeInTheDocument();
   });
+
+  describe("background noise chip", () => {
+    const chip = () => screen.queryByText(/^Background :/);
+
+    it("shows where the scenario puts the caller", () => {
+      renderWithClient(
+        <CallDetailsBar
+          data={{
+            call_type: "voice",
+            background_noise: "vehicle",
+            background_noise_label: "In a car",
+          }}
+        />,
+      );
+
+      expect(chip()).toHaveTextContent("Background : In a car");
+      expect(within(chip()).getByTestId("iconify")).toHaveAttribute(
+        "data-icon",
+        "solar:soundwave-linear",
+      );
+    });
+
+    it("mutes a quiet line", () => {
+      renderWithClient(
+        <CallDetailsBar
+          data={{
+            call_type: "voice",
+            background_noise: "quiet line",
+            background_noise_label: "Quiet line",
+          }}
+        />,
+      );
+
+      expect(chip()).toHaveTextContent("Background : Quiet line");
+      expect(within(chip()).getByTestId("iconify")).toHaveAttribute(
+        "data-icon",
+        "solar:volume-cross-linear",
+      );
+    });
+
+    it("leaves the chip out when the call has no background noise", () => {
+      renderWithClient(
+        <CallDetailsBar data={{ call_type: "voice", status: "completed" }} />,
+      );
+
+      expect(chip()).toBeNull();
+    });
+
+    it("explains the chip on hover", async () => {
+      renderWithClient(
+        <CallDetailsBar
+          data={{
+            background_noise: "street",
+            background_noise_label: "Street",
+          }}
+        />,
+      );
+
+      await userEvent.hover(chip());
+
+      expect(await screen.findByRole("tooltip")).toHaveTextContent(
+        "Where the scenario puts the caller",
+      );
+    });
+  });
 });
