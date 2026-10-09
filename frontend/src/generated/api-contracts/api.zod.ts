@@ -56531,6 +56531,29 @@ export const TracerFeedIssuesOverviewListResponse = zod.object({
 });
 
 /**
+ * Resolve an old issue ID to its active redirect target.
+ */
+export const TracerFeedIssuesRedirectListParams = zod.object({
+  cluster_id: zod.string(),
+});
+
+export const TracerFeedIssuesRedirectListQueryParams = zod.object({
+  project_id: zod.string().uuid().optional(),
+});
+
+export const tracerFeedIssuesRedirectListResponseStatusDefault = true;
+
+export const TracerFeedIssuesRedirectListResponse = zod.object({
+  status: zod
+    .boolean()
+    .default(tracerFeedIssuesRedirectListResponseStatusDefault),
+  result: zod.object({
+    requested_cluster_id: zod.string().min(1),
+    resolved_cluster_id: zod.string().min(1),
+  }),
+});
+
+/**
  * Read cached deep-analysis results for a single trace within the
 cluster. The frontend hits this on mount (to show existing results)
 and polls it after a POST to /deep-analysis/ until ``status`` flips
