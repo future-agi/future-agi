@@ -61,6 +61,7 @@ test(
         'each request stored in PG agentcc_request_log under the key\'s org with the caller metadata the gateway parsed',
         'the list endpoint returns only the rows of the filtered application',
         'two applications in one filter return both, a service filter and a team tag filter narrow the same way',
+        'filtering by the delivering key\'s gateway_key_id returns all rows stamped with that key, not a 400',
         'metadata-values offers exactly the two applications the org sent',
         'usage analytics grouped by application counts each application on its own',
         'the filtered UI row set equals the API result for the same filter',
@@ -134,6 +135,10 @@ test(
       expect((await listFor({ application: search })).count).toBe(1);
       expect((await listFor({ service: 'answer' })).count).toBe(1);
       expect((await listFor({ tags: `team:${team}` })).count).toBe(3);
+
+      // gatewayKeyId is the gateway's own key id (e.g. "gw-key-7f3a"), not the
+      // API key's UUID primary key; api_key_id must accept it.
+      expect((await listFor({ api_key_id: gatewayKeyId })).count).toBe(3);
 
       const options = await actor.api.get<{
         result: { application: string[]; service: string[] };
