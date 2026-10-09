@@ -15,6 +15,7 @@ import {
   parseTimeoutSeconds,
   withApiPathPrefix,
 } from "./utils";
+import { RESPONSES_ONLY_TAG } from "./modelCompatibility";
 import AddProviderDialog from "./AddProviderDialog";
 
 const { updateMutate, fetchMutate, fetchState, refreshState, snackbars } =
@@ -724,5 +725,33 @@ describe("AddProviderDialog model discovery", () => {
       apiFormat: "openai",
       apiPathPrefix: "/openai/v1",
     });
+  });
+
+  it("tags a catalogue model but never a hand-typed one the catalogue didn't list", async () => {
+    // Perplexity's catalogue never lists `sonar`/`sonar-pro` — those are
+    // typed by hand for chat completions — but it does list aggregator IDs
+    // like `openai/gpt-4o`, which must still get tagged.
+    fetchMutate.mockImplementation(
+      deferred((_vars, opts) => opts?.onSuccess?.({ models: ["openai/gpt-4o"] })),
+    );
+    renderEditDialogFor("perplexity", {
+      base_url: "https://api.perplexity.ai",
+      api_format: "openai",
+      api_path_prefix: "/v1",
+      models: ["sonar", "openai/gpt-4o"],
+    });
+
+    await waitFor(() => expect(fetchMutate).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.getAllByText(RESPONSES_ONLY_TAG).length).toBe(1),
+    );
+
+    const sonarChip = screen.getByText("sonar").closest("li, [class*='MuiChip']");
+    expect(sonarChip?.textContent).not.toContain(RESPONSES_ONLY_TAG);
+
+    const catalogueChip = screen
+      .getByText("openai/gpt-4o")
+      .closest("li, [class*='MuiChip']");
+    expect(catalogueChip?.textContent).toContain(RESPONSES_ONLY_TAG);
   });
 });

@@ -1,4 +1,10 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, {
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+  useRef,
+} from "react";
 import PropTypes from "prop-types";
 import {
   Dialog,
@@ -32,6 +38,13 @@ import {
   parseTimeoutSeconds,
   withApiPathPrefix,
 } from "./utils";
+import {
+  MODEL_LIST_SOURCE_HELP,
+  RESPONSES_ONLY_HELP,
+  RESPONSES_ONLY_TAG,
+  defaultSelectableModels,
+  responsesOnlyModelSet,
+} from "./modelCompatibility";
 
 const PROVIDER_PRESETS = {
   openai: {
@@ -186,6 +199,25 @@ const FIELD_LABELS = {
   apiKey: "API Key",
   timeout: "Timeout",
 };
+
+// Names the endpoint a model is served on. It rides with the ID so the warning
+// follows the model from the dropdown into the selected chip.
+const ResponsesOnlyTag = () => (
+  <Typography
+    component="span"
+    variant="caption"
+    sx={{
+      ml: 0.75,
+      px: 0.5,
+      borderRadius: 0.5,
+      bgcolor: "warning.lighter",
+      color: "warning.darker",
+      whiteSpace: "nowrap",
+    }}
+  >
+    {RESPONSES_ONLY_TAG}
+  </Typography>
+);
 
 const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
   const isEditMode = Boolean(provider);
@@ -511,11 +543,36 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
     setBaseUrl(`https://bedrock-runtime.${region}.amazonaws.com`);
   };
 
+  // Which listed models this provider serves on /v1/responses rather than chat
+  // completions. Built from the live catalogue only: `models` can hold an ID
+  // the user typed by hand (e.g. Perplexity's `sonar`, which chat completions
+  // serves and the catalogue never lists), and that must never be tagged.
+  const responsesOnly = useMemo(
+    () =>
+      responsesOnlyModelSet(modelOptions, {
+        providerName: name,
+        baseUrl,
+      }),
+    [modelOptions, name, baseUrl],
+  );
+
+  // What "Select All" covers. Tagged models stay out, which is what keeps them
+  // unselected by default; they remain individually selectable.
+  const bulkSelectable = useMemo(
+    () => defaultSelectableModels(modelOptions, { providerName: name, baseUrl }),
+    [modelOptions, name, baseUrl],
+  );
+
+  const allSelected =
+    bulkSelectable.length > 0 && bulkSelectable.every((m) => models.includes(m));
+
   const handleSelectAll = () => {
-    if (models.length === modelOptions.length) {
+    if (allSelected) {
       setModels([]);
     } else {
-      setModels([...modelOptions]);
+      // Union, not replacement: a tagged model the user picked on purpose, or
+      // one restored from the saved config, must survive this.
+      setModels((prev) => Array.from(new Set([...prev, ...bulkSelectable])));
     }
   };
 
@@ -684,9 +741,6 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
     modelOptions.length === 0 &&
     !apiKey.trim() &&
     !manualModels;
-
-  const allSelected =
-    modelOptions.length > 0 && models.length === modelOptions.length;
 
   const preset = PROVIDER_PRESETS[name] || PROVIDER_PRESETS.custom;
 
@@ -1012,13 +1066,19 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
               renderOption={(props, option, { selected }) => (
                 <li {...props} key={option}>
                   <Checkbox size="small" checked={selected} sx={{ mr: 1 }} />
-                  {option}
+                  <span>{option}</span>
+                  {responsesOnly.has(option) && <ResponsesOnlyTag />}
                 </li>
               )}
               renderTags={(value, getTagProps) =>
                 value.map((option, index) => (
                   <Chip
-                    label={option}
+                    label={
+                      <>
+                        <span>{option}</span>
+                        {responsesOnly.has(option) && <ResponsesOnlyTag />}
+                      </>
+                    }
                     size="small"
                     {...getTagProps({ index })}
                     key={option}
@@ -1061,6 +1121,19 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
               >
                 {fetchError}
               </Alert>
+            )}
+            {!isAwsAuth && !isVertexAuth && (
+              // Where the options come from — and, when any are tagged, which
+              // endpoint they are served on. AWS and Vertex are left out:
+              // neither is listed live.
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{ mt: 0.5, display: "block" }}
+              >
+                {MODEL_LIST_SOURCE_HELP}
+                {responsesOnly.size > 0 ? ` ${RESPONSES_ONLY_HELP}` : ""}
+              </Typography>
             )}
             {models.length === 0 && (
               // Save is held until a model is picked, so say so here.
