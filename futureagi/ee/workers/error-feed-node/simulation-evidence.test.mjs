@@ -131,3 +131,43 @@ test('simulation evidence carries the goals a call was authored to test', async 
     await rm(dir, {recursive: true, force: true});
   }
 });
+
+test('simulation evidence carries open-silence, turn latency and interruption metrics (TH-8096)', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'omega-simulation-evidence-test-'));
+  try {
+    const timed = call('timed');
+    timed.transcript = [
+      {...timed.transcript[0], start_time: 10, end_time: 12, gap_ms: 10_000},
+      {...timed.transcript[1], start_time: 13.5, end_time: 15, gap_ms: -200},
+    ];
+    timed.call_metrics = {avg_agent_latency_ms: 820, interruption_count: 1, interruption_rate: 0.5};
+    const legacy = call('legacy'); // predates gap_ms/call_metrics entirely
+    const control = async () => ({calls: [timed, legacy], next_cursor: 2, total_calls: 2});
+    const store = await downloadSimulationEvidence(claim(), join(dir, 'calls.jsonl'), {control});
+    const reader = createSimulationEvidenceReader(store, {maxResultBytes: 4096, maxTotalBytes: 16384});
+
+    const readTimed = JSON.parse((await reader.read(timed.call_execution_id, 0, 4096)).text);
+    assert.deepEqual(readTimed.transcript.map(entry => entry.gap_ms), [10_000, -200]);
+    assert.deepEqual(readTimed.call_metrics, timed.call_metrics);
+
+    const readLegacy = JSON.parse((await reader.read(legacy.call_execution_id, 0, 4096)).text);
+    assert.equal(Object.hasOwn(readLegacy.transcript[0], 'gap_ms'), false);
+    assert.equal(Object.hasOwn(readLegacy, 'call_metrics'), false);
+
+    for (const bad of [
+      {...call(), call_metrics: {avg_agent_latency_ms: 'slow', interruption_count: 1, interruption_rate: 0.5}},
+      {...call(), call_metrics: {avg_agent_latency_ms: 1}},
+    ]) {
+      await assert.rejects(downloadSimulationEvidence(claim(), join(dir, `bad-${randomUUID()}.jsonl`),
+        {control: async () => ({calls: [bad], next_cursor: 1, total_calls: 1})}),
+      /Invalid simulation call metric|shape/);
+    }
+    const badGap = call();
+    badGap.transcript = [{...badGap.transcript[0], gap_ms: 'soon'}];
+    await assert.rejects(downloadSimulationEvidence(claim(), join(dir, `bad-gap-${randomUUID()}.jsonl`),
+      {control: async () => ({calls: [badGap], next_cursor: 1, total_calls: 1})}),
+    /Invalid simulation transcript gap/);
+  } finally {
+    await rm(dir, {recursive: true, force: true});
+  }
+});
