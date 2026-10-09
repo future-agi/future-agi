@@ -35,6 +35,13 @@ const harness = vi.hoisted(() => ({
   },
   selectedTab: "trace",
   testDetailState: { setTestDetailDrawerOpen: vi.fn() },
+  addTagsProps: [],
+  snackbar: vi.fn(),
+}));
+
+vi.mock("notistack", async (importOriginal) => ({
+  ...(await importOriginal()),
+  enqueueSnackbar: (...args) => harness.snackbar(...args),
 }));
 
 vi.mock("src/auth/hooks", () => ({
@@ -249,7 +256,10 @@ vi.mock("src/components/tooltip", () => ({
   default: ({ children }) => children,
 }));
 vi.mock("src/components/traceDetail/AddTagsPopover", () => ({
-  default: () => null,
+  default: (props) => {
+    harness.addTagsProps.push(props);
+    return null;
+  },
 }));
 vi.mock("src/components/traceDetailDrawer/addToDataset/add-dataset", () => ({
   default: () => null,
@@ -348,17 +358,33 @@ describe("LLMTracingView graph population", () => {
 // A voice call's trace id can exist in several projects (a provider account
 // shared by several voice projects). Bulk "Add tags" reads each selected
 // call's current tags; that read must come from this project's copy.
+// GET /tracer/trace/{id}/ returns TraceDetailResult: the tags live under
+// `result.trace.tags`.
+const traceDetailResponse = (tags) => ({
+  data: {
+    status: true,
+    result: {
+      trace: { id: "trace", tags },
+      observation_spans: [],
+      summary: {},
+      graph: {},
+    },
+  },
+});
+
 describe("LLMTracingView voice bulk tags", () => {
   beforeEach(() => {
     harness.callLogsGridProps = [];
     harness.toolbarProps = [];
+    harness.addTagsProps = [];
+    harness.snackbar.mockReset();
     harness.selectedTab = "trace";
     harness.projectDetail = { source: "simulator" };
     axios.get.mockReset();
-    axios.get.mockResolvedValue({ data: { result: { tags: ["vip"] } } });
+    axios.get.mockResolvedValue(traceDetailResponse(["vip"]));
   });
 
-  it("reads each selected call's current tags from this project's copy", async () => {
+  const openBulkTags = async (callIds) => {
     renderView();
     await waitFor(() =>
       expect(harness.callLogsGridProps.some((props) => props.enabled)).toBe(
@@ -369,19 +395,64 @@ describe("LLMTracingView voice bulk tags", () => {
     await act(async () => {
       harness.callLogsGridProps
         .findLast((props) => props.enabled)
-        .onSelectionChanged(["trace-a", "trace-b"]);
+        .onSelectionChanged(callIds);
     });
     await act(async () => {
       harness.toolbarProps
         .at(-1)
         .onBulkAction("tags", { currentTarget: document.body });
     });
+  };
+
+  it("reads each selected call's current tags from this project's copy", async () => {
+    await openBulkTags(["trace-a", "trace-b"]);
 
     await waitFor(() => expect(axios.get).toHaveBeenCalledTimes(2));
     for (const [url, config] of axios.get.mock.calls) {
       expect(url).toBe("/traces/detail/");
       expect(config?.params).toEqual({ project_id: "project-1" });
     }
+  });
+
+  // TH-8026: the merge base came from `result.tags`, which the detail
+  // response does not have, so every call merged into [] and a bulk add
+  // would replace the call's existing tags.
+  it("merges into each call's stored tags", async () => {
+    axios.get
+      .mockResolvedValueOnce(traceDetailResponse(["vip"]))
+      .mockResolvedValueOnce(
+        traceDetailResponse([{ name: "prod", color: "#3B82F6" }]),
+      );
+
+    await openBulkTags(["trace-a", "trace-b"]);
+
+    await waitFor(() => expect(harness.addTagsProps.at(-1)?.open).toBe(true));
+    expect(harness.addTagsProps.at(-1).bulkItems).toEqual([
+      { id: "trace-a", type: "trace", currentTags: ["vip"] },
+      {
+        id: "trace-b",
+        type: "trace",
+        currentTags: [{ name: "prod", color: "#3B82F6" }],
+      },
+    ]);
+  });
+
+  // A failed read must not become an empty merge base: the bulk write would
+  // then replace that call's tags with only the new ones.
+  it("does not open the tag popover when a call's tags cannot be read", async () => {
+    axios.get
+      .mockResolvedValueOnce(traceDetailResponse(["vip"]))
+      .mockRejectedValueOnce(new Error("network"));
+
+    await openBulkTags(["trace-a", "trace-b"]);
+
+    await waitFor(() =>
+      expect(harness.snackbar).toHaveBeenCalledWith(
+        "Couldn't load the current tags of 1 of 2 selected calls. No tags were changed.",
+        { variant: "error" },
+      ),
+    );
+    expect(harness.addTagsProps.some((props) => props.open)).toBe(false);
   });
 });
 
