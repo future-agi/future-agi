@@ -12,6 +12,8 @@ from ai_tools.formatting import (
 )
 from ai_tools.registry import register_tool
 from model_hub.models.choices import ModelChoices
+from model_hub.models.evaluation import StatusChoices
+from sdk.utils.async_evaluations import mark_evaluation_failed
 
 
 class RunEvaluationInput(PydanticBaseModel):
@@ -99,7 +101,7 @@ class RunEvaluationTool(BaseTool):
             workspace=context.workspace,
             eval_template=template,
             model_name=model,
-            status="pending",
+            status=StatusChoices.PENDING,
             input_data={"dataset_id": str(dataset.id)},
             eval_config=template.config or {},
         )
@@ -113,12 +115,17 @@ class RunEvaluationTool(BaseTool):
             from tfc.temporal.evaluations.client import start_evaluation_workflow_async
 
             async_to_sync(start_evaluation_workflow_async)(str(evaluation.id))
-            evaluation.status = "processing"
-            evaluation.save(update_fields=["status"])
             workflow_started = True
         except Exception as e:
-            # Workflow failed to start, mark as pending (will be picked up by polling)
-            pass
+            # Nothing sweeps unstarted evaluations, so leaving this pending strands it.
+            mark_evaluation_failed(
+                str(evaluation.id), f"Evaluation workflow could not be started: {e}"
+            )
+            evaluation.refresh_from_db()
+
+        if workflow_started:
+            evaluation.status = StatusChoices.PROCESSING
+            evaluation.save(update_fields=["status"])
 
         info = key_value_block(
             [
@@ -129,11 +136,7 @@ class RunEvaluationTool(BaseTool):
                 ("Status", format_status(evaluation.status)),
                 (
                     "Workflow",
-                    (
-                        "Started"
-                        if workflow_started
-                        else "Queued (will be picked up shortly)"
-                    ),
+                    ("Started" if workflow_started else "Failed to start"),
                 ),
                 (
                     "Link",
