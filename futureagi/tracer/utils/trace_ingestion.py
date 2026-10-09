@@ -9,7 +9,14 @@ from datetime import datetime
 from typing import Any
 
 import structlog
-from django.db import IntegrityError, connection, models, transaction
+from django.db import (
+    IntegrityError,
+    InterfaceError,
+    OperationalError,
+    connection,
+    models,
+    transaction,
+)
 from django.utils import timezone
 
 from model_hub.models.prompt_label import PromptLabel
@@ -661,13 +668,127 @@ def _prepare_observation_spans_and_trace_updates(
     return spans_to_create, traces_to_update
 
 
+def _pg_error_code(exc: BaseException) -> str | None:
+    """Return the Postgres SQLSTATE for an exception, if any.
+
+    SQLSTATE (e.g. ``22001`` string-data-right-truncation, ``22003`` numeric
+    value out of range) identifies *why* a row was rejected without echoing the
+    offending value, so it is safe to log. We avoid ``str(exc)`` because some
+    psycopg ``DataError`` messages embed a fragment of the bad datum.
+    """
+    code = getattr(exc, "sqlstate", None)
+    if code is None:
+        code = getattr(getattr(exc, "__cause__", None), "sqlstate", None)
+    return code
+
+
+def _quarantine_record(span: ObservationSpan, exc: BaseException) -> dict[str, str]:
+    """Payload-free description of a dropped row, safe to log."""
+    return {
+        "span_id": str(span.id),
+        "error": type(exc).__name__,
+        "sqlstate": _pg_error_code(exc) or "",
+    }
+
+
+def _insert_spans_with_row_isolation(
+    spans_to_create: list[ObservationSpan],
+    original_exc: BaseException,
+) -> int:
+    """Fault-isolating fallback for a batch COPY that failed on a non-PK error.
+
+    ``_serialize_json_field_value`` already scrubs the two known JSON triggers
+    (non-finite floats and ``\\x00`` NUL bytes), but COPY is all-or-nothing and
+    the fast path only has a per-row fallback for primary-key collisions. Any
+    *other* unwritable row — an over-length ``CharField`` value, a numeric
+    overflow, a future field/constraint — therefore still rolls back and drops
+    *every* span in the batch. Scrubbing is a denylist of known-bad shapes; this
+    is the structural safety net beneath it.
+
+    We recover the healthy spans by **bisecting** the batch: a chunk that COPYs
+    cleanly is kept in a single statement, a chunk that fails is split in half
+    and retried, down to the individual offending row(s), which are quarantined.
+    Cost is O(k·log n) COPYs for k bad rows in a batch of n — not O(n) — and
+    every healthy span is still bulk-inserted.
+
+    Invariants that keep this correct and honest:
+
+    * Every COPY attempt runs in its own ``transaction.atomic()`` savepoint. In
+      Postgres the first failing statement aborts the surrounding transaction
+      until it is rolled back to a savepoint, so without one a single bad row
+      would take the rest of the batch (and the caller's outer transaction) down.
+    * A connection-level failure (``OperationalError``/``InterfaceError``) is
+      systemic, not a bad row, so it is re-raised immediately — we neither
+      bisect (pointless hammering of a down database) nor quarantine.
+    * If nothing else could be written either, the original error is re-raised:
+      an all-bad batch must stay loud rather than vanish silently.
+
+    Dropped rows are logged with their span id, exception class and Postgres
+    SQLSTATE only — never the payload — so the loss is observable without
+    leaking span contents.
+
+    Returns the number of spans successfully persisted.
+    """
+    from psycopg.errors import UniqueViolation as PgUniqueViolation
+
+    quarantined: list[dict[str, str]] = []
+
+    def _copy_chunk(chunk: list[ObservationSpan]) -> int:
+        if not chunk:
+            return 0
+        try:
+            with transaction.atomic():
+                _bulk_create_with_copy(ObservationSpan, chunk)
+            return len(chunk)
+        except (OperationalError, InterfaceError):
+            # Connection-level failure: systemic, not a bad row. Stay loud.
+            raise
+        except Exception as e:  # noqa: BLE001 - bisect to isolate the bad row(s)
+            if len(chunk) > 1:
+                mid = len(chunk) // 2
+                return _copy_chunk(chunk[:mid]) + _copy_chunk(chunk[mid:])
+            # Single row: a duplicate PK is already stored; anything else is
+            # genuinely unwritable and gets quarantined.
+            span = chunk[0]
+            if isinstance(
+                e, (IntegrityError, PgUniqueViolation)
+            ) and _is_pk_unique_violation(e, "tracer_observation_span"):
+                return 1
+            quarantined.append(_quarantine_record(span, e))
+            return 0
+
+    inserted = _copy_chunk(spans_to_create)
+
+    if quarantined and inserted == 0:
+        # Nothing got through and it was not a connection failure: an all-bad
+        # batch. Stay loud rather than silently dropping everything.
+        raise original_exc
+
+    if quarantined:
+        logger.error(
+            "observation_span_quarantined",
+            quarantined_count=len(quarantined),
+            inserted_count=inserted,
+            batch_size=len(spans_to_create),
+            samples=quarantined[:10],
+        )
+
+    return inserted
+
+
 def _bulk_insert_observation_spans(spans_to_create: list[ObservationSpan]):
     """Sets timestamps and bulk inserts observation spans.
 
-    Fast path: PostgreSQL COPY (all-or-nothing). On unique-key collision (e.g.
-    a client double-submitting an OTLP batch), the savepoint rolls back and we
-    re-insert via bulk_create(ignore_conflicts=True), which emits
+    Fast path: PostgreSQL COPY (all-or-nothing). On a primary-key collision
+    (e.g. a client double-submitting an OTLP batch), the savepoint rolls back
+    and we re-insert via bulk_create(ignore_conflicts=True), which emits
     INSERT ... ON CONFLICT DO NOTHING and skips only the duplicate rows.
+
+    Any other COPY failure means at least one span is unwritable for a reason
+    serialization scrubbing does not cover (an over-length value, a numeric
+    overflow, …). Because COPY is all-or-nothing, letting that propagate would
+    silently drop the whole batch, so we fall back to a bisecting insert that
+    isolates the offending rows (see ``_insert_spans_with_row_isolation``).
     """
     if not spans_to_create:
         return
@@ -685,18 +806,30 @@ def _bulk_insert_observation_spans(spans_to_create: list[ObservationSpan]):
     try:
         with transaction.atomic():
             _bulk_create_with_copy(ObservationSpan, spans_to_create)
-    except (IntegrityError, PgUniqueViolation) as e:
-        if not _is_pk_unique_violation(e, "tracer_observation_span"):
-            raise
-        logger.warning(
-            "observation_span_copy_pk_violation_falling_back",
-            batch_size=len(spans_to_create),
-        )
-        ObservationSpan.objects.bulk_create(
-            spans_to_create,
-            ignore_conflicts=True,
-            batch_size=500,
-        )
+    except Exception as e:
+        is_pk_violation = isinstance(
+            e, (IntegrityError, PgUniqueViolation)
+        ) and _is_pk_unique_violation(e, "tracer_observation_span")
+        if is_pk_violation:
+            logger.warning(
+                "observation_span_copy_pk_violation_falling_back",
+                batch_size=len(spans_to_create),
+            )
+            try:
+                with transaction.atomic():
+                    ObservationSpan.objects.bulk_create(
+                        spans_to_create,
+                        ignore_conflicts=True,
+                        batch_size=500,
+                    )
+                return
+            except Exception as e2:  # noqa: BLE001 - dups plus an unwritable row
+                # The batch had duplicates *and* at least one unwritable row,
+                # which ON CONFLICT DO NOTHING cannot rescue. Isolate instead.
+                _insert_spans_with_row_isolation(spans_to_create, e2)
+                return
+        # Non-PK failure: isolate the offending row(s), don't drop the batch.
+        _insert_spans_with_row_isolation(spans_to_create, e)
 
 
 def _bulk_update_traces(
