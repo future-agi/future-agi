@@ -22,23 +22,15 @@ import Iconify from "src/components/iconify";
 import useRequestLogs from "./hooks/useRequestLogs";
 import { formatCost } from "../utils/formatters";
 import { REQUEST_TAG } from "../constants/requestTags";
+import { BUILTIN_COLUMNS } from "./columns/columnModel";
+import MetadataCell from "./columns/MetadataCell";
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-const COLUMNS = [
-  { id: "startedAt", label: "Timestamp", width: 180, sortable: true },
-  { id: "model", label: "Model", width: 140, sortable: false },
-  { id: "provider", label: "Provider", width: 120, sortable: false },
-  { id: "application", label: "Application", width: 130, sortable: false },
-  { id: "service", label: "Service", width: 130, sortable: false },
-  { id: "statusCode", label: "Status", width: 80, sortable: true },
-  { id: "latencyMs", label: "Latency", width: 100, sortable: true },
-  { id: "cost", label: "Cost", width: 100, sortable: true },
-  { id: "totalTokens", label: "Tokens", width: 120, sortable: true },
-  { id: "sessionId", label: "Session ID", width: 130, sortable: false },
-];
+// Column definitions live in ./columns/columnModel. With no `columns` prop the
+// table renders the ten built-ins in their original order (TH-7041, R43).
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 
@@ -82,8 +74,142 @@ function formatTimestamp(iso) {
 // Memoised row component
 // ---------------------------------------------------------------------------
 
-const RequestRow = React.memo(function RequestRow({ log, onClick }) {
-  const startedAt = log.started_at;
+/** Built-in cell renderers keyed by the built-in column key; bodies unchanged. */
+function renderBuiltinCell(colKey, log, ctx) {
+  switch (colKey) {
+    case "startedAt":
+      return (
+        <TableCell sx={{ whiteSpace: "nowrap" }}>
+          <Typography variant="body2">
+            {formatTimestamp(log.started_at)}
+          </Typography>
+        </TableCell>
+      );
+    case "model":
+      return (
+        <TableCell>
+          <Typography variant="body2" noWrap>
+            {log.model || "-"}
+          </Typography>
+        </TableCell>
+      );
+    case "provider":
+      return (
+        <TableCell>
+          <Typography variant="body2" noWrap>
+            {log.provider || "-"}
+          </Typography>
+        </TableCell>
+      );
+    case "application":
+      return (
+        <TableCell>
+          <Typography variant="body2" noWrap>
+            {log.metadata?.[REQUEST_TAG.APPLICATION] || "-"}
+          </Typography>
+        </TableCell>
+      );
+    case "service":
+      return (
+        <TableCell>
+          <Typography variant="body2" noWrap>
+            {log.metadata?.[REQUEST_TAG.SERVICE] || "-"}
+          </Typography>
+        </TableCell>
+      );
+    case "statusCode":
+      return (
+        <TableCell>
+          <Chip
+            label={log.status_code ?? "-"}
+            size="small"
+            variant="outlined"
+            color={getStatusChipColor(log.status_code)}
+          />
+        </TableCell>
+      );
+    case "latencyMs":
+      return (
+        <TableCell>
+          <Typography
+            variant="body2"
+            sx={{
+              color:
+                ctx.latencyMs != null
+                  ? getLatencyColor(ctx.latencyMs)
+                  : undefined,
+              fontWeight: 500,
+            }}
+          >
+            {ctx.latencyMs != null ? `${ctx.latencyMs}ms` : "-"}
+          </Typography>
+        </TableCell>
+      );
+    case "cost":
+      return (
+        <TableCell>
+          <Typography variant="body2">{formatCost(log.cost)}</Typography>
+        </TableCell>
+      );
+    case "totalTokens":
+      return (
+        <TableCell>
+          <Tooltip
+            title={`Total: ${log.total_tokens ?? 0}`}
+            placement="top"
+            arrow
+          >
+            <Typography variant="body2">
+              {log.input_tokens ?? 0} / {log.output_tokens ?? 0}
+            </Typography>
+          </Tooltip>
+        </TableCell>
+      );
+    case "sessionId":
+      return (
+        <TableCell>
+          <Stack direction="row" spacing={0.5} alignItems="center">
+            <Typography variant="body2" noWrap sx={{ maxWidth: 100 }}>
+              {log.session_id || "-"}
+            </Typography>
+
+            {/* Flag icons */}
+            {log.cache_hit && (
+              <Tooltip title="Cache Hit" arrow>
+                <Iconify
+                  icon="mdi:cached"
+                  width={16}
+                  sx={{ color: "info.main" }}
+                />
+              </Tooltip>
+            )}
+            {ctx.guardrailTriggered && (
+              <Tooltip title="Guardrail Triggered" arrow>
+                <Iconify
+                  icon="mdi:shield-outline"
+                  width={16}
+                  sx={{ color: "warning.dark" }}
+                />
+              </Tooltip>
+            )}
+            {ctx.fallbackUsed && (
+              <Tooltip title="Fallback Used" arrow>
+                <Iconify
+                  icon="mdi:swap-horizontal"
+                  width={16}
+                  sx={{ color: "secondary.main" }}
+                />
+              </Tooltip>
+            )}
+          </Stack>
+        </TableCell>
+      );
+    default:
+      return <TableCell>-</TableCell>;
+  }
+}
+
+const RequestRow = React.memo(function RequestRow({ log, columns, onClick }) {
   const latencyMs = log.latency_ms;
   const guardrailTriggered = log.guardrail_triggered;
   const fallbackUsed = log.fallback_used;
@@ -96,6 +222,7 @@ const RequestRow = React.memo(function RequestRow({ log, onClick }) {
 
   const isErrorRow = isError || isGuardrailBlock;
   const isWarnRow = isGuardrailWarn;
+  const ctx = { latencyMs, guardrailTriggered, fallbackUsed };
 
   return (
     <TableRow
@@ -123,123 +250,22 @@ const RequestRow = React.memo(function RequestRow({ log, onClick }) {
         }),
       }}
     >
-      {/* Timestamp */}
-      <TableCell sx={{ whiteSpace: "nowrap" }}>
-        <Typography variant="body2">{formatTimestamp(startedAt)}</Typography>
-      </TableCell>
-
-      {/* Model */}
-      <TableCell>
-        <Typography variant="body2" noWrap>
-          {log.model || "-"}
-        </Typography>
-      </TableCell>
-
-      {/* Provider */}
-      <TableCell>
-        <Typography variant="body2" noWrap>
-          {log.provider || "-"}
-        </Typography>
-      </TableCell>
-
-      {/* Application */}
-      <TableCell>
-        <Typography variant="body2" noWrap>
-          {log.metadata?.[REQUEST_TAG.APPLICATION] || "-"}
-        </Typography>
-      </TableCell>
-
-      {/* Service */}
-      <TableCell>
-        <Typography variant="body2" noWrap>
-          {log.metadata?.[REQUEST_TAG.SERVICE] || "-"}
-        </Typography>
-      </TableCell>
-
-      {/* Status */}
-      <TableCell>
-        <Chip
-          label={log.status_code ?? "-"}
-          size="small"
-          variant="outlined"
-          color={getStatusChipColor(log.status_code)}
-        />
-      </TableCell>
-
-      {/* Latency */}
-      <TableCell>
-        <Typography
-          variant="body2"
-          sx={{
-            color: latencyMs != null ? getLatencyColor(latencyMs) : undefined,
-            fontWeight: 500,
-          }}
-        >
-          {latencyMs != null ? `${latencyMs}ms` : "-"}
-        </Typography>
-      </TableCell>
-
-      {/* Cost */}
-      <TableCell>
-        <Typography variant="body2">{formatCost(log.cost)}</Typography>
-      </TableCell>
-
-      {/* Tokens */}
-      <TableCell>
-        <Tooltip
-          title={`Total: ${log.total_tokens ?? 0}`}
-          placement="top"
-          arrow
-        >
-          <Typography variant="body2">
-            {log.input_tokens ?? 0} / {log.output_tokens ?? 0}
-          </Typography>
-        </Tooltip>
-      </TableCell>
-
-      {/* Session ID */}
-      <TableCell>
-        <Stack direction="row" spacing={0.5} alignItems="center">
-          <Typography variant="body2" noWrap sx={{ maxWidth: 100 }}>
-            {log.session_id || "-"}
-          </Typography>
-
-          {/* Flag icons */}
-          {log.cache_hit && (
-            <Tooltip title="Cache Hit" arrow>
-              <Iconify
-                icon="mdi:cached"
-                width={16}
-                sx={{ color: "info.main" }}
-              />
-            </Tooltip>
-          )}
-          {guardrailTriggered && (
-            <Tooltip title="Guardrail Triggered" arrow>
-              <Iconify
-                icon="mdi:shield-outline"
-                width={16}
-                sx={{ color: "warning.dark" }}
-              />
-            </Tooltip>
-          )}
-          {fallbackUsed && (
-            <Tooltip title="Fallback Used" arrow>
-              <Iconify
-                icon="mdi:swap-horizontal"
-                width={16}
-                sx={{ color: "secondary.main" }}
-              />
-            </Tooltip>
-          )}
-        </Stack>
-      </TableCell>
+      {columns.map((col) =>
+        col.kind === "metadata" ? (
+          <MetadataCell key={col.id} metadata={log.metadata} name={col.name} />
+        ) : (
+          <React.Fragment key={col.id}>
+            {renderBuiltinCell(col.key, log, ctx)}
+          </React.Fragment>
+        ),
+      )}
     </TableRow>
   );
 });
 
 RequestRow.propTypes = {
   log: PropTypes.object.isRequired,
+  columns: PropTypes.arrayOf(PropTypes.object).isRequired,
   onClick: PropTypes.func.isRequired,
 };
 
@@ -247,7 +273,13 @@ RequestRow.propTypes = {
 // Main component
 // ---------------------------------------------------------------------------
 
-const RequestTable = ({ filters, setFilter, setFilters, onSelectLog }) => {
+const RequestTable = ({
+  filters,
+  setFilter,
+  setFilters,
+  onSelectLog,
+  columns = BUILTIN_COLUMNS,
+}) => {
   // Pagination state derived from filters (URL params)
   const page = parseInt(filters.page, 10) || 1;
   const pageSize = parseInt(filters.pageSize, 10) || 25;
@@ -348,20 +380,21 @@ const RequestTable = ({ filters, setFilter, setFilters, onSelectLog }) => {
           {/* ---- Header ---- */}
           <TableHead>
             <TableRow>
-              {COLUMNS.map((col) => (
+              {columns.map((col) => (
                 <TableCell
                   key={col.id}
                   sx={{ width: col.width, fontWeight: 600 }}
+                  data-column={col.id}
                 >
                   {col.sortable ? (
                     <TableSortLabel
-                      active={sortField === (fieldMap[col.id] || col.id)}
+                      active={sortField === (fieldMap[col.key] || col.key)}
                       direction={
-                        sortField === (fieldMap[col.id] || col.id)
+                        sortField === (fieldMap[col.key] || col.key)
                           ? sortDir
                           : "desc"
                       }
-                      onClick={() => handleSort(col.id)}
+                      onClick={() => handleSort(col.key)}
                     >
                       {col.label}
                     </TableSortLabel>
@@ -378,9 +411,9 @@ const RequestTable = ({ filters, setFilter, setFilters, onSelectLog }) => {
             {isLoading &&
               Array.from({ length: 10 }).map((_, idx) => (
                 <TableRow key={`skeleton-${idx}`}>
-                  {COLUMNS.map((col) => (
+                  {columns.map((col) => (
                     <TableCell key={col.id}>
-                      {col.id === "statusCode" ? (
+                      {col.key === "statusCode" ? (
                         <Skeleton
                           variant="rectangular"
                           width={40}
@@ -399,13 +432,18 @@ const RequestTable = ({ filters, setFilter, setFilters, onSelectLog }) => {
             {!isLoading &&
               results.length > 0 &&
               results.map((log) => (
-                <RequestRow key={log.id} log={log} onClick={onSelectLog} />
+                <RequestRow
+                  key={log.id}
+                  log={log}
+                  columns={columns}
+                  onClick={onSelectLog}
+                />
               ))}
 
             {/* ---- Empty state ---- */}
             {!isLoading && !error && results.length === 0 && (
               <TableRow>
-                <TableCell colSpan={COLUMNS.length}>
+                <TableCell colSpan={columns.length}>
                   <Stack alignItems="center" spacing={1.5} py={6}>
                     <Iconify
                       icon="mdi:magnify-remove-outline"
@@ -446,6 +484,7 @@ RequestTable.propTypes = {
   setFilter: PropTypes.func.isRequired,
   setFilters: PropTypes.func.isRequired,
   onSelectLog: PropTypes.func.isRequired,
+  columns: PropTypes.arrayOf(PropTypes.object),
 };
 
 export default RequestTable;
