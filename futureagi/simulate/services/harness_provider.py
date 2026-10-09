@@ -1047,6 +1047,48 @@ def _scenario_row(reg, number: int | None = None) -> dict:
     }
 
 
+def _authoring_revision(job: HostedHarnessJob) -> str:
+    return str(
+        ((job.payload or {}).get("metadata") or {}).get("authoring_revision") or ""
+    )
+
+
+def _deliver_committed_suite(job_id, suite: list[dict], revision: str) -> bool:
+    """Bring saved chat workspaces and live sandboxes to a committed suite.
+
+    The job lock serializes deliveries and a suite a later edit replaced is skipped, so
+    live copies end on the suite the database holds. Delivery never fails a saved edit.
+    """
+    from simulate.services.hosted_harness_gateway import (
+        push_scenarios_into_live_sandbox,
+        rewrite_conversation_scenarios,
+    )
+
+    with transaction.atomic():
+        job = (
+            HostedHarnessJob.no_workspace_objects.select_for_update()
+            .filter(id=job_id)
+            .first()
+        )
+        if job is None or _authoring_revision(job) != revision:
+            logger.info("harness_superseded_delivery_skipped job_id=%s", job_id)
+            return False
+        try:
+            with transaction.atomic():
+                rewrite_conversation_scenarios(job, suite)
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "harness_conversation_rewrite_failed job_id=%s", job_id, exc_info=True
+            )
+        try:
+            return push_scenarios_into_live_sandbox(job, suite)
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "harness_live_sandbox_push_failed job_id=%s", job_id, exc_info=True
+            )
+            return False
+
+
 class HostedHarnessProvider:
     """Persist jobs and drive the configured managed sandbox through Temporal."""
 
@@ -1863,15 +1905,15 @@ class HostedHarnessProvider:
 
     def amend_scenarios(self, request, pk) -> Response:
         """Edit a finished run's authored suite, one receipt per requested change."""
+        from simulate.services.harness_scenarios import index_scenarios
         from simulate.services.hosted_harness_gateway import (
             AuthoringArchiveKept,
-            push_scenarios_into_live_sandbox,
             rewrite_authoring_scenarios,
-            rewrite_conversation_scenarios,
         )
 
         changes = request.validated_data["changes"]
         rework = bool(request.validated_data.get("rework", True))
+        committed = None
         with transaction.atomic():
             # Scope before locking, so a busy lock never reveals a job outside the caller's scope.
             scoped = _scoped_job(request, pk)
@@ -1960,6 +2002,15 @@ class HostedHarnessProvider:
                                 "scenario": name,
                                 "outcome": "refused",
                                 "why": "dropping a scenario changes the suite, so it needs a re-proof",
+                            }
+                        )
+                        continue
+                    if len(suite) == 1:
+                        receipts.append(
+                            {
+                                "scenario": name,
+                                "outcome": "refused",
+                                "why": "an environment needs at least one scenario",
                             }
                         )
                         continue
@@ -2068,7 +2119,9 @@ class HostedHarnessProvider:
                 ):
                     try:
                         problems = scenario_edit_problems(Scenario.model_validate(one))
-                    except Exception:  # noqa: BLE001 - a document we cannot read is the edit's fault
+                    except (
+                        Exception
+                    ):  # noqa: BLE001 - a document we cannot read is the edit's fault
                         problems = ["the edited scenario could not be read"]
                     if problems:
                         rejected.append((str(one.get("name") or ""), problems))
@@ -2093,56 +2146,63 @@ class HostedHarnessProvider:
                         }
                     )
             if touched:
-                # The archive a run replays changes first; if it cannot, nothing changes.
-                try:
-                    rewrite_authoring_scenarios(job, suite)
-                    rewrite_conversation_scenarios(job, suite)
-                except AuthoringArchiveKept as kept:
+
+                def refused_all(why: str) -> Response:
                     return Response(
                         {
                             "receipts": [
-                                {
-                                    **one,
-                                    "outcome": "refused",
-                                    "why": f"nothing changed: {kept}",
-                                }
-                                if one.get("outcome") == "applied"
-                                else one
+                                (
+                                    {
+                                        **one,
+                                        "outcome": "refused",
+                                        "why": f"nothing changed: {why}",
+                                    }
+                                    if one.get("outcome") == "applied"
+                                    else one
+                                )
                                 for one in receipts
                             ]
                         }
                     )
-                if output is not None:
-                    output.data = suite
-                    output.summary = f"{len(suite)} pre-authored scenarios"
-                    output.save(update_fields=["data", "summary", "updated_at"])
-                else:
-                    job.stage_outputs = [
-                        {**item, "data": suite}
-                        if item.get("kind") == "scenarios"
-                        else item
-                        for item in (job.stage_outputs or [])
-                    ]
-                    job.save(update_fields=["stage_outputs", "updated_at"])
-                # Write to the archive, the live guest and the index, or the edit reverts or hides.
-                try:
-                    from simulate.services.harness_scenarios import index_scenarios
 
-                    index_scenarios(job, suite, prune=True)
-                except Exception:  # noqa: BLE001 - the edit itself applied; the index can lag
-                    logger.warning(
-                        "harness_scenario_reindex_failed job_id=%s",
-                        job.id,
-                        exc_info=True,
-                    )
-                delivered = push_scenarios_into_live_sandbox(job, suite)
-                if delivered:
-                    receipts = [
+                try:
+                    # One savepoint: the snapshot, the scenarios output and the rows move together.
+                    with transaction.atomic():
+                        rewrite_authoring_scenarios(job, suite)
+                        if output is not None:
+                            output.data = suite
+                            output.summary = f"{len(suite)} pre-authored scenarios"
+                            output.save(update_fields=["data", "summary", "updated_at"])
+                        else:
+                            job.stage_outputs = [
+                                (
+                                    {**item, "data": suite}
+                                    if item.get("kind") == "scenarios"
+                                    else item
+                                )
+                                for item in (job.stage_outputs or [])
+                            ]
+                            job.save(update_fields=["stage_outputs", "updated_at"])
+                        index_scenarios(job, suite, prune=True)
+                except AuthoringArchiveKept as kept:
+                    return refused_all(str(kept))
+                except Exception:  # noqa: BLE001 - every store reverts together
+                    logger.exception("harness_scenario_record_failed job_id=%s", job.id)
+                    return refused_all("the scenario list could not be updated")
+                committed = suite
+        if committed is not None:
+            delivered = _deliver_committed_suite(
+                job.id, committed, _authoring_revision(job)
+            )
+            if delivered:
+                receipts = [
+                    (
                         {**one, "outcome": "queued"}
                         if one.get("outcome") == "applied"
                         else one
-                        for one in receipts
-                    ]
+                    )
+                    for one in receipts
+                ]
         return Response({"receipts": receipts})
 
     def extend(self, request, pk) -> Response:
