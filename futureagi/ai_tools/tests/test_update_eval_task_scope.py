@@ -14,9 +14,9 @@ from accounts.models.workspace import Workspace
 from ai_tools.base import ToolContext
 from ai_tools.tests.conftest import run_tool
 from ai_tools.tests.fixtures import make_eval_template, make_project
-from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.eval_task import EvalTask, EvalTaskStatus, RunType
 from tracer.models.project import Project
+from tracer.tests.eval_task_factories import make_config
 
 CONFIG_NOT_ON_PROJECT = "CustomEvalConfig(s) not found on the task's project"
 
@@ -62,17 +62,6 @@ def update(django_capture_on_commit_callbacks):
             )
 
     return run
-
-
-def _config(project, template, name):
-    return CustomEvalConfig.objects.create(
-        name=name,
-        project=project,
-        eval_template=template,
-        config={},
-        mapping={},
-        filters={},
-    )
 
 
 def _paused_task(project, config):
@@ -129,8 +118,12 @@ class TestUpdateEvalTaskScope:
         self, tool_context, template, starts, soft_deletes, update
     ):
         project = make_project(tool_context)
-        task = _paused_task(project, _config(project, template, "Current"))
-        replacement = _config(project, template, "Replacement")
+        task = _paused_task(
+            project, make_config(project=project, template=template, name="Current")
+        )
+        replacement = make_config(
+            project=project, template=template, name="Replacement"
+        )
 
         result = update(
             task, tool_context, edit_type="edit_rerun", evals=_ids([replacement])
@@ -149,11 +142,11 @@ class TestUpdateEvalTaskScope:
         """Nothing is linked when any requested config is foreign, not even
         the requested configs that do belong to the task's project."""
         project = make_project(tool_context)
-        current = _config(project, template, "Current")
+        current = make_config(project=project, template=template, name="Current")
         task = _paused_task(project, current)
-        own = _config(project, template, "Own")
+        own = make_config(project=project, template=template, name="Own")
         sibling = make_project(tool_context, name="Sibling Project")
-        foreign = _config(sibling, template, "Foreign")
+        foreign = make_config(project=sibling, template=template, name="Foreign")
 
         result = update(task, tool_context, evals=_ids([own, foreign]))
 
@@ -167,7 +160,7 @@ class TestUpdateEvalTaskScope:
         self, tool_context, template, starts, soft_deletes, update
     ):
         project = make_project(tool_context)
-        current = _config(project, template, "Current")
+        current = make_config(project=project, template=template, name="Current")
         task = _paused_task(project, current)
         other_organization = Organization.objects.create(name="Other Organization")
         other_workspace = Workspace.objects.create(
@@ -183,7 +176,7 @@ class TestUpdateEvalTaskScope:
             organization=other_organization,
             workspace=other_workspace,
         )
-        foreign = _config(elsewhere, template, "Foreign")
+        foreign = make_config(project=elsewhere, template=template, name="Foreign")
 
         result = update(task, tool_context, evals=_ids([foreign]))
 
@@ -205,9 +198,11 @@ class TestUpdateEvalTaskScope:
             created_by=tool_context.user,
         )
         project = make_project(tool_context, workspace=other_workspace)
-        current = _config(project, template, "Current")
+        current = make_config(project=project, template=template, name="Current")
         task = _paused_task(project, current)
-        replacement = _config(project, template, "Replacement")
+        replacement = make_config(
+            project=project, template=template, name="Replacement"
+        )
 
         result = update(task, tool_context, **_update_params(with_evals, [replacement]))
 
@@ -222,9 +217,11 @@ class TestUpdateEvalTaskScope:
         self, tool_context, template, starts, soft_deletes, update, with_evals
     ):
         project = make_project(tool_context)
-        current = _config(project, template, "Current")
+        current = make_config(project=project, template=template, name="Current")
         task = _paused_task(project, current)
-        replacement = _config(project, template, "Replacement")
+        replacement = make_config(
+            project=project, template=template, name="Replacement"
+        )
         Project.all_objects.filter(id=project.id).update(deleted=True)
 
         result = update(task, tool_context, **_update_params(with_evals, [replacement]))
@@ -239,10 +236,10 @@ class TestUpdateEvalTaskScope:
         """A context without a workspace still refuses another project's
         config: the project rule does not depend on the workspace."""
         project = make_project(tool_context)
-        current = _config(project, template, "Current")
+        current = make_config(project=project, template=template, name="Current")
         task = _paused_task(project, current)
         sibling = make_project(tool_context, name="Sibling Project")
-        foreign = _config(sibling, template, "Foreign")
+        foreign = make_config(project=sibling, template=template, name="Foreign")
         unscoped = ToolContext(
             user=tool_context.user,
             organization=tool_context.organization,

@@ -14,6 +14,7 @@ pytest discourages.
 
 import uuid
 
+from model_hub.models.ai_model import AIModel
 from model_hub.models.evals_metric import EvalTemplate
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.eval_task import EvalTask, EvalTaskStatus, RunType
@@ -22,6 +23,7 @@ from tracer.models.observation_span import (
     EvalTargetType,
     ObservationSpan,
 )
+from tracer.models.project import Project
 
 # Config payload per normalized output type, mirroring what the eval builder
 # writes -- the aggregation paths branch on both fields.
@@ -54,6 +56,24 @@ def make_config(*, project, template, name):
         mapping={},
         filters={},
     )
+
+
+def make_sibling_project(project, name="Sibling Project"):
+    """Another project of ``project``'s workspace, so the caller can see it."""
+    return Project.objects.create(
+        name=name,
+        organization=project.organization,
+        workspace=project.workspace,
+        model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+        trace_type="observe",
+    )
+
+
+def refusal_without_id(response, named_id):
+    """A refusal's status and body with the id it names masked, so the answer
+    for one id can be compared with the answer for another."""
+    body = response.content.decode() if response.content else ""
+    return response.status_code, body.replace(str(named_id), "<id>")
 
 
 def make_task(*, project, name="Eval task"):

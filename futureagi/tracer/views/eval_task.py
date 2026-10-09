@@ -1913,7 +1913,9 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             )
             if invalid_eval_ids:
                 return self._gm.bad_request(
-                    "Eval configs not found for project: " + ", ".join(invalid_eval_ids)
+                    get_error_message("EVAL_CONFIGS_NOT_IN_TASK_PROJECT").format(
+                        ", ".join(invalid_eval_ids)
+                    )
                 )
             eval_task = serializer.save()
 

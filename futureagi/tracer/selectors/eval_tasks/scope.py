@@ -13,15 +13,23 @@ scope goes through its project the same way.
 from __future__ import annotations
 
 from collections.abc import Iterable
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from django.db.models import Q, QuerySet
 
 from tracer.models.custom_eval_config import CustomEvalConfig
 
+if TYPE_CHECKING:
+    from accounts.models.organization import Organization
+    from accounts.models.workspace import Workspace
+
 
 def project_workspace_scope_q(
-    organization_id, workspace, *, project_prefix: str = "project__"
+    organization_id: UUID | str,
+    workspace: Workspace | None,
+    *,
+    project_prefix: str = "project__",
 ) -> Q:
     """Rows whose project lies in ``workspace``; ``project_prefix`` is the
     lookup path to that project, ``""`` for projects themselves.
@@ -51,7 +59,12 @@ def project_workspace_scope_q(
     return Q(**{f"{project_prefix}workspace": workspace})
 
 
-def projects_in_scope(queryset: QuerySet, *, organization, workspace) -> QuerySet:
+def projects_in_scope(
+    queryset: QuerySet,
+    *,
+    organization: Organization | None,
+    workspace: Workspace | None,
+) -> QuerySet:
     """Narrow ``queryset`` to the live projects ``organization`` may use in
     ``workspace``: the projects an eval task or an eval config may name.
 
@@ -84,8 +97,8 @@ def eval_tasks_in_scope(queryset: QuerySet, *, organization, workspace) -> Query
 def eval_configs_in_scope(
     queryset: QuerySet,
     *,
-    organization,
-    workspace,
+    organization: Organization | None,
+    workspace: Workspace | None,
     project_id: UUID | str | None = None,
 ) -> QuerySet:
     """Narrow ``queryset`` to the live eval configs ``organization`` may use in
@@ -110,8 +123,8 @@ def eval_config_ids_outside_project(
     eval_ids: Iterable[UUID | str] | None,
     *,
     project_id: UUID | str | None,
-    organization,
-    workspace,
+    organization: Organization | None,
+    workspace: Workspace | None,
 ) -> list[str]:
     """The requested eval config ids that are not live configs of
     ``project_id`` within the caller's scope, sorted.

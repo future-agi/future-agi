@@ -17,6 +17,7 @@ from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.eval_task import EvalTask, EvalTaskLogger, EvalTaskStatus
 from tracer.models.observation_span import EvalLogger
 from tracer.models.project import Project
+from tracer.tests.eval_task_factories import make_sibling_project, refusal_without_id
 from tracer.views import eval_task as eval_task_views
 from tracer.views.eval_task import EvalTaskView
 
@@ -69,17 +70,6 @@ def make_custom_eval_config_for_project(project, custom_eval_config, name):
     )
 
 
-def make_sibling_project(project, name):
-    """Another project of ``project``'s workspace, so the caller can see it."""
-    return Project.objects.create(
-        name=name,
-        organization=project.organization,
-        workspace=project.workspace,
-        model_type=AIModel.ModelTypes.GENERATIVE_LLM,
-        trace_type="observe",
-    )
-
-
 def linked_eval_ids(task):
     return set(task.evals.values_list("id", flat=True))
 
@@ -118,14 +108,6 @@ def make_out_of_scope_eval_config(kind, project, user, custom_eval_config):
     if kind == "deleted_project":
         Project.all_objects.filter(id=owner.id).update(deleted=True)
     return config
-
-
-def refusal_without_id(response, named_id):
-    """A refusal's status and body with the id it names masked, so the answer
-    for one id can be compared with the answer for another."""
-    return response.status_code, json.dumps(response.json()).replace(
-        str(named_id), "<id>"
-    )
 
 
 _PRIVATE_DB_ERROR = "Code: 159. DB::Exception: private stack and query text"

@@ -17,6 +17,7 @@ from accounts.models.workspace import Workspace
 from model_hub.models.ai_model import AIModel
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.project import Project
+from tracer.tests.eval_task_factories import make_sibling_project, refusal_without_id
 
 AUTH_REQUIRED_STATUS_CODES = (
     status.HTTP_401_UNAUTHORIZED,
@@ -193,17 +194,6 @@ class TestCustomEvalConfigPartialUpdateAPI:
         }
 
 
-def _sibling_project(project):
-    """Another project of ``project``'s workspace, so the caller can see it."""
-    return Project.objects.create(
-        name="Sibling Project",
-        organization=project.organization,
-        workspace=project.workspace,
-        model_type=AIModel.ModelTypes.GENERATIVE_LLM,
-        trace_type="observe",
-    )
-
-
 @pytest.mark.integration
 @pytest.mark.api
 class TestCustomEvalConfigProjectIsFixed:
@@ -228,7 +218,7 @@ class TestCustomEvalConfigProjectIsFixed:
     ):
         response = auth_client.patch(
             f"/tracer/custom-eval-config/{custom_eval_config.id}/",
-            {"project": str(_sibling_project(project).id), "name": "Moved"},
+            {"project": str(make_sibling_project(project).id), "name": "Moved"},
             format="json",
         )
 
@@ -245,7 +235,7 @@ class TestCustomEvalConfigProjectIsFixed:
         self, auth_client, project, custom_eval_config
     ):
         response = self._put(
-            auth_client, custom_eval_config, _sibling_project(project), "Moved"
+            auth_client, custom_eval_config, make_sibling_project(project), "Moved"
         )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
@@ -313,16 +303,9 @@ def _project_out_of_scope(kind, project, user):
             model_type=AIModel.ModelTypes.GENERATIVE_LLM,
             trace_type="observe",
         )
-    deleted = _sibling_project(project)
+    deleted = make_sibling_project(project)
     Project.all_objects.filter(id=deleted.id).update(deleted=True)
     return deleted
-
-
-def _refusal_without_id(response, named_id):
-    """A refusal's status and body with the id it names masked, so the answer
-    for one id can be compared with the answer for another."""
-    body = response.content.decode() if response.content else ""
-    return response.status_code, body.replace(str(named_id), "<id>")
 
 
 @pytest.mark.integration
@@ -368,7 +351,7 @@ class TestCustomEvalConfigDetailScope:
                 status.HTTP_400_BAD_REQUEST,
                 status.HTTP_404_NOT_FOUND,
             ), method
-            assert _refusal_without_id(refused, config.id) == _refusal_without_id(
+            assert refusal_without_id(refused, config.id) == refusal_without_id(
                 unknown, unknown_id
             ), method
 
@@ -419,7 +402,7 @@ class TestCustomEvalConfigProjectScope:
 
             assert refused.status_code == status.HTTP_400_BAD_REQUEST, method
             assert refused.json()["attr"] == "project", method
-            assert _refusal_without_id(refused, other.id) == _refusal_without_id(
+            assert refusal_without_id(refused, other.id) == refusal_without_id(
                 unknown, unknown_id
             ), method
 
