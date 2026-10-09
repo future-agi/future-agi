@@ -137,6 +137,16 @@ validator:
   off exactly as before; it only lifts the Community rule. The licensed stacks also set
   `FUTURE_AGI_ENTERPRISE_HEARTBEAT_DISABLED=true` and point `FUTURE_AGI_LICENSE_URL` at a closed
   loopback port, so no test stack ever calls Future AGI's licence service.
+- Where the managed-mock inspection is strict (the eval background opt-in, and always on
+  Standalone) it admits a licence only if it is exactly the one `bin/e2e` wrote for this project,
+  verifies against that file's throwaway public key, is the test licence with no product features,
+  and the container pins `FUTURE_AGI_LICENSE_URL` to the closed port with the heartbeat off; any
+  other licence STOPs the run (`lib/test-licence-guard.ts`). Activation and the heartbeat are the
+  backend's only licence-service calls and every managed-service token comes from activation, so
+  nothing managed can be reached.
+- Licensed, the API limits login, token and signup requests per client IP
+  (`MAX_LOGIN_ATTEMPTS_PER_HOUR`, default 10 an hour). Every actor reaches the stack from one
+  address, so the E2E overlays raise it.
 
 The backend trusts `EE_LICENSE_PUBLIC_KEY` only while `_BUNDLED_KEYS` in
 `futureagi/ee/licensing/keyring.py` is empty (the pre-GA trust path). Once a production key is
