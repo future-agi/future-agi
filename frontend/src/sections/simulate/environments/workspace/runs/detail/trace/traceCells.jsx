@@ -5,9 +5,11 @@ import { Box, Skeleton, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
 import { interpolateColorBasedOnScore } from "src/utils/utils";
+import { TestRunExecutionStatus } from "src/sections/test-detail/common";
 
 import { BUILD_TONES } from "../../../../buildEnvironment/buildTones";
-import { PENDING_EVAL_STATUS, isBad } from "./traceTable.constants";
+import { SCORING_STATUS } from "../../runs.constants";
+import { isBad } from "./traceTable.constants";
 
 // MUI's wave shimmer: one 2s cycle, counted from when each bar mounts.
 const SHIMMER_CYCLE_MS = 2000;
@@ -103,9 +105,9 @@ Score.propTypes = { result: PropTypes.object };
 // How a scoring state that ended without a value reads in a cell, and the tip
 // to fall back on when the server sent no reason.
 const ENDED_UNSCORED = {
-  failed: { text: "Failed", color: BUILD_TONES.red },
-  timed_out: { text: "Timed out", color: BUILD_TONES.amber },
-  skipped: { text: "Not scored", color: "text.disabled" },
+  [SCORING_STATUS.FAILED]: { text: "Failed", color: BUILD_TONES.red },
+  [SCORING_STATUS.TIMED_OUT]: { text: "Timed out", color: BUILD_TONES.amber },
+  [SCORING_STATUS.SKIPPED]: { text: "Not scored", color: "text.disabled" },
 };
 
 // A cell for a score that will not come: a word in the state's tone, the reason
@@ -130,13 +132,13 @@ EndedUnscored.propTypes = {
 // still scoring, failed, timed out or was skipped; without one (an older
 // payload) it loads while the call is live, as the other metric cells do.
 export function CsatValue({ value, status, reason, callLive }) {
-  if (status === "pending") return <CellSkeleton />;
-  if (status === "failed")
-    return <EndedUnscored state="failed" tip={reason || "CSAT could not be scored."} />;
-  if (status === "timed_out")
-    return <EndedUnscored state="timed_out" tip={reason || "CSAT timed out."} />;
-  if (status === "skipped")
-    return <EndedUnscored state="skipped" tip={reason || "CSAT was not scored."} />;
+  if (status === SCORING_STATUS.PENDING) return <CellSkeleton />;
+  if (status === SCORING_STATUS.FAILED)
+    return <EndedUnscored state={status} tip={reason || "CSAT could not be scored."} />;
+  if (status === SCORING_STATUS.TIMED_OUT)
+    return <EndedUnscored state={status} tip={reason || "CSAT timed out."} />;
+  if (status === SCORING_STATUS.SKIPPED)
+    return <EndedUnscored state={status} tip={reason || "CSAT was not scored."} />;
   return <MetricValue metric="csat" value={value} loading={!status && callLive} />;
 }
 CsatValue.propTypes = {
@@ -152,7 +154,7 @@ CsatValue.propTypes = {
 // never scored, or an eval with no entry on a finished call (it doesn't apply
 // to this scenario), shows a dash with why.
 export function UnscoredEval({ result, callLive, callStatus }) {
-  if ((!result && callLive) || result?.status === PENDING_EVAL_STATUS) {
+  if ((!result && callLive) || result?.status === SCORING_STATUS.PENDING) {
     // The metric cells' top padding, so the row's loading bars line up.
     return (
       <Box sx={{ px: 2, py: 1.5 }}>
@@ -162,18 +164,28 @@ export function UnscoredEval({ result, callLive, callStatus }) {
   }
   const status = result?.status;
   const reason = result?.reason;
-  if (status === "failed" || status === "error") {
+  if (status === SCORING_STATUS.FAILED || status === SCORING_STATUS.ERROR) {
     const tip = reason ? `Evaluation failed: ${reason}` : "Evaluation failed";
-    return <EndedUnscored state="failed" tip={tip} sx={{ display: "block", p: 2 }} />;
+    return (
+      <EndedUnscored
+        state={SCORING_STATUS.FAILED}
+        tip={tip}
+        sx={{ display: "block", p: 2 }}
+      />
+    );
   }
-  if (status === "timed_out" || status === "skipped") {
-    const tip = reason || (status === "skipped" ? "Not scored" : "Scoring timed out");
+  if (status === SCORING_STATUS.TIMED_OUT || status === SCORING_STATUS.SKIPPED) {
+    const tip =
+      reason ||
+      (status === SCORING_STATUS.SKIPPED ? "Not scored" : "Scoring timed out");
     return <EndedUnscored state={status} tip={tip} sx={{ display: "block", p: 2 }} />;
   }
   let tip = "Not applicable to this scenario";
   if (result) tip = "Scored, but no value came back";
-  else if (callStatus === "cancelled") tip = "Not evaluated: the call was cancelled";
-  else if (callStatus === "failed") tip = "Not evaluated: the call failed";
+  else if (callStatus === TestRunExecutionStatus.CANCELLED)
+    tip = "Not evaluated: the call was cancelled";
+  else if (callStatus === TestRunExecutionStatus.FAILED)
+    tip = "Not evaluated: the call failed";
   return (
     <CustomTooltip show arrow size="small" title={tip}>
       <Box sx={{ p: 2, typography: "s2", color: "text.disabled" }}>-</Box>

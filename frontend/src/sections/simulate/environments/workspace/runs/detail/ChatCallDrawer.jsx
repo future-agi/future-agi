@@ -10,6 +10,7 @@ import { ShareDialog } from "src/components/share-dialog";
 import { useCallDetail } from "src/api/simulate-environments/runDetail";
 
 import { BUILD_TONES } from "../../../buildEnvironment/buildTones";
+import { SCORING_STATUS } from "../runs.constants";
 import ChatTranscriptPane from "./ChatTranscriptPane";
 import { Meta, Cell, Attr } from "./chatDrawerCells";
 
@@ -125,9 +126,10 @@ export default function ChatCallDrawer({
     ...result,
     error:
       result.error === true ||
-      result.status === "failed" ||
-      result.status === "error",
-    skipped: result.skipped === true || result.status === "skipped",
+      result.status === SCORING_STATUS.FAILED ||
+      result.status === SCORING_STATUS.ERROR,
+    skipped:
+      result.skipped === true || result.status === SCORING_STATUS.SKIPPED,
     eval_name: result.name,
     score: result.score == null ? null : Math.round(result.score * 100),
     score_label:
