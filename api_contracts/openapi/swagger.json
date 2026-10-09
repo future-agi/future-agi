@@ -144084,8 +144084,15 @@
                     "type": "string",
                     "enum": [
                         "renew",
-                        "cancel"
+                        "cancel",
+                        "fail"
                     ]
+                },
+                "failure_code": {
+                    "title": "Failure code",
+                    "type": "string",
+                    "default": "",
+                    "maxLength": 100
                 }
             }
         },
@@ -144094,6 +144101,11 @@
             "properties": {
                 "state": {
                     "title": "State",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "failure_code": {
+                    "title": "Failure code",
                     "type": "string",
                     "minLength": 1
                 },
