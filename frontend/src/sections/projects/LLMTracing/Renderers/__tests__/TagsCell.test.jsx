@@ -221,4 +221,32 @@ describe("TagsCell", () => {
       "true",
     );
   });
+
+  // TH-8026: trace-list rows can carry tags as the raw JSON string stored in
+  // ClickHouse. The cell must show them and hand the popover the stored list,
+  // because the tag PATCH replaces the whole list.
+  it("reads a JSON-string tag list from a trace-list row", async () => {
+    const user = userEvent.setup();
+    const { container } = render(
+      <TagsCell value='["production", "v2"]' traceId="trace-1" />,
+    );
+
+    expect(screen.getByText("production")).toBeInTheDocument();
+    expect(screen.getByText("v2")).toBeInTheDocument();
+
+    await user.click(container.firstChild);
+    expect(screen.getByTestId("add-tags-popover")).toHaveAttribute(
+      "data-current-tags",
+      JSON.stringify(["production", "v2"]),
+    );
+  });
+
+  it("does not offer editing when the stored tags cannot be read", () => {
+    const { container } = render(
+      <TagsCell value="not-a-list" traceId="trace-1" />,
+    );
+
+    expect(screen.queryByTestId("add-tags-popover")).not.toBeInTheDocument();
+    expect(container.firstChild).toBeNull();
+  });
 });

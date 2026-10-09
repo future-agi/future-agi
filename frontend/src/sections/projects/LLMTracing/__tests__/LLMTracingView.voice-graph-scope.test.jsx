@@ -37,6 +37,7 @@ const harness = vi.hoisted(() => ({
   testDetailState: { setTestDetailDrawerOpen: vi.fn() },
   addTagsProps: [],
   snackbar: vi.fn(),
+  traceGridSelectedNodes: null,
 }));
 
 vi.mock("notistack", async (importOriginal) => ({
@@ -132,8 +133,20 @@ vi.mock("../TraceGrid", async () => {
     "../LLMTracingTraceDetailDrawer"
   );
   return {
-    default: ReactModule.forwardRef((props, _ref) => {
+    default: ReactModule.forwardRef((props, ref) => {
       harness.traceGridProps.push(props);
+      // Bulk actions read the grid's selection through its ref. Only the
+      // trace-grid bulk tests expose it; other tests keep a ref-less grid.
+      ReactModule.useImperativeHandle(ref, () =>
+        harness.traceGridSelectedNodes
+          ? {
+              api: {
+                getSelectedNodes: () => harness.traceGridSelectedNodes,
+                sizeColumnsToFit: () => {},
+              },
+            }
+          : null,
+      );
       return <LLMTracingTraceDetailDrawer />;
     }),
   };
@@ -246,6 +259,9 @@ vi.mock("../GraphSection/PrimaryGraph", () => ({
 vi.mock("../GraphSection/AgentGraph", () => ({ default: () => null }));
 vi.mock("../GraphSection/AgentPath", () => ({ default: () => null }));
 vi.mock("../SelectAllBanner", () => ({ default: () => null }));
+vi.mock("src/sections/develop-detail/Common/TotalRowsStatusBar", () => ({
+  default: () => null,
+}));
 vi.mock("../FilterChips", () => ({ default: () => null }));
 vi.mock("../TracingControls", () => ({ default: () => null }));
 vi.mock("../CustomColumnDialog", () => ({ default: () => null }));
@@ -449,6 +465,65 @@ describe("LLMTracingView voice bulk tags", () => {
     await waitFor(() =>
       expect(harness.snackbar).toHaveBeenCalledWith(
         "Couldn't load the current tags of 1 of 2 selected calls. No tags were changed.",
+        { variant: "error" },
+      ),
+    );
+    expect(harness.addTagsProps.some((props) => props.open)).toBe(false);
+  });
+});
+
+// TH-8026: on the trace grid, bulk "Add tags" merges into each selected row's
+// tags. Trace-list rows can carry them as the raw JSON string stored in
+// ClickHouse; reading that as "no tags" would make the bulk PATCH (which
+// replaces the list) drop them.
+describe("LLMTracingView trace grid bulk tags", () => {
+  beforeEach(() => {
+    harness.toolbarProps = [];
+    harness.addTagsProps = [];
+    harness.snackbar.mockReset();
+    harness.selectedTab = "trace";
+    harness.projectDetail = { source: "observe" };
+  });
+
+  afterEach(() => {
+    harness.traceGridSelectedNodes = null;
+  });
+
+  const openTraceBulkTags = async (nodes) => {
+    harness.traceGridSelectedNodes = nodes;
+    renderView();
+    await waitFor(() => expect(harness.toolbarProps.length).toBeGreaterThan(0));
+    await act(async () => {
+      harness.toolbarProps
+        .at(-1)
+        .onBulkAction("tags", { currentTarget: document.body });
+    });
+  };
+
+  it("merges into each row's stored tags, string or array", async () => {
+    await openTraceBulkTags([
+      { data: { trace_id: "trace-a", tags: '["prod"]' } },
+      { data: { trace_id: "trace-b", tags: ["vip"] } },
+      { data: { trace_id: "trace-c", tags: "[]" } },
+    ]);
+
+    await waitFor(() => expect(harness.addTagsProps.at(-1)?.open).toBe(true));
+    expect(harness.addTagsProps.at(-1).bulkItems).toEqual([
+      { id: "trace-a", type: "trace", currentTags: ["prod"] },
+      { id: "trace-b", type: "trace", currentTags: ["vip"] },
+      { id: "trace-c", type: "trace", currentTags: [] },
+    ]);
+  });
+
+  it("does not open the tag popover when a row's tags cannot be read", async () => {
+    await openTraceBulkTags([
+      { data: { trace_id: "trace-a", tags: ["prod"] } },
+      { data: { trace_id: "trace-b", tags: "not-a-list" } },
+    ]);
+
+    await waitFor(() =>
+      expect(harness.snackbar).toHaveBeenCalledWith(
+        "Couldn't read the current tags of 1 of 2 selected rows. No tags were changed.",
         { variant: "error" },
       ),
     );
