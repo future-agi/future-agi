@@ -14,6 +14,7 @@ from model_hub.utils.async_improve_prompt_runner import improve_prompt_async
 from model_hub.utils.async_prompt_runner import run_template_async
 from model_hub.utils.websocket_direct_manager import WebSocketDirectManager
 from model_hub.views.prompt_template import replace_ids_with_column_name_async
+from sockets.saml_guard import SamlSocketGuard
 from sockets.workspace_access import NOT_FOUND, WorkspaceAccessGate
 
 logger = structlog.get_logger(__name__)
@@ -46,12 +47,16 @@ class PromptStreamConsumer(AsyncJsonWebsocketConsumer):
         super().__init__(*args, **kwargs)
         self.session_uuid = None
         self.workspace_id = None
+        self._guard = SamlSocketGuard(self)
+        self._tasks = set()
 
     async def connect(self):
         self.user = self.scope.get("user")
         if not (self.user and self.user.is_authenticated):
             logger.warning("PromptStream connection rejected: user not authenticated.")
             await self.close(code=WS_CLOSE_CODE_UNAUTHENTICATED)
+            return
+        if not await self._guard.ensure_live(inbound=True):
             return
 
         self.session_uuid = str(uuid4())
@@ -65,6 +70,8 @@ class PromptStreamConsumer(AsyncJsonWebsocketConsumer):
         await self.accept()
 
     async def send_json(self, content, close=False):
+        if not await self._guard.ensure_live(inbound=False):
+            return
         try:
             await super().send_json(content, close=close)
         except Exception as e:
@@ -76,8 +83,12 @@ class PromptStreamConsumer(AsyncJsonWebsocketConsumer):
         logger.info(
             f"PromptStream connection closed: session={self.session_uuid}, code={close_code}"
         )
+        for task in tuple(self._tasks):
+            task.cancel()
 
     async def receive_json(self, content):
+        if not await self._guard.ensure_live(inbound=True):
+            return
         message_type = content.get("type")
         handlers = {
             "run_template": self.handle_run_template,
@@ -98,7 +109,17 @@ class PromptStreamConsumer(AsyncJsonWebsocketConsumer):
     # ------------------------------------------------------------------
 
     def _access_gate(self):
-        return WorkspaceAccessGate(user=self.user, workspace_id=self.workspace_id)
+        return WorkspaceAccessGate(
+            user=self.user,
+            workspace_id=self.workspace_id,
+            auth_scope=self.scope.get("auth_scope"),
+        )
+
+    def _create_task(self, coroutine):
+        task = asyncio.create_task(coroutine)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        return task
 
     async def _resolve_workspace_and_org(self, *, correlation=None):
         """Resolve the workspace + derive its org for execute paths.
@@ -182,7 +203,9 @@ class PromptStreamConsumer(AsyncJsonWebsocketConsumer):
             }
         )
 
-    async def _execute_with_org(self, *, correlation, log_context, failure_message, run):
+    async def _execute_with_org(
+        self, *, correlation, log_context, failure_message, run
+    ):
         """Shared scaffold for the three execute_*_async methods.
 
         Resolves ``(workspace, org_id)`` via the single access gate, then
@@ -206,7 +229,9 @@ class PromptStreamConsumer(AsyncJsonWebsocketConsumer):
             logger.exception(log_context)
             await self._send_ws_error(failure_message, correlation=correlation)
 
-    async def _fetch_template_for_run(self, template_id, workspace, org_id, correlation):
+    async def _fetch_template_for_run(
+        self, template_id, workspace, org_id, correlation
+    ):
         """Fetch + validate template access for a run.
 
         Sends the appropriate error frame and closes the socket on failure,
@@ -264,7 +289,7 @@ class PromptStreamConsumer(AsyncJsonWebsocketConsumer):
                 "session_uuid": self.session_uuid,
             }
         )
-        asyncio.create_task(self.execute_template_async(content, template_id))
+        self._create_task(self.execute_template_async(content, template_id))
 
     async def execute_template_async(self, content, template_id):
         correlation = {"template_id": template_id}
@@ -344,7 +369,7 @@ class PromptStreamConsumer(AsyncJsonWebsocketConsumer):
                 "session_uuid": self.session_uuid,
             }
         )
-        asyncio.create_task(
+        self._create_task(
             self.execute_improve_prompt_async(payload, payload["improve_id"])
         )
 
@@ -407,7 +432,7 @@ class PromptStreamConsumer(AsyncJsonWebsocketConsumer):
                 "session_uuid": self.session_uuid,
             }
         )
-        asyncio.create_task(self.execute_generate_prompt_async(payload, generation_id))
+        self._create_task(self.execute_generate_prompt_async(payload, generation_id))
 
     async def execute_generate_prompt_async(self, content, generation_id):
         correlation = {"generation_id": generation_id}

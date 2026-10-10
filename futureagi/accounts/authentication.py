@@ -27,10 +27,12 @@ from accounts.models import OrgApiKey, User
 from accounts.models.auth_token import (
     AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES,
     AuthToken,
+    AuthTokenOrigin,
     AuthTokenType,
 )
 from accounts.models.organization import Organization
 from accounts.models.workspace import Workspace, WorkspaceMembership
+from accounts.saml_credential import SamlCredentialInvalid, validate_saml_credential
 from accounts.services.workspace_membership import create_workspace_membership
 from tfc.constants.roles import OrganizationRoles
 from tfc.ee_gating import is_oss
@@ -134,9 +136,14 @@ class APIKeyAuthentication(BaseAuthentication):
     def authenticate_header(self, request):
         return "ApiKey"
 
-    def _bind_user_context(self, user):
+    def _bind_user_context(self, user, auth_scope=None):
         """Bind user context to structlog for all subsequent logs in this request."""
         structlog.contextvars.bind_contextvars(user_id=str(user.id))
+        if auth_scope is not None:
+            structlog.contextvars.bind_contextvars(
+                organization_id=str(auth_scope.org_id)
+            )
+            return
         if hasattr(user, "email") and user.email:
             structlog.contextvars.bind_contextvars(user_email=user.email)
         if hasattr(user, "organization") and user.organization:
@@ -154,7 +161,7 @@ class APIKeyAuthentication(BaseAuthentication):
 
         if auth_token:
             try:
-                user, token = decode_token(auth_token)
+                user, token, auth_scope = decode_token(auth_token)
                 # Allow org-less users to authenticate (they were removed
                 # from their org).  View layer handles access control via
                 # request.organization being None.
@@ -164,12 +171,18 @@ class APIKeyAuthentication(BaseAuthentication):
                 # Validate that organization is active
 
                 # Bind user context for structured logging
-                self._bind_user_context(user)
+                request.auth_scope = auth_scope
+                self._bind_user_context(user, auth_scope)
 
                 # Set workspace context after JWT authentication
                 self._set_workspace_context(request, user)
                 return user, token
-            except (PermissionDenied, DatabaseError, InterfaceError):
+            except (
+                PermissionDenied,
+                DatabaseError,
+                InterfaceError,
+                SamlCredentialInvalid,
+            ):
                 raise  # Authorization denials and database failures are not bad tokens.
             except Exception as e:
                 traceback.print_exc()
@@ -245,7 +258,10 @@ class APIKeyAuthentication(BaseAuthentication):
         workspace = self._get_requested_workspace(request, user, organization)
 
         if not workspace:
-            workspace = self._get_user_default_workspace(user, organization)
+            if getattr(request, "auth_scope", None) is not None:
+                workspace = self._get_scoped_default_workspace(user, organization)
+            else:
+                workspace = self._get_user_default_workspace(user, organization)
 
         # Check workspace access permissions
         if workspace and not self._user_has_workspace_access(user, workspace):
@@ -304,6 +320,25 @@ class APIKeyAuthentication(BaseAuthentication):
         from accounts.models.organization_membership import OrganizationMembership
 
         logger = structlog.get_logger("auth.resolve_org")
+
+        auth_scope = getattr(request, "auth_scope", None)
+        if auth_scope is not None:
+            requested_org_ids = [
+                value
+                for value in (
+                    request.headers.get("X-Organization-Id"),
+                    request.GET.get("organization_id"),
+                )
+                if value
+            ]
+            if any(
+                str(org_id) != str(auth_scope.org_id) for org_id in requested_org_ids
+            ):
+                raise PermissionDenied(
+                    "This session is bound to the organization that signed you in",
+                    code="saml_scope_conflict",
+                )
+            return Organization.objects.get(id=auth_scope.org_id)
 
         # 1. API key auth — org comes from the key itself
         if hasattr(request, "org_api_key") and request.org_api_key:
@@ -405,6 +440,25 @@ class APIKeyAuthentication(BaseAuthentication):
     def _get_requested_workspace(self, request, user, organization):
         """Get the requested workspace from headers, query params, or API key."""
 
+        auth_scope = getattr(request, "auth_scope", None)
+        if auth_scope is not None:
+            workspace_id = request.headers.get("X-Workspace-Id") or request.GET.get(
+                "workspace_id"
+            )
+            if not workspace_id:
+                return None
+            workspace = Workspace.objects.filter(
+                id=workspace_id, organization_id=auth_scope.org_id, is_active=True
+            ).first()
+            if workspace is None or not self._user_has_workspace_access(
+                user, workspace
+            ):
+                raise PermissionDenied(
+                    "This session is bound to the organization that signed you in",
+                    code="saml_scope_conflict",
+                )
+            return workspace
+
         # First, check if this is an API key request and get workspace from API key
         if hasattr(request, "org_api_key") and request.org_api_key:
             org_api_key = request.org_api_key
@@ -501,6 +555,26 @@ class APIKeyAuthentication(BaseAuthentication):
         # Last resort: get or create default workspace (only creates membership
         # when user has NO workspace memberships in this org)
         return self._get_or_create_default_workspace(user, organization)
+
+    def _get_scoped_default_workspace(self, user, organization):
+        """Resolve a bound-org workspace without consulting mutable user config."""
+
+        membership = (
+            WorkspaceMembership.no_workspace_objects.filter(
+                user=user,
+                workspace__organization=organization,
+                workspace__is_active=True,
+                is_active=True,
+            )
+            .select_related("workspace")
+            .first()
+        )
+        if membership:
+            return membership.workspace
+        workspace = Workspace.objects.filter(
+            organization=organization, is_default=True, is_active=True
+        ).first()
+        return workspace if workspace and user.can_access_workspace(workspace) else None
 
     def _get_or_create_default_workspace(self, user, organization):
         """Get or create the default workspace for an organization.
@@ -875,7 +949,7 @@ def decrypt_message(encrypted_message: str) -> dict[str, Any]:
         raise AuthenticationFailed("Invalid token format") from ex
 
 
-def decode_token(token: str):
+def decode_token(token: str, *, transport: str = "http"):
     try:
         if not token:
             raise AuthenticationFailed("empty token")
@@ -883,6 +957,39 @@ def decode_token(token: str):
         decrypted_token_obj = decrypt_message(token)
         user_id = decrypted_token_obj.get("user_id")
         token_id = decrypted_token_obj.get("id")
+        if not user_id:
+            raise AuthenticationFailed("Invalid user id")
+        token_row = (
+            AuthToken.objects.filter(id=token_id)
+            .values(
+                "id",
+                "user_id",
+                "auth_type",
+                "is_active",
+                "last_used_at",
+                "auth_origin",
+                "scoped_organization_id",
+                "origin_idp_id",
+                "origin_idp_generation",
+            )
+            .first()
+        )
+        if token_row is None:
+            raise AuthenticationFailed("Invalid auth token")
+        if token_row["auth_origin"] == AuthTokenOrigin.SAML:
+            now = timezone.now()
+            credential = validate_saml_credential(
+                token_row, user_id, now=now, transport=transport
+            )
+            user = User.objects.select_related("organization").get(id=user_id)
+            if (
+                AuthToken.objects.filter(id=token_id, is_active=True).update(
+                    last_used_at=now
+                )
+                != 1
+            ):
+                raise SamlCredentialInvalid("token_inactive")
+            return user, token, credential
         cache_data = cache.get(f"access_token_{token_id}")
 
         if cache_data:
@@ -898,10 +1005,8 @@ def decode_token(token: str):
             )
             AuthToken.objects.filter(id=token_id).update(last_used_at=timezone.now())
 
-            return user, token
+            return user, token, None
 
-        if not user_id:
-            raise AuthenticationFailed("Invalid user id")
         user = User.objects.select_related("organization").get(
             id=user_id, is_active=True
         )
@@ -939,7 +1044,7 @@ def decode_token(token: str):
             timeout=AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES * 60,
         )
 
-        return user, token
+        return user, token, None
 
     except (DatabaseError, InterfaceError):
         raise

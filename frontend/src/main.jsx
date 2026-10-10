@@ -12,6 +12,7 @@ import "@fontsource/inter/600.css";
 import "@fontsource/inter/700.css";
 
 import App from "./app";
+import { bootstrapSamlSession } from "./auth/saml-bootstrap";
 import { SplashScreen } from "./components/loading-screen";
 import {
   CellSelectionModule,
@@ -243,6 +244,8 @@ if (CURRENT_ENVIRONMENT !== "local" && "serviceWorker" in navigator) {
 // ----------------------------------------------------------------------
 
 const root = ReactDOM.createRoot(document.getElementById("root"));
+
+bootstrapSamlSession();
 
 root.render(
   <HelmetProvider>

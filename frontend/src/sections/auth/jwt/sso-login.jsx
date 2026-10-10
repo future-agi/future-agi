@@ -39,7 +39,9 @@ export default function SSOLogin() {
 
   const { mutate: initiateSSO, isPending: isLoading } = useMutation({
     mutationFn: async (data) => {
-      const response = await axios.get(endpoints.auth.ssoLogin(data.email));
+      const response = await axios.get(endpoints.auth.ssoLogin(data.email), {
+        withCredentials: true,
+      });
       return response.data;
     },
     onSuccess: (data) => {

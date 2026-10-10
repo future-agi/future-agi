@@ -1,34 +1,36 @@
-import datetime
-import os.path
+import base64
+import binascii
+import hashlib
+import secrets
 import traceback
+from urllib.parse import urlencode
 
 import requests
-
-# from accounts.models.user_permissions import UserPermission
 import structlog
+from django.conf import settings
 from django.core.cache import cache
-from django.db.models import Q
+from django.db import transaction
 from django.http import HttpResponse, HttpResponseRedirect
 from django.utils import timezone
 from django.utils.http import urlsafe_base64_encode
 from drf_yasg import openapi
 from drf_yasg.utils import no_body, swagger_auto_schema
 from rest_framework import viewsets
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.views import APIView
 
 from accounts.authentication import generate_encrypted_message
-from accounts.gcp_marketplace_utils import encode_oauth_state
+from accounts.gcp_marketplace_utils import encode_oauth_state, read_oauth_state
 from accounts.gcp_marketplace_utils import process_signup as marketplace_signup
-from accounts.gcp_marketplace_utils import read_oauth_state
 from accounts.models.auth_token import (
     AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES,
     AuthToken,
     AuthTokenType,
 )
 from accounts.models.user import User
-from accounts.utils import first_signup, get_request_organization, is_work_email
+from accounts.utils import first_signup, get_request_organization
 from analytics.utils import (
     MixpanelEvents,
     MixpanelModes,
@@ -36,7 +38,8 @@ from analytics.utils import (
     track_mixpanel_event,
 )
 from saml2_auth.forms import IDPUploadForm
-from saml2_auth.models import SAMLMetadataModel
+from saml2_auth.models import SamlLoginAttempt, SAMLMetadataModel, SamlResponseCandidate
+from saml2_auth.permissions import SAMLConfigPermission
 from saml2_auth.serializers import (
     SAMLAuthLoginQuerySerializer,
     SAMLErrorResponseSerializer,
@@ -48,16 +51,28 @@ from saml2_auth.serializers import (
     SAMLStringResponseSerializer,
     SAMLUrlResponseSerializer,
 )
-from tfc.middleware.workspace_context import get_current_organization
-
-# from user.permissions_manager import PermissionManager
-# from authentications.programatic_authentication import IsAuthenticated
+from saml2_auth.services import (
+    SamlDenied,
+    admit_attempt,
+    build_sp_client,
+    claim_attempt,
+    issue_token,
+    record_failure,
+    require_active_membership,
+    resolve_assertion_user,
+    resolve_login_idp,
+    resolve_login_user,
+    store_candidate,
+    update_attempt_request_id,
+    validate_next_path,
+    verify_assertion_bindings,
+)
 from tfc.settings.settings import (
     AUTH0_CALLBACK_URL,
     AUTH0_CLIENT_ID,
     AUTH0_CLIENT_SECRET,
     AUTH0_DOMAIN,
-    BASE_DIR,
+    BASE_DIR,  # noqa: F401 - retained as a non-I/O compatibility hook for integrations
     GITHUB_API_ENDPOINT,
     GITHUB_CALLBACK_URL,
     GITHUB_CLIENT_ID,
@@ -73,7 +88,6 @@ from tfc.settings.settings import (
     default_next_url,
     get_assertion_url,
     get_entity_id,
-    get_name_id_format,
     get_started_url,
 )
 from tfc.utils.api_contracts import validated_request
@@ -81,6 +95,7 @@ from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
+security_logger = structlog.get_logger("saml2_auth.security")
 
 SAML_REDIRECT_RESPONSES = {
     200: None,
@@ -104,6 +119,16 @@ SAML_ACS_FORM_PARAMETERS = [
         required=False,
         description="Relay state configured for the organization IdP.",
     ),
+]
+
+SAML_COMPLETE_QUERY_PARAMETERS = [
+    openapi.Parameter(
+        "c",
+        openapi.IN_QUERY,
+        type=openapi.TYPE_STRING,
+        required=True,
+        description="One-time SAML response candidate key.",
+    )
 ]
 
 SAML_IDP_UPLOAD_FORM_PARAMETERS = [
@@ -137,70 +162,6 @@ SAML_IDP_UPLOAD_FORM_PARAMETERS = [
     ),
 ]
 
-try:
-    import urllib.parse as _urlparse
-    from urllib.parse import unquote
-except ImportError:
-    import urllib.parse as _urlparse
-    from urllib.parse import unquote
-
-try:
-    pass
-except Exception:
-    import urllib.error
-    import urllib.parse
-
-
-def _get_metadata(alias):
-    saml_metadata_model = SAMLMetadataModel.objects.filter(identity_type=alias).first()
-    meta_dir = os.path.join(
-        BASE_DIR,
-        "metadata",
-    )
-    if not os.path.exists(meta_dir):
-        os.makedirs(meta_dir)
-    meta_file_path = os.path.join(meta_dir, f"{saml_metadata_model.relay_state}.xml")
-    if not os.path.isfile(meta_file_path):
-        with open(meta_file_path, "w") as fh:
-            fh.write(saml_metadata_model.meta)
-
-    return {"local": [meta_file_path]}, saml_metadata_model.identity_type
-
-
-def _get_saml_client(alias, acs_url):
-    from saml2 import BINDING_HTTP_POST, BINDING_HTTP_REDIRECT  # lazy
-    from saml2.client import Saml2Client  # lazy
-    from saml2.config import Config as Saml2Config  # lazy
-
-    metadata, identity_type = _get_metadata(alias)
-    saml_settings = {
-        "metadata": metadata,
-        "service": {
-            "sp": {
-                "endpoints": {
-                    "assertion_consumer_service": [
-                        (acs_url, BINDING_HTTP_REDIRECT),
-                        (acs_url, BINDING_HTTP_POST),
-                    ],
-                },
-                "allow_unsolicited": True,
-                "authn_requests_signed": False,
-                "logout_requests_signed": True,
-                "want_assertions_signed": True,
-                "want_response_signed": False,
-            },
-        },
-        "entityid": get_entity_id,
-    }
-
-    saml_settings["service"]["sp"]["name_id_format"] = get_name_id_format
-
-    spConfig = Saml2Config()
-    spConfig.load(saml_settings)
-    spConfig.allow_unknown_attributes = True
-    saml_client = Saml2Client(config=spConfig)
-    return saml_client, identity_type
-
 
 def get_alias(request):
     return request.get_host().split(".")[0]
@@ -216,154 +177,161 @@ def _format_form_errors(errors):
     return "Invalid request."
 
 
+def _saml_denial_redirect(reason):
+    security_logger.warning("saml_completion_denied", reason=reason)
+    encoded = urlsafe_base64_encode(
+        b"SAML is not enabled for your organization. Please contact your Administrator"
+    )
+    return HttpResponseRedirect(f"{default_error_next_url}&reason={encoded}")
+
+
+def record_failure_for_candidate(candidate_key, reason):
+    candidate = (
+        SamlResponseCandidate.objects.filter(candidate_key=candidate_key)
+        .only("attempt_id")
+        .first()
+    )
+    if candidate:
+        record_failure(candidate.attempt_id, reason)
+
+
 class ACSView(APIView):
     _gm = GeneralMethods()
     parser_classes = [FormParser, MultiPartParser]
-
-    def save_auth_response(self, authn_response, user_identity):
-        """Save SAML authentication response to a file"""
-        try:
-            log_dir = os.path.join(BASE_DIR, "saml_logs")
-            if not os.path.exists(log_dir):
-                os.makedirs(log_dir)
-
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = os.path.join(log_dir, f"saml_response_{timestamp}.txt")
-
-            with open(filename, "w") as f:
-                f.write("Authentication Response:\n")
-                f.write(str(authn_response) + "\n\n")
-                f.write("User Identity:\n")
-                f.write(str(user_identity))
-
-            logger.info(f"SAML response saved to {filename}")
-        except Exception as e:
-            logger.error(f"Failed to save SAML response: {str(e)}")
+    permission_classes = (AllowAny,)
+    authentication_classes = []
 
     @swagger_auto_schema(
         request_body=no_body,
         manual_parameters=SAML_ACS_FORM_PARAMETERS,
         runtime_request_validation=True,
-        responses={
-            **SAML_REDIRECT_RESPONSES,
-        },
+        responses={**SAML_REDIRECT_RESPONSES},
     )
     def post(self, request, *args, **kwargs):
-        from saml2 import entity  # lazy
-
         try:
-            resp = request.POST.get("SAMLResponse", None)
-            relay_state = request.POST.get("RelayState", "None Provided")
-            saml_obj = SAMLMetadataModel.objects.get(relay_state=relay_state)
-            if not saml_obj:
-                raise Exception("RelayState No Valid")
-
-            saml_client, identity_type = _get_saml_client(
-                saml_obj.identity_type, get_assertion_url
-            )
-
-            if not resp:
-                raise Exception("Unauthorised")
-
-            authn_response = saml_client.parse_authn_request_response(
-                resp, entity.BINDING_HTTP_POST
-            )
-            if authn_response is None:
-                raise Exception("Unauthorised")
-            user_identity = authn_response.get_identity()
-
+            if not settings.SAML_LOGIN_ENABLED:
+                raise SamlDenied("idp_unavailable")
+            content_length = request.META.get("CONTENT_LENGTH")
+            if (
+                content_length is None
+                or int(content_length) > settings.SAML_MAX_ACS_BODY_BYTES
+            ):
+                raise SamlDenied("acs_malformed")
+            if len(request.body) > settings.SAML_MAX_ACS_BODY_BYTES:
+                raise SamlDenied("acs_malformed")
+            relay_state = request.POST.get("RelayState")
+            saml_response = request.POST.get("SAMLResponse")
+            if not relay_state or not saml_response:
+                raise SamlDenied("acs_malformed")
             try:
-                name_id = authn_response.get_subject().text
-            except Exception:
-                pass
-
-            if user_identity is None:
-                raise Exception("Unauthorised")
-            attributes = SAMLMetadataModel.get_attributes(identity_type)
-            if not user_identity:
-                authn_response.parse_assertion(attributes)
-                user_identity = authn_response.ava
-
-            if user_identity:
-                user_email = user_identity.get(attributes[0])[0]
-            else:
-                user_email = name_id
-
-            name = None
-            """
-            For AWS.
-            """
-            if user_identity and "name" in user_identity:
-                name = user_identity["name"][0]
-
-            if not name:
-                """
-                For Google or OKTA.
-                """
-                names = []
-                if user_identity and attributes[1] in user_identity:
-                    first_name = user_identity[attributes[1]][0]
-                    names.append(first_name)
-
-                if user_identity and attributes[2] in user_identity:
-                    last_name = user_identity[attributes[2]][0]
-                    names.append(last_name)
-                name = " ".join(names)
-                if not name:
-                    # Create name from email by taking the part before @ and replacing dots/underscores with spaces
-                    name = (
-                        user_email.split("@")[0]
-                        .replace(".", " ")
-                        .replace("_", " ")
-                        .title()
-                    )
-
-            # user_name = authn_response.get_subject().text
-
-            user_model = User.objects.filter(email=user_email).get()
-
-            if not user_model.is_active:
-                raise Exception("User is no longer active.")
-
-            user_model.organization = saml_obj.organization
-            user_model.save()
-            access_token = AuthToken.objects.create(
-                user=user_model,
-                auth_type=AuthTokenType.ACCESS.value,
-                last_used_at=timezone.now(),
-                is_active=True,
+                payload = base64.b64decode(saml_response, validate=True)
+            except (ValueError, binascii.Error):
+                raise SamlDenied("acs_malformed") from None
+            if len(payload) > settings.SAML_MAX_RESPONSE_BYTES:
+                raise SamlDenied("acs_malformed")
+            attempt = SamlLoginAttempt.objects.filter(
+                relay_key=relay_state,
+                state=SamlLoginAttempt.State.PENDING,
+                expires_at__gt=timezone.now(),
+            ).first()
+            if attempt is None:
+                raise SamlDenied("attempt_unavailable")
+            candidate = store_candidate(attempt=attempt, payload=payload)
+            response = HttpResponseRedirect(
+                f"/saml2_auth/complete/?{urlencode({'c': candidate.candidate_key})}"
             )
+            response.status_code = 303
+            return response
+        except (SamlDenied, ValueError):
+            return _saml_denial_redirect("acs_malformed")
 
-            access_token_encrypted = generate_encrypted_message(
-                {"user_id": str(user_model.id), "id": str(access_token.id)}
-            )
-            cache.set(
-                f"access_token_{str(access_token.id)}",
-                {"token": access_token_encrypted, "user": user_model},
-                timeout=AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES * 60,
-            )
 
-            next_url = default_next_url
-            next_url += f"?sso_token={str(access_token_encrypted)}"
-            login_next_url = request.session.get("login_next_url", None)
-            if login_next_url:
-                next_url += f"&next={login_next_url}"
-                del request.session["login_next_url"]
+class CompleteView(APIView):
+    permission_classes = (AllowAny,)
+    authentication_classes = []
 
-            properties = get_mixpanel_properties(
-                user=user_model, mode=MixpanelModes.SAML.value
+    @swagger_auto_schema(
+        manual_parameters=SAML_COMPLETE_QUERY_PARAMETERS,
+        responses={**SAML_REDIRECT_RESPONSES},
+    )
+    def get(self, request, *args, **kwargs):
+        candidate_key = request.GET.get("c", "")
+        cookie_name = None
+        claimed_attempt_id = None
+        try:
+            if not settings.SAML_LOGIN_ENABLED:
+                raise SamlDenied("idp_unavailable")
+            candidate = SamlResponseCandidate.objects.only("attempt_id").get(
+                candidate_key=candidate_key
             )
-            track_mixpanel_event(MixpanelEvents.SSO_LOGIN.value, properties)
-            return HttpResponseRedirect(next_url)
+            attempt_ref = SamlLoginAttempt.objects.only("id").get(
+                id=candidate.attempt_id
+            )
+            cookie_name = f"fai_saml_b_{attempt_ref.id.hex[:16]}"
+            binder = request.COOKIES.get(cookie_name)
+            if not binder:
+                raise SamlDenied("browser_unbound")
+            attempt, payload = claim_attempt(candidate_key=candidate_key, binder=binder)
+            claimed_attempt_id = attempt.id
+            idp = SAMLMetadataModel.objects.get(
+                id=attempt.idp_id,
+                deleted=False,
+                is_enabled=True,
+                organization_id=attempt.organization_id,
+                security_generation=attempt.idp_generation,
+            )
+            if hashlib.sha256(idp.meta.encode()).hexdigest() != attempt.idp_meta_sha256:
+                raise SamlDenied("idp_changed")
+            from saml2 import BINDING_HTTP_POST
 
-        except Exception as e:
-            self._gm.error_log(api_view="ACSView.post", code="ACS001", message=str(e))
-            traceback.print_exc()
-            encoded = urlsafe_base64_encode(
-                b"SAML is not enabled for your organization. Please contact your Administrator"
+            parsed = build_sp_client(idp).parse_authn_request_response(
+                base64.b64encode(payload).decode(),
+                BINDING_HTTP_POST,
+                outstanding={attempt.request_id: attempt.relay_key},
             )
-            redirect_url = f"{default_error_next_url}&reason={encoded}"
-            return HttpResponseRedirect(redirect_url)
+            facts = verify_assertion_bindings(parsed, attempt, idp)
+            subject = parsed.get_subject()
+            user = resolve_assertion_user(
+                parsed.get_identity() or {}, getattr(subject, "text", None)
+            )
+            require_active_membership(user, idp.organization)
+            token = issue_token(
+                attempt_id=attempt.id,
+                user=user,
+                not_on_or_after=facts.not_on_or_after,
+            )
+            security_logger.info(
+                "saml_login_succeeded",
+                org_id=str(idp.organization_id),
+                user_id=str(user.id),
+            )
+            response = HttpResponseRedirect(
+                f"{default_next_url}?{urlencode({'sso_token': token, 'next': attempt.next_path, 'auth': 'saml'})}"
+            )
+        except SamlDenied as exc:
+            if claimed_attempt_id:
+                record_failure(claimed_attempt_id, exc.reason)
+            elif candidate_key:
+                record_failure_for_candidate(candidate_key, exc.reason)
+            response = _saml_denial_redirect(exc.reason)
+        except (SAMLMetadataModel.DoesNotExist, SamlResponseCandidate.DoesNotExist):
+            if claimed_attempt_id:
+                record_failure(claimed_attempt_id, "response_invalid")
+            elif candidate_key:
+                record_failure_for_candidate(candidate_key, "response_invalid")
+            response = _saml_denial_redirect("response_invalid")
+        except Exception as exc:
+            security_logger.warning(
+                "saml_completion_rejected", exc_type=type(exc).__name__
+            )
+            if claimed_attempt_id:
+                record_failure(claimed_attempt_id, "response_invalid")
+            elif candidate_key:
+                record_failure_for_candidate(candidate_key, "response_invalid")
+            response = _saml_denial_redirect("response_invalid")
+        if cookie_name:
+            response.delete_cookie(cookie_name, path="/saml2_auth/")
+        return response
 
 
 class IDPLoginView(APIView):
@@ -373,70 +341,60 @@ class IDPLoginView(APIView):
 
     @validated_request(
         query_serializer=SAMLIDPLoginQuerySerializer,
-        responses={
-            200: SAMLUrlResponseSerializer,
-            400: SAMLErrorResponseSerializer,
-        },
+        responses={200: SAMLUrlResponseSerializer, 400: SAMLErrorResponseSerializer},
         reject_unknown_fields=True,
     )
     def get(self, request, *args, **kwargs):
         msg = "SSO is not enabled for your organisation. Please contact to your administration."
         try:
-            # provider = request.GET.get('provider')
-            work_email = request.validated_query_data.get("email")
-            if not work_email:
-                return self._gm.bad_request("Email is required")
-
-            work_email = work_email.lower()
-
-            if not is_work_email(work_email):
-                return self._gm.bad_request("Only Work email is permitted")
-
-            try:
-                user = User.objects.get(email=work_email)
-            except User.DoesNotExist:
-                logger.info("User Not Found")
-                return self._gm.bad_request(msg)
-
-            org_name = (get_current_organization() or user.organization).name
-            saml_data = SAMLMetadataModel.objects.filter(
-                Q(relay_state__istartswith=f"{org_name}")
-            ).first()
-
-            if not saml_data:
-                logger.info("Saml Data does not Exist")
-                return self._gm.bad_request(msg)
-
-            alias = saml_data.identity_type
-            next_url = request.GET.get("next", default_next_url)
-
-            try:
-                if "next=" in unquote(next_url):
-                    next_url = _urlparse.parse_qs(
-                        _urlparse.urlparse(unquote(next_url)).query
-                    )["next"][0]
-            except (KeyError, IndexError):
-                next_url = request.GET.get("next", default_next_url)
-            request.session["login_next_url"] = next_url
-
-            saml_client, identity_type = _get_saml_client(alias, get_assertion_url)
-            _, info = saml_client.prepare_for_authenticate()
-
-            redirect_url = None
-
-            for key, value in info["headers"]:
-                if key == "Location":
-                    redirect_url = value
-                    break
-
-            if not redirect_url:
-                logger.info("No redirect Url")
-                return self._gm.bad_request(msg)
-            return self._gm.success_response({"url": redirect_url})
-
-        except Exception as e:
-            traceback.print_exc()
-            logger.error(e)
+            if not settings.SAML_LOGIN_ENABLED:
+                raise SamlDenied("idp_unavailable")
+            work_email = request.validated_query_data.get("email", "")
+            user = resolve_login_user(work_email)
+            if user is None:
+                raise SamlDenied("identity_missing")
+            idp = resolve_login_idp(user)
+            if idp is None:
+                raise SamlDenied("idp_unavailable")
+            cookie_names = [
+                name for name in request.COOKIES if name.startswith("fai_saml_b_")
+            ]
+            if len(cookie_names) >= settings.SAML_MAX_PENDING_COOKIES_PER_BROWSER:
+                raise SamlDenied("browser_capacity")
+            binder = secrets.token_urlsafe(32)
+            attempt = admit_attempt(
+                user=user,
+                idp=idp,
+                binder=binder,
+                next_path=validate_next_path(request.validated_query_data.get("next")),
+            )
+            request_id, info = build_sp_client(idp).prepare_for_authenticate(
+                relay_state=attempt.relay_key
+            )
+            update_attempt_request_id(attempt, request_id)
+            redirect_url = next(
+                value for key, value in info["headers"] if key == "Location"
+            )
+            response = self._gm.success_response({"url": redirect_url})
+            response.set_cookie(
+                f"fai_saml_b_{attempt.id.hex[:16]}",
+                binder,
+                max_age=settings.SAML_ATTEMPT_TTL_SECONDS,
+                httponly=True,
+                samesite="Lax",
+                secure=settings.ENV_TYPE not in {"local", "test", "development"},
+                path="/saml2_auth/",
+            )
+            return response
+        except (SamlDenied, StopIteration):
+            security_logger.warning("saml_login_denied", reason="idp_unavailable")
+            return self._gm.bad_request(msg)
+        except Exception as exc:
+            security_logger.warning(
+                "saml_login_denied",
+                reason="idp_unavailable",
+                exc_type=type(exc).__name__,
+            )
             return self._gm.bad_request(msg)
 
 
@@ -473,13 +431,78 @@ class IDPUploadViews(viewsets.ModelViewSet):
     _gm = GeneralMethods()
     parser_classes = (FormParser, MultiPartParser)
     # authentication_classes = (ProgrammaticAuthentication,)
-    permission_classes = (IsAuthenticated,)
+    permission_classes = (IsAuthenticated, SAMLConfigPermission)
     # rbac = 'idp'
     queryset = SAMLMetadataModel.objects.filter(deleted=False)
     lookup_field = "id"
     lookup_url_kwarg = "id"
     http_method_names = ["get", "post", "head", "delete", "options", "put"]
     parser_classes = (FormParser, MultiPartParser)
+
+    def get_queryset(self):
+        organization = get_request_organization(self.request)
+        if organization is None:
+            return SAMLMetadataModel.objects.none()
+        return SAMLMetadataModel.objects.filter(
+            deleted=False, organization=organization
+        )
+
+    def check_permissions(self, request):
+        try:
+            return super().check_permissions(request)
+        except PermissionDenied:
+            self._log_config_denied(
+                request,
+                self.kwargs.get(self.lookup_url_kwarg),
+                "permission_denied",
+            )
+            raise
+
+    def _metadata_too_large(self, request):
+        content_length = request.META.get("CONTENT_LENGTH")
+        maximum = getattr(settings, "SAML_MAX_METADATA_BYTES", 262144)
+        try:
+            if content_length is not None and int(content_length) > maximum:
+                return True
+        except ValueError:
+            return True
+        return len(request.body) > maximum
+
+    def _request_data(self, request):
+        if self._metadata_too_large(request):
+            return None
+        form = IDPUploadForm(request.POST, request.FILES)
+        if not form.is_valid():
+            return None
+        data = form.cleaned_data.copy()
+        metadata_file = data.pop("file", None)
+        data.pop("organization", None)
+        data.pop("relay_state", None)
+        if metadata_file is not None:
+            try:
+                data["meta"] = metadata_file.read().decode()
+            except (UnicodeDecodeError, OSError):
+                return None
+        return data
+
+    @staticmethod
+    def _revoke_idp_tokens(idp):
+        """Revoke scoped SAML credentials once the additive token fields land."""
+
+        if "origin_idp" not in {field.name for field in AuthToken._meta.get_fields()}:
+            return
+        AuthToken.no_workspace_objects.filter(origin_idp=idp, is_active=True).update(
+            is_active=False
+        )
+
+    def _log_config_denied(self, request, target_id, reason):
+        security_logger.warning(
+            "saml_config_denied",
+            actor_id=str(request.user.id),
+            target_id=str(target_id) if target_id else None,
+            method=request.method,
+            reason=reason,
+        )
 
     def get_serializer_class(self):
         if self.request.method == "GET":
@@ -527,31 +550,19 @@ class IDPUploadViews(viewsets.ModelViewSet):
         }
     )
     def retrieve(self, request, *args, **kwargs):
-        try:
-            uuid = kwargs.get(self.lookup_url_kwarg)
-            data = {}
-            existing_saml_metadata_model = SAMLMetadataModel.objects.get(
-                id=uuid, deleted=False
-            )
-            if existing_saml_metadata_model:
-                data["is_enabled"] = existing_saml_metadata_model.is_enabled
-                data["identity_type"] = existing_saml_metadata_model.identity_type
-                name = existing_saml_metadata_model.name
-                if (
-                    not existing_saml_metadata_model.name
-                    or existing_saml_metadata_model.name == "null"
-                ):
-                    name = existing_saml_metadata_model.get_identity_type
-                data["name"] = name
-                data["acs_url"] = get_assertion_url
-                data["audience_url"] = get_entity_id
-            return self._gm.success_response(data)
-        except SAMLMetadataModel.DoesNotExist:
-            return self._gm.bad_request("Invalid saml group.")
-        except Exception as e:
-            logger.error(e)
-            traceback.print_exc()
-            return self._gm.internal_server_error_response(get_error_message("US25"))
+        existing_saml_metadata_model = self.get_object()
+        name = existing_saml_metadata_model.name
+        if not name or name == "null":
+            name = existing_saml_metadata_model.get_identity_type
+        return self._gm.success_response(
+            {
+                "is_enabled": existing_saml_metadata_model.is_enabled,
+                "identity_type": existing_saml_metadata_model.identity_type,
+                "name": name,
+                "acs_url": get_assertion_url,
+                "audience_url": get_entity_id,
+            }
+        )
 
     @swagger_auto_schema(
         request_body=no_body,
@@ -564,31 +575,25 @@ class IDPUploadViews(viewsets.ModelViewSet):
         },
     )
     def create(self, request, *args, **kwargs):
-        try:
-            form = IDPUploadForm(request.POST, request.FILES)
-            if not form.is_valid():
-                return self._gm.bad_request(_format_form_errors(form.errors))
-            data = form.cleaned_data
-            data["organization"] = get_request_organization(request)
-            if "file" in data:
-                try:
-                    meta = data.pop("file").read()
-                    data["meta"] = meta.decode()
-                except Exception as e:
-                    logger.error(str(e))
-                    return self._gm.bad_request("Please select a XML file.")
-            if SAMLMetadataModel.objects.filter(
-                deleted=False, organization=data["organization"]
-            ).exists():
-                return self._gm.bad_request(
-                    "Maximum supported identity providers reached. Please edit or delete an existing IdP."
-                )
-            SAMLMetadataModel.objects.create(**data)
-            return self._gm.success_response("Success")
-        except Exception as e:
-            logger.error(e)
-            traceback.print_exc()
-            return self._gm.internal_server_error_response(get_error_message("US25"))
+        data = self._request_data(request)
+        organization = get_request_organization(request)
+        if data is None or organization is None:
+            return self._gm.bad_request("Please select a XML file.")
+        if SAMLMetadataModel.objects.filter(
+            deleted=False, organization=organization
+        ).exists():
+            return self._gm.bad_request(
+                "Maximum supported identity providers reached. Please edit or delete an existing IdP."
+            )
+        # relay_state is unique and no longer read for login (each attempt
+        # gets its own relay key), so the server assigns an opaque value
+        # rather than the empty default every upload would otherwise share.
+        SAMLMetadataModel.objects.create(
+            organization=organization,
+            relay_state=f"idp-{secrets.token_hex(16)}",
+            **data,
+        )
+        return self._gm.success_response("Success")
 
     @swagger_auto_schema(
         responses={
@@ -598,18 +603,23 @@ class IDPUploadViews(viewsets.ModelViewSet):
         }
     )
     def destroy(self, request, *args, **kwargs):
-        try:
-            uuid = kwargs.get(self.lookup_url_kwarg)
-            obj = SAMLMetadataModel.objects.get(id=uuid)
+        obj = self.get_object()
+        with transaction.atomic():
+            obj = self.get_queryset().select_for_update().get(id=obj.id)
             obj.deleted = True
-            obj.deleted_at = datetime.datetime.now()
-            obj.save()
-            return self._gm.success_response("Success")
-        except SAMLMetadataModel.DoesNotExist:
-            return self._gm.bad_request("Invalid saml group.")
-        except Exception as e:
-            logger.error(e)
-            return self._gm.internal_server_error_response(get_error_message("US25"))
+            obj.deleted_at = timezone.now()
+            obj.security_generation += 1
+            obj.save(update_fields=["deleted", "deleted_at", "security_generation"])
+            self._revoke_idp_tokens(obj)
+        security_logger.info(
+            "saml_config_changed",
+            actor_id=str(request.user.id),
+            org_id=str(obj.organization_id),
+            row_id=str(obj.id),
+            changed_fields=["deleted"],
+            generation=obj.security_generation,
+        )
+        return self._gm.success_response("Success")
 
     @swagger_auto_schema(
         request_body=no_body,
@@ -622,32 +632,37 @@ class IDPUploadViews(viewsets.ModelViewSet):
         },
     )
     def update(self, request, *args, **kwargs):
-        try:
-            uuid = kwargs.get(self.lookup_url_kwarg)
-            form = IDPUploadForm(request.POST, request.FILES)
-            saml_model = SAMLMetadataModel.objects.filter(id=uuid, deleted=False).get()
-            if not form.is_valid():
-                return self._gm.bad_request(_format_form_errors(form.errors))
-            data = form.cleaned_data
-            data["organization"] = get_request_organization(request)
-            if int(saml_model.identity_type) != int(
-                data.get("identity_type")
-            ) and not data.get("file"):
-                return self._gm.bad_request("Please select a XML file.")
-            if "file" in data:
-                try:
-                    meta = data.pop("file").read()
-                    data["meta"] = meta.decode()
-                except Exception:
-                    logger.info("No file in update SSO.")
-            SAMLMetadataModel.objects.filter(id=uuid).update(**data)
-            return self._gm.success_response("Success")
-        except SAMLMetadataModel.DoesNotExist:
-            return self._gm.bad_request("Invalid saml group.")
-        except Exception as e:
-            traceback.print_exc()
-            logger.error(e)
-            return self._gm.internal_server_error_response(get_error_message("US25"))
+        original = self.get_object()
+        data = self._request_data(request)
+        if data is None:
+            return self._gm.bad_request("Please select a XML file.")
+        if (
+            data.get("identity_type")
+            and int(original.identity_type) != int(data["identity_type"])
+            and "meta" not in data
+        ):
+            return self._gm.bad_request("Please select a XML file.")
+        changed_fields = [
+            field for field, value in data.items() if getattr(original, field) != value
+        ]
+        with transaction.atomic():
+            row = self.get_queryset().select_for_update().get(id=original.id)
+            for field, value in data.items():
+                setattr(row, field, value)
+            if changed_fields:
+                row.security_generation += 1
+                row.save(update_fields=[*changed_fields, "security_generation"])
+                self._revoke_idp_tokens(row)
+        if changed_fields:
+            security_logger.info(
+                "saml_config_changed",
+                actor_id=str(request.user.id),
+                org_id=str(original.organization_id),
+                row_id=str(original.id),
+                changed_fields=changed_fields,
+                generation=row.security_generation,
+            )
+        return self._gm.success_response("Success")
 
 
 import urllib.parse  # noqa: E402

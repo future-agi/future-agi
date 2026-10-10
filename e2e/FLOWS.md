@@ -209,6 +209,113 @@
 - Continue routes to /auth/jwt/login, not /auth/jwt/register
 - signing in as the owner returns a token pair from POST /accounts/token/ and moves on to organization setup
 
+### SAML-E2E-001 — signed login issues one organization-scoped session
+
+**Goal:** A member signs in through the tenant IdP and receives one scoped session  
+**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:152`  
+**Tags:** @saml
+
+**User steps:**
+
+1. provision an organization member and its local IdP metadata
+2. initiate from the browser
+3. complete the cross-site signed response
+4. render the authenticated dashboard
+
+**Backend state verified:**
+
+- the AuthToken row has auth_origin=saml and the actor organization scope
+- the shared login attempt reaches consumed
+- redacted callback request receipts contain no secret values
+
+### SAML-E2E-002 — another browser cannot consume the initiating browser candidate
+
+**Goal:** The browser that initiated SSO can complete after another browser posts first  
+**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:184`  
+**Tags:** @saml
+
+**User steps:**
+
+1. start SSO in browser X
+2. let browser Y post the signed response
+3. observe Y fail without the binder
+4. complete the same candidate in X
+
+**Backend state verified:**
+
+- no SAML token exists after Y fails
+- X consumes the pending attempt and receives exactly one token
+
+### SAML-E2E-003 — the cross-site ACS post omits the binder and completion carries it
+
+**Goal:** A real cross-site IdP POST does not leak the browser binding cookie  
+**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:229`  
+**Tags:** @saml
+
+**User steps:**
+
+1. initiate SSO from localhost
+2. navigate to the 127.0.0.1 IdP
+3. inspect ACS and completion requests
+
+**Backend state verified:**
+
+- ACS has no fai_saml_b cookie
+- completion has exactly one fai_saml_b cookie
+
+### SAML-E2E-004 — safe next survives the binding while external next values do not
+
+**Goal:** A SAML user returns to the approved deep page and cannot be redirected off-site  
+**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:252`  
+**Tags:** @saml
+
+**User steps:**
+
+1. complete a login with a deep relative next
+2. repeat with protocol-relative next
+3. repeat with an absolute external next
+
+**Backend state verified:**
+
+- the deep relative path is rendered after the barrier
+- unsafe next values land on the default dashboard route
+
+### SAML-E2E-005 — a SAML landing resolves the authenticated organization without configuration writes
+
+**Goal:** A SAML session lands in the organization that signed the assertion  
+**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:274`  
+**Tags:** @saml
+
+**User steps:**
+
+1. complete a signed login
+2. read the current organization
+3. inspect the account configuration row
+
+**Backend state verified:**
+
+- the current organization is the bound SAML organization
+- the callback did not write User.config
+
+### SAML-E2E-006 — SAML replaces a live password session before any stale scope is sent
+
+**Goal:** A SAML callback replaces a live session without using its stale organization scope  
+**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:305`  
+**Tags:** @saml
+
+**User steps:**
+
+1. render a live password session for another organization
+2. open the SAML callback in the same tab
+3. inspect the first protected request and browser storage
+4. try an explicit old organization selector
+
+**Backend state verified:**
+
+- the first user-info request uses the SAML bearer and no organization or workspace header
+- refresh and stale selector state are absent after the barrier
+- a forced old organization selector is denied
+
 ## dashboards
 
 ### DASH-E2E-001 — an imported numeric dataset column works in a saved widget

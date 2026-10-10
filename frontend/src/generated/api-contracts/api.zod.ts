@@ -30870,6 +30870,10 @@ export const Saml2AuthAuthReadQueryParams = zod.object({
   state: zod.string().optional(),
 });
 
+export const Saml2AuthCompleteListQueryParams = zod.object({
+  c: zod.string().describe("One-time SAML response candidate key."),
+});
+
 export const Saml2AuthGithubCallbackListQueryParams = zod.object({
   code: zod.string().optional(),
   state: zod.string().optional(),

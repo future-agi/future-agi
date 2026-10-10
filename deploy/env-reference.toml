@@ -1059,6 +1059,110 @@ a Mixpanel token.
     setups = ["S", "D", "H"]
     text = "Microsoft sign-in: a multi-tenant Entra app registration (the `common` endpoint). Redirect URI: `<API URL>/saml2_auth/microsoft/callback/`. Helm: `auth.microsoft`."
 
+  [[part.section]]
+  heading = "SAML sign-in boundaries"
+  body = '''
+SAML is SP-initiated: sign-in starts on the Future AGI login page, and an
+unsolicited (IdP-initiated) response is refused. The service refuses invalid
+values for these settings at startup. Deploy the backend and frontend together.
+'''
+
+    [[part.section.row]]
+    keys = ["SAML_LOGIN_ENABLED"]
+    default = "`true`"
+    setups = ["S", "D", "H"]
+    text = "Kill switch for SAML initiation, ACS and completion. On when unset or blank, so organizations that already use SAML keep it. `false` denies new SAML logins generically; it does not relax validation of existing SAML sessions. Any value other than true/false (or 1/0, yes/no, on/off) refuses to start."
+
+    [[part.section.row]]
+    keys = ["SAML_ATTEMPT_TTL_SECONDS"]
+    default = "`600` seconds, hard maximum `600`"
+    setups = ["S", "D", "H"]
+    text = "Lifetime of a pending browser-bound login attempt and its binder cookie."
+
+    [[part.section.row]]
+    keys = ["SAML_CANDIDATE_TTL_SECONDS"]
+    default = "`60` seconds, hard maximum `120`"
+    setups = ["S", "D", "H"]
+    text = "Lifetime of a signed IdP response retained between the ACS POST and the same-browser completion GET."
+
+    [[part.section.row]]
+    keys = ["SAML_MAX_RESPONSE_BYTES"]
+    default = "`65536` bytes, hard maximum `262144`"
+    setups = ["S", "D", "H"]
+    text = "Maximum decoded SAMLResponse size. Larger responses fail before XML processing."
+
+    [[part.section.row]]
+    keys = ["SAML_MAX_ACS_BODY_BYTES"]
+    default = "`131072` bytes, hard maximum `524288`"
+    setups = ["S", "D", "H"]
+    text = "Maximum ACS form body, checked before the form parser reads it."
+
+    [[part.section.row]]
+    keys = ["SAML_MAX_METADATA_BYTES"]
+    default = "`262144` bytes, hard maximum `1048576`"
+    setups = ["S", "D", "H"]
+    text = "Maximum IdP metadata upload body, checked before metadata parsing."
+
+    [[part.section.row]]
+    keys = ["SAML_MAX_CANDIDATES_PER_ATTEMPT"]
+    default = "`3`"
+    setups = ["S", "D", "H"]
+    text = "Maximum live stored IdP responses for one pending login attempt."
+
+    [[part.section.row]]
+    keys = ["SAML_MAX_CANDIDATES_PER_ATTEMPT_LIFETIME"]
+    default = "`6`"
+    setups = ["S", "D", "H"]
+    text = "Maximum responses ever accepted for one attempt, including candidates that were later consumed or expired."
+
+    [[part.section.row]]
+    keys = ["SAML_MAX_ATTEMPTS_PER_USER_PER_TTL"]
+    default = "`10`"
+    setups = ["S", "D", "H"]
+    text = "Maximum login attempts for one user in one attempt-TTL window, across all states."
+
+    [[part.section.row]]
+    keys = ["SAML_MAX_PENDING_COOKIES_PER_BROWSER"]
+    default = "`8`"
+    setups = ["S", "D", "H"]
+    text = "Maximum pending SAML binder cookies presented by one browser when it starts another login."
+
+    [[part.section.row]]
+    keys = ["SAML_MAX_ATTEMPT_ROWS"]
+    default = "`100000`"
+    setups = ["S", "D", "H"]
+    text = "Physical cap on retained login-attempt rows, including completed and failed rows awaiting retention cleanup."
+
+    [[part.section.row]]
+    keys = ["SAML_MAX_CANDIDATE_ROWS"]
+    default = "`2000`"
+    setups = ["S", "D", "H"]
+    text = "Physical cap on retained response-candidate rows."
+
+    [[part.section.row]]
+    keys = ["SAML_MAX_CANDIDATE_BYTES"]
+    default = "`134217728` bytes"
+    setups = ["S", "D", "H"]
+    text = "Physical cap on total retained raw response bytes. The service denies new candidates before this bound can grow."
+
+    [[part.section.row]]
+    keys = ["SAML_INLINE_CLEANUP_ROWS"]
+    default = "`100`"
+    setups = ["S", "D", "H"]
+    text = "Maximum expired attempt or candidate rows deleted inline when a new login is admitted or response candidate is stored."
+
+    [[part.section.row]]
+    keys = ["SAML_ATTEMPT_RETENTION_SECONDS"]
+    default = "`3600` seconds"
+    setups = ["S", "D", "H"]
+    text = "How long an expired terminal attempt remains before inline cleanup and the periodic purge delete it."
+
+    [[part.section.row]]
+    keys = ["SAML_SOCKET_REVALIDATE_SECONDS"]
+    default = "`30` seconds, hard maximum `120`"
+    setups = ["S", "D", "H"]
+    text = "Maximum interval before a SAML WebSocket revalidates its session before an outbound push. Inbound frames validate immediately."
+
     [[part.section.row]]
     keys = ["VITE_HELP_LINK"]
     default = "empty: the community Discord"

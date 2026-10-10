@@ -72,7 +72,6 @@ from tfc.utils.email import email_delivery_configured, email_helper
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.install_setup import manage_py_command
 
-
 try:
     from ee.usage.utils.usage_entries import (
         create_organization_subscription_if_not_exists,
@@ -557,9 +556,6 @@ def reset_password_confirm(request, uidb64, token):
     new_password = request.validated_data.get("new_password")
     repeat_password = request.validated_data.get("repeat_password")
 
-    if new_password != repeat_password:
-        return _gm.bad_request("Passwords do not match.")
-
     try:
         # Decode the uidb64 to the user ID
         uid = force_str(urlsafe_base64_decode(uidb64))
@@ -579,6 +575,12 @@ def reset_password_confirm(request, uidb64, token):
             )
         except AuthToken.DoesNotExist:
             return _gm.forbidden_response("Invalid token id.")
+
+        if auth_token_obj.auth_origin == "saml":
+            return _gm.forbidden_response("Invalid token.")
+
+        if new_password != repeat_password:
+            return _gm.bad_request("Passwords do not match.")
 
         if (
             not auth_token_obj.is_active

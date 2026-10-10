@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1058,
+  endpointCount: 1059,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -26157,6 +26157,30 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           state: {
             required: false,
+            schema: {
+              type: "string",
+            },
+          },
+        },
+        responses: {
+          400: {
+            $ref: "#/definitions/SAMLErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/saml2_auth/complete/": {
+      get: {
+        operationId: "saml2_auth_complete_list",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {
+          c: {
+            required: true,
             schema: {
               type: "string",
             },
