@@ -23,6 +23,7 @@ from tracer.models.trace_investigation import (
     TraceInvestigationGroupingStatus,
 )
 from tracer.queries import feed, scan_clustering
+from tracer.services.grouping.publish import _recount
 from tracer.tests.test_grouping_snapshot import _saved_report
 from tracer.types.feed_types import FeedUpdatePayload
 from tracer.views.feed.linear_issue_view import CreateLinearIssueView
@@ -58,6 +59,19 @@ def omega_issue(observe_project):
         cluster=cluster, trace_id=report.trace_id, finding=finding
     )
     return report, cluster, state, finding
+
+
+def test_recount_keeps_existing_investigation(omega_issue):
+    _, cluster, state, _ = omega_issue
+    cluster.rca_synthesis = "Confirmed cause"
+    cluster.rca_fix = "Confirmed fix"
+    cluster.save(update_fields=["rca_synthesis", "rca_fix", "updated_at"])
+
+    _recount(state)
+
+    cluster.refresh_from_db()
+    assert cluster.rca_synthesis == "Confirmed cause"
+    assert cluster.rca_fix == "Confirmed fix"
 
 
 def test_f6_membership_requires_current_completed_matching_finding(omega_issue):
