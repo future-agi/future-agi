@@ -66,7 +66,8 @@ func (t *Translator) RequestToCanonical(body []byte) (*models.ChatCompletionRequ
 				name = short
 			}
 			oaiTools = append(oaiTools, models.Tool{
-				Type: "function",
+				Type:           "function",
+				AllowedCallers: at.AllowedCallers,
 				Function: models.ToolFunction{
 					Name:        name,
 					Description: at.Description,
@@ -99,6 +100,16 @@ func (t *Translator) RequestToCanonical(body []byte) (*models.ChatCompletionRequ
 			out.ToolChoice = translated
 		}
 		drops = append(drops, tcDrops...)
+		var policy struct {
+			DisableParallelToolUse bool `json:"disable_parallel_tool_use"`
+		}
+		if err := json.Unmarshal(req.ToolChoice, &policy); err != nil {
+			return nil, nil, fmt.Errorf("anthropic: tool_choice: %w", err)
+		}
+		if policy.DisableParallelToolUse {
+			falseValue := false
+			out.ParallelToolCalls = &falseValue
+		}
 	}
 
 	// ── thinking config → Extra ────────────────────────────────────────────────
@@ -513,20 +524,14 @@ func translateAnthropicToolChoice(
 	toolNameMapping map[string]string,
 ) (json.RawMessage, []string, error) {
 	var obj struct {
-		Type                   string `json:"type"`
-		Name                   string `json:"name,omitempty"`
-		DisableParallelToolUse *bool  `json:"disable_parallel_tool_use,omitempty"`
+		Type string `json:"type"`
+		Name string `json:"name,omitempty"`
 	}
 	if err := json.Unmarshal(raw, &obj); err != nil {
 		return nil, nil, fmt.Errorf("unmarshal: %w", err)
 	}
 
 	var drops []string
-	if obj.DisableParallelToolUse != nil && *obj.DisableParallelToolUse {
-		// OpenAI expresses parallelism via top-level parallel_tool_calls, not
-		// inside tool_choice. We don't currently forward it end-to-end, so drop.
-		drops = append(drops, "disable_parallel_tool_use_unsupported")
-	}
 
 	switch obj.Type {
 	case "auto":

@@ -299,10 +299,17 @@ func translateRequest(req *models.ChatCompletionRequest) (*geminiRequest, string
 
 	gr.GenerationConfig = gc
 
-	// Translate tools.
-	if len(req.Tools) > 0 {
+	// The provider entry points validate allowed_tools before translation.
+	allowed, _ := models.ParseAllowedToolsChoice(req.ToolChoice)
+	tools := req.Tools
+	if allowed != nil {
+		tools, _ = allowed.Filter(tools)
+	}
+
+	// Translate only the selected declarations.
+	if len(tools) > 0 {
 		var decls []geminiFuncDecl
-		for _, t := range req.Tools {
+		for _, t := range tools {
 			if t.Type != "function" {
 				continue
 			}
@@ -318,7 +325,13 @@ func translateRequest(req *models.ChatCompletionRequest) (*geminiRequest, string
 	}
 
 	// Translate tool_choice → toolConfig.functionCallingConfig.
-	if len(req.ToolChoice) > 0 {
+	if allowed != nil {
+		mode := "AUTO"
+		if allowed.Mode == "required" {
+			mode = "ANY"
+		}
+		gr.ToolConfig = &geminiToolConfig{FunctionCallingConfig: &geminiFunctionCallingConfig{Mode: mode}}
+	} else if len(req.ToolChoice) > 0 {
 		if tc := translateToolChoice(req.ToolChoice); tc != nil {
 			gr.ToolConfig = &geminiToolConfig{FunctionCallingConfig: tc}
 		}

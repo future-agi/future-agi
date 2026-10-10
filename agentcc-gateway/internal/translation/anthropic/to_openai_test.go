@@ -10,6 +10,26 @@ import (
 
 var tr = anthropic.New()
 
+func TestRequestToCanonical_PreservesToolPolicy(t *testing.T) {
+	body := []byte(`{"model":"claude-sonnet-4-20250514","max_tokens":64,"messages":[{"role":"user","content":"hi"}],` +
+		`"tool_choice":{"type":"tool","name":"tool_b","disable_parallel_tool_use":true},` +
+		`"tools":[{"name":"tool_a","allowed_callers":["code_execution_20260120"],"input_schema":{"type":"object"}},` +
+		`{"name":"tool_b","input_schema":{"type":"object"}}]}`)
+	req, drops, err := tr.RequestToCanonical(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.ParallelToolCalls == nil || *req.ParallelToolCalls {
+		t.Fatalf("parallel_tool_calls = %v, want explicit false", req.ParallelToolCalls)
+	}
+	if len(req.Tools) != 2 || len(req.Tools[0].AllowedCallers) != 1 || req.Tools[0].AllowedCallers[0] != "code_execution_20260120" {
+		t.Fatalf("tools lost allowed_callers: %+v", req.Tools)
+	}
+	if len(drops) != 0 {
+		t.Fatalf("policy was reported as dropped: %v", drops)
+	}
+}
+
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
 func mustJSON(v interface{}) string {

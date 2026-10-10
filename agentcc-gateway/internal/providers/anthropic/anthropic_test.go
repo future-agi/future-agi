@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -32,6 +33,93 @@ func newTestProvider(t *testing.T, baseURL string) *Provider {
 		t.Fatalf("failed to create provider: %v", err)
 	}
 	return p
+}
+
+func TestAllowedToolsUnknownNameFailsBeforeAnthropicRequest(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	p := newTestProvider(t, server.URL)
+	defer p.Close()
+	req := &models.ChatCompletionRequest{
+		Model:      "claude-sonnet-4-20250514",
+		Messages:   []models.Message{{Role: "user", Content: json.RawMessage(`"Hi"`)}},
+		Tools:      []models.Tool{{Type: "function", Function: models.ToolFunction{Name: "tool_a"}}},
+		ToolChoice: json.RawMessage(`{"type":"allowed_tools","allowed_tools":{"mode":"auto","tools":[{"type":"function","name":"missing"}]}}`),
+	}
+	_, err := p.ChatCompletion(context.Background(), req)
+	if apiErr, ok := err.(*models.APIError); !ok || apiErr.Status != http.StatusBadRequest || !strings.Contains(apiErr.Message, "allowed_tools") {
+		t.Fatalf("non-streaming error = %v, want 400 naming allowed_tools", err)
+	}
+	chunks, errs := p.StreamChatCompletion(context.Background(), req)
+	for range chunks {
+		t.Fatal("unexpected streaming chunk")
+	}
+	streamErr := <-errs
+	if apiErr, ok := streamErr.(*models.APIError); !ok || apiErr.Status != http.StatusBadRequest || !strings.Contains(apiErr.Message, "allowed_tools") {
+		t.Fatalf("streaming error = %v, want 400 naming allowed_tools", streamErr)
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("sent %d requests despite invalid policy", calls.Load())
+	}
+}
+
+func TestIntegration_ToolChoiceNone(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stream=%t", stream), func(t *testing.T) {
+			var calls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				var body map[string]json.RawMessage
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Error(err)
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				for _, field := range []string{"tools", "tool_choice"} {
+					if value, ok := body[field]; ok {
+						t.Errorf("upstream %s = %s, want omitted", field, value)
+					}
+				}
+				if stream {
+					w.Header().Set("Content-Type", "text/event-stream")
+					fmt.Fprint(w, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_none\",\"model\":\"claude-sonnet-4-20250514\"}}\n\n")
+					fmt.Fprint(w, "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":1}}\n\n")
+					fmt.Fprint(w, "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
+				} else {
+					w.Header().Set("Content-Type", "application/json")
+					fmt.Fprint(w, `{"id":"msg_none","model":"claude-sonnet-4-20250514","content":[{"type":"text","text":"Hi"}],"stop_reason":"end_turn"}`)
+				}
+			}))
+			defer server.Close()
+			p := newTestProvider(t, server.URL)
+			defer p.Close()
+			parallel := false
+			req := &models.ChatCompletionRequest{
+				Model:             "claude-sonnet-4-20250514",
+				Messages:          []models.Message{{Role: "user", Content: json.RawMessage(`"Hi"`)}},
+				Tools:             []models.Tool{{Type: "function", Function: models.ToolFunction{Name: "do_not_call", Parameters: json.RawMessage(`{"type":"object"}`)}}},
+				ToolChoice:        json.RawMessage(`"none"`),
+				ParallelToolCalls: &parallel,
+			}
+			if stream {
+				chunks, errs := p.StreamChatCompletion(context.Background(), req)
+				for range chunks {
+				}
+				for err := range errs {
+					t.Fatal(err)
+				}
+			} else if _, err := p.ChatCompletion(context.Background(), req); err != nil {
+				t.Fatal(err)
+			}
+			if calls.Load() != 1 {
+				t.Fatalf("upstream calls = %d, want 1", calls.Load())
+			}
+		})
+	}
 }
 
 // ---------------------------------------------------------------------------
