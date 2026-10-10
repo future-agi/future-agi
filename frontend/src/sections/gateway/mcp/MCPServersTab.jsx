@@ -127,7 +127,7 @@ const MCPServersTab = ({ config, mcpStatus, gatewayId, onEditServer }) => {
                           wordBreak: "break-all",
                         }}
                       >
-                        {serverCfg.url || serverCfg.command || "—"}
+                        {serverCfg.url || "—"}
                       </Typography>
                     </Box>
 
