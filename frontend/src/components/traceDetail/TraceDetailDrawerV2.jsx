@@ -21,6 +21,7 @@ import logger from "src/utils/logger";
 import DrawerHeader from "./DrawerHeader";
 import DrawerToolbar from "./DrawerToolbar";
 import TraceDisplayPanel, { DEFAULT_VIEW_CONFIG } from "./TraceDisplayPanel";
+import { useTabStore } from "src/sections/projects/LLMTracing/tabStore";
 import {
   useGetSavedViews,
   useCreateSavedView,
@@ -371,71 +372,12 @@ const TraceDetailDrawerV2 = ({
     setShowAgentGraph(DEFAULT_VIEW_CONFIG.showAgentGraph);
   }, []);
 
-  // "Set default for everyone" — make current view project-visible
-  const handleSetDefaultView = useCallback(() => {
-    const onDone = {
-      onSuccess: () =>
-        enqueueSnackbar("View set as default for everyone", {
-          variant: "success",
-        }),
-      onError: (err) =>
-        enqueueSnackbar(
-          getRequestErrorMessage(err, "Failed to set view as default"),
-          { variant: "error" },
-        ),
-    };
+  // "Save as new view…" opens the personal save popover. Sharing stays a
+  // separate, explicit confirmation — nothing here publishes a view.
+  const handleSaveAsNewView = useCallback(() => {
+    useTabStore.getState().requestSaveAsNew();
+  }, []);
 
-    if (activeDrawerTab !== "trace") {
-      // Flip visibility only. This branch handles non-"trace" (imagine) tabs,
-      // whose config is a different shape — resending the trace-shaped config
-      // below would corrupt it (the same reason auto-save skips imagine tabs).
-      updateSavedView({ id: activeDrawerTab, visibility: "project" }, onDone);
-      return;
-    }
-
-    const config = {
-      display: { viewMode, spanTypeFilter, visibleMetrics, showAgentGraph },
-      filters: spanFilters,
-    };
-
-    // Adopt the user's own default for this drawer's tab_type ("traces").
-    // Scoped to the current user so we never overwrite a teammate's shared
-    // default (a blind create would 400 on the name).
-    const existingDefault = findOwnDefaultView(customViews, {
-      tabType: "traces",
-      userId: user?.id,
-    });
-    if (existingDefault) {
-      updateSavedView(
-        { id: existingDefault.id, visibility: "project", config },
-        onDone,
-      );
-      return;
-    }
-
-    createSavedView(
-      {
-        project_id: projectId,
-        name: DEFAULT_VIEW_NAME,
-        tab_type: "traces",
-        visibility: "project",
-        config,
-      },
-      onDone,
-    );
-  }, [
-    activeDrawerTab,
-    viewMode,
-    spanTypeFilter,
-    visibleMetrics,
-    showAgentGraph,
-    spanFilters,
-    projectId,
-    customViews,
-    user,
-    updateSavedView,
-    createSavedView,
-  ]);
 
   // Create new view from current config (called from "+" button or filter save)
   // Save View popover state
@@ -973,7 +915,7 @@ const TraceDetailDrawerV2 = ({
           showAgentGraph={showAgentGraph}
           onToggleAgentGraph={() => setShowAgentGraph((prev) => !prev)}
           onResetView={handleResetView}
-          onSetDefaultView={handleSetDefaultView}
+          onSaveAsNewView={handleSaveAsNewView}
         />
       )}
 

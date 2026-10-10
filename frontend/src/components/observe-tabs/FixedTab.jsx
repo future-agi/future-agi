@@ -14,6 +14,9 @@ const FixedTab = ({ tabKey, label, icon, shortcut, isActive, onClick }) => (
     type="black"
   >
     <ButtonBase
+      role="tab"
+      aria-selected={isActive}
+      tabIndex={isActive ? 0 : -1}
       onClick={() => onClick(tabKey)}
       sx={{
         display: "inline-flex",

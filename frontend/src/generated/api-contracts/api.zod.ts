@@ -62222,17 +62222,24 @@ export const TracerSavedViewsListQueryParams = zod.object({
     .number()
     .optional()
     .describe("Number of results to return per page."),
+  project_id: zod.string().uuid().optional(),
+  tab_type: zod
+    .enum([
+      "traces",
+      "spans",
+      "voice",
+      "imagine",
+      "users",
+      "user_detail",
+      "sessions",
+    ])
+    .optional(),
+  consistency: zod.enum(["primary"]).optional(),
 });
 
 export const tracerSavedViewsListResponseStatusDefault = true;
 
-export const tracerSavedViewsListResponseResultCustomViewsItemNameMax = 255;
-
-export const tracerSavedViewsListResponseResultCustomViewsItemPositionMin =
-  -2147483648;
-export const tracerSavedViewsListResponseResultCustomViewsItemPositionMax = 2147483647;
-
-export const tracerSavedViewsListResponseResultCustomViewsItemIconMax = 50;
+export const tracerSavedViewsListResponseResultTabOrderRevisionMin = 0;
 
 export const TracerSavedViewsListResponse = zod.object({
   status: zod.boolean().default(tracerSavedViewsListResponseStatusDefault),
@@ -62247,29 +62254,21 @@ export const TracerSavedViewsListResponse = zod.object({
     custom_views: zod.array(
       zod.object({
         id: zod.string().uuid().optional(),
-        name: zod
-          .string()
-          .min(1)
-          .max(tracerSavedViewsListResponseResultCustomViewsItemNameMax),
-        tab_type: zod.enum([
-          "traces",
-          "spans",
-          "voice",
-          "imagine",
-          "users",
-          "user_detail",
-          "sessions",
-        ]),
+        name: zod.string().min(1).optional(),
+        tab_type: zod
+          .enum([
+            "traces",
+            "spans",
+            "voice",
+            "imagine",
+            "users",
+            "user_detail",
+            "sessions",
+          ])
+          .optional(),
         visibility: zod.enum(["personal", "project"]).optional(),
-        position: zod
-          .number()
-          .min(tracerSavedViewsListResponseResultCustomViewsItemPositionMin)
-          .max(tracerSavedViewsListResponseResultCustomViewsItemPositionMax)
-          .optional(),
-        icon: zod
-          .string()
-          .max(tracerSavedViewsListResponseResultCustomViewsItemIconMax)
-          .optional(),
+        position: zod.number().optional(),
+        icon: zod.string().min(1).optional(),
         config: zod.object({}).passthrough().optional(),
         created_by: zod
           .object({
@@ -62280,19 +62279,30 @@ export const TracerSavedViewsListResponse = zod.object({
           .optional(),
         created_at: zod.string().datetime({ offset: true }).optional(),
         updated_at: zod.string().datetime({ offset: true }).optional(),
+        revision: zod.number().optional(),
+        is_owner: zod.string().optional(),
+        can_edit: zod.string().optional(),
+        can_delete: zod.string().optional(),
       }),
     ),
+    tab_order: zod.object({
+      revision: zod
+        .number()
+        .min(tracerSavedViewsListResponseResultTabOrderRevisionMin),
+      order: zod.array(zod.string().uuid()),
+    }),
   }),
 });
 
 export const tracerSavedViewsCreateBodyNameMax = 255;
 
-export const tracerSavedViewsCreateBodyPositionMin = -2147483648;
-export const tracerSavedViewsCreateBodyPositionMax = 2147483647;
-
+export const tracerSavedViewsCreateBodyVisibilityDefault = `personal`;
 export const tracerSavedViewsCreateBodyIconMax = 50;
 
+export const tracerSavedViewsCreateBodyConfigDefault = {};
+
 export const TracerSavedViewsCreateBody = zod.object({
+  project_id: zod.string().uuid().optional(),
   name: zod.string().min(1).max(tracerSavedViewsCreateBodyNameMax),
   tab_type: zod.enum([
     "traces",
@@ -62303,65 +62313,39 @@ export const TracerSavedViewsCreateBody = zod.object({
     "user_detail",
     "sessions",
   ]),
-  visibility: zod.enum(["personal", "project"]).optional(),
-  position: zod
-    .number()
-    .min(tracerSavedViewsCreateBodyPositionMin)
-    .max(tracerSavedViewsCreateBodyPositionMax)
-    .optional(),
+  visibility: zod
+    .enum(["personal", "project"])
+    .default(tracerSavedViewsCreateBodyVisibilityDefault),
   icon: zod.string().max(tracerSavedViewsCreateBodyIconMax).optional(),
-  config: zod.object({}).passthrough().optional(),
-  created_by: zod
-    .object({
-      id: zod.string().uuid().optional(),
-      name: zod.string().min(1).optional(),
-      email: zod.string().email().min(1).optional(),
-    })
-    .optional(),
+  config: zod
+    .object({})
+    .passthrough()
+    .default(tracerSavedViewsCreateBodyConfigDefault),
 });
 
 export const tracerSavedViewsCreateResponseStatusDefault = true;
-export const tracerSavedViewsCreateResponseResultNameMax = 255;
-
-export const tracerSavedViewsCreateResponseResultPositionMin = -2147483648;
-export const tracerSavedViewsCreateResponseResultPositionMax = 2147483647;
-
-export const tracerSavedViewsCreateResponseResultIconMax = 50;
 
 export const TracerSavedViewsCreateResponse = zod.object({
   status: zod.boolean().default(tracerSavedViewsCreateResponseStatusDefault),
   result: zod.object({
     id: zod.string().uuid().optional(),
-    name: zod.string().min(1).max(tracerSavedViewsCreateResponseResultNameMax),
-    tab_type: zod.enum([
-      "traces",
-      "spans",
-      "voice",
-      "imagine",
-      "users",
-      "user_detail",
-      "sessions",
-    ]),
+    name: zod.string().min(1).optional(),
+    tab_type: zod
+      .enum([
+        "traces",
+        "spans",
+        "voice",
+        "imagine",
+        "users",
+        "user_detail",
+        "sessions",
+      ])
+      .optional(),
     visibility: zod.enum(["personal", "project"]).optional(),
-    position: zod
-      .number()
-      .min(tracerSavedViewsCreateResponseResultPositionMin)
-      .max(tracerSavedViewsCreateResponseResultPositionMax)
-      .optional(),
-    icon: zod
-      .string()
-      .max(tracerSavedViewsCreateResponseResultIconMax)
-      .optional(),
+    position: zod.number().optional(),
+    icon: zod.string().min(1).optional(),
     config: zod.object({}).passthrough().optional(),
-    project: zod.string().uuid().optional(),
     created_by: zod
-      .object({
-        id: zod.string().uuid().optional(),
-        name: zod.string().min(1).optional(),
-        email: zod.string().email().min(1).optional(),
-      })
-      .optional(),
-    updated_by: zod
       .object({
         id: zod.string().uuid().optional(),
         name: zod.string().min(1).optional(),
@@ -62370,50 +62354,64 @@ export const TracerSavedViewsCreateResponse = zod.object({
       .optional(),
     created_at: zod.string().datetime({ offset: true }).optional(),
     updated_at: zod.string().datetime({ offset: true }).optional(),
+    revision: zod.number().optional(),
+    is_owner: zod.string().optional(),
+    can_edit: zod.string().optional(),
+    can_delete: zod.string().optional(),
+    project: zod.string().uuid().optional(),
+    updated_by: zod
+      .object({
+        id: zod.string().uuid().optional(),
+        name: zod.string().min(1).optional(),
+        email: zod.string().email().min(1).optional(),
+      })
+      .optional(),
   }),
 });
 
-export const tracerSavedViewsReorderBodyNameMax = 255;
+export const tracerSavedViewsReorderBodyExpectedRevisionMin = 0;
 
-export const tracerSavedViewsReorderBodyPositionMin = -2147483648;
-export const tracerSavedViewsReorderBodyPositionMax = 2147483647;
-
-export const tracerSavedViewsReorderBodyIconMax = 50;
+export const tracerSavedViewsReorderBodyOrderItemPositionMin = 0;
 
 export const TracerSavedViewsReorderBody = zod.object({
-  name: zod.string().min(1).max(tracerSavedViewsReorderBodyNameMax),
-  tab_type: zod.enum([
-    "traces",
-    "spans",
-    "voice",
-    "imagine",
-    "users",
-    "user_detail",
-    "sessions",
-  ]),
-  visibility: zod.enum(["personal", "project"]).optional(),
-  position: zod
+  expected_revision: zod
     .number()
-    .min(tracerSavedViewsReorderBodyPositionMin)
-    .max(tracerSavedViewsReorderBodyPositionMax)
+    .min(tracerSavedViewsReorderBodyExpectedRevisionMin),
+  project_id: zod.string().uuid().optional(),
+  tab_type: zod
+    .enum([
+      "traces",
+      "spans",
+      "voice",
+      "imagine",
+      "users",
+      "user_detail",
+      "sessions",
+    ])
     .optional(),
-  icon: zod.string().max(tracerSavedViewsReorderBodyIconMax).optional(),
-  config: zod.object({}).passthrough().optional(),
-  created_by: zod
-    .object({
-      id: zod.string().uuid().optional(),
-      name: zod.string().min(1).optional(),
-      email: zod.string().email().min(1).optional(),
-    })
-    .optional(),
+  order: zod.array(
+    zod.object({
+      id: zod.string().uuid(),
+      position: zod
+        .number()
+        .min(tracerSavedViewsReorderBodyOrderItemPositionMin),
+    }),
+  ),
 });
 
 export const tracerSavedViewsReorderResponseStatusDefault = true;
+export const tracerSavedViewsReorderResponseResultTabOrderRevisionMin = 0;
 
 export const TracerSavedViewsReorderResponse = zod.object({
   status: zod.boolean().default(tracerSavedViewsReorderResponseStatusDefault),
   result: zod.object({
     message: zod.string().min(1),
+    tab_order: zod.object({
+      revision: zod
+        .number()
+        .min(tracerSavedViewsReorderResponseResultTabOrderRevisionMin),
+      order: zod.array(zod.string().uuid()),
+    }),
   }),
 });
 
@@ -62421,20 +62419,10 @@ export const TracerSavedViewsReadParams = zod.object({
   id: zod.string(),
 });
 
-export const tracerSavedViewsReadResponseStatusDefault = true;
-export const tracerSavedViewsReadResponseResultNameMax = 255;
-
-export const tracerSavedViewsReadResponseResultPositionMin = -2147483648;
-export const tracerSavedViewsReadResponseResultPositionMax = 2147483647;
-
-export const tracerSavedViewsReadResponseResultIconMax = 50;
-
-export const TracerSavedViewsReadResponse = zod.object({
-  status: zod.boolean().default(tracerSavedViewsReadResponseStatusDefault),
-  result: zod.object({
-    id: zod.string().uuid().optional(),
-    name: zod.string().min(1).max(tracerSavedViewsReadResponseResultNameMax),
-    tab_type: zod.enum([
+export const TracerSavedViewsReadQueryParams = zod.object({
+  project_id: zod.string().uuid().optional(),
+  tab_type: zod
+    .enum([
       "traces",
       "spans",
       "voice",
@@ -62442,27 +62430,34 @@ export const TracerSavedViewsReadResponse = zod.object({
       "users",
       "user_detail",
       "sessions",
-    ]),
+    ])
+    .optional(),
+  consistency: zod.enum(["primary"]).optional(),
+});
+
+export const tracerSavedViewsReadResponseStatusDefault = true;
+
+export const TracerSavedViewsReadResponse = zod.object({
+  status: zod.boolean().default(tracerSavedViewsReadResponseStatusDefault),
+  result: zod.object({
+    id: zod.string().uuid().optional(),
+    name: zod.string().min(1).optional(),
+    tab_type: zod
+      .enum([
+        "traces",
+        "spans",
+        "voice",
+        "imagine",
+        "users",
+        "user_detail",
+        "sessions",
+      ])
+      .optional(),
     visibility: zod.enum(["personal", "project"]).optional(),
-    position: zod
-      .number()
-      .min(tracerSavedViewsReadResponseResultPositionMin)
-      .max(tracerSavedViewsReadResponseResultPositionMax)
-      .optional(),
-    icon: zod
-      .string()
-      .max(tracerSavedViewsReadResponseResultIconMax)
-      .optional(),
+    position: zod.number().optional(),
+    icon: zod.string().min(1).optional(),
     config: zod.object({}).passthrough().optional(),
-    project: zod.string().uuid().optional(),
     created_by: zod
-      .object({
-        id: zod.string().uuid().optional(),
-        name: zod.string().min(1).optional(),
-        email: zod.string().email().min(1).optional(),
-      })
-      .optional(),
-    updated_by: zod
       .object({
         id: zod.string().uuid().optional(),
         name: zod.string().min(1).optional(),
@@ -62471,6 +62466,18 @@ export const TracerSavedViewsReadResponse = zod.object({
       .optional(),
     created_at: zod.string().datetime({ offset: true }).optional(),
     updated_at: zod.string().datetime({ offset: true }).optional(),
+    revision: zod.number().optional(),
+    is_owner: zod.string().optional(),
+    can_edit: zod.string().optional(),
+    can_delete: zod.string().optional(),
+    project: zod.string().uuid().optional(),
+    updated_by: zod
+      .object({
+        id: zod.string().uuid().optional(),
+        name: zod.string().min(1).optional(),
+        email: zod.string().email().min(1).optional(),
+      })
+      .optional(),
   }),
 });
 
@@ -62480,81 +62487,39 @@ export const TracerSavedViewsUpdateParams = zod.object({
 
 export const tracerSavedViewsUpdateBodyNameMax = 255;
 
-export const tracerSavedViewsUpdateBodyPositionMin = -2147483648;
-export const tracerSavedViewsUpdateBodyPositionMax = 2147483647;
-
 export const tracerSavedViewsUpdateBodyIconMax = 50;
 
 export const TracerSavedViewsUpdateBody = zod.object({
-  name: zod.string().min(1).max(tracerSavedViewsUpdateBodyNameMax),
-  tab_type: zod.enum([
-    "traces",
-    "spans",
-    "voice",
-    "imagine",
-    "users",
-    "user_detail",
-    "sessions",
-  ]),
+  expected_revision: zod.number().min(1),
+  name: zod.string().min(1).max(tracerSavedViewsUpdateBodyNameMax).optional(),
   visibility: zod.enum(["personal", "project"]).optional(),
-  position: zod
-    .number()
-    .min(tracerSavedViewsUpdateBodyPositionMin)
-    .max(tracerSavedViewsUpdateBodyPositionMax)
-    .optional(),
   icon: zod.string().max(tracerSavedViewsUpdateBodyIconMax).optional(),
   config: zod.object({}).passthrough().optional(),
-  created_by: zod
-    .object({
-      id: zod.string().uuid().optional(),
-      name: zod.string().min(1).optional(),
-      email: zod.string().email().min(1).optional(),
-    })
-    .optional(),
 });
 
 export const tracerSavedViewsUpdateResponseStatusDefault = true;
-export const tracerSavedViewsUpdateResponseResultNameMax = 255;
-
-export const tracerSavedViewsUpdateResponseResultPositionMin = -2147483648;
-export const tracerSavedViewsUpdateResponseResultPositionMax = 2147483647;
-
-export const tracerSavedViewsUpdateResponseResultIconMax = 50;
 
 export const TracerSavedViewsUpdateResponse = zod.object({
   status: zod.boolean().default(tracerSavedViewsUpdateResponseStatusDefault),
   result: zod.object({
     id: zod.string().uuid().optional(),
-    name: zod.string().min(1).max(tracerSavedViewsUpdateResponseResultNameMax),
-    tab_type: zod.enum([
-      "traces",
-      "spans",
-      "voice",
-      "imagine",
-      "users",
-      "user_detail",
-      "sessions",
-    ]),
+    name: zod.string().min(1).optional(),
+    tab_type: zod
+      .enum([
+        "traces",
+        "spans",
+        "voice",
+        "imagine",
+        "users",
+        "user_detail",
+        "sessions",
+      ])
+      .optional(),
     visibility: zod.enum(["personal", "project"]).optional(),
-    position: zod
-      .number()
-      .min(tracerSavedViewsUpdateResponseResultPositionMin)
-      .max(tracerSavedViewsUpdateResponseResultPositionMax)
-      .optional(),
-    icon: zod
-      .string()
-      .max(tracerSavedViewsUpdateResponseResultIconMax)
-      .optional(),
+    position: zod.number().optional(),
+    icon: zod.string().min(1).optional(),
     config: zod.object({}).passthrough().optional(),
-    project: zod.string().uuid().optional(),
     created_by: zod
-      .object({
-        id: zod.string().uuid().optional(),
-        name: zod.string().min(1).optional(),
-        email: zod.string().email().min(1).optional(),
-      })
-      .optional(),
-    updated_by: zod
       .object({
         id: zod.string().uuid().optional(),
         name: zod.string().min(1).optional(),
@@ -62563,6 +62528,18 @@ export const TracerSavedViewsUpdateResponse = zod.object({
       .optional(),
     created_at: zod.string().datetime({ offset: true }).optional(),
     updated_at: zod.string().datetime({ offset: true }).optional(),
+    revision: zod.number().optional(),
+    is_owner: zod.string().optional(),
+    can_edit: zod.string().optional(),
+    can_delete: zod.string().optional(),
+    project: zod.string().uuid().optional(),
+    updated_by: zod
+      .object({
+        id: zod.string().uuid().optional(),
+        name: zod.string().min(1).optional(),
+        email: zod.string().email().min(1).optional(),
+      })
+      .optional(),
   }),
 });
 
@@ -62572,47 +62549,21 @@ export const TracerSavedViewsPartialUpdateParams = zod.object({
 
 export const tracerSavedViewsPartialUpdateBodyNameMax = 255;
 
-export const tracerSavedViewsPartialUpdateBodyPositionMin = -2147483648;
-export const tracerSavedViewsPartialUpdateBodyPositionMax = 2147483647;
-
 export const tracerSavedViewsPartialUpdateBodyIconMax = 50;
 
 export const TracerSavedViewsPartialUpdateBody = zod.object({
-  name: zod.string().min(1).max(tracerSavedViewsPartialUpdateBodyNameMax),
-  tab_type: zod.enum([
-    "traces",
-    "spans",
-    "voice",
-    "imagine",
-    "users",
-    "user_detail",
-    "sessions",
-  ]),
-  visibility: zod.enum(["personal", "project"]).optional(),
-  position: zod
-    .number()
-    .min(tracerSavedViewsPartialUpdateBodyPositionMin)
-    .max(tracerSavedViewsPartialUpdateBodyPositionMax)
+  expected_revision: zod.number().min(1),
+  name: zod
+    .string()
+    .min(1)
+    .max(tracerSavedViewsPartialUpdateBodyNameMax)
     .optional(),
+  visibility: zod.enum(["personal", "project"]).optional(),
   icon: zod.string().max(tracerSavedViewsPartialUpdateBodyIconMax).optional(),
   config: zod.object({}).passthrough().optional(),
-  created_by: zod
-    .object({
-      id: zod.string().uuid().optional(),
-      name: zod.string().min(1).optional(),
-      email: zod.string().email().min(1).optional(),
-    })
-    .optional(),
 });
 
 export const tracerSavedViewsPartialUpdateResponseStatusDefault = true;
-export const tracerSavedViewsPartialUpdateResponseResultNameMax = 255;
-
-export const tracerSavedViewsPartialUpdateResponseResultPositionMin =
-  -2147483648;
-export const tracerSavedViewsPartialUpdateResponseResultPositionMax = 2147483647;
-
-export const tracerSavedViewsPartialUpdateResponseResultIconMax = 50;
 
 export const TracerSavedViewsPartialUpdateResponse = zod.object({
   status: zod
@@ -62620,39 +62571,23 @@ export const TracerSavedViewsPartialUpdateResponse = zod.object({
     .default(tracerSavedViewsPartialUpdateResponseStatusDefault),
   result: zod.object({
     id: zod.string().uuid().optional(),
-    name: zod
-      .string()
-      .min(1)
-      .max(tracerSavedViewsPartialUpdateResponseResultNameMax),
-    tab_type: zod.enum([
-      "traces",
-      "spans",
-      "voice",
-      "imagine",
-      "users",
-      "user_detail",
-      "sessions",
-    ]),
+    name: zod.string().min(1).optional(),
+    tab_type: zod
+      .enum([
+        "traces",
+        "spans",
+        "voice",
+        "imagine",
+        "users",
+        "user_detail",
+        "sessions",
+      ])
+      .optional(),
     visibility: zod.enum(["personal", "project"]).optional(),
-    position: zod
-      .number()
-      .min(tracerSavedViewsPartialUpdateResponseResultPositionMin)
-      .max(tracerSavedViewsPartialUpdateResponseResultPositionMax)
-      .optional(),
-    icon: zod
-      .string()
-      .max(tracerSavedViewsPartialUpdateResponseResultIconMax)
-      .optional(),
+    position: zod.number().optional(),
+    icon: zod.string().min(1).optional(),
     config: zod.object({}).passthrough().optional(),
-    project: zod.string().uuid().optional(),
     created_by: zod
-      .object({
-        id: zod.string().uuid().optional(),
-        name: zod.string().min(1).optional(),
-        email: zod.string().email().min(1).optional(),
-      })
-      .optional(),
-    updated_by: zod
       .object({
         id: zod.string().uuid().optional(),
         name: zod.string().min(1).optional(),
@@ -62661,11 +62596,28 @@ export const TracerSavedViewsPartialUpdateResponse = zod.object({
       .optional(),
     created_at: zod.string().datetime({ offset: true }).optional(),
     updated_at: zod.string().datetime({ offset: true }).optional(),
+    revision: zod.number().optional(),
+    is_owner: zod.string().optional(),
+    can_edit: zod.string().optional(),
+    can_delete: zod.string().optional(),
+    project: zod.string().uuid().optional(),
+    updated_by: zod
+      .object({
+        id: zod.string().uuid().optional(),
+        name: zod.string().min(1).optional(),
+        email: zod.string().email().min(1).optional(),
+      })
+      .optional(),
   }),
 });
 
 export const TracerSavedViewsDeleteParams = zod.object({
   id: zod.string(),
+});
+
+export const TracerSavedViewsDeleteQueryParams = zod.object({
+  expected_revision: zod.number().min(1),
+  project_id: zod.string().uuid().optional(),
 });
 
 export const tracerSavedViewsDeleteResponseStatusDefault = true;
@@ -62681,58 +62633,10 @@ export const TracerSavedViewsDuplicateParams = zod.object({
   id: zod.string(),
 });
 
-export const tracerSavedViewsDuplicateBodyNameMax = 255;
-
-export const tracerSavedViewsDuplicateBodyPositionMin = -2147483648;
-export const tracerSavedViewsDuplicateBodyPositionMax = 2147483647;
-
-export const tracerSavedViewsDuplicateBodyIconMax = 50;
-
-export const TracerSavedViewsDuplicateBody = zod.object({
-  name: zod.string().min(1).max(tracerSavedViewsDuplicateBodyNameMax),
-  tab_type: zod.enum([
-    "traces",
-    "spans",
-    "voice",
-    "imagine",
-    "users",
-    "user_detail",
-    "sessions",
-  ]),
-  visibility: zod.enum(["personal", "project"]).optional(),
-  position: zod
-    .number()
-    .min(tracerSavedViewsDuplicateBodyPositionMin)
-    .max(tracerSavedViewsDuplicateBodyPositionMax)
-    .optional(),
-  icon: zod.string().max(tracerSavedViewsDuplicateBodyIconMax).optional(),
-  config: zod.object({}).passthrough().optional(),
-  created_by: zod
-    .object({
-      id: zod.string().uuid().optional(),
-      name: zod.string().min(1).optional(),
-      email: zod.string().email().min(1).optional(),
-    })
-    .optional(),
-});
-
-export const tracerSavedViewsDuplicateResponseStatusDefault = true;
-export const tracerSavedViewsDuplicateResponseResultNameMax = 255;
-
-export const tracerSavedViewsDuplicateResponseResultPositionMin = -2147483648;
-export const tracerSavedViewsDuplicateResponseResultPositionMax = 2147483647;
-
-export const tracerSavedViewsDuplicateResponseResultIconMax = 50;
-
-export const TracerSavedViewsDuplicateResponse = zod.object({
-  status: zod.boolean().default(tracerSavedViewsDuplicateResponseStatusDefault),
-  result: zod.object({
-    id: zod.string().uuid().optional(),
-    name: zod
-      .string()
-      .min(1)
-      .max(tracerSavedViewsDuplicateResponseResultNameMax),
-    tab_type: zod.enum([
+export const TracerSavedViewsDuplicateQueryParams = zod.object({
+  project_id: zod.string().uuid().optional(),
+  tab_type: zod
+    .enum([
       "traces",
       "spans",
       "voice",
@@ -62740,27 +62644,44 @@ export const TracerSavedViewsDuplicateResponse = zod.object({
       "users",
       "user_detail",
       "sessions",
-    ]),
+    ])
+    .optional(),
+  consistency: zod.enum(["primary"]).optional(),
+});
+
+export const tracerSavedViewsDuplicateBodyNameMax = 255;
+
+export const TracerSavedViewsDuplicateBody = zod.object({
+  name: zod
+    .string()
+    .min(1)
+    .max(tracerSavedViewsDuplicateBodyNameMax)
+    .optional(),
+});
+
+export const tracerSavedViewsDuplicateResponseStatusDefault = true;
+
+export const TracerSavedViewsDuplicateResponse = zod.object({
+  status: zod.boolean().default(tracerSavedViewsDuplicateResponseStatusDefault),
+  result: zod.object({
+    id: zod.string().uuid().optional(),
+    name: zod.string().min(1).optional(),
+    tab_type: zod
+      .enum([
+        "traces",
+        "spans",
+        "voice",
+        "imagine",
+        "users",
+        "user_detail",
+        "sessions",
+      ])
+      .optional(),
     visibility: zod.enum(["personal", "project"]).optional(),
-    position: zod
-      .number()
-      .min(tracerSavedViewsDuplicateResponseResultPositionMin)
-      .max(tracerSavedViewsDuplicateResponseResultPositionMax)
-      .optional(),
-    icon: zod
-      .string()
-      .max(tracerSavedViewsDuplicateResponseResultIconMax)
-      .optional(),
+    position: zod.number().optional(),
+    icon: zod.string().min(1).optional(),
     config: zod.object({}).passthrough().optional(),
-    project: zod.string().uuid().optional(),
     created_by: zod
-      .object({
-        id: zod.string().uuid().optional(),
-        name: zod.string().min(1).optional(),
-        email: zod.string().email().min(1).optional(),
-      })
-      .optional(),
-    updated_by: zod
       .object({
         id: zod.string().uuid().optional(),
         name: zod.string().min(1).optional(),
@@ -62769,6 +62690,18 @@ export const TracerSavedViewsDuplicateResponse = zod.object({
       .optional(),
     created_at: zod.string().datetime({ offset: true }).optional(),
     updated_at: zod.string().datetime({ offset: true }).optional(),
+    revision: zod.number().optional(),
+    is_owner: zod.string().optional(),
+    can_edit: zod.string().optional(),
+    can_delete: zod.string().optional(),
+    project: zod.string().uuid().optional(),
+    updated_by: zod
+      .object({
+        id: zod.string().uuid().optional(),
+        name: zod.string().min(1).optional(),
+        email: zod.string().email().min(1).optional(),
+      })
+      .optional(),
   }),
 });
 

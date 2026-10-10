@@ -1078,10 +1078,19 @@ import type {
   Saml2AuthMicrosoftCallbackListParams,
   Saml2AuthMicrosoftReadParams,
   Saml2AuthReadParams,
+  SavedViewConflictResponseApi,
+  SavedViewCreateApi,
   SavedViewDetailResponseApi,
-  SavedViewListApi,
+  SavedViewDuplicateApi,
+  SavedViewForbiddenResponseApi,
   SavedViewListResponseApi,
   SavedViewMessageResponseApi,
+  SavedViewNotFoundResponseApi,
+  SavedViewOrderConflictResponseApi,
+  SavedViewPreconditionResponseApi,
+  SavedViewReorderApi,
+  SavedViewReorderResponseApi,
+  SavedViewUpdateApi,
   ScenarioAddColumnsRequestApi,
   ScenarioAddColumnsResponseApi,
   ScenarioAddRowsRequestApi,
@@ -1336,7 +1345,10 @@ import type {
   TracerProjectVersionListParams,
   TracerProjectVersionListRuns200,
   TracerProjectVersionListRunsParams,
+  TracerSavedViewsDeleteParams,
+  TracerSavedViewsDuplicateParams,
   TracerSavedViewsListParams,
+  TracerSavedViewsReadParams,
   TracerSharedLinksList200,
   TracerSharedLinksListParams,
   TracerTraceAgentGraphParams,
@@ -77292,19 +77304,32 @@ export type tracerSavedViewsListResponse200 = {
   status: 200;
 };
 
+export type tracerSavedViewsListResponse400 = {
+  data: ManagementAPIErrorResponseApi;
+  status: 400;
+};
+
+export type tracerSavedViewsListResponse404 = {
+  data: SavedViewNotFoundResponseApi;
+  status: 404;
+};
+
 export type tracerSavedViewsListResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404>;
 };
 
 export type tracerSavedViewsListResponseSuccess =
   tracerSavedViewsListResponse200 & {
     headers: Headers;
   };
-export type tracerSavedViewsListResponseError =
-  tracerSavedViewsListResponseDefault & {
-    headers: Headers;
-  };
+export type tracerSavedViewsListResponseError = (
+  | tracerSavedViewsListResponse400
+  | tracerSavedViewsListResponse404
+  | tracerSavedViewsListResponseDefault
+) & {
+  headers: Headers;
+};
 
 export type tracerSavedViewsListResponse =
   | tracerSavedViewsListResponseSuccess
@@ -77350,19 +77375,32 @@ export type tracerSavedViewsCreateResponse200 = {
   status: 200;
 };
 
+export type tracerSavedViewsCreateResponse400 = {
+  data: ManagementAPIErrorResponseApi;
+  status: 400;
+};
+
+export type tracerSavedViewsCreateResponse404 = {
+  data: SavedViewNotFoundResponseApi;
+  status: 404;
+};
+
 export type tracerSavedViewsCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404>;
 };
 
 export type tracerSavedViewsCreateResponseSuccess =
   tracerSavedViewsCreateResponse200 & {
     headers: Headers;
   };
-export type tracerSavedViewsCreateResponseError =
-  tracerSavedViewsCreateResponseDefault & {
-    headers: Headers;
-  };
+export type tracerSavedViewsCreateResponseError = (
+  | tracerSavedViewsCreateResponse400
+  | tracerSavedViewsCreateResponse404
+  | tracerSavedViewsCreateResponseDefault
+) & {
+  headers: Headers;
+};
 
 export type tracerSavedViewsCreateResponse =
   | tracerSavedViewsCreateResponseSuccess
@@ -77373,7 +77411,7 @@ export const getTracerSavedViewsCreateUrl = () => {
 };
 
 export const tracerSavedViewsCreate = async (
-  savedViewListApi: NonReadonly<SavedViewListApi>,
+  savedViewCreateApi: SavedViewCreateApi,
   options?: RequestInit,
 ): Promise<tracerSavedViewsCreateResponse> => {
   return apiMutator<tracerSavedViewsCreateResponse>(
@@ -77382,29 +77420,60 @@ export const tracerSavedViewsCreate = async (
       ...options,
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(savedViewListApi),
+      body: JSON.stringify(savedViewCreateApi),
     },
   );
 };
 
 export type tracerSavedViewsReorderResponse200 = {
-  data: SavedViewMessageResponseApi;
+  data: SavedViewReorderResponseApi;
   status: 200;
+};
+
+export type tracerSavedViewsReorderResponse400 = {
+  data: ManagementAPIErrorResponseApi;
+  status: 400;
+};
+
+export type tracerSavedViewsReorderResponse403 = {
+  data: SavedViewForbiddenResponseApi;
+  status: 403;
+};
+
+export type tracerSavedViewsReorderResponse404 = {
+  data: SavedViewNotFoundResponseApi;
+  status: 404;
+};
+
+export type tracerSavedViewsReorderResponse409 = {
+  data: SavedViewOrderConflictResponseApi;
+  status: 409;
+};
+
+export type tracerSavedViewsReorderResponse428 = {
+  data: SavedViewPreconditionResponseApi;
+  status: 428;
 };
 
 export type tracerSavedViewsReorderResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 428>;
 };
 
 export type tracerSavedViewsReorderResponseSuccess =
   tracerSavedViewsReorderResponse200 & {
     headers: Headers;
   };
-export type tracerSavedViewsReorderResponseError =
-  tracerSavedViewsReorderResponseDefault & {
-    headers: Headers;
-  };
+export type tracerSavedViewsReorderResponseError = (
+  | tracerSavedViewsReorderResponse400
+  | tracerSavedViewsReorderResponse403
+  | tracerSavedViewsReorderResponse404
+  | tracerSavedViewsReorderResponse409
+  | tracerSavedViewsReorderResponse428
+  | tracerSavedViewsReorderResponseDefault
+) & {
+  headers: Headers;
+};
 
 export type tracerSavedViewsReorderResponse =
   | tracerSavedViewsReorderResponseSuccess
@@ -77415,7 +77484,7 @@ export const getTracerSavedViewsReorderUrl = () => {
 };
 
 export const tracerSavedViewsReorder = async (
-  savedViewListApi: NonReadonly<SavedViewListApi>,
+  savedViewReorderApi: SavedViewReorderApi,
   options?: RequestInit,
 ): Promise<tracerSavedViewsReorderResponse> => {
   return apiMutator<tracerSavedViewsReorderResponse>(
@@ -77424,7 +77493,7 @@ export const tracerSavedViewsReorder = async (
       ...options,
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(savedViewListApi),
+      body: JSON.stringify(savedViewReorderApi),
     },
   );
 };
@@ -77434,34 +77503,67 @@ export type tracerSavedViewsReadResponse200 = {
   status: 200;
 };
 
+export type tracerSavedViewsReadResponse400 = {
+  data: ManagementAPIErrorResponseApi;
+  status: 400;
+};
+
+export type tracerSavedViewsReadResponse404 = {
+  data: SavedViewNotFoundResponseApi;
+  status: 404;
+};
+
 export type tracerSavedViewsReadResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404>;
 };
 
 export type tracerSavedViewsReadResponseSuccess =
   tracerSavedViewsReadResponse200 & {
     headers: Headers;
   };
-export type tracerSavedViewsReadResponseError =
-  tracerSavedViewsReadResponseDefault & {
-    headers: Headers;
-  };
+export type tracerSavedViewsReadResponseError = (
+  | tracerSavedViewsReadResponse400
+  | tracerSavedViewsReadResponse404
+  | tracerSavedViewsReadResponseDefault
+) & {
+  headers: Headers;
+};
 
 export type tracerSavedViewsReadResponse =
   | tracerSavedViewsReadResponseSuccess
   | tracerSavedViewsReadResponseError;
 
-export const getTracerSavedViewsReadUrl = (id: string) => {
-  return `/tracer/saved-views/${id}/`;
+export const getTracerSavedViewsReadUrl = (
+  id: string,
+  params?: TracerSavedViewsReadParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/saved-views/${id}/?${stringifiedParams}`
+    : `/tracer/saved-views/${id}/`;
 };
 
 export const tracerSavedViewsRead = async (
   id: string,
+  params?: TracerSavedViewsReadParams,
   options?: RequestInit,
 ): Promise<tracerSavedViewsReadResponse> => {
   return apiMutator<tracerSavedViewsReadResponse>(
-    getTracerSavedViewsReadUrl(id),
+    getTracerSavedViewsReadUrl(id, params),
     {
       ...options,
       method: "GET",
@@ -77474,19 +77576,50 @@ export type tracerSavedViewsUpdateResponse200 = {
   status: 200;
 };
 
+export type tracerSavedViewsUpdateResponse400 = {
+  data: ManagementAPIErrorResponseApi;
+  status: 400;
+};
+
+export type tracerSavedViewsUpdateResponse403 = {
+  data: SavedViewForbiddenResponseApi;
+  status: 403;
+};
+
+export type tracerSavedViewsUpdateResponse404 = {
+  data: SavedViewNotFoundResponseApi;
+  status: 404;
+};
+
+export type tracerSavedViewsUpdateResponse409 = {
+  data: SavedViewConflictResponseApi;
+  status: 409;
+};
+
+export type tracerSavedViewsUpdateResponse428 = {
+  data: SavedViewPreconditionResponseApi;
+  status: 428;
+};
+
 export type tracerSavedViewsUpdateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 428>;
 };
 
 export type tracerSavedViewsUpdateResponseSuccess =
   tracerSavedViewsUpdateResponse200 & {
     headers: Headers;
   };
-export type tracerSavedViewsUpdateResponseError =
-  tracerSavedViewsUpdateResponseDefault & {
-    headers: Headers;
-  };
+export type tracerSavedViewsUpdateResponseError = (
+  | tracerSavedViewsUpdateResponse400
+  | tracerSavedViewsUpdateResponse403
+  | tracerSavedViewsUpdateResponse404
+  | tracerSavedViewsUpdateResponse409
+  | tracerSavedViewsUpdateResponse428
+  | tracerSavedViewsUpdateResponseDefault
+) & {
+  headers: Headers;
+};
 
 export type tracerSavedViewsUpdateResponse =
   | tracerSavedViewsUpdateResponseSuccess
@@ -77498,7 +77631,7 @@ export const getTracerSavedViewsUpdateUrl = (id: string) => {
 
 export const tracerSavedViewsUpdate = async (
   id: string,
-  savedViewListApi: NonReadonly<SavedViewListApi>,
+  savedViewUpdateApi: SavedViewUpdateApi,
   options?: RequestInit,
 ): Promise<tracerSavedViewsUpdateResponse> => {
   return apiMutator<tracerSavedViewsUpdateResponse>(
@@ -77507,7 +77640,7 @@ export const tracerSavedViewsUpdate = async (
       ...options,
       method: "PUT",
       headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(savedViewListApi),
+      body: JSON.stringify(savedViewUpdateApi),
     },
   );
 };
@@ -77517,19 +77650,50 @@ export type tracerSavedViewsPartialUpdateResponse200 = {
   status: 200;
 };
 
+export type tracerSavedViewsPartialUpdateResponse400 = {
+  data: ManagementAPIErrorResponseApi;
+  status: 400;
+};
+
+export type tracerSavedViewsPartialUpdateResponse403 = {
+  data: SavedViewForbiddenResponseApi;
+  status: 403;
+};
+
+export type tracerSavedViewsPartialUpdateResponse404 = {
+  data: SavedViewNotFoundResponseApi;
+  status: 404;
+};
+
+export type tracerSavedViewsPartialUpdateResponse409 = {
+  data: SavedViewConflictResponseApi;
+  status: 409;
+};
+
+export type tracerSavedViewsPartialUpdateResponse428 = {
+  data: SavedViewPreconditionResponseApi;
+  status: 428;
+};
+
 export type tracerSavedViewsPartialUpdateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 428>;
 };
 
 export type tracerSavedViewsPartialUpdateResponseSuccess =
   tracerSavedViewsPartialUpdateResponse200 & {
     headers: Headers;
   };
-export type tracerSavedViewsPartialUpdateResponseError =
-  tracerSavedViewsPartialUpdateResponseDefault & {
-    headers: Headers;
-  };
+export type tracerSavedViewsPartialUpdateResponseError = (
+  | tracerSavedViewsPartialUpdateResponse400
+  | tracerSavedViewsPartialUpdateResponse403
+  | tracerSavedViewsPartialUpdateResponse404
+  | tracerSavedViewsPartialUpdateResponse409
+  | tracerSavedViewsPartialUpdateResponse428
+  | tracerSavedViewsPartialUpdateResponseDefault
+) & {
+  headers: Headers;
+};
 
 export type tracerSavedViewsPartialUpdateResponse =
   | tracerSavedViewsPartialUpdateResponseSuccess
@@ -77541,7 +77705,7 @@ export const getTracerSavedViewsPartialUpdateUrl = (id: string) => {
 
 export const tracerSavedViewsPartialUpdate = async (
   id: string,
-  savedViewListApi: NonReadonly<SavedViewListApi>,
+  savedViewUpdateApi: SavedViewUpdateApi,
   options?: RequestInit,
 ): Promise<tracerSavedViewsPartialUpdateResponse> => {
   return apiMutator<tracerSavedViewsPartialUpdateResponse>(
@@ -77550,7 +77714,7 @@ export const tracerSavedViewsPartialUpdate = async (
       ...options,
       method: "PATCH",
       headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(savedViewListApi),
+      body: JSON.stringify(savedViewUpdateApi),
     },
   );
 };
@@ -77560,34 +77724,85 @@ export type tracerSavedViewsDeleteResponse200 = {
   status: 200;
 };
 
+export type tracerSavedViewsDeleteResponse400 = {
+  data: ManagementAPIErrorResponseApi;
+  status: 400;
+};
+
+export type tracerSavedViewsDeleteResponse403 = {
+  data: SavedViewForbiddenResponseApi;
+  status: 403;
+};
+
+export type tracerSavedViewsDeleteResponse404 = {
+  data: SavedViewNotFoundResponseApi;
+  status: 404;
+};
+
+export type tracerSavedViewsDeleteResponse409 = {
+  data: SavedViewConflictResponseApi;
+  status: 409;
+};
+
+export type tracerSavedViewsDeleteResponse428 = {
+  data: SavedViewPreconditionResponseApi;
+  status: 428;
+};
+
 export type tracerSavedViewsDeleteResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 428>;
 };
 
 export type tracerSavedViewsDeleteResponseSuccess =
   tracerSavedViewsDeleteResponse200 & {
     headers: Headers;
   };
-export type tracerSavedViewsDeleteResponseError =
-  tracerSavedViewsDeleteResponseDefault & {
-    headers: Headers;
-  };
+export type tracerSavedViewsDeleteResponseError = (
+  | tracerSavedViewsDeleteResponse400
+  | tracerSavedViewsDeleteResponse403
+  | tracerSavedViewsDeleteResponse404
+  | tracerSavedViewsDeleteResponse409
+  | tracerSavedViewsDeleteResponse428
+  | tracerSavedViewsDeleteResponseDefault
+) & {
+  headers: Headers;
+};
 
 export type tracerSavedViewsDeleteResponse =
   | tracerSavedViewsDeleteResponseSuccess
   | tracerSavedViewsDeleteResponseError;
 
-export const getTracerSavedViewsDeleteUrl = (id: string) => {
-  return `/tracer/saved-views/${id}/`;
+export const getTracerSavedViewsDeleteUrl = (
+  id: string,
+  params: TracerSavedViewsDeleteParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/saved-views/${id}/?${stringifiedParams}`
+    : `/tracer/saved-views/${id}/`;
 };
 
 export const tracerSavedViewsDelete = async (
   id: string,
+  params: TracerSavedViewsDeleteParams,
   options?: RequestInit,
 ): Promise<tracerSavedViewsDeleteResponse> => {
   return apiMutator<tracerSavedViewsDeleteResponse>(
-    getTracerSavedViewsDeleteUrl(id),
+    getTracerSavedViewsDeleteUrl(id, params),
     {
       ...options,
       method: "DELETE",
@@ -77600,40 +77815,73 @@ export type tracerSavedViewsDuplicateResponse200 = {
   status: 200;
 };
 
+export type tracerSavedViewsDuplicateResponse400 = {
+  data: ManagementAPIErrorResponseApi;
+  status: 400;
+};
+
+export type tracerSavedViewsDuplicateResponse404 = {
+  data: SavedViewNotFoundResponseApi;
+  status: 404;
+};
+
 export type tracerSavedViewsDuplicateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404>;
 };
 
 export type tracerSavedViewsDuplicateResponseSuccess =
   tracerSavedViewsDuplicateResponse200 & {
     headers: Headers;
   };
-export type tracerSavedViewsDuplicateResponseError =
-  tracerSavedViewsDuplicateResponseDefault & {
-    headers: Headers;
-  };
+export type tracerSavedViewsDuplicateResponseError = (
+  | tracerSavedViewsDuplicateResponse400
+  | tracerSavedViewsDuplicateResponse404
+  | tracerSavedViewsDuplicateResponseDefault
+) & {
+  headers: Headers;
+};
 
 export type tracerSavedViewsDuplicateResponse =
   | tracerSavedViewsDuplicateResponseSuccess
   | tracerSavedViewsDuplicateResponseError;
 
-export const getTracerSavedViewsDuplicateUrl = (id: string) => {
-  return `/tracer/saved-views/${id}/duplicate/`;
+export const getTracerSavedViewsDuplicateUrl = (
+  id: string,
+  params?: TracerSavedViewsDuplicateParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/saved-views/${id}/duplicate/?${stringifiedParams}`
+    : `/tracer/saved-views/${id}/duplicate/`;
 };
 
 export const tracerSavedViewsDuplicate = async (
   id: string,
-  savedViewListApi: NonReadonly<SavedViewListApi>,
+  savedViewDuplicateApi: SavedViewDuplicateApi,
+  params?: TracerSavedViewsDuplicateParams,
   options?: RequestInit,
 ): Promise<tracerSavedViewsDuplicateResponse> => {
   return apiMutator<tracerSavedViewsDuplicateResponse>(
-    getTracerSavedViewsDuplicateUrl(id),
+    getTracerSavedViewsDuplicateUrl(id, params),
     {
       ...options,
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(savedViewListApi),
+      body: JSON.stringify(savedViewDuplicateApi),
     },
   );
 };

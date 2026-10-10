@@ -1,4 +1,8 @@
+import ConflictDialog from "src/components/observe-tabs/ConflictDialog";
+import { useTabStore } from "./tabStore";
+import { savedViewStorageKeys } from "./savedViewStorage";
 import {
+  Alert,
   Badge,
   Box,
   Button,
@@ -232,12 +236,12 @@ import { useCreateReplaySessions } from "src/api/project/replay-sessions";
 import { enqueueSnackbar } from "notistack";
 import {
   useUpdateSavedView,
-  useCreateSavedView,
+  useGetWorkspaceSavedViews,
+  useRefreshSavedViews,
+  classifySavedViewError,
+  removeSavedViewFromCache,
   useUpdateWorkspaceSavedView,
   useGetSavedViews,
-  DEFAULT_VIEW_NAME,
-  findOwnDefaultView,
-  tabTypeForSelectedTab,
 } from "src/api/project/saved-views";
 import { getRequestErrorMessage } from "src/utils/errorUtils";
 import { getDefaultDateRangeForMode } from "../dateRangeDefaults";
@@ -1111,6 +1115,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     activeViewConfig,
     setActiveViewConfig,
     registerGetViewConfig,
+    registerGetViewRevision,
   } = useObserveHeader();
 
   // keepPrevious: hold `source` across refetch so projectSource doesn't flicker
@@ -2104,7 +2109,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       // Re-hydrate from localStorage — the mount hydrate is keyed on
       // displayStorageKey and won't re-fire on a same-project tab toggle.
       try {
-        const raw = localStorage.getItem(displayStorageKey);
+        const raw = displayStorageKey ? localStorage.getItem(displayStorageKey) : null;
         const saved = raw ? JSON.parse(raw) : null;
         if (saved?.customColumns) {
           // customColumns may be a legacy array or new {trace, spans}
@@ -2488,12 +2493,9 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   // ---------------------------------------------------------------------------
   // View persistence — auto-save display + reset/default
   // ---------------------------------------------------------------------------
-  const displayStorageKey = isUserMode
-    ? `user-display-${userIdForUserMode}`
-    : `observe-display-${observeId}`;
-  const filtersStorageKey = isUserMode
-    ? `user-filters-${userIdForUserMode}`
-    : `observe-filters-${observeId}`;
+  const { display: displayStorageKey, filters: filtersStorageKey } = savedViewStorageKeys(
+    user?.id, currentWorkspaceId, observeId, isUserMode ? userIdForUserMode : null,
+  );
 
   // User-initiated clears (popover "Clear all" / chip-strip "Clear all").
   // Wipes the localStorage entry too — without this the saved filter
@@ -2501,11 +2503,11 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   // `filtersStorageKey` restores any non-empty extraFilters it finds.
   const clearPrimaryExtraFilters = useCallback(() => {
     setExtraFilters([]);
-    localStorage.removeItem(filtersStorageKey);
+    if (filtersStorageKey) localStorage.removeItem(filtersStorageKey);
   }, [setExtraFilters, filtersStorageKey]);
   const clearCompareExtraFilters = useCallback(() => {
     setCompareExtraFilters([]);
-    localStorage.removeItem(filtersStorageKey);
+    if (filtersStorageKey) localStorage.removeItem(filtersStorageKey);
   }, [setCompareExtraFilters, filtersStorageKey]);
 
   // Pending custom cols, queued until the backend returns real columns so
@@ -2522,7 +2524,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   useEffect(() => {
     if (activeViewTabId) return;
     try {
-      const raw = localStorage.getItem(displayStorageKey);
+      const raw = displayStorageKey ? localStorage.getItem(displayStorageKey) : null;
       if (!raw) return;
       const saved = JSON.parse(raw);
       if (saved.viewMode) setViewMode(saved.viewMode);
@@ -2640,7 +2642,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     const urlHoldsPrimary =
       urlParams.has("primaryTraceFilter") || urlParams.has("primarySpanFilter");
     try {
-      const raw = localStorage.getItem(filtersStorageKey);
+      const raw = filtersStorageKey ? localStorage.getItem(filtersStorageKey) : null;
       if (!raw) return;
       const saved = JSON.parse(raw);
       if (!urlHoldsPrimary && saved.filters?.length > 0) {
@@ -2707,12 +2709,16 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     return selectCustomColumnsByTab(columns);
   }, [columns]);
 
-  const { mutate: updateSavedView } = useUpdateSavedView(observeId);
-  const { mutate: createSavedView } = useCreateSavedView(observeId);
+  const { mutate: updateSavedView, isPending: isUpdatingSavedView } = useUpdateSavedView(observeId);
   // Shares the tab bar's query cache (same key) — no extra fetch.
   const { data: savedViewsData } = useGetSavedViews(observeId);
+  const { data: workspaceSavedViews } = useGetWorkspaceSavedViews(isUserMode ? USER_DETAIL_TAB_TYPE : null);
+  const refreshSavedViews = useRefreshSavedViews(observeId, isUserMode ? USER_DETAIL_TAB_TYPE : undefined);
+  const [viewConflict, setViewConflict] = useState(null);
+  const [saveTransportError, setSaveTransportError] = useState(false);
+  const loadedViewRef = useRef(null);
   // Workspace-scoped update for user_detail mode — only invoked when isUserMode.
-  const { mutate: updateWorkspaceSavedView } =
+  const { mutate: updateWorkspaceSavedView, isPending: isUpdatingWorkspaceView } =
     useUpdateWorkspaceSavedView(USER_DETAIL_TAB_TYPE);
 
   const activeViewTabId = useMemo(() => {
@@ -2720,6 +2726,15 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     const tab = isUserMode ? params.get("userTab") : params.get("tab");
     return tab?.startsWith("view-") ? tab.replace("view-", "") : null;
   }, [activeViewConfig, isUserMode]);
+
+  const activeSavedView = (isUserMode ? workspaceSavedViews : savedViewsData)?.custom_views?.find((v) => v.id === activeViewTabId);
+  // Keep the revision the editor actually loaded, even if a background list
+  // refresh sees a newer version while this draft is dirty.
+  useEffect(() => {
+    if (!activeViewTabId) loadedViewRef.current = null;
+    else if (activeSavedView && loadedViewRef.current?.id !== activeViewTabId) loadedViewRef.current = activeSavedView;
+  }, [activeViewTabId, activeSavedView]);
+  const handleSaveAsNewView = useCallback(() => useTabStore.getState().requestSaveAsNew(), []);
 
   const buildViewConfig = useCallback(() => {
     // columnState lives inside `display` because the backend serializer
@@ -2748,6 +2763,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
         })
       : rawColumnState;
     const currentDisplay = {
+      ...activeViewConfig?.display,
       viewMode,
       cellHeight,
       showErrors,
@@ -2763,6 +2779,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       ...(columnState ? { columnState } : {}),
     };
     const config = {
+      ...activeViewConfig,
       display: currentDisplay,
       filters: serializeTraceFiltersForPersistence(
         selectedTab === "trace" ? primaryTraceFilters : primarySpanFilters,
@@ -2780,8 +2797,14 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       config.compare_extra_filters =
         serializeTraceFiltersForPersistence(compareExtraFilters);
     }
+    if (!showCompare) {
+      delete config.compare_filters;
+      delete config.compare_date_filter;
+      delete config.compare_extra_filters;
+    }
     return config;
   }, [
+    activeViewConfig,
     viewMode,
     cellHeight,
     showErrors,
@@ -2810,30 +2833,49 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     return () => registerGetViewConfig(null);
   }, [registerGetViewConfig, buildViewConfig]);
 
-  // Bound to ObserveToolbar's Save view button.
+  useEffect(() => {
+    registerGetViewRevision(() => loadedViewRef.current?.revision ?? null);
+    return () => registerGetViewRevision(null);
+  }, [registerGetViewRevision]);
+
+  // The save precondition belongs to the editor baseline, not a newer list response.
   const handleSaveView = useCallback(() => {
-    if (!activeViewTabId) return;
+    if (!activeViewTabId || isUpdatingSavedView || isUpdatingWorkspaceView) return;
+    if (activeSavedView && !activeSavedView.can_edit) {
+      handleSaveAsNewView();
+      return;
+    }
     const config = buildViewConfig();
     const mutate = isUserMode ? updateWorkspaceSavedView : updateSavedView;
-    mutate(
-      { id: activeViewTabId, config },
-      {
-        onSuccess: (response) => {
-          setActiveViewConfig(response?.data?.result?.config ?? config);
-          enqueueSnackbar("View updated", { variant: "success" });
-        },
-        onError: () =>
-          enqueueSnackbar("Failed to update view", { variant: "error" }),
+    setSaveTransportError(false);
+    mutate({ id: activeViewTabId, config, expected_revision: loadedViewRef.current?.revision }, {
+      onSuccess: (response) => {
+        loadedViewRef.current = response?.data?.result;
+        setActiveViewConfig(response?.data?.result?.config ?? config);
+        useTabStore.getState().clearDirty();
+        enqueueSnackbar("Saved", { variant: "success" });
       },
-    );
-  }, [
-    activeViewTabId,
-    buildViewConfig,
-    isUserMode,
-    updateSavedView,
-    updateWorkspaceSavedView,
-    setActiveViewConfig,
-  ]);
+      onError: (err) => {
+        const { kind, current } = classifySavedViewError(err);
+        if (kind === "conflict") setViewConflict(current);
+        else if (kind === "unavailable_record") {
+          removeSavedViewFromCache(queryClient, activeViewTabId);
+          loadedViewRef.current = null;
+          setActiveViewConfig(null);
+          useTabStore.getState().clearDirty();
+          enqueueSnackbar("This view is unavailable", { variant: "error" });
+          if (isUserMode) {
+            const url = new URL(window.location.href);
+            url.searchParams.delete("userTab");
+            navigate(`${url.pathname}${url.search}`, { replace: true });
+          } else navigate(`/dashboard/observe/${observeId}/llm-tracing?tab=traces&selectedTab=trace`, { replace: true });
+        } else if (kind === "unavailable_transport") setSaveTransportError(true);
+        else enqueueSnackbar(kind === "precondition" ? "Refresh the page and try again." : getRequestErrorMessage(err, "Failed to update view"), { variant: "error" });
+      },
+    });
+  }, [activeViewTabId, activeSavedView, buildViewConfig, isUserMode, updateSavedView,
+    updateWorkspaceSavedView, setActiveViewConfig, handleSaveAsNewView, isUpdatingSavedView,
+    isUpdatingWorkspaceView, navigate, observeId, queryClient]);
 
   // Default tab only — saved views go through handleSaveView instead.
   useEffect(() => {
@@ -2850,7 +2892,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       customColumns: getCustomColumnsByTab(),
     };
     try {
-      localStorage.setItem(displayStorageKey, JSON.stringify(currentDisplay));
+      if (displayStorageKey) localStorage.setItem(displayStorageKey, JSON.stringify(currentDisplay));
     } catch {
       /* quota exceeded */
     }
@@ -2893,6 +2935,11 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   ]);
 
   const handleResetView = useCallback(() => {
+    if (activeViewConfig) {
+      setActiveViewConfig({ ...activeViewConfig });
+      useTabStore.getState().clearDirty();
+      return;
+    }
     setViewMode(DEFAULT_DISPLAY_CONFIG.viewMode);
     setHasEvalFilter(DEFAULT_DISPLAY_CONFIG.hasEvalFilter);
     setShowCompare(DEFAULT_DISPLAY_CONFIG.showCompare);
@@ -2937,98 +2984,17 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       withGridRefApi(ref, (api) => api.resetColumnState?.()),
     );
     try {
-      localStorage.removeItem(displayStorageKey);
+      if (displayStorageKey) localStorage.removeItem(displayStorageKey);
     } catch {
       /* noop */
     }
     try {
-      localStorage.removeItem(filtersStorageKey);
+      if (filtersStorageKey) localStorage.removeItem(filtersStorageKey);
     } catch {
       /* noop */
     }
     enqueueSnackbar("View reset to defaults", { variant: "info" });
-  }, [selectedTab, displayStorageKey, filtersStorageKey]);
-
-  const handleSetDefaultView = useCallback(() => {
-    const configPayload = buildViewConfig();
-    const onDone = {
-      onSuccess: () =>
-        enqueueSnackbar("View set as default for everyone", {
-          variant: "success",
-        }),
-      onError: (err) =>
-        enqueueSnackbar(
-          getRequestErrorMessage(err, "Failed to set view as default"),
-          { variant: "error" },
-        ),
-    };
-
-    if (activeViewTabId) {
-      updateSavedView(
-        { id: activeViewTabId, visibility: "project", config: configPayload },
-        onDone,
-      );
-      return;
-    }
-
-    const tabType = tabTypeForSelectedTab(selectedTab);
-
-    // Adopt the user's own default for THIS tab_type (a blind create would 400
-    // on the name). Scoped to the current user so we never overwrite a
-    // teammate's shared default, and to tab_type so a spans click can't PATCH
-    // the traces default with spans-shaped config.
-    const existingDefault = findOwnDefaultView(savedViewsData?.custom_views, {
-      tabType,
-      userId: user?.id,
-    });
-    if (existingDefault) {
-      updateSavedView(
-        {
-          id: existingDefault.id,
-          visibility: "project",
-          config: configPayload,
-        },
-        onDone,
-      );
-      return;
-    }
-
-    createSavedView(
-      {
-        project_id: observeId,
-        name: DEFAULT_VIEW_NAME,
-        tab_type: tabType,
-        visibility: "project",
-        config: configPayload,
-      },
-      {
-        ...onDone,
-        onSuccess: (res) => {
-          // Adopt the created view as the active tab so subsequent clicks
-          // take the update-by-id branch.
-          const newId = res?.data?.result?.id;
-          if (newId && !isUserMode) {
-            navigate(
-              `/dashboard/observe/${observeId}/llm-tracing?tab=view-${newId}&selectedTab=${selectedTab}`,
-              { replace: true },
-            );
-          }
-          onDone.onSuccess();
-        },
-      },
-    );
-  }, [
-    activeViewTabId,
-    selectedTab,
-    observeId,
-    isUserMode,
-    navigate,
-    savedViewsData,
-    user,
-    buildViewConfig,
-    updateSavedView,
-    createSavedView,
-  ]);
+  }, [selectedTab, displayStorageKey, filtersStorageKey, activeViewConfig, setActiveViewConfig]);
 
   // Eval filter chips — drives the Filter button's red "active" dot.
   // Keep this scoped to extraFilters only; date/column changes should NOT
@@ -3073,6 +3039,11 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     const currentDate =
       viewTabType === "trace" ? primaryTraceDateFilter : primarySpanDateFilter;
     if ((currentDate?.dateOption ?? null) !== baselineDateOption) return true;
+    if (baselineDateOption === "Custom" && !_.isEqual(currentDate, baselineDisplay.dateFilter)) return true;
+    if (showCompare) {
+      if (!filtersContentEqual(compareExtraFilters, hydrateProjectFilterList(activeViewConfig.compare_extra_filters))) return true;
+      if (!filtersContentEqual(viewTabType === "trace" ? compareTraceFilters : compareSpansFilters, hydrateProjectFilterList(activeViewConfig.compare_filters))) return true;
+    }
 
     const columnFilters =
       viewTabType === "trace" ? primaryTraceFilters : primarySpanFilters;
@@ -3142,6 +3113,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     return false;
   }, [
     activeViewConfig,
+    compareExtraFilters, compareTraceFilters, compareSpansFilters,
     hydrateProjectFilterList,
     extraFilters,
     selectedTab,
@@ -3162,6 +3134,16 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   // Defer the visibility signal so a view-switch doesn't briefly flip
   // canSaveView true if the baseline trails the filter state by a render.
   const canSaveViewDeferred = useDeferredValue(canSaveView);
+  useEffect(() => {
+    const draft = canSaveViewDeferred ? buildViewConfig() : null;
+    if (!_.isEqual(useTabStore.getState().dirtyConfig, draft)) useTabStore.getState().setDirtyConfig(draft);
+  }, [canSaveViewDeferred, buildViewConfig]);
+  useEffect(() => {
+    if (!canSaveViewDeferred) return undefined;
+    const warn = (event) => { event.preventDefault(); event.returnValue = ""; };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [canSaveViewDeferred]);
 
   const currentGridRef = useMemo(() => {
     if (selectedGraph === "primary" && selectedTab === "trace") {
@@ -3557,7 +3539,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
             setExternalFilterAnchor(null);
             setExtraFilters([]);
             try {
-              localStorage.removeItem(filtersStorageKey);
+              if (filtersStorageKey) localStorage.removeItem(filtersStorageKey);
             } catch {
               /* noop */
             }
@@ -3581,7 +3563,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
               });
             } else {
               try {
-                localStorage.setItem(
+                filtersStorageKey && localStorage.setItem(
                   filtersStorageKey,
                   JSON.stringify({
                     tabType: selectedTab,
@@ -3621,7 +3603,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 setExtraFilters([]);
                 setCompareExtraFilters([]);
                 try {
-                  localStorage.removeItem(filtersStorageKey);
+                  if (filtersStorageKey) localStorage.removeItem(filtersStorageKey);
                 } catch {
                   /* noop */
                 }
@@ -3648,7 +3630,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   });
                 } else {
                   try {
-                    localStorage.setItem(
+                    filtersStorageKey && localStorage.setItem(
                       filtersStorageKey,
                       JSON.stringify({
                         tabType: selectedTab,
@@ -4031,6 +4013,17 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
             </Box>
           </ShowComponent>
           <>
+            <ConflictDialog open={Boolean(viewConflict)} viewName={activeSavedView?.name}
+              onClose={() => setViewConflict(null)}
+              onSaveCopy={() => { setViewConflict(null); handleSaveAsNewView(); }}
+              onReload={() => {
+                loadedViewRef.current = viewConflict;
+                setActiveViewConfig(viewConflict.config);
+                useTabStore.getState().clearDirty();
+                setViewConflict(null);
+                refreshSavedViews();
+              }} />
+            {saveTransportError && <Alert severity="error" action={<Button onClick={handleSaveView} disabled={isUpdatingSavedView || isUpdatingWorkspaceView}>Retry</Button>}>Could not save this view. Your unsaved changes are kept.</Alert>}
             {/* Toolbar */}
             <ObserveToolbar
               dateLabel={dateLabel}
@@ -4045,7 +4038,9 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   : setPrimarySpanDateFilter
               }
               hasActiveFilter={hasActiveFilter}
-              canSaveView={canSaveViewDeferred}
+              canSaveView={canSaveViewDeferred || Boolean(activeSavedView && !activeSavedView.can_edit)}
+              saveViewLabel={activeSavedView && !activeSavedView.can_edit ? "Save a copy" : "Save view"}
+              isSavingView={isUpdatingSavedView || isUpdatingWorkspaceView}
               onSaveView={handleSaveView}
               onFilterToggle={() => {
                 // Clear any chip/+ anchor so the popover re-anchors to the
@@ -4123,7 +4118,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
               onCompareToggle={() => setShowCompare(!showCompare)}
               isCompareActive={showCompare}
               onResetView={handleResetView}
-              onSetDefaultView={handleSetDefaultView}
+              onSaveAsNewView={handleSaveAsNewView}
               projectId={toolbarProjectId}
               allowWorkspaceScope={isUserMode}
               agentGraphEnabled={Boolean(primaryAgentGraphProjectId)}

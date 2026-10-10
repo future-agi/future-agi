@@ -238,7 +238,7 @@ const DisplayPanel = ({
   onCompareToggle,
   isCompareActive,
   onResetView,
-  onSetDefaultView,
+  onSaveAsNewView,
   // Voice / Simulator
   isSimulator,
   excludeSimulationCalls,
@@ -522,11 +522,11 @@ const DisplayPanel = ({
             py: 0.5,
           }}
         >
-          Reset
+          Reset view
         </ButtonBase>
         <ButtonBase
           onClick={() => {
-            onSetDefaultView?.();
+            onSaveAsNewView?.();
             onClose();
           }}
           sx={{
@@ -537,7 +537,7 @@ const DisplayPanel = ({
             py: 0.5,
           }}
         >
-          Set default for everyone
+          Save as new view…
         </ButtonBase>
       </Box>
     </Popover>
@@ -572,7 +572,7 @@ DisplayPanel.propTypes = {
   onCompareToggle: PropTypes.func,
   isCompareActive: PropTypes.bool,
   onResetView: PropTypes.func,
-  onSetDefaultView: PropTypes.func,
+  onSaveAsNewView: PropTypes.func,
   isSimulator: PropTypes.bool,
   excludeSimulationCalls: PropTypes.bool,
   onToggleSimulationCalls: PropTypes.func,

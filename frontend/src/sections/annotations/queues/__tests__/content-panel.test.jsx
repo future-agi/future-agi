@@ -160,6 +160,11 @@ vi.mock("src/api/project/trace-detail", () => ({
 }));
 
 vi.mock("src/api/project/saved-views", () => ({
+  useGetWorkspaceSavedViews: () => ({ data: undefined }),
+  useRefreshSavedViews: () => vi.fn(),
+  classifySavedViewError: () => ({ kind: "unavailable_record" }),
+  resolveExpectedRevision: vi.fn(),
+
   useGetSavedViews: () => ({ data: { custom_views: [] } }),
   useDeleteSavedView: () => ({ mutate: vi.fn() }),
 }));

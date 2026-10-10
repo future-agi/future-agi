@@ -13,6 +13,10 @@ export const useTabStore = create((set) => ({
   createModalOpen: false,
   editModalView: null, // view object when editing, null when creating
 
+  saveAsNewRequested: false,
+  requestSaveAsNew: () => set({ saveAsNewRequested: true }),
+  consumeSaveAsNew: () => set({ saveAsNewRequested: false }),
+
   // Inline rename
   editingTabId: null,
 
@@ -37,6 +41,7 @@ export const useTabStoreShallow = (fn) => useTabStore(useShallow(fn));
 
 export const resetTabStore = () => {
   useTabStore.setState({
+    saveAsNewRequested: false,
     dirtyConfig: null,
     isDirty: false,
     contextMenuAnchor: null,

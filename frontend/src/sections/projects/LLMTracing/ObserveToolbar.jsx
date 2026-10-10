@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import PropTypes from "prop-types";
-import { Badge, Button, MenuItem, Popover, Stack } from "@mui/material";
+import { Badge, Typography, Button, MenuItem, Popover, Stack } from "@mui/material";
 import Iconify from "src/components/iconify";
 import DisplayPanel from "./DisplayPanel";
 import TraceFilterPanel from "./TraceFilterPanel";
@@ -51,6 +51,8 @@ const ObserveToolbar = ({
   hasActiveFilter,
   canSaveView,
   onSaveView,
+  saveViewLabel = "Save view",
+  isSavingView = false,
   isFilterOpen,
   onFilterToggle,
   onApplyExtraFilters,
@@ -108,7 +110,7 @@ const ObserveToolbar = ({
   graphFilters,
   // View persistence
   onResetView,
-  onSetDefaultView,
+  onSaveAsNewView,
   // External filter anchor (compare mode)
   externalFilterAnchor,
   // Compare mode: which graph's filter is being edited
@@ -452,8 +454,10 @@ const ObserveToolbar = ({
           {/* Save view — updates the currently-active saved view in place
               when its state has diverged from the saved baseline. The "+"
               button in the tab bar handles save-as-new. */}
+          {canSaveView && saveViewLabel === "Save view" && <Typography variant="caption" color="text.secondary">Unsaved changes</Typography>}
           {canSaveView && (
             <Button
+              disabled={isSavingView}
               variant="outlined"
               size="small"
               startIcon={<Iconify icon="mdi:content-save-outline" width={16} />}
@@ -481,7 +485,7 @@ const ObserveToolbar = ({
                 },
               }}
             >
-              Save view
+              {isSavingView ? "Saving…" : saveViewLabel}
             </Button>
           )}
 
@@ -526,7 +530,7 @@ const ObserveToolbar = ({
             onCompareToggle={onCompareToggle}
             isCompareActive={isCompareActive}
             onResetView={onResetView}
-            onSetDefaultView={onSetDefaultView}
+            onSaveAsNewView={onSaveAsNewView}
             isSimulator={isSimulator}
             excludeSimulationCalls={excludeSimulationCalls}
             onToggleSimulationCalls={onToggleSimulationCalls}
@@ -568,6 +572,8 @@ ObserveToolbar.propTypes = {
   hasActiveFilter: PropTypes.bool,
   canSaveView: PropTypes.bool,
   onSaveView: PropTypes.func,
+  saveViewLabel: PropTypes.string,
+  isSavingView: PropTypes.bool,
   isFilterOpen: PropTypes.bool,
   onFilterToggle: PropTypes.func,
   filters: PropTypes.array,
@@ -615,7 +621,7 @@ ObserveToolbar.propTypes = {
   tab: PropTypes.oneOf(["trace", "spans", "voiceCalls"]),
   graphFilters: PropTypes.array,
   onResetView: PropTypes.func,
-  onSetDefaultView: PropTypes.func,
+  onSaveAsNewView: PropTypes.func,
   externalFilterAnchor: PropTypes.any,
   filterTarget: PropTypes.string,
   onApplyCompareExtraFilters: PropTypes.func,

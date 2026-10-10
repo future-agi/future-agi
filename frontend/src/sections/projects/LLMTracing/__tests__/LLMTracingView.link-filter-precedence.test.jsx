@@ -29,7 +29,7 @@ const harness = vi.hoisted(() => ({
 }));
 
 vi.mock("src/auth/hooks", () => ({
-  useAuthContext: () => ({ role: "Admin" }),
+  useAuthContext: () => ({ role: "Admin", user: { id: "user-1" } }),
 }));
 
 vi.mock("react-helmet-async", () => ({ Helmet: () => null }));
@@ -239,7 +239,7 @@ vi.mock(
   () => ({ default: () => null }),
 );
 
-const FILTERS_STORAGE_KEY = "observe-filters-project-1";
+const FILTERS_STORAGE_KEY = "observe-filters-user-1-workspace-1-project-1";
 
 const STORED_PRIMARY_VALUE = "stored-primary";
 const STORED_EXTRA_VALUE = "stored-extra";
@@ -304,9 +304,23 @@ const panelFilterValues = () =>
       .getAttribute("data-graph-filter-values"),
   );
 
+const memoryStorage = () => {
+  const store = new Map();
+  return {
+    getItem: (key) => store.get(key) ?? null,
+    setItem: (key, value) => store.set(key, String(value)),
+    removeItem: (key) => store.delete(key),
+    clear: () => store.clear(),
+    key: (index) => [...store.keys()][index] ?? null,
+    get length() { return store.size; },
+  };
+};
+
 describe("LLMTracingView deep link vs localStorage filter precedence", () => {
   beforeEach(() => {
-    window.localStorage.clear();
+    // jsdom 26 exposes localStorage as a getter that throws in this vitest
+    // worker, so the tests use an explicit in-memory Storage.
+    Object.defineProperty(window, "localStorage", { value: memoryStorage(), configurable: true });
     harness.setFiltersCalls.length = 0;
     setSearch("");
   });

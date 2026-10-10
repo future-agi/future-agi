@@ -1,3 +1,5 @@
+import { useRef } from "react";
+import { SS_KEY_USER_ID, SS_KEY_ORG_ID, SS_KEY_WORKSPACE_ID } from "src/utils/sessionKeys";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { serializeFilterListForApi } from "src/api/contracts/filter-contract";
@@ -34,7 +36,7 @@ const CREATE_PAYLOAD_KEYS = new Set([
   "config",
 ]);
 
-const UPDATE_PAYLOAD_KEYS = new Set(["name", "visibility", "icon", "config"]);
+const UPDATE_PAYLOAD_KEYS = new Set(["name", "visibility", "icon", "config", "expected_revision"]);
 
 const mapPayloadKeys = (data, allowedKeys) =>
   Object.fromEntries(
@@ -117,246 +119,282 @@ export const findOwnDefaultView = (views, { tabType, userId }) =>
       String(v?.created_by?.id) === String(userId),
   ) ?? null;
 
-const appendCustomViewToCache = (currentResult, newView) => {
-  if (!currentResult) return currentResult;
-  const currentList = currentResult.custom_views ?? [];
-  if (currentList.some((v) => v.id === newView.id)) return currentResult;
-  return {
-    ...currentResult,
-    custom_views: [...currentList, newView],
-  };
+// Retain the bucket prefix for consumer invalidations, while isolating identities.
+const identity = () => [SS_KEY_USER_ID, SS_KEY_ORG_ID, SS_KEY_WORKSPACE_ID].map(
+  (key) => typeof sessionStorage === "undefined" ? null : sessionStorage.getItem(key),
+);
+export const savedViewsKey = (projectId, tabType) => {
+  const scope = identity();
+  const bucket = projectId ? [SAVED_VIEWS_KEY, projectId] : [SAVED_VIEWS_KEY, "workspace", tabType];
+  return scope.some(Boolean) ? [...bucket, scope] : bucket;
+};
+const sameIdentity = (key) => {
+  const scope = identity();
+  const suffix = Array.isArray(key.at(-1)) ? key.at(-1) : [null, null, null];
+  return JSON.stringify(scope) === JSON.stringify(suffix);
+};
+// Per-client state disappears with the query client. Timestamps never store config.
+const consistencyState = new WeakMap();
+const stateFor = (client, key) => {
+  if (!consistencyState.has(client)) consistencyState.set(client, new Map());
+  const states = consistencyState.get(client);
+  const hash = JSON.stringify(key);
+  if (!states.has(hash)) states.set(hash, { until: 0, written: new Map(), deleted: new Map() });
+  return states.get(hash);
+};
+export const markStrongRead = (queryClient, key) => {
+  stateFor(queryClient, key).until = Date.now() + 30_000;
 };
 
-const updateCustomViewInCache = (currentResult, updatedView) => {
-  if (!currentResult) return currentResult;
-  const currentList = currentResult.custom_views ?? [];
-  return {
-    ...currentResult,
-    custom_views: currentList.map((v) =>
-      v.id === updatedView.id ? { ...v, ...updatedView } : v,
-    ),
-  };
+export const classifySavedViewError = (err) => {
+  const status = err?.response?.status ?? err?.statusCode;
+  const body = err?.response?.data ?? err;
+  if (status === 409) return { kind: "conflict", current: body?.result?.current };
+  if (status === 428) return { kind: "precondition" };
+  if (status === 403) return { kind: "forbidden" };
+  if (status === 404) return { kind: "unavailable_record" };
+  if (!status || status >= 500) return { kind: "unavailable_transport" };
+  return { kind: "validation" };
 };
 
-const reorderCustomViewsInCache = (currentResult, order) => {
-  if (!currentResult) return currentResult;
-  const positionById = Object.fromEntries(
-    order.map((item) => [item.id, item.position]),
-  );
-  return {
-    ...currentResult,
-    custom_views: (currentResult.custom_views ?? [])
-      .map((view) => ({
-        ...view,
-        position: positionById[view.id] ?? view.position,
-      }))
-      .sort((a, b) => a.position - b.position),
-  };
+const applyOrder = (result, tabOrder) => {
+  if (!result || !tabOrder) return result;
+  const views = result.custom_views ?? [];
+  const byId = new Map(views.map((view) => [view.id, view]));
+  const ordered = (tabOrder.order ?? []).map((id) => byId.get(id)).filter(Boolean);
+  const ids = new Set(ordered.map((view) => view.id));
+  return { ...result, tab_order: tabOrder, custom_views: [...ordered, ...views.filter((view) => !ids.has(view.id))] };
 };
 
-// ---------------------------------------------------------------------------
-// Queries
-// ---------------------------------------------------------------------------
+export const mergeSavedViews = (cached, incoming, { primary = false, writtenIds = new Set(), deletedIds = new Set() } = {}) => {
+  if (!incoming) throw new Error("Could not load saved views");
+  const oldById = new Map((cached?.custom_views ?? []).map((view) => [view.id, view]));
+  const views = (incoming.custom_views ?? []).filter((v) => !deletedIds.has(v.id)).map((view) => {
+    const old = oldById.get(view.id);
+    return (old?.revision ?? 0) > (view.revision ?? 0) ? old : view;
+  });
+  const ids = new Set(views.map((view) => view.id));
+  if (!primary) for (const view of oldById.values()) {
+    if (writtenIds.has(view.id) && !ids.has(view.id) && !deletedIds.has(view.id)) views.push(view);
+  }
+  const order = (cached?.tab_order?.revision ?? 0) > (incoming.tab_order?.revision ?? 0)
+    ? cached.tab_order : incoming.tab_order;
+  return applyOrder({ ...incoming, custom_views: views }, order);
+};
+
+const listSavedViews = async (client, key, params, signal, forcePrimary = false) => {
+  const state = stateFor(client, key);
+  const primary = forcePrimary || state.until > Date.now();
+  const scope = JSON.stringify(identity());
+  const response = await axios.get(endpoints.savedViews.list, {
+    params: { ...params, ...(primary ? { consistency: "primary" } : {}) },
+    ...(signal ? { signal } : {}),
+  });
+  if (signal?.aborted || scope !== JSON.stringify(identity())) throw new Error("Saved view scope changed");
+  const recent = (map) => new Set([...map].filter(([, until]) => until > Date.now()).map(([id]) => id));
+  return mergeSavedViews(client.getQueryData(key), response.data?.result, {
+    primary, writtenIds: recent(state.written), deletedIds: recent(state.deleted),
+  });
+};
+
+export const resolveExpectedRevision = async (client, key, id, params = {}) => {
+  let record = client.getQueryData(key)?.custom_views?.find((view) => view.id === id);
+  if (!record?.revision) {
+    record = client.getQueriesData({ queryKey: [SAVED_VIEWS_KEY] })
+      .filter(([candidate]) => sameIdentity(candidate))
+      .flatMap(([, data]) => data?.custom_views ?? []).find((view) => view.id === id && view.revision);
+  }
+  if (!record?.revision) {
+    const response = await axios.get(endpoints.savedViews.detail(id), {
+      params: { ...params, consistency: "primary" },
+    });
+    record = response.data?.result;
+  }
+  if (!Number.isInteger(record?.revision) || record.revision < 1) {
+    throw { statusCode: 428, message: "Refresh the page and try again." };
+  }
+  return record.revision;
+};
+
+const rememberView = (client, key, view) => {
+  if (!view?.id || !sameIdentity(key)) return;
+  markStrongRead(client, key);
+  stateFor(client, key).written.set(view.id, Date.now() + 30_000);
+  client.setQueryData(key, (old) => {
+    const current = old ?? { default_tabs: [], custom_views: [], tab_order: { revision: 0, order: [] } };
+    const previous = current.custom_views.find((v) => v.id === view.id);
+    if ((previous?.revision ?? 0) > (view.revision ?? 0)) return current;
+    return { ...current, custom_views: previous
+      ? current.custom_views.map((v) => v.id === view.id ? { ...v, ...view } : v)
+      : [...current.custom_views, view] };
+  });
+};
+export const removeSavedViewFromCache = (client, id) => {
+  for (const [key] of client.getQueriesData({ queryKey: [SAVED_VIEWS_KEY] })) {
+    if (key.at(-2) === "detail" && key.at(-1) === id) {
+      client.setQueryData(key, null);
+      continue;
+    }
+    stateFor(client, key).deleted.set(id, Date.now() + 30_000);
+    client.setQueryData(key, (old) => old && ({ ...old,
+      custom_views: (old.custom_views ?? []).filter((v) => v.id !== id),
+      ...(old.tab_order ? { tab_order: { ...old.tab_order, order: old.tab_order.order.filter((pk) => pk !== id) } } : {}),
+    }));
+  }
+};
+const invalidate = (client, key) => {
+  if (!sameIdentity(key)) return;
+  markStrongRead(client, key);
+  client.invalidateQueries({ queryKey: key });
+};
 
 export const useGetSavedViews = (projectId) => {
-  return useQuery({
-    queryKey: [SAVED_VIEWS_KEY, projectId],
-    queryFn: async () => {
-      const res = await axios.get(endpoints.savedViews.list, {
-        params: { project_id: projectId },
-      });
-      return res.data?.result;
-    },
-    staleTime: 60_000,
-    enabled: !!projectId,
-  });
+  const client = useQueryClient();
+  const key = savedViewsKey(projectId);
+  return useQuery({ queryKey: key, queryFn: ({ signal }) => listSavedViews(client, key, { project_id: projectId }, signal), staleTime: 60_000, enabled: !!projectId });
 };
-
-// Workspace-scoped saved views (no project_id). Scoped per tab_type so the
-// users page, future standalone pages, etc. don't collide.
 export const useGetWorkspaceSavedViews = (tabType) => {
-  return useQuery({
-    queryKey: [SAVED_VIEWS_KEY, "workspace", tabType],
-    queryFn: async () => {
-      const res = await axios.get(endpoints.savedViews.list, {
-        params: { tab_type: tabType },
-      });
-      return res.data?.result;
-    },
-    staleTime: 60_000,
-    enabled: !!tabType,
-  });
+  const client = useQueryClient();
+  const key = savedViewsKey(null, tabType);
+  return useQuery({ queryKey: key, queryFn: ({ signal }) => listSavedViews(client, key, { tab_type: tabType }, signal), staleTime: 60_000, enabled: !!tabType });
+};
+export const useRefreshSavedViews = (projectId, tabType) => {
+  const client = useQueryClient();
+  return () => {
+    const key = savedViewsKey(projectId, tabType);
+    markStrongRead(client, key);
+    return client.invalidateQueries({ queryKey: key });
+  };
 };
 
-export const useCreateWorkspaceSavedView = (tabType) => {
-  const queryClient = useQueryClient();
+const useCreateView = (projectId, tabType) => {
+  const client = useQueryClient();
+  const key = savedViewsKey(projectId, tabType);
+  const uncertain = useRef(null);
   return useMutation({
-    mutationFn: (data) =>
-      axios.post(
-        endpoints.savedViews.create,
-        buildCreateSavedViewPayload(data, tabType),
-      ),
-    onSuccess: (response) => {
-      const newView = response?.data?.result;
-      if (newView) {
-        queryClient.setQueryData(
-          [SAVED_VIEWS_KEY, "workspace", tabType],
-          (old) => appendCustomViewToCache(old, newView),
-        );
+    mutationFn: async (data) => {
+      const payload = buildCreateSavedViewPayload(data, tabType);
+      const fingerprint = JSON.stringify([key, payload]);
+      try {
+        const response = await axios.post(endpoints.savedViews.create, payload);
+        uncertain.current = null;
+        return response;
+      } catch (error) {
+        const kind = classifySavedViewError(error).kind;
+        if (kind === "validation" && uncertain.current === fingerprint && /already exists/i.test(JSON.stringify(error?.response?.data ?? error))) {
+          const result = await listSavedViews(client, key, projectId ? { project_id: projectId } : { tab_type: tabType }, undefined, true);
+          const record = result.custom_views.find((v) => v.is_owner && v.name === payload.name && v.tab_type === payload.tab_type && JSON.stringify(v.config) === JSON.stringify(payload.config ?? {}));
+          if (record) {
+            uncertain.current = null;
+            return { data: { result: record } };
+          }
+        }
+        if (kind === "unavailable_transport") uncertain.current = fingerprint;
+        throw error;
       }
-      queryClient.invalidateQueries({
-        queryKey: [SAVED_VIEWS_KEY, "workspace", tabType],
-      });
     },
+    onSuccess: (response) => { rememberView(client, key, response?.data?.result); invalidate(client, key); },
   });
 };
+export const useCreateSavedView = (projectId) => useCreateView(projectId);
+export const useCreateWorkspaceSavedView = (tabType) => useCreateView(null, tabType);
 
-export const useUpdateWorkspaceSavedView = (tabType) => {
-  const queryClient = useQueryClient();
+const useUpdateView = (projectId, tabType) => {
+  const client = useQueryClient();
+  const key = savedViewsKey(projectId, tabType);
+  const params = projectId ? { project_id: projectId } : {};
   return useMutation({
-    mutationFn: ({ id, ...data }) =>
-      axios.put(
-        endpoints.savedViews.update(id),
-        buildUpdateSavedViewPayload(data),
-      ),
-    onSuccess: (response) => {
-      const updated = response?.data?.result;
-      if (updated?.id) {
-        queryClient.setQueryData(
-          [SAVED_VIEWS_KEY, "workspace", tabType],
-          (old) => updateCustomViewInCache(old, updated),
-        );
-      }
-      queryClient.invalidateQueries({
-        queryKey: [SAVED_VIEWS_KEY, "workspace", tabType],
-      });
+    mutationFn: async ({ id, ...data }) => {
+      const payload = buildUpdateSavedViewPayload(data);
+      payload.expected_revision ??= await resolveExpectedRevision(client, key, id, params);
+      return axios.put(endpoints.savedViews.update(id), payload, { params });
     },
+    onSuccess: (response) => { rememberView(client, key, response?.data?.result); invalidate(client, key); },
   });
 };
+export const useUpdateSavedView = (projectId) => useUpdateView(projectId);
+export const useUpdateWorkspaceSavedView = (tabType) => useUpdateView(null, tabType);
 
-export const useDeleteWorkspaceSavedView = (tabType) => {
-  const queryClient = useQueryClient();
+const useDeleteView = (projectId, tabType) => {
+  const client = useQueryClient();
+  const key = savedViewsKey(projectId, tabType);
+  const params = projectId ? { project_id: projectId } : {};
   return useMutation({
-    mutationFn: (id) => axios.delete(endpoints.savedViews.delete(id)),
-    onSuccess: () => {
-      queryClient.invalidateQueries({
-        queryKey: [SAVED_VIEWS_KEY, "workspace", tabType],
-      });
+    mutationFn: async (input) => {
+      const id = typeof input === "string" ? input : input.id;
+      const expected = input?.expected_revision ?? await resolveExpectedRevision(client, key, id, params);
+      return axios.delete(endpoints.savedViews.delete(id), { params: { ...params, expected_revision: expected } });
+    },
+    onSuccess: (_response, input) => {
+      if (!sameIdentity(key)) return;
+      removeSavedViewFromCache(client, typeof input === "string" ? input : input.id);
+      invalidate(client, key);
     },
   });
 };
-
-// ---------------------------------------------------------------------------
-// Mutations
-// ---------------------------------------------------------------------------
-
-export const useCreateSavedView = (projectId) => {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (data) =>
-      axios.post(
-        endpoints.savedViews.create,
-        buildCreateSavedViewPayload(data),
-      ),
-    onSuccess: (response) => {
-      const newView = response?.data?.result;
-      if (newView) {
-        queryClient.setQueryData([SAVED_VIEWS_KEY, projectId], (old) =>
-          appendCustomViewToCache(old, newView),
-        );
-      }
-      queryClient.invalidateQueries({
-        queryKey: [SAVED_VIEWS_KEY, projectId],
-      });
-    },
-  });
-};
-
-export const useUpdateSavedView = (projectId) => {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, ...data }) =>
-      axios.put(
-        endpoints.savedViews.update(id),
-        buildUpdateSavedViewPayload(data),
-        {
-          params: { project_id: projectId },
-        },
-      ),
-    onSuccess: (response) => {
-      const updated = response?.data?.result;
-      if (updated?.id) {
-        queryClient.setQueryData([SAVED_VIEWS_KEY, projectId], (old) => {
-          return updateCustomViewInCache(old, updated);
-        });
-      }
-      queryClient.invalidateQueries({
-        queryKey: [SAVED_VIEWS_KEY, projectId],
-      });
-    },
-  });
-};
-
-export const useDeleteSavedView = (projectId) => {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (id) =>
-      axios.delete(endpoints.savedViews.delete(id), {
-        params: { project_id: projectId },
-      }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({
-        queryKey: [SAVED_VIEWS_KEY, projectId],
-      });
-    },
-  });
-};
+export const useDeleteSavedView = (projectId) => useDeleteView(projectId);
+export const useDeleteWorkspaceSavedView = (tabType) => useDeleteView(null, tabType);
 
 export const useDuplicateSavedView = (projectId) => {
-  const queryClient = useQueryClient();
+  const client = useQueryClient();
+  const key = savedViewsKey(projectId);
   return useMutation({
-    mutationFn: ({ id, name }) =>
-      axios.post(
-        endpoints.savedViews.duplicate(id),
-        { name },
-        { params: { project_id: projectId } },
-      ),
-    onSuccess: () => {
-      queryClient.invalidateQueries({
-        queryKey: [SAVED_VIEWS_KEY, projectId],
-      });
-    },
+    mutationFn: ({ id, name }) => axios.post(endpoints.savedViews.duplicate(id), { name }, { params: { project_id: projectId } }),
+    onSuccess: (response) => { rememberView(client, key, response?.data?.result); invalidate(client, key); },
   });
 };
 
 export const useReorderSavedViews = (projectId) => {
-  const queryClient = useQueryClient();
+  const client = useQueryClient();
+  const keyFor = (data) => savedViewsKey(projectId ?? data.project_id, data.tab_type);
   return useMutation({
-    mutationFn: (data) => axios.post(endpoints.savedViews.reorder, data),
-    onMutate: async ({ order }) => {
-      await queryClient.cancelQueries({
-        queryKey: [SAVED_VIEWS_KEY, projectId],
-      });
-      const previous = queryClient.getQueryData([SAVED_VIEWS_KEY, projectId]);
-
-      queryClient.setQueryData([SAVED_VIEWS_KEY, projectId], (old) => {
-        return reorderCustomViewsInCache(old, order);
-      });
-
-      return { previous };
-    },
-    onError: (_err, _vars, context) => {
-      if (context?.previous) {
-        queryClient.setQueryData(
-          [SAVED_VIEWS_KEY, projectId],
-          context.previous,
-        );
+    mutationFn: async (data) => {
+      const key = keyFor(data);
+      let revision = data.expected_revision ?? client.getQueryData(key)?.tab_order?.revision;
+      if (revision == null) {
+        const result = await listSavedViews(client, key, data.project_id ? { project_id: data.project_id } : { tab_type: data.tab_type }, undefined, true);
+        revision = result.tab_order.revision;
       }
+      return axios.post(endpoints.savedViews.reorder, { ...data, expected_revision: revision });
     },
-    onSettled: () => {
-      queryClient.invalidateQueries({
-        queryKey: [SAVED_VIEWS_KEY, projectId],
+    onMutate: async (data) => {
+      const key = keyFor(data);
+      await client.cancelQueries({ queryKey: key });
+      const previous = client.getQueryData(key);
+      const order = [...data.order].sort((a, b) => a.position - b.position).map((item) => item.id);
+      client.setQueryData(key, (old) => applyOrder(old, { ...old?.tab_order, order }));
+      return { previous, key };
+    },
+    onSuccess: (response, data) => {
+      const key = keyFor(data);
+      if (sameIdentity(key)) client.setQueryData(key, (old) => applyOrder(old, response?.data?.result?.tab_order));
+    },
+    onError: (err, _vars, context) => {
+      if (!context || !sameIdentity(context.key)) return;
+      const { current, kind } = classifySavedViewError(err);
+      client.setQueryData(context.key, kind === "conflict" && current
+        ? applyOrder(context.previous, current) : context.previous);
+    },
+    onSettled: (_response, _error, data) => invalidate(client, keyFor(data)),
+  });
+};
+
+// Named links revalidate authorization on the primary before mounting their data surface.
+export const useGetSavedView = (projectId, id) => {
+  const client = useQueryClient();
+  const key = savedViewsKey(projectId);
+  return useQuery({
+    queryKey: [...key, "detail", id],
+    enabled: Boolean(projectId && id),
+    retry: false,
+    staleTime: 0,
+    queryFn: async ({ signal }) => {
+      const response = await axios.get(endpoints.savedViews.detail(id), {
+        params: { project_id: projectId, consistency: "primary" }, signal,
       });
+      if (signal.aborted || !sameIdentity(key)) throw new Error("Saved view scope changed");
+      rememberView(client, key, response.data?.result);
+      return response.data?.result;
     },
   });
 };

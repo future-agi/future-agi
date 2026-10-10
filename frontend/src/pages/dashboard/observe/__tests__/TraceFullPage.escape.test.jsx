@@ -22,6 +22,11 @@ const { useGetTraceDetail } = vi.hoisted(() => ({
 // TraceDetailDrawerV2 dependencies
 vi.mock("src/api/project/trace-detail", () => ({ useGetTraceDetail }));
 vi.mock("src/api/project/saved-views", () => ({
+  useGetWorkspaceSavedViews: () => ({ data: undefined }),
+  useRefreshSavedViews: () => vi.fn(),
+  classifySavedViewError: () => ({ kind: "unavailable_record" }),
+  resolveExpectedRevision: vi.fn(),
+
   useGetSavedViews: () => ({ data: undefined }),
   useCreateSavedView: () => ({ mutate: vi.fn() }),
   useUpdateSavedView: () => ({ mutate: vi.fn() }),

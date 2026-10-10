@@ -84,6 +84,11 @@ vi.mock("src/routes/hooks/use-url-state", async () => {
   return { useUrlState: (_key, initial) => useState(initial) };
 });
 vi.mock("src/api/project/saved-views", () => ({
+  useGetWorkspaceSavedViews: () => ({ data: undefined }),
+  useRefreshSavedViews: () => vi.fn(),
+  classifySavedViewError: () => ({ kind: "unavailable_record" }),
+  resolveExpectedRevision: vi.fn(),
+
   useUpdateSavedView: () => ({ mutate: vi.fn() }),
   useUpdateWorkspaceSavedView: () => ({ mutate: vi.fn() }),
 }));

@@ -179,8 +179,7 @@ const TraceDisplayPanel = ({
   showAgentGraph,
   onToggleAgentGraph,
   onResetView,
-  onSetDefaultView,
-  hideSetDefault = false,
+  onSaveAsNewView,
 }) => {
   const [spanTypeAnchor, setSpanTypeAnchor] = useState(null);
 
@@ -416,23 +415,21 @@ const TraceDisplayPanel = ({
         >
           Reset
         </ButtonBase>
-        {!hideSetDefault && (
-          <ButtonBase
-            onClick={() => {
-              onSetDefaultView?.();
-              onClose();
-            }}
-            sx={{
-              fontSize: 14,
-              fontFamily: "'IBM Plex Sans', sans-serif",
-              color: (t) =>
-                t.palette.mode === "dark" ? "text.primary" : "#573FCC",
-              py: 0.5,
-            }}
-          >
-            Set default for everyone
-          </ButtonBase>
-        )}
+        <ButtonBase
+          onClick={() => {
+            onSaveAsNewView?.();
+            onClose();
+          }}
+          sx={{
+            fontSize: 14,
+            fontFamily: "'IBM Plex Sans', sans-serif",
+            color: (t) =>
+              t.palette.mode === "dark" ? "text.primary" : "#573FCC",
+            py: 0.5,
+          }}
+        >
+          Save as new view…
+        </ButtonBase>
       </Box>
       <Box sx={{ pb: 0.5 }} />
     </Popover>
@@ -452,8 +449,7 @@ TraceDisplayPanel.propTypes = {
   showAgentGraph: PropTypes.bool,
   onToggleAgentGraph: PropTypes.func,
   onResetView: PropTypes.func,
-  onSetDefaultView: PropTypes.func,
-  hideSetDefault: PropTypes.bool,
+  onSaveAsNewView: PropTypes.func,
 };
 
 export default React.memo(TraceDisplayPanel);

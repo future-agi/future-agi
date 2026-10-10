@@ -1,3 +1,4 @@
+import ShareViewDialog from "./ShareViewDialog";
 import React, { useState, useEffect } from "react";
 import PropTypes from "prop-types";
 import {
@@ -42,7 +43,9 @@ const ViewConfigModal = ({
   initialValues,
   projectId,
   onSuccess,
+  projectName,
 }) => {
+  const [confirmSharing, setConfirmSharing] = useState(false);
   const [name, setName] = useState("");
   const [tabType, setTabType] = useState("traces");
   const [visibility, setVisibility] = useState("personal");
@@ -77,14 +80,18 @@ const ViewConfigModal = ({
     }
   }, [open, initialValues]);
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    if (!trimmedName || isDuplicateName) return;
+  const handleSubmit = (e, confirmed = false) => {
+    e?.preventDefault();
+    if (!trimmedName || isDuplicateName || isPending || (mode === "edit" && initialValues?.can_edit === false)) return;
+    if (!confirmed && visibility !== (initialValues?.visibility ?? "personal")) {
+      setConfirmSharing(true);
+      return;
+    }
 
-    const snapshot = getViewConfig?.() ?? null;
+    const snapshot = mode === "create" ? getViewConfig?.() ?? null : null;
     const config =
       mode === "edit"
-        ? snapshot ?? initialValues?.config ?? {}
+        ? initialValues?.config ?? {}
         : snapshot ?? {};
 
     const basePayload = {
@@ -95,9 +102,10 @@ const ViewConfigModal = ({
 
     if (mode === "edit" && initialValues?.id) {
       updateView(
-        { id: initialValues.id, ...basePayload },
+        { id: initialValues.id, name: trimmedName, visibility, expected_revision: initialValues.revision },
         {
           onSuccess: (res) => {
+            setConfirmSharing(false);
             onClose();
             onSuccess?.(res.data?.result);
           },
@@ -113,6 +121,7 @@ const ViewConfigModal = ({
         { project_id: projectId, tab_type: tabType, ...basePayload },
         {
           onSuccess: (res) => {
+            setConfirmSharing(false);
             onClose();
             onSuccess?.(res.data?.result);
           },
@@ -127,6 +136,7 @@ const ViewConfigModal = ({
   };
 
   return (
+    <>
     <Dialog
       open={open}
       onClose={onClose}
@@ -186,7 +196,7 @@ const ViewConfigModal = ({
               <FormControlLabel
                 value="project"
                 control={<Radio size="small" />}
-                label="Shared with team"
+                label="Shared with project"
                 slotProps={{ typography: { variant: "body2" } }}
               />
             </RadioGroup>
@@ -209,6 +219,9 @@ const ViewConfigModal = ({
         </LoadingButton>
       </DialogActions>
     </Dialog>
+    {confirmSharing && <ShareViewDialog view={{ name: trimmedName, visibility: initialValues?.visibility ?? "personal" }}
+      projectName={projectName} pending={isPending} onClose={() => setConfirmSharing(false)} onConfirm={() => handleSubmit(null, true)} />}
+    </>
   );
 };
 
@@ -218,12 +231,15 @@ ViewConfigModal.propTypes = {
   mode: PropTypes.oneOf(["create", "edit"]),
   initialValues: PropTypes.shape({
     id: PropTypes.string,
+    revision: PropTypes.number,
+    can_edit: PropTypes.bool,
     name: PropTypes.string,
     tab_type: PropTypes.string,
     visibility: PropTypes.string,
     config: PropTypes.object,
   }),
   projectId: PropTypes.string.isRequired,
+  projectName: PropTypes.string,
   onSuccess: PropTypes.func,
 };
 

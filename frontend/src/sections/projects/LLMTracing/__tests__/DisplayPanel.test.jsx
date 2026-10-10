@@ -113,7 +113,7 @@ describe("DisplayPanel — interactive controls", () => {
     await user.click(screen.getByText("Sessions"));
     expect(onGroupByChange).toHaveBeenCalledWith("sessions");
 
-    await user.click(screen.getByText("Reset"));
+    await user.click(screen.getByText("Reset view"));
     expect(onResetView).toHaveBeenCalledOnce();
     expect(onClose).toHaveBeenCalledOnce();
   });
