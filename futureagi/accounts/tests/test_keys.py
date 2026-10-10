@@ -614,6 +614,31 @@ class TestGetSecretKeysRowContent:
             "type",
         }
 
+    def test_system_key_is_not_masked_so_quickstart_copy_works(
+        self, auth_client, organization
+    ):
+        """Regression for #1304: the system key has no other reveal path.
+
+        Unlike a user-generated key (shown in full once, at creation), the
+        auto-created ``system`` key is only ever surfaced through this list.
+        Masking it here left the Keys page's copy button handing out a value
+        that never matches ``accounts_orgapikey``, so the documented
+        quickstart always 401s.
+        """
+        from accounts.models.user import OrgApiKey
+
+        system_key = OrgApiKey.objects.create(
+            organization=organization, type="system"
+        )
+
+        response = auth_client.get(f"{SECRET_KEYS_URL}?search={system_key.name}")
+
+        row = _rows(response)[0]
+        assert row["api_key"] == system_key.api_key
+        assert row["secret_key"] == system_key.secret_key
+        assert "*" not in row["api_key"]
+        assert "*" not in row["secret_key"]
+
 
 @pytest.mark.integration
 @pytest.mark.api
