@@ -175,6 +175,13 @@ class TraceErrorGroup(BaseModel):
     """Stores grouped error information — each row = one Feed issue."""
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    redirect_to = models.ForeignKey(
+        "self",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="redirected_from",
+    )
 
     project = models.ForeignKey(
         Project,

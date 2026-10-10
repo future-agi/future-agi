@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1055,
+  endpointCount: 1058,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -5173,7 +5173,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              format: "uuid",
+              maxLength: 255,
             },
           },
         },
@@ -7342,7 +7342,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              format: "uuid",
+              maxLength: 255,
             },
           },
           request_id: {
@@ -28170,6 +28170,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     "/simulate/api/harness-environments/{id}/evaluations/{eval_config_id}/": {
+      patch: {
+        operationId: "simulate_api_harness-environments_edit_evaluation",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessEnvironmentEvalEdit",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/SimulateEvalConfigResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
       delete: {
         operationId: "simulate_api_harness-environments_remove_evaluation",
         runtimeRequestValidation: false,
@@ -28216,6 +28233,27 @@ export const OPENAPI_CONTRACT = Object.freeze({
           responses: {
             202: {
               $ref: "#/definitions/HarnessEnvironmentRunEvaluationQueued",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
+    "/simulate/api/harness-environments/{id}/runs/{execution_id}/evaluations/run/":
+      {
+        post: {
+          operationId:
+            "simulate_api_harness-environments_runs_evaluations_run_evaluations",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: {
+            $ref: "#/definitions/HarnessEnvironmentRunEvaluations",
+          },
+          queryParameters: {},
+          responses: {
+            202: {
+              $ref: "#/definitions/HarnessEnvironmentRunEvaluationsQueued",
             },
             default: {
               $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -30900,6 +30938,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           404: {
             $ref: "#/definitions/EvalErrorResponse",
           },
+          409: {
+            $ref: "#/definitions/EvalErrorResponse",
+          },
           500: {
             $ref: "#/definitions/EvalErrorResponse",
           },
@@ -31508,6 +31549,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/ErrorResponse",
           },
           404: {
+            $ref: "#/definitions/ErrorResponse",
+          },
+          409: {
             $ref: "#/definitions/ErrorResponse",
           },
           500: {
@@ -34369,6 +34413,43 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/tracer/feed/issues/{cluster_id}/redirect/": {
+      get: {
+        operationId: "tracer_feed_issues_redirect_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          project_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/FeedRedirectApiResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/tracer/feed/issues/{cluster_id}/root-cause/": {
       get: {
         operationId: "tracer_feed_issues_root-cause_list",
@@ -34662,6 +34743,30 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/tracer/internal/error-feed-v2/attempts/{attempt_id}/conversation-evidence/":
+      {
+        post: {
+          operationId:
+            "tracer_internal_error-feed-v2_attempts_conversation-evidence_create",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: {
+            $ref: "#/definitions/ConversationEvidenceRequest",
+          },
+          queryParameters: {},
+          responses: {
+            200: {
+              $ref: "#/definitions/ConversationEvidenceResponse",
+            },
+            409: {
+              $ref: "#/definitions/InvestigationControlError",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
     "/tracer/internal/error-feed-v2/attempts/{attempt_id}/simulation-evidence/":
       {
         post: {
@@ -53916,6 +54021,30 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    ConversationEvidenceRequest: {
+      required: ["lease_token"],
+      type: "object",
+      properties: {
+        lease_token: {
+          title: "Lease token",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+      },
+    },
+    ConversationEvidenceResponse: {
+      required: ["rows"],
+      type: "object",
+      properties: {
+        rows: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/ConversationEvidenceRow",
+          },
+        },
+      },
+    },
     ConversationListResponse: {
       required: ["status", "results", "total", "limit", "offset", "has_more"],
       type: "object",
@@ -60310,6 +60439,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    FeedRedirectApiResponse: {
+      required: ["result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: true,
+        },
+        result: {
+          $ref: "#/definitions/FeedRedirect",
+        },
+      },
+    },
     FeedSidebarApiResponse: {
       required: ["result"],
       type: "object",
@@ -61892,6 +62035,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           minLength: 1,
         },
+        failure_code: {
+          title: "Failure code",
+          type: "string",
+          minLength: 1,
+        },
         status: {
           title: "Status",
           type: "string",
@@ -62422,6 +62570,125 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessEnvironmentEvalEdit: {
+      type: "object",
+      properties: {
+        config: {
+          title: "Config",
+          description: "Updated evaluation configuration parameters.",
+          type: "object",
+          "x-nullable": true,
+          additionalProperties: true,
+        },
+        mapping: {
+          title: "Mapping",
+          description:
+            "Updated field mapping between test data and evaluation inputs.",
+          type: "object",
+          "x-nullable": true,
+          additionalProperties: true,
+        },
+        model: {
+          title: "Model",
+          description: "Model to use for evaluations.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        error_localizer: {
+          title: "Error localizer",
+          description:
+            "Enable granular error localization in evaluation results.",
+          type: "boolean",
+        },
+        kb_id: {
+          title: "Kb id",
+          description:
+            "UUID of a knowledge base to use for grounding. Pass null to clear. Switching template_id without providing an explicit kb_id will clear the KB association.",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        filters: {
+          description:
+            "Updated canonical filter list to restrict which test results are evaluated.",
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              column_id: {
+                type: "string",
+                description: "Column or attribute id to filter on.",
+              },
+              property_id: {
+                type: "string",
+                description:
+                  "Optional stable namespaced Property Registry identity.",
+              },
+              display_name: {
+                type: "string",
+                description: "Optional UI label for chips and saved views.",
+              },
+              source: {
+                type: "string",
+                description:
+                  "Optional source surface for mixed-source filters, for example traces, datasets, or simulation.",
+              },
+              output_type: {
+                type: "string",
+                description:
+                  "Optional metric output type metadata used by eval and annotation filters.",
+              },
+              filter_config: {
+                type: "object",
+                properties: {
+                  filter_type: {
+                    type: "string",
+                    description:
+                      "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map.",
+                  },
+                  filter_op: {
+                    type: "string",
+                    description:
+                      "Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null.",
+                  },
+                  filter_value: {
+                    description:
+                      "Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type.",
+                  },
+                  col_type: {
+                    type: "string",
+                    description:
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                  },
+                  attribute_value_types: {
+                    type: "array",
+                    items: {
+                      type: "string",
+                      enum: ["string", "number", "boolean"],
+                      "x-nullable": true,
+                    },
+                    description:
+                      "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values.",
+                  },
+                },
+                required: ["filter_type", "filter_op"],
+                additionalProperties: false,
+              },
+            },
+            required: ["column_id", "filter_config"],
+            additionalProperties: false,
+          },
+          "x-nullable": true,
+        },
+        name: {
+          title: "Name",
+          description: "Updated name for the evaluation configuration.",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
     HarnessEnvironmentListResponse: {
       required: [
         "count",
@@ -62507,6 +62774,38 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         completed_calls: {
           title: "Completed calls",
+          type: "integer",
+        },
+      },
+    },
+    HarnessEnvironmentRunEvaluations: {
+      required: ["eval_config_ids"],
+      type: "object",
+      properties: {
+        eval_config_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            format: "uuid",
+          },
+          minItems: 1,
+        },
+        enable_tool_evaluation: {
+          title: "Enable tool evaluation",
+          description:
+            "Saved on the environment before grading starts; left as it is when absent.",
+          type: "boolean",
+          "x-nullable": true,
+        },
+      },
+    },
+    HarnessEnvironmentRunEvaluationsQueued: {
+      required: ["call_execution_count"],
+      type: "object",
+      properties: {
+        call_execution_count: {
+          title: "Call execution count",
+          description: "How many of the run's calls were queued for grading.",
           type: "integer",
         },
       },
@@ -72636,7 +72935,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     RunNewEvalsResponse: {
-      required: ["message", "run_test_id", "call_execution_count"],
+      required: [
+        "message",
+        "run_test_id",
+        "call_execution_count",
+        "dispatched",
+      ],
       type: "object",
       properties: {
         message: {
@@ -72652,6 +72956,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         call_execution_count: {
           title: "Call execution count",
           type: "integer",
+        },
+        dispatched: {
+          title: "Dispatched",
+          type: "boolean",
         },
       },
     },
@@ -75316,6 +75624,158 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         result: {
           $ref: "#/definitions/SignupResult",
+        },
+      },
+    },
+    SimulateEvalConfigResponse: {
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        config: {
+          title: "Config",
+          type: "object",
+          readOnly: true,
+          "x-nullable": true,
+          additionalProperties: true,
+        },
+        mapping: {
+          title: "Mapping",
+          type: "object",
+          readOnly: true,
+          "x-nullable": true,
+          additionalProperties: true,
+        },
+        filters: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              column_id: {
+                type: "string",
+                description: "Column or attribute id to filter on.",
+              },
+              property_id: {
+                type: "string",
+                description:
+                  "Optional stable namespaced Property Registry identity.",
+              },
+              display_name: {
+                type: "string",
+                description: "Optional UI label for chips and saved views.",
+              },
+              source: {
+                type: "string",
+                description:
+                  "Optional source surface for mixed-source filters, for example traces, datasets, or simulation.",
+              },
+              output_type: {
+                type: "string",
+                description:
+                  "Optional metric output type metadata used by eval and annotation filters.",
+              },
+              filter_config: {
+                type: "object",
+                properties: {
+                  filter_type: {
+                    type: "string",
+                    description:
+                      "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map.",
+                  },
+                  filter_op: {
+                    type: "string",
+                    description:
+                      "Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null.",
+                  },
+                  filter_value: {
+                    description:
+                      "Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type.",
+                  },
+                  col_type: {
+                    type: "string",
+                    description:
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                  },
+                  attribute_value_types: {
+                    type: "array",
+                    items: {
+                      type: "string",
+                      enum: ["string", "number", "boolean"],
+                      "x-nullable": true,
+                    },
+                    description:
+                      "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values.",
+                  },
+                },
+                required: ["filter_type", "filter_op"],
+                additionalProperties: false,
+              },
+            },
+            required: ["column_id", "filter_config"],
+            additionalProperties: false,
+          },
+          readOnly: true,
+          default: [],
+        },
+        error_localizer: {
+          title: "Error localizer",
+          type: "boolean",
+          readOnly: true,
+        },
+        model: {
+          title: "Model",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        eval_group: {
+          title: "Eval group",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        template_id: {
+          title: "Template id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        eval_type: {
+          title: "Eval type",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        regradable: {
+          title: "Regradable",
+          type: "boolean",
+          readOnly: true,
+        },
+        editable: {
+          title: "Editable",
+          type: "boolean",
+          readOnly: true,
         },
       },
     },
@@ -79209,7 +79669,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
         action: {
           title: "Action",
           type: "string",
-          enum: ["renew", "cancel"],
+          enum: ["renew", "cancel", "fail"],
+        },
+        failure_code: {
+          title: "Failure code",
+          type: "string",
+          default: "",
+          maxLength: 100,
         },
       },
     },
@@ -83101,6 +83567,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
           format: "uuid",
           readOnly: true,
         },
+        eval_type: {
+          title: "Eval type",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        regradable: {
+          title: "Regradable",
+          type: "boolean",
+          readOnly: true,
+        },
+        editable: {
+          title: "Editable",
+          type: "boolean",
+          readOnly: true,
+        },
       },
     },
     AddQueueItem: {
@@ -85579,6 +86061,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "date-time",
         },
+        evidence_window: {
+          $ref: "#/definitions/InvestigationEvidenceWindow",
+        },
+        evidence_source: {
+          title: "Evidence source",
+          type: "string",
+          enum: ["conversation"],
+        },
         engine_version: {
           title: "Engine version",
           type: "string",
@@ -86113,6 +86603,80 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "date-time",
           readOnly: true,
+        },
+      },
+    },
+    ConversationEvidenceRow: {
+      required: [
+        "project_id",
+        "trace_id",
+        "org_id",
+        "id",
+        "parent_span_id",
+        "name",
+        "observation_type",
+        "start_time",
+        "end_time",
+        "attrs_string",
+        "conversation",
+      ],
+      type: "object",
+      properties: {
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        trace_id: {
+          title: "Trace id",
+          type: "string",
+          format: "uuid",
+        },
+        org_id: {
+          title: "Org id",
+          type: "string",
+          format: "uuid",
+        },
+        id: {
+          title: "Id",
+          type: "string",
+          maxLength: 64,
+          minLength: 1,
+        },
+        parent_span_id: {
+          title: "Parent span id",
+          type: "string",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+        },
+        observation_type: {
+          title: "Observation type",
+          type: "string",
+          minLength: 1,
+        },
+        start_time: {
+          title: "Start time",
+          type: "string",
+          format: "date-time",
+        },
+        end_time: {
+          title: "End time",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        attrs_string: {
+          title: "Attrs string",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        conversation: {
+          $ref: "#/definitions/ConversationDossier",
         },
       },
     },
@@ -89906,6 +90470,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         offset: {
           title: "Offset",
           type: "integer",
+        },
+      },
+    },
+    FeedRedirect: {
+      required: ["requested_cluster_id", "resolved_cluster_id"],
+      type: "object",
+      properties: {
+        requested_cluster_id: {
+          title: "Requested cluster id",
+          type: "string",
+          minLength: 1,
+        },
+        resolved_cluster_id: {
+          title: "Resolved cluster id",
+          type: "string",
+          minLength: 1,
         },
       },
     },
@@ -99305,142 +99885,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    SimulateEvalConfigResponse: {
-      type: "object",
-      properties: {
-        id: {
-          title: "Id",
-          type: "string",
-          format: "uuid",
-          readOnly: true,
-        },
-        name: {
-          title: "Name",
-          type: "string",
-          readOnly: true,
-          minLength: 1,
-          "x-nullable": true,
-        },
-        config: {
-          title: "Config",
-          type: "object",
-          readOnly: true,
-          "x-nullable": true,
-          additionalProperties: true,
-        },
-        mapping: {
-          title: "Mapping",
-          type: "object",
-          readOnly: true,
-          "x-nullable": true,
-          additionalProperties: true,
-        },
-        filters: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: {
-              column_id: {
-                type: "string",
-                description: "Column or attribute id to filter on.",
-              },
-              property_id: {
-                type: "string",
-                description:
-                  "Optional stable namespaced Property Registry identity.",
-              },
-              display_name: {
-                type: "string",
-                description: "Optional UI label for chips and saved views.",
-              },
-              source: {
-                type: "string",
-                description:
-                  "Optional source surface for mixed-source filters, for example traces, datasets, or simulation.",
-              },
-              output_type: {
-                type: "string",
-                description:
-                  "Optional metric output type metadata used by eval and annotation filters.",
-              },
-              filter_config: {
-                type: "object",
-                properties: {
-                  filter_type: {
-                    type: "string",
-                    description:
-                      "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map.",
-                  },
-                  filter_op: {
-                    type: "string",
-                    description:
-                      "Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null.",
-                  },
-                  filter_value: {
-                    description:
-                      "Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type.",
-                  },
-                  col_type: {
-                    type: "string",
-                    description:
-                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
-                  },
-                  attribute_value_types: {
-                    type: "array",
-                    items: {
-                      type: "string",
-                      enum: ["string", "number", "boolean"],
-                      "x-nullable": true,
-                    },
-                    description:
-                      "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values.",
-                  },
-                },
-                required: ["filter_type", "filter_op"],
-                additionalProperties: false,
-              },
-            },
-            required: ["column_id", "filter_config"],
-            additionalProperties: false,
-          },
-          readOnly: true,
-          default: [],
-        },
-        error_localizer: {
-          title: "Error localizer",
-          type: "boolean",
-          readOnly: true,
-        },
-        model: {
-          title: "Model",
-          type: "string",
-          readOnly: true,
-          minLength: 1,
-          "x-nullable": true,
-        },
-        status: {
-          title: "Status",
-          type: "string",
-          readOnly: true,
-          minLength: 1,
-          "x-nullable": true,
-        },
-        eval_group: {
-          title: "Eval group",
-          type: "string",
-          readOnly: true,
-          minLength: 1,
-          "x-nullable": true,
-        },
-        template_id: {
-          title: "Template id",
-          type: "string",
-          format: "uuid",
-          readOnly: true,
-          "x-nullable": true,
-        },
-      },
-    },
     SAMLIDPUploadDetailResult: {
       required: [
         "is_enabled",
@@ -104653,6 +105097,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    InvestigationEvidenceWindow: {
+      required: ["start", "end"],
+      type: "object",
+      properties: {
+        start: {
+          title: "Start",
+          type: "string",
+          format: "date-time",
+        },
+        end: {
+          title: "End",
+          type: "string",
+          format: "date-time",
+        },
+      },
+    },
     InvestigationLimits: {
       required: [
         "deadline_seconds",
@@ -104970,6 +105430,66 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "date-time",
           readOnly: true,
+        },
+      },
+    },
+    ConversationDossier: {
+      required: [
+        "provider",
+        "agent_instructions",
+        "call",
+        "variables",
+        "analysis",
+        "latency_ms",
+        "turns",
+        "not_included",
+      ],
+      type: "object",
+      properties: {
+        provider: {
+          title: "Provider",
+          type: "string",
+          minLength: 1,
+        },
+        agent_instructions: {
+          title: "Agent instructions",
+          type: "string",
+          "x-nullable": true,
+        },
+        call: {
+          $ref: "#/definitions/ConversationCall",
+        },
+        variables: {
+          $ref: "#/definitions/ConversationVariables",
+        },
+        analysis: {
+          $ref: "#/definitions/ConversationAnalysis",
+        },
+        latency_ms: {
+          title: "Latency ms",
+          type: "object",
+          additionalProperties: {
+            $ref: "#/definitions/ConversationLatency",
+          },
+        },
+        turns: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/ConversationTurn",
+          },
+        },
+        provider_log_issues: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/ConversationProviderLogIssue",
+          },
+        },
+        not_included: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
         },
       },
     },
@@ -108795,6 +109315,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "inputs",
         "id",
         "runnable",
+        "editable",
       ],
       type: "object",
       properties: {
@@ -108857,6 +109378,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         runnable: {
           title: "Runnable",
+          type: "boolean",
+        },
+        editable: {
+          title: "Editable",
           type: "boolean",
         },
       },
@@ -114770,6 +115295,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           format: "uuid",
           "x-nullable": true,
         },
+        project_name: {
+          title: "Project name",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
         user_id_type: {
           title: "User id type",
           type: "string",
@@ -115208,6 +115739,284 @@ export const OPENAPI_CONTRACT = Object.freeze({
           maxLength: 128,
           minLength: 1,
           "x-nullable": true,
+        },
+      },
+    },
+    ConversationAnalysis: {
+      required: ["summary", "successful", "in_voicemail", "sentiment", "flags"],
+      type: "object",
+      properties: {
+        summary: {
+          title: "Summary",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        successful: {
+          title: "Successful",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        in_voicemail: {
+          title: "In voicemail",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        sentiment: {
+          title: "Sentiment",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        flags: {
+          title: "Flags",
+          type: "object",
+          additionalProperties: {
+            type: "object",
+            "x-nullable": true,
+            "x-json-value": true,
+            description: "Any valid JSON value.",
+          },
+        },
+      },
+    },
+    ConversationCall: {
+      required: [
+        "status",
+        "direction",
+        "duration_seconds",
+        "ended_reason",
+        "agent",
+      ],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        direction: {
+          title: "Direction",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        duration_seconds: {
+          title: "Duration seconds",
+          type: "number",
+          "x-nullable": true,
+        },
+        ended_reason: {
+          title: "Ended reason",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        agent: {
+          $ref: "#/definitions/ConversationCallAgent",
+        },
+      },
+    },
+    ConversationLatency: {
+      required: ["p50", "p90", "max", "num"],
+      type: "object",
+      properties: {
+        p50: {
+          title: "P50",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        p90: {
+          title: "P90",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        max: {
+          title: "Max",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        num: {
+          title: "Num",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+      },
+    },
+    ConversationProviderLogIssue: {
+      required: ["at", "level", "message"],
+      type: "object",
+      properties: {
+        at: {
+          title: "At",
+          type: "number",
+        },
+        level: {
+          title: "Level",
+          type: "string",
+          enum: ["warn", "error"],
+        },
+        message: {
+          title: "Message",
+          type: "string",
+        },
+      },
+    },
+    ConversationTurn: {
+      required: ["i", "role"],
+      type: "object",
+      properties: {
+        i: {
+          title: "I",
+          type: "integer",
+          minimum: 0,
+        },
+        role: {
+          title: "Role",
+          type: "string",
+          minLength: 1,
+        },
+        start: {
+          title: "Start",
+          type: "number",
+          "x-nullable": true,
+        },
+        end: {
+          title: "End",
+          type: "number",
+          "x-nullable": true,
+        },
+        text: {
+          title: "Text",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        spoken: {
+          title: "Spoken",
+          type: "boolean",
+        },
+        at: {
+          title: "At",
+          type: "number",
+          "x-nullable": true,
+        },
+        id: {
+          title: "Id",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        name: {
+          title: "Name",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        arguments: {
+          title: "Arguments",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        ok: {
+          title: "Ok",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        content: {
+          title: "Content",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        to: {
+          title: "To",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        type: {
+          title: "Type",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        digit: {
+          title: "Digit",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        media: {
+          type: "array",
+          items: {
+            type: "object",
+            "x-nullable": true,
+            "x-json-value": true,
+            description: "Any valid JSON value.",
+          },
+        },
+        from: {
+          title: "From",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+      },
+    },
+    ConversationVariables: {
+      required: ["configured", "collected"],
+      type: "object",
+      properties: {
+        configured: {
+          title: "Configured",
+          type: "object",
+          additionalProperties: {
+            type: "object",
+            "x-nullable": true,
+            "x-json-value": true,
+            description: "Any valid JSON value.",
+          },
+        },
+        collected: {
+          title: "Collected",
+          type: "object",
+          additionalProperties: {
+            type: "object",
+            "x-nullable": true,
+            "x-json-value": true,
+            description: "Any valid JSON value.",
+          },
         },
       },
     },
@@ -116439,6 +117248,33 @@ export const OPENAPI_CONTRACT = Object.freeze({
           additionalProperties: {
             $ref: "#/definitions/AgentPromptOptimiserComponentEvalResult",
           },
+        },
+      },
+    },
+    ConversationCallAgent: {
+      required: ["id", "version", "name"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        version: {
+          title: "Version",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        name: {
+          title: "Name",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
         },
       },
     },

@@ -361,7 +361,13 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
     # The sandbox resolves nothing on our network, so the guest's collector is configured
     # separately and only falls back to ours when they are the same host.
     collector = str(
-        os.environ.get("ALK_HOSTED_FI_BASE_URL") or os.environ.get("FI_BASE_URL") or ""
+        os.environ.get("ALK_HOSTED_FI_BASE_URL")
+        # The harness callback URL is already required to be sandbox-reachable. It is a
+        # safer fallback than FI_BASE_URL, which commonly names an internal Compose/K8s
+        # service (for example ``http://backend:80``) that cannot resolve from E2B.
+        or os.environ.get("HARNESS_PUBLIC_BASE_URL")
+        or os.environ.get("FI_BASE_URL")
+        or ""
     ).strip()
     if collector:
         values["FI_BASE_URL"] = collector
@@ -3133,23 +3139,6 @@ class HostedHarnessGateway:
             and isinstance(scenarios, list)
             and len(scenarios) == job.scenario_count
         )
-        if (
-            not metadata.get("simulation_only")
-            and authoring_complete
-            and isinstance(spend, dict)
-        ):
-            from simulate.services.harness_usage import (
-                record_harness_authoring_usage,
-            )
-
-            try:
-                record_harness_authoring_usage(attempt, spend)
-            except Exception:  # noqa: BLE001 - poll must continue to terminal cleanup
-                logger.exception(
-                    "could not price hosted authoring usage job=%s attempt=%s",
-                    job.id,
-                    attempt.id,
-                )
 
         # Unified hosted execution authors the contract/world/scenarios in the same
         # sandbox that later runs the calls.  Freeze those inputs as soon as Bundle V2
@@ -3446,6 +3435,7 @@ class HostedHarnessGateway:
                 recovered_artifact_ids=recovered_by_scenario.get(
                     receipt.get("scenario_key"), []
                 ),
+                replay_usage=False,
             )
 
         manifest_name = "outbound-spool/manifest.json"
@@ -4455,7 +4445,7 @@ def _read_harness_usage(attempt: HostedHarnessAttempt, sandbox) -> None:
     try:
         serializer = HarnessUsageRequestSerializer(data=json.loads(body))
         serializer.is_valid(raise_exception=True)
-        record_harness_usage(attempt, serializer.validated_data)
+        record_harness_usage(attempt, serializer.validated_data, emit=False)
     except Exception:
         logger.exception("could not recover usage journal attempt=%s", attempt.id)
 
