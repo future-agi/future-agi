@@ -39,6 +39,7 @@ from simulate.services.harness_provider import (
     scope_jobs,
 )
 from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_errors import build_error_envelope
 from tfc.utils.pagination import ExtendedPageNumberPagination
 
 
@@ -485,7 +486,9 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         runs = TestExecution.objects.filter(id=identifier, run_test_id=job.run_test_id)
         if identifier is None or not runs.exists():
             return Response(
-                {"detail": "Run not found"},
+                build_error_envelope(
+                    "Run not found", status_code=status.HTTP_404_NOT_FOUND
+                ),
                 status=status.HTTP_404_NOT_FOUND,
             )
         execution_ids = [str(identifier)]
@@ -493,12 +496,20 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         try:
             regrade_still_finishing(execution_ids, harness_run=harness_run)
         except RegradeStillFinishing as finishing:
-            return Response({"detail": str(finishing)}, status=status.HTTP_409_CONFLICT)
+            return Response(
+                build_error_envelope(
+                    str(finishing), status_code=status.HTTP_409_CONFLICT
+                ),
+                status=status.HTTP_409_CONFLICT,
+            )
         # Read after the job check above, for the teardown reason it gives.
         run_status = runs.values_list("status", flat=True).first()
         if run_status != TestExecution.ExecutionStatus.COMPLETED:
             return Response(
-                {"detail": "Only a finished run can be graded again"},
+                build_error_envelope(
+                    "Only a finished run can be graded again",
+                    status_code=status.HTTP_409_CONFLICT,
+                ),
                 status=status.HTTP_409_CONFLICT,
             )
         eval_config_ids = request.validated_data["eval_config_ids"]
@@ -516,31 +527,48 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         except RegradeEvalNotFound:
             # An eval removed between the check above and the service's own.
             return Response(
-                {"detail": "Evaluation not found"},
+                build_error_envelope(
+                    "Evaluation not found", status_code=status.HTTP_404_NOT_FOUND
+                ),
                 status=status.HTTP_404_NOT_FOUND,
             )
         except RegradeRefused as refused:
             return Response(
-                {"detail": str(refused)}, status=status.HTTP_400_BAD_REQUEST
+                build_error_envelope(
+                    str(refused), status_code=status.HTTP_400_BAD_REQUEST
+                ),
+                status=status.HTTP_400_BAD_REQUEST,
             )
         except RegradeNoCalls:
             return Response(
-                {"detail": "This run has no calls to grade"},
+                build_error_envelope(
+                    "This run has no calls to grade",
+                    status_code=status.HTTP_409_CONFLICT,
+                ),
                 status=status.HTTP_409_CONFLICT,
             )
         except RegradeNoCompletedCall:
             return Response(
-                {"detail": "Nothing to grade again: no call in this run completed."},
+                build_error_envelope(
+                    "Nothing to grade again: no call in this run completed.",
+                    status_code=status.HTTP_409_CONFLICT,
+                ),
                 status=status.HTTP_409_CONFLICT,
             )
         except RegradeAlreadyRunning:
             return Response(
-                {"detail": "Grading is already running on this run."},
+                build_error_envelope(
+                    "Grading is already running on this run.",
+                    status_code=status.HTTP_409_CONFLICT,
+                ),
                 status=status.HTTP_409_CONFLICT,
             )
         except RegradeDispatchFailed:
             return Response(
-                {"detail": "Grading couldn't be started. Try again."},
+                build_error_envelope(
+                    "Grading couldn't be started. Try again.",
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                ),
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
         # Queuing a grade is content movement, as it is for add_run_evaluation.
@@ -643,18 +671,26 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         )
         if config is None:
             return Response(
-                {"detail": "Evaluation not found"},
+                build_error_envelope(
+                    "Evaluation not found", status_code=status.HTTP_404_NOT_FOUND
+                ),
                 status=status.HTTP_404_NOT_FOUND,
             )
         name = config.name or "This evaluation"
         if is_harness_run_test(job.run_test_id) and not has_own_mapping(config):
             return Response(
-                {"detail": f"{name} is set by the harness and can't be edited here."},
+                build_error_envelope(
+                    f"{name} is set by the harness and can't be edited here.",
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                ),
                 status=status.HTTP_400_BAD_REQUEST,
             )
         if not request.validated_data:
             return Response(
-                {"detail": "Nothing to change"}, status=status.HTTP_400_BAD_REQUEST
+                build_error_envelope(
+                    "Nothing to change", status_code=status.HTTP_400_BAD_REQUEST
+                ),
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         def keeps_its_inputs(edited):
@@ -673,7 +709,10 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
                 _touch_content(job)
         except EvalConfigEditRefused as refused:
             return Response(
-                {"detail": str(refused)}, status=status.HTTP_400_BAD_REQUEST
+                build_error_envelope(
+                    str(refused), status_code=status.HTTP_400_BAD_REQUEST
+                ),
+                status=status.HTTP_400_BAD_REQUEST,
             )
         return Response(SimulateEvalConfigSimpleSerializer(config).data)
 

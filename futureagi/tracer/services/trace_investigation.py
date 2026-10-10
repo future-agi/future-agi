@@ -5,14 +5,16 @@ import json
 import secrets
 import uuid
 from collections.abc import Mapping
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
+import structlog
 from django.conf import settings
 from django.db import transaction
-from django.db.models import Count, Exists, F, OuterRef, Q
+from django.db.models import Count, Exists, F, Max, OuterRef, Q
 from django.utils import timezone
 
+from tracer.models.observability_provider import ObservabilityProvider
 from tracer.models.project import Project
 from tracer.models.trace_investigation import (
     InvestigationWorkload,
@@ -40,6 +42,8 @@ from tracer.queries.trace_scanner import is_trace_sampled
 from tracer.services.grouping_features import enqueue_grouping_features
 from tracer.services.trace_investigation_billing import charge_trace_investigation
 
+logger = structlog.get_logger(__name__)
+
 CONTRACT_VERSION = "omega-investigation/v1"
 _DEFAULT_LIMITS = {
     "deadline_seconds": 180,
@@ -61,6 +65,31 @@ _LIMIT_CEILINGS = {
     "max_evidence_bytes": 128 * 1024 * 1024,
     "max_tool_result_bytes": 1024 * 1024,
 }
+# Delay before each automatic retry. A trace job stops after one more unread
+# attempt in a row than there are delays.
+_RETRY_DELAYS = (timedelta(minutes=1), timedelta(minutes=5))
+# Failures another attempt can clear. Codes that repeat for the same evidence
+# (schema, citation and budget failures) are left out, because every attempt that
+# reached the model is billed. "unreported" is a worker that predates failure codes.
+_RETRYABLE_FAILURES = frozenset(
+    {
+        "clickhouse_read_failed",
+        "gateway_rate_limited",
+        "gateway_request_aborted",
+        "gateway_response_invalid",
+        "gateway_transport_failed",
+        "gateway_upstream_error",
+        "investigation_cancelled",
+        "investigation_deadline",
+        "lease_expired",
+        "structured_output_empty",
+        "structured_output_unparseable",
+        "unreported",
+    }
+)
+# Spans of one trace start within this long of its root's end, on either side.
+# The worker reads again without the window when the result shows a gap.
+_EVIDENCE_WINDOW = timedelta(hours=24)
 
 
 class InvestigationControlError(Exception):
@@ -398,13 +427,22 @@ def _expire_claims(now: datetime) -> None:
             job = TraceInvestigationJob.no_workspace_objects.select_for_update().get(
                 id=attempt.job_id
             )
-            if job.state == TraceInvestigationJobState.RUNNING:
-                job.state = (
-                    _superseded_job_state(job, now)
-                    if job.generation > attempt.generation
-                    else TraceInvestigationJobState.CANCELLED
-                )
-                job.save(update_fields=["state", "updated_at"])
+            _settle_job(
+                job,
+                attempt,
+                now,
+                ended_as=TraceInvestigationJobState.CANCELLED,
+                failure="lease_expired",
+            )
+
+
+def _evidence_window(root_end_time: datetime) -> dict[str, datetime]:
+    """Whole-hour bounds on span start time for the worker's ClickHouse read."""
+    hour = root_end_time.astimezone(UTC).replace(minute=0, second=0, microsecond=0)
+    return {
+        "start": hour - _EVIDENCE_WINDOW,
+        "end": hour + _EVIDENCE_WINDOW + timedelta(hours=1),
+    }
 
 
 def _claim_payload(attempt: TraceInvestigationAttempt, token: str) -> dict[str, object]:
@@ -446,6 +484,15 @@ def _claim_payload(attempt: TraceInvestigationAttempt, token: str) -> dict[str, 
                 "contract_version": CONTRACT_VERSION,
             }
         )
+        if job.root_end_time is not None:
+            claim["evidence_window"] = _evidence_window(job.root_end_time)
+        # A project fed by a voice provider holds call logs. The worker asks the
+        # backend for their compact evidence first; other traces of the project
+        # get no rows there and are read from the span store as before.
+        if ObservabilityProvider.no_workspace_objects.filter(
+            project_id=job.project_id
+        ).exists():
+            claim["evidence_source"] = "conversation"
     return claim
 
 
@@ -672,6 +719,70 @@ def _superseded_job_state(job: TraceInvestigationJob, now) -> str:
     )
 
 
+def _retry_delay(job: TraceInvestigationJob) -> timedelta | None:
+    """Delay before a trace job's next automatic attempt; None when none is left.
+
+    Only attempts since the job's last accepted completed report count, so a
+    trace that was read before keeps its retries when a later attempt fails.
+    """
+    if job.workload_type != InvestigationWorkload.TRACE:
+        return None
+    attempts = TraceInvestigationAttempt.no_workspace_objects.filter(job=job)
+    last_read = attempts.filter(
+        status=TraceInvestigationAttemptStatus.COMPLETED,
+        report__execution_status="completed",
+    ).aggregate(generation=Max("generation"))["generation"]
+    unread = attempts.filter(generation__gt=last_read or 0).count()
+    return _RETRY_DELAYS[unread - 1] if 0 < unread <= len(_RETRY_DELAYS) else None
+
+
+def _settle_job(
+    job: TraceInvestigationJob,
+    attempt: TraceInvestigationAttempt,
+    now: datetime,
+    *,
+    ended_as: str,
+    failure: str | None = None,
+) -> None:
+    """Move a running job on once ``attempt`` has ended.
+
+    A newer generation keeps its own claim or its place in the queue. ``failure``
+    names why the attempt left no usable report: a retryable one runs again as a
+    fresh generation while the job has a delay left. Reports are not touched, so
+    the next publication supersedes the current one as usual.
+    """
+    if job.state != TraceInvestigationJobState.RUNNING:
+        return
+    superseded = job.generation > attempt.generation
+    delay = None
+    if superseded:
+        job.state = _superseded_job_state(job, now)
+    elif failure in _RETRYABLE_FAILURES and (delay := _retry_delay(job)) is not None:
+        job.generation += 1
+        job.state = TraceInvestigationJobState.WAITING
+        job.not_before = now + delay
+    else:
+        job.state = ended_as
+    if failure is not None and not superseded:
+        logger.warning(
+            "trace_investigation_attempt_unread",
+            job_id=str(job.id),
+            project_id=str(job.project_id),
+            workload_type=job.workload_type,
+            failure=failure,
+            retry_in_seconds=int(delay.total_seconds()) if delay else None,
+        )
+    job.save(
+        update_fields=[
+            "generation",
+            "state",
+            "not_before",
+            "current_report",
+            "updated_at",
+        ]
+    )
+
+
 def update_investigation_attempt(
     *,
     attempt_id: uuid.UUID,
@@ -700,13 +811,13 @@ def update_investigation_attempt(
             attempt.status = TraceInvestigationAttemptStatus.EXPIRED
             attempt.completed_at = now
             attempt.save(update_fields=["status", "completed_at", "updated_at"])
-            if job.state == TraceInvestigationJobState.RUNNING:
-                job.state = (
-                    _superseded_job_state(job, now)
-                    if job.generation > attempt.generation
-                    else TraceInvestigationJobState.CANCELLED
-                )
-                job.save(update_fields=["state", "updated_at"])
+            _settle_job(
+                job,
+                attempt,
+                now,
+                ended_as=TraceInvestigationJobState.CANCELLED,
+                failure="lease_expired",
+            )
             expired = True
         elif action == "renew":
             attempt.lease_expires_at = now + timedelta(
@@ -725,13 +836,9 @@ def update_investigation_attempt(
                     "updated_at",
                 ]
             )
-            if job.state == TraceInvestigationJobState.RUNNING:
-                job.state = (
-                    _superseded_job_state(job, now)
-                    if job.generation > attempt.generation
-                    else TraceInvestigationJobState.CANCELLED
-                )
-                job.save(update_fields=["state", "updated_at"])
+            _settle_job(
+                job, attempt, now, ended_as=TraceInvestigationJobState.CANCELLED
+            )
 
     if expired:
         raise InvestigationConflict("attempt lease has expired")
@@ -1066,12 +1173,30 @@ def publish_investigation(
             )
             return _publication_receipt(existing, duplicate=True)
         report_id = uuid.uuid4()
-        active = (
+        on_time = (
             job.generation == attempt.generation
             and job.state == TraceInvestigationJobState.RUNNING
             and attempt.status == TraceInvestigationAttemptStatus.CLAIMED
             and attempt.lease_expires_at > now
         )
+        # A completed trace report that lands after its lease ran out is still a
+        # full read, so it is used unless a later attempt of the job was claimed.
+        # Simulation reports keep the strict lease: debug analysis re-reads itself.
+        late = (
+            not on_time
+            and not simulation
+            and result["execution_status"] == "completed"
+            and attempt.lease_expires_at <= now
+            and attempt.status
+            in (
+                TraceInvestigationAttemptStatus.CLAIMED,
+                TraceInvestigationAttemptStatus.EXPIRED,
+            )
+            and not TraceInvestigationAttempt.no_workspace_objects.filter(
+                job=job, generation__gt=attempt.generation
+            ).exists()
+        )
+        active = on_time or late
         grouping_status = (
             TraceInvestigationGroupingStatus.STALE
             if not active
@@ -1085,8 +1210,15 @@ def publish_investigation(
                 has_issues = True
             elif result["outcome"] == "success" and not result["findings"]:
                 has_issues = False
-        old_current_report_id = job.current_report_id if active else None
-        if active:
+        # A failed report never replaces a completed one: the earlier read stays
+        # the job's report and stays in the Feed.
+        current = active and not (
+            result["execution_status"] == "failed"
+            and job.current_report_id is not None
+            and job.current_report.execution_status == "completed"
+        )
+        old_current_report_id = job.current_report_id if current else None
+        if current:
             superseded_reports = TraceInvestigationReport.no_workspace_objects.filter(
                 project_id=job.project_id,
                 is_current=True,
@@ -1107,7 +1239,7 @@ def publish_investigation(
             test_execution_id=job.test_execution_id if simulation else None,
             trace_id=None if simulation else job.trace_id,
             recorded_at=now,
-            is_current=active,
+            is_current=current,
             has_issues=has_issues,
             job=job,
             attempt=attempt,
@@ -1137,35 +1269,51 @@ def publish_investigation(
             grouping_status=grouping_status,
         )
         _persist_investigation_details(report, result)
-        if active and groupable_findings(report).exists():
+        if current and groupable_findings(report).exists():
             report.grouping_status = TraceInvestigationGroupingStatus.PENDING
             report.save(update_fields=["grouping_status", "updated_at"])
         enqueue_grouping_features(report=report)
         transaction.on_commit(lambda report=report: charge_trace_investigation(report))
-        if active:
+        if current:
             job.current_report = report
 
-        if attempt.status == TraceInvestigationAttemptStatus.CLAIMED:
+        if late or attempt.status == TraceInvestigationAttemptStatus.CLAIMED:
             attempt.status = (
                 TraceInvestigationAttemptStatus.COMPLETED
-                if attempt.lease_expires_at > now
+                if active or attempt.lease_expires_at > now
                 else TraceInvestigationAttemptStatus.EXPIRED
             )
             attempt.completed_at = now
             attempt.save(update_fields=["status", "completed_at", "updated_at"])
-        if job.state == TraceInvestigationJobState.RUNNING:
-            if job.generation > attempt.generation:
-                job.state = _superseded_job_state(job, now)
-            elif active:
+        failure = None
+        if not active:
+            failure = "lease_expired"
+        elif report.execution_status == "failed":
+            failure = (report.error_message or "").partition(":")[0] or "unreported"
+        if late and job.state != TraceInvestigationJobState.RUNNING:
+            # The lease was already written off. A job that gave up now has its
+            # report. A queued run stays queued: it may hold a newer notification,
+            # and its report supersedes this one.
+            if job.state == TraceInvestigationJobState.CANCELLED:
                 job.state = TraceInvestigationJobState.COMPLETED
-            else:
-                job.state = TraceInvestigationJobState.CANCELLED
             job.save(update_fields=["state", "current_report", "updated_at"])
+        else:
+            _settle_job(
+                job,
+                attempt,
+                now,
+                ended_as=(
+                    TraceInvestigationJobState.COMPLETED
+                    if active
+                    else TraceInvestigationJobState.CANCELLED
+                ),
+                failure=failure,
+            )
         if simulation:
             from tracer.services.simulation_investigation import retry_unread_call_once
 
             retry_unread_call_once(job, now)
-        if active and old_current_report_id and old_current_report_id != report.id:
+        if current and old_current_report_id and old_current_report_id != report.id:
             from tracer.services.grouping.lifecycle import deproject_superseded_report
 
             deproject_superseded_report(
@@ -1173,3 +1321,76 @@ def publish_investigation(
                 successor_report_id=report.id,
             )
         return _publication_receipt(report, duplicate=False)
+
+
+def requeue_unread_investigations(
+    *, project_id: uuid.UUID, apply: bool = False, limit: int = 500
+) -> dict[str, object]:
+    """Preview, or queue again, a project's trace jobs that hold no usable report.
+
+    That is a finished or cancelled job whose current report failed or is
+    missing. A cancelled job that still holds a completed report is left alone.
+
+    A queued job is claimed under the project's current scan config. Jobs the
+    current sampling rate excludes are left alone, and a project with scanning
+    off is refused, because the claim would cancel or never reach them.
+    """
+    if not 1 <= limit <= 5000:
+        raise ValueError("limit must be between 1 and 5000")
+    config = TraceScanConfig.no_workspace_objects.filter(project_id=project_id).first()
+    rate = config.sampling_rate if config is not None and config.enabled else 0.0
+    if apply and rate <= 0:
+        raise InvestigationConflict(
+            "scanning is off for this project; a requeued job is never claimed"
+        )
+    unread_states = (
+        TraceInvestigationJobState.CANCELLED,
+        TraceInvestigationJobState.COMPLETED,
+    )
+    unread = TraceInvestigationJob.no_workspace_objects.filter(
+        Q(current_report__isnull=True) | Q(current_report__execution_status="failed"),
+        state__in=unread_states,
+        project_id=project_id,
+        workload_type=InvestigationWorkload.TRACE,
+    )
+    # Every unread job is checked against the sampling rate before the limit
+    # applies, so excluded jobs at the head of the queue cannot starve the rest.
+    total = 0
+    sampled = 0
+    selected: list[uuid.UUID] = []
+    for job_id, trace_id in (
+        unread.order_by("created_at", "id").values_list("id", "trace_id").iterator()
+    ):
+        total += 1
+        if is_trace_sampled(str(trace_id), rate):
+            sampled += 1
+            if len(selected) < limit:
+                selected.append(job_id)
+    requeued = 0
+    if apply:
+        now = timezone.now()
+        # The selected rows are locked first and their eligibility is read again
+        # under the lock, so a job that was queued, claimed or given a completed
+        # report in the meantime is left alone. One UPDATE with the report filter
+        # would not see a report that commits while it waits for the row.
+        with transaction.atomic():
+            locked = list(
+                TraceInvestigationJob.no_workspace_objects.select_for_update()
+                .filter(id__in=selected)
+                .values_list("id", flat=True)
+            )
+            requeued = unread.filter(id__in=locked).update(
+                generation=F("generation") + 1,
+                state=TraceInvestigationJobState.WAITING,
+                not_before=now,
+                updated_at=now,
+            )
+    return {
+        "project_id": str(project_id),
+        "sampling_rate": rate,
+        "scan_version": config.scan_version if config is not None else None,
+        "unread": total,
+        "selected": len(selected),
+        "outside_sampling": total - sampled,
+        "requeued": requeued,
+    }
