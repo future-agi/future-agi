@@ -165,6 +165,24 @@ def test_download_document_from_url_passes_explicit_max_bytes():
     assert kwargs.get("max_bytes") == MAX_DOCUMENT_FILE_SIZE
 
 
+def test_download_document_from_url_accepts_csv_bytes():
+    """CSV is an advertised document type and must not be rejected by the downloader."""
+    csv_bytes = b"name,score\nAda,100\n"
+    with patch(
+        "tfc.utils.storage.safe_fetch",
+        return_value=SsrfResponse(
+            200,
+            {"Content-Type": "text/csv; charset=utf-8"},
+            csv_bytes,
+            "https://cdn.example.com/download?signature=redacted",
+        ),
+    ):
+        assert download_document_from_url("https://cdn.example.com/download") == (
+            csv_bytes,
+            "text/csv",
+        )
+
+
 class TestIsOwnStorageUrl:
     """is_own_storage_url must use hostname/path parsing, not substring, so an
     attacker-controlled URL that merely contains the bucket name cannot spoof
