@@ -511,3 +511,54 @@ func TestRequestToCanonical_InvalidJSON(t *testing.T) {
 		t.Error("expected error for invalid JSON")
 	}
 }
+
+func TestRequestToCanonical_DisableParallelToolUse(t *testing.T) {
+	body := []byte(`{
+		"model": "claude-3-5-sonnet-20241022",
+		"max_tokens": 128,
+		"messages": [{"role": "user", "content": "hi"}],
+		"tools": [{"name": "tool_b", "input_schema": {"type": "object"}}],
+		"tool_choice": {"type": "tool", "name": "tool_b", "disable_parallel_tool_use": true}
+	}`)
+	req, drops, err := tr.RequestToCanonical(body)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if req.ParallelToolCalls == nil || *req.ParallelToolCalls {
+		t.Errorf("ParallelToolCalls = %v, want false", req.ParallelToolCalls)
+	}
+	for _, d := range drops {
+		if d == "disable_parallel_tool_use_unsupported" {
+			t.Errorf("unexpected drop tag: %s", d)
+		}
+	}
+}
+
+func TestRequestToCanonical_ToolStrictAndAllowedCallers(t *testing.T) {
+	body := []byte(`{
+		"model": "claude-3-5-sonnet-20241022",
+		"max_tokens": 128,
+		"messages": [{"role": "user", "content": "hi"}],
+		"tools": [{
+			"name": "tool_a",
+			"description": "desc",
+			"strict": true,
+			"allowed_callers": ["direct"],
+			"input_schema": {"type": "object"}
+		}]
+	}`)
+	req, _, err := tr.RequestToCanonical(body)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(req.Tools) != 1 {
+		t.Fatalf("Tools len = %d, want 1", len(req.Tools))
+	}
+	fn := req.Tools[0].Function
+	if fn.Strict == nil || !*fn.Strict {
+		t.Errorf("Strict = %v, want true", fn.Strict)
+	}
+	if len(fn.AllowedCallers) != 1 || fn.AllowedCallers[0] != "direct" {
+		t.Errorf("AllowedCallers = %v, want [direct]", fn.AllowedCallers)
+	}
+}
