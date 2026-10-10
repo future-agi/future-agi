@@ -5,6 +5,7 @@ import structlog
 from django.conf import settings
 from django.http import QueryDict
 from drf_yasg import openapi
+from drf_yasg.generators import OpenAPISchemaGenerator
 from drf_yasg.inspectors import SwaggerAutoSchema
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import serializers
@@ -12,6 +13,7 @@ from rest_framework.response import Response
 
 from tfc.utils.api_serializers import ManagementAPIErrorResponseSerializer
 from tfc.utils.general_methods import GeneralMethods
+from tfc.utils.openapi_contract import HTTP_METHODS, plan_operation_id_renames
 
 logger = structlog.get_logger(__name__)
 
@@ -91,6 +93,50 @@ class ExplicitQueryAutoSchema(ManagementAPIAutoSchema):
 
     def get_pagination_parameters(self):
         return []
+
+
+class ManagementAPISchemaGenerator(OpenAPISchemaGenerator):
+    """Schema generator that guarantees unique operationIds and a safe base URL.
+
+    drf-yasg derives an operationId from the URL path and HTTP method, so one view
+    mounted on both a collection and a detail route (``users/`` and
+    ``users/<uuid:user_id>/``), or on two spellings of one route, yields the same
+    ID twice. Duplicate IDs make the document invalid Swagger 2.0 and let client
+    generators silently drop or overwrite one of the operations.
+
+    Only the losing member of each collision is renamed, so every ID that is
+    already unique keeps its exact value. The route with the fewest path
+    parameters keeps the historic ID; among equal-parameter routes, one that
+    omits the trailing slash loses, so the route the router mounts (which always
+    has one) keeps it and the slash-less alias is renamed. Each other member
+    gets a suffix derived from what distinguishes its route, e.g.
+    ``accounts_appsmith_users_create_by_user_id``.
+    See :func:`tfc.utils.openapi_contract.plan_operation_id_renames`.
+
+    A ``DEFAULT_API_URL`` that is not an absolute http(s) URL makes drf-yasg raise
+    ``SwaggerGenerationError`` while building the schema, which the schema view
+    turns into an HTTP 500 for every visitor of ``/docs/``. The setting is
+    normalized in ``tfc.settings`` so a bad value is never passed in.
+    """
+
+    def get_paths(self, endpoints, components, request, public):
+        paths, prefix = super().get_paths(endpoints, components, request, public)
+        # Operation is a SwaggerDict (OrderedDict subclass). dict(operation) would
+        # treat each value as a (key, value) pair and crash; copy the mapping.
+        # Path items also carry a `parameters` list, which is not an operation.
+        document = {
+            "paths": {
+                route: {
+                    method: dict(operation.items())
+                    for method, operation in item.items()
+                    if method in HTTP_METHODS
+                }
+                for route, item in paths.items()
+            }
+        }
+        for (route, method), operation_id in plan_operation_id_renames(document).items():
+            paths[route][method]["operationId"] = operation_id
+        return paths, prefix
 
 
 def _serializer_name(serializer):

@@ -347,10 +347,6 @@ export const AccountsAppsmithUsersListResponse = zod.object({
   total_queries: zod.number().optional(),
 });
 
-export const AccountsAppsmithUsersCreateParams = zod.object({
-  user_id: zod.string(),
-});
-
 export const accountsAppsmithUsersCreateBodyEmailMax = 255;
 
 export const accountsAppsmithUsersCreateBodyPasswordMin = 8;
@@ -373,10 +369,6 @@ export const AccountsAppsmithUsersCreateBody = zod.object({
     .min(1)
     .max(accountsAppsmithUsersCreateBodyOrganizationNameMax),
   send_credential: zod.boolean(),
-});
-
-export const AccountsAppsmithUsersPartialUpdateParams = zod.object({
-  user_id: zod.string(),
 });
 
 export const accountsAppsmithUsersPartialUpdateBodyPasswordMin = 8;
@@ -451,6 +443,48 @@ export const AccountsAppsmithUsersReadResponse = zod.object({
   total_pages: zod.number(),
   current_page: zod.number(),
   total_queries: zod.number().optional(),
+});
+
+export const AccountsAppsmithUsersCreateByUserIdParams = zod.object({
+  user_id: zod.string(),
+});
+
+export const accountsAppsmithUsersCreateByUserIdBodyEmailMax = 255;
+
+export const accountsAppsmithUsersCreateByUserIdBodyPasswordMin = 8;
+export const accountsAppsmithUsersCreateByUserIdBodyPasswordMax = 128;
+
+export const accountsAppsmithUsersCreateByUserIdBodyOrganizationNameMax = 255;
+
+export const AccountsAppsmithUsersCreateByUserIdBody = zod.object({
+  email: zod
+    .string()
+    .email()
+    .min(1)
+    .max(accountsAppsmithUsersCreateByUserIdBodyEmailMax),
+  password: zod
+    .string()
+    .min(accountsAppsmithUsersCreateByUserIdBodyPasswordMin)
+    .max(accountsAppsmithUsersCreateByUserIdBodyPasswordMax),
+  organization_name: zod
+    .string()
+    .min(1)
+    .max(accountsAppsmithUsersCreateByUserIdBodyOrganizationNameMax),
+  send_credential: zod.boolean(),
+});
+
+export const AccountsAppsmithUsersPartialUpdateByUserIdParams = zod.object({
+  user_id: zod.string(),
+});
+
+export const accountsAppsmithUsersPartialUpdateByUserIdBodyPasswordMin = 8;
+export const accountsAppsmithUsersPartialUpdateByUserIdBodyPasswordMax = 128;
+
+export const AccountsAppsmithUsersPartialUpdateByUserIdBody = zod.object({
+  password: zod
+    .string()
+    .min(accountsAppsmithUsersPartialUpdateByUserIdBodyPasswordMin)
+    .max(accountsAppsmithUsersPartialUpdateByUserIdBodyPasswordMax),
 });
 
 /**
@@ -1500,10 +1534,6 @@ export const AccountsTeamUsersListResponse = zod.object({
   }),
 });
 
-export const AccountsTeamUsersCreateParams = zod.object({
-  member_id: zod.string(),
-});
-
 export const accountsTeamUsersCreateBodyOrgNameMax = 255;
 
 export const accountsTeamUsersCreateBodyWorkspaceNameMax = 255;
@@ -1560,10 +1590,6 @@ export const AccountsTeamUsersCreateBody = zod.object({
       }),
     )
     .default(accountsTeamUsersCreateBodyMembersDefault),
-});
-
-export const AccountsTeamUsersDeleteParams = zod.object({
-  member_id: zod.string(),
 });
 
 export const AccountsTeamUsersDeleteResponse = zod.object({
@@ -1625,6 +1651,83 @@ export const AccountsTeamUsersReadResponse = zod.object({
       }),
     ),
     total: zod.number(),
+  }),
+});
+
+export const AccountsTeamUsersCreateByMemberIdParams = zod.object({
+  member_id: zod.string(),
+});
+
+export const accountsTeamUsersCreateByMemberIdBodyOrgNameMax = 255;
+
+export const accountsTeamUsersCreateByMemberIdBodyWorkspaceNameMax = 255;
+
+export const accountsTeamUsersCreateByMemberIdBodyWorkspaceDisplayNameMax = 255;
+
+export const accountsTeamUsersCreateByMemberIdBodyMembersItemEmailMax = 255;
+
+export const accountsTeamUsersCreateByMemberIdBodyMembersItemNameMax = 255;
+
+export const accountsTeamUsersCreateByMemberIdBodyMembersDefault = [];
+
+export const AccountsTeamUsersCreateByMemberIdBody = zod.object({
+  org_name: zod
+    .string()
+    .max(accountsTeamUsersCreateByMemberIdBodyOrgNameMax)
+    .optional(),
+  workspace: zod
+    .object({
+      name: zod
+        .string()
+        .max(accountsTeamUsersCreateByMemberIdBodyWorkspaceNameMax)
+        .optional(),
+      display_name: zod
+        .string()
+        .max(accountsTeamUsersCreateByMemberIdBodyWorkspaceDisplayNameMax)
+        .optional(),
+      description: zod.string().optional(),
+    })
+    .optional(),
+  members: zod
+    .array(
+      zod.object({
+        email: zod
+          .string()
+          .email()
+          .min(1)
+          .max(accountsTeamUsersCreateByMemberIdBodyMembersItemEmailMax),
+        role: zod
+          .enum([
+            "Owner",
+            "Admin",
+            "Member",
+            "Viewer",
+            "workspace_admin",
+            "workspace_member",
+            "workspace_viewer",
+          ])
+          .optional(),
+        organization_role: zod
+          .enum(["Owner", "Admin", "Member", "Viewer"])
+          .optional(),
+        name: zod
+          .string()
+          .min(1)
+          .max(accountsTeamUsersCreateByMemberIdBodyMembersItemNameMax),
+      }),
+    )
+    .default(accountsTeamUsersCreateByMemberIdBodyMembersDefault),
+});
+
+export const AccountsTeamUsersDeleteByMemberIdParams = zod.object({
+  member_id: zod.string(),
+});
+
+export const AccountsTeamUsersDeleteByMemberIdResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    message: zod.string().min(1),
+    removed_from: zod.string().min(1),
   }),
 });
 
@@ -2170,9 +2273,6 @@ export const AccountsWorkspacesListResponse = zod.object({
 /**
  * Create a new workspace
  */
-export const AccountsWorkspacesCreateParams = zod.object({
-  workspace_id: zod.string(),
-});
 
 export const accountsWorkspacesCreateBodyEmailsDefault = [];
 
@@ -2189,10 +2289,6 @@ export const AccountsWorkspacesCreateBody = zod.object({
 /**
  * Update workspace details
  */
-export const AccountsWorkspacesUpdateParams = zod.object({
-  workspace_id: zod.string(),
-});
-
 export const AccountsWorkspacesUpdateBody = zod.object({
   name: zod.string().optional(),
   display_name: zod.string().optional(),
@@ -2216,9 +2312,6 @@ export const AccountsWorkspacesUpdateResponse = zod.object({
 /**
  * Delete a workspace
  */
-export const AccountsWorkspacesDeleteParams = zod.object({
-  workspace_id: zod.string(),
-});
 
 export const AccountsWorkspacesDeleteResponse = zod.object({
   status: zod.boolean(),
@@ -2251,6 +2344,66 @@ export const AccountsWorkspacesReadResponse = zod.object({
       }),
     ),
     total: zod.number(),
+  }),
+});
+
+/**
+ * Create a new workspace
+ */
+export const AccountsWorkspacesCreateByWorkspaceIdParams = zod.object({
+  workspace_id: zod.string(),
+});
+
+export const accountsWorkspacesCreateByWorkspaceIdBodyEmailsDefault = [];
+
+export const AccountsWorkspacesCreateByWorkspaceIdBody = zod.object({
+  name: zod.string().min(1),
+  display_name: zod.string().optional(),
+  description: zod.string().optional(),
+  emails: zod
+    .array(zod.string().email().min(1))
+    .default(accountsWorkspacesCreateByWorkspaceIdBodyEmailsDefault),
+  role: zod.string().optional(),
+});
+
+/**
+ * Update workspace details
+ */
+export const AccountsWorkspacesUpdateByWorkspaceIdParams = zod.object({
+  workspace_id: zod.string(),
+});
+
+export const AccountsWorkspacesUpdateByWorkspaceIdBody = zod.object({
+  name: zod.string().optional(),
+  display_name: zod.string().optional(),
+  description: zod.string().optional(),
+});
+
+export const AccountsWorkspacesUpdateByWorkspaceIdResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    workspace: zod.object({
+      id: zod.string().uuid(),
+      name: zod.string().min(1),
+      display_name: zod.string(),
+      description: zod.string().optional(),
+      is_default: zod.boolean().optional(),
+    }),
+    message: zod.string().min(1),
+  }),
+});
+
+/**
+ * Delete a workspace
+ */
+export const AccountsWorkspacesDeleteByWorkspaceIdParams = zod.object({
+  workspace_id: zod.string(),
+});
+
+export const AccountsWorkspacesDeleteByWorkspaceIdResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    message: zod.string().min(1),
   }),
 });
 
@@ -2290,7 +2443,6 @@ export const AccountsWorkspacesMembersListResponse = zod.object({
  */
 export const AccountsWorkspacesMembersCreateParams = zod.object({
   workspace_id: zod.string(),
-  member_id: zod.string(),
 });
 
 export const AccountsWorkspacesMembersCreateBody = zod.object({
@@ -2302,7 +2454,6 @@ export const AccountsWorkspacesMembersCreateBody = zod.object({
  */
 export const AccountsWorkspacesMembersDeleteParams = zod.object({
   workspace_id: zod.string(),
-  member_id: zod.string(),
 });
 
 export const AccountsWorkspacesMembersDeleteResponse = zod.object({
@@ -2341,6 +2492,33 @@ export const AccountsWorkspacesMembersReadResponse = zod.object({
       }),
     ),
     total: zod.number(),
+  }),
+});
+
+/**
+ * Add users to workspace
+ */
+export const AccountsWorkspacesMembersCreateByMemberIdParams = zod.object({
+  workspace_id: zod.string(),
+  member_id: zod.string(),
+});
+
+export const AccountsWorkspacesMembersCreateByMemberIdBody = zod.object({
+  users: zod.array(zod.record(zod.string(), zod.string())),
+});
+
+/**
+ * Remove user from workspace
+ */
+export const AccountsWorkspacesMembersDeleteByMemberIdParams = zod.object({
+  workspace_id: zod.string(),
+  member_id: zod.string(),
+});
+
+export const AccountsWorkspacesMembersDeleteByMemberIdResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    message: zod.string().min(1),
   }),
 });
 
@@ -2772,11 +2950,11 @@ export const AgentPlaygroundGraphsReferenceableGraphsResponse = zod.object({
 });
 
 /**
- * Get a specific version with full nested structure (nodes→ports, edges).
+ * Returns lightweight: id, version_number, status, commit_message, created_at.
+ * @summary List all versions for a graph.
  */
 export const AgentPlaygroundGraphsVersionsReadParams = zod.object({
   id: zod.string(),
-  version_id: zod.string(),
 });
 
 export const AgentPlaygroundGraphsVersionsReadQueryParams = zod.object({
@@ -2840,6 +3018,61 @@ export const AgentPlaygroundGraphsVersionsCreateBody = zod.object({
       email: zod.string().email().min(1).optional(),
     })
     .optional(),
+});
+
+/**
+ * Get a specific version with full nested structure (nodes→ports, edges).
+ */
+export const AgentPlaygroundGraphsVersionsReadByVersionIdParams = zod.object({
+  id: zod.string(),
+  version_id: zod.string(),
+});
+
+export const AgentPlaygroundGraphsVersionsReadByVersionIdQueryParams =
+  zod.object({
+    page: zod
+      .number()
+      .optional()
+      .describe("A page number within the paginated result set."),
+    limit: zod
+      .number()
+      .optional()
+      .describe("Number of results to return per page."),
+  });
+
+export const AgentPlaygroundGraphsVersionsReadByVersionIdResponse = zod.object({
+  count: zod.number(),
+  next: zod.string().url().optional(),
+  previous: zod.string().url().optional(),
+  results: zod.array(
+    zod.object({
+      id: zod.string().uuid().optional(),
+      name: zod.string().min(1).optional().describe("Display name"),
+      description: zod.string().min(1).optional(),
+      is_template: zod.boolean().optional(),
+      created_at: zod.string().datetime({ offset: true }).optional(),
+      updated_at: zod.string().datetime({ offset: true }).optional(),
+      created_by: zod
+        .object({
+          id: zod.string().uuid().optional(),
+          name: zod.string().min(1).optional(),
+          email: zod.string().email().min(1).optional(),
+        })
+        .optional(),
+      collaborators: zod
+        .array(
+          zod.object({
+            id: zod.string().uuid().optional(),
+            name: zod.string().min(1).optional(),
+            email: zod.string().email().min(1).optional(),
+          }),
+        )
+        .optional(),
+      active_version_id: zod.string().uuid().optional(),
+      active_version_number: zod.number().optional(),
+      node_count: zod.number().optional(),
+    }),
+  ),
 });
 
 /**
@@ -24509,7 +24742,6 @@ export const ModelHubExperimentsV2StopCreateResponse = zod.object({
 
 export const ModelHubExperimentsReadParams = zod.object({
   experiment_id: zod.string(),
-  row_id: zod.string(),
 });
 
 export const modelHubExperimentsReadQueryPageSizeDefault = 10;
@@ -24814,6 +25046,89 @@ export const ModelHubExperimentsStatsListResponse = zod.object({
     metadata: zod.object({
       is_winner_chosen: zod.boolean(),
     }),
+  }),
+});
+
+export const ModelHubExperimentsReadByRowIdParams = zod.object({
+  experiment_id: zod.string(),
+  row_id: zod.string(),
+});
+
+export const modelHubExperimentsReadByRowIdQueryPageSizeDefault = 10;
+export const modelHubExperimentsReadByRowIdQueryPageSizeMax = 100;
+
+export const modelHubExperimentsReadByRowIdQueryCurrentPageIndexDefault = 0;
+export const modelHubExperimentsReadByRowIdQueryCurrentPageIndexMin = 0;
+
+export const modelHubExperimentsReadByRowIdQueryColumnConfigOnlyDefault = false;
+export const modelHubExperimentsReadByRowIdQueryGetDiffDefault = false;
+export const modelHubExperimentsReadByRowIdQuerySearchDefault = ``;
+export const modelHubExperimentsReadByRowIdQuerySearchMax = 512;
+
+export const ModelHubExperimentsReadByRowIdQueryParams = zod.object({
+  page_size: zod
+    .number()
+    .min(1)
+    .max(modelHubExperimentsReadByRowIdQueryPageSizeMax)
+    .default(modelHubExperimentsReadByRowIdQueryPageSizeDefault),
+  current_page_index: zod
+    .number()
+    .min(modelHubExperimentsReadByRowIdQueryCurrentPageIndexMin)
+    .default(modelHubExperimentsReadByRowIdQueryCurrentPageIndexDefault),
+  column_config_only: zod
+    .boolean()
+    .default(modelHubExperimentsReadByRowIdQueryColumnConfigOnlyDefault),
+  get_diff: zod
+    .boolean()
+    .default(modelHubExperimentsReadByRowIdQueryGetDiffDefault),
+  search: zod
+    .string()
+    .max(modelHubExperimentsReadByRowIdQuerySearchMax)
+    .default(modelHubExperimentsReadByRowIdQuerySearchDefault),
+});
+
+export const ModelHubExperimentsReadByRowIdResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    column_config: zod.array(
+      zod.object({
+        id: zod.string().min(1),
+        name: zod.string().min(1),
+        origin_type: zod.string().optional(),
+        data_type: zod.string().optional(),
+        status: zod.string().optional(),
+        group: zod.object({}).passthrough().optional(),
+        average_score: zod.object({}).passthrough().optional(),
+        dataset_id: zod.string().optional(),
+        choices_map: zod.object({}).passthrough().optional(),
+        is_base_column: zod.boolean().optional(),
+        output_type: zod.string().optional(),
+        eval_template_id: zod.string().optional(),
+        source_id: zod.string().optional(),
+        is_agent: zod.boolean().optional(),
+        is_final: zod.boolean().optional(),
+      }),
+    ),
+    table: zod
+      .array(
+        zod.object({
+          row_id: zod.string().uuid(),
+        }),
+      )
+      .optional(),
+    metadata: zod
+      .object({
+        total_rows: zod.number().optional(),
+        dataset: zod.string().optional(),
+        dataset_name: zod.string().optional(),
+        column: zod.string().optional(),
+        total_pages: zod.number().optional(),
+        description: zod.record(zod.string(), zod.string()).optional(),
+      })
+      .optional(),
+    output_format: zod.string().optional(),
+    status: zod.string().optional(),
+    next_row_ids: zod.array(zod.string().uuid()).optional(),
   }),
 });
 
@@ -25902,6 +26217,34 @@ export const ModelHubKbCreateBody = zod.object({
  * Get all supported embedding models.
  * @summary Get supported embedding models.
  */
+export const ModelHubKbSupportedEmbeddingModelsSupportedEmbeddingModelsQueryParams =
+  zod.object({
+    search: zod.string().optional().describe("A search term."),
+    page: zod
+      .number()
+      .optional()
+      .describe("A page number within the paginated result set."),
+    limit: zod
+      .number()
+      .optional()
+      .describe("Number of results to return per page."),
+  });
+
+export const ModelHubKbSupportedEmbeddingModelsSupportedEmbeddingModelsResponse =
+  zod.object({
+    status: zod.number(),
+    result: zod.array(
+      zod.object({
+        value: zod.string().min(1),
+        label: zod.string().min(1),
+      }),
+    ),
+  });
+
+/**
+ * Get all supported embedding models.
+ * @summary Get supported embedding models.
+ */
 export const ModelHubKbSupportedEmbeddingModelsQueryParams = zod.object({
   search: zod.string().optional().describe("A search term."),
   page: zod
@@ -26702,56 +27045,84 @@ export const ModelHubOptimizeDatasetKnowledgeBaseCreateResponse = zod.object({
 
 export const ModelHubOptimizeDatasetReadParams = zod.object({
   model_id: zod.string(),
-  optimization_id: zod.string(),
 });
 
-export const modelHubOptimizeDatasetReadResponseDataNameMax = 255;
+export const modelHubOptimizeDatasetReadQueryFiltersDefault = `[]`;
 
-export const modelHubOptimizeDatasetReadResponseDataVersionMax = 255;
+export const modelHubOptimizeDatasetReadQueryPageDefault = 1;
 
-export const modelHubOptimizeDatasetReadResponseDataMetricsItemNameMax = 100;
+export const modelHubOptimizeDatasetReadQueryLimitDefault = 15;
+
+export const ModelHubOptimizeDatasetReadQueryParams = zod.object({
+  filters: zod
+    .string()
+    .min(1)
+    .default(modelHubOptimizeDatasetReadQueryFiltersDefault),
+  page: zod
+    .number()
+    .min(1)
+    .default(modelHubOptimizeDatasetReadQueryPageDefault),
+  limit: zod
+    .number()
+    .min(1)
+    .default(modelHubOptimizeDatasetReadQueryLimitDefault),
+});
+
+export const modelHubOptimizeDatasetReadResponseResultsItemNameMax = 255;
+
+export const modelHubOptimizeDatasetReadResponseResultsItemVersionMax = 255;
+
+export const modelHubOptimizeDatasetReadResponseResultsItemMetricsItemNameMax = 100;
 
 export const ModelHubOptimizeDatasetReadResponse = zod.object({
-  status: zod.string().min(1),
-  data: zod.object({
-    id: zod.string().uuid().optional(),
-    created_at: zod.string().datetime({ offset: true }).optional(),
-    name: zod
-      .string()
-      .min(1)
-      .max(modelHubOptimizeDatasetReadResponseDataNameMax),
-    optimize_type: zod.enum([
-      "PromptTemplate",
-      "RightAnswer",
-      "RagPromptTemplate",
-    ]),
-    environment: zod.enum(["Production", "Training", "Validation", "Corpus"]),
-    version: zod
-      .string()
-      .min(1)
-      .max(modelHubOptimizeDatasetReadResponseDataVersionMax),
-    status: zod
-      .enum([
-        "not_started",
-        "pending",
-        "running",
-        "completed",
-        "failed",
-        "cancelled",
-      ])
-      .optional(),
-    metrics: zod.array(
-      zod.object({
-        id: zod.string().uuid().optional(),
-        name: zod
-          .string()
-          .min(1)
-          .max(modelHubOptimizeDatasetReadResponseDataMetricsItemNameMax),
-      }),
-    ),
-    start_date: zod.string().datetime({ offset: true }).optional(),
-    end_date: zod.string().datetime({ offset: true }).optional(),
-  }),
+  count: zod.number(),
+  next: zod.string().optional(),
+  previous: zod.string().optional(),
+  results: zod.array(
+    zod.object({
+      id: zod.string().uuid().optional(),
+      created_at: zod.string().datetime({ offset: true }).optional(),
+      name: zod
+        .string()
+        .min(1)
+        .max(modelHubOptimizeDatasetReadResponseResultsItemNameMax),
+      optimize_type: zod.enum([
+        "PromptTemplate",
+        "RightAnswer",
+        "RagPromptTemplate",
+      ]),
+      environment: zod.enum(["Production", "Training", "Validation", "Corpus"]),
+      version: zod
+        .string()
+        .min(1)
+        .max(modelHubOptimizeDatasetReadResponseResultsItemVersionMax),
+      status: zod
+        .enum([
+          "not_started",
+          "pending",
+          "running",
+          "completed",
+          "failed",
+          "cancelled",
+        ])
+        .optional(),
+      metrics: zod.array(
+        zod.object({
+          id: zod.string().uuid().optional(),
+          name: zod
+            .string()
+            .min(1)
+            .max(
+              modelHubOptimizeDatasetReadResponseResultsItemMetricsItemNameMax,
+            ),
+        }),
+      ),
+      start_date: zod.string().datetime({ offset: true }).optional(),
+      end_date: zod.string().datetime({ offset: true }).optional(),
+    }),
+  ),
+  total_pages: zod.number().optional(),
+  current_page: zod.number().optional(),
 });
 
 export const ModelHubOptimizeDatasetCreateParams = zod.object({
@@ -26960,6 +27331,62 @@ export const ModelHubOptimizeDatasetRightAnswersCreateResponse = zod.object({
   next: zod.boolean(),
   previous: zod.boolean(),
   message: zod.string(),
+});
+
+export const ModelHubOptimizeDatasetReadByOptimizationIdParams = zod.object({
+  model_id: zod.string(),
+  optimization_id: zod.string(),
+});
+
+export const modelHubOptimizeDatasetReadByOptimizationIdResponseDataNameMax = 255;
+
+export const modelHubOptimizeDatasetReadByOptimizationIdResponseDataVersionMax = 255;
+
+export const modelHubOptimizeDatasetReadByOptimizationIdResponseDataMetricsItemNameMax = 100;
+
+export const ModelHubOptimizeDatasetReadByOptimizationIdResponse = zod.object({
+  status: zod.string().min(1),
+  data: zod.object({
+    id: zod.string().uuid().optional(),
+    created_at: zod.string().datetime({ offset: true }).optional(),
+    name: zod
+      .string()
+      .min(1)
+      .max(modelHubOptimizeDatasetReadByOptimizationIdResponseDataNameMax),
+    optimize_type: zod.enum([
+      "PromptTemplate",
+      "RightAnswer",
+      "RagPromptTemplate",
+    ]),
+    environment: zod.enum(["Production", "Training", "Validation", "Corpus"]),
+    version: zod
+      .string()
+      .min(1)
+      .max(modelHubOptimizeDatasetReadByOptimizationIdResponseDataVersionMax),
+    status: zod
+      .enum([
+        "not_started",
+        "pending",
+        "running",
+        "completed",
+        "failed",
+        "cancelled",
+      ])
+      .optional(),
+    metrics: zod.array(
+      zod.object({
+        id: zod.string().uuid().optional(),
+        name: zod
+          .string()
+          .min(1)
+          .max(
+            modelHubOptimizeDatasetReadByOptimizationIdResponseDataMetricsItemNameMax,
+          ),
+      }),
+    ),
+    start_date: zod.string().datetime({ offset: true }).optional(),
+    end_date: zod.string().datetime({ offset: true }).optional(),
+  }),
 });
 
 export const ModelHubOrganizationsUsersListParams = zod.object({
@@ -38525,7 +38952,6 @@ export const SimulateApiHarnessConversationsWorkspaceResponse = zod.object({
  */
 export const SimulateApiHarnessIngressReadParams = zod.object({
   token: zod.string(),
-  target_path: zod.string(),
 });
 
 /**
@@ -38533,7 +38959,6 @@ export const SimulateApiHarnessIngressReadParams = zod.object({
  */
 export const SimulateApiHarnessIngressCreateParams = zod.object({
   token: zod.string(),
-  target_path: zod.string(),
 });
 
 export const SimulateApiHarnessIngressCreateBody = zod.object({
@@ -38547,7 +38972,6 @@ export const SimulateApiHarnessIngressCreateResponse = zod.instanceof(File);
  */
 export const SimulateApiHarnessIngressUpdateParams = zod.object({
   token: zod.string(),
-  target_path: zod.string(),
 });
 
 export const SimulateApiHarnessIngressUpdateBody = zod.object({
@@ -38561,7 +38985,6 @@ export const SimulateApiHarnessIngressUpdateResponse = zod.instanceof(File);
  */
 export const SimulateApiHarnessIngressPartialUpdateParams = zod.object({
   token: zod.string(),
-  target_path: zod.string(),
 });
 
 export const SimulateApiHarnessIngressPartialUpdateBody = zod.object({
@@ -38575,6 +38998,68 @@ export const SimulateApiHarnessIngressPartialUpdateResponse =
  * Relay a signed callback URL to the active sandbox without exposing provider headers.
  */
 export const SimulateApiHarnessIngressDeleteParams = zod.object({
+  token: zod.string(),
+});
+
+/**
+ * Relay a signed callback URL to the active sandbox without exposing provider headers.
+ */
+export const SimulateApiHarnessIngressReadByTargetPathParams = zod.object({
+  token: zod.string(),
+  target_path: zod.string(),
+});
+
+/**
+ * Relay a signed callback URL to the active sandbox without exposing provider headers.
+ */
+export const SimulateApiHarnessIngressCreateByTargetPathParams = zod.object({
+  token: zod.string(),
+  target_path: zod.string(),
+});
+
+export const SimulateApiHarnessIngressCreateByTargetPathBody = zod.object({
+  payload: zod.object({}).passthrough().optional(),
+});
+
+export const SimulateApiHarnessIngressCreateByTargetPathResponse =
+  zod.instanceof(File);
+
+/**
+ * Relay a signed callback URL to the active sandbox without exposing provider headers.
+ */
+export const SimulateApiHarnessIngressUpdateByTargetPathParams = zod.object({
+  token: zod.string(),
+  target_path: zod.string(),
+});
+
+export const SimulateApiHarnessIngressUpdateByTargetPathBody = zod.object({
+  payload: zod.object({}).passthrough().optional(),
+});
+
+export const SimulateApiHarnessIngressUpdateByTargetPathResponse =
+  zod.instanceof(File);
+
+/**
+ * Relay a signed callback URL to the active sandbox without exposing provider headers.
+ */
+export const SimulateApiHarnessIngressPartialUpdateByTargetPathParams =
+  zod.object({
+    token: zod.string(),
+    target_path: zod.string(),
+  });
+
+export const SimulateApiHarnessIngressPartialUpdateByTargetPathBody =
+  zod.object({
+    payload: zod.object({}).passthrough().optional(),
+  });
+
+export const SimulateApiHarnessIngressPartialUpdateByTargetPathResponse =
+  zod.instanceof(File);
+
+/**
+ * Relay a signed callback URL to the active sandbox without exposing provider headers.
+ */
+export const SimulateApiHarnessIngressDeleteByTargetPathParams = zod.object({
   token: zod.string(),
   target_path: zod.string(),
 });
@@ -68609,10 +69094,6 @@ export const UsageOrganizationBillingListResponse = zod.object({
   ),
 });
 
-export const UsageOrganizationBillingPartialUpdateParams = zod.object({
-  billing_id: zod.string(),
-});
-
 export const usageOrganizationBillingPartialUpdateBodyBillingContactNameMax = 100;
 
 export const usageOrganizationBillingPartialUpdateBodyBillingContactEmailMax = 254;
@@ -68833,6 +69314,169 @@ export const UsageOrganizationBillingReadResponse = zod.object({
   ),
 });
 
+export const UsageOrganizationBillingPartialUpdateByBillingIdParams =
+  zod.object({
+    billing_id: zod.string(),
+  });
+
+export const usageOrganizationBillingPartialUpdateByBillingIdBodyBillingContactNameMax = 100;
+
+export const usageOrganizationBillingPartialUpdateByBillingIdBodyBillingContactEmailMax = 254;
+
+export const usageOrganizationBillingPartialUpdateByBillingIdBodyCompanyMax = 100;
+
+export const usageOrganizationBillingPartialUpdateByBillingIdBodyBillingAddress1Max = 255;
+
+export const usageOrganizationBillingPartialUpdateByBillingIdBodyBillingAddress2Max = 255;
+
+export const usageOrganizationBillingPartialUpdateByBillingIdBodyCityMax = 100;
+
+export const usageOrganizationBillingPartialUpdateByBillingIdBodyStateMax = 100;
+
+export const usageOrganizationBillingPartialUpdateByBillingIdBodyCountryMax = 100;
+
+export const usageOrganizationBillingPartialUpdateByBillingIdBodyPostalCodeMax = 20;
+
+export const usageOrganizationBillingPartialUpdateByBillingIdBodyTaxIdMax = 50;
+
+export const UsageOrganizationBillingPartialUpdateByBillingIdBody = zod.object({
+  billing_contact_name: zod
+    .string()
+    .max(
+      usageOrganizationBillingPartialUpdateByBillingIdBodyBillingContactNameMax,
+    )
+    .optional(),
+  billing_contact_email: zod
+    .string()
+    .email()
+    .max(
+      usageOrganizationBillingPartialUpdateByBillingIdBodyBillingContactEmailMax,
+    )
+    .optional(),
+  company: zod
+    .string()
+    .max(usageOrganizationBillingPartialUpdateByBillingIdBodyCompanyMax)
+    .optional(),
+  billing_address1: zod
+    .string()
+    .max(usageOrganizationBillingPartialUpdateByBillingIdBodyBillingAddress1Max)
+    .optional(),
+  billing_address2: zod
+    .string()
+    .max(usageOrganizationBillingPartialUpdateByBillingIdBodyBillingAddress2Max)
+    .optional(),
+  city: zod
+    .string()
+    .max(usageOrganizationBillingPartialUpdateByBillingIdBodyCityMax)
+    .optional(),
+  state: zod
+    .string()
+    .max(usageOrganizationBillingPartialUpdateByBillingIdBodyStateMax)
+    .optional(),
+  country: zod
+    .string()
+    .max(usageOrganizationBillingPartialUpdateByBillingIdBodyCountryMax)
+    .optional(),
+  postal_code: zod
+    .string()
+    .max(usageOrganizationBillingPartialUpdateByBillingIdBodyPostalCodeMax)
+    .optional(),
+  tax_id: zod
+    .string()
+    .max(usageOrganizationBillingPartialUpdateByBillingIdBodyTaxIdMax)
+    .optional(),
+});
+
+export const usageOrganizationBillingPartialUpdateByBillingIdResponseResultBillingContactNameMax = 100;
+
+export const usageOrganizationBillingPartialUpdateByBillingIdResponseResultBillingContactEmailMax = 254;
+
+export const usageOrganizationBillingPartialUpdateByBillingIdResponseResultCompanyMax = 100;
+
+export const usageOrganizationBillingPartialUpdateByBillingIdResponseResultBillingAddress1Max = 255;
+
+export const usageOrganizationBillingPartialUpdateByBillingIdResponseResultBillingAddress2Max = 255;
+
+export const usageOrganizationBillingPartialUpdateByBillingIdResponseResultCityMax = 100;
+
+export const usageOrganizationBillingPartialUpdateByBillingIdResponseResultStateMax = 100;
+
+export const usageOrganizationBillingPartialUpdateByBillingIdResponseResultCountryMax = 100;
+
+export const usageOrganizationBillingPartialUpdateByBillingIdResponseResultPostalCodeMax = 20;
+
+export const usageOrganizationBillingPartialUpdateByBillingIdResponseResultTaxIdMax = 50;
+
+export const UsageOrganizationBillingPartialUpdateByBillingIdResponse =
+  zod.object({
+    status: zod.boolean(),
+    result: zod.object({
+      id: zod.number().optional(),
+      organization: zod.string().uuid().optional(),
+      billing_contact_name: zod
+        .string()
+        .max(
+          usageOrganizationBillingPartialUpdateByBillingIdResponseResultBillingContactNameMax,
+        )
+        .optional(),
+      billing_contact_email: zod
+        .string()
+        .email()
+        .max(
+          usageOrganizationBillingPartialUpdateByBillingIdResponseResultBillingContactEmailMax,
+        )
+        .optional(),
+      company: zod
+        .string()
+        .max(
+          usageOrganizationBillingPartialUpdateByBillingIdResponseResultCompanyMax,
+        )
+        .optional(),
+      billing_address1: zod
+        .string()
+        .max(
+          usageOrganizationBillingPartialUpdateByBillingIdResponseResultBillingAddress1Max,
+        )
+        .optional(),
+      billing_address2: zod
+        .string()
+        .max(
+          usageOrganizationBillingPartialUpdateByBillingIdResponseResultBillingAddress2Max,
+        )
+        .optional(),
+      city: zod
+        .string()
+        .max(
+          usageOrganizationBillingPartialUpdateByBillingIdResponseResultCityMax,
+        )
+        .optional(),
+      state: zod
+        .string()
+        .max(
+          usageOrganizationBillingPartialUpdateByBillingIdResponseResultStateMax,
+        )
+        .optional(),
+      country: zod
+        .string()
+        .max(
+          usageOrganizationBillingPartialUpdateByBillingIdResponseResultCountryMax,
+        )
+        .optional(),
+      postal_code: zod
+        .string()
+        .max(
+          usageOrganizationBillingPartialUpdateByBillingIdResponseResultPostalCodeMax,
+        )
+        .optional(),
+      tax_id: zod
+        .string()
+        .max(
+          usageOrganizationBillingPartialUpdateByBillingIdResponseResultTaxIdMax,
+        )
+        .optional(),
+    }),
+  });
+
 export const usageOrganizationFilterListResponseResultItemNameMax = 255;
 
 export const UsageOrganizationFilterListResponse = zod.object({
@@ -68934,10 +69578,6 @@ export const UsageOrganizationSubscriptionListResponse = zod.object({
         .describe("Amount of the last refill."),
     }),
   ),
-});
-
-export const UsageOrganizationSubscriptionCreateParams = zod.object({
-  organization_subscription_id: zod.string(),
 });
 
 export const usageOrganizationSubscriptionCreateBodyStripeCustomerIdTestMax = 100;
@@ -69085,10 +69725,6 @@ export const UsageOrganizationSubscriptionCreateResponse = zod.object({
     organization: zod.string().uuid(),
     subscription_tier: zod.number(),
   }),
-});
-
-export const UsageOrganizationSubscriptionPartialUpdateParams = zod.object({
-  organization_subscription_id: zod.string(),
 });
 
 export const usageOrganizationSubscriptionPartialUpdateBodyStripeCustomerIdTestMax = 100;
@@ -69240,10 +69876,6 @@ export const UsageOrganizationSubscriptionPartialUpdateResponse = zod.object({
   }),
 });
 
-export const UsageOrganizationSubscriptionDeleteParams = zod.object({
-  organization_subscription_id: zod.string(),
-});
-
 export const UsageOrganizationSubscriptionDeleteResponse = zod.object({
   status: zod.boolean(),
   result: zod.string().min(1),
@@ -69341,6 +69973,345 @@ export const UsageOrganizationSubscriptionReadResponse = zod.object({
   ),
 });
 
+export const UsageOrganizationSubscriptionCreateByOrganizationSubscriptionIdParams =
+  zod.object({
+    organization_subscription_id: zod.string(),
+  });
+
+export const usageOrganizationSubscriptionCreateByOrganizationSubscriptionIdBodyStripeCustomerIdTestMax = 100;
+
+export const usageOrganizationSubscriptionCreateByOrganizationSubscriptionIdBodyStripeCustomerIdLiveMax = 100;
+
+export const usageOrganizationSubscriptionCreateByOrganizationSubscriptionIdBodyPaymentMethodIdMax = 100;
+
+export const usageOrganizationSubscriptionCreateByOrganizationSubscriptionIdBodyCustomSubscriptionIdMax = 100;
+
+export const UsageOrganizationSubscriptionCreateByOrganizationSubscriptionIdBody =
+  zod.object({
+    next_renewal_date: zod
+      .string()
+      .date()
+      .optional()
+      .describe("Next due date for renewal."),
+    subscription_price: zod
+      .string()
+      .optional()
+      .describe("Price of the subscription."),
+    subscription_future_tier: zod
+      .enum(["free", "basic", "basic_yearly", "custom"])
+      .optional(),
+    subscription_future_start_date: zod
+      .string()
+      .date()
+      .optional()
+      .describe("Next due date for renewal."),
+    subscription_future_price: zod
+      .string()
+      .optional()
+      .describe("Price of the future subscription."),
+    status: zod
+      .enum(["active", "past_due", "unpaid", "canceled", "inactive"])
+      .optional(),
+    wallet_refill_amount: zod
+      .string()
+      .optional()
+      .describe("Amount to refill the wallet every month."),
+    wallet_balance: zod.string().optional(),
+    stripe_customer_id_test: zod
+      .string()
+      .max(
+        usageOrganizationSubscriptionCreateByOrganizationSubscriptionIdBodyStripeCustomerIdTestMax,
+      )
+      .optional()
+      .describe("Stripe customer ID for test mode. NULL values are allowed."),
+    stripe_customer_id_live: zod
+      .string()
+      .max(
+        usageOrganizationSubscriptionCreateByOrganizationSubscriptionIdBodyStripeCustomerIdLiveMax,
+      )
+      .optional()
+      .describe("Stripe customer ID for live mode. NULL values are allowed."),
+    auto_recharge_enabled: zod.boolean().optional(),
+    auto_recharge_amount: zod
+      .string()
+      .optional()
+      .describe("Amount to refill the wallet every month."),
+    auto_recharge_threshold: zod
+      .string()
+      .optional()
+      .describe("Threshold to trigger auto recharge."),
+    payment_method_id: zod
+      .string()
+      .max(
+        usageOrganizationSubscriptionCreateByOrganizationSubscriptionIdBodyPaymentMethodIdMax,
+      )
+      .optional(),
+    custom_subscription_id: zod
+      .string()
+      .max(
+        usageOrganizationSubscriptionCreateByOrganizationSubscriptionIdBodyCustomSubscriptionIdMax,
+      )
+      .optional(),
+    organization: zod.string().uuid(),
+    subscription_tier: zod.number(),
+  });
+
+export const usageOrganizationSubscriptionCreateByOrganizationSubscriptionIdResponseResultStripeCustomerIdTestMax = 100;
+
+export const usageOrganizationSubscriptionCreateByOrganizationSubscriptionIdResponseResultStripeCustomerIdLiveMax = 100;
+
+export const usageOrganizationSubscriptionCreateByOrganizationSubscriptionIdResponseResultPaymentMethodIdMax = 100;
+
+export const usageOrganizationSubscriptionCreateByOrganizationSubscriptionIdResponseResultCustomSubscriptionIdMax = 100;
+
+export const UsageOrganizationSubscriptionCreateByOrganizationSubscriptionIdResponse =
+  zod.object({
+    status: zod.boolean(),
+    result: zod.object({
+      next_renewal_date: zod
+        .string()
+        .date()
+        .optional()
+        .describe("Next due date for renewal."),
+      subscription_price: zod
+        .string()
+        .optional()
+        .describe("Price of the subscription."),
+      subscription_future_tier: zod
+        .enum(["free", "basic", "basic_yearly", "custom"])
+        .optional(),
+      subscription_future_start_date: zod
+        .string()
+        .date()
+        .optional()
+        .describe("Next due date for renewal."),
+      subscription_future_price: zod
+        .string()
+        .optional()
+        .describe("Price of the future subscription."),
+      status: zod
+        .enum(["active", "past_due", "unpaid", "canceled", "inactive"])
+        .optional(),
+      wallet_refill_amount: zod
+        .string()
+        .optional()
+        .describe("Amount to refill the wallet every month."),
+      wallet_balance: zod.string().optional(),
+      stripe_customer_id_test: zod
+        .string()
+        .max(
+          usageOrganizationSubscriptionCreateByOrganizationSubscriptionIdResponseResultStripeCustomerIdTestMax,
+        )
+        .optional()
+        .describe("Stripe customer ID for test mode. NULL values are allowed."),
+      stripe_customer_id_live: zod
+        .string()
+        .max(
+          usageOrganizationSubscriptionCreateByOrganizationSubscriptionIdResponseResultStripeCustomerIdLiveMax,
+        )
+        .optional()
+        .describe("Stripe customer ID for live mode. NULL values are allowed."),
+      auto_recharge_enabled: zod.boolean().optional(),
+      auto_recharge_amount: zod
+        .string()
+        .optional()
+        .describe("Amount to refill the wallet every month."),
+      auto_recharge_threshold: zod
+        .string()
+        .optional()
+        .describe("Threshold to trigger auto recharge."),
+      payment_method_id: zod
+        .string()
+        .max(
+          usageOrganizationSubscriptionCreateByOrganizationSubscriptionIdResponseResultPaymentMethodIdMax,
+        )
+        .optional(),
+      custom_subscription_id: zod
+        .string()
+        .max(
+          usageOrganizationSubscriptionCreateByOrganizationSubscriptionIdResponseResultCustomSubscriptionIdMax,
+        )
+        .optional(),
+      organization: zod.string().uuid(),
+      subscription_tier: zod.number(),
+    }),
+  });
+
+export const UsageOrganizationSubscriptionPartialUpdateByOrganizationSubscriptionIdParams =
+  zod.object({
+    organization_subscription_id: zod.string(),
+  });
+
+export const usageOrganizationSubscriptionPartialUpdateByOrganizationSubscriptionIdBodyStripeCustomerIdTestMax = 100;
+
+export const usageOrganizationSubscriptionPartialUpdateByOrganizationSubscriptionIdBodyStripeCustomerIdLiveMax = 100;
+
+export const usageOrganizationSubscriptionPartialUpdateByOrganizationSubscriptionIdBodyPaymentMethodIdMax = 100;
+
+export const usageOrganizationSubscriptionPartialUpdateByOrganizationSubscriptionIdBodyCustomSubscriptionIdMax = 100;
+
+export const UsageOrganizationSubscriptionPartialUpdateByOrganizationSubscriptionIdBody =
+  zod.object({
+    next_renewal_date: zod
+      .string()
+      .date()
+      .optional()
+      .describe("Next due date for renewal."),
+    subscription_price: zod
+      .string()
+      .optional()
+      .describe("Price of the subscription."),
+    subscription_future_tier: zod
+      .enum(["free", "basic", "basic_yearly", "custom"])
+      .optional(),
+    subscription_future_start_date: zod
+      .string()
+      .date()
+      .optional()
+      .describe("Next due date for renewal."),
+    subscription_future_price: zod
+      .string()
+      .optional()
+      .describe("Price of the future subscription."),
+    status: zod
+      .enum(["active", "past_due", "unpaid", "canceled", "inactive"])
+      .optional(),
+    wallet_refill_amount: zod
+      .string()
+      .optional()
+      .describe("Amount to refill the wallet every month."),
+    wallet_balance: zod.string().optional(),
+    stripe_customer_id_test: zod
+      .string()
+      .max(
+        usageOrganizationSubscriptionPartialUpdateByOrganizationSubscriptionIdBodyStripeCustomerIdTestMax,
+      )
+      .optional()
+      .describe("Stripe customer ID for test mode. NULL values are allowed."),
+    stripe_customer_id_live: zod
+      .string()
+      .max(
+        usageOrganizationSubscriptionPartialUpdateByOrganizationSubscriptionIdBodyStripeCustomerIdLiveMax,
+      )
+      .optional()
+      .describe("Stripe customer ID for live mode. NULL values are allowed."),
+    auto_recharge_enabled: zod.boolean().optional(),
+    auto_recharge_amount: zod
+      .string()
+      .optional()
+      .describe("Amount to refill the wallet every month."),
+    auto_recharge_threshold: zod
+      .string()
+      .optional()
+      .describe("Threshold to trigger auto recharge."),
+    payment_method_id: zod
+      .string()
+      .max(
+        usageOrganizationSubscriptionPartialUpdateByOrganizationSubscriptionIdBodyPaymentMethodIdMax,
+      )
+      .optional(),
+    custom_subscription_id: zod
+      .string()
+      .max(
+        usageOrganizationSubscriptionPartialUpdateByOrganizationSubscriptionIdBodyCustomSubscriptionIdMax,
+      )
+      .optional(),
+    organization: zod.string().uuid(),
+    subscription_tier: zod.number(),
+  });
+
+export const usageOrganizationSubscriptionPartialUpdateByOrganizationSubscriptionIdResponseResultStripeCustomerIdTestMax = 100;
+
+export const usageOrganizationSubscriptionPartialUpdateByOrganizationSubscriptionIdResponseResultStripeCustomerIdLiveMax = 100;
+
+export const usageOrganizationSubscriptionPartialUpdateByOrganizationSubscriptionIdResponseResultPaymentMethodIdMax = 100;
+
+export const usageOrganizationSubscriptionPartialUpdateByOrganizationSubscriptionIdResponseResultCustomSubscriptionIdMax = 100;
+
+export const UsageOrganizationSubscriptionPartialUpdateByOrganizationSubscriptionIdResponse =
+  zod.object({
+    status: zod.boolean(),
+    result: zod.object({
+      next_renewal_date: zod
+        .string()
+        .date()
+        .optional()
+        .describe("Next due date for renewal."),
+      subscription_price: zod
+        .string()
+        .optional()
+        .describe("Price of the subscription."),
+      subscription_future_tier: zod
+        .enum(["free", "basic", "basic_yearly", "custom"])
+        .optional(),
+      subscription_future_start_date: zod
+        .string()
+        .date()
+        .optional()
+        .describe("Next due date for renewal."),
+      subscription_future_price: zod
+        .string()
+        .optional()
+        .describe("Price of the future subscription."),
+      status: zod
+        .enum(["active", "past_due", "unpaid", "canceled", "inactive"])
+        .optional(),
+      wallet_refill_amount: zod
+        .string()
+        .optional()
+        .describe("Amount to refill the wallet every month."),
+      wallet_balance: zod.string().optional(),
+      stripe_customer_id_test: zod
+        .string()
+        .max(
+          usageOrganizationSubscriptionPartialUpdateByOrganizationSubscriptionIdResponseResultStripeCustomerIdTestMax,
+        )
+        .optional()
+        .describe("Stripe customer ID for test mode. NULL values are allowed."),
+      stripe_customer_id_live: zod
+        .string()
+        .max(
+          usageOrganizationSubscriptionPartialUpdateByOrganizationSubscriptionIdResponseResultStripeCustomerIdLiveMax,
+        )
+        .optional()
+        .describe("Stripe customer ID for live mode. NULL values are allowed."),
+      auto_recharge_enabled: zod.boolean().optional(),
+      auto_recharge_amount: zod
+        .string()
+        .optional()
+        .describe("Amount to refill the wallet every month."),
+      auto_recharge_threshold: zod
+        .string()
+        .optional()
+        .describe("Threshold to trigger auto recharge."),
+      payment_method_id: zod
+        .string()
+        .max(
+          usageOrganizationSubscriptionPartialUpdateByOrganizationSubscriptionIdResponseResultPaymentMethodIdMax,
+        )
+        .optional(),
+      custom_subscription_id: zod
+        .string()
+        .max(
+          usageOrganizationSubscriptionPartialUpdateByOrganizationSubscriptionIdResponseResultCustomSubscriptionIdMax,
+        )
+        .optional(),
+      organization: zod.string().uuid(),
+      subscription_tier: zod.number(),
+    }),
+  });
+
+export const UsageOrganizationSubscriptionDeleteByOrganizationSubscriptionIdParams =
+  zod.object({
+    organization_subscription_id: zod.string(),
+  });
+
+export const UsageOrganizationSubscriptionDeleteByOrganizationSubscriptionIdResponse =
+  zod.object({
+    status: zod.boolean(),
+    result: zod.string().min(1),
+  });
+
 export const usageOrganizationsListResponseResultItemNameMax = 255;
 
 export const UsageOrganizationsListResponse = zod.object({
@@ -69380,10 +70351,6 @@ export const UsagePricingListResponse = zod.object({
   ),
 });
 
-export const UsagePricingCreateParams = zod.object({
-  pricing_id: zod.string(),
-});
-
 export const UsagePricingCreateBody = zod.object({
   api_call_type: zod.number(),
   price_per_call: zod.string(),
@@ -69400,10 +70367,6 @@ export const UsagePricingCreateResponse = zod.object({
   }),
 });
 
-export const UsagePricingPartialUpdateParams = zod.object({
-  pricing_id: zod.string(),
-});
-
 export const UsagePricingPartialUpdateBody = zod.object({
   api_call_type: zod.number(),
   price_per_call: zod.string(),
@@ -69418,10 +70381,6 @@ export const UsagePricingPartialUpdateResponse = zod.object({
     price_per_call: zod.string(),
     organization: zod.string().uuid().optional(),
   }),
-});
-
-export const UsagePricingDeleteParams = zod.object({
-  pricing_id: zod.string(),
 });
 
 export const UsagePricingDeleteResponse = zod.object({
@@ -69443,6 +70402,55 @@ export const UsagePricingReadResponse = zod.object({
       organization: zod.string().uuid().optional(),
     }),
   ),
+});
+
+export const UsagePricingCreateByPricingIdParams = zod.object({
+  pricing_id: zod.string(),
+});
+
+export const UsagePricingCreateByPricingIdBody = zod.object({
+  api_call_type: zod.number(),
+  price_per_call: zod.string(),
+  organization: zod.string().uuid().optional(),
+});
+
+export const UsagePricingCreateByPricingIdResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    id: zod.number().optional(),
+    api_call_type: zod.number(),
+    price_per_call: zod.string(),
+    organization: zod.string().uuid().optional(),
+  }),
+});
+
+export const UsagePricingPartialUpdateByPricingIdParams = zod.object({
+  pricing_id: zod.string(),
+});
+
+export const UsagePricingPartialUpdateByPricingIdBody = zod.object({
+  api_call_type: zod.number(),
+  price_per_call: zod.string(),
+  organization: zod.string().uuid().optional(),
+});
+
+export const UsagePricingPartialUpdateByPricingIdResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    id: zod.number().optional(),
+    api_call_type: zod.string().optional(),
+    price_per_call: zod.string(),
+    organization: zod.string().uuid().optional(),
+  }),
+});
+
+export const UsagePricingDeleteByPricingIdParams = zod.object({
+  pricing_id: zod.string(),
+});
+
+export const UsagePricingDeleteByPricingIdResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.string().min(1),
 });
 
 export const usageRateLimitsListResponseResultItemMinuteLimitMin = 0;
@@ -69491,10 +70499,6 @@ export const UsageRateLimitsListResponse = zod.object({
       subscription_tier: zod.string().optional(),
     }),
   ),
-});
-
-export const UsageRateLimitsCreateParams = zod.object({
-  rate_limit_id: zod.string(),
 });
 
 export const usageRateLimitsCreateBodyMinuteLimitMin = 0;
@@ -69585,10 +70589,6 @@ export const UsageRateLimitsCreateResponse = zod.object({
   }),
 });
 
-export const UsageRateLimitsPartialUpdateParams = zod.object({
-  rate_limit_id: zod.string(),
-});
-
 export const usageRateLimitsPartialUpdateBodyMinuteLimitMin = 0;
 export const usageRateLimitsPartialUpdateBodyMinuteLimitMax = 2147483647;
 
@@ -69677,10 +70677,6 @@ export const UsageRateLimitsPartialUpdateResponse = zod.object({
   }),
 });
 
-export const UsageRateLimitsDeleteParams = zod.object({
-  rate_limit_id: zod.string(),
-});
-
 export const UsageRateLimitsDeleteResponse = zod.object({
   status: zod.boolean(),
   result: zod.string().min(1),
@@ -69738,6 +70734,203 @@ export const UsageRateLimitsReadResponse = zod.object({
   ),
 });
 
+export const UsageRateLimitsCreateByRateLimitIdParams = zod.object({
+  rate_limit_id: zod.string(),
+});
+
+export const usageRateLimitsCreateByRateLimitIdBodyMinuteLimitMin = 0;
+export const usageRateLimitsCreateByRateLimitIdBodyMinuteLimitMax = 2147483647;
+
+export const usageRateLimitsCreateByRateLimitIdBodyHourLimitMin = 0;
+export const usageRateLimitsCreateByRateLimitIdBodyHourLimitMax = 2147483647;
+
+export const usageRateLimitsCreateByRateLimitIdBodyDayLimitMin = 0;
+export const usageRateLimitsCreateByRateLimitIdBodyDayLimitMax = 2147483647;
+
+export const usageRateLimitsCreateByRateLimitIdBodyMonthLimitMin = 0;
+export const usageRateLimitsCreateByRateLimitIdBodyMonthLimitMax = 2147483647;
+
+export const UsageRateLimitsCreateByRateLimitIdBody = zod.object({
+  api_call_type: zod.number(),
+  organization: zod.string().uuid().optional(),
+  minute_limit: zod
+    .number()
+    .min(usageRateLimitsCreateByRateLimitIdBodyMinuteLimitMin)
+    .max(usageRateLimitsCreateByRateLimitIdBodyMinuteLimitMax)
+    .optional()
+    .describe("Max calls per minute"),
+  hour_limit: zod
+    .number()
+    .min(usageRateLimitsCreateByRateLimitIdBodyHourLimitMin)
+    .max(usageRateLimitsCreateByRateLimitIdBodyHourLimitMax)
+    .optional()
+    .describe("Max calls per hour"),
+  day_limit: zod
+    .number()
+    .min(usageRateLimitsCreateByRateLimitIdBodyDayLimitMin)
+    .max(usageRateLimitsCreateByRateLimitIdBodyDayLimitMax)
+    .optional()
+    .describe("Max calls per day"),
+  month_limit: zod
+    .number()
+    .min(usageRateLimitsCreateByRateLimitIdBodyMonthLimitMin)
+    .max(usageRateLimitsCreateByRateLimitIdBodyMonthLimitMax)
+    .optional()
+    .describe("Max calls per month"),
+  subscription_tier: zod.number(),
+});
+
+export const usageRateLimitsCreateByRateLimitIdResponseResultMinuteLimitMin = 0;
+export const usageRateLimitsCreateByRateLimitIdResponseResultMinuteLimitMax = 2147483647;
+
+export const usageRateLimitsCreateByRateLimitIdResponseResultHourLimitMin = 0;
+export const usageRateLimitsCreateByRateLimitIdResponseResultHourLimitMax = 2147483647;
+
+export const usageRateLimitsCreateByRateLimitIdResponseResultDayLimitMin = 0;
+export const usageRateLimitsCreateByRateLimitIdResponseResultDayLimitMax = 2147483647;
+
+export const usageRateLimitsCreateByRateLimitIdResponseResultMonthLimitMin = 0;
+export const usageRateLimitsCreateByRateLimitIdResponseResultMonthLimitMax = 2147483647;
+
+export const UsageRateLimitsCreateByRateLimitIdResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    id: zod.number().optional(),
+    api_call_type: zod.number(),
+    organization: zod.string().uuid().optional(),
+    minute_limit: zod
+      .number()
+      .min(usageRateLimitsCreateByRateLimitIdResponseResultMinuteLimitMin)
+      .max(usageRateLimitsCreateByRateLimitIdResponseResultMinuteLimitMax)
+      .optional()
+      .describe("Max calls per minute"),
+    hour_limit: zod
+      .number()
+      .min(usageRateLimitsCreateByRateLimitIdResponseResultHourLimitMin)
+      .max(usageRateLimitsCreateByRateLimitIdResponseResultHourLimitMax)
+      .optional()
+      .describe("Max calls per hour"),
+    day_limit: zod
+      .number()
+      .min(usageRateLimitsCreateByRateLimitIdResponseResultDayLimitMin)
+      .max(usageRateLimitsCreateByRateLimitIdResponseResultDayLimitMax)
+      .optional()
+      .describe("Max calls per day"),
+    month_limit: zod
+      .number()
+      .min(usageRateLimitsCreateByRateLimitIdResponseResultMonthLimitMin)
+      .max(usageRateLimitsCreateByRateLimitIdResponseResultMonthLimitMax)
+      .optional()
+      .describe("Max calls per month"),
+    subscription_tier: zod.number(),
+  }),
+});
+
+export const UsageRateLimitsPartialUpdateByRateLimitIdParams = zod.object({
+  rate_limit_id: zod.string(),
+});
+
+export const usageRateLimitsPartialUpdateByRateLimitIdBodyMinuteLimitMin = 0;
+export const usageRateLimitsPartialUpdateByRateLimitIdBodyMinuteLimitMax = 2147483647;
+
+export const usageRateLimitsPartialUpdateByRateLimitIdBodyHourLimitMin = 0;
+export const usageRateLimitsPartialUpdateByRateLimitIdBodyHourLimitMax = 2147483647;
+
+export const usageRateLimitsPartialUpdateByRateLimitIdBodyDayLimitMin = 0;
+export const usageRateLimitsPartialUpdateByRateLimitIdBodyDayLimitMax = 2147483647;
+
+export const usageRateLimitsPartialUpdateByRateLimitIdBodyMonthLimitMin = 0;
+export const usageRateLimitsPartialUpdateByRateLimitIdBodyMonthLimitMax = 2147483647;
+
+export const UsageRateLimitsPartialUpdateByRateLimitIdBody = zod.object({
+  api_call_type: zod.number(),
+  organization: zod.string().uuid().optional(),
+  minute_limit: zod
+    .number()
+    .min(usageRateLimitsPartialUpdateByRateLimitIdBodyMinuteLimitMin)
+    .max(usageRateLimitsPartialUpdateByRateLimitIdBodyMinuteLimitMax)
+    .optional()
+    .describe("Max calls per minute"),
+  hour_limit: zod
+    .number()
+    .min(usageRateLimitsPartialUpdateByRateLimitIdBodyHourLimitMin)
+    .max(usageRateLimitsPartialUpdateByRateLimitIdBodyHourLimitMax)
+    .optional()
+    .describe("Max calls per hour"),
+  day_limit: zod
+    .number()
+    .min(usageRateLimitsPartialUpdateByRateLimitIdBodyDayLimitMin)
+    .max(usageRateLimitsPartialUpdateByRateLimitIdBodyDayLimitMax)
+    .optional()
+    .describe("Max calls per day"),
+  month_limit: zod
+    .number()
+    .min(usageRateLimitsPartialUpdateByRateLimitIdBodyMonthLimitMin)
+    .max(usageRateLimitsPartialUpdateByRateLimitIdBodyMonthLimitMax)
+    .optional()
+    .describe("Max calls per month"),
+  subscription_tier: zod.number(),
+});
+
+export const usageRateLimitsPartialUpdateByRateLimitIdResponseResultMinuteLimitMin = 0;
+export const usageRateLimitsPartialUpdateByRateLimitIdResponseResultMinuteLimitMax = 2147483647;
+
+export const usageRateLimitsPartialUpdateByRateLimitIdResponseResultHourLimitMin = 0;
+export const usageRateLimitsPartialUpdateByRateLimitIdResponseResultHourLimitMax = 2147483647;
+
+export const usageRateLimitsPartialUpdateByRateLimitIdResponseResultDayLimitMin = 0;
+export const usageRateLimitsPartialUpdateByRateLimitIdResponseResultDayLimitMax = 2147483647;
+
+export const usageRateLimitsPartialUpdateByRateLimitIdResponseResultMonthLimitMin = 0;
+export const usageRateLimitsPartialUpdateByRateLimitIdResponseResultMonthLimitMax = 2147483647;
+
+export const UsageRateLimitsPartialUpdateByRateLimitIdResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    id: zod.number().optional(),
+    api_call_type: zod.string().optional(),
+    organization: zod.string().uuid().optional(),
+    minute_limit: zod
+      .number()
+      .min(
+        usageRateLimitsPartialUpdateByRateLimitIdResponseResultMinuteLimitMin,
+      )
+      .max(
+        usageRateLimitsPartialUpdateByRateLimitIdResponseResultMinuteLimitMax,
+      )
+      .optional()
+      .describe("Max calls per minute"),
+    hour_limit: zod
+      .number()
+      .min(usageRateLimitsPartialUpdateByRateLimitIdResponseResultHourLimitMin)
+      .max(usageRateLimitsPartialUpdateByRateLimitIdResponseResultHourLimitMax)
+      .optional()
+      .describe("Max calls per hour"),
+    day_limit: zod
+      .number()
+      .min(usageRateLimitsPartialUpdateByRateLimitIdResponseResultDayLimitMin)
+      .max(usageRateLimitsPartialUpdateByRateLimitIdResponseResultDayLimitMax)
+      .optional()
+      .describe("Max calls per day"),
+    month_limit: zod
+      .number()
+      .min(usageRateLimitsPartialUpdateByRateLimitIdResponseResultMonthLimitMin)
+      .max(usageRateLimitsPartialUpdateByRateLimitIdResponseResultMonthLimitMax)
+      .optional()
+      .describe("Max calls per month"),
+    subscription_tier: zod.string().optional(),
+  }),
+});
+
+export const UsageRateLimitsDeleteByRateLimitIdParams = zod.object({
+  rate_limit_id: zod.string(),
+});
+
+export const UsageRateLimitsDeleteByRateLimitIdResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.string().min(1),
+});
+
 export const usageResourceLimitsListResponseResultItemLimitMin = 0;
 export const usageResourceLimitsListResponseResultItemLimitMax = 2147483647;
 
@@ -69756,10 +70949,6 @@ export const UsageResourceLimitsListResponse = zod.object({
       organization: zod.string().uuid().optional(),
     }),
   ),
-});
-
-export const UsageResourceLimitsCreateParams = zod.object({
-  resource_limit_id: zod.string(),
 });
 
 export const usageResourceLimitsCreateBodyLimitMin = 0;
@@ -69794,10 +70983,6 @@ export const UsageResourceLimitsCreateResponse = zod.object({
   }),
 });
 
-export const UsageResourceLimitsPartialUpdateParams = zod.object({
-  resource_limit_id: zod.string(),
-});
-
 export const usageResourceLimitsPartialUpdateBodyLimitMin = 0;
 export const usageResourceLimitsPartialUpdateBodyLimitMax = 2147483647;
 
@@ -69830,10 +71015,6 @@ export const UsageResourceLimitsPartialUpdateResponse = zod.object({
   }),
 });
 
-export const UsageResourceLimitsDeleteParams = zod.object({
-  resource_limit_id: zod.string(),
-});
-
 export const UsageResourceLimitsDeleteResponse = zod.object({
   status: zod.boolean(),
   result: zod.string().min(1),
@@ -69861,6 +71042,95 @@ export const UsageResourceLimitsReadResponse = zod.object({
       organization: zod.string().uuid().optional(),
     }),
   ),
+});
+
+export const UsageResourceLimitsCreateByResourceLimitIdParams = zod.object({
+  resource_limit_id: zod.string(),
+});
+
+export const usageResourceLimitsCreateByResourceLimitIdBodyLimitMin = 0;
+export const usageResourceLimitsCreateByResourceLimitIdBodyLimitMax = 2147483647;
+
+export const UsageResourceLimitsCreateByResourceLimitIdBody = zod.object({
+  resource_type: zod.number(),
+  subscription_tier: zod.number(),
+  limit: zod
+    .number()
+    .min(usageResourceLimitsCreateByResourceLimitIdBodyLimitMin)
+    .max(usageResourceLimitsCreateByResourceLimitIdBodyLimitMax)
+    .describe("Limit for the resource"),
+  organization: zod.string().uuid().optional(),
+});
+
+export const usageResourceLimitsCreateByResourceLimitIdResponseResultLimitMin = 0;
+export const usageResourceLimitsCreateByResourceLimitIdResponseResultLimitMax = 2147483647;
+
+export const UsageResourceLimitsCreateByResourceLimitIdResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    id: zod.number().optional(),
+    resource_type: zod.number(),
+    subscription_tier: zod.number(),
+    limit: zod
+      .number()
+      .min(usageResourceLimitsCreateByResourceLimitIdResponseResultLimitMin)
+      .max(usageResourceLimitsCreateByResourceLimitIdResponseResultLimitMax)
+      .describe("Limit for the resource"),
+    organization: zod.string().uuid().optional(),
+  }),
+});
+
+export const UsageResourceLimitsPartialUpdateByResourceLimitIdParams =
+  zod.object({
+    resource_limit_id: zod.string(),
+  });
+
+export const usageResourceLimitsPartialUpdateByResourceLimitIdBodyLimitMin = 0;
+export const usageResourceLimitsPartialUpdateByResourceLimitIdBodyLimitMax = 2147483647;
+
+export const UsageResourceLimitsPartialUpdateByResourceLimitIdBody = zod.object(
+  {
+    resource_type: zod.number(),
+    subscription_tier: zod.number(),
+    limit: zod
+      .number()
+      .min(usageResourceLimitsPartialUpdateByResourceLimitIdBodyLimitMin)
+      .max(usageResourceLimitsPartialUpdateByResourceLimitIdBodyLimitMax)
+      .describe("Limit for the resource"),
+    organization: zod.string().uuid().optional(),
+  },
+);
+
+export const usageResourceLimitsPartialUpdateByResourceLimitIdResponseResultLimitMin = 0;
+export const usageResourceLimitsPartialUpdateByResourceLimitIdResponseResultLimitMax = 2147483647;
+
+export const UsageResourceLimitsPartialUpdateByResourceLimitIdResponse =
+  zod.object({
+    status: zod.boolean(),
+    result: zod.object({
+      id: zod.number().optional(),
+      resource_type: zod.string().optional(),
+      subscription_tier: zod.string().optional(),
+      limit: zod
+        .number()
+        .min(
+          usageResourceLimitsPartialUpdateByResourceLimitIdResponseResultLimitMin,
+        )
+        .max(
+          usageResourceLimitsPartialUpdateByResourceLimitIdResponseResultLimitMax,
+        )
+        .describe("Limit for the resource"),
+      organization: zod.string().uuid().optional(),
+    }),
+  });
+
+export const UsageResourceLimitsDeleteByResourceLimitIdParams = zod.object({
+  resource_limit_id: zod.string(),
+});
+
+export const UsageResourceLimitsDeleteByResourceLimitIdResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.string().min(1),
 });
 
 export const UsageResourceTypeListResponse = zod.object({
@@ -69929,10 +71199,6 @@ export const UsageSubscriptionTierListResponse = zod.object({
   ),
 });
 
-export const UsageSubscriptionTierCreateParams = zod.object({
-  subscription_id: zod.string(),
-});
-
 export const usageSubscriptionTierCreateBodyStripePriceIdMax = 100;
 
 export const UsageSubscriptionTierCreateBody = zod.object({
@@ -69964,10 +71230,6 @@ export const UsageSubscriptionTierCreateResponse = zod.object({
       .optional()
       .describe("Amount to refill the wallet every month."),
   }),
-});
-
-export const UsageSubscriptionTierPartialUpdateParams = zod.object({
-  subscription_id: zod.string(),
 });
 
 export const usageSubscriptionTierPartialUpdateBodyStripePriceIdMax = 100;
@@ -70003,10 +71265,6 @@ export const UsageSubscriptionTierPartialUpdateResponse = zod.object({
   }),
 });
 
-export const UsageSubscriptionTierDeleteParams = zod.object({
-  subscription_id: zod.string(),
-});
-
 export const UsageSubscriptionTierDeleteResponse = zod.object({
   status: zod.boolean(),
   result: zod.string().min(1),
@@ -70035,6 +71293,98 @@ export const UsageSubscriptionTierReadResponse = zod.object({
         .describe("Amount to refill the wallet every month."),
     }),
   ),
+});
+
+export const UsageSubscriptionTierCreateBySubscriptionIdParams = zod.object({
+  subscription_id: zod.string(),
+});
+
+export const usageSubscriptionTierCreateBySubscriptionIdBodyStripePriceIdMax = 100;
+
+export const UsageSubscriptionTierCreateBySubscriptionIdBody = zod.object({
+  description: zod.string(),
+  stripe_price_id: zod
+    .string()
+    .max(usageSubscriptionTierCreateBySubscriptionIdBodyStripePriceIdMax)
+    .optional(),
+  wallet_refill_amount: zod
+    .string()
+    .optional()
+    .describe("Amount to refill the wallet every month."),
+});
+
+export const usageSubscriptionTierCreateBySubscriptionIdResponseResultStripePriceIdMax = 100;
+
+export const UsageSubscriptionTierCreateBySubscriptionIdResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    id: zod.number().optional(),
+    name: zod.enum(["free", "basic", "basic_yearly", "custom"]).optional(),
+    description: zod.string(),
+    stripe_price_id: zod
+      .string()
+      .max(
+        usageSubscriptionTierCreateBySubscriptionIdResponseResultStripePriceIdMax,
+      )
+      .optional(),
+    wallet_refill_amount: zod
+      .string()
+      .optional()
+      .describe("Amount to refill the wallet every month."),
+  }),
+});
+
+export const UsageSubscriptionTierPartialUpdateBySubscriptionIdParams =
+  zod.object({
+    subscription_id: zod.string(),
+  });
+
+export const usageSubscriptionTierPartialUpdateBySubscriptionIdBodyStripePriceIdMax = 100;
+
+export const UsageSubscriptionTierPartialUpdateBySubscriptionIdBody =
+  zod.object({
+    description: zod.string(),
+    stripe_price_id: zod
+      .string()
+      .max(
+        usageSubscriptionTierPartialUpdateBySubscriptionIdBodyStripePriceIdMax,
+      )
+      .optional(),
+    wallet_refill_amount: zod
+      .string()
+      .optional()
+      .describe("Amount to refill the wallet every month."),
+  });
+
+export const usageSubscriptionTierPartialUpdateBySubscriptionIdResponseResultStripePriceIdMax = 100;
+
+export const UsageSubscriptionTierPartialUpdateBySubscriptionIdResponse =
+  zod.object({
+    status: zod.boolean(),
+    result: zod.object({
+      id: zod.number().optional(),
+      name: zod.enum(["free", "basic", "basic_yearly", "custom"]).optional(),
+      description: zod.string(),
+      stripe_price_id: zod
+        .string()
+        .max(
+          usageSubscriptionTierPartialUpdateBySubscriptionIdResponseResultStripePriceIdMax,
+        )
+        .optional(),
+      wallet_refill_amount: zod
+        .string()
+        .optional()
+        .describe("Amount to refill the wallet every month."),
+    }),
+  });
+
+export const UsageSubscriptionTierDeleteBySubscriptionIdParams = zod.object({
+  subscription_id: zod.string(),
+});
+
+export const UsageSubscriptionTierDeleteBySubscriptionIdResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.string().min(1),
 });
 
 export const UsageUpdateAutoReloadSettingsCreateBody = zod.object({
@@ -70415,18 +71765,14 @@ export const UsageV2PaymentMethodsListResponse = zod.object({
 });
 
 /**
- * Manage a specific payment method.
+ * List payment methods or create a Stripe Checkout session for adding a card.
  */
-export const UsageV2PaymentMethodsCreateParams = zod.object({
-  pm_id: zod.string(),
-});
-
 export const UsageV2PaymentMethodsCreateBody = zod.object({}).passthrough();
 
 export const UsageV2PaymentMethodsCreateResponse = zod.object({
   status: zod.boolean(),
   result: zod.object({
-    message: zod.string().min(1),
+    checkout_url: zod.string().url().min(1),
   }),
 });
 
@@ -70499,6 +71845,24 @@ export const UsageV2PaymentMethodsSetupIntentUpdateResponse = zod.object({
   result: zod.object({
     payment_method_id: zod.string().min(1),
     set_as_default: zod.boolean(),
+  }),
+});
+
+/**
+ * Manage a specific payment method.
+ */
+export const UsageV2PaymentMethodsCreateByPmIdParams = zod.object({
+  pm_id: zod.string(),
+});
+
+export const UsageV2PaymentMethodsCreateByPmIdBody = zod
+  .object({})
+  .passthrough();
+
+export const UsageV2PaymentMethodsCreateByPmIdResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    message: zod.string().min(1),
   }),
 });
 

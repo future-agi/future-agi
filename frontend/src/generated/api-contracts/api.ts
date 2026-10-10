@@ -90,6 +90,8 @@ import type {
   AgentPlaygroundGraphsVersionsNodesPossibleEdgeMappings200,
   AgentPlaygroundGraphsVersionsNodesPossibleEdgeMappingsParams,
   AgentPlaygroundGraphsVersionsRead200,
+  AgentPlaygroundGraphsVersionsReadByVersionId200,
+  AgentPlaygroundGraphsVersionsReadByVersionIdParams,
   AgentPlaygroundGraphsVersionsReadParams,
   AgentPlaygroundNodeTemplatesList200,
   AgentPlaygroundNodeTemplatesListParams,
@@ -768,6 +770,7 @@ import type {
   ModelHubExperimentDetailListParams,
   ModelHubExperimentsDataList200,
   ModelHubExperimentsDataListParams,
+  ModelHubExperimentsReadByRowIdParams,
   ModelHubExperimentsReadParams,
   ModelHubExperimentsV2ListList200,
   ModelHubExperimentsV2ListListParams,
@@ -784,11 +787,13 @@ import type {
   ModelHubGetEvalMetricsListParams,
   ModelHubKbListParams,
   ModelHubKbSupportedEmbeddingModelsParams,
+  ModelHubKbSupportedEmbeddingModelsSupportedEmbeddingModelsParams,
   ModelHubOptimisationList200,
   ModelHubOptimisationListParams,
   ModelHubOptimizeDatasetList200,
   ModelHubOptimizeDatasetListParams,
   ModelHubOptimizeDatasetPromptTemplateExploreCreate200,
+  ModelHubOptimizeDatasetReadParams,
   ModelHubOptimizeDatasetRightAnswersCreate200,
   ModelHubOrganizationsUsersList200,
   ModelHubOrganizationsUsersListParams,
@@ -867,6 +872,7 @@ import type {
   OptimizeDatasetKnowledgeBaseRequestApi,
   OptimizeDatasetMutationRequestApi,
   OptimizeDatasetPageRequestApi,
+  OptimizeDatasetPaginatedResponseApi,
   OptimizeDatasetTemplateResultsResponseApi,
   OrgConfigBulkResponseApi,
   OrgTwoFactorPolicyApi,
@@ -2652,17 +2658,16 @@ export type accountsAppsmithUsersCreateResponse =
   | accountsAppsmithUsersCreateResponseSuccess
   | accountsAppsmithUsersCreateResponseError;
 
-export const getAccountsAppsmithUsersCreateUrl = (userId: string) => {
-  return `/accounts/appsmith/users/${userId}/`;
+export const getAccountsAppsmithUsersCreateUrl = () => {
+  return `/accounts/appsmith/users/`;
 };
 
 export const accountsAppsmithUsersCreate = async (
-  userId: string,
   userCreateApi: UserCreateApi,
   options?: RequestInit,
 ): Promise<accountsAppsmithUsersCreateResponse> => {
   return apiMutator<accountsAppsmithUsersCreateResponse>(
-    getAccountsAppsmithUsersCreateUrl(userId),
+    getAccountsAppsmithUsersCreateUrl(),
     {
       ...options,
       method: "POST",
@@ -2726,17 +2731,16 @@ export type accountsAppsmithUsersPartialUpdateResponse =
   | accountsAppsmithUsersPartialUpdateResponseSuccess
   | accountsAppsmithUsersPartialUpdateResponseError;
 
-export const getAccountsAppsmithUsersPartialUpdateUrl = (userId: string) => {
-  return `/accounts/appsmith/users/${userId}/`;
+export const getAccountsAppsmithUsersPartialUpdateUrl = () => {
+  return `/accounts/appsmith/users/`;
 };
 
 export const accountsAppsmithUsersPartialUpdate = async (
-  userId: string,
   passwordValidationApi: PasswordValidationApi,
   options?: RequestInit,
 ): Promise<accountsAppsmithUsersPartialUpdateResponse> => {
   return apiMutator<accountsAppsmithUsersPartialUpdateResponse>(
-    getAccountsAppsmithUsersPartialUpdateUrl(userId),
+    getAccountsAppsmithUsersPartialUpdateUrl(),
     {
       ...options,
       method: "PATCH",
@@ -2886,6 +2890,156 @@ export const accountsAppsmithUsersRead = async (
     {
       ...options,
       method: "GET",
+    },
+  );
+};
+
+export type accountsAppsmithUsersCreateByUserIdResponse201 = {
+  data: AppsmithUserCreateResponseApi;
+  status: 201;
+};
+
+export type accountsAppsmithUsersCreateByUserIdResponse400 = {
+  data: AccountsErrorResponseApi;
+  status: 400;
+};
+
+export type accountsAppsmithUsersCreateByUserIdResponse401 = {
+  data: AccountsErrorResponseApi;
+  status: 401;
+};
+
+export type accountsAppsmithUsersCreateByUserIdResponse403 = {
+  data: AccountsErrorResponseApi;
+  status: 403;
+};
+
+export type accountsAppsmithUsersCreateByUserIdResponse404 = {
+  data: AccountsErrorResponseApi;
+  status: 404;
+};
+
+export type accountsAppsmithUsersCreateByUserIdResponse500 = {
+  data: AccountsErrorResponseApi;
+  status: 500;
+};
+
+export type accountsAppsmithUsersCreateByUserIdResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201 | 400 | 401 | 403 | 404 | 500>;
+};
+
+export type accountsAppsmithUsersCreateByUserIdResponseSuccess =
+  accountsAppsmithUsersCreateByUserIdResponse201 & {
+    headers: Headers;
+  };
+export type accountsAppsmithUsersCreateByUserIdResponseError = (
+  | accountsAppsmithUsersCreateByUserIdResponse400
+  | accountsAppsmithUsersCreateByUserIdResponse401
+  | accountsAppsmithUsersCreateByUserIdResponse403
+  | accountsAppsmithUsersCreateByUserIdResponse404
+  | accountsAppsmithUsersCreateByUserIdResponse500
+  | accountsAppsmithUsersCreateByUserIdResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type accountsAppsmithUsersCreateByUserIdResponse =
+  | accountsAppsmithUsersCreateByUserIdResponseSuccess
+  | accountsAppsmithUsersCreateByUserIdResponseError;
+
+export const getAccountsAppsmithUsersCreateByUserIdUrl = (userId: string) => {
+  return `/accounts/appsmith/users/${userId}/`;
+};
+
+export const accountsAppsmithUsersCreateByUserId = async (
+  userId: string,
+  userCreateApi: UserCreateApi,
+  options?: RequestInit,
+): Promise<accountsAppsmithUsersCreateByUserIdResponse> => {
+  return apiMutator<accountsAppsmithUsersCreateByUserIdResponse>(
+    getAccountsAppsmithUsersCreateByUserIdUrl(userId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(userCreateApi),
+    },
+  );
+};
+
+export type accountsAppsmithUsersPartialUpdateByUserIdResponse201 = {
+  data: AppsmithPasswordUpdateResponseApi;
+  status: 201;
+};
+
+export type accountsAppsmithUsersPartialUpdateByUserIdResponse400 = {
+  data: AccountsErrorResponseApi;
+  status: 400;
+};
+
+export type accountsAppsmithUsersPartialUpdateByUserIdResponse401 = {
+  data: AccountsErrorResponseApi;
+  status: 401;
+};
+
+export type accountsAppsmithUsersPartialUpdateByUserIdResponse403 = {
+  data: AccountsErrorResponseApi;
+  status: 403;
+};
+
+export type accountsAppsmithUsersPartialUpdateByUserIdResponse404 = {
+  data: AccountsErrorResponseApi;
+  status: 404;
+};
+
+export type accountsAppsmithUsersPartialUpdateByUserIdResponse500 = {
+  data: AccountsErrorResponseApi;
+  status: 500;
+};
+
+export type accountsAppsmithUsersPartialUpdateByUserIdResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201 | 400 | 401 | 403 | 404 | 500>;
+};
+
+export type accountsAppsmithUsersPartialUpdateByUserIdResponseSuccess =
+  accountsAppsmithUsersPartialUpdateByUserIdResponse201 & {
+    headers: Headers;
+  };
+export type accountsAppsmithUsersPartialUpdateByUserIdResponseError = (
+  | accountsAppsmithUsersPartialUpdateByUserIdResponse400
+  | accountsAppsmithUsersPartialUpdateByUserIdResponse401
+  | accountsAppsmithUsersPartialUpdateByUserIdResponse403
+  | accountsAppsmithUsersPartialUpdateByUserIdResponse404
+  | accountsAppsmithUsersPartialUpdateByUserIdResponse500
+  | accountsAppsmithUsersPartialUpdateByUserIdResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type accountsAppsmithUsersPartialUpdateByUserIdResponse =
+  | accountsAppsmithUsersPartialUpdateByUserIdResponseSuccess
+  | accountsAppsmithUsersPartialUpdateByUserIdResponseError;
+
+export const getAccountsAppsmithUsersPartialUpdateByUserIdUrl = (
+  userId: string,
+) => {
+  return `/accounts/appsmith/users/${userId}/`;
+};
+
+export const accountsAppsmithUsersPartialUpdateByUserId = async (
+  userId: string,
+  passwordValidationApi: PasswordValidationApi,
+  options?: RequestInit,
+): Promise<accountsAppsmithUsersPartialUpdateByUserIdResponse> => {
+  return apiMutator<accountsAppsmithUsersPartialUpdateByUserIdResponse>(
+    getAccountsAppsmithUsersPartialUpdateByUserIdUrl(userId),
+    {
+      ...options,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(passwordValidationApi),
     },
   );
 };
@@ -6894,17 +7048,16 @@ export type accountsTeamUsersCreateResponse =
   | accountsTeamUsersCreateResponseSuccess
   | accountsTeamUsersCreateResponseError;
 
-export const getAccountsTeamUsersCreateUrl = (memberId: string) => {
-  return `/accounts/team/users/${memberId}/`;
+export const getAccountsTeamUsersCreateUrl = () => {
+  return `/accounts/team/users/`;
 };
 
 export const accountsTeamUsersCreate = async (
-  memberId: string,
   teamCreateRequestApi: TeamCreateRequestApi,
   options?: RequestInit,
 ): Promise<accountsTeamUsersCreateResponse> => {
   return apiMutator<accountsTeamUsersCreateResponse>(
-    getAccountsTeamUsersCreateUrl(memberId),
+    getAccountsTeamUsersCreateUrl(),
     {
       ...options,
       method: "POST",
@@ -6968,16 +7121,15 @@ export type accountsTeamUsersDeleteResponse =
   | accountsTeamUsersDeleteResponseSuccess
   | accountsTeamUsersDeleteResponseError;
 
-export const getAccountsTeamUsersDeleteUrl = (memberId: string) => {
-  return `/accounts/team/users/${memberId}/`;
+export const getAccountsTeamUsersDeleteUrl = () => {
+  return `/accounts/team/users/`;
 };
 
 export const accountsTeamUsersDelete = async (
-  memberId: string,
   options?: RequestInit,
 ): Promise<accountsTeamUsersDeleteResponse> => {
   return apiMutator<accountsTeamUsersDeleteResponse>(
-    getAccountsTeamUsersDeleteUrl(memberId),
+    getAccountsTeamUsersDeleteUrl(),
     {
       ...options,
       method: "DELETE",
@@ -7052,6 +7204,151 @@ export const accountsTeamUsersRead = async (
     {
       ...options,
       method: "GET",
+    },
+  );
+};
+
+export type accountsTeamUsersCreateByMemberIdResponse201 = {
+  data: TeamCreateResponseApi;
+  status: 201;
+};
+
+export type accountsTeamUsersCreateByMemberIdResponse400 = {
+  data: AccountsErrorResponseApi;
+  status: 400;
+};
+
+export type accountsTeamUsersCreateByMemberIdResponse401 = {
+  data: AccountsErrorResponseApi;
+  status: 401;
+};
+
+export type accountsTeamUsersCreateByMemberIdResponse403 = {
+  data: AccountsErrorResponseApi;
+  status: 403;
+};
+
+export type accountsTeamUsersCreateByMemberIdResponse404 = {
+  data: AccountsErrorResponseApi;
+  status: 404;
+};
+
+export type accountsTeamUsersCreateByMemberIdResponse500 = {
+  data: AccountsErrorResponseApi;
+  status: 500;
+};
+
+export type accountsTeamUsersCreateByMemberIdResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201 | 400 | 401 | 403 | 404 | 500>;
+};
+
+export type accountsTeamUsersCreateByMemberIdResponseSuccess =
+  accountsTeamUsersCreateByMemberIdResponse201 & {
+    headers: Headers;
+  };
+export type accountsTeamUsersCreateByMemberIdResponseError = (
+  | accountsTeamUsersCreateByMemberIdResponse400
+  | accountsTeamUsersCreateByMemberIdResponse401
+  | accountsTeamUsersCreateByMemberIdResponse403
+  | accountsTeamUsersCreateByMemberIdResponse404
+  | accountsTeamUsersCreateByMemberIdResponse500
+  | accountsTeamUsersCreateByMemberIdResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type accountsTeamUsersCreateByMemberIdResponse =
+  | accountsTeamUsersCreateByMemberIdResponseSuccess
+  | accountsTeamUsersCreateByMemberIdResponseError;
+
+export const getAccountsTeamUsersCreateByMemberIdUrl = (memberId: string) => {
+  return `/accounts/team/users/${memberId}/`;
+};
+
+export const accountsTeamUsersCreateByMemberId = async (
+  memberId: string,
+  teamCreateRequestApi: TeamCreateRequestApi,
+  options?: RequestInit,
+): Promise<accountsTeamUsersCreateByMemberIdResponse> => {
+  return apiMutator<accountsTeamUsersCreateByMemberIdResponse>(
+    getAccountsTeamUsersCreateByMemberIdUrl(memberId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(teamCreateRequestApi),
+    },
+  );
+};
+
+export type accountsTeamUsersDeleteByMemberIdResponse200 = {
+  data: TeamRemoveResponseApi;
+  status: 200;
+};
+
+export type accountsTeamUsersDeleteByMemberIdResponse400 = {
+  data: AccountsErrorResponseApi;
+  status: 400;
+};
+
+export type accountsTeamUsersDeleteByMemberIdResponse401 = {
+  data: AccountsErrorResponseApi;
+  status: 401;
+};
+
+export type accountsTeamUsersDeleteByMemberIdResponse403 = {
+  data: AccountsErrorResponseApi;
+  status: 403;
+};
+
+export type accountsTeamUsersDeleteByMemberIdResponse404 = {
+  data: AccountsErrorResponseApi;
+  status: 404;
+};
+
+export type accountsTeamUsersDeleteByMemberIdResponse500 = {
+  data: AccountsErrorResponseApi;
+  status: 500;
+};
+
+export type accountsTeamUsersDeleteByMemberIdResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 403 | 404 | 500>;
+};
+
+export type accountsTeamUsersDeleteByMemberIdResponseSuccess =
+  accountsTeamUsersDeleteByMemberIdResponse200 & {
+    headers: Headers;
+  };
+export type accountsTeamUsersDeleteByMemberIdResponseError = (
+  | accountsTeamUsersDeleteByMemberIdResponse400
+  | accountsTeamUsersDeleteByMemberIdResponse401
+  | accountsTeamUsersDeleteByMemberIdResponse403
+  | accountsTeamUsersDeleteByMemberIdResponse404
+  | accountsTeamUsersDeleteByMemberIdResponse500
+  | accountsTeamUsersDeleteByMemberIdResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type accountsTeamUsersDeleteByMemberIdResponse =
+  | accountsTeamUsersDeleteByMemberIdResponseSuccess
+  | accountsTeamUsersDeleteByMemberIdResponseError;
+
+export const getAccountsTeamUsersDeleteByMemberIdUrl = (memberId: string) => {
+  return `/accounts/team/users/${memberId}/`;
+};
+
+export const accountsTeamUsersDeleteByMemberId = async (
+  memberId: string,
+  options?: RequestInit,
+): Promise<accountsTeamUsersDeleteByMemberIdResponse> => {
+  return apiMutator<accountsTeamUsersDeleteByMemberIdResponse>(
+    getAccountsTeamUsersDeleteByMemberIdUrl(memberId),
+    {
+      ...options,
+      method: "DELETE",
     },
   );
 };
@@ -8444,20 +8741,19 @@ export type accountsWorkspacesCreateResponse =
   | accountsWorkspacesCreateResponseSuccess
   | accountsWorkspacesCreateResponseError;
 
-export const getAccountsWorkspacesCreateUrl = (workspaceId: string) => {
-  return `/accounts/workspaces/${workspaceId}/`;
+export const getAccountsWorkspacesCreateUrl = () => {
+  return `/accounts/workspaces/`;
 };
 
 /**
  * Create a new workspace
  */
 export const accountsWorkspacesCreate = async (
-  workspaceId: string,
   workspaceCreateRequestApi: WorkspaceCreateRequestApi,
   options?: RequestInit,
 ): Promise<accountsWorkspacesCreateResponse> => {
   return apiMutator<accountsWorkspacesCreateResponse>(
-    getAccountsWorkspacesCreateUrl(workspaceId),
+    getAccountsWorkspacesCreateUrl(),
     {
       ...options,
       method: "POST",
@@ -8521,20 +8817,19 @@ export type accountsWorkspacesUpdateResponse =
   | accountsWorkspacesUpdateResponseSuccess
   | accountsWorkspacesUpdateResponseError;
 
-export const getAccountsWorkspacesUpdateUrl = (workspaceId: string) => {
-  return `/accounts/workspaces/${workspaceId}/`;
+export const getAccountsWorkspacesUpdateUrl = () => {
+  return `/accounts/workspaces/`;
 };
 
 /**
  * Update workspace details
  */
 export const accountsWorkspacesUpdate = async (
-  workspaceId: string,
   workspaceUpdateRequestApi: WorkspaceUpdateRequestApi,
   options?: RequestInit,
 ): Promise<accountsWorkspacesUpdateResponse> => {
   return apiMutator<accountsWorkspacesUpdateResponse>(
-    getAccountsWorkspacesUpdateUrl(workspaceId),
+    getAccountsWorkspacesUpdateUrl(),
     {
       ...options,
       method: "PUT",
@@ -8598,19 +8893,18 @@ export type accountsWorkspacesDeleteResponse =
   | accountsWorkspacesDeleteResponseSuccess
   | accountsWorkspacesDeleteResponseError;
 
-export const getAccountsWorkspacesDeleteUrl = (workspaceId: string) => {
-  return `/accounts/workspaces/${workspaceId}/`;
+export const getAccountsWorkspacesDeleteUrl = () => {
+  return `/accounts/workspaces/`;
 };
 
 /**
  * Delete a workspace
  */
 export const accountsWorkspacesDelete = async (
-  workspaceId: string,
   options?: RequestInit,
 ): Promise<accountsWorkspacesDeleteResponse> => {
   return apiMutator<accountsWorkspacesDeleteResponse>(
-    getAccountsWorkspacesDeleteUrl(workspaceId),
+    getAccountsWorkspacesDeleteUrl(),
     {
       ...options,
       method: "DELETE",
@@ -8688,6 +8982,240 @@ export const accountsWorkspacesRead = async (
     {
       ...options,
       method: "GET",
+    },
+  );
+};
+
+export type accountsWorkspacesCreateByWorkspaceIdResponse201 = {
+  data: WorkspaceCreateResponseApi;
+  status: 201;
+};
+
+export type accountsWorkspacesCreateByWorkspaceIdResponse400 = {
+  data: AccountsErrorResponseApi;
+  status: 400;
+};
+
+export type accountsWorkspacesCreateByWorkspaceIdResponse401 = {
+  data: AccountsErrorResponseApi;
+  status: 401;
+};
+
+export type accountsWorkspacesCreateByWorkspaceIdResponse403 = {
+  data: AccountsErrorResponseApi;
+  status: 403;
+};
+
+export type accountsWorkspacesCreateByWorkspaceIdResponse404 = {
+  data: AccountsErrorResponseApi;
+  status: 404;
+};
+
+export type accountsWorkspacesCreateByWorkspaceIdResponse500 = {
+  data: AccountsErrorResponseApi;
+  status: 500;
+};
+
+export type accountsWorkspacesCreateByWorkspaceIdResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201 | 400 | 401 | 403 | 404 | 500>;
+};
+
+export type accountsWorkspacesCreateByWorkspaceIdResponseSuccess =
+  accountsWorkspacesCreateByWorkspaceIdResponse201 & {
+    headers: Headers;
+  };
+export type accountsWorkspacesCreateByWorkspaceIdResponseError = (
+  | accountsWorkspacesCreateByWorkspaceIdResponse400
+  | accountsWorkspacesCreateByWorkspaceIdResponse401
+  | accountsWorkspacesCreateByWorkspaceIdResponse403
+  | accountsWorkspacesCreateByWorkspaceIdResponse404
+  | accountsWorkspacesCreateByWorkspaceIdResponse500
+  | accountsWorkspacesCreateByWorkspaceIdResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type accountsWorkspacesCreateByWorkspaceIdResponse =
+  | accountsWorkspacesCreateByWorkspaceIdResponseSuccess
+  | accountsWorkspacesCreateByWorkspaceIdResponseError;
+
+export const getAccountsWorkspacesCreateByWorkspaceIdUrl = (
+  workspaceId: string,
+) => {
+  return `/accounts/workspaces/${workspaceId}/`;
+};
+
+/**
+ * Create a new workspace
+ */
+export const accountsWorkspacesCreateByWorkspaceId = async (
+  workspaceId: string,
+  workspaceCreateRequestApi: WorkspaceCreateRequestApi,
+  options?: RequestInit,
+): Promise<accountsWorkspacesCreateByWorkspaceIdResponse> => {
+  return apiMutator<accountsWorkspacesCreateByWorkspaceIdResponse>(
+    getAccountsWorkspacesCreateByWorkspaceIdUrl(workspaceId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(workspaceCreateRequestApi),
+    },
+  );
+};
+
+export type accountsWorkspacesUpdateByWorkspaceIdResponse200 = {
+  data: WorkspaceUpdateResponseApi;
+  status: 200;
+};
+
+export type accountsWorkspacesUpdateByWorkspaceIdResponse400 = {
+  data: AccountsErrorResponseApi;
+  status: 400;
+};
+
+export type accountsWorkspacesUpdateByWorkspaceIdResponse401 = {
+  data: AccountsErrorResponseApi;
+  status: 401;
+};
+
+export type accountsWorkspacesUpdateByWorkspaceIdResponse403 = {
+  data: AccountsErrorResponseApi;
+  status: 403;
+};
+
+export type accountsWorkspacesUpdateByWorkspaceIdResponse404 = {
+  data: AccountsErrorResponseApi;
+  status: 404;
+};
+
+export type accountsWorkspacesUpdateByWorkspaceIdResponse500 = {
+  data: AccountsErrorResponseApi;
+  status: 500;
+};
+
+export type accountsWorkspacesUpdateByWorkspaceIdResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 403 | 404 | 500>;
+};
+
+export type accountsWorkspacesUpdateByWorkspaceIdResponseSuccess =
+  accountsWorkspacesUpdateByWorkspaceIdResponse200 & {
+    headers: Headers;
+  };
+export type accountsWorkspacesUpdateByWorkspaceIdResponseError = (
+  | accountsWorkspacesUpdateByWorkspaceIdResponse400
+  | accountsWorkspacesUpdateByWorkspaceIdResponse401
+  | accountsWorkspacesUpdateByWorkspaceIdResponse403
+  | accountsWorkspacesUpdateByWorkspaceIdResponse404
+  | accountsWorkspacesUpdateByWorkspaceIdResponse500
+  | accountsWorkspacesUpdateByWorkspaceIdResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type accountsWorkspacesUpdateByWorkspaceIdResponse =
+  | accountsWorkspacesUpdateByWorkspaceIdResponseSuccess
+  | accountsWorkspacesUpdateByWorkspaceIdResponseError;
+
+export const getAccountsWorkspacesUpdateByWorkspaceIdUrl = (
+  workspaceId: string,
+) => {
+  return `/accounts/workspaces/${workspaceId}/`;
+};
+
+/**
+ * Update workspace details
+ */
+export const accountsWorkspacesUpdateByWorkspaceId = async (
+  workspaceId: string,
+  workspaceUpdateRequestApi: WorkspaceUpdateRequestApi,
+  options?: RequestInit,
+): Promise<accountsWorkspacesUpdateByWorkspaceIdResponse> => {
+  return apiMutator<accountsWorkspacesUpdateByWorkspaceIdResponse>(
+    getAccountsWorkspacesUpdateByWorkspaceIdUrl(workspaceId),
+    {
+      ...options,
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(workspaceUpdateRequestApi),
+    },
+  );
+};
+
+export type accountsWorkspacesDeleteByWorkspaceIdResponse200 = {
+  data: WorkspaceDeleteResponseApi;
+  status: 200;
+};
+
+export type accountsWorkspacesDeleteByWorkspaceIdResponse400 = {
+  data: AccountsErrorResponseApi;
+  status: 400;
+};
+
+export type accountsWorkspacesDeleteByWorkspaceIdResponse401 = {
+  data: AccountsErrorResponseApi;
+  status: 401;
+};
+
+export type accountsWorkspacesDeleteByWorkspaceIdResponse403 = {
+  data: AccountsErrorResponseApi;
+  status: 403;
+};
+
+export type accountsWorkspacesDeleteByWorkspaceIdResponse404 = {
+  data: AccountsErrorResponseApi;
+  status: 404;
+};
+
+export type accountsWorkspacesDeleteByWorkspaceIdResponse500 = {
+  data: AccountsErrorResponseApi;
+  status: 500;
+};
+
+export type accountsWorkspacesDeleteByWorkspaceIdResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 403 | 404 | 500>;
+};
+
+export type accountsWorkspacesDeleteByWorkspaceIdResponseSuccess =
+  accountsWorkspacesDeleteByWorkspaceIdResponse200 & {
+    headers: Headers;
+  };
+export type accountsWorkspacesDeleteByWorkspaceIdResponseError = (
+  | accountsWorkspacesDeleteByWorkspaceIdResponse400
+  | accountsWorkspacesDeleteByWorkspaceIdResponse401
+  | accountsWorkspacesDeleteByWorkspaceIdResponse403
+  | accountsWorkspacesDeleteByWorkspaceIdResponse404
+  | accountsWorkspacesDeleteByWorkspaceIdResponse500
+  | accountsWorkspacesDeleteByWorkspaceIdResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type accountsWorkspacesDeleteByWorkspaceIdResponse =
+  | accountsWorkspacesDeleteByWorkspaceIdResponseSuccess
+  | accountsWorkspacesDeleteByWorkspaceIdResponseError;
+
+export const getAccountsWorkspacesDeleteByWorkspaceIdUrl = (
+  workspaceId: string,
+) => {
+  return `/accounts/workspaces/${workspaceId}/`;
+};
+
+/**
+ * Delete a workspace
+ */
+export const accountsWorkspacesDeleteByWorkspaceId = async (
+  workspaceId: string,
+  options?: RequestInit,
+): Promise<accountsWorkspacesDeleteByWorkspaceIdResponse> => {
+  return apiMutator<accountsWorkspacesDeleteByWorkspaceIdResponse>(
+    getAccountsWorkspacesDeleteByWorkspaceIdUrl(workspaceId),
+    {
+      ...options,
+      method: "DELETE",
     },
   );
 };
@@ -8820,11 +9348,8 @@ export type accountsWorkspacesMembersCreateResponse =
   | accountsWorkspacesMembersCreateResponseSuccess
   | accountsWorkspacesMembersCreateResponseError;
 
-export const getAccountsWorkspacesMembersCreateUrl = (
-  workspaceId: string,
-  memberId: string,
-) => {
-  return `/accounts/workspaces/${workspaceId}/members/${memberId}/`;
+export const getAccountsWorkspacesMembersCreateUrl = (workspaceId: string) => {
+  return `/accounts/workspaces/${workspaceId}/members/`;
 };
 
 /**
@@ -8832,12 +9357,11 @@ export const getAccountsWorkspacesMembersCreateUrl = (
  */
 export const accountsWorkspacesMembersCreate = async (
   workspaceId: string,
-  memberId: string,
   workspaceMembersRequestApi: WorkspaceMembersRequestApi,
   options?: RequestInit,
 ): Promise<accountsWorkspacesMembersCreateResponse> => {
   return apiMutator<accountsWorkspacesMembersCreateResponse>(
-    getAccountsWorkspacesMembersCreateUrl(workspaceId, memberId),
+    getAccountsWorkspacesMembersCreateUrl(workspaceId),
     {
       ...options,
       method: "POST",
@@ -8901,11 +9425,8 @@ export type accountsWorkspacesMembersDeleteResponse =
   | accountsWorkspacesMembersDeleteResponseSuccess
   | accountsWorkspacesMembersDeleteResponseError;
 
-export const getAccountsWorkspacesMembersDeleteUrl = (
-  workspaceId: string,
-  memberId: string,
-) => {
-  return `/accounts/workspaces/${workspaceId}/members/${memberId}/`;
+export const getAccountsWorkspacesMembersDeleteUrl = (workspaceId: string) => {
+  return `/accounts/workspaces/${workspaceId}/members/`;
 };
 
 /**
@@ -8913,11 +9434,10 @@ export const getAccountsWorkspacesMembersDeleteUrl = (
  */
 export const accountsWorkspacesMembersDelete = async (
   workspaceId: string,
-  memberId: string,
   options?: RequestInit,
 ): Promise<accountsWorkspacesMembersDeleteResponse> => {
   return apiMutator<accountsWorkspacesMembersDeleteResponse>(
-    getAccountsWorkspacesMembersDeleteUrl(workspaceId, memberId),
+    getAccountsWorkspacesMembersDeleteUrl(workspaceId),
     {
       ...options,
       method: "DELETE",
@@ -8999,6 +9519,165 @@ export const accountsWorkspacesMembersRead = async (
     {
       ...options,
       method: "GET",
+    },
+  );
+};
+
+export type accountsWorkspacesMembersCreateByMemberIdResponse201 = {
+  data: WorkspaceMembersAddResponseApi;
+  status: 201;
+};
+
+export type accountsWorkspacesMembersCreateByMemberIdResponse400 = {
+  data: AccountsErrorResponseApi;
+  status: 400;
+};
+
+export type accountsWorkspacesMembersCreateByMemberIdResponse401 = {
+  data: AccountsErrorResponseApi;
+  status: 401;
+};
+
+export type accountsWorkspacesMembersCreateByMemberIdResponse403 = {
+  data: AccountsErrorResponseApi;
+  status: 403;
+};
+
+export type accountsWorkspacesMembersCreateByMemberIdResponse404 = {
+  data: AccountsErrorResponseApi;
+  status: 404;
+};
+
+export type accountsWorkspacesMembersCreateByMemberIdResponse500 = {
+  data: AccountsErrorResponseApi;
+  status: 500;
+};
+
+export type accountsWorkspacesMembersCreateByMemberIdResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201 | 400 | 401 | 403 | 404 | 500>;
+};
+
+export type accountsWorkspacesMembersCreateByMemberIdResponseSuccess =
+  accountsWorkspacesMembersCreateByMemberIdResponse201 & {
+    headers: Headers;
+  };
+export type accountsWorkspacesMembersCreateByMemberIdResponseError = (
+  | accountsWorkspacesMembersCreateByMemberIdResponse400
+  | accountsWorkspacesMembersCreateByMemberIdResponse401
+  | accountsWorkspacesMembersCreateByMemberIdResponse403
+  | accountsWorkspacesMembersCreateByMemberIdResponse404
+  | accountsWorkspacesMembersCreateByMemberIdResponse500
+  | accountsWorkspacesMembersCreateByMemberIdResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type accountsWorkspacesMembersCreateByMemberIdResponse =
+  | accountsWorkspacesMembersCreateByMemberIdResponseSuccess
+  | accountsWorkspacesMembersCreateByMemberIdResponseError;
+
+export const getAccountsWorkspacesMembersCreateByMemberIdUrl = (
+  workspaceId: string,
+  memberId: string,
+) => {
+  return `/accounts/workspaces/${workspaceId}/members/${memberId}/`;
+};
+
+/**
+ * Add users to workspace
+ */
+export const accountsWorkspacesMembersCreateByMemberId = async (
+  workspaceId: string,
+  memberId: string,
+  workspaceMembersRequestApi: WorkspaceMembersRequestApi,
+  options?: RequestInit,
+): Promise<accountsWorkspacesMembersCreateByMemberIdResponse> => {
+  return apiMutator<accountsWorkspacesMembersCreateByMemberIdResponse>(
+    getAccountsWorkspacesMembersCreateByMemberIdUrl(workspaceId, memberId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(workspaceMembersRequestApi),
+    },
+  );
+};
+
+export type accountsWorkspacesMembersDeleteByMemberIdResponse200 = {
+  data: WorkspaceMemberRemoveResponseApi;
+  status: 200;
+};
+
+export type accountsWorkspacesMembersDeleteByMemberIdResponse400 = {
+  data: AccountsErrorResponseApi;
+  status: 400;
+};
+
+export type accountsWorkspacesMembersDeleteByMemberIdResponse401 = {
+  data: AccountsErrorResponseApi;
+  status: 401;
+};
+
+export type accountsWorkspacesMembersDeleteByMemberIdResponse403 = {
+  data: AccountsErrorResponseApi;
+  status: 403;
+};
+
+export type accountsWorkspacesMembersDeleteByMemberIdResponse404 = {
+  data: AccountsErrorResponseApi;
+  status: 404;
+};
+
+export type accountsWorkspacesMembersDeleteByMemberIdResponse500 = {
+  data: AccountsErrorResponseApi;
+  status: 500;
+};
+
+export type accountsWorkspacesMembersDeleteByMemberIdResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 403 | 404 | 500>;
+};
+
+export type accountsWorkspacesMembersDeleteByMemberIdResponseSuccess =
+  accountsWorkspacesMembersDeleteByMemberIdResponse200 & {
+    headers: Headers;
+  };
+export type accountsWorkspacesMembersDeleteByMemberIdResponseError = (
+  | accountsWorkspacesMembersDeleteByMemberIdResponse400
+  | accountsWorkspacesMembersDeleteByMemberIdResponse401
+  | accountsWorkspacesMembersDeleteByMemberIdResponse403
+  | accountsWorkspacesMembersDeleteByMemberIdResponse404
+  | accountsWorkspacesMembersDeleteByMemberIdResponse500
+  | accountsWorkspacesMembersDeleteByMemberIdResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type accountsWorkspacesMembersDeleteByMemberIdResponse =
+  | accountsWorkspacesMembersDeleteByMemberIdResponseSuccess
+  | accountsWorkspacesMembersDeleteByMemberIdResponseError;
+
+export const getAccountsWorkspacesMembersDeleteByMemberIdUrl = (
+  workspaceId: string,
+  memberId: string,
+) => {
+  return `/accounts/workspaces/${workspaceId}/members/${memberId}/`;
+};
+
+/**
+ * Remove user from workspace
+ */
+export const accountsWorkspacesMembersDeleteByMemberId = async (
+  workspaceId: string,
+  memberId: string,
+  options?: RequestInit,
+): Promise<accountsWorkspacesMembersDeleteByMemberIdResponse> => {
+  return apiMutator<accountsWorkspacesMembersDeleteByMemberIdResponse>(
+    getAccountsWorkspacesMembersDeleteByMemberIdUrl(workspaceId, memberId),
+    {
+      ...options,
+      method: "DELETE",
     },
   );
 };
@@ -10168,7 +10847,6 @@ export type agentPlaygroundGraphsVersionsReadResponse =
 
 export const getAgentPlaygroundGraphsVersionsReadUrl = (
   id: string,
-  versionId: string,
   params?: AgentPlaygroundGraphsVersionsReadParams,
 ) => {
   const normalizedParams = new URLSearchParams();
@@ -10186,21 +10864,21 @@ export const getAgentPlaygroundGraphsVersionsReadUrl = (
   const stringifiedParams = normalizedParams.toString();
 
   return stringifiedParams.length > 0
-    ? `/agent-playground/graphs/${id}/versions/${versionId}/?${stringifiedParams}`
-    : `/agent-playground/graphs/${id}/versions/${versionId}/`;
+    ? `/agent-playground/graphs/${id}/versions/?${stringifiedParams}`
+    : `/agent-playground/graphs/${id}/versions/`;
 };
 
 /**
- * Get a specific version with full nested structure (nodes→ports, edges).
+ * Returns lightweight: id, version_number, status, commit_message, created_at.
+ * @summary List all versions for a graph.
  */
 export const agentPlaygroundGraphsVersionsRead = async (
   id: string,
-  versionId: string,
   params?: AgentPlaygroundGraphsVersionsReadParams,
   options?: RequestInit,
 ): Promise<agentPlaygroundGraphsVersionsReadResponse> => {
   return apiMutator<agentPlaygroundGraphsVersionsReadResponse>(
-    getAgentPlaygroundGraphsVersionsReadUrl(id, versionId, params),
+    getAgentPlaygroundGraphsVersionsReadUrl(id, params),
     {
       ...options,
       method: "GET",
@@ -10269,6 +10947,90 @@ export const agentPlaygroundGraphsVersionsCreate = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(graphListApi),
+    },
+  );
+};
+
+export type agentPlaygroundGraphsVersionsReadByVersionIdResponse200 = {
+  data: AgentPlaygroundGraphsVersionsReadByVersionId200;
+  status: 200;
+};
+
+export type agentPlaygroundGraphsVersionsReadByVersionIdResponse400 = {
+  data: AgentPlaygroundErrorResponseApi;
+  status: 400;
+};
+
+export type agentPlaygroundGraphsVersionsReadByVersionIdResponse404 = {
+  data: AgentPlaygroundErrorResponseApi;
+  status: 404;
+};
+
+export type agentPlaygroundGraphsVersionsReadByVersionIdResponse500 = {
+  data: AgentPlaygroundErrorResponseApi;
+  status: 500;
+};
+
+export type agentPlaygroundGraphsVersionsReadByVersionIdResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 500>;
+};
+
+export type agentPlaygroundGraphsVersionsReadByVersionIdResponseSuccess =
+  agentPlaygroundGraphsVersionsReadByVersionIdResponse200 & {
+    headers: Headers;
+  };
+export type agentPlaygroundGraphsVersionsReadByVersionIdResponseError = (
+  | agentPlaygroundGraphsVersionsReadByVersionIdResponse400
+  | agentPlaygroundGraphsVersionsReadByVersionIdResponse404
+  | agentPlaygroundGraphsVersionsReadByVersionIdResponse500
+  | agentPlaygroundGraphsVersionsReadByVersionIdResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type agentPlaygroundGraphsVersionsReadByVersionIdResponse =
+  | agentPlaygroundGraphsVersionsReadByVersionIdResponseSuccess
+  | agentPlaygroundGraphsVersionsReadByVersionIdResponseError;
+
+export const getAgentPlaygroundGraphsVersionsReadByVersionIdUrl = (
+  id: string,
+  versionId: string,
+  params?: AgentPlaygroundGraphsVersionsReadByVersionIdParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/agent-playground/graphs/${id}/versions/${versionId}/?${stringifiedParams}`
+    : `/agent-playground/graphs/${id}/versions/${versionId}/`;
+};
+
+/**
+ * Get a specific version with full nested structure (nodes→ports, edges).
+ */
+export const agentPlaygroundGraphsVersionsReadByVersionId = async (
+  id: string,
+  versionId: string,
+  params?: AgentPlaygroundGraphsVersionsReadByVersionIdParams,
+  options?: RequestInit,
+): Promise<agentPlaygroundGraphsVersionsReadByVersionIdResponse> => {
+  return apiMutator<agentPlaygroundGraphsVersionsReadByVersionIdResponse>(
+    getAgentPlaygroundGraphsVersionsReadByVersionIdUrl(id, versionId, params),
+    {
+      ...options,
+      method: "GET",
     },
   );
 };
@@ -42510,7 +43272,6 @@ export type modelHubExperimentsReadResponse =
 
 export const getModelHubExperimentsReadUrl = (
   experimentId: string,
-  rowId: string,
   params?: ModelHubExperimentsReadParams,
 ) => {
   const normalizedParams = new URLSearchParams();
@@ -42528,18 +43289,17 @@ export const getModelHubExperimentsReadUrl = (
   const stringifiedParams = normalizedParams.toString();
 
   return stringifiedParams.length > 0
-    ? `/model-hub/experiments/${experimentId}/${rowId}/?${stringifiedParams}`
-    : `/model-hub/experiments/${experimentId}/${rowId}/`;
+    ? `/model-hub/experiments/${experimentId}/?${stringifiedParams}`
+    : `/model-hub/experiments/${experimentId}/`;
 };
 
 export const modelHubExperimentsRead = async (
   experimentId: string,
-  rowId: string,
   params?: ModelHubExperimentsReadParams,
   options?: RequestInit,
 ): Promise<modelHubExperimentsReadResponse> => {
   return apiMutator<modelHubExperimentsReadResponse>(
-    getModelHubExperimentsReadUrl(experimentId, rowId, params),
+    getModelHubExperimentsReadUrl(experimentId, params),
     {
       ...options,
       method: "GET",
@@ -43064,6 +43824,120 @@ export const modelHubExperimentsStatsList = async (
 ): Promise<modelHubExperimentsStatsListResponse> => {
   return apiMutator<modelHubExperimentsStatsListResponse>(
     getModelHubExperimentsStatsListUrl(experimentId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type modelHubExperimentsReadByRowIdResponse200 = {
+  data: ExperimentTableRowsResponseApi;
+  status: 200;
+};
+
+export type modelHubExperimentsReadByRowIdResponse400 = {
+  data: ModelHubErrorResponseApi;
+  status: 400;
+};
+
+export type modelHubExperimentsReadByRowIdResponse403 = {
+  data: ModelHubErrorResponseApi;
+  status: 403;
+};
+
+export type modelHubExperimentsReadByRowIdResponse404 = {
+  data: ModelHubErrorResponseApi;
+  status: 404;
+};
+
+export type modelHubExperimentsReadByRowIdResponse409 = {
+  data: ModelHubErrorResponseApi;
+  status: 409;
+};
+
+export type modelHubExperimentsReadByRowIdResponse413 = {
+  data: ModelHubErrorResponseApi;
+  status: 413;
+};
+
+export type modelHubExperimentsReadByRowIdResponse422 = {
+  data: ModelHubErrorResponseApi;
+  status: 422;
+};
+
+export type modelHubExperimentsReadByRowIdResponse500 = {
+  data: ModelHubErrorResponseApi;
+  status: 500;
+};
+
+export type modelHubExperimentsReadByRowIdResponse503 = {
+  data: ModelHubErrorResponseApi;
+  status: 503;
+};
+
+export type modelHubExperimentsReadByRowIdResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 403 | 404 | 409 | 413 | 422 | 500 | 503
+  >;
+};
+
+export type modelHubExperimentsReadByRowIdResponseSuccess =
+  modelHubExperimentsReadByRowIdResponse200 & {
+    headers: Headers;
+  };
+export type modelHubExperimentsReadByRowIdResponseError = (
+  | modelHubExperimentsReadByRowIdResponse400
+  | modelHubExperimentsReadByRowIdResponse403
+  | modelHubExperimentsReadByRowIdResponse404
+  | modelHubExperimentsReadByRowIdResponse409
+  | modelHubExperimentsReadByRowIdResponse413
+  | modelHubExperimentsReadByRowIdResponse422
+  | modelHubExperimentsReadByRowIdResponse500
+  | modelHubExperimentsReadByRowIdResponse503
+  | modelHubExperimentsReadByRowIdResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type modelHubExperimentsReadByRowIdResponse =
+  | modelHubExperimentsReadByRowIdResponseSuccess
+  | modelHubExperimentsReadByRowIdResponseError;
+
+export const getModelHubExperimentsReadByRowIdUrl = (
+  experimentId: string,
+  rowId: string,
+  params?: ModelHubExperimentsReadByRowIdParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/model-hub/experiments/${experimentId}/${rowId}/?${stringifiedParams}`
+    : `/model-hub/experiments/${experimentId}/${rowId}/`;
+};
+
+export const modelHubExperimentsReadByRowId = async (
+  experimentId: string,
+  rowId: string,
+  params?: ModelHubExperimentsReadByRowIdParams,
+  options?: RequestInit,
+): Promise<modelHubExperimentsReadByRowIdResponse> => {
+  return apiMutator<modelHubExperimentsReadByRowIdResponse>(
+    getModelHubExperimentsReadByRowIdUrl(experimentId, rowId, params),
     {
       ...options,
       method: "GET",
@@ -44918,6 +45792,110 @@ export const modelHubKbCreate = async (
   });
 };
 
+export type modelHubKbSupportedEmbeddingModelsSupportedEmbeddingModelsResponse200 =
+  {
+    data: KnowledgeBaseEmbeddingModelsResponseApi;
+    status: 200;
+  };
+
+export type modelHubKbSupportedEmbeddingModelsSupportedEmbeddingModelsResponse400 =
+  {
+    data: ModelHubErrorResponseApi;
+    status: 400;
+  };
+
+export type modelHubKbSupportedEmbeddingModelsSupportedEmbeddingModelsResponse403 =
+  {
+    data: ModelHubErrorResponseApi;
+    status: 403;
+  };
+
+export type modelHubKbSupportedEmbeddingModelsSupportedEmbeddingModelsResponse404 =
+  {
+    data: ModelHubErrorResponseApi;
+    status: 404;
+  };
+
+export type modelHubKbSupportedEmbeddingModelsSupportedEmbeddingModelsResponse409 =
+  {
+    data: ModelHubErrorResponseApi;
+    status: 409;
+  };
+
+export type modelHubKbSupportedEmbeddingModelsSupportedEmbeddingModelsResponse500 =
+  {
+    data: ModelHubErrorResponseApi;
+    status: 500;
+  };
+
+export type modelHubKbSupportedEmbeddingModelsSupportedEmbeddingModelsResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
+  };
+
+export type modelHubKbSupportedEmbeddingModelsSupportedEmbeddingModelsResponseSuccess =
+  modelHubKbSupportedEmbeddingModelsSupportedEmbeddingModelsResponse200 & {
+    headers: Headers;
+  };
+export type modelHubKbSupportedEmbeddingModelsSupportedEmbeddingModelsResponseError =
+  (
+    | modelHubKbSupportedEmbeddingModelsSupportedEmbeddingModelsResponse400
+    | modelHubKbSupportedEmbeddingModelsSupportedEmbeddingModelsResponse403
+    | modelHubKbSupportedEmbeddingModelsSupportedEmbeddingModelsResponse404
+    | modelHubKbSupportedEmbeddingModelsSupportedEmbeddingModelsResponse409
+    | modelHubKbSupportedEmbeddingModelsSupportedEmbeddingModelsResponse500
+    | modelHubKbSupportedEmbeddingModelsSupportedEmbeddingModelsResponseDefault
+  ) & {
+    headers: Headers;
+  };
+
+export type modelHubKbSupportedEmbeddingModelsSupportedEmbeddingModelsResponse =
+
+    | modelHubKbSupportedEmbeddingModelsSupportedEmbeddingModelsResponseSuccess
+    | modelHubKbSupportedEmbeddingModelsSupportedEmbeddingModelsResponseError;
+
+export const getModelHubKbSupportedEmbeddingModelsSupportedEmbeddingModelsUrl =
+  (
+    params?: ModelHubKbSupportedEmbeddingModelsSupportedEmbeddingModelsParams,
+  ) => {
+    const normalizedParams = new URLSearchParams();
+
+    Object.entries(params || {}).forEach(([key, value]) => {
+      if (Array.isArray(value)) {
+        value
+          .filter((item) => item !== undefined && item !== null)
+          .forEach((item) => normalizedParams.append(key, item.toString()));
+      } else if (value !== undefined && value !== null) {
+        normalizedParams.append(key, value.toString());
+      }
+    });
+
+    const stringifiedParams = normalizedParams.toString();
+
+    return stringifiedParams.length > 0
+      ? `/model-hub/kb/supported-embedding-models?${stringifiedParams}`
+      : `/model-hub/kb/supported-embedding-models`;
+  };
+
+/**
+ * Get all supported embedding models.
+ * @summary Get supported embedding models.
+ */
+export const modelHubKbSupportedEmbeddingModelsSupportedEmbeddingModels =
+  async (
+    params?: ModelHubKbSupportedEmbeddingModelsSupportedEmbeddingModelsParams,
+    options?: RequestInit,
+  ): Promise<modelHubKbSupportedEmbeddingModelsSupportedEmbeddingModelsResponse> => {
+    return apiMutator<modelHubKbSupportedEmbeddingModelsSupportedEmbeddingModelsResponse>(
+      getModelHubKbSupportedEmbeddingModelsSupportedEmbeddingModelsUrl(params),
+      {
+        ...options,
+        method: "GET",
+      },
+    );
+  };
+
 export type modelHubKbSupportedEmbeddingModelsResponse200 = {
   data: KnowledgeBaseEmbeddingModelsResponseApi;
   status: 200;
@@ -46585,7 +47563,7 @@ export const modelHubOptimizeDatasetKnowledgeBaseCreate = async (
 };
 
 export type modelHubOptimizeDatasetReadResponse200 = {
-  data: OptimizeDatasetDetailResponseApi;
+  data: OptimizeDatasetPaginatedResponseApi;
   status: 200;
 };
 
@@ -46640,18 +47618,34 @@ export type modelHubOptimizeDatasetReadResponse =
 
 export const getModelHubOptimizeDatasetReadUrl = (
   modelId: string,
-  optimizationId: string,
+  params?: ModelHubOptimizeDatasetReadParams,
 ) => {
-  return `/model-hub/optimize-dataset/${modelId}/${optimizationId}/`;
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/model-hub/optimize-dataset/${modelId}/?${stringifiedParams}`
+    : `/model-hub/optimize-dataset/${modelId}/`;
 };
 
 export const modelHubOptimizeDatasetRead = async (
   modelId: string,
-  optimizationId: string,
+  params?: ModelHubOptimizeDatasetReadParams,
   options?: RequestInit,
 ): Promise<modelHubOptimizeDatasetReadResponse> => {
   return apiMutator<modelHubOptimizeDatasetReadResponse>(
-    getModelHubOptimizeDatasetReadUrl(modelId, optimizationId),
+    getModelHubOptimizeDatasetReadUrl(modelId, params),
     {
       ...options,
       method: "GET",
@@ -47456,6 +48450,81 @@ export const modelHubOptimizeDatasetRightAnswersCreate = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(optimizeDatasetPageRequestApi),
+    },
+  );
+};
+
+export type modelHubOptimizeDatasetReadByOptimizationIdResponse200 = {
+  data: OptimizeDatasetDetailResponseApi;
+  status: 200;
+};
+
+export type modelHubOptimizeDatasetReadByOptimizationIdResponse400 = {
+  data: ModelHubErrorResponseApi;
+  status: 400;
+};
+
+export type modelHubOptimizeDatasetReadByOptimizationIdResponse403 = {
+  data: ModelHubErrorResponseApi;
+  status: 403;
+};
+
+export type modelHubOptimizeDatasetReadByOptimizationIdResponse404 = {
+  data: ModelHubErrorResponseApi;
+  status: 404;
+};
+
+export type modelHubOptimizeDatasetReadByOptimizationIdResponse409 = {
+  data: ModelHubErrorResponseApi;
+  status: 409;
+};
+
+export type modelHubOptimizeDatasetReadByOptimizationIdResponse500 = {
+  data: ModelHubErrorResponseApi;
+  status: 500;
+};
+
+export type modelHubOptimizeDatasetReadByOptimizationIdResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
+};
+
+export type modelHubOptimizeDatasetReadByOptimizationIdResponseSuccess =
+  modelHubOptimizeDatasetReadByOptimizationIdResponse200 & {
+    headers: Headers;
+  };
+export type modelHubOptimizeDatasetReadByOptimizationIdResponseError = (
+  | modelHubOptimizeDatasetReadByOptimizationIdResponse400
+  | modelHubOptimizeDatasetReadByOptimizationIdResponse403
+  | modelHubOptimizeDatasetReadByOptimizationIdResponse404
+  | modelHubOptimizeDatasetReadByOptimizationIdResponse409
+  | modelHubOptimizeDatasetReadByOptimizationIdResponse500
+  | modelHubOptimizeDatasetReadByOptimizationIdResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type modelHubOptimizeDatasetReadByOptimizationIdResponse =
+  | modelHubOptimizeDatasetReadByOptimizationIdResponseSuccess
+  | modelHubOptimizeDatasetReadByOptimizationIdResponseError;
+
+export const getModelHubOptimizeDatasetReadByOptimizationIdUrl = (
+  modelId: string,
+  optimizationId: string,
+) => {
+  return `/model-hub/optimize-dataset/${modelId}/${optimizationId}/`;
+};
+
+export const modelHubOptimizeDatasetReadByOptimizationId = async (
+  modelId: string,
+  optimizationId: string,
+  options?: RequestInit,
+): Promise<modelHubOptimizeDatasetReadByOptimizationIdResponse> => {
+  return apiMutator<modelHubOptimizeDatasetReadByOptimizationIdResponse>(
+    getModelHubOptimizeDatasetReadByOptimizationIdUrl(modelId, optimizationId),
+    {
+      ...options,
+      method: "GET",
     },
   );
 };
@@ -60561,11 +61630,8 @@ export type simulateApiHarnessIngressReadResponse =
   | simulateApiHarnessIngressReadResponseSuccess
   | simulateApiHarnessIngressReadResponseError;
 
-export const getSimulateApiHarnessIngressReadUrl = (
-  token: string,
-  targetPath: string,
-) => {
-  return `/simulate/api/harness/ingress/${token}/${targetPath}`;
+export const getSimulateApiHarnessIngressReadUrl = (token: string) => {
+  return `/simulate/api/harness/ingress/${token}/`;
 };
 
 /**
@@ -60573,11 +61639,10 @@ export const getSimulateApiHarnessIngressReadUrl = (
  */
 export const simulateApiHarnessIngressRead = async (
   token: string,
-  targetPath: string,
   options?: RequestInit,
 ): Promise<simulateApiHarnessIngressReadResponse> => {
   return apiMutator<simulateApiHarnessIngressReadResponse>(
-    getSimulateApiHarnessIngressReadUrl(token, targetPath),
+    getSimulateApiHarnessIngressReadUrl(token),
     {
       ...options,
       method: "GET",
@@ -60615,11 +61680,8 @@ export type simulateApiHarnessIngressCreateResponse =
   | simulateApiHarnessIngressCreateResponseSuccess
   | simulateApiHarnessIngressCreateResponseError;
 
-export const getSimulateApiHarnessIngressCreateUrl = (
-  token: string,
-  targetPath: string,
-) => {
-  return `/simulate/api/harness/ingress/${token}/${targetPath}`;
+export const getSimulateApiHarnessIngressCreateUrl = (token: string) => {
+  return `/simulate/api/harness/ingress/${token}/`;
 };
 
 /**
@@ -60627,12 +61689,11 @@ export const getSimulateApiHarnessIngressCreateUrl = (
  */
 export const simulateApiHarnessIngressCreate = async (
   token: string,
-  targetPath: string,
   harnessIngressProxyRequestApi: HarnessIngressProxyRequestApi,
   options?: RequestInit,
 ): Promise<simulateApiHarnessIngressCreateResponse> => {
   return apiMutator<simulateApiHarnessIngressCreateResponse>(
-    getSimulateApiHarnessIngressCreateUrl(token, targetPath),
+    getSimulateApiHarnessIngressCreateUrl(token),
     {
       ...options,
       method: "POST",
@@ -60672,11 +61733,8 @@ export type simulateApiHarnessIngressUpdateResponse =
   | simulateApiHarnessIngressUpdateResponseSuccess
   | simulateApiHarnessIngressUpdateResponseError;
 
-export const getSimulateApiHarnessIngressUpdateUrl = (
-  token: string,
-  targetPath: string,
-) => {
-  return `/simulate/api/harness/ingress/${token}/${targetPath}`;
+export const getSimulateApiHarnessIngressUpdateUrl = (token: string) => {
+  return `/simulate/api/harness/ingress/${token}/`;
 };
 
 /**
@@ -60684,12 +61742,11 @@ export const getSimulateApiHarnessIngressUpdateUrl = (
  */
 export const simulateApiHarnessIngressUpdate = async (
   token: string,
-  targetPath: string,
   harnessIngressProxyRequestApi: HarnessIngressProxyRequestApi,
   options?: RequestInit,
 ): Promise<simulateApiHarnessIngressUpdateResponse> => {
   return apiMutator<simulateApiHarnessIngressUpdateResponse>(
-    getSimulateApiHarnessIngressUpdateUrl(token, targetPath),
+    getSimulateApiHarnessIngressUpdateUrl(token),
     {
       ...options,
       method: "PUT",
@@ -60729,11 +61786,8 @@ export type simulateApiHarnessIngressPartialUpdateResponse =
   | simulateApiHarnessIngressPartialUpdateResponseSuccess
   | simulateApiHarnessIngressPartialUpdateResponseError;
 
-export const getSimulateApiHarnessIngressPartialUpdateUrl = (
-  token: string,
-  targetPath: string,
-) => {
-  return `/simulate/api/harness/ingress/${token}/${targetPath}`;
+export const getSimulateApiHarnessIngressPartialUpdateUrl = (token: string) => {
+  return `/simulate/api/harness/ingress/${token}/`;
 };
 
 /**
@@ -60741,12 +61795,11 @@ export const getSimulateApiHarnessIngressPartialUpdateUrl = (
  */
 export const simulateApiHarnessIngressPartialUpdate = async (
   token: string,
-  targetPath: string,
   harnessIngressProxyRequestApi: HarnessIngressProxyRequestApi,
   options?: RequestInit,
 ): Promise<simulateApiHarnessIngressPartialUpdateResponse> => {
   return apiMutator<simulateApiHarnessIngressPartialUpdateResponse>(
-    getSimulateApiHarnessIngressPartialUpdateUrl(token, targetPath),
+    getSimulateApiHarnessIngressPartialUpdateUrl(token),
     {
       ...options,
       method: "PATCH",
@@ -60779,7 +61832,50 @@ export type simulateApiHarnessIngressDeleteResponse =
   | simulateApiHarnessIngressDeleteResponseSuccess
   | simulateApiHarnessIngressDeleteResponseError;
 
-export const getSimulateApiHarnessIngressDeleteUrl = (
+export const getSimulateApiHarnessIngressDeleteUrl = (token: string) => {
+  return `/simulate/api/harness/ingress/${token}/`;
+};
+
+/**
+ * Relay a signed callback URL to the active sandbox without exposing provider headers.
+ */
+export const simulateApiHarnessIngressDelete = async (
+  token: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessIngressDeleteResponse> => {
+  return apiMutator<simulateApiHarnessIngressDeleteResponse>(
+    getSimulateApiHarnessIngressDeleteUrl(token),
+    {
+      ...options,
+      method: "DELETE",
+    },
+  );
+};
+
+export type simulateApiHarnessIngressReadByTargetPathResponse200 = {
+  data: void;
+  status: 200;
+};
+
+export type simulateApiHarnessIngressReadByTargetPathResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessIngressReadByTargetPathResponseSuccess =
+  simulateApiHarnessIngressReadByTargetPathResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessIngressReadByTargetPathResponseError =
+  simulateApiHarnessIngressReadByTargetPathResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessIngressReadByTargetPathResponse =
+  | simulateApiHarnessIngressReadByTargetPathResponseSuccess
+  | simulateApiHarnessIngressReadByTargetPathResponseError;
+
+export const getSimulateApiHarnessIngressReadByTargetPathUrl = (
   token: string,
   targetPath: string,
 ) => {
@@ -60789,13 +61885,233 @@ export const getSimulateApiHarnessIngressDeleteUrl = (
 /**
  * Relay a signed callback URL to the active sandbox without exposing provider headers.
  */
-export const simulateApiHarnessIngressDelete = async (
+export const simulateApiHarnessIngressReadByTargetPath = async (
   token: string,
   targetPath: string,
   options?: RequestInit,
-): Promise<simulateApiHarnessIngressDeleteResponse> => {
-  return apiMutator<simulateApiHarnessIngressDeleteResponse>(
-    getSimulateApiHarnessIngressDeleteUrl(token, targetPath),
+): Promise<simulateApiHarnessIngressReadByTargetPathResponse> => {
+  return apiMutator<simulateApiHarnessIngressReadByTargetPathResponse>(
+    getSimulateApiHarnessIngressReadByTargetPathUrl(token, targetPath),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessIngressCreateByTargetPathResponse200 = {
+  data: Blob;
+  status: 200;
+};
+
+export type simulateApiHarnessIngressCreateByTargetPathResponse201 = {
+  data: Blob;
+  status: 201;
+};
+
+export type simulateApiHarnessIngressCreateByTargetPathResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 201>;
+};
+
+export type simulateApiHarnessIngressCreateByTargetPathResponseSuccess = (
+  | simulateApiHarnessIngressCreateByTargetPathResponse200
+  | simulateApiHarnessIngressCreateByTargetPathResponse201
+) & {
+  headers: Headers;
+};
+export type simulateApiHarnessIngressCreateByTargetPathResponseError =
+  simulateApiHarnessIngressCreateByTargetPathResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessIngressCreateByTargetPathResponse =
+  | simulateApiHarnessIngressCreateByTargetPathResponseSuccess
+  | simulateApiHarnessIngressCreateByTargetPathResponseError;
+
+export const getSimulateApiHarnessIngressCreateByTargetPathUrl = (
+  token: string,
+  targetPath: string,
+) => {
+  return `/simulate/api/harness/ingress/${token}/${targetPath}`;
+};
+
+/**
+ * Relay a signed callback URL to the active sandbox without exposing provider headers.
+ */
+export const simulateApiHarnessIngressCreateByTargetPath = async (
+  token: string,
+  targetPath: string,
+  harnessIngressProxyRequestApi: HarnessIngressProxyRequestApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessIngressCreateByTargetPathResponse> => {
+  return apiMutator<simulateApiHarnessIngressCreateByTargetPathResponse>(
+    getSimulateApiHarnessIngressCreateByTargetPathUrl(token, targetPath),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessIngressProxyRequestApi),
+    },
+  );
+};
+
+export type simulateApiHarnessIngressUpdateByTargetPathResponse200 = {
+  data: Blob;
+  status: 200;
+};
+
+export type simulateApiHarnessIngressUpdateByTargetPathResponse201 = {
+  data: Blob;
+  status: 201;
+};
+
+export type simulateApiHarnessIngressUpdateByTargetPathResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 201>;
+};
+
+export type simulateApiHarnessIngressUpdateByTargetPathResponseSuccess = (
+  | simulateApiHarnessIngressUpdateByTargetPathResponse200
+  | simulateApiHarnessIngressUpdateByTargetPathResponse201
+) & {
+  headers: Headers;
+};
+export type simulateApiHarnessIngressUpdateByTargetPathResponseError =
+  simulateApiHarnessIngressUpdateByTargetPathResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessIngressUpdateByTargetPathResponse =
+  | simulateApiHarnessIngressUpdateByTargetPathResponseSuccess
+  | simulateApiHarnessIngressUpdateByTargetPathResponseError;
+
+export const getSimulateApiHarnessIngressUpdateByTargetPathUrl = (
+  token: string,
+  targetPath: string,
+) => {
+  return `/simulate/api/harness/ingress/${token}/${targetPath}`;
+};
+
+/**
+ * Relay a signed callback URL to the active sandbox without exposing provider headers.
+ */
+export const simulateApiHarnessIngressUpdateByTargetPath = async (
+  token: string,
+  targetPath: string,
+  harnessIngressProxyRequestApi: HarnessIngressProxyRequestApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessIngressUpdateByTargetPathResponse> => {
+  return apiMutator<simulateApiHarnessIngressUpdateByTargetPathResponse>(
+    getSimulateApiHarnessIngressUpdateByTargetPathUrl(token, targetPath),
+    {
+      ...options,
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessIngressProxyRequestApi),
+    },
+  );
+};
+
+export type simulateApiHarnessIngressPartialUpdateByTargetPathResponse200 = {
+  data: Blob;
+  status: 200;
+};
+
+export type simulateApiHarnessIngressPartialUpdateByTargetPathResponse201 = {
+  data: Blob;
+  status: 201;
+};
+
+export type simulateApiHarnessIngressPartialUpdateByTargetPathResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 200 | 201>;
+  };
+
+export type simulateApiHarnessIngressPartialUpdateByTargetPathResponseSuccess =
+  (
+    | simulateApiHarnessIngressPartialUpdateByTargetPathResponse200
+    | simulateApiHarnessIngressPartialUpdateByTargetPathResponse201
+  ) & {
+    headers: Headers;
+  };
+export type simulateApiHarnessIngressPartialUpdateByTargetPathResponseError =
+  simulateApiHarnessIngressPartialUpdateByTargetPathResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessIngressPartialUpdateByTargetPathResponse =
+  | simulateApiHarnessIngressPartialUpdateByTargetPathResponseSuccess
+  | simulateApiHarnessIngressPartialUpdateByTargetPathResponseError;
+
+export const getSimulateApiHarnessIngressPartialUpdateByTargetPathUrl = (
+  token: string,
+  targetPath: string,
+) => {
+  return `/simulate/api/harness/ingress/${token}/${targetPath}`;
+};
+
+/**
+ * Relay a signed callback URL to the active sandbox without exposing provider headers.
+ */
+export const simulateApiHarnessIngressPartialUpdateByTargetPath = async (
+  token: string,
+  targetPath: string,
+  harnessIngressProxyRequestApi: HarnessIngressProxyRequestApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessIngressPartialUpdateByTargetPathResponse> => {
+  return apiMutator<simulateApiHarnessIngressPartialUpdateByTargetPathResponse>(
+    getSimulateApiHarnessIngressPartialUpdateByTargetPathUrl(token, targetPath),
+    {
+      ...options,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessIngressProxyRequestApi),
+    },
+  );
+};
+
+export type simulateApiHarnessIngressDeleteByTargetPathResponse204 = {
+  data: void;
+  status: 204;
+};
+
+export type simulateApiHarnessIngressDeleteByTargetPathResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 204>;
+};
+
+export type simulateApiHarnessIngressDeleteByTargetPathResponseSuccess =
+  simulateApiHarnessIngressDeleteByTargetPathResponse204 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessIngressDeleteByTargetPathResponseError =
+  simulateApiHarnessIngressDeleteByTargetPathResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessIngressDeleteByTargetPathResponse =
+  | simulateApiHarnessIngressDeleteByTargetPathResponseSuccess
+  | simulateApiHarnessIngressDeleteByTargetPathResponseError;
+
+export const getSimulateApiHarnessIngressDeleteByTargetPathUrl = (
+  token: string,
+  targetPath: string,
+) => {
+  return `/simulate/api/harness/ingress/${token}/${targetPath}`;
+};
+
+/**
+ * Relay a signed callback URL to the active sandbox without exposing provider headers.
+ */
+export const simulateApiHarnessIngressDeleteByTargetPath = async (
+  token: string,
+  targetPath: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessIngressDeleteByTargetPathResponse> => {
+  return apiMutator<simulateApiHarnessIngressDeleteByTargetPathResponse>(
+    getSimulateApiHarnessIngressDeleteByTargetPathUrl(token, targetPath),
     {
       ...options,
       method: "DELETE",
@@ -84474,19 +85790,16 @@ export type usageOrganizationBillingPartialUpdateResponse =
   | usageOrganizationBillingPartialUpdateResponseSuccess
   | usageOrganizationBillingPartialUpdateResponseError;
 
-export const getUsageOrganizationBillingPartialUpdateUrl = (
-  billingId: string,
-) => {
-  return `/usage/organization-billing/${billingId}/`;
+export const getUsageOrganizationBillingPartialUpdateUrl = () => {
+  return `/usage/organization-billing/`;
 };
 
 export const usageOrganizationBillingPartialUpdate = async (
-  billingId: string,
   usageOrganizationBillingApi: NonReadonly<UsageOrganizationBillingApi>,
   options?: RequestInit,
 ): Promise<usageOrganizationBillingPartialUpdateResponse> => {
   return apiMutator<usageOrganizationBillingPartialUpdateResponse>(
-    getUsageOrganizationBillingPartialUpdateUrl(billingId),
+    getUsageOrganizationBillingPartialUpdateUrl(),
     {
       ...options,
       method: "PATCH",
@@ -84569,6 +85882,88 @@ export const usageOrganizationBillingRead = async (
     {
       ...options,
       method: "GET",
+    },
+  );
+};
+
+export type usageOrganizationBillingPartialUpdateByBillingIdResponse200 = {
+  data: OrganizationBillingDetailResponseApi;
+  status: 200;
+};
+
+export type usageOrganizationBillingPartialUpdateByBillingIdResponse400 = {
+  data: UsageErrorResponseApi;
+  status: 400;
+};
+
+export type usageOrganizationBillingPartialUpdateByBillingIdResponse401 = {
+  data: UsageErrorResponseApi;
+  status: 401;
+};
+
+export type usageOrganizationBillingPartialUpdateByBillingIdResponse402 = {
+  data: UsageErrorResponseApi;
+  status: 402;
+};
+
+export type usageOrganizationBillingPartialUpdateByBillingIdResponse403 = {
+  data: UsageErrorResponseApi;
+  status: 403;
+};
+
+export type usageOrganizationBillingPartialUpdateByBillingIdResponse404 = {
+  data: UsageErrorResponseApi;
+  status: 404;
+};
+
+export type usageOrganizationBillingPartialUpdateByBillingIdResponse500 = {
+  data: UsageErrorResponseApi;
+  status: 500;
+};
+
+export type usageOrganizationBillingPartialUpdateByBillingIdResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>;
+};
+
+export type usageOrganizationBillingPartialUpdateByBillingIdResponseSuccess =
+  usageOrganizationBillingPartialUpdateByBillingIdResponse200 & {
+    headers: Headers;
+  };
+export type usageOrganizationBillingPartialUpdateByBillingIdResponseError = (
+  | usageOrganizationBillingPartialUpdateByBillingIdResponse400
+  | usageOrganizationBillingPartialUpdateByBillingIdResponse401
+  | usageOrganizationBillingPartialUpdateByBillingIdResponse402
+  | usageOrganizationBillingPartialUpdateByBillingIdResponse403
+  | usageOrganizationBillingPartialUpdateByBillingIdResponse404
+  | usageOrganizationBillingPartialUpdateByBillingIdResponse500
+  | usageOrganizationBillingPartialUpdateByBillingIdResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type usageOrganizationBillingPartialUpdateByBillingIdResponse =
+  | usageOrganizationBillingPartialUpdateByBillingIdResponseSuccess
+  | usageOrganizationBillingPartialUpdateByBillingIdResponseError;
+
+export const getUsageOrganizationBillingPartialUpdateByBillingIdUrl = (
+  billingId: string,
+) => {
+  return `/usage/organization-billing/${billingId}/`;
+};
+
+export const usageOrganizationBillingPartialUpdateByBillingId = async (
+  billingId: string,
+  usageOrganizationBillingApi: NonReadonly<UsageOrganizationBillingApi>,
+  options?: RequestInit,
+): Promise<usageOrganizationBillingPartialUpdateByBillingIdResponse> => {
+  return apiMutator<usageOrganizationBillingPartialUpdateByBillingIdResponse>(
+    getUsageOrganizationBillingPartialUpdateByBillingIdUrl(billingId),
+    {
+      ...options,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(usageOrganizationBillingApi),
     },
   );
 };
@@ -84785,19 +86180,16 @@ export type usageOrganizationSubscriptionCreateResponse =
   | usageOrganizationSubscriptionCreateResponseSuccess
   | usageOrganizationSubscriptionCreateResponseError;
 
-export const getUsageOrganizationSubscriptionCreateUrl = (
-  organizationSubscriptionId: string,
-) => {
-  return `/usage/organization-subscription/${organizationSubscriptionId}/`;
+export const getUsageOrganizationSubscriptionCreateUrl = () => {
+  return `/usage/organization-subscription/`;
 };
 
 export const usageOrganizationSubscriptionCreate = async (
-  organizationSubscriptionId: string,
   usageOrganizationSubscriptionCreateApi: UsageOrganizationSubscriptionCreateApi,
   options?: RequestInit,
 ): Promise<usageOrganizationSubscriptionCreateResponse> => {
   return apiMutator<usageOrganizationSubscriptionCreateResponse>(
-    getUsageOrganizationSubscriptionCreateUrl(organizationSubscriptionId),
+    getUsageOrganizationSubscriptionCreateUrl(),
     {
       ...options,
       method: "POST",
@@ -84867,21 +86259,16 @@ export type usageOrganizationSubscriptionPartialUpdateResponse =
   | usageOrganizationSubscriptionPartialUpdateResponseSuccess
   | usageOrganizationSubscriptionPartialUpdateResponseError;
 
-export const getUsageOrganizationSubscriptionPartialUpdateUrl = (
-  organizationSubscriptionId: string,
-) => {
-  return `/usage/organization-subscription/${organizationSubscriptionId}/`;
+export const getUsageOrganizationSubscriptionPartialUpdateUrl = () => {
+  return `/usage/organization-subscription/`;
 };
 
 export const usageOrganizationSubscriptionPartialUpdate = async (
-  organizationSubscriptionId: string,
   usageOrganizationSubscriptionCreateApi: UsageOrganizationSubscriptionCreateApi,
   options?: RequestInit,
 ): Promise<usageOrganizationSubscriptionPartialUpdateResponse> => {
   return apiMutator<usageOrganizationSubscriptionPartialUpdateResponse>(
-    getUsageOrganizationSubscriptionPartialUpdateUrl(
-      organizationSubscriptionId,
-    ),
+    getUsageOrganizationSubscriptionPartialUpdateUrl(),
     {
       ...options,
       method: "PATCH",
@@ -84951,18 +86338,15 @@ export type usageOrganizationSubscriptionDeleteResponse =
   | usageOrganizationSubscriptionDeleteResponseSuccess
   | usageOrganizationSubscriptionDeleteResponseError;
 
-export const getUsageOrganizationSubscriptionDeleteUrl = (
-  organizationSubscriptionId: string,
-) => {
-  return `/usage/organization-subscription/${organizationSubscriptionId}/`;
+export const getUsageOrganizationSubscriptionDeleteUrl = () => {
+  return `/usage/organization-subscription/`;
 };
 
 export const usageOrganizationSubscriptionDelete = async (
-  organizationSubscriptionId: string,
   options?: RequestInit,
 ): Promise<usageOrganizationSubscriptionDeleteResponse> => {
   return apiMutator<usageOrganizationSubscriptionDeleteResponse>(
-    getUsageOrganizationSubscriptionDeleteUrl(organizationSubscriptionId),
+    getUsageOrganizationSubscriptionDeleteUrl(),
     {
       ...options,
       method: "DELETE",
@@ -85048,6 +86432,285 @@ export const usageOrganizationSubscriptionRead = async (
     },
   );
 };
+
+export type usageOrganizationSubscriptionCreateByOrganizationSubscriptionIdResponse200 =
+  {
+    data: OrganizationSubscriptionMutationResponseApi;
+    status: 200;
+  };
+
+export type usageOrganizationSubscriptionCreateByOrganizationSubscriptionIdResponse400 =
+  {
+    data: UsageErrorResponseApi;
+    status: 400;
+  };
+
+export type usageOrganizationSubscriptionCreateByOrganizationSubscriptionIdResponse401 =
+  {
+    data: UsageErrorResponseApi;
+    status: 401;
+  };
+
+export type usageOrganizationSubscriptionCreateByOrganizationSubscriptionIdResponse402 =
+  {
+    data: UsageErrorResponseApi;
+    status: 402;
+  };
+
+export type usageOrganizationSubscriptionCreateByOrganizationSubscriptionIdResponse403 =
+  {
+    data: UsageErrorResponseApi;
+    status: 403;
+  };
+
+export type usageOrganizationSubscriptionCreateByOrganizationSubscriptionIdResponse404 =
+  {
+    data: UsageErrorResponseApi;
+    status: 404;
+  };
+
+export type usageOrganizationSubscriptionCreateByOrganizationSubscriptionIdResponse500 =
+  {
+    data: UsageErrorResponseApi;
+    status: 500;
+  };
+
+export type usageOrganizationSubscriptionCreateByOrganizationSubscriptionIdResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>;
+  };
+
+export type usageOrganizationSubscriptionCreateByOrganizationSubscriptionIdResponseSuccess =
+  usageOrganizationSubscriptionCreateByOrganizationSubscriptionIdResponse200 & {
+    headers: Headers;
+  };
+export type usageOrganizationSubscriptionCreateByOrganizationSubscriptionIdResponseError =
+  (
+    | usageOrganizationSubscriptionCreateByOrganizationSubscriptionIdResponse400
+    | usageOrganizationSubscriptionCreateByOrganizationSubscriptionIdResponse401
+    | usageOrganizationSubscriptionCreateByOrganizationSubscriptionIdResponse402
+    | usageOrganizationSubscriptionCreateByOrganizationSubscriptionIdResponse403
+    | usageOrganizationSubscriptionCreateByOrganizationSubscriptionIdResponse404
+    | usageOrganizationSubscriptionCreateByOrganizationSubscriptionIdResponse500
+    | usageOrganizationSubscriptionCreateByOrganizationSubscriptionIdResponseDefault
+  ) & {
+    headers: Headers;
+  };
+
+export type usageOrganizationSubscriptionCreateByOrganizationSubscriptionIdResponse =
+
+    | usageOrganizationSubscriptionCreateByOrganizationSubscriptionIdResponseSuccess
+    | usageOrganizationSubscriptionCreateByOrganizationSubscriptionIdResponseError;
+
+export const getUsageOrganizationSubscriptionCreateByOrganizationSubscriptionIdUrl =
+  (organizationSubscriptionId: string) => {
+    return `/usage/organization-subscription/${organizationSubscriptionId}/`;
+  };
+
+export const usageOrganizationSubscriptionCreateByOrganizationSubscriptionId =
+  async (
+    organizationSubscriptionId: string,
+    usageOrganizationSubscriptionCreateApi: UsageOrganizationSubscriptionCreateApi,
+    options?: RequestInit,
+  ): Promise<usageOrganizationSubscriptionCreateByOrganizationSubscriptionIdResponse> => {
+    return apiMutator<usageOrganizationSubscriptionCreateByOrganizationSubscriptionIdResponse>(
+      getUsageOrganizationSubscriptionCreateByOrganizationSubscriptionIdUrl(
+        organizationSubscriptionId,
+      ),
+      {
+        ...options,
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...options?.headers },
+        body: JSON.stringify(usageOrganizationSubscriptionCreateApi),
+      },
+    );
+  };
+
+export type usageOrganizationSubscriptionPartialUpdateByOrganizationSubscriptionIdResponse200 =
+  {
+    data: OrganizationSubscriptionMutationResponseApi;
+    status: 200;
+  };
+
+export type usageOrganizationSubscriptionPartialUpdateByOrganizationSubscriptionIdResponse400 =
+  {
+    data: UsageErrorResponseApi;
+    status: 400;
+  };
+
+export type usageOrganizationSubscriptionPartialUpdateByOrganizationSubscriptionIdResponse401 =
+  {
+    data: UsageErrorResponseApi;
+    status: 401;
+  };
+
+export type usageOrganizationSubscriptionPartialUpdateByOrganizationSubscriptionIdResponse402 =
+  {
+    data: UsageErrorResponseApi;
+    status: 402;
+  };
+
+export type usageOrganizationSubscriptionPartialUpdateByOrganizationSubscriptionIdResponse403 =
+  {
+    data: UsageErrorResponseApi;
+    status: 403;
+  };
+
+export type usageOrganizationSubscriptionPartialUpdateByOrganizationSubscriptionIdResponse404 =
+  {
+    data: UsageErrorResponseApi;
+    status: 404;
+  };
+
+export type usageOrganizationSubscriptionPartialUpdateByOrganizationSubscriptionIdResponse500 =
+  {
+    data: UsageErrorResponseApi;
+    status: 500;
+  };
+
+export type usageOrganizationSubscriptionPartialUpdateByOrganizationSubscriptionIdResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>;
+  };
+
+export type usageOrganizationSubscriptionPartialUpdateByOrganizationSubscriptionIdResponseSuccess =
+  usageOrganizationSubscriptionPartialUpdateByOrganizationSubscriptionIdResponse200 & {
+    headers: Headers;
+  };
+export type usageOrganizationSubscriptionPartialUpdateByOrganizationSubscriptionIdResponseError =
+  (
+    | usageOrganizationSubscriptionPartialUpdateByOrganizationSubscriptionIdResponse400
+    | usageOrganizationSubscriptionPartialUpdateByOrganizationSubscriptionIdResponse401
+    | usageOrganizationSubscriptionPartialUpdateByOrganizationSubscriptionIdResponse402
+    | usageOrganizationSubscriptionPartialUpdateByOrganizationSubscriptionIdResponse403
+    | usageOrganizationSubscriptionPartialUpdateByOrganizationSubscriptionIdResponse404
+    | usageOrganizationSubscriptionPartialUpdateByOrganizationSubscriptionIdResponse500
+    | usageOrganizationSubscriptionPartialUpdateByOrganizationSubscriptionIdResponseDefault
+  ) & {
+    headers: Headers;
+  };
+
+export type usageOrganizationSubscriptionPartialUpdateByOrganizationSubscriptionIdResponse =
+
+    | usageOrganizationSubscriptionPartialUpdateByOrganizationSubscriptionIdResponseSuccess
+    | usageOrganizationSubscriptionPartialUpdateByOrganizationSubscriptionIdResponseError;
+
+export const getUsageOrganizationSubscriptionPartialUpdateByOrganizationSubscriptionIdUrl =
+  (organizationSubscriptionId: string) => {
+    return `/usage/organization-subscription/${organizationSubscriptionId}/`;
+  };
+
+export const usageOrganizationSubscriptionPartialUpdateByOrganizationSubscriptionId =
+  async (
+    organizationSubscriptionId: string,
+    usageOrganizationSubscriptionCreateApi: UsageOrganizationSubscriptionCreateApi,
+    options?: RequestInit,
+  ): Promise<usageOrganizationSubscriptionPartialUpdateByOrganizationSubscriptionIdResponse> => {
+    return apiMutator<usageOrganizationSubscriptionPartialUpdateByOrganizationSubscriptionIdResponse>(
+      getUsageOrganizationSubscriptionPartialUpdateByOrganizationSubscriptionIdUrl(
+        organizationSubscriptionId,
+      ),
+      {
+        ...options,
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...options?.headers },
+        body: JSON.stringify(usageOrganizationSubscriptionCreateApi),
+      },
+    );
+  };
+
+export type usageOrganizationSubscriptionDeleteByOrganizationSubscriptionIdResponse200 =
+  {
+    data: UsageStringResponseApi;
+    status: 200;
+  };
+
+export type usageOrganizationSubscriptionDeleteByOrganizationSubscriptionIdResponse400 =
+  {
+    data: UsageErrorResponseApi;
+    status: 400;
+  };
+
+export type usageOrganizationSubscriptionDeleteByOrganizationSubscriptionIdResponse401 =
+  {
+    data: UsageErrorResponseApi;
+    status: 401;
+  };
+
+export type usageOrganizationSubscriptionDeleteByOrganizationSubscriptionIdResponse402 =
+  {
+    data: UsageErrorResponseApi;
+    status: 402;
+  };
+
+export type usageOrganizationSubscriptionDeleteByOrganizationSubscriptionIdResponse403 =
+  {
+    data: UsageErrorResponseApi;
+    status: 403;
+  };
+
+export type usageOrganizationSubscriptionDeleteByOrganizationSubscriptionIdResponse404 =
+  {
+    data: UsageErrorResponseApi;
+    status: 404;
+  };
+
+export type usageOrganizationSubscriptionDeleteByOrganizationSubscriptionIdResponse500 =
+  {
+    data: UsageErrorResponseApi;
+    status: 500;
+  };
+
+export type usageOrganizationSubscriptionDeleteByOrganizationSubscriptionIdResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>;
+  };
+
+export type usageOrganizationSubscriptionDeleteByOrganizationSubscriptionIdResponseSuccess =
+  usageOrganizationSubscriptionDeleteByOrganizationSubscriptionIdResponse200 & {
+    headers: Headers;
+  };
+export type usageOrganizationSubscriptionDeleteByOrganizationSubscriptionIdResponseError =
+  (
+    | usageOrganizationSubscriptionDeleteByOrganizationSubscriptionIdResponse400
+    | usageOrganizationSubscriptionDeleteByOrganizationSubscriptionIdResponse401
+    | usageOrganizationSubscriptionDeleteByOrganizationSubscriptionIdResponse402
+    | usageOrganizationSubscriptionDeleteByOrganizationSubscriptionIdResponse403
+    | usageOrganizationSubscriptionDeleteByOrganizationSubscriptionIdResponse404
+    | usageOrganizationSubscriptionDeleteByOrganizationSubscriptionIdResponse500
+    | usageOrganizationSubscriptionDeleteByOrganizationSubscriptionIdResponseDefault
+  ) & {
+    headers: Headers;
+  };
+
+export type usageOrganizationSubscriptionDeleteByOrganizationSubscriptionIdResponse =
+
+    | usageOrganizationSubscriptionDeleteByOrganizationSubscriptionIdResponseSuccess
+    | usageOrganizationSubscriptionDeleteByOrganizationSubscriptionIdResponseError;
+
+export const getUsageOrganizationSubscriptionDeleteByOrganizationSubscriptionIdUrl =
+  (organizationSubscriptionId: string) => {
+    return `/usage/organization-subscription/${organizationSubscriptionId}/`;
+  };
+
+export const usageOrganizationSubscriptionDeleteByOrganizationSubscriptionId =
+  async (
+    organizationSubscriptionId: string,
+    options?: RequestInit,
+  ): Promise<usageOrganizationSubscriptionDeleteByOrganizationSubscriptionIdResponse> => {
+    return apiMutator<usageOrganizationSubscriptionDeleteByOrganizationSubscriptionIdResponse>(
+      getUsageOrganizationSubscriptionDeleteByOrganizationSubscriptionIdUrl(
+        organizationSubscriptionId,
+      ),
+      {
+        ...options,
+        method: "DELETE",
+      },
+    );
+  };
 
 export type usageOrganizationsListResponse200 = {
   data: OrganizationListResponseApi;
@@ -85336,24 +86999,20 @@ export type usagePricingCreateResponse =
   | usagePricingCreateResponseSuccess
   | usagePricingCreateResponseError;
 
-export const getUsagePricingCreateUrl = (pricingId: string) => {
-  return `/usage/pricing/${pricingId}/`;
+export const getUsagePricingCreateUrl = () => {
+  return `/usage/pricing/`;
 };
 
 export const usagePricingCreate = async (
-  pricingId: string,
   usagePricingCreateApi: NonReadonly<UsagePricingCreateApi>,
   options?: RequestInit,
 ): Promise<usagePricingCreateResponse> => {
-  return apiMutator<usagePricingCreateResponse>(
-    getUsagePricingCreateUrl(pricingId),
-    {
-      ...options,
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(usagePricingCreateApi),
-    },
-  );
+  return apiMutator<usagePricingCreateResponse>(getUsagePricingCreateUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(usagePricingCreateApi),
+  });
 };
 
 export type usagePricingPartialUpdateResponse200 = {
@@ -85416,17 +87075,16 @@ export type usagePricingPartialUpdateResponse =
   | usagePricingPartialUpdateResponseSuccess
   | usagePricingPartialUpdateResponseError;
 
-export const getUsagePricingPartialUpdateUrl = (pricingId: string) => {
-  return `/usage/pricing/${pricingId}/`;
+export const getUsagePricingPartialUpdateUrl = () => {
+  return `/usage/pricing/`;
 };
 
 export const usagePricingPartialUpdate = async (
-  pricingId: string,
   usagePricingCreateApi: NonReadonly<UsagePricingCreateApi>,
   options?: RequestInit,
 ): Promise<usagePricingPartialUpdateResponse> => {
   return apiMutator<usagePricingPartialUpdateResponse>(
-    getUsagePricingPartialUpdateUrl(pricingId),
+    getUsagePricingPartialUpdateUrl(),
     {
       ...options,
       method: "PATCH",
@@ -85496,21 +87154,17 @@ export type usagePricingDeleteResponse =
   | usagePricingDeleteResponseSuccess
   | usagePricingDeleteResponseError;
 
-export const getUsagePricingDeleteUrl = (pricingId: string) => {
-  return `/usage/pricing/${pricingId}/`;
+export const getUsagePricingDeleteUrl = () => {
+  return `/usage/pricing/`;
 };
 
 export const usagePricingDelete = async (
-  pricingId: string,
   options?: RequestInit,
 ): Promise<usagePricingDeleteResponse> => {
-  return apiMutator<usagePricingDeleteResponse>(
-    getUsagePricingDeleteUrl(pricingId),
-    {
-      ...options,
-      method: "DELETE",
-    },
-  );
+  return apiMutator<usagePricingDeleteResponse>(getUsagePricingDeleteUrl(), {
+    ...options,
+    method: "DELETE",
+  });
 };
 
 export type usagePricingReadResponse200 = {
@@ -85585,6 +87239,245 @@ export const usagePricingRead = async (
     {
       ...options,
       method: "GET",
+    },
+  );
+};
+
+export type usagePricingCreateByPricingIdResponse200 = {
+  data: PricingDetailResponseApi;
+  status: 200;
+};
+
+export type usagePricingCreateByPricingIdResponse400 = {
+  data: UsageErrorResponseApi;
+  status: 400;
+};
+
+export type usagePricingCreateByPricingIdResponse401 = {
+  data: UsageErrorResponseApi;
+  status: 401;
+};
+
+export type usagePricingCreateByPricingIdResponse402 = {
+  data: UsageErrorResponseApi;
+  status: 402;
+};
+
+export type usagePricingCreateByPricingIdResponse403 = {
+  data: UsageErrorResponseApi;
+  status: 403;
+};
+
+export type usagePricingCreateByPricingIdResponse404 = {
+  data: UsageErrorResponseApi;
+  status: 404;
+};
+
+export type usagePricingCreateByPricingIdResponse500 = {
+  data: UsageErrorResponseApi;
+  status: 500;
+};
+
+export type usagePricingCreateByPricingIdResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>;
+};
+
+export type usagePricingCreateByPricingIdResponseSuccess =
+  usagePricingCreateByPricingIdResponse200 & {
+    headers: Headers;
+  };
+export type usagePricingCreateByPricingIdResponseError = (
+  | usagePricingCreateByPricingIdResponse400
+  | usagePricingCreateByPricingIdResponse401
+  | usagePricingCreateByPricingIdResponse402
+  | usagePricingCreateByPricingIdResponse403
+  | usagePricingCreateByPricingIdResponse404
+  | usagePricingCreateByPricingIdResponse500
+  | usagePricingCreateByPricingIdResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type usagePricingCreateByPricingIdResponse =
+  | usagePricingCreateByPricingIdResponseSuccess
+  | usagePricingCreateByPricingIdResponseError;
+
+export const getUsagePricingCreateByPricingIdUrl = (pricingId: string) => {
+  return `/usage/pricing/${pricingId}/`;
+};
+
+export const usagePricingCreateByPricingId = async (
+  pricingId: string,
+  usagePricingCreateApi: NonReadonly<UsagePricingCreateApi>,
+  options?: RequestInit,
+): Promise<usagePricingCreateByPricingIdResponse> => {
+  return apiMutator<usagePricingCreateByPricingIdResponse>(
+    getUsagePricingCreateByPricingIdUrl(pricingId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(usagePricingCreateApi),
+    },
+  );
+};
+
+export type usagePricingPartialUpdateByPricingIdResponse200 = {
+  data: PricingReadResponseApi;
+  status: 200;
+};
+
+export type usagePricingPartialUpdateByPricingIdResponse400 = {
+  data: UsageErrorResponseApi;
+  status: 400;
+};
+
+export type usagePricingPartialUpdateByPricingIdResponse401 = {
+  data: UsageErrorResponseApi;
+  status: 401;
+};
+
+export type usagePricingPartialUpdateByPricingIdResponse402 = {
+  data: UsageErrorResponseApi;
+  status: 402;
+};
+
+export type usagePricingPartialUpdateByPricingIdResponse403 = {
+  data: UsageErrorResponseApi;
+  status: 403;
+};
+
+export type usagePricingPartialUpdateByPricingIdResponse404 = {
+  data: UsageErrorResponseApi;
+  status: 404;
+};
+
+export type usagePricingPartialUpdateByPricingIdResponse500 = {
+  data: UsageErrorResponseApi;
+  status: 500;
+};
+
+export type usagePricingPartialUpdateByPricingIdResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>;
+};
+
+export type usagePricingPartialUpdateByPricingIdResponseSuccess =
+  usagePricingPartialUpdateByPricingIdResponse200 & {
+    headers: Headers;
+  };
+export type usagePricingPartialUpdateByPricingIdResponseError = (
+  | usagePricingPartialUpdateByPricingIdResponse400
+  | usagePricingPartialUpdateByPricingIdResponse401
+  | usagePricingPartialUpdateByPricingIdResponse402
+  | usagePricingPartialUpdateByPricingIdResponse403
+  | usagePricingPartialUpdateByPricingIdResponse404
+  | usagePricingPartialUpdateByPricingIdResponse500
+  | usagePricingPartialUpdateByPricingIdResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type usagePricingPartialUpdateByPricingIdResponse =
+  | usagePricingPartialUpdateByPricingIdResponseSuccess
+  | usagePricingPartialUpdateByPricingIdResponseError;
+
+export const getUsagePricingPartialUpdateByPricingIdUrl = (
+  pricingId: string,
+) => {
+  return `/usage/pricing/${pricingId}/`;
+};
+
+export const usagePricingPartialUpdateByPricingId = async (
+  pricingId: string,
+  usagePricingCreateApi: NonReadonly<UsagePricingCreateApi>,
+  options?: RequestInit,
+): Promise<usagePricingPartialUpdateByPricingIdResponse> => {
+  return apiMutator<usagePricingPartialUpdateByPricingIdResponse>(
+    getUsagePricingPartialUpdateByPricingIdUrl(pricingId),
+    {
+      ...options,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(usagePricingCreateApi),
+    },
+  );
+};
+
+export type usagePricingDeleteByPricingIdResponse200 = {
+  data: UsageStringResponseApi;
+  status: 200;
+};
+
+export type usagePricingDeleteByPricingIdResponse400 = {
+  data: UsageErrorResponseApi;
+  status: 400;
+};
+
+export type usagePricingDeleteByPricingIdResponse401 = {
+  data: UsageErrorResponseApi;
+  status: 401;
+};
+
+export type usagePricingDeleteByPricingIdResponse402 = {
+  data: UsageErrorResponseApi;
+  status: 402;
+};
+
+export type usagePricingDeleteByPricingIdResponse403 = {
+  data: UsageErrorResponseApi;
+  status: 403;
+};
+
+export type usagePricingDeleteByPricingIdResponse404 = {
+  data: UsageErrorResponseApi;
+  status: 404;
+};
+
+export type usagePricingDeleteByPricingIdResponse500 = {
+  data: UsageErrorResponseApi;
+  status: 500;
+};
+
+export type usagePricingDeleteByPricingIdResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>;
+};
+
+export type usagePricingDeleteByPricingIdResponseSuccess =
+  usagePricingDeleteByPricingIdResponse200 & {
+    headers: Headers;
+  };
+export type usagePricingDeleteByPricingIdResponseError = (
+  | usagePricingDeleteByPricingIdResponse400
+  | usagePricingDeleteByPricingIdResponse401
+  | usagePricingDeleteByPricingIdResponse402
+  | usagePricingDeleteByPricingIdResponse403
+  | usagePricingDeleteByPricingIdResponse404
+  | usagePricingDeleteByPricingIdResponse500
+  | usagePricingDeleteByPricingIdResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type usagePricingDeleteByPricingIdResponse =
+  | usagePricingDeleteByPricingIdResponseSuccess
+  | usagePricingDeleteByPricingIdResponseError;
+
+export const getUsagePricingDeleteByPricingIdUrl = (pricingId: string) => {
+  return `/usage/pricing/${pricingId}/`;
+};
+
+export const usagePricingDeleteByPricingId = async (
+  pricingId: string,
+  options?: RequestInit,
+): Promise<usagePricingDeleteByPricingIdResponse> => {
+  return apiMutator<usagePricingDeleteByPricingIdResponse>(
+    getUsagePricingDeleteByPricingIdUrl(pricingId),
+    {
+      ...options,
+      method: "DELETE",
     },
   );
 };
@@ -85722,17 +87615,16 @@ export type usageRateLimitsCreateResponse =
   | usageRateLimitsCreateResponseSuccess
   | usageRateLimitsCreateResponseError;
 
-export const getUsageRateLimitsCreateUrl = (rateLimitId: string) => {
-  return `/usage/rate-limits/${rateLimitId}/`;
+export const getUsageRateLimitsCreateUrl = () => {
+  return `/usage/rate-limits/`;
 };
 
 export const usageRateLimitsCreate = async (
-  rateLimitId: string,
   usageRateLimitCreateApi: NonReadonly<UsageRateLimitCreateApi>,
   options?: RequestInit,
 ): Promise<usageRateLimitsCreateResponse> => {
   return apiMutator<usageRateLimitsCreateResponse>(
-    getUsageRateLimitsCreateUrl(rateLimitId),
+    getUsageRateLimitsCreateUrl(),
     {
       ...options,
       method: "POST",
@@ -85802,17 +87694,16 @@ export type usageRateLimitsPartialUpdateResponse =
   | usageRateLimitsPartialUpdateResponseSuccess
   | usageRateLimitsPartialUpdateResponseError;
 
-export const getUsageRateLimitsPartialUpdateUrl = (rateLimitId: string) => {
-  return `/usage/rate-limits/${rateLimitId}/`;
+export const getUsageRateLimitsPartialUpdateUrl = () => {
+  return `/usage/rate-limits/`;
 };
 
 export const usageRateLimitsPartialUpdate = async (
-  rateLimitId: string,
   usageRateLimitCreateApi: NonReadonly<UsageRateLimitCreateApi>,
   options?: RequestInit,
 ): Promise<usageRateLimitsPartialUpdateResponse> => {
   return apiMutator<usageRateLimitsPartialUpdateResponse>(
-    getUsageRateLimitsPartialUpdateUrl(rateLimitId),
+    getUsageRateLimitsPartialUpdateUrl(),
     {
       ...options,
       method: "PATCH",
@@ -85882,16 +87773,15 @@ export type usageRateLimitsDeleteResponse =
   | usageRateLimitsDeleteResponseSuccess
   | usageRateLimitsDeleteResponseError;
 
-export const getUsageRateLimitsDeleteUrl = (rateLimitId: string) => {
-  return `/usage/rate-limits/${rateLimitId}/`;
+export const getUsageRateLimitsDeleteUrl = () => {
+  return `/usage/rate-limits/`;
 };
 
 export const usageRateLimitsDelete = async (
-  rateLimitId: string,
   options?: RequestInit,
 ): Promise<usageRateLimitsDeleteResponse> => {
   return apiMutator<usageRateLimitsDeleteResponse>(
-    getUsageRateLimitsDeleteUrl(rateLimitId),
+    getUsageRateLimitsDeleteUrl(),
     {
       ...options,
       method: "DELETE",
@@ -85972,6 +87862,249 @@ export const usageRateLimitsRead = async (
     {
       ...options,
       method: "GET",
+    },
+  );
+};
+
+export type usageRateLimitsCreateByRateLimitIdResponse200 = {
+  data: RateLimitMutationResponseApi;
+  status: 200;
+};
+
+export type usageRateLimitsCreateByRateLimitIdResponse400 = {
+  data: UsageErrorResponseApi;
+  status: 400;
+};
+
+export type usageRateLimitsCreateByRateLimitIdResponse401 = {
+  data: UsageErrorResponseApi;
+  status: 401;
+};
+
+export type usageRateLimitsCreateByRateLimitIdResponse402 = {
+  data: UsageErrorResponseApi;
+  status: 402;
+};
+
+export type usageRateLimitsCreateByRateLimitIdResponse403 = {
+  data: UsageErrorResponseApi;
+  status: 403;
+};
+
+export type usageRateLimitsCreateByRateLimitIdResponse404 = {
+  data: UsageErrorResponseApi;
+  status: 404;
+};
+
+export type usageRateLimitsCreateByRateLimitIdResponse500 = {
+  data: UsageErrorResponseApi;
+  status: 500;
+};
+
+export type usageRateLimitsCreateByRateLimitIdResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>;
+};
+
+export type usageRateLimitsCreateByRateLimitIdResponseSuccess =
+  usageRateLimitsCreateByRateLimitIdResponse200 & {
+    headers: Headers;
+  };
+export type usageRateLimitsCreateByRateLimitIdResponseError = (
+  | usageRateLimitsCreateByRateLimitIdResponse400
+  | usageRateLimitsCreateByRateLimitIdResponse401
+  | usageRateLimitsCreateByRateLimitIdResponse402
+  | usageRateLimitsCreateByRateLimitIdResponse403
+  | usageRateLimitsCreateByRateLimitIdResponse404
+  | usageRateLimitsCreateByRateLimitIdResponse500
+  | usageRateLimitsCreateByRateLimitIdResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type usageRateLimitsCreateByRateLimitIdResponse =
+  | usageRateLimitsCreateByRateLimitIdResponseSuccess
+  | usageRateLimitsCreateByRateLimitIdResponseError;
+
+export const getUsageRateLimitsCreateByRateLimitIdUrl = (
+  rateLimitId: string,
+) => {
+  return `/usage/rate-limits/${rateLimitId}/`;
+};
+
+export const usageRateLimitsCreateByRateLimitId = async (
+  rateLimitId: string,
+  usageRateLimitCreateApi: NonReadonly<UsageRateLimitCreateApi>,
+  options?: RequestInit,
+): Promise<usageRateLimitsCreateByRateLimitIdResponse> => {
+  return apiMutator<usageRateLimitsCreateByRateLimitIdResponse>(
+    getUsageRateLimitsCreateByRateLimitIdUrl(rateLimitId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(usageRateLimitCreateApi),
+    },
+  );
+};
+
+export type usageRateLimitsPartialUpdateByRateLimitIdResponse200 = {
+  data: RateLimitDetailResponseApi;
+  status: 200;
+};
+
+export type usageRateLimitsPartialUpdateByRateLimitIdResponse400 = {
+  data: UsageErrorResponseApi;
+  status: 400;
+};
+
+export type usageRateLimitsPartialUpdateByRateLimitIdResponse401 = {
+  data: UsageErrorResponseApi;
+  status: 401;
+};
+
+export type usageRateLimitsPartialUpdateByRateLimitIdResponse402 = {
+  data: UsageErrorResponseApi;
+  status: 402;
+};
+
+export type usageRateLimitsPartialUpdateByRateLimitIdResponse403 = {
+  data: UsageErrorResponseApi;
+  status: 403;
+};
+
+export type usageRateLimitsPartialUpdateByRateLimitIdResponse404 = {
+  data: UsageErrorResponseApi;
+  status: 404;
+};
+
+export type usageRateLimitsPartialUpdateByRateLimitIdResponse500 = {
+  data: UsageErrorResponseApi;
+  status: 500;
+};
+
+export type usageRateLimitsPartialUpdateByRateLimitIdResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>;
+};
+
+export type usageRateLimitsPartialUpdateByRateLimitIdResponseSuccess =
+  usageRateLimitsPartialUpdateByRateLimitIdResponse200 & {
+    headers: Headers;
+  };
+export type usageRateLimitsPartialUpdateByRateLimitIdResponseError = (
+  | usageRateLimitsPartialUpdateByRateLimitIdResponse400
+  | usageRateLimitsPartialUpdateByRateLimitIdResponse401
+  | usageRateLimitsPartialUpdateByRateLimitIdResponse402
+  | usageRateLimitsPartialUpdateByRateLimitIdResponse403
+  | usageRateLimitsPartialUpdateByRateLimitIdResponse404
+  | usageRateLimitsPartialUpdateByRateLimitIdResponse500
+  | usageRateLimitsPartialUpdateByRateLimitIdResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type usageRateLimitsPartialUpdateByRateLimitIdResponse =
+  | usageRateLimitsPartialUpdateByRateLimitIdResponseSuccess
+  | usageRateLimitsPartialUpdateByRateLimitIdResponseError;
+
+export const getUsageRateLimitsPartialUpdateByRateLimitIdUrl = (
+  rateLimitId: string,
+) => {
+  return `/usage/rate-limits/${rateLimitId}/`;
+};
+
+export const usageRateLimitsPartialUpdateByRateLimitId = async (
+  rateLimitId: string,
+  usageRateLimitCreateApi: NonReadonly<UsageRateLimitCreateApi>,
+  options?: RequestInit,
+): Promise<usageRateLimitsPartialUpdateByRateLimitIdResponse> => {
+  return apiMutator<usageRateLimitsPartialUpdateByRateLimitIdResponse>(
+    getUsageRateLimitsPartialUpdateByRateLimitIdUrl(rateLimitId),
+    {
+      ...options,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(usageRateLimitCreateApi),
+    },
+  );
+};
+
+export type usageRateLimitsDeleteByRateLimitIdResponse200 = {
+  data: UsageStringResponseApi;
+  status: 200;
+};
+
+export type usageRateLimitsDeleteByRateLimitIdResponse400 = {
+  data: UsageErrorResponseApi;
+  status: 400;
+};
+
+export type usageRateLimitsDeleteByRateLimitIdResponse401 = {
+  data: UsageErrorResponseApi;
+  status: 401;
+};
+
+export type usageRateLimitsDeleteByRateLimitIdResponse402 = {
+  data: UsageErrorResponseApi;
+  status: 402;
+};
+
+export type usageRateLimitsDeleteByRateLimitIdResponse403 = {
+  data: UsageErrorResponseApi;
+  status: 403;
+};
+
+export type usageRateLimitsDeleteByRateLimitIdResponse404 = {
+  data: UsageErrorResponseApi;
+  status: 404;
+};
+
+export type usageRateLimitsDeleteByRateLimitIdResponse500 = {
+  data: UsageErrorResponseApi;
+  status: 500;
+};
+
+export type usageRateLimitsDeleteByRateLimitIdResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>;
+};
+
+export type usageRateLimitsDeleteByRateLimitIdResponseSuccess =
+  usageRateLimitsDeleteByRateLimitIdResponse200 & {
+    headers: Headers;
+  };
+export type usageRateLimitsDeleteByRateLimitIdResponseError = (
+  | usageRateLimitsDeleteByRateLimitIdResponse400
+  | usageRateLimitsDeleteByRateLimitIdResponse401
+  | usageRateLimitsDeleteByRateLimitIdResponse402
+  | usageRateLimitsDeleteByRateLimitIdResponse403
+  | usageRateLimitsDeleteByRateLimitIdResponse404
+  | usageRateLimitsDeleteByRateLimitIdResponse500
+  | usageRateLimitsDeleteByRateLimitIdResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type usageRateLimitsDeleteByRateLimitIdResponse =
+  | usageRateLimitsDeleteByRateLimitIdResponseSuccess
+  | usageRateLimitsDeleteByRateLimitIdResponseError;
+
+export const getUsageRateLimitsDeleteByRateLimitIdUrl = (
+  rateLimitId: string,
+) => {
+  return `/usage/rate-limits/${rateLimitId}/`;
+};
+
+export const usageRateLimitsDeleteByRateLimitId = async (
+  rateLimitId: string,
+  options?: RequestInit,
+): Promise<usageRateLimitsDeleteByRateLimitIdResponse> => {
+  return apiMutator<usageRateLimitsDeleteByRateLimitIdResponse>(
+    getUsageRateLimitsDeleteByRateLimitIdUrl(rateLimitId),
+    {
+      ...options,
+      method: "DELETE",
     },
   );
 };
@@ -86112,17 +88245,16 @@ export type usageResourceLimitsCreateResponse =
   | usageResourceLimitsCreateResponseSuccess
   | usageResourceLimitsCreateResponseError;
 
-export const getUsageResourceLimitsCreateUrl = (resourceLimitId: string) => {
-  return `/usage/resource-limits/${resourceLimitId}/`;
+export const getUsageResourceLimitsCreateUrl = () => {
+  return `/usage/resource-limits/`;
 };
 
 export const usageResourceLimitsCreate = async (
-  resourceLimitId: string,
   usageResourceLimitCreateApi: NonReadonly<UsageResourceLimitCreateApi>,
   options?: RequestInit,
 ): Promise<usageResourceLimitsCreateResponse> => {
   return apiMutator<usageResourceLimitsCreateResponse>(
-    getUsageResourceLimitsCreateUrl(resourceLimitId),
+    getUsageResourceLimitsCreateUrl(),
     {
       ...options,
       method: "POST",
@@ -86192,19 +88324,16 @@ export type usageResourceLimitsPartialUpdateResponse =
   | usageResourceLimitsPartialUpdateResponseSuccess
   | usageResourceLimitsPartialUpdateResponseError;
 
-export const getUsageResourceLimitsPartialUpdateUrl = (
-  resourceLimitId: string,
-) => {
-  return `/usage/resource-limits/${resourceLimitId}/`;
+export const getUsageResourceLimitsPartialUpdateUrl = () => {
+  return `/usage/resource-limits/`;
 };
 
 export const usageResourceLimitsPartialUpdate = async (
-  resourceLimitId: string,
   usageResourceLimitCreateApi: NonReadonly<UsageResourceLimitCreateApi>,
   options?: RequestInit,
 ): Promise<usageResourceLimitsPartialUpdateResponse> => {
   return apiMutator<usageResourceLimitsPartialUpdateResponse>(
-    getUsageResourceLimitsPartialUpdateUrl(resourceLimitId),
+    getUsageResourceLimitsPartialUpdateUrl(),
     {
       ...options,
       method: "PATCH",
@@ -86274,16 +88403,15 @@ export type usageResourceLimitsDeleteResponse =
   | usageResourceLimitsDeleteResponseSuccess
   | usageResourceLimitsDeleteResponseError;
 
-export const getUsageResourceLimitsDeleteUrl = (resourceLimitId: string) => {
-  return `/usage/resource-limits/${resourceLimitId}/`;
+export const getUsageResourceLimitsDeleteUrl = () => {
+  return `/usage/resource-limits/`;
 };
 
 export const usageResourceLimitsDelete = async (
-  resourceLimitId: string,
   options?: RequestInit,
 ): Promise<usageResourceLimitsDeleteResponse> => {
   return apiMutator<usageResourceLimitsDeleteResponse>(
-    getUsageResourceLimitsDeleteUrl(resourceLimitId),
+    getUsageResourceLimitsDeleteUrl(),
     {
       ...options,
       method: "DELETE",
@@ -86364,6 +88492,249 @@ export const usageResourceLimitsRead = async (
     {
       ...options,
       method: "GET",
+    },
+  );
+};
+
+export type usageResourceLimitsCreateByResourceLimitIdResponse200 = {
+  data: ResourceLimitMutationResponseApi;
+  status: 200;
+};
+
+export type usageResourceLimitsCreateByResourceLimitIdResponse400 = {
+  data: UsageErrorResponseApi;
+  status: 400;
+};
+
+export type usageResourceLimitsCreateByResourceLimitIdResponse401 = {
+  data: UsageErrorResponseApi;
+  status: 401;
+};
+
+export type usageResourceLimitsCreateByResourceLimitIdResponse402 = {
+  data: UsageErrorResponseApi;
+  status: 402;
+};
+
+export type usageResourceLimitsCreateByResourceLimitIdResponse403 = {
+  data: UsageErrorResponseApi;
+  status: 403;
+};
+
+export type usageResourceLimitsCreateByResourceLimitIdResponse404 = {
+  data: UsageErrorResponseApi;
+  status: 404;
+};
+
+export type usageResourceLimitsCreateByResourceLimitIdResponse500 = {
+  data: UsageErrorResponseApi;
+  status: 500;
+};
+
+export type usageResourceLimitsCreateByResourceLimitIdResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>;
+};
+
+export type usageResourceLimitsCreateByResourceLimitIdResponseSuccess =
+  usageResourceLimitsCreateByResourceLimitIdResponse200 & {
+    headers: Headers;
+  };
+export type usageResourceLimitsCreateByResourceLimitIdResponseError = (
+  | usageResourceLimitsCreateByResourceLimitIdResponse400
+  | usageResourceLimitsCreateByResourceLimitIdResponse401
+  | usageResourceLimitsCreateByResourceLimitIdResponse402
+  | usageResourceLimitsCreateByResourceLimitIdResponse403
+  | usageResourceLimitsCreateByResourceLimitIdResponse404
+  | usageResourceLimitsCreateByResourceLimitIdResponse500
+  | usageResourceLimitsCreateByResourceLimitIdResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type usageResourceLimitsCreateByResourceLimitIdResponse =
+  | usageResourceLimitsCreateByResourceLimitIdResponseSuccess
+  | usageResourceLimitsCreateByResourceLimitIdResponseError;
+
+export const getUsageResourceLimitsCreateByResourceLimitIdUrl = (
+  resourceLimitId: string,
+) => {
+  return `/usage/resource-limits/${resourceLimitId}/`;
+};
+
+export const usageResourceLimitsCreateByResourceLimitId = async (
+  resourceLimitId: string,
+  usageResourceLimitCreateApi: NonReadonly<UsageResourceLimitCreateApi>,
+  options?: RequestInit,
+): Promise<usageResourceLimitsCreateByResourceLimitIdResponse> => {
+  return apiMutator<usageResourceLimitsCreateByResourceLimitIdResponse>(
+    getUsageResourceLimitsCreateByResourceLimitIdUrl(resourceLimitId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(usageResourceLimitCreateApi),
+    },
+  );
+};
+
+export type usageResourceLimitsPartialUpdateByResourceLimitIdResponse200 = {
+  data: ResourceLimitDetailResponseApi;
+  status: 200;
+};
+
+export type usageResourceLimitsPartialUpdateByResourceLimitIdResponse400 = {
+  data: UsageErrorResponseApi;
+  status: 400;
+};
+
+export type usageResourceLimitsPartialUpdateByResourceLimitIdResponse401 = {
+  data: UsageErrorResponseApi;
+  status: 401;
+};
+
+export type usageResourceLimitsPartialUpdateByResourceLimitIdResponse402 = {
+  data: UsageErrorResponseApi;
+  status: 402;
+};
+
+export type usageResourceLimitsPartialUpdateByResourceLimitIdResponse403 = {
+  data: UsageErrorResponseApi;
+  status: 403;
+};
+
+export type usageResourceLimitsPartialUpdateByResourceLimitIdResponse404 = {
+  data: UsageErrorResponseApi;
+  status: 404;
+};
+
+export type usageResourceLimitsPartialUpdateByResourceLimitIdResponse500 = {
+  data: UsageErrorResponseApi;
+  status: 500;
+};
+
+export type usageResourceLimitsPartialUpdateByResourceLimitIdResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>;
+};
+
+export type usageResourceLimitsPartialUpdateByResourceLimitIdResponseSuccess =
+  usageResourceLimitsPartialUpdateByResourceLimitIdResponse200 & {
+    headers: Headers;
+  };
+export type usageResourceLimitsPartialUpdateByResourceLimitIdResponseError = (
+  | usageResourceLimitsPartialUpdateByResourceLimitIdResponse400
+  | usageResourceLimitsPartialUpdateByResourceLimitIdResponse401
+  | usageResourceLimitsPartialUpdateByResourceLimitIdResponse402
+  | usageResourceLimitsPartialUpdateByResourceLimitIdResponse403
+  | usageResourceLimitsPartialUpdateByResourceLimitIdResponse404
+  | usageResourceLimitsPartialUpdateByResourceLimitIdResponse500
+  | usageResourceLimitsPartialUpdateByResourceLimitIdResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type usageResourceLimitsPartialUpdateByResourceLimitIdResponse =
+  | usageResourceLimitsPartialUpdateByResourceLimitIdResponseSuccess
+  | usageResourceLimitsPartialUpdateByResourceLimitIdResponseError;
+
+export const getUsageResourceLimitsPartialUpdateByResourceLimitIdUrl = (
+  resourceLimitId: string,
+) => {
+  return `/usage/resource-limits/${resourceLimitId}/`;
+};
+
+export const usageResourceLimitsPartialUpdateByResourceLimitId = async (
+  resourceLimitId: string,
+  usageResourceLimitCreateApi: NonReadonly<UsageResourceLimitCreateApi>,
+  options?: RequestInit,
+): Promise<usageResourceLimitsPartialUpdateByResourceLimitIdResponse> => {
+  return apiMutator<usageResourceLimitsPartialUpdateByResourceLimitIdResponse>(
+    getUsageResourceLimitsPartialUpdateByResourceLimitIdUrl(resourceLimitId),
+    {
+      ...options,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(usageResourceLimitCreateApi),
+    },
+  );
+};
+
+export type usageResourceLimitsDeleteByResourceLimitIdResponse200 = {
+  data: UsageStringResponseApi;
+  status: 200;
+};
+
+export type usageResourceLimitsDeleteByResourceLimitIdResponse400 = {
+  data: UsageErrorResponseApi;
+  status: 400;
+};
+
+export type usageResourceLimitsDeleteByResourceLimitIdResponse401 = {
+  data: UsageErrorResponseApi;
+  status: 401;
+};
+
+export type usageResourceLimitsDeleteByResourceLimitIdResponse402 = {
+  data: UsageErrorResponseApi;
+  status: 402;
+};
+
+export type usageResourceLimitsDeleteByResourceLimitIdResponse403 = {
+  data: UsageErrorResponseApi;
+  status: 403;
+};
+
+export type usageResourceLimitsDeleteByResourceLimitIdResponse404 = {
+  data: UsageErrorResponseApi;
+  status: 404;
+};
+
+export type usageResourceLimitsDeleteByResourceLimitIdResponse500 = {
+  data: UsageErrorResponseApi;
+  status: 500;
+};
+
+export type usageResourceLimitsDeleteByResourceLimitIdResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>;
+};
+
+export type usageResourceLimitsDeleteByResourceLimitIdResponseSuccess =
+  usageResourceLimitsDeleteByResourceLimitIdResponse200 & {
+    headers: Headers;
+  };
+export type usageResourceLimitsDeleteByResourceLimitIdResponseError = (
+  | usageResourceLimitsDeleteByResourceLimitIdResponse400
+  | usageResourceLimitsDeleteByResourceLimitIdResponse401
+  | usageResourceLimitsDeleteByResourceLimitIdResponse402
+  | usageResourceLimitsDeleteByResourceLimitIdResponse403
+  | usageResourceLimitsDeleteByResourceLimitIdResponse404
+  | usageResourceLimitsDeleteByResourceLimitIdResponse500
+  | usageResourceLimitsDeleteByResourceLimitIdResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type usageResourceLimitsDeleteByResourceLimitIdResponse =
+  | usageResourceLimitsDeleteByResourceLimitIdResponseSuccess
+  | usageResourceLimitsDeleteByResourceLimitIdResponseError;
+
+export const getUsageResourceLimitsDeleteByResourceLimitIdUrl = (
+  resourceLimitId: string,
+) => {
+  return `/usage/resource-limits/${resourceLimitId}/`;
+};
+
+export const usageResourceLimitsDeleteByResourceLimitId = async (
+  resourceLimitId: string,
+  options?: RequestInit,
+): Promise<usageResourceLimitsDeleteByResourceLimitIdResponse> => {
+  return apiMutator<usageResourceLimitsDeleteByResourceLimitIdResponse>(
+    getUsageResourceLimitsDeleteByResourceLimitIdUrl(resourceLimitId),
+    {
+      ...options,
+      method: "DELETE",
     },
   );
 };
@@ -86732,17 +89103,16 @@ export type usageSubscriptionTierCreateResponse =
   | usageSubscriptionTierCreateResponseSuccess
   | usageSubscriptionTierCreateResponseError;
 
-export const getUsageSubscriptionTierCreateUrl = (subscriptionId: string) => {
-  return `/usage/subscription-tier/${subscriptionId}/`;
+export const getUsageSubscriptionTierCreateUrl = () => {
+  return `/usage/subscription-tier/`;
 };
 
 export const usageSubscriptionTierCreate = async (
-  subscriptionId: string,
   usageSubscriptionTierApi: NonReadonly<UsageSubscriptionTierApi>,
   options?: RequestInit,
 ): Promise<usageSubscriptionTierCreateResponse> => {
   return apiMutator<usageSubscriptionTierCreateResponse>(
-    getUsageSubscriptionTierCreateUrl(subscriptionId),
+    getUsageSubscriptionTierCreateUrl(),
     {
       ...options,
       method: "POST",
@@ -86812,19 +89182,16 @@ export type usageSubscriptionTierPartialUpdateResponse =
   | usageSubscriptionTierPartialUpdateResponseSuccess
   | usageSubscriptionTierPartialUpdateResponseError;
 
-export const getUsageSubscriptionTierPartialUpdateUrl = (
-  subscriptionId: string,
-) => {
-  return `/usage/subscription-tier/${subscriptionId}/`;
+export const getUsageSubscriptionTierPartialUpdateUrl = () => {
+  return `/usage/subscription-tier/`;
 };
 
 export const usageSubscriptionTierPartialUpdate = async (
-  subscriptionId: string,
   usageSubscriptionTierApi: NonReadonly<UsageSubscriptionTierApi>,
   options?: RequestInit,
 ): Promise<usageSubscriptionTierPartialUpdateResponse> => {
   return apiMutator<usageSubscriptionTierPartialUpdateResponse>(
-    getUsageSubscriptionTierPartialUpdateUrl(subscriptionId),
+    getUsageSubscriptionTierPartialUpdateUrl(),
     {
       ...options,
       method: "PATCH",
@@ -86894,16 +89261,15 @@ export type usageSubscriptionTierDeleteResponse =
   | usageSubscriptionTierDeleteResponseSuccess
   | usageSubscriptionTierDeleteResponseError;
 
-export const getUsageSubscriptionTierDeleteUrl = (subscriptionId: string) => {
-  return `/usage/subscription-tier/${subscriptionId}/`;
+export const getUsageSubscriptionTierDeleteUrl = () => {
+  return `/usage/subscription-tier/`;
 };
 
 export const usageSubscriptionTierDelete = async (
-  subscriptionId: string,
   options?: RequestInit,
 ): Promise<usageSubscriptionTierDeleteResponse> => {
   return apiMutator<usageSubscriptionTierDeleteResponse>(
-    getUsageSubscriptionTierDeleteUrl(subscriptionId),
+    getUsageSubscriptionTierDeleteUrl(),
     {
       ...options,
       method: "DELETE",
@@ -86984,6 +89350,250 @@ export const usageSubscriptionTierRead = async (
     {
       ...options,
       method: "GET",
+    },
+  );
+};
+
+export type usageSubscriptionTierCreateBySubscriptionIdResponse200 = {
+  data: SubscriptionTierDetailResponseApi;
+  status: 200;
+};
+
+export type usageSubscriptionTierCreateBySubscriptionIdResponse400 = {
+  data: UsageErrorResponseApi;
+  status: 400;
+};
+
+export type usageSubscriptionTierCreateBySubscriptionIdResponse401 = {
+  data: UsageErrorResponseApi;
+  status: 401;
+};
+
+export type usageSubscriptionTierCreateBySubscriptionIdResponse402 = {
+  data: UsageErrorResponseApi;
+  status: 402;
+};
+
+export type usageSubscriptionTierCreateBySubscriptionIdResponse403 = {
+  data: UsageErrorResponseApi;
+  status: 403;
+};
+
+export type usageSubscriptionTierCreateBySubscriptionIdResponse404 = {
+  data: UsageErrorResponseApi;
+  status: 404;
+};
+
+export type usageSubscriptionTierCreateBySubscriptionIdResponse500 = {
+  data: UsageErrorResponseApi;
+  status: 500;
+};
+
+export type usageSubscriptionTierCreateBySubscriptionIdResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>;
+};
+
+export type usageSubscriptionTierCreateBySubscriptionIdResponseSuccess =
+  usageSubscriptionTierCreateBySubscriptionIdResponse200 & {
+    headers: Headers;
+  };
+export type usageSubscriptionTierCreateBySubscriptionIdResponseError = (
+  | usageSubscriptionTierCreateBySubscriptionIdResponse400
+  | usageSubscriptionTierCreateBySubscriptionIdResponse401
+  | usageSubscriptionTierCreateBySubscriptionIdResponse402
+  | usageSubscriptionTierCreateBySubscriptionIdResponse403
+  | usageSubscriptionTierCreateBySubscriptionIdResponse404
+  | usageSubscriptionTierCreateBySubscriptionIdResponse500
+  | usageSubscriptionTierCreateBySubscriptionIdResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type usageSubscriptionTierCreateBySubscriptionIdResponse =
+  | usageSubscriptionTierCreateBySubscriptionIdResponseSuccess
+  | usageSubscriptionTierCreateBySubscriptionIdResponseError;
+
+export const getUsageSubscriptionTierCreateBySubscriptionIdUrl = (
+  subscriptionId: string,
+) => {
+  return `/usage/subscription-tier/${subscriptionId}/`;
+};
+
+export const usageSubscriptionTierCreateBySubscriptionId = async (
+  subscriptionId: string,
+  usageSubscriptionTierApi: NonReadonly<UsageSubscriptionTierApi>,
+  options?: RequestInit,
+): Promise<usageSubscriptionTierCreateBySubscriptionIdResponse> => {
+  return apiMutator<usageSubscriptionTierCreateBySubscriptionIdResponse>(
+    getUsageSubscriptionTierCreateBySubscriptionIdUrl(subscriptionId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(usageSubscriptionTierApi),
+    },
+  );
+};
+
+export type usageSubscriptionTierPartialUpdateBySubscriptionIdResponse200 = {
+  data: SubscriptionTierDetailResponseApi;
+  status: 200;
+};
+
+export type usageSubscriptionTierPartialUpdateBySubscriptionIdResponse400 = {
+  data: UsageErrorResponseApi;
+  status: 400;
+};
+
+export type usageSubscriptionTierPartialUpdateBySubscriptionIdResponse401 = {
+  data: UsageErrorResponseApi;
+  status: 401;
+};
+
+export type usageSubscriptionTierPartialUpdateBySubscriptionIdResponse402 = {
+  data: UsageErrorResponseApi;
+  status: 402;
+};
+
+export type usageSubscriptionTierPartialUpdateBySubscriptionIdResponse403 = {
+  data: UsageErrorResponseApi;
+  status: 403;
+};
+
+export type usageSubscriptionTierPartialUpdateBySubscriptionIdResponse404 = {
+  data: UsageErrorResponseApi;
+  status: 404;
+};
+
+export type usageSubscriptionTierPartialUpdateBySubscriptionIdResponse500 = {
+  data: UsageErrorResponseApi;
+  status: 500;
+};
+
+export type usageSubscriptionTierPartialUpdateBySubscriptionIdResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>;
+  };
+
+export type usageSubscriptionTierPartialUpdateBySubscriptionIdResponseSuccess =
+  usageSubscriptionTierPartialUpdateBySubscriptionIdResponse200 & {
+    headers: Headers;
+  };
+export type usageSubscriptionTierPartialUpdateBySubscriptionIdResponseError = (
+  | usageSubscriptionTierPartialUpdateBySubscriptionIdResponse400
+  | usageSubscriptionTierPartialUpdateBySubscriptionIdResponse401
+  | usageSubscriptionTierPartialUpdateBySubscriptionIdResponse402
+  | usageSubscriptionTierPartialUpdateBySubscriptionIdResponse403
+  | usageSubscriptionTierPartialUpdateBySubscriptionIdResponse404
+  | usageSubscriptionTierPartialUpdateBySubscriptionIdResponse500
+  | usageSubscriptionTierPartialUpdateBySubscriptionIdResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type usageSubscriptionTierPartialUpdateBySubscriptionIdResponse =
+  | usageSubscriptionTierPartialUpdateBySubscriptionIdResponseSuccess
+  | usageSubscriptionTierPartialUpdateBySubscriptionIdResponseError;
+
+export const getUsageSubscriptionTierPartialUpdateBySubscriptionIdUrl = (
+  subscriptionId: string,
+) => {
+  return `/usage/subscription-tier/${subscriptionId}/`;
+};
+
+export const usageSubscriptionTierPartialUpdateBySubscriptionId = async (
+  subscriptionId: string,
+  usageSubscriptionTierApi: NonReadonly<UsageSubscriptionTierApi>,
+  options?: RequestInit,
+): Promise<usageSubscriptionTierPartialUpdateBySubscriptionIdResponse> => {
+  return apiMutator<usageSubscriptionTierPartialUpdateBySubscriptionIdResponse>(
+    getUsageSubscriptionTierPartialUpdateBySubscriptionIdUrl(subscriptionId),
+    {
+      ...options,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(usageSubscriptionTierApi),
+    },
+  );
+};
+
+export type usageSubscriptionTierDeleteBySubscriptionIdResponse200 = {
+  data: UsageStringResponseApi;
+  status: 200;
+};
+
+export type usageSubscriptionTierDeleteBySubscriptionIdResponse400 = {
+  data: UsageErrorResponseApi;
+  status: 400;
+};
+
+export type usageSubscriptionTierDeleteBySubscriptionIdResponse401 = {
+  data: UsageErrorResponseApi;
+  status: 401;
+};
+
+export type usageSubscriptionTierDeleteBySubscriptionIdResponse402 = {
+  data: UsageErrorResponseApi;
+  status: 402;
+};
+
+export type usageSubscriptionTierDeleteBySubscriptionIdResponse403 = {
+  data: UsageErrorResponseApi;
+  status: 403;
+};
+
+export type usageSubscriptionTierDeleteBySubscriptionIdResponse404 = {
+  data: UsageErrorResponseApi;
+  status: 404;
+};
+
+export type usageSubscriptionTierDeleteBySubscriptionIdResponse500 = {
+  data: UsageErrorResponseApi;
+  status: 500;
+};
+
+export type usageSubscriptionTierDeleteBySubscriptionIdResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>;
+};
+
+export type usageSubscriptionTierDeleteBySubscriptionIdResponseSuccess =
+  usageSubscriptionTierDeleteBySubscriptionIdResponse200 & {
+    headers: Headers;
+  };
+export type usageSubscriptionTierDeleteBySubscriptionIdResponseError = (
+  | usageSubscriptionTierDeleteBySubscriptionIdResponse400
+  | usageSubscriptionTierDeleteBySubscriptionIdResponse401
+  | usageSubscriptionTierDeleteBySubscriptionIdResponse402
+  | usageSubscriptionTierDeleteBySubscriptionIdResponse403
+  | usageSubscriptionTierDeleteBySubscriptionIdResponse404
+  | usageSubscriptionTierDeleteBySubscriptionIdResponse500
+  | usageSubscriptionTierDeleteBySubscriptionIdResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type usageSubscriptionTierDeleteBySubscriptionIdResponse =
+  | usageSubscriptionTierDeleteBySubscriptionIdResponseSuccess
+  | usageSubscriptionTierDeleteBySubscriptionIdResponseError;
+
+export const getUsageSubscriptionTierDeleteBySubscriptionIdUrl = (
+  subscriptionId: string,
+) => {
+  return `/usage/subscription-tier/${subscriptionId}/`;
+};
+
+export const usageSubscriptionTierDeleteBySubscriptionId = async (
+  subscriptionId: string,
+  options?: RequestInit,
+): Promise<usageSubscriptionTierDeleteBySubscriptionIdResponse> => {
+  return apiMutator<usageSubscriptionTierDeleteBySubscriptionIdResponse>(
+    getUsageSubscriptionTierDeleteBySubscriptionIdUrl(subscriptionId),
+    {
+      ...options,
+      method: "DELETE",
     },
   );
 };
@@ -88522,7 +91132,7 @@ export const usageV2PaymentMethodsList = async (
 };
 
 export type usageV2PaymentMethodsCreateResponse200 = {
-  data: UsageMessageResponseApi;
+  data: PaymentMethodCheckoutResponseApi;
   status: 200;
 };
 
@@ -88581,20 +91191,19 @@ export type usageV2PaymentMethodsCreateResponse =
   | usageV2PaymentMethodsCreateResponseSuccess
   | usageV2PaymentMethodsCreateResponseError;
 
-export const getUsageV2PaymentMethodsCreateUrl = (pmId: string) => {
-  return `/usage/v2/payment-methods/${pmId}/`;
+export const getUsageV2PaymentMethodsCreateUrl = () => {
+  return `/usage/v2/payment-methods/`;
 };
 
 /**
- * Manage a specific payment method.
+ * List payment methods or create a Stripe Checkout session for adding a card.
  */
 export const usageV2PaymentMethodsCreate = async (
-  pmId: string,
   usageEmptyRequestApi: UsageEmptyRequestApi,
   options?: RequestInit,
 ): Promise<usageV2PaymentMethodsCreateResponse> => {
   return apiMutator<usageV2PaymentMethodsCreateResponse>(
-    getUsageV2PaymentMethodsCreateUrl(pmId),
+    getUsageV2PaymentMethodsCreateUrl(),
     {
       ...options,
       method: "POST",
@@ -88933,6 +91542,89 @@ export const usageV2PaymentMethodsSetupIntentUpdate = async (
       method: "PUT",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(setupIntentConfirmRequestApi),
+    },
+  );
+};
+
+export type usageV2PaymentMethodsCreateByPmIdResponse200 = {
+  data: UsageMessageResponseApi;
+  status: 200;
+};
+
+export type usageV2PaymentMethodsCreateByPmIdResponse400 = {
+  data: UsageErrorResponseApi;
+  status: 400;
+};
+
+export type usageV2PaymentMethodsCreateByPmIdResponse401 = {
+  data: UsageErrorResponseApi;
+  status: 401;
+};
+
+export type usageV2PaymentMethodsCreateByPmIdResponse402 = {
+  data: UsageErrorResponseApi;
+  status: 402;
+};
+
+export type usageV2PaymentMethodsCreateByPmIdResponse403 = {
+  data: UsageErrorResponseApi;
+  status: 403;
+};
+
+export type usageV2PaymentMethodsCreateByPmIdResponse404 = {
+  data: UsageErrorResponseApi;
+  status: 404;
+};
+
+export type usageV2PaymentMethodsCreateByPmIdResponse500 = {
+  data: UsageErrorResponseApi;
+  status: 500;
+};
+
+export type usageV2PaymentMethodsCreateByPmIdResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>;
+};
+
+export type usageV2PaymentMethodsCreateByPmIdResponseSuccess =
+  usageV2PaymentMethodsCreateByPmIdResponse200 & {
+    headers: Headers;
+  };
+export type usageV2PaymentMethodsCreateByPmIdResponseError = (
+  | usageV2PaymentMethodsCreateByPmIdResponse400
+  | usageV2PaymentMethodsCreateByPmIdResponse401
+  | usageV2PaymentMethodsCreateByPmIdResponse402
+  | usageV2PaymentMethodsCreateByPmIdResponse403
+  | usageV2PaymentMethodsCreateByPmIdResponse404
+  | usageV2PaymentMethodsCreateByPmIdResponse500
+  | usageV2PaymentMethodsCreateByPmIdResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type usageV2PaymentMethodsCreateByPmIdResponse =
+  | usageV2PaymentMethodsCreateByPmIdResponseSuccess
+  | usageV2PaymentMethodsCreateByPmIdResponseError;
+
+export const getUsageV2PaymentMethodsCreateByPmIdUrl = (pmId: string) => {
+  return `/usage/v2/payment-methods/${pmId}/`;
+};
+
+/**
+ * Manage a specific payment method.
+ */
+export const usageV2PaymentMethodsCreateByPmId = async (
+  pmId: string,
+  usageEmptyRequestApi: UsageEmptyRequestApi,
+  options?: RequestInit,
+): Promise<usageV2PaymentMethodsCreateByPmIdResponse> => {
+  return apiMutator<usageV2PaymentMethodsCreateByPmIdResponse>(
+    getUsageV2PaymentMethodsCreateByPmIdUrl(pmId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(usageEmptyRequestApi),
     },
   );
 };
