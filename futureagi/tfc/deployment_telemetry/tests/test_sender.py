@@ -85,6 +85,15 @@ def test_schedule_disables_temporal_retries():
     assert _ACTIVITY_REGISTRY[schedule.activity_name]["max_retries"] == 0
 
 
+def test_event_schedule_flushes_without_temporal_retries():
+    schedule = DEPLOYMENT_TELEMETRY_SCHEDULES[1]
+    assert schedule.schedule_id == "deployment-telemetry-events"
+    assert schedule.interval_seconds == 60
+    from tfc.temporal.drop_in.decorator import _ACTIVITY_REGISTRY
+
+    assert _ACTIVITY_REGISTRY[schedule.activity_name]["max_retries"] == 0
+
+
 def test_http_sender_retries_three_times(monkeypatch):
     response = MagicMock(status_code=503)
     with (

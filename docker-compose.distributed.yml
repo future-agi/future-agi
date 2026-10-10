@@ -61,7 +61,7 @@ x-backend-env: &backend-env
   FUTURE_AGI_DEPLOYMENT_TYPE: ${FUTURE_AGI_DEPLOYMENT_TYPE:-docker}
   FUTURE_AGI_TELEMETRY_DISABLED: ${FUTURE_AGI_TELEMETRY_DISABLED:-false}
   FUTURE_AGI_TELEMETRY_JITTER_SECONDS: ${FUTURE_AGI_TELEMETRY_JITTER_SECONDS:-1800}
-  FUTURE_AGI_TELEMETRY_BUFFER_DIR: ${FUTURE_AGI_TELEMETRY_BUFFER_DIR:-/tmp/futureagi-deployment-telemetry}
+  FUTURE_AGI_TELEMETRY_BUFFER_DIR: ${FUTURE_AGI_TELEMETRY_BUFFER_DIR:-/data/telemetry}
   # The next three are forwarded so staging/test installs can redirect the
   # sender at an alternate receiver and tune cadence/timeout without rebuilding
   # the image. Defaults match the sender so leaving them unset is identical to
@@ -368,6 +368,8 @@ services:
       # starts fast and we don't want a slow boot to block backend.
       fi-collector:
         condition: service_started
+    volumes:
+      - telemetry-data:/data/telemetry
     restart: unless-stopped
 
   worker:
@@ -393,6 +395,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    volumes:
+      - telemetry-data:/data/telemetry
     restart: unless-stopped
 
   worker-default:
@@ -1233,6 +1237,7 @@ services:
         condition: service_healthy
 
 volumes:
+  telemetry-data:
   postgres-data:
   clickhouse-data:
   redis-data:

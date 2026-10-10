@@ -289,6 +289,18 @@ class SecretKeyAPIViewSet(ViewSet):
                 type="user",
                 user=request.user,
             )
+            try:
+                from tfc.deployment_telemetry.events import record_event
+
+                record_event(
+                    "api_key_created",
+                    actor_type="api_key",
+                    actor_id=org_key.id,
+                    source="web",
+                    organization_id=org_key.organization_id,
+                )
+            except Exception:
+                logger.debug("deployment_telemetry_api_key_event_failed", exc_info=True)
             response = {
                 "key_id": org_key.id,
                 "key_name": org_key.name,
