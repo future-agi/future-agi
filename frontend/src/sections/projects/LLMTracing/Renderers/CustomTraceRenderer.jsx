@@ -76,7 +76,14 @@ const CustomTraceRenderer = (params) => {
   if (colId === CELL_TYPES.STATUS && value) {
     return (
       <Box paddingX={1.5}>
-        <StatusChip label={value} status={value} />
+        <StatusChip
+          label={value}
+          status={value}
+          // TH-4088: neutral status text on the span list measured below 4.5:1 against the
+          // chip background with the shared `text.disabled` token. Only the span list opts
+          // into the readable token; the trace list and other consumers are unchanged.
+          neutralTextColor={isSpanLevel ? "text.secondary" : undefined}
+        />
       </Box>
     );
   }

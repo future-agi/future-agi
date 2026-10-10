@@ -114,7 +114,7 @@ class TestGatewayMCPUpdates:
             f"/agentcc/gateways/{gateway_id}/update-mcp-server/",
             {
                 "server_id": "server-a",
-                "config": {"url": "http://mcp/server-a", "enabled": True},
+                "config": {"transport": "http", "url": "http://mcp/server-a"},
             },
             format="json",
         )
@@ -156,14 +156,17 @@ class TestGatewayMCPUpdates:
 
         response = auth_client.post(
             f"/agentcc/gateways/{gateway_id}/update-mcp-guardrails/",
-            {"config": {"scan_tool_names": True}},
+            {"config": {"enabled": True, "blocked_tools": ["shell"]}},
             format="json",
         )
         assert response.status_code == 200, response.json()
         active = AgentccOrgConfig.no_workspace_objects.get(
             organization=user.organization, is_active=True, deleted=False
         )
-        assert (active.mcp or {}).get("guardrails") == {"scan_tool_names": True}
+        assert (active.mcp or {}).get("guardrails") == {
+            "enabled": True,
+            "blocked_tools": ["shell"],
+        }
 
 
 @pytest.mark.integration

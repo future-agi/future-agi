@@ -317,6 +317,23 @@ func (h *Handlers) resolveOrgConfig(rc *models.RequestContext) (string, *tenant.
 	return h.tenantStore.ResolveOrgConfig(rc.Metadata)
 }
 
+// lookupRequestKey returns the API key the request presented, or nil. It does
+// not authenticate and writes nothing.
+func (h *Handlers) lookupRequestKey(rc *models.RequestContext) *authpkg.APIKey {
+	if h.keyStore == nil {
+		return nil
+	}
+	authHeader := rc.Metadata["authorization"]
+	if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
+		return nil
+	}
+	rawKey := strings.TrimPrefix(authHeader, "Bearer ")
+	if rawKey == "" {
+		return nil
+	}
+	return h.keyStore.Lookup(rawKey)
+}
+
 // peekKeyOrgID does a lightweight key lookup to extract org_id from the API key
 // metadata BEFORE the auth plugin runs. This is needed because resolveOrgConfig
 // depends on rc.Metadata["key_org_id"] which the auth plugin sets — but auth runs
@@ -325,18 +342,7 @@ func (h *Handlers) resolveOrgConfig(rc *models.RequestContext) (string, *tenant.
 // The auth plugin still performs full validation (status, expiry, IP, model access).
 // This peek is read-only and only copies the org_id; it does NOT authenticate.
 func (h *Handlers) peekKeyOrgID(rc *models.RequestContext) {
-	if h.keyStore == nil {
-		return
-	}
-	authHeader := rc.Metadata["authorization"]
-	if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
-		return
-	}
-	rawKey := strings.TrimPrefix(authHeader, "Bearer ")
-	if rawKey == "" {
-		return
-	}
-	apiKey := h.keyStore.Lookup(rawKey)
+	apiKey := h.lookupRequestKey(rc)
 	if apiKey == nil {
 		return
 	}
@@ -806,24 +812,58 @@ func (h *Handlers) applyOrgModelMapOverrides(orgCfg *tenant.OrgConfig, rc *model
 	}
 }
 
+// orgModelTimeout returns the timeout the request's org set for rc.Model.
+// Handlers resolve the timeout before they apply org overrides, so this reads
+// the org from the request's key instead of from rc.
+func (h *Handlers) orgModelTimeout(rc *models.RequestContext) (time.Duration, bool) {
+	if h.tenantStore == nil {
+		return 0, false
+	}
+	apiKey := h.lookupRequestKey(rc)
+	if apiKey == nil {
+		return 0, false
+	}
+	orgCfg := h.tenantStore.Get(apiKey.Metadata["org_id"])
+	if orgCfg == nil || orgCfg.Routing == nil {
+		return 0, false
+	}
+	raw, ok := orgCfg.Routing.ModelTimeouts[rc.Model]
+	if !ok {
+		return 0, false
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		slog.Warn("org model timeout is not a positive duration, ignoring it",
+			"model", rc.Model,
+			"value", raw,
+		)
+		return 0, false
+	}
+	return d, true
+}
+
 // resolveTimeout returns the effective timeout for a request.
-// Priority: x-agentcc-timeout header > model-specific > server default.
+// Priority: request header > the org's model timeout > config.yaml model
+// timeout > server default.
 func (h *Handlers) resolveTimeout(rc *models.RequestContext, r *http.Request) time.Duration {
-	// 1. Request header override (Go duration string, e.g. "30s", "2m", "500ms").
-	if v := r.Header.Get("x-agentcc-timeout"); v != "" {
-		if d, err := time.ParseDuration(v); err == nil && d > 0 {
-			return d
-		}
+	// 1. Request header override.
+	if d, ok := middleware.RequestTimeoutHeader(r); ok {
+		return d
 	}
 
-	// 2. Per-model timeout from config.
+	// 2. Per-model timeout from the org's config.
+	if d, ok := h.orgModelTimeout(rc); ok {
+		return d
+	}
+
+	// 3. Per-model timeout from config.yaml.
 	if mt := h.modelTimeouts.Load(); mt != nil {
 		if d, ok := (*mt)[rc.Model]; ok && d > 0 {
 			return d
 		}
 	}
 
-	// 3. Server default.
+	// 4. Server default.
 	return h.defaultTimeout
 }
 
