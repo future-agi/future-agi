@@ -19,6 +19,7 @@ from tracer.views.feed import (
     CreateLinearIssueView,
     FeedDeepAnalysisView,
     FeedDetailView,
+    FeedRedirectView,
     FeedListView,
     FeedOverviewView,
     FeedRootCauseView,
@@ -54,6 +55,7 @@ from tracer.views.trace_grouping import (
 )
 from tracer.views.trace_investigation import (
     ClaimInvestigationsView,
+    ConversationEvidenceView,
     PublishInvestigationView,
     RecordTraceNotificationsView,
     SimulationEvidenceView,
@@ -191,6 +193,11 @@ urlpatterns = [
         name="error-feed-v2-attempt",
     ),
     path(
+        "internal/error-feed-v2/attempts/<uuid:attempt_id>/conversation-evidence/",
+        ConversationEvidenceView.as_view(),
+        name="error-feed-v2-conversation-evidence",
+    ),
+    path(
         "internal/error-feed-v2/attempts/<uuid:attempt_id>/simulation-evidence/",
         SimulationEvidenceView.as_view(),
         name="error-feed-v2-simulation-evidence",
@@ -251,6 +258,11 @@ urlpatterns = [
         "feed/issues/<str:cluster_id>/",
         FeedDetailView.as_view(),
         name="feed-issue-detail",
+    ),
+    path(
+        "feed/issues/<str:cluster_id>/redirect/",
+        FeedRedirectView.as_view(),
+        name="feed-issue-redirect",
     ),
     path(
         "feed/issues/<str:cluster_id>/overview/",

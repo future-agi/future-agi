@@ -518,20 +518,14 @@ const VoiceDetailDrawerV2 = ({
         )}
       </Box>
 
-      {/* Share dialog — Observe voice calls share their trace and fall back
-          to the voice full-page route; simulation calls share their
-          CallExecution and fall back to the current page URL. */}
+      {/* Share dialog — Observe voice calls share their trace; simulation
+          calls share their CallExecution. */}
       {shareResource && (
         <ShareDialog
           open={shareDialogOpen}
           onClose={() => setShareDialogOpen(false)}
           resourceType={shareResource.resourceType}
           resourceId={shareResource.resourceId}
-          fallbackShareUrl={
-            shareResource.resourceType === "trace" && projectId
-              ? `${window.location.origin}/dashboard/observe/${projectId}/voice/${shareResource.resourceId}`
-              : undefined
-          }
         />
       )}
 
