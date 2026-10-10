@@ -38,6 +38,7 @@ from agentcc.serializers.contracts import (
     GatewayConfigPatchRequestSerializer,
     GatewayConfigResponseSerializer,
     GatewayDetailResponseSerializer,
+    GatewayHealthErrorResponseSerializer,
     GatewayHealthResponseSerializer,
     GatewayListResponseSerializer,
     GatewayMCPGuardrailsUpdateRequestSerializer,
@@ -236,6 +237,7 @@ class AgentccGatewayViewSet(ViewSet):
                 status = "unreachable"
 
             data = _build_virtual_gateway(status=status, health=health)
+            data["last_health_check"] = timezone.now().isoformat()
 
             org = self._current_org(request)
             if org:
@@ -263,6 +265,7 @@ class AgentccGatewayViewSet(ViewSet):
                 status = "unreachable"
 
             data = _build_virtual_gateway(status=status, health=health)
+            data["last_health_check"] = timezone.now().isoformat()
 
             org = self._current_org(request)
             if org:
@@ -297,7 +300,7 @@ class AgentccGatewayViewSet(ViewSet):
         request_serializer=AgentccEmptyRequestSerializer,
         responses={
             200: GatewayHealthResponseSerializer,
-            **GATEWAY_BAD_REQUEST_RESPONSES,
+            400: GatewayHealthErrorResponseSerializer,
         },
         reject_unknown_fields=True,
     )
@@ -309,6 +312,8 @@ class AgentccGatewayViewSet(ViewSet):
 
             try:
                 health = client.health_check()
+                # This is the live probe's completion time, not persisted history.
+                last_health_check = timezone.now().isoformat()
 
                 db_providers = AgentccProviderCredential.no_workspace_objects.filter(
                     organization=org, is_active=True, deleted=False
@@ -344,6 +349,7 @@ class AgentccGatewayViewSet(ViewSet):
 
                 data = {
                     "status": "healthy",
+                    "last_health_check": last_health_check,
                     "health": health,
                     "providers": provider_health,
                     "provider_count": p_count,
@@ -354,6 +360,7 @@ class AgentccGatewayViewSet(ViewSet):
                 return self._gm.bad_request(
                     {
                         "status": "unreachable",
+                        "last_health_check": timezone.now().isoformat(),
                         "error": str(e),
                     }
                 )
