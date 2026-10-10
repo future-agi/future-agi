@@ -8,11 +8,15 @@ Note: Django ORM is synchronous, so we use otel_sync_to_async to wrap database o
 This ensures OTel context (trace/span info) is propagated to the sync thread.
 """
 
+import asyncio
+import time
 import uuid
 from typing import Optional
 
 from django.db import close_old_connections
 from temporalio import activity
+from temporalio.client import WorkflowExecutionStatus
+from temporalio.service import RPCError, RPCStatusCode
 
 from tfc.telemetry import otel_sync_to_async
 from tfc.temporal.common.heartbeat import Heartbeater
@@ -29,6 +33,7 @@ from tfc.temporal.experiments.types import (  # V2 types; Rerun cells types; Sto
     CreateErrorAgentCellsOutput,
     CreateErrorEvalCellsInput,
     CreateErrorEvalCellsOutput,
+    FailEvalOnlyRerunInput,
     GetEvalTemplatesInput,
     GetEvalTemplatesOutput,
     MarkExperimentRunningInput,
@@ -55,11 +60,47 @@ from tfc.temporal.experiments.types import (  # V2 types; Rerun cells types; Sto
     SetupPromptV2Output,
     StopExperimentCleanupInput,
     StopExperimentCleanupOutput,
+    WaitForExperimentRunsInput,
+    WaitForExperimentRunsOutput,
 )
 
 # =============================================================================
 # Shared Helper Functions
 # =============================================================================
+
+
+async def _experiment_runs_in_flight(
+    client, experiment_id: str, exclude_workflow_id: str
+) -> list[str]:
+    """Find output-producing runs; unknown observations remain pending."""
+    running_ids = []
+    main_workflow_id = f"experiment-{experiment_id}"
+    try:
+        description = await client.get_workflow_handle(main_workflow_id).describe()
+        if description.status == WorkflowExecutionStatus.RUNNING:
+            running_ids.append(main_workflow_id)
+    except RPCError as exc:
+        if exc.status != RPCStatusCode.NOT_FOUND:
+            running_ids.append(main_workflow_id)  # Unknown is not final.
+    except Exception:
+        running_ids.append(main_workflow_id)
+
+    rerun_prefix = f"rerun-experiment-cells-{experiment_id}-"
+    eval_rerun_prefix = f"{rerun_prefix}evals-"
+    query = (
+        f'WorkflowId STARTS_WITH "{rerun_prefix}" ' "AND ExecutionStatus = 'Running'"
+    )
+    try:
+        async for workflow_info in client.list_workflows(query=query):
+            if (
+                workflow_info.id != exclude_workflow_id
+                and not workflow_info.id.startswith(eval_rerun_prefix)
+            ):
+                running_ids.append(workflow_info.id)
+    except Exception:
+        running_ids.append(f"{rerun_prefix}visibility-unknown")
+
+    return running_ids
 
 
 def _get_config_ids(experiment) -> tuple[list, list]:
@@ -1213,6 +1254,67 @@ def _check_experiment_dataset_status_sync(entity_id: str) -> dict:
 # =============================================================================
 # Activities (async wrappers around sync functions)
 # =============================================================================
+
+
+@activity.defn
+async def fail_eval_only_rerun_activity(input: FailEvalOnlyRerunInput) -> None:
+    """Close this rerun's placeholders without failing a separate main run."""
+
+    def cleanup():
+        from model_hub.models.experiments import ExperimentsTable
+        from model_hub.services.experiment_utils import fail_eval_only_rerun
+
+        close_old_connections()
+        try:
+            experiment = ExperimentsTable.objects.get(
+                id=input.experiment_id, deleted=False
+            )
+            fail_eval_only_rerun(experiment, input.eval_template_ids, input.reason)
+        finally:
+            close_old_connections()
+
+    await otel_sync_to_async(cleanup, thread_sensitive=False)()
+
+
+@activity.defn
+async def wait_for_experiment_runs_activity(
+    input: WaitForExperimentRunsInput,
+) -> WaitForExperimentRunsOutput:
+    """Wait for final outputs before an eval-only rerun, with bounded polling."""
+    from model_hub.services.experiment_utils import is_experiment_cancelled
+    from tfc.temporal.common.client import get_client
+
+    def check_cancelled():
+        close_old_connections()
+        try:
+            return is_experiment_cancelled(uuid.UUID(input.experiment_id))
+        finally:
+            close_old_connections()
+
+    started = time.monotonic()
+    client = await get_client()
+    while True:
+        activity.heartbeat(time.monotonic() - started)
+        running_ids = await _experiment_runs_in_flight(
+            client, input.experiment_id, input.exclude_workflow_id
+        )
+        if not running_ids:
+            cancelled = await otel_sync_to_async(
+                check_cancelled, thread_sensitive=False
+            )()
+            return WaitForExperimentRunsOutput(
+                status="CANCELLED" if cancelled else "READY",
+                waited_seconds=time.monotonic() - started,
+            )
+
+        waited_seconds = time.monotonic() - started
+        if waited_seconds >= input.max_wait_seconds:
+            return WaitForExperimentRunsOutput(
+                status="TIMED_OUT", waited_seconds=waited_seconds
+            )
+        await asyncio.sleep(
+            min(input.poll_interval_seconds, input.max_wait_seconds - waited_seconds)
+        )
 
 
 @activity.defn
@@ -2798,6 +2900,9 @@ __all__ = [
     "CleanupRunningCellsInput",
     "CleanupRunningCellsOutput",
     # V2 types
+    "FailEvalOnlyRerunInput",
+    "WaitForExperimentRunsInput",
+    "WaitForExperimentRunsOutput",
     "SetupPromptV2Input",
     "SetupPromptV2Output",
     "SetupAgentInput",
@@ -2812,6 +2917,8 @@ __all__ = [
     "MarkExperimentRunningInput",
     "MarkExperimentRunningOutput",
     # Activities
+    "fail_eval_only_rerun_activity",
+    "wait_for_experiment_runs_activity",
     "setup_experiment_activity",
     "process_prompt_activity",
     "setup_prompt_v2_activity",
