@@ -10,6 +10,8 @@ class AudioBlot extends BlockEmbed {
   static create(value) {
     const node = super.create();
     node.setAttribute("contenteditable", false);
+    node.style.userSelect = "none";
+    node.style.webkitUserSelect = "none";
     node.setAttribute("id", value.id);
     node.setAttribute(
       "data-audio-data",
