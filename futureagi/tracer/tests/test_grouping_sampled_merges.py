@@ -12,7 +12,7 @@ from django.db import connection
 from django.test import override_settings
 
 from tracer.constants.grouping_versions import SAMPLED_GROUPING_POLICY_VERSION
-from tracer.models.trace_error_analysis import ErrorClusterTraces
+from tracer.models.trace_error_analysis import ErrorClusterTraces, TraceErrorGroup
 from tracer.models.trace_grouping import (
     TraceGroupingAttempt,
     TraceGroupingCall,
@@ -23,16 +23,19 @@ from tracer.models.trace_grouping import (
     TraceGroupingWork,
 )
 from tracer.models.trace_investigation import TraceInvestigationFinding
+from tracer.queries.grouping_redirect import resolve_issue_redirect
 from tracer.services.grouping import context
 from tracer.services.grouping import publish as publisher
 from tracer.services.grouping.accounting import reserve_call, settle_call
 from tracer.services.grouping.control import (
     GroupingConflict,
+    GroupingControlError,
     GroupingNotFound,
     claim_grouping_work,
 )
 from tracer.services.grouping.publish import (
     _assign,
+    _command_shape,
     _issue_members,
     _new_issue,
     _text_digest,
@@ -43,6 +46,20 @@ from tracer.services.grouping.sampling import (
     sample_issue_members,
 )
 from tracer.tests.test_grouping_runtime import FakeFeatureStore, _prepare_runtime
+
+
+def test_merge_command_shape_accepts_old_and_new_workers():
+    fields = publisher.COMMAND_FIELDS["merge"]
+    for sampled in (False, True):
+        current = {key: ("merge" if key == "type" else None) for key in fields}
+        if sampled:
+            current["reviewed_occurrence_ids"] = None
+        legacy = {**current, "temporary_id": "new-group"}
+        del legacy["survivor_issue_id"]
+        assert _command_shape(current, sampled=sampled) == current
+        assert _command_shape(legacy, sampled=sampled) == legacy
+        with pytest.raises(GroupingControlError, match="unknown or missing fields"):
+            _command_shape({**current, "temporary_id": "ambiguous"}, sampled=sampled)
 
 
 def test_sample_keeps_prototypes_recent_and_diverse_examples_deterministically():
@@ -123,6 +140,7 @@ def sampled_claim(observe_project, monkeypatch):
 
 def _merge_payload(scope, sources, claim, mechanism):
     attempt = TraceGroupingAttempt.no_workspace_objects.get(pk=claim["attempt_id"])
+    survivor = max(sources, key=lambda state: len(_issue_members(state)))
     sample_ids = [
         item["occurrence_id"]
         for issue in claim["candidate_window"]["issues"]
@@ -191,7 +209,7 @@ def _merge_payload(scope, sources, claim, mechanism):
                 "expected_revisions": {
                     str(item.cluster_id): item.revision for item in sources
                 },
-                "temporary_id": "merged-large",
+                "survivor_issue_id": str(survivor.cluster_id),
                 "mechanism": mechanism,
                 "prototype_occurrence_ids": [sample_ids[0]],
                 "reviewed_occurrence_ids": sample_ids,
@@ -223,9 +241,13 @@ def test_large_issues_are_offered_with_eight_examples_and_merge_all_members(
     )
     assert len(claim["candidate_snapshots"]) == 16
     assert all(len(_issue_members(item)) > 16 for item in sources)
+    sources[0].cluster.rca_synthesis = "Earlier investigation"
+    sources[0].cluster.rca_fix = "Earlier fix"
+    sources[0].cluster.save(update_fields=["rca_synthesis", "rca_fix", "updated_at"])
     payload = _merge_payload(scope, sources, claim, mechanism)
     result = publish_grouping(**payload)
-    target = uuid.UUID(result["created_issue_ids"]["merged-large"])
+    target = uuid.UUID(payload["commands"][0]["survivor_issue_id"])
+    assert result["created_issue_ids"] == {}
     assert (
         TraceInvestigationFinding.no_workspace_objects.filter(cluster_id=target).count()
         == 35
@@ -234,16 +256,71 @@ def test_large_issues_are_offered_with_eight_examples_and_merge_all_members(
         ErrorClusterTraces.no_workspace_objects.filter(cluster_id=target).count() == 35
     )
     assert (
-        TraceGroupingIssueState.no_workspace_objects.filter(
-            cluster_id__in=[item.cluster_id for item in sources], retired=True
+        TraceGroupingIssueState.all_objects.filter(
+            cluster_id=sources[0].cluster_id,
+            retired=True,
+            deleted=True,
         ).count()
-        == 2
+        == 1
     )
     assert not ErrorClusterTraces.no_workspace_objects.filter(
-        cluster_id__in=[item.cluster_id for item in sources]
+        cluster_id=sources[0].cluster_id
     ).exists()
+    assert TraceGroupingIssueState.no_workspace_objects.filter(
+        cluster_id=target
+    ).exists()
+    old_group = TraceErrorGroup.all_objects.get(pk=sources[0].cluster_id)
+    assert old_group.deleted is True
+    assert old_group.redirect_to_id == target
+    assert old_group.rca_synthesis == "Earlier investigation"
+    assert old_group.rca_fix == "Earlier fix"
+    redirect = resolve_issue_redirect(
+        str(sources[0].cluster.cluster_id), [str(scope.project_id)]
+    )
+    assert (
+        redirect["resolved_cluster_id"]
+        == TraceGroupingIssueState.no_workspace_objects.get(
+            cluster_id=target
+        ).cluster.cluster_id
+    )
+    assert (
+        resolve_issue_redirect(str(sources[0].cluster.cluster_id), [str(uuid.uuid4())])
+        is None
+    )
     assert publish_grouping(**payload) == result
     assert TraceGroupingDecision.no_workspace_objects.filter(scope=scope).count() == 1
+
+
+@pytest.mark.django_db
+def test_legacy_merge_creates_target_and_redirects_both_sources(sampled_claim):
+    scope, sources, reports, claim, mechanism = sampled_claim
+    payload = _merge_payload(scope, sources, claim, mechanism)
+    command = payload["commands"][0]
+    command["temporary_id"] = "legacy-merge-target"
+    del command["survivor_issue_id"]
+
+    result = publish_grouping(**payload)
+    target = uuid.UUID(result["created_issue_ids"]["legacy-merge-target"])
+    assert target not in {item.cluster_id for item in sources}
+    assert TraceInvestigationFinding.no_workspace_objects.filter(
+        cluster_id=target
+    ).count() == len(reports)
+    for source in sources:
+        group = TraceErrorGroup.all_objects.get(pk=source.cluster_id)
+        assert group.deleted is True
+        assert group.redirect_to_id == target
+        assert (
+            TraceGroupingIssueState.all_objects.get(
+                cluster_id=source.cluster_id
+            ).retired
+            is True
+        )
+        assert (
+            resolve_issue_redirect(group.cluster_id, [str(scope.project_id)])[
+                "resolved_cluster_id"
+            ]
+            == TraceErrorGroup.all_objects.get(pk=target).cluster_id
+        )
 
 
 @pytest.mark.django_db
