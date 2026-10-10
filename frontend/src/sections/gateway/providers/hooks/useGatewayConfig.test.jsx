@@ -3,12 +3,14 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { renderHook } from "src/utils/test-utils";
 import {
   MutationCache,
+  QueryCache,
   QueryClient,
   QueryClientProvider,
 } from "@tanstack/react-query";
 import { act, waitFor } from "@testing-library/react";
 import {
   asRequestError,
+  gatewayConfigRefreshFailed,
   useFetchProviderModels,
   useGatewayConfig,
   useReloadConfig,
@@ -141,6 +143,45 @@ describe("useUpdateProvider", () => {
     });
 
     expect(prefixSeenOnSuccess).toBe("");
+  });
+});
+
+describe("gatewayConfigRefreshFailed", () => {
+  // The save POST and the config re-read are two calls. invalidateQueries
+  // resolves either way, so without this the dialog cannot tell a clean save
+  // from one whose screen is now stale.
+  const renderConfig = () => {
+    const client = new QueryClient({
+      queryCache: new QueryCache({ onError: () => {} }),
+      defaultOptions: { queries: { retry: false } },
+    });
+    const clientWrapper = ({ children }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(() => useGatewayConfig("gw-1"), {
+      wrapper: clientWrapper,
+    });
+    return { client, result };
+  };
+
+  it("is false when the config has been re-read", async () => {
+    get.mockReset();
+    get.mockResolvedValue({ data: { result: { version: 1 } } });
+
+    const { client, result } = renderConfig();
+    await waitFor(() => expect(result.current.data).toBeTruthy());
+
+    expect(gatewayConfigRefreshFailed(client)).toBe(false);
+  });
+
+  it("is true when the re-read failed", async () => {
+    get.mockReset();
+    get.mockRejectedValue(new Error("gateway unreachable"));
+
+    const { client, result } = renderConfig();
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    expect(gatewayConfigRefreshFailed(client)).toBe(true);
   });
 });
 

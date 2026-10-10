@@ -15,7 +15,7 @@ vi.mock("../providers/hooks/useGatewayConfig", () => ({
     isLoading: false,
     data: {
       budgets: {
-        per_model: {
+        hard_limit: {
           limit: 1000,
           spent: 125,
           alertThreshold: 75,
@@ -45,7 +45,7 @@ describe("BudgetRBACSection", () => {
 
     expect(screen.getByText("Budgets")).toBeInTheDocument();
     expect(screen.getByText("Budget Levels")).toBeInTheDocument();
-    expect(screen.getByText("Per Model")).toBeInTheDocument();
+    expect(screen.getByText("Hard Limit")).toBeInTheDocument();
     expect(screen.getByText("$125.00 / $1.0K")).toBeInTheDocument();
   });
 });

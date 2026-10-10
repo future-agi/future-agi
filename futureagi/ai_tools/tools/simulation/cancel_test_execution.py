@@ -43,6 +43,9 @@ class CancelTestExecutionTool(BaseTool):
 
         from simulate.models.run_test import RunTest
         from simulate.models.test_execution import TestExecution
+        from simulate.services.harness_evals import (
+            is_regrading_a_finished_harness_run,
+        )
         from tfc.settings import settings as app_settings
 
         # Validate that at least one identifier is provided
@@ -98,6 +101,12 @@ class CancelTestExecutionTool(BaseTool):
                 f"Cannot cancel execution with status '{test_execution.status}'. "
                 f"Only executions with status {[s.value if hasattr(s, 'value') else s for s in cancellable_statuses]} can be cancelled.",
                 error_code="VALIDATION_ERROR",
+            )
+
+        if is_regrading_a_finished_harness_run(test_execution):
+            return ToolResult.error(
+                "Grading can't be stopped. It finishes on its own.",
+                error_code="CONFLICT",
             )
 
         previous_status = test_execution.status
