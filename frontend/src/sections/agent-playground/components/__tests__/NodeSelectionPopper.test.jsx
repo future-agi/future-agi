@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import NodeSelectionPopper from "../NodeSelectionPopper";
 
 // ---------------------------------------------------------------------------
@@ -29,14 +29,39 @@ const mockTemplateNodes = [
   },
 ];
 
+// Referenceable-graphs state is configurable per test (TH-4549): the Agent node
+// must be listed regardless, and insertion is deferred when none are eligible.
+const referenceableState = {
+  data: [{ id: "other-agent" }],
+  isLoading: false,
+  isFetching: false,
+  isError: false,
+  error: null,
+};
+const mockRefetch = vi.fn();
+
 vi.mock("src/api/agent-playground/agent-playground", () => ({
   useGetNodeTemplates: () => ({ data: mockTemplateNodes }),
-  useGetReferenceableGraphs: () => ({ data: [{ id: "other-agent" }] }),
+  useGetReferenceableGraphs: () => ({
+    ...referenceableState,
+    refetch: mockRefetch,
+  }),
 }));
 
 vi.mock("../../store", () => ({
   useAgentPlaygroundStoreShallow: () => ({ currentAgent: { id: "agent-1" } }),
 }));
+
+const setReferenceable = (overrides) => {
+  Object.assign(referenceableState, {
+    data: [{ id: "other-agent" }],
+    isLoading: false,
+    isFetching: false,
+    isError: false,
+    error: null,
+    ...overrides,
+  });
+};
 
 vi.mock("../../utils/constants", async () => {
   const actual = await vi.importActual("../../utils/constants");
@@ -109,6 +134,7 @@ describe("NodeSelectionPopper", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    setReferenceable();
   });
 
   // -----------------------------------------------------------------------
@@ -251,6 +277,316 @@ describe("NodeSelectionPopper", () => {
       position: undefined,
       node_template_id: undefined,
     });
+    expect(
+      screen.queryByTestId("agent-node-setup-dialog"),
+    ).not.toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TH-4549 — Agent node discoverability when no eligible agents exist
+// ---------------------------------------------------------------------------
+describe("NodeSelectionPopper — Agent node without eligible agents (TH-4549)", () => {
+  // Attached like the real "+" / "Add first node" anchors (isConnected === true).
+  const anchorEl = document.body.appendChild(document.createElement("div"));
+  const defaultProps = {
+    open: true,
+    anchorEl,
+    onClose: vi.fn(),
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setReferenceable({ data: [] });
+  });
+
+  it("still lists the Agent node when referenceable graphs are empty (regression)", () => {
+    render(<NodeSelectionPopper {...defaultProps} />);
+
+    expect(screen.getByTestId("node-card-agent")).toBeInTheDocument();
+    expect(screen.getAllByTestId(/^node-card-/)).toHaveLength(3);
+  });
+
+  it("still lists the Agent node while referenceable graphs are loading", () => {
+    setReferenceable({ data: undefined, isLoading: true });
+    render(<NodeSelectionPopper {...defaultProps} />);
+
+    expect(screen.getByTestId("node-card-agent")).toBeInTheDocument();
+  });
+
+  it("opens the non-mutating setup dialog instead of adding a node", () => {
+    render(<NodeSelectionPopper {...defaultProps} />);
+
+    fireEvent.click(screen.getByTestId("node-card-agent"));
+
+    expect(mockAddNode).not.toHaveBeenCalled();
+    expect(screen.getByTestId("agent-node-setup-dialog")).toBeInTheDocument();
+    expect(
+      screen.getByText("No eligible agents available here"),
+    ).toBeInTheDocument();
+    expect(defaultProps.onClose).toHaveBeenCalled();
+  });
+
+  it("does not call onNodeSelect either when agents are unavailable", () => {
+    const onNodeSelect = vi.fn();
+    render(
+      <NodeSelectionPopper {...defaultProps} onNodeSelect={onNodeSelect} />,
+    );
+
+    fireEvent.click(screen.getByTestId("node-card-agent"));
+
+    expect(onNodeSelect).not.toHaveBeenCalled();
+    expect(screen.getByTestId("agent-node-setup-dialog")).toBeInTheDocument();
+  });
+
+  it("offers a real same-origin new-tab link to the Agent Playground and never names other agents", () => {
+    render(<NodeSelectionPopper {...defaultProps} />);
+    fireEvent.click(screen.getByTestId("node-card-agent"));
+
+    const link = screen.getByTestId("agent-node-setup-open-agents");
+    expect(link.tagName).toBe("A");
+    expect(link).toHaveAttribute("href", "/dashboard/agents");
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", "noopener noreferrer");
+    expect(link).toHaveTextContent(/new tab/i);
+    expect(screen.getByTestId("agent-node-setup-body").textContent).not.toMatch(
+      /other-agent|\d+ agents?|organization has no agents|admin/i,
+    );
+  });
+
+  it("Refresh agents only refetches — it never inserts, even when the result is nonempty", async () => {
+    mockRefetch.mockImplementationOnce(async () => {
+      setReferenceable({ data: [{ id: "now-published" }] });
+      return { data: [{ id: "now-published" }] };
+    });
+    render(<NodeSelectionPopper {...defaultProps} />);
+    fireEvent.click(screen.getByTestId("node-card-agent"));
+
+    fireEvent.click(screen.getByTestId("agent-node-setup-refresh"));
+
+    await waitFor(() => expect(mockRefetch).toHaveBeenCalledTimes(1));
+    expect(mockAddNode).not.toHaveBeenCalled();
+    expect(screen.getByTestId("agent-node-setup-dialog")).toBeInTheDocument();
+  });
+
+  it("shows READY copy and enables Add Agent node once eligibility is confirmed nonempty", async () => {
+    const { rerender } = render(<NodeSelectionPopper {...defaultProps} />);
+    fireEvent.click(screen.getByTestId("node-card-agent"));
+    expect(screen.getByTestId("agent-node-setup-add")).toBeDisabled();
+
+    setReferenceable({ data: [{ id: "now-published" }] });
+    rerender(<NodeSelectionPopper {...defaultProps} />);
+
+    expect(
+      screen.getByText("Eligible agents are available"),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("agent-node-setup-add")).toBeEnabled();
+    expect(mockAddNode).not.toHaveBeenCalled();
+  });
+
+  it("explicit Add Agent node inserts the retained request exactly once and closes", async () => {
+    const { rerender } = render(<NodeSelectionPopper {...defaultProps} />);
+    fireEvent.click(screen.getByTestId("node-card-agent"));
+    setReferenceable({ data: [{ id: "now-published" }] });
+    rerender(<NodeSelectionPopper {...defaultProps} />);
+
+    const add = screen.getByTestId("agent-node-setup-add");
+    fireEvent.click(add);
+    fireEvent.click(add);
+
+    await waitFor(() =>
+      expect(mockAddNode).toHaveBeenCalledWith({
+        type: "agent",
+        position: undefined,
+        node_template_id: undefined,
+      }),
+    );
+    expect(mockAddNode).toHaveBeenCalledTimes(1);
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId("agent-node-setup-dialog"),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
+  it("routes the deferred Add through the parent's *latest* onNodeSelect", async () => {
+    const stale = vi.fn();
+    const fresh = vi.fn();
+    const { rerender } = render(
+      <NodeSelectionPopper {...defaultProps} onNodeSelect={stale} />,
+    );
+    fireEvent.click(screen.getByTestId("node-card-agent"));
+
+    setReferenceable({ data: [{ id: "now-published" }] });
+    rerender(<NodeSelectionPopper {...defaultProps} onNodeSelect={fresh} />);
+    fireEvent.click(screen.getByTestId("agent-node-setup-add"));
+
+    await waitFor(() => expect(fresh).toHaveBeenCalledWith("agent", undefined));
+    expect(stale).not.toHaveBeenCalled();
+    expect(mockAddNode).not.toHaveBeenCalled();
+  });
+
+  it("runs the deferred Add even after the hover-only '+' anchor unmounted (edge chrome is not the target)", async () => {
+    // AnimatedEdge renders its "+" only while hovered and closes hover when the
+    // popper closes, so by the time the user clicks Add the anchor element is
+    // detached. The source node still exists; the caller decides that.
+    const detached = document.createElement("button"); // never appended: isConnected === false
+    const onNodeSelect = vi.fn();
+    const { rerender } = render(
+      <NodeSelectionPopper
+        {...defaultProps}
+        anchorEl={detached}
+        onNodeSelect={onNodeSelect}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("node-card-agent"));
+    setReferenceable({ data: [{ id: "now-published" }] });
+    rerender(
+      <NodeSelectionPopper
+        {...defaultProps}
+        anchorEl={detached}
+        onNodeSelect={onNodeSelect}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("agent-node-setup-add"));
+
+    await waitFor(() =>
+      expect(onNodeSelect).toHaveBeenCalledWith("agent", undefined),
+    );
+    expect(onNodeSelect).toHaveBeenCalledTimes(1);
+    expect(mockAddNode).not.toHaveBeenCalled();
+  });
+
+  it("keeps the dialog open and adds nothing when a refresh is still empty", async () => {
+    mockRefetch.mockResolvedValueOnce({ data: [] });
+    render(<NodeSelectionPopper {...defaultProps} />);
+    fireEvent.click(screen.getByTestId("node-card-agent"));
+
+    fireEvent.click(screen.getByTestId("agent-node-setup-refresh"));
+
+    await waitFor(() => expect(mockRefetch).toHaveBeenCalledTimes(1));
+    expect(mockAddNode).not.toHaveBeenCalled();
+    expect(screen.getByTestId("agent-node-setup-dialog")).toBeInTheDocument();
+    expect(screen.getByTestId("agent-node-setup-add")).toBeDisabled();
+  });
+
+  it("drops the pending insert when the user cancels", async () => {
+    render(<NodeSelectionPopper {...defaultProps} />);
+    fireEvent.click(screen.getByTestId("node-card-agent"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId("agent-node-setup-dialog"),
+      ).not.toBeInTheDocument(),
+    );
+    expect(mockAddNode).not.toHaveBeenCalled();
+  });
+
+  it("shows a distinct error state with Retry (not empty-state advice) when the request failed", () => {
+    setReferenceable({
+      data: undefined,
+      isError: true,
+      // production shape from src/utils/axios interceptor
+      error: {
+        message: "Something went wrong",
+        statusCode: 500,
+        transportCode: "ERR_BAD_RESPONSE",
+      },
+    });
+    render(<NodeSelectionPopper {...defaultProps} />);
+
+    fireEvent.click(screen.getByTestId("node-card-agent"));
+
+    expect(mockAddNode).not.toHaveBeenCalled();
+    expect(
+      screen.getByText("Could not load eligible agents"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("agent-node-setup-open-agents"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("agent-node-setup-add"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+  });
+
+  it("renders 403 as an access failure, never as empty", () => {
+    setReferenceable({
+      data: undefined,
+      isError: true,
+      error: {
+        detail: "Forbidden",
+        statusCode: 403,
+        transportCode: "ERR_BAD_REQUEST",
+      },
+    });
+    render(<NodeSelectionPopper {...defaultProps} />);
+
+    fireEvent.click(screen.getByTestId("node-card-agent"));
+
+    expect(
+      screen.getByText("You cannot access eligible agents in this context"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("No eligible agents available here"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("agent-node-setup-open-agents"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders 404 as current-agent-unavailable without existence details", () => {
+    setReferenceable({
+      data: undefined,
+      isError: true,
+      error: {
+        detail: "Not found",
+        statusCode: 404,
+        transportCode: "ERR_BAD_REQUEST",
+      },
+    });
+    render(<NodeSelectionPopper {...defaultProps} />);
+
+    fireEvent.click(screen.getByTestId("node-card-agent"));
+
+    expect(screen.getByText("Current agent unavailable")).toBeInTheDocument();
+    expect(screen.getByTestId("agent-node-setup-body").textContent).not.toMatch(
+      /agent-1|exists|other-agent/,
+    );
+  });
+
+  it("does not insert while eligibility is still loading", () => {
+    setReferenceable({ data: undefined, isLoading: true });
+    render(<NodeSelectionPopper {...defaultProps} />);
+
+    fireEvent.click(screen.getByTestId("node-card-agent"));
+
+    expect(mockAddNode).not.toHaveBeenCalled();
+    expect(screen.getByText("Loading eligible agents...")).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("agent-node-setup-refresh"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("agent-node-setup-add"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("leaves non-Agent nodes unaffected by the Agent eligibility gate", () => {
+    render(<NodeSelectionPopper {...defaultProps} />);
+
+    fireEvent.click(screen.getByTestId("node-card-eval"));
+
+    expect(mockAddNode).toHaveBeenCalledWith({
+      type: "eval",
+      position: undefined,
+      node_template_id: "tpl-2",
+    });
+    expect(
+      screen.queryByTestId("agent-node-setup-dialog"),
+    ).not.toBeInTheDocument();
   });
 });
 
