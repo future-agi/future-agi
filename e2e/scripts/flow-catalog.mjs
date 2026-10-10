@@ -7,7 +7,7 @@ import path from "node:path";
 
 const E2E_DIR = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const CATALOG = path.join(E2E_DIR, "FLOWS.md");
-const REQUIRED = ["id", "area", "userGoal", "steps", "backendChecks"];
+const REQUIRED = ["id", "area", "userGoal", "steps"];
 
 export function extractFlows(entries) {
   const flowTests = entries.filter((e) => e.tags.includes("@flow"));
@@ -25,6 +25,8 @@ export function extractFlows(entries) {
         throw new Error(`flow "${e.title}": annotation missing ${key}`);
       }
     }
+    if (!meta.backendChecks?.length && !meta.browserChecks?.length)
+      throw new Error(`flow "${e.title}": annotation missing checks`);
     return {
       ...meta,
       title: e.title,
@@ -64,11 +66,21 @@ export function renderCatalog(flows) {
         "",
         ...f.steps.map((s, i) => `${i + 1}. ${s}`),
         "",
-        "**Backend state verified:**",
-        "",
-        ...f.backendChecks.map((c) => `- ${c}`),
-        "",
       );
+      if (f.backendChecks?.length)
+        lines.push(
+          "**Backend state verified:**",
+          "",
+          ...f.backendChecks.map((c) => `- ${c}`),
+          "",
+        );
+      if (f.browserChecks?.length)
+        lines.push(
+          "**Browser observations:**",
+          "",
+          ...f.browserChecks.map((c) => `- ${c}`),
+          "",
+        );
     }
   }
   return lines.join("\n");

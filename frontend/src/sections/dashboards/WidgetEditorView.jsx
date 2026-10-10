@@ -77,6 +77,7 @@ import {
   useLegacyCursorAttributeInventory,
 } from "src/sections/projects/LLMTracing/useCursorAttributeInventory";
 import useCanEditDashboard from "./hooks/useCanEditDashboard";
+import useClampedChartTooltips from "./hooks/useClampedChartTooltips";
 import {
   coerceFilterValue,
   FILTER_STRING_MAX_UTF8_BYTES,
@@ -102,6 +103,12 @@ import {
   getExactDashboardResult,
   getDashboardMetricSeriesState,
   getPlottedChartSeries,
+  getChartTimeWindow,
+  getTableBucketPlan,
+  describeTableBuckets,
+  isDenseChartSeries,
+  getChartMarkerSizes,
+  isAbsentChartPoint,
   getSeriesScalar,
   groupPieSeries,
   getSuggestedUnitConfig,
@@ -109,7 +116,6 @@ import {
   getYAxisRangeWarning,
   getVisibleIndices,
   resolveWidgetAxisPlan,
-  shouldConnectAcrossMissingBuckets,
   resolveSavedSelection,
   toAxisConfigPayload,
 } from "./widgetUtils";
@@ -2503,6 +2509,10 @@ export default function WidgetEditorView() {
   const [customDateRange, setCustomDateRange] = useState(null); // [startDate, endDate]
   const customDateAnchorRef = useRef(null);
   const lineChartRef = useRef(null);
+  // Stable ancestor for the tooltip-clamp observer: lineChartRef only mounts
+  // once the preview query resolves, but this container is present from the
+  // first render.
+  const chartAncestorRef = useRef(null);
   const saveNavTimerRef = useRef(null);
   useEffect(() => () => clearTimeout(saveNavTimerRef.current), []);
 
@@ -3726,8 +3736,6 @@ export default function WidgetEditorView() {
   const isTable = chartType === "table";
   const isMetricCard = chartType === "metric";
   const isLineChart = apexType === "line";
-  const connectsAcrossMissingBuckets =
-    shouldConnectAcrossMissingBuckets(apexType);
 
   const aggColumnLabel = useMemo(
     () => getAggColumnLabel(metrics, ALL_AGGREGATIONS),
@@ -3747,10 +3755,17 @@ export default function WidgetEditorView() {
   );
 
   // Match the saved-dashboard renderer: null means an absent aggregate
-  // bucket, not zero, so line previews connect the neighbouring exact points.
+  // bucket, not zero (see getPlottedChartSeries). Memoized so the big
+  // chartOptions memo below (which depends on this object) doesn't recompute
+  // on every render from a fresh {min,max}.
+  const chartTimeWindow = useMemo(
+    () => getChartTimeWindow(previewResult),
+    [previewResult],
+  );
+
   const plottedChartSeries = useMemo(
-    () => getPlottedChartSeries(chartSeries, connectsAcrossMissingBuckets),
-    [chartSeries, connectsAcrossMissingBuckets],
+    () => getPlottedChartSeries(chartSeries, { stacked: isStacked }),
+    [chartSeries, isStacked],
   );
 
   const outOfRangeWarning = useMemo(
@@ -3854,6 +3869,8 @@ export default function WidgetEditorView() {
     [isPie, pieHasBreakdown, previewSeries],
   );
 
+  useClampedChartTooltips(lineChartRef, chartAncestorRef);
+
   // Legend hover → highlight series by dimming others via SVG opacity
   const handleLegendHover = useCallback((seriesIndex) => {
     const el = lineChartRef.current;
@@ -3875,6 +3892,16 @@ export default function WidgetEditorView() {
   }, []);
 
   const isDark = theme.palette.mode === "dark";
+
+  const markerSizes = useMemo(
+    () =>
+      getChartMarkerSizes(
+        plottedChartSeries,
+        isLineChart ? 5 : apexType === "area" ? 4 : 0,
+      ),
+    [plottedChartSeries, isLineChart, apexType],
+  );
+
   const formatValFn = useCallback(
     (val) =>
       formatValueWithConfig(val, leftAxisFormatConfig, {
@@ -3889,13 +3916,18 @@ export default function WidgetEditorView() {
       (val) =>
         formatValueWithConfig(val, cfg, { fallbackDecimals, includeUnit });
     const formatVal = makeFormatter(leftAxisFormatConfig);
+    const isDenseSeries = isDenseChartSeries(plottedChartSeries);
     return {
       chart: {
         type: apexType,
         toolbar: { show: false },
         zoom: { enabled: true },
         stacked: isStacked,
-        animations: { enabled: true, easing: "easeinout", speed: 400 },
+        animations: {
+          enabled: !isDenseSeries,
+          easing: "easeinout",
+          speed: 400,
+        },
         events: {
           mouseMove: (event, chartContext, config) => {
             const el = chartContext?.el;
@@ -4033,7 +4065,9 @@ export default function WidgetEditorView() {
           }
         : {
             type: "datetime",
-            tickAmount: Math.min(chartSeries[0]?.data?.length || 10, 12),
+            // Span the window that was queried, not just the buckets that
+            // reported.
+            ...(chartTimeWindow || {}),
             labels: {
               show: axisConfig.xAxis.visible,
               style: { colors: theme.palette.text.secondary, fontSize: "11px" },
@@ -4135,7 +4169,12 @@ export default function WidgetEditorView() {
         });
       })(),
       stroke: {
-        curve: "monotoneCubic",
+        // Not monotoneCubic: it derives each control handle from the
+        // neighbouring gap widths, so a tight cluster beside a long empty
+        // stretch gets a handle hundreds of px past its own segment and the
+        // line visibly runs forward then doubles back. "smooth" does not, and
+        // is what every other chart in the app already uses.
+        curve: "smooth",
         width: apexType === "area" ? 2 : apexType === "line" ? 2.5 : 0,
       },
       fill: (() => {
@@ -4153,7 +4192,7 @@ export default function WidgetEditorView() {
         };
       })(),
       markers: {
-        size: isLineChart ? 5 : apexType === "area" ? 4 : 0,
+        size: markerSizes,
         strokeWidth: 2,
         strokeColors: isDark ? theme.palette.background.paper : "#fff",
         hover: isLineChart
@@ -4188,13 +4227,18 @@ export default function WidgetEditorView() {
               format: "MMM dd, yyyy",
             },
             y: {
-              formatter: formatVal,
+              formatter: (val, { seriesIndex, dataPointIndex, w } = {}) =>
+                isAbsentChartPoint(w, seriesIndex, dataPointIndex)
+                  ? "-"
+                  : formatVal(val),
             },
           }
         : {
             enabled: true,
             shared: false,
-            intersect: isLineChart,
+            // A series without markers has nothing to intersect, so a dense chart
+            // finds the hovered point by position instead.
+            intersect: isLineChart && !isDenseSeries,
             custom: ({ series, seriesIndex, dataPointIndex, w }) => {
               const sName = w.globals.seriesNames[seriesIndex] || "";
               const color = w.globals.colors[seriesIndex] || "#6366F1";
@@ -4242,8 +4286,11 @@ export default function WidgetEditorView() {
     isHorizontal,
     chartType,
     chartSeries,
+    plottedChartSeries,
+    chartTimeWindow,
     chartSeriesIndices,
     chartColors,
+    markerSizes,
     theme,
     axisConfig,
     autoDecimals,
@@ -5007,6 +5054,7 @@ export default function WidgetEditorView() {
 
           {/* Chart + View toggles + Data table */}
           <Box
+            ref={chartAncestorRef}
             sx={{
               flex: 1,
               border: `1px solid ${theme.palette.divider}`,
@@ -5482,7 +5530,10 @@ export default function WidgetEditorView() {
                     ) : isTable ? (
                       /* Data table — Time as rows, Segments as columns */
                       (() => {
-                        const timeData = chartSeries[0]?.data || [];
+                        // One row per bucket becomes thousands of rows at
+                        // minute granularity, so empty buckets are dropped and
+                        // the remainder capped (TH-7757).
+                        const bucketPlan = getTableBucketPlan(chartSeries);
                         const dateFmt =
                           granularity === "minute"
                             ? "HH:mm"
@@ -5527,6 +5578,20 @@ export default function WidgetEditorView() {
                                     }}
                                   >
                                     Time
+                                    {describeTableBuckets(bucketPlan) && (
+                                      <Box
+                                        component="span"
+                                        sx={{
+                                          display: "block",
+                                          fontWeight: 400,
+                                          fontSize: "11px",
+                                          color: "text.disabled",
+                                          whiteSpace: "nowrap",
+                                        }}
+                                      >
+                                        {describeTableBuckets(bucketPlan)}
+                                      </Box>
+                                    )}
                                   </th>
                                   {chartSeries.map((s, i) => (
                                     <th
@@ -5573,7 +5638,15 @@ export default function WidgetEditorView() {
                                 </tr>
                               </thead>
                               <tbody>
-                                {timeData.map((pt, ri) => {
+                                {bucketPlan.indices.map((ri) => {
+                                  // The plan is sized by the widest series, so
+                                  // a shorter chartSeries[0] must not drop a
+                                  // row another series still reports
+                                  // (TH-7757 review).
+                                  const pt = chartSeries.find(
+                                    (s) => s?.data?.[ri],
+                                  )?.data?.[ri];
+                                  if (!pt) return null;
                                   const hasData = chartSeries.some(
                                     (s) =>
                                       s.data[ri]?.y != null &&
@@ -5889,12 +5962,19 @@ export default function WidgetEditorView() {
                   visibleSeries !== null &&
                   visibleSeries.size > 0 &&
                   visibleSeries.size < previewSeries.length;
-                // Show all time columns — the table scrolls horizontally
-                const allDataPoints = previewSeries[0]?.data || [];
-                const displayData = allDataPoints;
-                const displayIndicesSet = new Set(
-                  allDataPoints.map((_, i) => i),
-                );
+                // Empty buckets are dropped and the remainder capped, so a
+                // minute-granularity range cannot render thousands of columns.
+                // The CSV export above still writes every bucket.
+                const bucketPlan = getTableBucketPlan(previewSeries);
+                // The plan is sized by the widest series, so a shorter
+                // previewSeries[0] must not drop a row another series still
+                // reports (TH-7757 review).
+                const displayData = bucketPlan.indices
+                  .map(
+                    (i) => previewSeries.find((s) => s?.data?.[i])?.data?.[i],
+                  )
+                  .filter(Boolean);
+                const displayIndicesSet = new Set(bucketPlan.indices);
 
                 const toggleSeries = (si) => {
                   const current = visibleSeries || new Set(allIndices);
@@ -6051,6 +6131,20 @@ export default function WidgetEditorView() {
                               }}
                             >
                               {aggColumnLabel}
+                              {describeTableBuckets(bucketPlan) && (
+                                <Box
+                                  component="span"
+                                  sx={{
+                                    display: "block",
+                                    fontWeight: 400,
+                                    fontSize: "11px",
+                                    color: "text.disabled",
+                                    whiteSpace: "nowrap",
+                                  }}
+                                >
+                                  {describeTableBuckets(bucketPlan)}
+                                </Box>
+                              )}
                             </th>
                             {displayData.map((pt, ci) => (
                               <th
