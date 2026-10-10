@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { filtersContentEqual } from "../saved-view-utils";
+import {
+  dateBoundsEqual,
+  dateFilterEqual,
+  filtersContentEqual,
+} from "../saved-view-utils";
 
 const filter = (overrides = {}) => ({
   column_id: "latency_ms",
@@ -64,5 +68,70 @@ describe("saved-view-utils", () => {
         [filter({ property_id: "system_attribute:traces:latency_ms" })],
       ),
     ).toBe(false);
+  });
+
+  describe("dateBoundsEqual", () => {
+    const range = ["2026-09-01 00:00:00", "2026-09-10 00:00:00"];
+
+    it("treats identical persisted bounds as equal", () => {
+      expect(dateBoundsEqual(range, [...range])).toBe(true);
+    });
+
+    it("detects an edited start or end bound", () => {
+      expect(dateBoundsEqual(range, ["2026-09-02 00:00:00", range[1]])).toBe(
+        false,
+      );
+      expect(dateBoundsEqual(range, [range[0], "2026-09-12 00:00:00"])).toBe(
+        false,
+      );
+    });
+
+    it("treats missing bounds as an empty pair", () => {
+      expect(dateBoundsEqual(undefined, [])).toBe(true);
+      expect(dateBoundsEqual(null, undefined)).toBe(true);
+      expect(dateBoundsEqual(undefined, range)).toBe(false);
+    });
+  });
+
+  describe("dateFilterEqual", () => {
+    const custom = (dateFilter) => ({ dateOption: "Custom", dateFilter });
+    const range = ["2026-09-01 00:00:00", "2026-09-10 00:00:00"];
+
+    it("is false when the option name differs", () => {
+      expect(dateFilterEqual({ dateOption: "7D" }, custom(range))).toBe(false);
+    });
+
+    it("compares bounds only for a Custom baseline", () => {
+      expect(
+        dateFilterEqual(
+          { dateOption: "7D", dateFilter: range },
+          { dateOption: "7D", dateFilter: ["x", "y"] },
+        ),
+      ).toBe(true);
+      expect(dateFilterEqual(custom(range), custom([...range]))).toBe(true);
+      expect(
+        dateFilterEqual(
+          custom(["2026-09-02 00:00:00", "2026-09-12 00:00:00"]),
+          custom(range),
+        ),
+      ).toBe(false);
+    });
+
+    it("treats a missing filter on both sides as equal", () => {
+      expect(dateFilterEqual(undefined, undefined)).toBe(true);
+      expect(dateFilterEqual(undefined, custom(range))).toBe(false);
+    });
+
+    // Migration 0078 copied legacy filters.dateFilter objects that carried an
+    // option name and no bounds array. The live default always has bounds, so
+    // a stored Custom with no pair must not read as an edit on load.
+    it("treats a Custom baseline with no bounds as equal to any bounds", () => {
+      expect(dateFilterEqual(custom(range), { dateOption: "Custom" })).toBe(
+        true,
+      );
+      expect(dateFilterEqual(custom(range), custom(undefined))).toBe(true);
+      expect(dateFilterEqual(custom(range), custom(null))).toBe(true);
+      expect(dateFilterEqual(custom(range), custom([]))).toBe(true);
+    });
   });
 });
