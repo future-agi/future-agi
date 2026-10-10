@@ -1850,6 +1850,10 @@ export const endpoints = {
     stats: apiPath("/tracer/feed/issues/stats/"),
     detail: (clusterId) =>
       apiPath("/tracer/feed/issues/{cluster_id}/", { cluster_id: clusterId }),
+    redirect: (clusterId) =>
+      apiPath("/tracer/feed/issues/{cluster_id}/redirect/", {
+        cluster_id: clusterId,
+      }),
     update: (clusterId) =>
       apiPath("/tracer/feed/issues/{cluster_id}/", { cluster_id: clusterId }),
     overview: (clusterId) =>

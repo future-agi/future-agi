@@ -698,6 +698,24 @@
 - current property label, value choices and filtered UI/API rows agree after editing
 - removed columns and datasets cannot be rediscovered through metadata or value requests
 
+## error-feed
+
+### FEED-E2E-001 — an old issue URL opens the surviving issue
+
+**Goal:** A saved link to a retired issue opens its surviving issue  
+**Spec:** `flows/error-feed/retired-issue-redirect.spec.ts:7`  
+**Tags:** —
+
+**User steps:**
+
+1. open the retired issue URL
+2. follow its redirect to the active issue URL
+
+**Browser observations:**
+
+- the browser requests the redirect for the retired ID and receives a stubbed response
+- the browser never requests the retired issue detail
+
 ## evals
 
 ### EVAL-E2E-001 — eval task runs over ingested spans via the mock LLM
@@ -829,6 +847,7 @@
 - each request stored in PG agentcc_request_log under the key's org with the caller metadata the gateway parsed
 - the list endpoint returns only the rows of the filtered application
 - two applications in one filter return both, a service filter and a team tag filter narrow the same way
+- filtering by the delivering key's gateway_key_id returns all rows stamped with that key, not a 400
 - metadata-values offers exactly the two applications the org sent
 - usage analytics grouped by application counts each application on its own
 - the filtered UI row set equals the API result for the same filter
@@ -1135,7 +1154,7 @@
 ### OBS-E2E-027 — trace list pager windows forward without an endless page count
 
 **Goal:** A developer paging through a large trace list always knows where they are and when they have reached the end  
-**Spec:** `flows/observe/list-pagination.spec.ts:297`  
+**Spec:** `flows/observe/list-pagination.spec.ts:311`  
 **Tags:** —
 
 **User steps:**
@@ -1156,7 +1175,7 @@
 ### OBS-E2E-028 — Next stays usable through a full Back-Back-Next-Next round trip from the terminal page
 
 **Goal:** A developer bouncing back and forth near the end of a trace list never loses forward navigation  
-**Spec:** `flows/observe/list-pagination.spec.ts:524`  
+**Spec:** `flows/observe/list-pagination.spec.ts:537`  
 **Tags:** —
 
 **User steps:**
@@ -1174,7 +1193,7 @@
 ### OBS-E2E-029 — an exactly-full final page ends pagination without offering a phantom next page
 
 **Goal:** A developer whose trace count divides evenly by the page size sees a real last page, not an empty page N+1  
-**Spec:** `flows/observe/list-pagination.spec.ts:616`  
+**Spec:** `flows/observe/list-pagination.spec.ts:629`  
 **Tags:** —
 
 **User steps:**
@@ -1191,7 +1210,7 @@
 ### OBS-E2E-030 — has_more without a strictly greater total promises no page number, but keeps Next enabled
 
 **Goal:** A developer searching a sparse cursor window is never shown a page number the transport cannot prove exists  
-**Spec:** `flows/observe/list-pagination.spec.ts:670`  
+**Spec:** `flows/observe/list-pagination.spec.ts:683`  
 **Tags:** —
 
 **User steps:**
@@ -1209,7 +1228,7 @@
 ### OBS-E2E-031 — the Next label DOM node survives ~1.5s of ancestor re-render churn
 
 **Goal:** A developer's pointer never lands on a button whose label React just tore down and rebuilt underneath it  
-**Spec:** `flows/observe/list-pagination.spec.ts:746`  
+**Spec:** `flows/observe/list-pagination.spec.ts:762`  
 **Tags:** —
 
 **User steps:**
@@ -1227,7 +1246,7 @@
 ### OBS-E2E-032 — a real dwell-click on Next/Back actually fires a click, not just a press
 
 **Goal:** A developer's mouse press on Back/Next always produces a click, even while the ancestor is mid-re-render  
-**Spec:** `flows/observe/list-pagination.spec.ts:812`  
+**Spec:** `flows/observe/list-pagination.spec.ts:828`  
 **Tags:** —
 
 **User steps:**
@@ -1246,7 +1265,7 @@
 ### OBS-E2E-033 — changing page size changes the outbound page_size, the rendered row count, and resets to page 1
 
 **Goal:** A developer who changes results-per-page gets exactly that many rows and starts back at page 1, not a stale mid-list position  
-**Spec:** `flows/observe/list-pagination.spec.ts:881`  
+**Spec:** `flows/observe/list-pagination.spec.ts:897`  
 **Tags:** —
 
 **User steps:**
@@ -1263,7 +1282,7 @@
 ### OBS-E2E-034 — the agent call-log pager (a plain DRF-paginated, non-cursor screen) still paginates and reaches its last row
 
 **Goal:** A developer browsing an agent version's call logs gets a working pager even though this screen has no cursor `has_more` contract  
-**Spec:** `flows/observe/list-pagination.spec.ts:921`  
+**Spec:** `flows/observe/list-pagination.spec.ts:937`  
 **Tags:** —
 
 **User steps:**
@@ -1282,7 +1301,7 @@
 ### OBS-E2E-035 — changing the date filter resets pagination to page 1 and drops the old cursor
 
 **Goal:** A developer who narrows the date range never sees stale rows or a stale page position from the filter they just replaced  
-**Spec:** `flows/observe/list-pagination.spec.ts:979`  
+**Spec:** `flows/observe/list-pagination.spec.ts:995`  
 **Tags:** —
 
 **User steps:**
@@ -1300,7 +1319,7 @@
 ### OBS-E2E-036 — the furthest-visited page reappears as a boundary after walking back to page 1
 
 **Goal:** A developer who has already paged deep into a trace list and jumps back to page 1 can still return straight to the page they left off on  
-**Spec:** `flows/observe/list-pagination.spec.ts:1066`  
+**Spec:** `flows/observe/list-pagination.spec.ts:1082`  
 **Tags:** —
 
 **User steps:**

@@ -288,6 +288,8 @@ import type {
   ConditionalColumnRequestApi,
   ConversationCreateRequestApi,
   ConversationDetailResponseApi,
+  ConversationEvidenceRequestApi,
+  ConversationEvidenceResponseApi,
   ConversationListResponseApi,
   ConversationUpdateRequestApi,
   CreateDatasetFromExperimentRequestApi,
@@ -507,6 +509,7 @@ import type {
   FalconMemoryListResponseApi,
   FeedDetailApiResponseApi,
   FeedListApiResponseApi,
+  FeedRedirectApiResponseApi,
   FeedSidebarApiResponseApi,
   FeedStatsApiResponseApi,
   FeedUpdateBodyApi,
@@ -1287,6 +1290,7 @@ import type {
   TracerFeedIssuesListParams,
   TracerFeedIssuesOverviewListParams,
   TracerFeedIssuesReadParams,
+  TracerFeedIssuesRedirectListParams,
   TracerFeedIssuesRootCauseListParams,
   TracerFeedIssuesSidebarListParams,
   TracerFeedIssuesStatsListParams,
@@ -71250,6 +71254,94 @@ export const tracerFeedIssuesOverviewList = async (
   );
 };
 
+export type tracerFeedIssuesRedirectListResponse200 = {
+  data: FeedRedirectApiResponseApi;
+  status: 200;
+};
+
+export type tracerFeedIssuesRedirectListResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerFeedIssuesRedirectListResponse403 = {
+  data: ApiErrorResponseApi;
+  status: 403;
+};
+
+export type tracerFeedIssuesRedirectListResponse404 = {
+  data: ApiErrorResponseApi;
+  status: 404;
+};
+
+export type tracerFeedIssuesRedirectListResponse500 = {
+  data: ApiErrorResponseApi;
+  status: 500;
+};
+
+export type tracerFeedIssuesRedirectListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 500>;
+};
+
+export type tracerFeedIssuesRedirectListResponseSuccess =
+  tracerFeedIssuesRedirectListResponse200 & {
+    headers: Headers;
+  };
+export type tracerFeedIssuesRedirectListResponseError = (
+  | tracerFeedIssuesRedirectListResponse400
+  | tracerFeedIssuesRedirectListResponse403
+  | tracerFeedIssuesRedirectListResponse404
+  | tracerFeedIssuesRedirectListResponse500
+  | tracerFeedIssuesRedirectListResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type tracerFeedIssuesRedirectListResponse =
+  | tracerFeedIssuesRedirectListResponseSuccess
+  | tracerFeedIssuesRedirectListResponseError;
+
+export const getTracerFeedIssuesRedirectListUrl = (
+  clusterId: string,
+  params?: TracerFeedIssuesRedirectListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/feed/issues/${clusterId}/redirect/?${stringifiedParams}`
+    : `/tracer/feed/issues/${clusterId}/redirect/`;
+};
+
+/**
+ * Resolve an old issue ID to its active redirect target.
+ */
+export const tracerFeedIssuesRedirectList = async (
+  clusterId: string,
+  params?: TracerFeedIssuesRedirectListParams,
+  options?: RequestInit,
+): Promise<tracerFeedIssuesRedirectListResponse> => {
+  return apiMutator<tracerFeedIssuesRedirectListResponse>(
+    getTracerFeedIssuesRedirectListUrl(clusterId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
 export type tracerFeedIssuesRootCauseListResponse200 = {
   data: DeepAnalysisApiResponseApi;
   status: 200;
@@ -71900,6 +71992,65 @@ export const tracerInternalErrorFeedV2AttemptsPartialUpdate = async (
     },
   );
 };
+
+export type tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponse200 =
+  {
+    data: ConversationEvidenceResponseApi;
+    status: 200;
+  };
+
+export type tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponse409 =
+  {
+    data: InvestigationControlErrorApi;
+    status: 409;
+  };
+
+export type tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 200 | 409>;
+  };
+
+export type tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponseSuccess =
+  tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponse200 & {
+    headers: Headers;
+  };
+export type tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponseError =
+  (
+    | tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponse409
+    | tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponseDefault
+  ) & {
+    headers: Headers;
+  };
+
+export type tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponse =
+
+    | tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponseSuccess
+    | tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponseError;
+
+export const getTracerInternalErrorFeedV2AttemptsConversationEvidenceCreateUrl =
+  (attemptId: string) => {
+    return `/tracer/internal/error-feed-v2/attempts/${attemptId}/conversation-evidence/`;
+  };
+
+export const tracerInternalErrorFeedV2AttemptsConversationEvidenceCreate =
+  async (
+    attemptId: string,
+    conversationEvidenceRequestApi: ConversationEvidenceRequestApi,
+    options?: RequestInit,
+  ): Promise<tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponse> => {
+    return apiMutator<tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponse>(
+      getTracerInternalErrorFeedV2AttemptsConversationEvidenceCreateUrl(
+        attemptId,
+      ),
+      {
+        ...options,
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...options?.headers },
+        body: JSON.stringify(conversationEvidenceRequestApi),
+      },
+    );
+  };
 
 export type tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponse201 =
   {
