@@ -39,6 +39,8 @@ const harness = vi.hoisted(() => ({
   snackbar: vi.fn(),
   traceGridSelectedNodes: null,
   traceGridApiExtras: {},
+  spanGridSelectedNodes: null,
+  spanGridApiExtras: {},
 }));
 
 vi.mock("notistack", async (importOriginal) => ({
@@ -163,7 +165,23 @@ vi.mock("src/components/traceDetail/TraceDetailDrawerV2", () => ({
 
 vi.mock("../SpanGrid", async () => {
   const ReactModule = await import("react");
-  return { default: ReactModule.forwardRef((_props, _ref) => null) };
+  return {
+    default: ReactModule.forwardRef((_props, ref) => {
+      // Only the span bulk-tag test exposes a grid API through the ref.
+      ReactModule.useImperativeHandle(ref, () =>
+        harness.spanGridSelectedNodes
+          ? {
+              api: {
+                getSelectedNodes: () => harness.spanGridSelectedNodes,
+                sizeColumnsToFit: () => {},
+                ...harness.spanGridApiExtras,
+              },
+            }
+          : null,
+      );
+      return null;
+    }),
+  };
 });
 
 vi.mock("src/sections/agents/CallLogs/CallLogsGrid", async () => {
@@ -490,13 +508,18 @@ describe("LLMTracingView trace grid bulk tags", () => {
   afterEach(() => {
     harness.traceGridSelectedNodes = null;
     harness.traceGridApiExtras = {};
+    harness.spanGridSelectedNodes = null;
+    harness.spanGridApiExtras = {};
+    harness.selectedTab = "trace";
   });
 
   // The popover is lazy; its first load in a cold run can take over the
   // default 1 s waitFor timeout.
   const POPOVER_OPEN = { timeout: 5000 };
 
-  const openTraceBulkTags = async (nodes) => {
+  // `nodes` are the trace grid's selection; span tests set
+  // harness.spanGridSelectedNodes and pass null.
+  const openGridBulkTags = async (nodes) => {
     harness.traceGridSelectedNodes = nodes;
     renderView();
     await waitFor(() => expect(harness.toolbarProps.length).toBeGreaterThan(0));
@@ -516,7 +539,7 @@ describe("LLMTracingView trace grid bulk tags", () => {
   };
 
   it("merges into each row's stored tags, string or array", async () => {
-    await openTraceBulkTags([
+    await openGridBulkTags([
       { data: { trace_id: "trace-a", tags: '["prod"]' } },
       { data: { trace_id: "trace-b", tags: ["vip"] } },
       { data: { trace_id: "trace-c", tags: "[]" } },
@@ -534,7 +557,7 @@ describe("LLMTracingView trace grid bulk tags", () => {
   });
 
   it("does not open the tag popover when a row's tags cannot be read", async () => {
-    await openTraceBulkTags([
+    await openGridBulkTags([
       { data: { trace_id: "trace-a", tags: ["prod"] } },
       { data: { trace_id: "trace-b", tags: "not-a-list" } },
     ]);
@@ -561,9 +584,7 @@ describe("LLMTracingView trace grid bulk tags", () => {
       refreshServerSide,
       deselectAll,
     };
-    await openTraceBulkTags([
-      { data: { trace_id: "trace-a", tags: ["prod"] } },
-    ]);
+    await openGridBulkTags([{ data: { trace_id: "trace-a", tags: ["prod"] } }]);
     await waitFor(
       () => expect(harness.addTagsProps.at(-1)?.open).toBe(true),
       POPOVER_OPEN,
@@ -578,6 +599,38 @@ describe("LLMTracingView trace grid bulk tags", () => {
     expect(refreshServerSide).not.toHaveBeenCalled();
     expect(deselectAll).toHaveBeenCalled();
     await waitFor(() => expect(harness.addTagsProps.at(-1)?.open).toBe(false));
+  });
+
+  it("re-reads the span list through the grid's reload when the tag popover closes", async () => {
+    const reloadList = vi.fn();
+    const refreshServerSide = vi.fn();
+    const deselectAll = vi.fn();
+    harness.selectedTab = "spans";
+    harness.spanGridSelectedNodes = [
+      { data: { span_id: "span-a", tags: [{ name: "prod", color: "#000" }] } },
+    ];
+    harness.spanGridApiExtras = {
+      getGridOption: (key) => (key === "context" ? { reloadList } : undefined),
+      refreshServerSide,
+      deselectAll,
+    };
+    await openGridBulkTags(null);
+    await waitFor(
+      () => expect(harness.addTagsProps.at(-1)?.open).toBe(true),
+      POPOVER_OPEN,
+    );
+    expect(harness.addTagsProps.at(-1).bulkItems).toEqual([
+      expect.objectContaining({ id: "span-a", type: "span" }),
+    ]);
+
+    await act(async () => {
+      harness.addTagsProps.at(-1).onClose();
+    });
+
+    expect(reloadList).toHaveBeenCalledOnce();
+    expect(reloadList).toHaveBeenCalledWith(true);
+    expect(refreshServerSide).not.toHaveBeenCalled();
+    expect(deselectAll).toHaveBeenCalled();
   });
 });
 
