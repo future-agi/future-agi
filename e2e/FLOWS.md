@@ -169,7 +169,7 @@
 ### AUTH-E2E-002 — workspace switching updates implicit scope without replacing the signed-in session
 
 **Goal:** Switch workspaces and continue seeing the selected workspace after refresh, while explicitly scoped requests still reach the requested authorized workspace  
-**Spec:** `flows/auth/default-workspace-switch.spec.ts:44`  
+**Spec:** `flows/auth/default-workspace-switch.spec.ts:39`  
 **Tags:** —
 
 **User steps:**
