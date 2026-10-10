@@ -1,19 +1,22 @@
 import json
+import logging
 import re
 import traceback
 import uuid
 
-from accounts.models.user import User
-from django.db import close_old_connections, models, transaction
+from django.db import IntegrityError, close_old_connections, models, transaction
 from django.db.models import Count, Max, OuterRef, Q, Subquery
 from django.http import Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.exceptions import NotFound
+from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+
+from accounts.models.user import User
 from tfc.ee_stub import _ee_stub
 
 try:
@@ -44,10 +47,12 @@ try:
 except ImportError:
     get_personas_by_language = None
 from drf_yasg.utils import swagger_auto_schema
+
 from simulate.models import AgentDefinition, AgentVersion, Persona, Scenarios
 from simulate.models.scenario_graph import ScenarioGraph
 from simulate.models.simulator_agent import SimulatorAgent
 from simulate.serializers.requests.scenarios import (
+    DUPLICATE_NAME_ERROR,
     ScenarioAddColumnsRequestSerializer,
     ScenarioAddRowsRequestSerializer,
     ScenarioCreateRequestSerializer,
@@ -172,6 +177,12 @@ def _scenario_add_columns_serializer_context(request, scenario_id=None):
             .first()
         )
     return {"request": request, "scenario": scenario}
+
+
+def _edit_scenario_serializer_context(request, scenario_id=None):
+    """Pass scenario_id so the edit serializer can exclude self from the
+    best-effort duplicate-name check."""
+    return {"request": request, "scenario_id": scenario_id}
 
 
 def _request_organization(request):
@@ -524,6 +535,10 @@ class CreateScenarioView(APIView):
                 metadata=metadata,
             )
             return scenario
+        except IntegrityError as e:
+            if "unique_scenario_name_per_org" in str(e):
+                raise DRFValidationError({"name": DUPLICATE_NAME_ERROR}) from e
+            raise
         except Exception as e:
             raise Exception(f"Failed to create temporary scenario: {str(e)}") from e
 
@@ -577,8 +592,6 @@ class CreateScenarioView(APIView):
         except Exception as e:
             raise Exception(f"Failed to create simulator agent: {str(e)}")  # noqa: B904
 
-
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -810,6 +823,7 @@ class EditScenarioView(APIView):
 
     @validated_request(
         request_serializer=ScenarioEditRequestSerializer,
+        serializer_context=_edit_scenario_serializer_context,
         tags=["Scenarios"],
         operation_summary="Edit scenario",
         operation_description="Updates scenario name, description, graph, or prompt.",
@@ -887,6 +901,12 @@ class EditScenarioView(APIView):
                 status=status.HTTP_200_OK,
             )
 
+        except IntegrityError as e:
+            if "unique_scenario_name_per_org" in str(e):
+                return self.gm.bad_request({"name": DUPLICATE_NAME_ERROR})
+            return self.gm.internal_server_error_response(
+                f"Failed to update scenario: {str(e)}"
+            )
         except Http404:
             return self.gm.not_found("Scenario not found.")
         except Exception as e:
