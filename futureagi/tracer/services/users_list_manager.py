@@ -74,6 +74,10 @@ USERS_EXPORT_COLUMNS = [
     ("Evals Pass Rate (%)", "bool_eval_pass_rate"),
     ("Input Tokens", "input_tokens"),
     ("Output Tokens", "output_tokens"),
+    # Rows are per project + user (one EndUser each), so a user active in two
+    # projects exports twice; the project names each row's scope.  Appended
+    # so existing column positions stay stable.
+    ("Project", "project_name"),
 ]
 
 
@@ -525,6 +529,7 @@ class UsersListManager:
         sort_params: list[dict] | None = None,
         requested_columns: list[str] | None = None,
         attribute_keys: list[str] | None = None,
+        project_names: dict[str, str] | None = None,
     ):
         self.organization_id = str(organization_id)
         self.project_id = str(project_id) if project_id else None
@@ -700,6 +705,18 @@ class UsersListManager:
         self.scoped_project_ids, self.empty_scope = self._resolve_scope(
             self.project_id, allowed_project_ids
         )
+        # Display names for row labels, limited to this request's scope.
+        # ``None`` (no names supplied) leaves rows unlabelled.
+        scoped = set(self.scoped_project_ids)
+        self.project_names: dict[str, str] | None = (
+            None
+            if project_names is None
+            else {
+                str(project_id): name
+                for project_id, name in project_names.items()
+                if str(project_id) in scoped
+            }
+        )
 
     @staticmethod
     def _resolve_scope(
@@ -717,6 +734,27 @@ class UsersListManager:
             return [], True
         scoped = [str(p) for p in allowed_project_ids]
         return scoped, not scoped
+
+    def _label_project_scope(self, rows: list[dict]) -> None:
+        """Name the project each published row belongs to.
+
+        A Users row is one ``EndUser``: a user *within one project*.  The same
+        ``user_id`` active in two projects is two rows, so every row carries
+        its project's display name for the table and CSV export.  This adds
+        no cross-project identity aggregation and no read: the names come
+        from the request's authorized-project lookup (``project_names``),
+        restricted again to this page's scope.  A row whose project is outside
+        that scope gets ``None``, never another project's name.  A caller that
+        supplies no names leaves rows untouched.
+        """
+
+        if self.project_names is None:
+            return
+        for row in rows:
+            project_id = row.get("project_id")
+            row["project_name"] = (
+                self.project_names.get(str(project_id)) if project_id else None
+            )
 
     def _fetch_rows(
         self,
@@ -2154,6 +2192,26 @@ class UsersListManager:
         cursor: ListCursor | None = None,
         page_wall: bool = True,
     ) -> UserCursorRead:
+        """Read one exact cursor page and name each row's project.
+
+        ``_read_cursor_page`` owns the page contract (and every early return
+        through the matching-activity walk); this boundary only labels the
+        published rows' project scope for the table and the CSV export.
+        """
+
+        cursor_read = self._read_cursor_page(
+            page_size=page_size, cursor=cursor, page_wall=page_wall
+        )
+        self._label_project_scope(cursor_read.payload.get("table") or [])
+        return cursor_read
+
+    def _read_cursor_page(
+        self,
+        *,
+        page_size: int,
+        cursor: ListCursor | None = None,
+        page_wall: bool = True,
+    ) -> UserCursorRead:
         """Fill an exact activity-ordered page or prove population exhaustion.
 
         Finite batches bound memory, not traversal or accuracy. A resource
@@ -2542,6 +2600,7 @@ class UsersListManager:
             # turn an arbitrary programming defect into a successful empty or
             # partially enriched user page.
             raise
+        self._label_project_scope(rows)
         total_pages = (count // page_size) + (1 if count % page_size > 0 else 0)
         return {"table": rows, "total_count": count, "total_pages": total_pages}
 

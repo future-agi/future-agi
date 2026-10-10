@@ -144,9 +144,8 @@ describe("VoiceDetailDrawerV2 share resource", () => {
     const dialog = screen.getByTestId("share-dialog");
     expect(dialog).toHaveAttribute("data-resource-type", "trace");
     expect(dialog).toHaveAttribute("data-resource-id", "trace-1");
-    expect(dialog.getAttribute("data-fallback-url")).toContain(
-      "/dashboard/observe/project-1/voice/trace-1",
-    );
+    // A dashboard URL needs sign-in, so it is never offered as a share link.
+    expect(dialog).toHaveAttribute("data-fallback-url", "");
   });
 
   it("shares a simulation voice call as its call execution", () => {

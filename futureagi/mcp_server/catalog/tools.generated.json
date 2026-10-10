@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "source_contract_sha256": "04701172cd47bfdfd63c12c697bcf51a211b161e4c7a9fa664bd105fdeefcf42",
+  "source_contract_sha256": "a7d5977aec580026b0855c2be798dd695ae7026bcba023f6b41c9302b2d3fb06",
   "tool_count": 92,
   "tools": [
     {
@@ -8406,7 +8406,8 @@
           },
           "api_key_id": {
             "type": "string",
-            "format": "uuid"
+            "maxLength": 255,
+            "description": "Gateway key id (not the API key's UUID primary key)."
           },
           "request_id": {
             "type": "string"
@@ -8557,7 +8558,8 @@
           },
           "api_key_id": {
             "type": "string",
-            "format": "uuid"
+            "maxLength": 255,
+            "description": "Gateway key id (not the API key's UUID primary key)."
           }
         },
         "additionalProperties": false
