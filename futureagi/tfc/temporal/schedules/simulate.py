@@ -51,4 +51,11 @@ SIMULATE_SCHEDULES: list[ScheduleConfig] = [
         queue="default",
         description="Restart hosted environment chat runtimes that died with messages waiting",
     ),
+    ScheduleConfig(
+        schedule_id="seal-unsealed-hosted-harness-usage",
+        activity_name="seal_unsealed_hosted_harness_usage",
+        interval_seconds=600,
+        queue="default",
+        description="Re-enqueue usage sealing for hosted sandbox cleanups whose seal never ran",
+    ),
 ]
