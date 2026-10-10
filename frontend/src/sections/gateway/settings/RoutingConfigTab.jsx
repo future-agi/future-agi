@@ -22,13 +22,10 @@ import {
 import Iconify from "src/components/iconify";
 import FallbackChainEditor from "./FallbackChainEditor";
 import { useAvailableModels } from "../hooks/useAvailableModels";
-
-const STRATEGIES = [
-  { value: "round_robin", label: "Round Robin" },
-  { value: "weighted", label: "Weighted" },
-  { value: "least_latency", label: "Least Latency" },
-  { value: "cost_optimized", label: "Cost Optimized" },
-];
+import {
+  DEFAULT_ROUTING_STRATEGY,
+  ROUTING_STRATEGY_OPTIONS,
+} from "../constants/routing";
 
 // ---------- Section wrapper for collapsible cards ----------
 const ConfigSection = ({
@@ -366,13 +363,13 @@ const RoutingConfigTab = ({ routing, onChange }) => {
         defaultOpen
       >
         <ToggleButtonGroup
-          value={config.strategy || "round_robin"}
+          value={config.strategy || DEFAULT_ROUTING_STRATEGY}
           exclusive
           onChange={handleStrategyChange}
           size="small"
           sx={{ mb: 2 }}
         >
-          {STRATEGIES.map((s) => (
+          {ROUTING_STRATEGY_OPTIONS.map((s) => (
             <ToggleButton key={s.value} value={s.value}>
               {s.label}
             </ToggleButton>

@@ -1153,6 +1153,25 @@ def _record_target_agent_facts(
         changed.append("agent_name")
     agent = job.payload.get("agent") or {}
     agent_config = agent.get("config") or {}
+    # Provider-backed web voice targets are identified by different payload
+    # keys, but AgentDefinition intentionally stores both in assistant_id.
+    # Without copying this identity into the definition/version, authoring can
+    # succeed while the later simulation-runner build has no Retell agent_id
+    # or Vapi assistant_id and fails every selected call before transport.
+    assistant_id = str(
+        agent_config.get("assistant_id") or agent_config.get("agent_id") or ""
+    ).strip()
+    if assistant_id and agent_definition.assistant_id != assistant_id:
+        agent_definition.assistant_id = assistant_id
+        changed.append("assistant_id")
+    contact_number = str(agent_config.get("phone_number") or "").strip()
+    if contact_number and agent_definition.contact_number != contact_number:
+        # Phone targets arrive through the hosted job payload rather than the
+        # native agent-definition form. Persist the validated destination on
+        # the definition before creating its version so the hosted runner sees
+        # a SIP target instead of treating it as a LiveKit-native agent.
+        agent_definition.contact_number = contact_number
+        changed.append("contact_number")
     explicit_inbound = agent_config.get("inbound")
     declared = str(agent.get("call_direction") or "").strip().lower()
     direction = declared or str(authored.get("call_direction") or "").strip().lower()
@@ -1176,7 +1195,14 @@ def _record_target_agent_facts(
         changed.append("target_speaks_first")
     if changed:
         agent_definition.save(update_fields=[*changed, "updated_at"])
-    if prompt and (agent_definition.latest_version is None or "description" in changed):
+    if (
+        prompt
+        and (
+            agent_definition.latest_version is None
+            or "description" in changed
+            or "assistant_id" in changed
+        )
+    ):
         agent_definition.create_version(
             description=prompt,
             commit_message="hosted harness target agent prompt",
@@ -1385,14 +1411,13 @@ def record_cleanup(
         if attempt.state != HostedHarnessAttempt.State.SUPERSEDED:
             attempt.state = _attempt_terminal_state(attempt)
         attempt.save(update_fields=["cleanup_verified_at", "state", "updated_at"])
-        from simulate.services.harness_usage import (
-            record_sandbox_runtime,
-            replay_harness_usage,
-        )
+        from simulate.services.harness_usage import record_sandbox_runtime
+        from simulate.tasks.hosted_harness_usage import schedule_usage_seal
 
         record_sandbox_runtime(attempt, final=True)
-        # Teardown seals all measured authoring, even when no bundle was produced.
-        replay_harness_usage(attempt)
+        # Sealed after commit on the backend queue: the sandbox runner has no billing config.
+        sealed_attempt_id = str(attempt.id)
+        transaction.on_commit(lambda: schedule_usage_seal(sealed_attempt_id))
         job = HostedHarnessJob.no_workspace_objects.select_for_update().get(
             id=attempt.job_id
         )

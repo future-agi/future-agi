@@ -116,7 +116,9 @@ def require_harness_source_call_usage(
         _require_harness_action(organization_id, "voice_call")
 
 
-def record_harness_usage(attempt: HostedHarnessAttempt, report: dict) -> dict:
+def record_harness_usage(
+    attempt: HostedHarnessAttempt, report: dict, *, emit: bool = True
+) -> dict:
     normalized = json.loads(json.dumps(report, cls=DjangoJSONEncoder))
     records = normalized["records"]
     by_id = {item["id"]: item for item in records}
@@ -158,13 +160,14 @@ def record_harness_usage(attempt: HostedHarnessAttempt, report: dict) -> dict:
         new_record_ids = frozenset(by_id) - frozenset(previous)
         current.usage_report = normalized
         current.save(update_fields=["usage_report", "updated_at"])
-        transaction.on_commit(
-            lambda: emit_harness_usage(
-                current,
-                normalized,
-                record_ids=new_record_ids,
+        if emit:
+            transaction.on_commit(
+                lambda: emit_harness_usage(
+                    current,
+                    normalized,
+                    record_ids=new_record_ids,
+                )
             )
-        )
     return {"accepted": True}
 
 
@@ -369,7 +372,7 @@ def record_harness_authoring_usage(attempt: HostedHarnessAttempt, spend: dict) -
         )
         old = current.authoring_usage_report
         if old is None:
-            legacy_job = HostedHarnessJob.no_workspace_objects.only("payload").get(
+            legacy_job = HostedHarnessJob.all_objects.only("payload").get(
                 id=current.job_id
             )
             old = (
@@ -428,7 +431,7 @@ def emit_harness_authoring_usage(attempt: HostedHarnessAttempt, report: dict) ->
 
 def replay_harness_usage(attempt: HostedHarnessAttempt) -> None:
     current = HostedHarnessAttempt.no_workspace_objects.get(id=attempt.id)
-    job = HostedHarnessJob.no_workspace_objects.only("payload").get(id=current.job_id)
+    job = HostedHarnessJob.all_objects.only("payload").get(id=current.job_id)
     metadata = job.payload.get("metadata") or {}
     report = current.usage_report
     if report is None:
