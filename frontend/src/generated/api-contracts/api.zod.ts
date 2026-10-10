@@ -4137,11 +4137,17 @@ export const AgentccAnalyticsModelComparisonResponse = zod.object({
  * KPI cards with trend comparison.
  */
 
+export const agentccAnalyticsOverviewQueryApiKeyIdMax = 255;
+
 export const AgentccAnalyticsOverviewQueryParams = zod.object({
   start: zod.string().datetime({ offset: true }).optional(),
   end: zod.string().datetime({ offset: true }).optional(),
   granularity: zod.string().min(1).optional(),
-  api_key_id: zod.string().uuid().optional(),
+  api_key_id: zod
+    .string()
+    .max(agentccAnalyticsOverviewQueryApiKeyIdMax)
+    .optional()
+    .describe("Gateway key id (not the API key's UUID primary key)."),
 });
 
 export const AgentccAnalyticsOverviewResponseItem = zod.object({
@@ -7408,12 +7414,18 @@ export const AgentccProviderCredentialsRotateBody = zod.object({
   last_rotated_at: zod.string().datetime({ offset: true }).optional(),
 });
 
+export const agentccRequestLogsListQueryApiKeyIdMax = 255;
+
 export const AgentccRequestLogsListQueryParams = zod.object({
   page: zod.number().min(1).optional(),
   limit: zod.number().min(1).optional(),
   user_id: zod.string().optional(),
   session_id: zod.string().optional(),
-  api_key_id: zod.string().uuid().optional(),
+  api_key_id: zod
+    .string()
+    .max(agentccRequestLogsListQueryApiKeyIdMax)
+    .optional()
+    .describe("Gateway key id (not the API key's UUID primary key)."),
   request_id: zod.string().optional(),
   model: zod
     .string()
@@ -55168,6 +55180,29 @@ export const TracerFeedIssuesOverviewListResponse = zod.object({
 });
 
 /**
+ * Resolve an old issue ID to its active redirect target.
+ */
+export const TracerFeedIssuesRedirectListParams = zod.object({
+  cluster_id: zod.string(),
+});
+
+export const TracerFeedIssuesRedirectListQueryParams = zod.object({
+  project_id: zod.string().uuid().optional(),
+});
+
+export const tracerFeedIssuesRedirectListResponseStatusDefault = true;
+
+export const TracerFeedIssuesRedirectListResponse = zod.object({
+  status: zod
+    .boolean()
+    .default(tracerFeedIssuesRedirectListResponseStatusDefault),
+  result: zod.object({
+    requested_cluster_id: zod.string().min(1),
+    resolved_cluster_id: zod.string().min(1),
+  }),
+});
+
+/**
  * Read cached deep-analysis results for a single trace within the
 cluster. The frontend hits this on mount (to show existing results)
 and polls it after a POST to /deep-analysis/ until ``status`` flips
@@ -55526,6 +55561,145 @@ export const TracerInternalErrorFeedV2AttemptsPartialUpdateResponse =
     job_state: zod.string().min(1),
   });
 
+export const TracerInternalErrorFeedV2AttemptsConversationEvidenceCreateParams =
+  zod.object({
+    attempt_id: zod.string(),
+  });
+
+export const tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateBodyLeaseTokenMax = 255;
+
+export const TracerInternalErrorFeedV2AttemptsConversationEvidenceCreateBody =
+  zod.object({
+    lease_token: zod
+      .string()
+      .min(1)
+      .max(
+        tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateBodyLeaseTokenMax,
+      ),
+  });
+
+export const tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponseRowsItemIdMax = 64;
+
+export const tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponseRowsItemConversationTurnsItemIMin = 0;
+
+export const TracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponse =
+  zod.object({
+    rows: zod.array(
+      zod.object({
+        project_id: zod.string().uuid(),
+        trace_id: zod.string().uuid(),
+        org_id: zod.string().uuid(),
+        id: zod
+          .string()
+          .min(1)
+          .max(
+            tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponseRowsItemIdMax,
+          ),
+        parent_span_id: zod.string(),
+        name: zod.string(),
+        observation_type: zod.string().min(1),
+        start_time: zod.string().datetime({ offset: true }),
+        end_time: zod.string().datetime({ offset: true }).nullable(),
+        attrs_string: zod.record(zod.string(), zod.string().min(1)),
+        conversation: zod.object({
+          provider: zod.string().min(1),
+          agent_instructions: zod.string().nullable(),
+          call: zod.object({
+            status: jsonValueSchema.describe("Any valid JSON value."),
+            direction: jsonValueSchema.describe("Any valid JSON value."),
+            duration_seconds: zod.number().nullable(),
+            ended_reason: jsonValueSchema.describe("Any valid JSON value."),
+            agent: zod.object({
+              id: jsonValueSchema.describe("Any valid JSON value."),
+              version: jsonValueSchema.describe("Any valid JSON value."),
+              name: jsonValueSchema.describe("Any valid JSON value."),
+            }),
+          }),
+          variables: zod.object({
+            configured: zod.record(
+              zod.string(),
+              jsonValueSchema.describe("Any valid JSON value."),
+            ),
+            collected: zod.record(
+              zod.string(),
+              jsonValueSchema.describe("Any valid JSON value."),
+            ),
+          }),
+          analysis: zod.object({
+            summary: jsonValueSchema.describe("Any valid JSON value."),
+            successful: jsonValueSchema.describe("Any valid JSON value."),
+            in_voicemail: jsonValueSchema.describe("Any valid JSON value."),
+            sentiment: jsonValueSchema.describe("Any valid JSON value."),
+            flags: zod.record(
+              zod.string(),
+              jsonValueSchema.describe("Any valid JSON value."),
+            ),
+          }),
+          latency_ms: zod.record(
+            zod.string(),
+            zod.object({
+              p50: jsonValueSchema.describe("Any valid JSON value."),
+              p90: jsonValueSchema.describe("Any valid JSON value."),
+              max: jsonValueSchema.describe("Any valid JSON value."),
+              num: jsonValueSchema.describe("Any valid JSON value."),
+            }),
+          ),
+          turns: zod.array(
+            zod.object({
+              i: zod
+                .number()
+                .min(
+                  tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponseRowsItemConversationTurnsItemIMin,
+                ),
+              role: zod.string().min(1),
+              start: zod.number().nullable().optional(),
+              end: zod.number().nullable().optional(),
+              text: jsonValueSchema
+                .optional()
+                .describe("Any valid JSON value."),
+              spoken: zod.boolean().optional(),
+              at: zod.number().nullable().optional(),
+              id: jsonValueSchema.optional().describe("Any valid JSON value."),
+              name: jsonValueSchema
+                .optional()
+                .describe("Any valid JSON value."),
+              arguments: jsonValueSchema
+                .optional()
+                .describe("Any valid JSON value."),
+              ok: jsonValueSchema.optional().describe("Any valid JSON value."),
+              content: jsonValueSchema
+                .optional()
+                .describe("Any valid JSON value."),
+              to: jsonValueSchema.optional().describe("Any valid JSON value."),
+              type: jsonValueSchema
+                .optional()
+                .describe("Any valid JSON value."),
+              digit: jsonValueSchema
+                .optional()
+                .describe("Any valid JSON value."),
+              media: zod
+                .array(jsonValueSchema.describe("Any valid JSON value."))
+                .optional(),
+              from: jsonValueSchema
+                .optional()
+                .describe("Any valid JSON value."),
+            }),
+          ),
+          provider_log_issues: zod
+            .array(
+              zod.object({
+                at: zod.number(),
+                level: zod.enum(["warn", "error"]),
+                message: zod.string(),
+              }),
+            )
+            .optional(),
+          not_included: zod.array(zod.string().min(1)),
+        }),
+      }),
+    ),
+  });
+
 export const TracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateParams =
   zod.object({
     attempt_id: zod.string(),
@@ -55606,6 +55780,13 @@ export const TracerInternalErrorFeedV2ClaimsCreateResponse = zod.object({
       lease_token: zod.string().min(1),
       lease_expires_at: zod.string().datetime({ offset: true }),
       read_cutoff: zod.string().datetime({ offset: true }),
+      evidence_window: zod
+        .object({
+          start: zod.string().datetime({ offset: true }),
+          end: zod.string().datetime({ offset: true }),
+        })
+        .optional(),
+      evidence_source: zod.enum(["conversation"]).optional(),
       engine_version: zod
         .string()
         .min(1)
@@ -55681,6 +55862,9 @@ export const TracerInternalErrorFeedV2GroupingAttemptsPartialUpdateParams =
 
 export const tracerInternalErrorFeedV2GroupingAttemptsPartialUpdateBodyLeaseTokenMax = 255;
 
+export const tracerInternalErrorFeedV2GroupingAttemptsPartialUpdateBodyFailureCodeDefault = ``;
+export const tracerInternalErrorFeedV2GroupingAttemptsPartialUpdateBodyFailureCodeMax = 100;
+
 export const TracerInternalErrorFeedV2GroupingAttemptsPartialUpdateBody =
   zod.object({
     lease_token: zod
@@ -55689,12 +55873,21 @@ export const TracerInternalErrorFeedV2GroupingAttemptsPartialUpdateBody =
       .max(
         tracerInternalErrorFeedV2GroupingAttemptsPartialUpdateBodyLeaseTokenMax,
       ),
-    action: zod.enum(["renew", "cancel"]),
+    action: zod.enum(["renew", "cancel", "fail"]),
+    failure_code: zod
+      .string()
+      .max(
+        tracerInternalErrorFeedV2GroupingAttemptsPartialUpdateBodyFailureCodeMax,
+      )
+      .default(
+        tracerInternalErrorFeedV2GroupingAttemptsPartialUpdateBodyFailureCodeDefault,
+      ),
   });
 
 export const TracerInternalErrorFeedV2GroupingAttemptsPartialUpdateResponse =
   zod.object({
     state: zod.string().min(1).optional(),
+    failure_code: zod.string().min(1).optional(),
     status: zod.string().min(1).optional(),
     checkpoint_revision: zod.number().optional(),
     receipt_id: zod.string().uuid().optional(),
@@ -55728,6 +55921,7 @@ export const TracerInternalErrorFeedV2GroupingAttemptsCheckpointUpdateBody =
 export const TracerInternalErrorFeedV2GroupingAttemptsCheckpointUpdateResponse =
   zod.object({
     state: zod.string().min(1).optional(),
+    failure_code: zod.string().min(1).optional(),
     status: zod.string().min(1).optional(),
     checkpoint_revision: zod.number().optional(),
     receipt_id: zod.string().uuid().optional(),
@@ -55790,6 +55984,7 @@ export const TracerInternalErrorFeedV2GroupingAttemptsPublishCreateBody =
 export const TracerInternalErrorFeedV2GroupingAttemptsPublishCreateResponse =
   zod.object({
     state: zod.string().min(1).optional(),
+    failure_code: zod.string().min(1).optional(),
     status: zod.string().min(1).optional(),
     checkpoint_revision: zod.number().optional(),
     receipt_id: zod.string().uuid().optional(),
@@ -55873,6 +56068,7 @@ export const TracerInternalErrorFeedV2GroupingAttemptsReserveCreateBody =
 export const TracerInternalErrorFeedV2GroupingAttemptsReserveCreateResponse =
   zod.object({
     state: zod.string().min(1).optional(),
+    failure_code: zod.string().min(1).optional(),
     status: zod.string().min(1).optional(),
     checkpoint_revision: zod.number().optional(),
     receipt_id: zod.string().uuid().optional(),
@@ -55953,6 +56149,7 @@ export const TracerInternalErrorFeedV2GroupingAttemptsSettleCreateBody =
 export const TracerInternalErrorFeedV2GroupingAttemptsSettleCreateResponse =
   zod.object({
     state: zod.string().min(1).optional(),
+    failure_code: zod.string().min(1).optional(),
     status: zod.string().min(1).optional(),
     checkpoint_revision: zod.number().optional(),
     receipt_id: zod.string().uuid().optional(),
@@ -56000,6 +56197,7 @@ export const TracerInternalErrorFeedV2GroupingFeatureAttemptsPartialUpdateBody =
 export const TracerInternalErrorFeedV2GroupingFeatureAttemptsPartialUpdateResponse =
   zod.object({
     state: zod.string().min(1).optional(),
+    failure_code: zod.string().min(1).optional(),
     status: zod.string().min(1).optional(),
     checkpoint_revision: zod.number().optional(),
     receipt_id: zod.string().uuid().optional(),
@@ -56044,6 +56242,7 @@ export const TracerInternalErrorFeedV2GroupingFeatureAttemptsCompleteCreateBody 
 export const TracerInternalErrorFeedV2GroupingFeatureAttemptsCompleteCreateResponse =
   zod.object({
     state: zod.string().min(1).optional(),
+    failure_code: zod.string().min(1).optional(),
     status: zod.string().min(1).optional(),
     checkpoint_revision: zod.number().optional(),
     receipt_id: zod.string().uuid().optional(),
@@ -56097,6 +56296,7 @@ export const TracerInternalErrorFeedV2GroupingOutboxAckCreateBody = zod
 export const TracerInternalErrorFeedV2GroupingOutboxAckCreateResponse =
   zod.object({
     state: zod.string().min(1).optional(),
+    failure_code: zod.string().min(1).optional(),
     status: zod.string().min(1).optional(),
     checkpoint_revision: zod.number().optional(),
     receipt_id: zod.string().uuid().optional(),
@@ -56123,6 +56323,7 @@ export const TracerInternalErrorFeedV2GroupingSeverityAttemptsPartialUpdateBody 
 export const TracerInternalErrorFeedV2GroupingSeverityAttemptsPartialUpdateResponse =
   zod.object({
     state: zod.string().min(1).optional(),
+    failure_code: zod.string().min(1).optional(),
     status: zod.string().min(1).optional(),
     checkpoint_revision: zod.number().optional(),
     receipt_id: zod.string().uuid().optional(),
@@ -56149,6 +56350,7 @@ export const TracerInternalErrorFeedV2GroupingSeverityAttemptsPublishCreateBody 
 export const TracerInternalErrorFeedV2GroupingSeverityAttemptsPublishCreateResponse =
   zod.object({
     state: zod.string().min(1).optional(),
+    failure_code: zod.string().min(1).optional(),
     status: zod.string().min(1).optional(),
     checkpoint_revision: zod.number().optional(),
     receipt_id: zod.string().uuid().optional(),
@@ -56232,6 +56434,7 @@ export const TracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateBody 
 export const TracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateResponse =
   zod.object({
     state: zod.string().min(1).optional(),
+    failure_code: zod.string().min(1).optional(),
     status: zod.string().min(1).optional(),
     checkpoint_revision: zod.number().optional(),
     receipt_id: zod.string().uuid().optional(),
@@ -56312,6 +56515,7 @@ export const TracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateBody =
 export const TracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateResponse =
   zod.object({
     state: zod.string().min(1).optional(),
+    failure_code: zod.string().min(1).optional(),
     status: zod.string().min(1).optional(),
     checkpoint_revision: zod.number().optional(),
     receipt_id: zod.string().uuid().optional(),
@@ -67725,6 +67929,7 @@ export const TracerUsersListResponse = zod.object({
         bool_eval_pass_rate: zod.number().optional(),
         avg_output_float: zod.number().optional(),
         project_id: zod.string().uuid().optional(),
+        project_name: zod.string().min(1).optional(),
         user_id_type: zod.string().min(1).optional(),
         user_id_hash: zod.string().min(1).optional(),
         end_user_id: zod.string().uuid().optional(),
