@@ -37,10 +37,7 @@ from ee.agenthub.scenario_graph.persona_configurator import (
     PersonaConfigurator,
 )
 from agentic_eval.core.llm.llm import LLM
-try:
-    from ee.usage.models.usage import APICallTypeChoices
-except ImportError:
-    APICallTypeChoices = None
+from tfc.constants.api_calls import APICallTypeChoices
 try:
     from ee.usage.utils.usage_entries import count_text_tokens, log_and_deduct_cost_for_api_request
 except ImportError:
@@ -1148,20 +1145,18 @@ class EnhancedScenariosAgent:
         """
         # Pre-check usage before the LLM call
         try:
-            from ee.usage.models.usage import APICallTypeChoices
-        except ImportError:
-            APICallTypeChoices = None
-        try:
             from ee.usage.services.metering import check_usage
         except ImportError:
+            # Usage metering isn't available (OSS deployment) — skip the pre-check.
             check_usage = None
 
-        usage_check = check_usage(
-            str(self.agent_definition.organization.id),
-            APICallTypeChoices.SYNTHETIC_DATA_GENERATION.value,
-        )
-        if not usage_check.allowed:
-            raise ValueError(usage_check.reason or "Usage limit exceeded")
+        if check_usage is not None:
+            usage_check = check_usage(
+                str(self.agent_definition.organization.id),
+                APICallTypeChoices.SYNTHETIC_DATA_GENERATION.value,
+            )
+            if not usage_check.allowed:
+                raise ValueError(usage_check.reason or "Usage limit exceeded")
 
         try:
             # Validate template branch has a path
@@ -1373,9 +1368,10 @@ class EnhancedScenariosAgent:
                 # Update the persona column in generated_data
                 generated_data["persona"] = persona_column
             tik_total_tokens = 0
-            for col in generated_data.columns:
-                for value in generated_data[col]:
-                    tik_total_tokens += count_text_tokens(str(value))
+            if count_text_tokens is not None:
+                for col in generated_data.columns:
+                    for value in generated_data[col]:
+                        tik_total_tokens += count_text_tokens(str(value))
 
             return self._convert_sda_data_to_cases(generated_data)
 
