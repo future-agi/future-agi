@@ -32,6 +32,30 @@ type MappingRestorer interface {
 	) ([]byte, error)
 }
 
+const (
+	// anthropicThinkingConfigExtraKey is where the inbound Anthropic translator
+	// parks a parsed `thinking` config. The translator is backend-agnostic; the
+	// /v1/messages handler decides, after provider resolution, whether the
+	// resolved backend can honor it.
+	anthropicThinkingConfigExtraKey = "anthropic_thinking_config"
+	// thinkingUnsupportedOnBackendDrop is the translation_drops reason recorded
+	// when a thinking config reaches a backend that is not Anthropic-native.
+	// It means "this gateway route did not honor the control", not that the
+	// model cannot reason.
+	thinkingUnsupportedOnBackendDrop = "thinking_unsupported_on_backend"
+)
+
+// appendUniqueDrop appends reason unless it is already present, preserving the
+// translator's drop order so the single comma-joined emission stays stable.
+func appendUniqueDrop(drops []string, reason string) []string {
+	for _, existing := range drops {
+		if existing == reason {
+			return drops
+		}
+	}
+	return append(drops, reason)
+}
+
 // AnthropicMessages handles POST /v1/messages — native Anthropic Messages API pass-through.
 func (h *Handlers) AnthropicMessages(w http.ResponseWriter, r *http.Request) {
 	rc := models.AcquireRequestContext()
@@ -181,6 +205,16 @@ func (h *Handlers) AnthropicMessages(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(status)
 		w.Write(errBody)
 		return
+	}
+	// The resolved provider is not Anthropic-native (that fast path returned
+	// above), so the thinking config the translator carried in Extra cannot be
+	// honored here. Only this boundary knows the backend: remove the carrier
+	// before the pipeline and provider see it, and record the drop once through
+	// the existing emission below so the caller gets the same metadata/header
+	// signal as any other translation drop.
+	if _, hasThinking := canonicalReq.Extra[anthropicThinkingConfigExtraKey]; hasThinking {
+		delete(canonicalReq.Extra, anthropicThinkingConfigExtraKey)
+		drops = appendUniqueDrop(drops, thinkingUnsupportedOnBackendDrop)
 	}
 	if len(drops) > 0 {
 		joined := strings.Join(drops, ",")
