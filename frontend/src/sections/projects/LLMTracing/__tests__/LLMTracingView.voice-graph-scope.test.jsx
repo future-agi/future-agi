@@ -38,6 +38,7 @@ const harness = vi.hoisted(() => ({
   addTagsProps: [],
   snackbar: vi.fn(),
   traceGridSelectedNodes: null,
+  traceGridApiExtras: {},
 }));
 
 vi.mock("notistack", async (importOriginal) => ({
@@ -143,6 +144,7 @@ vi.mock("../TraceGrid", async () => {
               api: {
                 getSelectedNodes: () => harness.traceGridSelectedNodes,
                 sizeColumnsToFit: () => {},
+                ...harness.traceGridApiExtras,
               },
             }
           : null,
@@ -487,12 +489,25 @@ describe("LLMTracingView trace grid bulk tags", () => {
 
   afterEach(() => {
     harness.traceGridSelectedNodes = null;
+    harness.traceGridApiExtras = {};
   });
+
+  // The popover is lazy; its first load in a cold run can take over the
+  // default 1 s waitFor timeout.
+  const POPOVER_OPEN = { timeout: 5000 };
 
   const openTraceBulkTags = async (nodes) => {
     harness.traceGridSelectedNodes = nodes;
     renderView();
     await waitFor(() => expect(harness.toolbarProps.length).toBeGreaterThan(0));
+    // On a cold run the view suspends on its lazy children, and toolbar props
+    // captured before that commit belong to a discarded render: their
+    // handlers update nothing. The lazy popover rendering means the view has
+    // committed, so the latest toolbar props are live.
+    await waitFor(
+      () => expect(harness.addTagsProps.length).toBeGreaterThan(0),
+      POPOVER_OPEN,
+    );
     await act(async () => {
       harness.toolbarProps
         .at(-1)
@@ -507,7 +522,10 @@ describe("LLMTracingView trace grid bulk tags", () => {
       { data: { trace_id: "trace-c", tags: "[]" } },
     ]);
 
-    await waitFor(() => expect(harness.addTagsProps.at(-1)?.open).toBe(true));
+    await waitFor(
+      () => expect(harness.addTagsProps.at(-1)?.open).toBe(true),
+      POPOVER_OPEN,
+    );
     expect(harness.addTagsProps.at(-1).bulkItems).toEqual([
       { id: "trace-a", type: "trace", currentTags: ["prod"] },
       { id: "trace-b", type: "trace", currentTags: ["vip"] },
@@ -528,6 +546,38 @@ describe("LLMTracingView trace grid bulk tags", () => {
       ),
     );
     expect(harness.addTagsProps.some((props) => props.open)).toBe(false);
+  });
+
+  // The grid keeps visited pages for cursor pagination; a bare
+  // refreshServerSide() is answered from that memory, so the saved tags never
+  // appeared until a manual Reload (OBS-E2E-037 on CI). The popover's close
+  // must use the grid's own reload.
+  it("re-reads the trace list through the grid's reload when the tag popover closes", async () => {
+    const reloadList = vi.fn();
+    const refreshServerSide = vi.fn();
+    const deselectAll = vi.fn();
+    harness.traceGridApiExtras = {
+      getGridOption: (key) => (key === "context" ? { reloadList } : undefined),
+      refreshServerSide,
+      deselectAll,
+    };
+    await openTraceBulkTags([
+      { data: { trace_id: "trace-a", tags: ["prod"] } },
+    ]);
+    await waitFor(
+      () => expect(harness.addTagsProps.at(-1)?.open).toBe(true),
+      POPOVER_OPEN,
+    );
+
+    await act(async () => {
+      harness.addTagsProps.at(-1).onClose();
+    });
+
+    expect(reloadList).toHaveBeenCalledOnce();
+    expect(reloadList).toHaveBeenCalledWith(true);
+    expect(refreshServerSide).not.toHaveBeenCalled();
+    expect(deselectAll).toHaveBeenCalled();
+    await waitFor(() => expect(harness.addTagsProps.at(-1)?.open).toBe(false));
   });
 });
 

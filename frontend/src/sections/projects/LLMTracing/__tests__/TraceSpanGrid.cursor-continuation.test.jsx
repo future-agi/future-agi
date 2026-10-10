@@ -1366,6 +1366,38 @@ describe.each(["trace", "span"])("%s grid completion regression", (kind) => {
     filter_config: { filter_type: "text", filter_op: "in", filter_value: ["new"] },
   }];
 
+  // LLMTracingView reloads the list after a bulk action (TH-8026: bulk Add
+  // tags). The grid keeps each visited page for cursor pagination, and a bare
+  // refreshServerSide() is answered from that memory without a request, so
+  // the reload must come from the grid itself, which clears it first.
+  it("re-reads the list when reloaded from outside the grid", async () => {
+    const before = { ...currentRow, tags: ["prod"] };
+    const after = { ...currentRow, tags: ["prod", "need improvement"] };
+    getMock
+      .mockResolvedValueOnce(listResponse({ rows: [before], totalRows: 1 }))
+      .mockResolvedValueOnce(listResponse({ rows: [after], totalRows: 1 }));
+    const props = baseProps();
+    const ref = React.createRef();
+    render(renderGridSubject({ kind, ref, props, filters: props.filters }));
+    const grid = await completionGrid(gridState.props.serverSideDatasource);
+    try {
+      await waitFor(() =>
+        expect(grid.api.getDisplayedRowAtIndex(0)?.data).toEqual(before),
+      );
+      const { reloadList } = gridState.props.context;
+      act(() => reloadList(true));
+      await waitFor(() =>
+        expect(grid.api.getDisplayedRowAtIndex(0)?.data).toEqual(after),
+      );
+      expect(getMock).toHaveBeenCalledTimes(2);
+    } finally {
+      grid.close();
+      await act(async () => {
+        await Promise.all(grid.reads.map((read) => read.settled));
+      });
+    }
+  });
+
   it.each(["success", "failure"])(
     "releases the real concurrency-one queue before cancelled transport late %s",
     async (outcome) => {
