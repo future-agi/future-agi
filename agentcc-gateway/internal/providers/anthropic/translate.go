@@ -62,14 +62,17 @@ type imageSource struct {
 }
 
 type anthropicTool struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description,omitempty"`
-	InputSchema json.RawMessage `json:"input_schema"`
+	Name           string          `json:"name"`
+	Description    string          `json:"description,omitempty"`
+	InputSchema    json.RawMessage `json:"input_schema"`
+	Strict         *bool           `json:"strict,omitempty"`
+	AllowedCallers []string        `json:"allowed_callers,omitempty"`
 }
 
 type anthropicToolChoice struct {
-	Type string `json:"type"`
-	Name string `json:"name,omitempty"`
+	Type                   string `json:"type"`
+	Name                   string `json:"name,omitempty"`
+	DisableParallelToolUse *bool  `json:"disable_parallel_tool_use,omitempty"`
 }
 
 type anthropicResponse struct {
@@ -176,12 +179,40 @@ func translateRequest(req *models.ChatCompletionRequest) (*anthropicRequest, err
 	// fields (max_uses, allowed_domains, user_location, allowed_callers) have
 	// nowhere to live on the canonical struct.  Dropping it, which is what this
 	// did before, left the model with no tool and no error to explain why.
+	var allowedToolsMap map[string]bool
+	if len(req.ToolChoice) > 0 {
+		var at struct {
+			Type         string `json:"type"`
+			AllowedTools struct {
+				Tools []struct {
+					Type     string `json:"type"`
+					Function struct {
+						Name string `json:"name"`
+					} `json:"function"`
+				} `json:"tools"`
+			} `json:"allowed_tools"`
+		}
+		if err := json.Unmarshal(req.ToolChoice, &at); err == nil && at.Type == "allowed_tools" {
+			allowedToolsMap = make(map[string]bool, len(at.AllowedTools.Tools))
+			for _, item := range at.AllowedTools.Tools {
+				if item.Function.Name != "" {
+					allowedToolsMap[item.Function.Name] = true
+				}
+			}
+		}
+	}
+
 	for _, t := range req.Tools {
 		if t.Type == "function" {
+			if allowedToolsMap != nil && !allowedToolsMap[t.Function.Name] {
+				continue
+			}
 			encoded, err := json.Marshal(anthropicTool{
-				Name:        t.Function.Name,
-				Description: t.Function.Description,
-				InputSchema: t.Function.Parameters,
+				Name:           t.Function.Name,
+				Description:    t.Function.Description,
+				InputSchema:    t.Function.Parameters,
+				Strict:         t.Function.Strict,
+				AllowedCallers: t.Function.AllowedCallers,
 			})
 			if err != nil {
 				return nil, fmt.Errorf("encoding tool %q: %w", t.Function.Name, err)
@@ -199,6 +230,29 @@ func translateRequest(req *models.ChatCompletionRequest) (*anthropicRequest, err
 		tc, err := translateToolChoice(req.ToolChoice)
 		if err == nil && tc != nil {
 			ar.ToolChoice = tc
+		}
+	}
+
+	disableParallel := false
+	if req.ParallelToolCalls != nil {
+		if !*req.ParallelToolCalls {
+			disableParallel = true
+		}
+	} else if len(req.Extra) > 0 {
+		if v, ok := req.Extra["parallel_tool_calls"]; ok {
+			var b bool
+			if err := json.Unmarshal(v, &b); err == nil && !b {
+				disableParallel = true
+			}
+		}
+	}
+
+	if disableParallel {
+		f := true
+		if ar.ToolChoice == nil && len(ar.Tools) > 0 {
+			ar.ToolChoice = &anthropicToolChoice{Type: "auto", DisableParallelToolUse: &f}
+		} else if ar.ToolChoice != nil && ar.ToolChoice.Type != "none" {
+			ar.ToolChoice.DisableParallelToolUse = &f
 		}
 	}
 
@@ -429,7 +483,7 @@ func translateToolChoice(raw json.RawMessage) (*anthropicToolChoice, error) {
 		case "auto":
 			return &anthropicToolChoice{Type: "auto"}, nil
 		case "none":
-			return nil, nil // Anthropic doesn't have "none" — just omit tools.
+			return &anthropicToolChoice{Type: "none"}, nil
 		case "required":
 			return &anthropicToolChoice{Type: "any"}, nil
 		}
@@ -445,6 +499,34 @@ func translateToolChoice(raw json.RawMessage) (*anthropicToolChoice, error) {
 	}
 	if err := json.Unmarshal(raw, &obj); err == nil && obj.Function.Name != "" {
 		return &anthropicToolChoice{Type: "tool", Name: obj.Function.Name}, nil
+	}
+
+	var at struct {
+		Type         string `json:"type"`
+		AllowedTools struct {
+			Mode  string `json:"mode"`
+			Tools []struct {
+				Type     string `json:"type"`
+				Function struct {
+					Name string `json:"name"`
+				} `json:"function"`
+			} `json:"tools"`
+		} `json:"allowed_tools"`
+	}
+	if err := json.Unmarshal(raw, &at); err == nil && at.Type == "allowed_tools" {
+		var names []string
+		for _, item := range at.AllowedTools.Tools {
+			if item.Function.Name != "" {
+				names = append(names, item.Function.Name)
+			}
+		}
+		if len(names) == 1 {
+			return &anthropicToolChoice{Type: "tool", Name: names[0]}, nil
+		}
+		if at.AllowedTools.Mode == "required" {
+			return &anthropicToolChoice{Type: "any"}, nil
+		}
+		return &anthropicToolChoice{Type: "auto"}, nil
 	}
 
 	return nil, nil

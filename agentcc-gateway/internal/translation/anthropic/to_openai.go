@@ -68,9 +68,11 @@ func (t *Translator) RequestToCanonical(body []byte) (*models.ChatCompletionRequ
 			oaiTools = append(oaiTools, models.Tool{
 				Type: "function",
 				Function: models.ToolFunction{
-					Name:        name,
-					Description: at.Description,
-					Parameters:  at.InputSchema,
+					Name:           name,
+					Description:    at.Description,
+					Parameters:     at.InputSchema,
+					Strict:         at.Strict,
+					AllowedCallers: at.AllowedCallers,
 				},
 			})
 		}
@@ -91,12 +93,16 @@ func (t *Translator) RequestToCanonical(body []byte) (*models.ChatCompletionRequ
 	//   OpenAI:    "auto" | "none" | "required" |
 	//              {"type":"function","function":{"name":"foo"}}
 	if req.ToolChoice != nil {
-		translated, tcDrops, err := translateAnthropicToolChoice(req.ToolChoice, toolNameMapping)
+		translated, tcDrops, disableParallel, err := translateAnthropicToolChoice(req.ToolChoice, toolNameMapping)
 		if err != nil {
 			return nil, nil, fmt.Errorf("anthropic: tool_choice: %w", err)
 		}
 		if translated != nil {
 			out.ToolChoice = translated
+		}
+		if disableParallel != nil && *disableParallel {
+			f := false
+			out.ParallelToolCalls = &f
 		}
 		drops = append(drops, tcDrops...)
 	}
@@ -511,33 +517,32 @@ func extractText(blocks []ContentBlock) string {
 func translateAnthropicToolChoice(
 	raw json.RawMessage,
 	toolNameMapping map[string]string,
-) (json.RawMessage, []string, error) {
+) (json.RawMessage, []string, *bool, error) {
 	var obj struct {
 		Type                   string `json:"type"`
 		Name                   string `json:"name,omitempty"`
 		DisableParallelToolUse *bool  `json:"disable_parallel_tool_use,omitempty"`
 	}
 	if err := json.Unmarshal(raw, &obj); err != nil {
-		return nil, nil, fmt.Errorf("unmarshal: %w", err)
+		return nil, nil, nil, fmt.Errorf("unmarshal: %w", err)
 	}
 
 	var drops []string
-	if obj.DisableParallelToolUse != nil && *obj.DisableParallelToolUse {
-		// OpenAI expresses parallelism via top-level parallel_tool_calls, not
-		// inside tool_choice. We don't currently forward it end-to-end, so drop.
-		drops = append(drops, "disable_parallel_tool_use_unsupported")
+	var disableParallel *bool
+	if obj.DisableParallelToolUse != nil {
+		disableParallel = obj.DisableParallelToolUse
 	}
 
 	switch obj.Type {
 	case "auto":
-		return json.RawMessage(`"auto"`), drops, nil
+		return json.RawMessage(`"auto"`), drops, disableParallel, nil
 	case "none":
-		return json.RawMessage(`"none"`), drops, nil
+		return json.RawMessage(`"none"`), drops, disableParallel, nil
 	case "any":
-		return json.RawMessage(`"required"`), drops, nil
+		return json.RawMessage(`"required"`), drops, disableParallel, nil
 	case "tool":
 		if obj.Name == "" {
-			return nil, drops, fmt.Errorf("tool_choice type=tool requires name")
+			return nil, drops, nil, fmt.Errorf("tool_choice type=tool requires name")
 		}
 		name := obj.Name
 		// Invert short→original so selection by original name resolves back to
@@ -553,12 +558,12 @@ func translateAnthropicToolChoice(
 			"function": map[string]string{"name": name},
 		})
 		if err != nil {
-			return nil, drops, err
+			return nil, drops, nil, err
 		}
-		return wrapped, drops, nil
+		return wrapped, drops, disableParallel, nil
 	default:
 		// Unknown type — best-effort drop rather than crash.
 		drops = append(drops, "unknown_tool_choice_type:"+obj.Type)
-		return nil, drops, nil
+		return nil, drops, disableParallel, nil
 	}
 }

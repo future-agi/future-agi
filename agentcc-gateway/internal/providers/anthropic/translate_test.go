@@ -449,9 +449,8 @@ func TestTranslateRequest_ToolChoiceNone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// Anthropic doesn't have "none" -- tool_choice should be nil (omitted).
-	if ar.ToolChoice != nil {
-		t.Errorf("tool_choice = %+v, want nil (anthropic has no 'none' equivalent)", ar.ToolChoice)
+	if ar.ToolChoice == nil || ar.ToolChoice.Type != "none" {
+		t.Errorf("tool_choice = %+v, want Type=none", ar.ToolChoice)
 	}
 }
 
@@ -1925,5 +1924,141 @@ func TestStreamParse_ServerToolUseDoesNotCorruptAnInFlightToolCall(t *testing.T)
 	if chunk != nil {
 		t.Fatalf("the search query was appended to get_weather's arguments: %+v",
 			chunk.Choices[0].Delta.ToolCalls)
+	}
+}
+
+
+func TestTranslateRequest_ToolChoiceAllowedToolsSingle(t *testing.T) {
+	req := &models.ChatCompletionRequest{
+		Model: "claude-3-5-sonnet",
+		Messages: []models.Message{
+			{Role: "user", Content: json.RawMessage(`"hi"`)},
+		},
+		Tools: []models.Tool{
+			{
+				Type: "function",
+				Function: models.ToolFunction{
+					Name:       "tool_a",
+					Parameters: json.RawMessage(`{"type":"object"}`),
+				},
+			},
+			{
+				Type: "function",
+				Function: models.ToolFunction{
+					Name:       "tool_b",
+					Parameters: json.RawMessage(`{"type":"object"}`),
+				},
+			},
+		},
+		ToolChoice: json.RawMessage(`{"type":"allowed_tools","allowed_tools":{"mode":"auto","tools":[{"type":"function","function":{"name":"tool_b"}}]}}`),
+	}
+	ar, err := translateRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(ar.Tools) != 1 {
+		t.Fatalf("len(ar.Tools) = %d, want 1", len(ar.Tools))
+	}
+	if ar.ToolChoice == nil || ar.ToolChoice.Type != "tool" || ar.ToolChoice.Name != "tool_b" {
+		t.Fatalf("ar.ToolChoice = %+v, want tool tool_b", ar.ToolChoice)
+	}
+}
+
+func TestTranslateRequest_ToolChoiceAllowedToolsRequired(t *testing.T) {
+	req := &models.ChatCompletionRequest{
+		Model: "claude-3-5-sonnet",
+		Messages: []models.Message{
+			{Role: "user", Content: json.RawMessage(`"hi"`)},
+		},
+		Tools: []models.Tool{
+			{
+				Type: "function",
+				Function: models.ToolFunction{
+					Name:       "tool_a",
+					Parameters: json.RawMessage(`{"type":"object"}`),
+				},
+			},
+			{
+				Type: "function",
+				Function: models.ToolFunction{
+					Name:       "tool_b",
+					Parameters: json.RawMessage(`{"type":"object"}`),
+				},
+			},
+		},
+		ToolChoice: json.RawMessage(`{"type":"allowed_tools","allowed_tools":{"mode":"required","tools":[{"type":"function","function":{"name":"tool_a"}},{"type":"function","function":{"name":"tool_b"}}]}}`),
+	}
+	ar, err := translateRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ar.ToolChoice == nil || ar.ToolChoice.Type != "any" {
+		t.Fatalf("ar.ToolChoice = %+v, want Type=any", ar.ToolChoice)
+	}
+}
+
+func TestTranslateRequest_ParallelToolCallsFalse(t *testing.T) {
+	p := false
+	req := &models.ChatCompletionRequest{
+		Model: "claude-3-5-sonnet",
+		Messages: []models.Message{
+			{Role: "user", Content: json.RawMessage(`"hi"`)},
+		},
+		Tools: []models.Tool{
+			{
+				Type: "function",
+				Function: models.ToolFunction{
+					Name:       "tool_a",
+					Parameters: json.RawMessage(`{"type":"object"}`),
+				},
+			},
+		},
+		ToolChoice:        json.RawMessage(`{"type":"function","function":{"name":"tool_a"}}`),
+		ParallelToolCalls: &p,
+	}
+	ar, err := translateRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ar.ToolChoice == nil || ar.ToolChoice.DisableParallelToolUse == nil || !*ar.ToolChoice.DisableParallelToolUse {
+		t.Fatalf("expected DisableParallelToolUse=true, got %+v", ar.ToolChoice)
+	}
+}
+
+func TestTranslateRequest_ToolStrictAndAllowedCallers(t *testing.T) {
+	s := true
+	req := &models.ChatCompletionRequest{
+		Model: "claude-3-5-sonnet",
+		Messages: []models.Message{
+			{Role: "user", Content: json.RawMessage(`"hi"`)},
+		},
+		Tools: []models.Tool{
+			{
+				Type: "function",
+				Function: models.ToolFunction{
+					Name:           "tool_a",
+					Parameters:     json.RawMessage(`{"type":"object"}`),
+					Strict:         &s,
+					AllowedCallers: []string{"direct"},
+				},
+			},
+		},
+	}
+	ar, err := translateRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(ar.Tools) != 1 {
+		t.Fatalf("len(ar.Tools) = %d, want 1", len(ar.Tools))
+	}
+	var tool anthropicTool
+	if err := json.Unmarshal(ar.Tools[0], &tool); err != nil {
+		t.Fatalf("failed to unmarshal tool: %v", err)
+	}
+	if tool.Strict == nil || !*tool.Strict {
+		t.Errorf("Strict = %v, want true", tool.Strict)
+	}
+	if len(tool.AllowedCallers) != 1 || tool.AllowedCallers[0] != "direct" {
+		t.Errorf("AllowedCallers = %v, want [direct]", tool.AllowedCallers)
 	}
 }
