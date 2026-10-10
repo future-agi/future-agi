@@ -14,6 +14,9 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
 	"github.com/futureagi/agentcc-gateway/internal/realtime"
+	"github.com/futureagi/agentcc-gateway/internal/guardrails"
+	"github.com/futureagi/agentcc-gateway/internal/guardrails/policy"
+
 )
 
 // RealtimeHandler handles WebSocket-based realtime API sessions.
@@ -28,15 +31,17 @@ type RealtimeHandler struct {
 	writeBufferSize    int
 	maxMessageSize     int64
 	upgrader           websocket.Upgrader
+	guardrailEngine    *guardrails.Engine  
 	logger             *slog.Logger
 }
 
 // NewRealtimeHandler creates a new handler for the realtime API.
-func NewRealtimeHandler(tracker *realtime.SessionTracker, registry *providers.Registry, keyStore *auth.KeyStore, cfg realtimeHandlerConfig) *RealtimeHandler {
+func NewRealtimeHandler(tracker *realtime.SessionTracker, registry *providers.Registry, keyStore *auth.KeyStore,  guardrailEngine *guardrails.Engine,cfg realtimeHandlerConfig) *RealtimeHandler {
 	return &RealtimeHandler{
 		tracker:            tracker,
 		registry:           registry,
 		keyStore:           keyStore,
+		guardrailEngine:    guardrailEngine,  
 		maxSessionDuration: cfg.MaxSessionDuration,
 		pingInterval:       cfg.PingInterval,
 		pongTimeout:        cfg.PongTimeout,
@@ -211,7 +216,9 @@ func (rh *RealtimeHandler) HandleRealtime(w http.ResponseWriter, r *http.Request
 		PongTimeout:       rh.pongTimeout,
 		MaxMessageSize:    rh.maxMessageSize,
 	}
-	relay := realtime.NewRelay(session, relayConfig, rh.logger)
+	
+	checker := realtime.NewGuardrailChecker(rh.guardrailEngine, nil, policy.RequestPolicyNone, sessionID, model)
+	relay := realtime.NewRelay(session, relayConfig, rh.logger,checker)
 	relay.Start()
 
 	// Post-session cleanup.
