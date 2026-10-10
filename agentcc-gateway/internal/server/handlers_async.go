@@ -131,25 +131,12 @@ func (h *Handlers) DeleteAsyncJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Try to cancel a running job.
-	job := h.asyncStore.Get(jobID)
-	if job == nil {
+	// Cancel via the store so the live CancelFn is invoked (Get returns a
+	// snapshot with CancelFn stripped). Cancel also removes the job.
+	if !h.asyncStore.Cancel(jobID) {
 		models.WriteError(w, models.ErrNotFound("job_not_found", "Async job not found"))
 		return
 	}
-
-	// Cancel if still running.
-	if job.Status == async.StatusQueued || job.Status == async.StatusProcessing {
-		now := time.Now()
-		job.Status = async.StatusCancelled
-		job.CompletedAt = &now
-		if job.CancelFn != nil {
-			job.CancelFn()
-		}
-	}
-
-	// Delete from store.
-	h.asyncStore.Delete(jobID)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
