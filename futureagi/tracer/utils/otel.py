@@ -37,6 +37,7 @@ from tracer.utils.semantic_conventions import (
     get_attribute,
 )
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
+
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_resource_request
 except ImportError:
@@ -558,6 +559,10 @@ class ConversationAttributes:
     MONO_ASSISTANT = "mono.assistant"
     """
     The assistant recording of the conversation.
+    """
+    PROVIDER_LOG_ISSUES = "conversation.provider_log.issues"
+    """
+    Warning and error lines of the provider's own call log, as a JSON list.
     """
 
 
