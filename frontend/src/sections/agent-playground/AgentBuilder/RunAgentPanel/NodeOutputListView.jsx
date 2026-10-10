@@ -19,15 +19,29 @@ export default function NodeOutputListView({
   const [searchQuery, setSearchQuery] = useState("");
   const filteredNodes = useMemo(() => {
     if (!nodes?.length) return [];
-    return nodes.filter((node) =>
-      (node?.name ?? "").toLowerCase().includes(searchQuery.toLowerCase()),
-    );
+    if (!searchQuery?.trim()) return nodes;
+    const query = searchQuery.toLowerCase();
+
+    const filterNode = (node) => {
+      const nameMatches = (node?.name ?? "").toLowerCase().includes(query);
+      if (node?.children?.length) {
+        const matchingChildren = node.children.map(filterNode).filter(Boolean);
+        if (matchingChildren.length > 0) {
+          return { ...node, children: matchingChildren };
+        }
+      }
+      return nameMatches ? node : null;
+    };
+
+    return nodes.map(filterNode).filter(Boolean);
   }, [nodes, searchQuery]);
+
   return (
     <Box
       sx={{
         minWidth: 360,
         maxWidth: 420,
+        flexShrink: 0,
         display: "flex",
         flexDirection: "column",
         height: "100%",
