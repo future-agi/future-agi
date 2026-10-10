@@ -416,21 +416,33 @@ type oaiTextPart struct {
 	Text string `json:"text"`
 }
 
+// oaiFilePart is a file content part for OpenAI.
+type oaiFilePart struct {
+	Type string     `json:"type"`
+	File oaiFileObj `json:"file"`
+}
+
+type oaiFileObj struct {
+	FileID   string `json:"file_id,omitempty"`
+	FileData string `json:"file_data,omitempty"`
+	Format   string `json:"format,omitempty"`
+}
+
 // convertContentParts converts a slice of non-tool_result ContentBlocks into
 // an OpenAI content field. Returns a JSON string if there's only plain text;
-// returns a JSON array of content parts when images are present.
+// returns a JSON array of content parts when images or documents are present.
 func convertContentParts(blocks []ContentBlock) (json.RawMessage, error) {
 
-	// Check if we have any image blocks.
-	hasImage := false
+	// Check if we have any non-text blocks (images, documents, or container uploads).
+	hasMultimodal := false
 	for _, b := range blocks {
-		if b.Type == "image" {
-			hasImage = true
+		if b.Type == "image" || b.Type == "document" || b.Type == "container_upload" {
+			hasMultimodal = true
 			break
 		}
 	}
 
-	if !hasImage {
+	if !hasMultimodal {
 		// Plain text only — return a bare string.
 		var sb strings.Builder
 		for _, b := range blocks {
@@ -461,9 +473,55 @@ func convertContentParts(blocks []ContentBlock) (json.RawMessage, error) {
 				Type:     "image_url",
 				ImageURL: oaiImageURL{URL: url},
 			})
+		case "document":
+			if b.Source == nil {
+				continue
+			}
+			filePart, err := documentSourceToFilePart(b.Source)
+			if err != nil {
+				return nil, err
+			}
+			parts = append(parts, filePart)
+		case "container_upload":
+			return nil, fmt.Errorf("unsupported content block type %q: Anthropic container_upload references cannot be translated to other providers", b.Type)
+		default:
+			return nil, fmt.Errorf("unsupported content block type %q", b.Type)
 		}
 	}
 	return json.Marshal(parts)
+}
+
+// documentSourceToFilePart converts an Anthropic document ImageSource to an OpenAI file part.
+func documentSourceToFilePart(src *ImageSource) (oaiFilePart, error) {
+	switch src.Type {
+	case "base64":
+		mediaType := src.MediaType
+		if mediaType == "" {
+			mediaType = "application/pdf"
+		}
+		if _, err := base64.StdEncoding.DecodeString(src.Data); err != nil {
+			if _, err2 := base64.URLEncoding.DecodeString(src.Data); err2 != nil {
+				return oaiFilePart{}, fmt.Errorf("document source base64 data is not valid base64: %w", err)
+			}
+		}
+		return oaiFilePart{
+			Type: "file",
+			File: oaiFileObj{
+				FileData: fmt.Sprintf("data:%s;base64,%s", mediaType, src.Data),
+				Format:   mediaType,
+			},
+		}, nil
+	case "url":
+		return oaiFilePart{
+			Type: "file",
+			File: oaiFileObj{
+				FileID: src.URL,
+				Format: src.MediaType,
+			},
+		}, nil
+	default:
+		return oaiFilePart{}, fmt.Errorf("unsupported document source type: %q", src.Type)
+	}
 }
 
 // imageSourceToURL converts an Anthropic ImageSource to an OpenAI image_url string.

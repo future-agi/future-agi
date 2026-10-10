@@ -1212,7 +1212,10 @@ func TestTranslateVisionContent_WithImages(t *testing.T) {
 		{"type":"image_url","image_url":{"url":"data:image/png;base64,iVBORw0KGgo="}}
 	]`)
 
-	blocks := translateVisionContent(content)
+	blocks, err := translateVisionContent(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if blocks == nil {
 		t.Fatal("expected non-nil blocks for content with images")
 	}
@@ -1250,7 +1253,7 @@ func TestTranslateVisionContent_NoImages(t *testing.T) {
 	// Content array with only text parts should return nil (falls through to text extraction).
 	content := json.RawMessage(`[{"type":"text","text":"Just text, no images"}]`)
 
-	blocks := translateVisionContent(content)
+	blocks, _ := translateVisionContent(content)
 	if blocks != nil {
 		t.Errorf("expected nil for text-only content array, got %d blocks", len(blocks))
 	}
@@ -1261,7 +1264,10 @@ func TestTranslateVisionContent_DataURI(t *testing.T) {
 		{"type":"image_url","image_url":{"url":"data:image/jpeg;base64,/9j/4AAQSkZJRg=="}}
 	]`)
 
-	blocks := translateVisionContent(content)
+	blocks, err := translateVisionContent(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if blocks == nil {
 		t.Fatal("expected non-nil blocks")
 	}
@@ -1290,7 +1296,10 @@ func TestTranslateVisionContent_HTTPURL(t *testing.T) {
 		{"type":"image_url","image_url":{"url":"https://example.com/image.png"}}
 	]`)
 
-	blocks := translateVisionContent(content)
+	blocks, err := translateVisionContent(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if blocks == nil {
 		t.Fatal("expected non-nil blocks")
 	}
@@ -1312,19 +1321,19 @@ func TestTranslateVisionContent_HTTPURL(t *testing.T) {
 }
 
 func TestTranslateVisionContent_EmptyContent(t *testing.T) {
-	blocks := translateVisionContent(nil)
+	blocks, _ := translateVisionContent(nil)
 	if blocks != nil {
 		t.Errorf("expected nil for nil content, got %d blocks", len(blocks))
 	}
 
-	blocks = translateVisionContent(json.RawMessage(""))
+	blocks, _ = translateVisionContent(json.RawMessage(""))
 	if blocks != nil {
 		t.Errorf("expected nil for empty content, got %d blocks", len(blocks))
 	}
 }
 
 func TestTranslateVisionContent_InvalidJSON(t *testing.T) {
-	blocks := translateVisionContent(json.RawMessage(`{not valid`))
+	blocks, _ := translateVisionContent(json.RawMessage(`{not valid`))
 	if blocks != nil {
 		t.Errorf("expected nil for invalid JSON, got %d blocks", len(blocks))
 	}
@@ -1338,9 +1347,81 @@ func TestTranslateVisionContent_NilImageURL(t *testing.T) {
 	]`)
 
 	// No valid image_url parts, so should return nil (hasImage is false).
-	blocks := translateVisionContent(content)
+	blocks, _ := translateVisionContent(content)
 	if blocks != nil {
 		t.Errorf("expected nil for content with null image_url, got %d blocks", len(blocks))
+	}
+}
+
+func TestTranslateVisionContent_FileDataPDF(t *testing.T) {
+	content := json.RawMessage(`[
+		{"type":"text","text":"Summarize this PDF"},
+		{"type":"file","file":{"file_data":"data:application/pdf;base64,JVBERi0x","filename":"sample.pdf"}}
+	]`)
+
+	blocks, err := translateVisionContent(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(blocks) != 2 {
+		t.Fatalf("blocks length = %d, want 2", len(blocks))
+	}
+	if blocks[1].Type != "document" {
+		t.Errorf("Type = %q, want document", blocks[1].Type)
+	}
+	if blocks[1].Source == nil || blocks[1].Source.Type != "base64" || blocks[1].Source.MediaType != "application/pdf" {
+		t.Fatalf("unexpected source: %+v", blocks[1].Source)
+	}
+	if blocks[1].Source.Data != "JVBERi0x" {
+		t.Errorf("Data = %q, want JVBERi0x", blocks[1].Source.Data)
+	}
+}
+
+func TestTranslateVisionContent_FileID_URL(t *testing.T) {
+	content := json.RawMessage(`[
+		{"type":"file","file":{"file_id":"https://example.com/test.pdf"}}
+	]`)
+
+	blocks, err := translateVisionContent(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(blocks) != 1 {
+		t.Fatalf("blocks length = %d, want 1", len(blocks))
+	}
+	if blocks[0].Type != "document" {
+		t.Errorf("Type = %q, want document", blocks[0].Type)
+	}
+	if blocks[0].Source == nil || blocks[0].Source.Type != "url" || blocks[0].Source.URL != "https://example.com/test.pdf" {
+		t.Fatalf("unexpected source: %+v", blocks[0].Source)
+	}
+}
+
+func TestTranslateVisionContent_FileID_OpaqueRejected(t *testing.T) {
+	content := json.RawMessage(`[
+		{"type":"file","file":{"file_id":"file-abc123"}}
+	]`)
+
+	_, err := translateVisionContent(content)
+	if err == nil {
+		t.Fatal("expected error for opaque file_id, got nil")
+	}
+	if !strings.Contains(err.Error(), "cannot be forwarded without resolution") {
+		t.Errorf("error = %q, want error about managed file reference", err.Error())
+	}
+}
+
+func TestTranslateVisionContent_InputAudio_Rejected(t *testing.T) {
+	content := json.RawMessage(`[
+		{"type":"input_audio","input_audio":{"data":"UklGRi...","format":"wav"}}
+	]`)
+
+	_, err := translateVisionContent(content)
+	if err == nil {
+		t.Fatal("expected error for input_audio, got nil")
+	}
+	if !strings.Contains(err.Error(), "input_audio") {
+		t.Errorf("error = %q, want error mentioning input_audio", err.Error())
 	}
 }
 
