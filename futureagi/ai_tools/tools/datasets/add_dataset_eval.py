@@ -63,7 +63,7 @@ class AddDatasetEvalTool(BaseTool):
 
         from ai_tools.resolvers import resolve_dataset, resolve_eval_template
         from model_hub.models.develop_dataset import Column
-        from model_hub.models.evals_metric import EvalTemplate, UserEvalMetric
+        from model_hub.models.evals_metric import UserEvalMetric
         from model_hub.utils.eval_result_columns import infer_eval_result_column_data_type
         from model_hub.utils.eval_validators import validate_eval_template_org_access
 
@@ -78,31 +78,12 @@ class AddDatasetEvalTool(BaseTool):
         template_obj, error = resolve_eval_template(
             params.template_id, context.organization, context.workspace
         )
-        if template_obj:
-            try:
-                template = EvalTemplate.objects.get(id=template_obj.id)
-            except EvalTemplate.DoesNotExist:
-                template = EvalTemplate.objects.filter(name=template_obj.name).first()
-                if not template:
-                    return ToolResult.not_found("EvalTemplate", params.template_id)
-        else:
-            # Try direct EvalTemplate lookup (system templates)
-            try:
-                from ai_tools.resolvers import is_uuid
-
-                if is_uuid(params.template_id):
-                    template = EvalTemplate.objects.get(id=params.template_id)
-                else:
-                    template = EvalTemplate.objects.filter(
-                        name__iexact=params.template_id
-                    ).first()
-                    if not template:
-                        return ToolResult.error(
-                            error or f"Eval template '{params.template_id}' not found.",
-                            error_code="NOT_FOUND",
-                        )
-            except EvalTemplate.DoesNotExist:
-                return ToolResult.not_found("EvalTemplate", params.template_id)
+        if not template_obj:
+            return ToolResult.error(
+                error or f"Eval template '{params.template_id}' not found.",
+                error_code="NOT_FOUND",
+            )
+        template = template_obj
 
         # Auto-generate name if not provided
         eval_name = params.name or f"{template.name}"
