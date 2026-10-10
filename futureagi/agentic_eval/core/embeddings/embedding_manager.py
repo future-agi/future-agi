@@ -473,7 +473,7 @@ class EmbeddingManager:
             eval_id,
             embedding_vector,
             data,
-            [unique_key],
+            [unique_key] if isinstance(unique_key, str) else unique_key,
             exclude_keys,
         )
 
@@ -603,13 +603,25 @@ class EmbeddingManager:
                     raise
                 try:
                     if insert and table_name==FEEDBACK_TABLE_NAME and eval_id!="":
+                        # Tombstone identity: (feedback_id, feedback_input) so a
+                        # retune revokes the prior vector for the same Feedback
+                        # record AND input field — a multi-input submission keeps
+                        # one active vector per field.
+                        if mod_dict.get("feedback_id"):
+                            mod_dict["feedback_input"] = str(inp)
+                            unique_key = ["feedback_id", "feedback_input"]
+                            unique_key_value = mod_dict["feedback_id"]
+                        else:
+                            unique_key = "item_id"
+                            unique_key_value = mod_dict["item_id"]
                         self.insert_embedding(
                             eval_id,
                             data=mod_dict,
                             table_name=f"{table_name}",
                             index_col_type=index_col_type[n],  # Accessing index_col_type[n]
                             column_name="index_column",
-                            unique_key_value=mod_dict["item_id"],
+                            unique_key_value=unique_key_value,
+                            unique_key=unique_key,
                         )
 
                 except Exception:

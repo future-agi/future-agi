@@ -14,6 +14,7 @@ from rest_framework.test import APIClient
 
 from accounts.models import Organization, User
 from accounts.models.workspace import Workspace
+from agentic_eval.core.embeddings.embedding_manager import EmbeddingManager
 from model_hub.models.choices import (
     CellStatus,
     DatasetSourceChoices,
@@ -1517,3 +1518,262 @@ class TestExperimentDeleteV2:
         assert experiment_with_evals.deleted_at is not None
         assert experiment_with_evals.updated_at == experiment_with_evals.deleted_at
         assert experiment_with_evals.updated_at > previous_experiment_updated_at
+
+
+# ==================== #3278: feedback vector lifecycle ====================
+
+
+@pytest.mark.django_db
+class TestFeedbackVectorLifecycle:
+    """Feedback edits/deletes must revoke the vector's retrieval eligibility.
+
+    Regression coverage for #3278: the embed path upserts on a stable
+    ``feedback_id`` identity (not the per-embed ``item_id``), and
+    ``Feedback.delete()`` tombstones the ClickHouse ``feedbacks`` rows that
+    carry the record's identity.
+    """
+
+    @patch("model_hub.views.experiment_feedback_v2.EmbeddingManager")
+    @patch("model_hub.views.experiment_feedback_v2.EvaluationRunner")
+    def test_submit_stamps_feedback_id_in_embedding_metadata(
+        self,
+        mock_runner_cls,
+        mock_embed_cls,
+        auth_client,
+        experiment_with_evals,
+        feedback_per_edt,
+        user_eval_metric,
+        eval_cell_per_edt,
+        input_cell,
+    ):
+        mock_runner = MagicMock()
+        mock_runner._get_required_fields_and_mappings.return_value = ([], {})
+        mock_runner_cls.return_value = mock_runner
+        mock_embed = MagicMock()
+        mock_embed_cls.return_value = mock_embed
+
+        response = auth_client.post(
+            url(experiment_with_evals.id, "submit-feedback/"),
+            {
+                "feedback_id": str(feedback_per_edt.id),
+                "user_eval_metric_id": str(user_eval_metric.id),
+                "action_type": "retune",
+            },
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK
+
+        metadatas = mock_embed.parallel_process_metadata.call_args.kwargs[
+            "metadatas"
+        ]
+        assert metadatas["feedback_id"] == str(feedback_per_edt.id)
+
+    @patch("agentic_eval.core.database.ch_vector.ClickHouseVectorDB")
+    def test_delete_tombstones_feedback_vectors(
+        self, mock_db_cls, db, feedback_per_edt, user_eval_metric
+    ):
+        Feedback.objects.filter(pk=feedback_per_edt.pk).update(
+            eval_template=user_eval_metric.template
+        )
+        feedback_per_edt.refresh_from_db()
+        mock_client = MagicMock()
+        mock_db_cls.return_value = mock_client
+
+        feedback_per_edt.delete()
+
+        mock_client.mark_deleted_by_metadata.assert_called_once_with(
+            "feedbacks",
+            {"feedback_id": str(feedback_per_edt.id)},
+            eval_id=str(user_eval_metric.template.id),
+        )
+        mock_client.close.assert_called_once()
+        feedback_per_edt.refresh_from_db()
+        assert feedback_per_edt.deleted is True
+
+    @patch("agentic_eval.core.database.ch_vector.ClickHouseVectorDB")
+    def test_delete_without_eval_template_tombstones_unscoped(
+        self, mock_db_cls, db, feedback_per_edt
+    ):
+        mock_client = MagicMock()
+        mock_db_cls.return_value = mock_client
+
+        feedback_per_edt.delete()
+
+        mock_client.mark_deleted_by_metadata.assert_called_once_with(
+            "feedbacks",
+            {"feedback_id": str(feedback_per_edt.id)},
+            eval_id=None,
+        )
+
+    @patch("agentic_eval.core.database.ch_vector.ClickHouseVectorDB")
+    def test_delete_swallows_clickhouse_failure(
+        self, mock_db_cls, db, feedback_per_edt
+    ):
+        mock_client = MagicMock()
+        mock_client.mark_deleted_by_metadata.side_effect = RuntimeError("ch down")
+        mock_db_cls.return_value = mock_client
+
+        feedback_per_edt.delete()
+
+        feedback_per_edt.refresh_from_db()
+        assert feedback_per_edt.deleted is True
+
+    @patch("agentic_eval.core.database.ch_vector.ClickHouseVectorDB")
+    def test_queryset_delete_tombstones_via_post_delete(
+        self, mock_db_cls, db, feedback_per_edt, user_eval_metric
+    ):
+        """Collector deletes (queryset/cascade) bypass Feedback.delete() and
+        fire post_delete — the receiver must tombstone instead."""
+        Feedback.objects.filter(pk=feedback_per_edt.pk).update(
+            eval_template=user_eval_metric.template
+        )
+        mock_client = MagicMock()
+        mock_db_cls.return_value = mock_client
+
+        Feedback.objects.filter(pk=feedback_per_edt.pk).delete()
+
+        mock_client.mark_deleted_by_metadata.assert_called_once_with(
+            "feedbacks",
+            {"feedback_id": str(feedback_per_edt.id)},
+            eval_id=str(user_eval_metric.template.id),
+        )
+
+
+class TestFeedbackUniqueKeySelection:
+    """data_formatter picks feedback_id (stable) over item_id (per-embed)."""
+
+    def _manager(self):
+        with patch(
+            "agentic_eval.core.database.ch_vector.ClickHouseVectorDB.__init__",
+            lambda self, *a, **k: None,
+        ):
+            mgr = EmbeddingManager()
+        mgr.insert_embedding = MagicMock()
+        return mgr
+
+    def _run(self, mgr, row_dict):
+        with patch(
+            "agentic_eval.core.embeddings.embedding_manager.model_manager"
+        ) as mock_mm:
+            mock_mm._use_serving = False
+            mock_mm.text_model = MagicMock()
+            mock_mm.text_model.encode.return_value.tolist.return_value = [0.1]
+            return mgr.data_formatter(
+                row_dict=row_dict,
+                inputs_formater=["prompt"],
+                table_name="feedbacks",
+                insert=True,
+                eval_id="eval-1",
+                organization_id="org-1",
+            )
+
+    def test_uses_feedback_id_when_present(self):
+        mgr = self._manager()
+        self._run(
+            mgr,
+            {
+                "feedback_id": "fb-123",
+                "prompt": "hello",
+                "feedback_comment": "x",
+                "feedback_value": "Failed",
+            },
+        )
+        mgr.insert_embedding.assert_called_once()
+        kwargs = mgr.insert_embedding.call_args.kwargs
+        assert kwargs["unique_key"] == ["feedback_id", "feedback_input"]
+        assert kwargs["unique_key_value"] == "fb-123"
+
+    def test_falls_back_to_item_id_without_feedback_id(self):
+        mgr = self._manager()
+        self._run(mgr, {"prompt": "hello", "feedback_comment": "x"})
+        mgr.insert_embedding.assert_called_once()
+        kwargs = mgr.insert_embedding.call_args.kwargs
+        assert kwargs["unique_key"] == "item_id"
+        assert kwargs["unique_key_value"]
+
+    def test_multi_input_keeps_one_vector_per_field(self):
+        """Two inputs of one submission must not tombstone each other.
+
+        Spies on the real insert_embedding → upsert_vector path: each input
+        upserts under (feedback_id, feedback_input), so a later input only
+        supersedes its own field's prior vector.
+        """
+        from agentic_eval.core.database.ch_vector import ClickHouseVectorDB
+
+        with patch.object(
+            ClickHouseVectorDB, "__init__", lambda self, *a, **k: None
+        ):
+            mgr = EmbeddingManager()
+        mgr.db_client = MagicMock()
+
+        with patch(
+            "agentic_eval.core.embeddings.embedding_manager.model_manager"
+        ) as mock_mm:
+            mock_mm._use_serving = False
+            mock_mm.text_model = MagicMock()
+            mock_mm.text_model.encode.return_value.tolist.return_value = [0.1]
+            mgr.data_formatter(
+                row_dict={
+                    "feedback_id": "fb-1",
+                    "prompt": "p",
+                    "response": "r",
+                    "feedback_comment": "x",
+                    "feedback_value": "Failed",
+                },
+                inputs_formater=["prompt", "response"],
+                table_name="feedbacks",
+                insert=True,
+                eval_id="eval-1",
+                organization_id="org-1",
+            )
+
+        calls = mgr.db_client.upsert_vector.call_args_list
+        assert len(calls) == 2
+        assert [c.args[4] for c in calls] == [
+            ["feedback_id", "feedback_input"],
+            ["feedback_id", "feedback_input"],
+        ]
+        assert [c.args[3]["feedback_input"] for c in calls] == [
+            "prompt",
+            "response",
+        ]
+        assert all(c.args[3]["feedback_id"] == "fb-1" for c in calls)
+
+
+class TestMarkDeletedByMetadata:
+    """ch_vector tombstone helper emits a scoped ALTER … UPDATE deleted = 1."""
+
+    def test_scoped_tombstone_sql(self):
+        from agentic_eval.core.database.ch_vector import ClickHouseVectorDB
+
+        with patch.object(
+            ClickHouseVectorDB, "__init__", lambda self, *a, **k: None
+        ):
+            db = ClickHouseVectorDB()
+        db.client = MagicMock()
+
+        db.mark_deleted_by_metadata(
+            "feedbacks", {"feedback_id": "fb-9"}, eval_id="eval-7"
+        )
+
+        sql = db.client.execute.call_args.args[0]
+        assert sql.startswith("ALTER TABLE feedbacks UPDATE deleted = 1")
+        assert "deleted = 0" in sql
+        assert "eval_id = 'eval-7'" in sql
+        assert "has(metadata.key, 'feedback_id')" in sql
+        assert "'fb-9'" in sql
+
+    def test_unscoped_tombstone_sql(self):
+        from agentic_eval.core.database.ch_vector import ClickHouseVectorDB
+
+        with patch.object(
+            ClickHouseVectorDB, "__init__", lambda self, *a, **k: None
+        ):
+            db = ClickHouseVectorDB()
+        db.client = MagicMock()
+
+        db.mark_deleted_by_metadata("feedbacks", {"feedback_id": "fb-9"})
+
+        sql = db.client.execute.call_args.args[0]
+        assert "eval_id" not in sql
+        assert "has(metadata.key, 'feedback_id')" in sql

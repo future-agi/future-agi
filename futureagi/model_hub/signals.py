@@ -11,7 +11,7 @@ PromptVersion are soft-deleted.
 from threading import local
 
 import structlog
-from django.db.models.signals import post_save, pre_save
+from django.db.models.signals import post_delete, post_save, pre_save
 from django.dispatch import receiver
 
 logger = structlog.get_logger(__name__)
@@ -289,3 +289,16 @@ def cascade_soft_delete_on_prompt_version_deletion(sender, instance, **kwargs):
                 prompt_version_id=str(instance.id),
                 nodes_deleted=nodes_cascaded,
             )
+
+
+@receiver(post_delete, sender="model_hub.Feedback")
+def tombstone_feedback_vectors_on_delete(sender, instance, **kwargs):
+    """Revoke vector eligibility on collector-path deletes.
+
+    ``Feedback.delete()`` only covers instance deletes (soft-delete saves);
+    queryset ``.delete()`` and FK cascades reach the collector instead and
+    fire ``post_delete`` — tombstone the ClickHouse vectors here.
+    """
+    from model_hub.models.evals_metric import tombstone_feedback_vectors
+
+    tombstone_feedback_vectors(instance.id, instance.eval_template_id)
