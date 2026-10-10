@@ -12,6 +12,7 @@ import PropTypes from "prop-types";
 import React, { useCallback, useRef, useState } from "react";
 import PromptTopSection from "./PromptCardTopSection";
 import PromptEditor from "./PromptEditor";
+import { ALL_MEDIA_KINDS, NO_MEDIA_KINDS } from "./clipboard/constants";
 import { ShowComponent } from "../show";
 import PromptRecorder from "./PromptRecorder";
 import UploadMedia from "./UploadMedia/UploadMedia";
@@ -388,6 +389,9 @@ export default function ExpandedPrompt({
             variableValidator={variableValidator}
             jinjaMode={jinjaMode}
             label={hideExpandedHeader ? role : ""}
+            allowedMediaTypes={
+              allowAttachment ? ALL_MEDIA_KINDS : NO_MEDIA_KINDS
+            }
           />
           <ShowComponent condition={isRecorderActive}>
             <PromptRecorder
