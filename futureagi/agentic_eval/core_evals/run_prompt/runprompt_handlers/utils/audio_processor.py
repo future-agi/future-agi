@@ -112,6 +112,27 @@ class AudioProcessor:
         return input_text
 
     @staticmethod
+    def extract_literal_speech_script(messages: List[Dict[str, Any]]) -> str:
+        """Speech script for literal TTS: user-role text only.
+
+        System, developer, assistant, tool and unknown roles are control text
+        and must not be spoken. The phrase "record audio with script" is kept
+        when the user put it in the script. Completion-generated audio must
+        keep using extract_text_from_messages, which retains every role.
+        """
+        user_messages = [
+            msg
+            for msg in messages
+            if isinstance(msg, dict) and msg.get("role") == "user"
+        ]
+        try:
+            return AudioProcessor.extract_text_from_messages(user_messages)
+        except ValueError as exc:
+            if "No text found" in str(exc):
+                raise ValueError("Enter text to synthesize speech.") from exc
+            raise
+
+    @staticmethod
     def extract_audio_from_messages(messages: List[Dict[str, Any]]) -> str:
         """
         Extract audio data (URL or base64 string) from messages.
