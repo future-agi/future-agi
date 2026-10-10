@@ -451,10 +451,21 @@ const SpanGrid = React.forwardRef(
       RolePermission.OBSERVABILITY[PERMISSIONS.CREATE_EDIT_PROJECT]?.[role],
     );
     // Tells cell renderers (e.g. TagsCell) they are on the span grid (so tag
-    // edits target the span) and whether the role may edit.
+    // edits target the span) and whether the role may edit. `reloadList` lets
+    // LLMTracingView re-read the list after a bulk action (src/utils/gridApi
+    // reloadServerSideGrid): a bare refreshServerSide() is answered from the
+    // cursor pagination's page memory, which only refreshGrid clears.
+    const refreshGridLatestRef = useRef(refreshGrid);
+    useEffect(() => {
+      refreshGridLatestRef.current = refreshGrid;
+    }, [refreshGrid]);
+    const reloadList = useCallback(
+      (purge) => refreshGridLatestRef.current(purge),
+      [],
+    );
     const gridContext = useMemo(
-      () => ({ entityType: "span", canEditTags }),
-      [canEditTags],
+      () => ({ entityType: "span", canEditTags, reloadList }),
+      [canEditTags, reloadList],
     );
 
     const { columnDefs } = useMemo(() => {

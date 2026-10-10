@@ -6,8 +6,14 @@ import axios from "src/utils/axios";
 import { apiPath } from "src/api/contracts/api-surface";
 import { enqueueSnackbar } from "notistack";
 import { normalizeTags } from "./tagUtils";
+import { serializeTraceTags } from "./traceTagPayload";
 import TagChip from "./TagChip";
 import TagInput from "./TagInput";
+
+// Bulk callers pass no currentTags. A fresh `[]` default would be a new
+// dependency on every render, so the reset effect below would set state and
+// re-render forever while the popover is open.
+const NO_TAGS = [];
 
 const AddTagsPopover = ({
   anchorEl,
@@ -16,11 +22,14 @@ const AddTagsPopover = ({
   traceId,
   spanId,
   bulkItems,
-  currentTags = [],
+  currentTags = NO_TAGS,
   onSuccess,
 }) => {
   const items = Array.isArray(bulkItems) ? bulkItems : [];
-  const isBulk = items.length > 1;
+  // Only the grid's bulk action passes bulkItems, with no traceId or
+  // currentTags, so any selection (one row included) takes the bulk path.
+  const isBulk = items.length > 0;
+  const itemsLabel = `${items.length} ${items.length === 1 ? "item" : "items"}`;
 
   const [tags, setTags] = useState(() =>
     isBulk ? [] : normalizeTags(currentTags),
@@ -32,7 +41,10 @@ const AddTagsPopover = ({
   }, [open, currentTags, isBulk]);
 
   const patchTrace = (id, newTags) =>
-    axios.patch(apiPath("/tracer/trace/{id}/tags/", { id }), { tags: newTags });
+    axios.patch(apiPath("/tracer/trace/{id}/tags/", { id }), {
+      tags: serializeTraceTags(newTags),
+    });
+
   const patchSpan = (id, newTags) =>
     axios.post(apiPath("/tracer/observation-span/update-tags/"), {
       span_id: id,
@@ -64,7 +76,7 @@ const AddTagsPopover = ({
     },
     onSuccess: () => {
       enqueueSnackbar(
-        isBulk ? `Tags applied to ${items.length} items` : "Tags updated",
+        isBulk ? `Tags applied to ${itemsLabel}` : "Tags updated",
         { variant: "success" },
       );
       // Refreshes the trace-detail drawer. The LLM tracing grid is AG-Grid
@@ -123,7 +135,7 @@ const AddTagsPopover = ({
       slotProps={{ paper: { sx: { width: 300, p: 1.5, mt: 0.5 } } }}
     >
       <Typography sx={{ fontSize: 12, fontWeight: 600, mb: 1 }}>
-        {isBulk ? `Add tags to ${items.length} items` : "Tags"}
+        {isBulk ? `Add tags to ${itemsLabel}` : "Tags"}
       </Typography>
 
       {!isBulk && tags.length > 0 && (

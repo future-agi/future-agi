@@ -43,6 +43,7 @@ import { isOpenAIMessages } from "./ChatMessageView";
 import useSearchHighlight from "./useSearchHighlight";
 import ScoresListSection from "src/components/ScoresListSection/ScoresListSection";
 import { normalizeTags } from "./tagUtils";
+import { serializeTraceTags } from "./traceTagPayload";
 import TagChip from "./TagChip";
 import TagInput from "./TagInput";
 import EvalsTabView, { collectAllEvalsFromEntry } from "./EvalsTabView";
@@ -1212,7 +1213,7 @@ const InlineTagsRow = ({ tags = [], traceId, spanId }) => {
         });
       }
       return axios.patch(apiPath("/tracer/trace/{id}/tags/", { id: traceId }), {
-        tags: newTags,
+        tags: serializeTraceTags(newTags),
       });
     },
     onSuccess: () => {

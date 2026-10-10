@@ -2,29 +2,35 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen, userEvent } from "src/utils/test-utils";
 import TagsCell from "../TagsCell";
 
+// Every render's currentTags, to check the identity the popover sees.
+const popoverCurrentTags = vi.hoisted(() => []);
+
 // Stub the real popover (it depends on react-query / network) so these tests
 // stay focused on TagsCell wiring: the cell must open the popover and hand it
 // the row identity + current tags.
 vi.mock("src/components/traceDetail/AddTagsPopover", () => ({
-  default: ({ open, traceId, spanId, currentTags, onClose }) => (
-    <div
-      data-testid="add-tags-popover"
-      data-open={String(open)}
-      data-trace-id={traceId ?? ""}
-      data-span-id={spanId ?? ""}
-      data-current-tags={JSON.stringify(currentTags ?? [])}
-    >
-      {open && (
-        <button
-          type="button"
-          data-testid="popover-close"
-          onClick={() => onClose?.()}
-        >
-          close
-        </button>
-      )}
-    </div>
-  ),
+  default: ({ open, traceId, spanId, currentTags, onClose }) => {
+    popoverCurrentTags.push(currentTags);
+    return (
+      <div
+        data-testid="add-tags-popover"
+        data-open={String(open)}
+        data-trace-id={traceId ?? ""}
+        data-span-id={spanId ?? ""}
+        data-current-tags={JSON.stringify(currentTags ?? [])}
+      >
+        {open && (
+          <button
+            type="button"
+            data-testid="popover-close"
+            onClick={() => onClose?.()}
+          >
+            close
+          </button>
+        )}
+      </div>
+    );
+  },
 }));
 
 describe("TagsCell", () => {
@@ -220,5 +226,45 @@ describe("TagsCell", () => {
       "data-open",
       "true",
     );
+  });
+
+  // TH-8026: trace-list rows can carry tags as the raw JSON string stored in
+  // ClickHouse. The cell must show them and hand the popover the stored list,
+  // because the tag PATCH replaces the whole list.
+  it("reads a JSON-string tag list from a trace-list row", async () => {
+    const user = userEvent.setup();
+    const { container } = render(
+      <TagsCell value='["production", "v2"]' traceId="trace-1" />,
+    );
+
+    expect(screen.getByText("production")).toBeInTheDocument();
+    expect(screen.getByText("v2")).toBeInTheDocument();
+
+    await user.click(container.firstChild);
+    expect(screen.getByTestId("add-tags-popover")).toHaveAttribute(
+      "data-current-tags",
+      JSON.stringify(["production", "v2"]),
+    );
+  });
+
+  it("does not offer editing when the stored tags cannot be read", () => {
+    const { container } = render(
+      <TagsCell value="not-a-list" traceId="trace-1" />,
+    );
+
+    expect(screen.queryByTestId("add-tags-popover")).not.toBeInTheDocument();
+    expect(container.firstChild).toBeNull();
+  });
+
+  // The popover resets its working tags whenever currentTags changes, so a
+  // grid re-render with the same row value must not hand it a new array.
+  it.each([
+    ["a JSON-string list", '["production", "v2"]'],
+    ["no tags", undefined],
+  ])("keeps currentTags stable across re-renders for %s", (_label, value) => {
+    const { rerender } = render(<TagsCell value={value} traceId="trace-1" />);
+    const first = popoverCurrentTags.at(-1);
+    rerender(<TagsCell value={value} traceId="trace-1" />);
+    expect(popoverCurrentTags.at(-1)).toBe(first);
   });
 });

@@ -230,6 +230,7 @@ import { REPLAY_TYPES } from "../SessionsView/ReplaySessions/constants";
 import { filtersContentEqual } from "../saved-view-utils";
 import { useCreateReplaySessions } from "src/api/project/replay-sessions";
 import { enqueueSnackbar } from "notistack";
+import { parseTagList } from "src/components/traceDetail/tagUtils";
 import {
   useUpdateSavedView,
   useCreateSavedView,
@@ -243,7 +244,11 @@ import { getRequestErrorMessage } from "src/utils/errorUtils";
 import { getDefaultDateRangeForMode } from "../dateRangeDefaults";
 import { useCursorAttributeInventory } from "./useCursorAttributeInventory";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
-import { isGridApiLive, withLiveGridApi } from "src/utils/gridApi";
+import {
+  isGridApiLive,
+  reloadServerSideGrid,
+  withLiveGridApi,
+} from "src/utils/gridApi";
 
 const USER_DETAIL_TAB_TYPE = "user_detail";
 const getLiveGridRefApi = (gridRef) => {
@@ -4277,6 +4282,9 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     // against concurrent clicks triggering duplicate fetches.
                     // A call's trace id can exist in several projects, so
                     // read this project's copy.
+                    // The tags PATCH replaces the whole list, so a call whose
+                    // tags can't be read must not be merged into [] (that
+                    // would drop its tags): open nothing if any read fails.
                     if (tagsFetching) return;
                     const ids = (selectedCallIds || []).filter(Boolean);
                     if (ids.length === 0) return;
@@ -4287,19 +4295,28 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                           .get(endpoints.project.getTrace(id), {
                             params: { project_id: observeId },
                           })
-                          .then((res) => ({
-                            id,
-                            type: "trace",
-                            currentTags: res?.data?.result?.tags || [],
-                          }))
-                          .catch(() => ({
-                            id,
-                            type: "trace",
-                            currentTags: [],
-                          })),
+                          .then((res) => {
+                            // TraceDetailResult: { trace: { tags }, ... }
+                            const result = res?.data?.result;
+                            return {
+                              id,
+                              type: "trace",
+                              currentTags:
+                                result?.trace?.tags || result?.tags || [],
+                            };
+                          })
+                          .catch(() => null),
                       ),
                     )
                       .then((items) => {
+                        const unread = items.filter((item) => !item).length;
+                        if (unread > 0) {
+                          enqueueSnackbar(
+                            `Couldn't load the current tags of ${unread} of ${ids.length} selected calls. No tags were changed.`,
+                            { variant: "error" },
+                          );
+                          return;
+                        }
                         setTagsBulkItems(items);
                         setTagsAnchorEl(anchor);
                       })
@@ -4372,18 +4389,30 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                         : primarySpanGridRef,
                     );
                     const nodes = grid?.getSelectedNodes?.() || [];
-                    setTagsBulkItems(
-                      nodes
-                        .map((n) => ({
-                          id:
-                            selectedTab === "trace"
-                              ? n.data?.trace_id
-                              : n.data?.span_id,
-                          type: selectedTab === "trace" ? "trace" : "span",
-                          currentTags: n.data?.tags || [],
-                        }))
-                        .filter((i) => i.id),
-                    );
+                    const items = nodes
+                      .map((n) => ({
+                        id:
+                          selectedTab === "trace"
+                            ? n.data?.trace_id
+                            : n.data?.span_id,
+                        type: selectedTab === "trace" ? "trace" : "span",
+                        // Trace-list rows can carry the stored JSON string.
+                        currentTags: parseTagList(n.data?.tags),
+                      }))
+                      .filter((i) => i.id);
+                    // The tag PATCH replaces each row's list, so merging into
+                    // a list we couldn't read would drop it.
+                    const unread = items.filter(
+                      (i) => i.currentTags === null,
+                    ).length;
+                    if (unread > 0) {
+                      enqueueSnackbar(
+                        `Couldn't load the current tags of ${unread} of ${items.length} selected rows. No tags were changed.`,
+                        { variant: "error" },
+                      );
+                      break;
+                    }
+                    setTagsBulkItems(items);
                     setTagsAnchorEl(anchor);
                     break;
                   }
@@ -4746,10 +4775,19 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     compareCallLogsGridRef.current?.deselectAll?.();
                     setSelectedCallIds([]);
                   } else if (selectedTab === "trace") {
-                    refreshGridRef(primaryTraceGridRef, { purge: true });
+                    // The grid's own reload: a bare refreshServerSide() is
+                    // answered from its cursor page memory, and the tags
+                    // just saved would not appear.
+                    reloadServerSideGrid(
+                      getLiveGridRefApi(primaryTraceGridRef),
+                      { purge: true },
+                    );
                     deselectGridRef(primaryTraceGridRef);
                   } else {
-                    refreshGridRef(primarySpanGridRef, { purge: true });
+                    reloadServerSideGrid(
+                      getLiveGridRefApi(primarySpanGridRef),
+                      { purge: true },
+                    );
                     deselectGridRef(primarySpanGridRef);
                   }
                   setTagsAnchorEl(null);

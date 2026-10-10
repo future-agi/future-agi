@@ -1,11 +1,17 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import { Box, Chip } from "@mui/material";
-import { normalizeTag } from "src/components/traceDetail/tagUtils";
+import {
+  normalizeTag,
+  parseTagList,
+} from "src/components/traceDetail/tagUtils";
 import TagChip from "src/components/traceDetail/TagChip";
 import AddTagsPopover from "src/components/traceDetail/AddTagsPopover";
 
 const MAX_VISIBLE = 2;
+// Stable "no tags" value: AddTagsPopover resets its working tags whenever
+// currentTags changes, so a fresh [] per render would wipe a session's adds.
+const NO_TAGS = [];
 
 const TagsCell = ({
   value,
@@ -16,7 +22,10 @@ const TagsCell = ({
   onTagsUpdated,
 }) => {
   const [anchorEl, setAnchorEl] = useState(null);
-  const tags = Array.isArray(value) ? value : [];
+  // Trace-list rows can carry tags as the stored JSON string. Parse once per
+  // value so the popover gets the same array across re-renders.
+  const storedTags = useMemo(() => parseTagList(value), [value]);
+  const tags = storedTags ?? NO_TAGS;
 
   // Resolve which single entity this cell tags from the grid context (trace
   // grid vs span grid). A trace row can also carry its root span_id and the
@@ -26,9 +35,13 @@ const TagsCell = ({
   const targetTraceId = isSpanRow ? undefined : traceId;
   const targetSpanId = isSpanRow ? spanId : undefined;
 
-  // Editable only when there is something to PATCH (a trace/span id) AND the
-  // role may edit tags. Otherwise the cell stays a passive display.
-  const editable = Boolean(targetTraceId || targetSpanId) && canEditTags;
+  // Editable only when there is something to PATCH (a trace/span id), the
+  // role may edit tags, and the stored list could be read: a save replaces
+  // the whole list, so editing an unreadable one would drop it.
+  const editable =
+    Boolean(targetTraceId || targetSpanId) &&
+    canEditTags &&
+    storedTags !== null;
 
   if (tags.length === 0 && !editable) return null;
 
@@ -124,7 +137,7 @@ const TagsCell = ({
           onClose={handleClose}
           traceId={targetTraceId}
           spanId={targetSpanId}
-          currentTags={value}
+          currentTags={tags}
         />
       )}
     </>
@@ -132,7 +145,7 @@ const TagsCell = ({
 };
 
 TagsCell.propTypes = {
-  value: PropTypes.array,
+  value: PropTypes.oneOfType([PropTypes.array, PropTypes.string]),
   traceId: PropTypes.string,
   spanId: PropTypes.string,
   // "trace" | "span" — which entity this grid tags. Disambiguates rows that

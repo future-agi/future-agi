@@ -355,9 +355,21 @@ const TraceGrid = React.forwardRef(
     );
     // Tells cell renderers (e.g. TagsCell) they are on the trace grid (so tag
     // edits target the trace, not its root span) and whether the role may edit.
+    // `reloadList` lets LLMTracingView re-read the list after a bulk action
+    // (src/utils/gridApi reloadServerSideGrid): a bare refreshServerSide() is
+    // answered from the cursor pagination's page memory, which only
+    // refreshGrid clears.
+    const refreshGridLatestRef = useRef(refreshGrid);
+    useEffect(() => {
+      refreshGridLatestRef.current = refreshGrid;
+    }, [refreshGrid]);
+    const reloadList = useCallback(
+      (purge) => refreshGridLatestRef.current(purge),
+      [],
+    );
     const gridContext = useMemo(
-      () => ({ entityType: "trace", canEditTags }),
-      [canEditTags],
+      () => ({ entityType: "trace", canEditTags, reloadList }),
+      [canEditTags, reloadList],
     );
 
     const dataSource = useMemo(
