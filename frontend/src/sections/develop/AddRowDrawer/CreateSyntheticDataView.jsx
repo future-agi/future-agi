@@ -27,7 +27,10 @@ import { LoadingButton } from "@mui/lab";
 import { useKnowledgeBaseList } from "src/api/knowledge-base/files";
 import PropTypes from "prop-types";
 
-import { getSyntheticDefaultValues } from "./CreateSyntheticData/common";
+import {
+  buildSyntheticColumnPayload,
+  getSyntheticDefaultValues,
+} from "./CreateSyntheticData/common";
 import CreateSyntheticDatasetOptionModal from "./EditSyntheticData/CreateSyntheticDatasetOptionModal";
 import { useEditSyntheticDataStore } from "./EditSyntheticData/state";
 import { useDatasetOriginStore } from "../../develop-detail/states";
@@ -216,9 +219,14 @@ const CreateSyntheticDataView = ({
     meta: { errorHandled: true },
     onError: (error) => {
       enqueueSnackbar(
-        getRequestErrorMessage(error, "Failed to create synthetic dataset", {
-          retryAction: "creating this synthetic dataset",
-        }),
+        getRequestErrorMessage(
+          error,
+          "We couldn't create the synthetic dataset. Please review the form and try again.",
+          {
+            retryAction: "creating this synthetic dataset",
+            sanitizeTechnicalFieldErrors: true,
+          },
+        ),
         { variant: "error" },
       );
     },
@@ -252,9 +260,14 @@ const CreateSyntheticDataView = ({
     },
     onError: (error) => {
       enqueueSnackbar(
-        getRequestErrorMessage(error, "Failed to update synthetic dataset", {
-          retryAction: "updating this synthetic dataset",
-        }),
+        getRequestErrorMessage(
+          error,
+          "We couldn't update the synthetic dataset. Please review the form and try again.",
+          {
+            retryAction: "updating this synthetic dataset",
+            sanitizeTechnicalFieldErrors: true,
+          },
+        ),
         { variant: "error" },
       );
     },
@@ -286,20 +299,13 @@ const CreateSyntheticDataView = ({
       num_rows: Number(formData.rowNumber),
       kb_id: kb_id,
       columns: formData.columns.map((item, index) => {
-        const property = {};
-        item.property.forEach((dummy) => {
-          property[dummy.type] = dummy.value;
-        });
         if (index === 0) {
           cols[item.name] = item.description;
         }
-        const newItem = {
-          ...item,
-          description: replaceColumn(item.description, item.name),
-          property,
-          // ...(datasetId && { is_new: true, skip: true }),  // It need for the perticular dataset
-        };
-        return newItem;
+        return buildSyntheticColumnPayload(
+          item,
+          replaceColumn(item.description, item.name),
+        );
       }),
     };
 
