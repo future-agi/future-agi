@@ -6,10 +6,11 @@ import csv
 import functools
 import json
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from itertools import islice
 from typing import Any
 
+from django.db.models import QuerySet
 from django.http import StreamingHttpResponse
 from django.shortcuts import get_object_or_404
 from drf_yasg import openapi
@@ -33,6 +34,7 @@ from simulate.services.run_results_v3 import (
 from simulate.services.run_results_v3_page import (
     page_calls,
     page_groups,
+    read_call_values,
     run_calls_page,
 )
 from simulate.services.run_results_v3_queries import (
@@ -526,6 +528,37 @@ def _execution_payload(
     }
 
 
+def _facet_rows(
+    calls_page: dict[str, Any],
+    base_queryset: Callable[[], QuerySet],
+    call_ids: list[str] | None,
+) -> list[dict[str, Any]]:
+    """The run's call values, narrowed to a hand-off's calls.
+
+    Cached page rows can lag the calls, so facets re-read them unless this
+    request already did.
+    """
+    if not calls_page["execution_rows_fresh"]:
+        queryset = base_queryset()
+        if call_ids:
+            queryset = apply_run_call_query(
+                queryset, {"filters": {"call_execution_id": call_ids}}
+            )
+        return read_call_values(queryset)
+    rows = calls_page["execution_rows"]
+    if not call_ids:
+        return rows
+    scoped = {str(uuid.UUID(call_id)) for call_id in call_ids}
+    return [row for row in rows if row["id"] in scoped]
+
+
+def _facet_calls(
+    execution: TestExecution, call_ids: list[str] | None
+) -> QuerySet[CallExecution]:
+    calls = CallExecution.objects.filter(test_execution=execution)
+    return calls.filter(id__in=call_ids) if call_ids else calls
+
+
 class RunCallsV3View(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -548,17 +581,13 @@ class RunCallsV3View(APIView):
         calls_page = run_calls_page(execution, query, columns, base_queryset)
         count = calls_page["count"]
         page_rows, columns = build_call_rows(
-            execution, page_calls(calls_page), columns, live_eval_ids
+            execution, page_calls(calls_page, execution), columns, live_eval_ids
         )
         facets_cache_key = None
         # Facets span the whole run so filter options never vanish, except under
         # a hand-off of specific calls, which scopes the counts too.
-        facet_queryset = base_queryset
-        if call_ids := (query.get("filters") or {}).get("call_execution_id"):
-            facet_queryset = apply_run_call_query(
-                base_queryset(), {"filters": {"call_execution_id": call_ids}}
-            )
-        elif execution.status == TestExecution.ExecutionStatus.COMPLETED:
+        call_ids = (query.get("filters") or {}).get("call_execution_id")
+        if not call_ids and execution.status == TestExecution.ExecutionStatus.COMPLETED:
             version = execution.completed_at or execution.updated_at
             # A deleted call moves the run's total and nothing else in this key.
             facets_cache_key = (
@@ -574,7 +603,11 @@ class RunCallsV3View(APIView):
             "total_pages": max(1, (count + page_size - 1) // page_size),
             "results": page_rows,
             "groups": page_groups(execution, calls_page, query, columns, base_queryset),
-            "facets": run_call_facets(facet_queryset, facets_cache_key),
+            "facets": run_call_facets(
+                lambda: _facet_rows(calls_page, base_queryset, call_ids),
+                lambda: _facet_calls(execution, call_ids),
+                facets_cache_key,
+            ),
             "evaluation_columns": columns,
         }
         return Response(response)

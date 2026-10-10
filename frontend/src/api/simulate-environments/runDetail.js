@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { extractKpis } from "src/sections/test-detail/common";
 import { normalizeEvalResult } from "src/sections/develop-detail/DataTab/common";
@@ -9,6 +9,7 @@ import {
   runColor,
   runStateFor,
 } from "src/sections/simulate/environments/workspace/runs/runs.constants";
+import { fetchRunCalls, runSummaryKey } from "./runCalls";
 
 /**
  * The run/execution DETAIL data source.
@@ -164,19 +165,26 @@ export function buildRunStats(kpis, perf, row) {
  * The run-detail header + stats hook.
  * @param {string} runTestId   The run-test id (owns the executions list).
  * @param {string} executionId The execution row to detail.
- * @param {{ envName?: string }} [opts]
+ * @param {{ envName?: string, callsShown?: boolean }} [opts]  `callsShown`:
+ *   the calls table is (or is about to be) mounted and feeds this read.
  * @returns {{ identity: ?RunIdentity, stats: RunStats, isLoading: boolean }}
  */
-export function useRunDetail(runTestId, executionId, { envName } = {}) {
+export function useRunDetail(
+  runTestId,
+  executionId,
+  { envName, callsShown = false } = {},
+) {
+  const queryClient = useQueryClient();
   const query = useQuery({
-    queryKey: ["simulation-run-results-v3", executionId, "summary"],
-    queryFn: () =>
-      axios
-        .get(endpoints.runResultsV3.calls(executionId), {
-          params: { page: 1, page_size: 1 },
-        })
-        .then((res) => res.data),
-    enabled: !!executionId,
+    queryKey: runSummaryKey(executionId),
+    queryFn: async () => {
+      const data = await fetchRunCalls(executionId, { page: 1, page_size: 1 });
+      // A later request's snapshot landed while this one was in flight.
+      const current = queryClient.getQueryData(runSummaryKey(executionId));
+      return current?.requestedAt > data.requestedAt ? current : data;
+    },
+    // The calls table's own polls keep this fresh while it's shown.
+    enabled: !!executionId && !callsShown,
     refetchInterval: (query) =>
       ACTIVE_EXECUTION_STATUSES.has(query.state.data?.execution?.status)
         ? 3000

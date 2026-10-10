@@ -2031,6 +2031,79 @@ class TestRunResultsV3Views:
 
         assert (by_status["count"], by_goal["count"]) == (1, 0)
 
+    @staticmethod
+    def _set_harness_outcome(call, outcome):
+        CallExecution.objects.filter(pk=call.pk).update(
+            call_metadata={"harness_outcome_status": outcome}
+        )
+
+    def test_hand_off_facets_read_calls_newer_than_the_page_cache(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        first, second = analytics_call_executions[:2]
+        for call in (first, second):
+            self._set_harness_outcome(call, "passed")
+        self._calls(auth_client, test_execution)
+        # A filtered page caches the whole run's rows as well.
+        self._calls(
+            auth_client, test_execution, filters=json.dumps({"status": ["passed"]})
+        )
+        self._set_harness_outcome(second, "failed")
+
+        body = self._calls(
+            auth_client,
+            test_execution,
+            filters=json.dumps(
+                {"call_execution_id": [str(first.id).upper(), str(second.id)]}
+            ),
+        )
+
+        assert body["facets"]["status"] == [
+            {"value": "failed", "count": 1},
+            {"value": "passed", "count": 1},
+        ]
+
+    def test_facets_cache_miss_reads_calls_newer_than_the_page_cache(
+        self, auth_client, test_execution, analytics_call_executions, monkeypatch
+    ):
+        class NoFacetsCache:
+            def get(self, key):
+                return None
+
+            def set(self, key, value, timeout=None):
+                pass
+
+        monkeypatch.setattr(
+            "simulate.services.run_results_v3_queries.cache", NoFacetsCache()
+        )
+        first = analytics_call_executions[0]
+        self._set_harness_outcome(first, "passed")
+        self._calls(auth_client, test_execution)
+        self._set_harness_outcome(first, "failed")
+
+        body = self._calls(auth_client, test_execution)
+
+        statuses = {item["value"]: item["count"] for item in body["facets"]["status"]}
+        assert statuses.get("failed") == 1
+        assert "passed" not in statuses
+
+    def test_hand_off_facets_on_a_running_run_scope_mixed_case_ids(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        TestExecution.objects.filter(pk=test_execution.pk).update(
+            status=TestExecution.ExecutionStatus.RUNNING
+        )
+        failed = analytics_call_executions[3]
+
+        body = self._calls(
+            auth_client,
+            test_execution,
+            filters=json.dumps({"call_execution_id": [str(failed.id).upper()]}),
+        )
+
+        assert body["facets"]["status"] == [{"value": "error", "count": 1}]
+        assert sum(item["count"] for item in body["facets"]["goal"]) == 1
+
     def test_groups_score_an_eval_the_catalog_has_not_listed(
         self, auth_client, test_execution, analytics_call_executions
     ):

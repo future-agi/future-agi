@@ -1019,6 +1019,23 @@ describe("RunDetail", () => {
     expect(navArgs().live).toBe(true);
   });
 
+  it("lets the calls table feed the header only while it is shown", async () => {
+    const user = userEvent.setup();
+    renderDetail();
+    expect(useRunDetail).toHaveBeenLastCalledWith(
+      "rt1",
+      "ex1",
+      expect.objectContaining({ callsShown: true }),
+    );
+
+    await user.click(screen.getByRole("tab", { name: "Analytics" }));
+    expect(useRunDetail).toHaveBeenLastCalledWith(
+      "rt1",
+      "ex1",
+      expect.objectContaining({ callsShown: false }),
+    );
+  });
+
   it("marks a call opened from Analytics as not from the table", async () => {
     const user = userEvent.setup();
     renderDetail();
