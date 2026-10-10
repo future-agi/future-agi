@@ -144,7 +144,7 @@ def extract_raw_result(eval_result, eval_template):
 
     Returns:
         Dict with keys: data, failure, reason, runtime, model, metrics,
-                       metadata, output
+                       metadata, cost, token_usage, output
     """
     eval_results = getattr(eval_result, "eval_results", None) or []
     first = eval_results[0] if eval_results else {}
@@ -153,6 +153,8 @@ def extract_raw_result(eval_result, eval_template):
     if first is None:
         first = {}
     template_config = getattr(eval_template, "config", None) or {}
+    output = template_config.get("output", "score")
+
     return {
         "data": first.get("data"),
         "failure": first.get("failure"),
@@ -161,5 +163,7 @@ def extract_raw_result(eval_result, eval_template):
         "model": first.get("model"),
         "metrics": first.get("metrics"),
         "metadata": first.get("metadata"),
-        "output": template_config.get("output", "score"),
+        "cost": first.get("cost"),
+        "token_usage": first.get("token_usage"),
+        "output": output,
     }
