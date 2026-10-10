@@ -81,6 +81,7 @@ export default function RunDetail({
   const [exporting, setExporting] = useState(false);
   const { identity, stats } = useRunDetail(testId, executionId, {
     envName: env?.name,
+    callsShown: tab === "tasks",
   });
   const callNav = useCallListNavigation({
     executionId,

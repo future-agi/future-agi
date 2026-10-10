@@ -9,6 +9,7 @@ from collections.abc import Callable
 from typing import Any
 
 from django.core.cache import cache
+from django.db import connection
 from django.db.models import (
     Avg,
     BooleanField,
@@ -84,6 +85,18 @@ GROUP_FIELDS = {
 }
 UNGROUPED = "Ungrouped"
 LIST_AXES = frozenset({"sub_goal"})
+# The ``ordering`` values a run's calls sort by, and the field each one orders on.
+ORDERING_FIELDS = {
+    "started_at": "started_at",
+    "duration_seconds": "duration_seconds",
+    "latency_ms": "result_latency_ms",
+    "turn_count": "result_turn_count",
+    "tokens": "result_tokens",
+    "cost_cents": "result_cost_cents",
+    "scenario": "scenario__name",
+    "goal": "result_goal",
+    "outcome": "result_outcome",
+}
 READ_ONCE_JSON_COLUMNS = frozenset({"call_metadata", "eval_outputs"})
 
 
@@ -251,6 +264,8 @@ def _choice_array_matches(
     )
 
 
+# Twin: ``_EvalScore`` in run_results_v3_scan; change both. Guarded by
+# test_every_stored_entry_shape_scores_like_the_sql_read_model.
 def _expanded_eval_score(
     eval_id: str,
     spec: EvalScoringSpec | None = None,
@@ -462,6 +477,8 @@ def _eval_score(eval_id: str, spec: EvalScoringSpec | None = None):
     )
 
 
+# Twin: ``_ConfiguredVerdict`` in run_results_v3_scan; change both. Guarded by
+# test_every_stored_entry_shape_scores_like_the_sql_read_model.
 def _configured_eval_verdict(
     eval_id: str, config: SimulateEvalConfig, spec: EvalScoringSpec | None = None
 ):
@@ -542,6 +559,8 @@ def _configured_eval_verdict(
     return score, passed, failed
 
 
+# Twin: ``_native_verdicts`` in run_results_v3_scan; change both. Guarded by
+# test_every_stored_entry_shape_scores_like_the_sql_read_model.
 class _NativeHarnessVerdict(Func):
     """Judge template-less harness checks using the call-row verdict rules."""
 
@@ -700,6 +719,7 @@ def run_calls_queryset(
             default=Value("inconclusive"),
             output_field=CharField(),
         ),
+        # Twin: the goal fallbacks in run_results_v3_scan.scan_call_values; change both.
         result_goal=Coalesce(
             NullIf(
                 Subquery(authored.values("use_case")[:1], output_field=TextField()),
@@ -715,6 +735,8 @@ def run_calls_queryset(
             F("scenario__name"),
             output_field=CharField(),
         ),
+        # Twin: ``_outcome`` in run_results_v3_scan; change both. Guarded by
+        # test_every_stored_entry_shape_scores_like_the_sql_read_model.
         result_outcome=Case(
             When(status__in=["pending", "queued"], then=Value("queued")),
             When(status__in=["ongoing", "analyzing"], then=Value("in_progress")),
@@ -869,18 +891,7 @@ def apply_run_call_query(queryset: QuerySet, query: dict[str, Any]) -> QuerySet:
     ordering = str(query.get("ordering") or "-started_at")
     descending = ordering.startswith("-")
     requested = ordering.lstrip("-")
-    fields = {
-        "started_at": "started_at",
-        "duration_seconds": "duration_seconds",
-        "latency_ms": "result_latency_ms",
-        "turn_count": "result_turn_count",
-        "tokens": "result_tokens",
-        "cost_cents": "result_cost_cents",
-        "scenario": "scenario__name",
-        "goal": "result_goal",
-        "outcome": "result_outcome",
-    }
-    field = fields.get(requested, "started_at")
+    field = ORDERING_FIELDS.get(requested, "started_at")
     return queryset.order_by(f"-{field}" if descending else field, "id")
 
 
@@ -948,40 +959,62 @@ def _summary_from_values(values: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def run_call_facets(
-    queryset: QuerySet | Callable[[], QuerySet], facets_cache_key: str | None = None
-) -> dict[str, list[dict[str, Any]]]:
-    if facets_cache_key and (cached := cache.get(facets_cache_key)) is not None:
-        return cached
-    if callable(queryset):
-        queryset = queryset()
-    facets = {}
-    for name, field in (("goal", "result_goal"), ("status", "result_outcome")):
-        facets[name] = [
-            {"value": row[field], "count": row["count"]}
-            for row in queryset.values(field)
-            .annotate(count=Count("id"))
-            .order_by("-count", field)
-        ]
+def _result_sub_goals_expression() -> Coalesce:
+    """A call's own sub-goals, else its authored scenario's, as the rows show."""
+    empty = Value([], output_field=JSONField())
+    return Coalesce(
+        NullIf(
+            _json_value("call_metadata", "hosted_harness_receipt", "sub_goals"), empty
+        ),
+        NullIf(_json_value("call_metadata", "sub_goals"), empty),
+        _authored_sub_goals_expression(),
+        empty,
+        output_field=JSONField(),
+    )
 
+
+def _collation_order(values: list[str]) -> dict[str, int]:
+    """Rank values as the database collation sorts them."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT value FROM unnest(%s::text[]) AS value ORDER BY value", [values]
+        )
+        return {value: index for index, (value,) in enumerate(cursor.fetchall())}
+
+
+def _value_facets(
+    rows: list[dict[str, Any]], fields: dict[str, str]
+) -> dict[str, list[dict[str, Any]]]:
+    """Count each field's values, ordered as ``ORDER BY -count, value`` would."""
+    counts = {
+        name: Counter(row[field] for row in rows) for name, field in fields.items()
+    }
+    tied = set()
+    for counter in counts.values():
+        repeats = Counter(counter.values())
+        tied.update(
+            value
+            for value, count in counter.items()
+            if value is not None and repeats[count] > 1
+        )
+    order = _collation_order(sorted(tied)) if tied else {}
+    return {
+        name: [
+            {"value": value, "count": count}
+            for value, count in sorted(
+                counter.items(),
+                key=lambda item: (-item[1], item[0] is None, order.get(item[0], 0)),
+            )
+        ]
+        for name, counter in counts.items()
+    }
+
+
+def _sub_goal_facet(calls: QuerySet) -> list[dict[str, Any]]:
     sub_goals = Counter()
     metadata_rows = (
-        queryset.order_by()
-        .annotate(
-            result_sub_goals=Coalesce(
-                NullIf(
-                    _json_value("call_metadata", "hosted_harness_receipt", "sub_goals"),
-                    Value([], output_field=JSONField()),
-                ),
-                NullIf(
-                    _json_value("call_metadata", "sub_goals"),
-                    Value([], output_field=JSONField()),
-                ),
-                _authored_sub_goals_expression(),
-                Value([], output_field=JSONField()),
-                output_field=JSONField(),
-            )
-        )
+        calls.order_by()
+        .annotate(result_sub_goals=_result_sub_goals_expression())
         .values_list("result_sub_goals", flat=True)
         .iterator(chunk_size=2000)
     )
@@ -992,12 +1025,24 @@ def run_call_facets(
             name = value.get("name") if isinstance(value, dict) else value
             if name:
                 sub_goals[str(name)] += 1
-    facets["sub_goal"] = [
+    return [
         {"value": value, "count": count}
         for value, count in sorted(
             sub_goals.items(), key=lambda item: (-item[1], item[0].lower())
         )
     ]
+
+
+def run_call_facets(
+    rows: Callable[[], list[dict[str, Any]]],
+    calls: Callable[[], QuerySet],
+    facets_cache_key: str | None = None,
+) -> dict[str, list[dict[str, Any]]]:
+    """Facets of the call-value rows; ``calls`` are the same calls, unannotated."""
+    if facets_cache_key and (cached := cache.get(facets_cache_key)) is not None:
+        return cached
+    facets = _value_facets(rows(), {"goal": "result_goal", "status": "result_outcome"})
+    facets["sub_goal"] = _sub_goal_facet(calls())
     if facets_cache_key:
         cache.set(facets_cache_key, facets, timeout=60 * 60)
     return facets

@@ -5,7 +5,18 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from django.db.models import Case, IntegerField, Q, QuerySet, Value, When
+from django.contrib.postgres.expressions import ArraySubquery
+from django.db.models import (
+    BooleanField,
+    Case,
+    F,
+    Func,
+    IntegerField,
+    Q,
+    QuerySet,
+    Value,
+    When,
+)
 from django.db.models.functions import Replace
 from django.utils import timezone
 
@@ -228,6 +239,29 @@ def authored_scenarios(run_test_id, *, call_execution_id, scenario_key) -> Query
     ).order_by("-created_at")
 
 
+class _InArray(Func):
+    """``expression = ANY(ARRAY(subquery))``, the array read once up front."""
+
+    template = "%(expressions)s)"
+    arg_joiner = " = ANY("
+    output_field = BooleanField()
+
+
+def _job_in(test_execution_id: UUID, field: str) -> _InArray:
+    # The base manager, as a join would: deleted or other-workspace jobs still count.
+    jobs = HostedHarnessJob._base_manager.filter(test_execution_id=test_execution_id)
+    return _InArray(F("job_id"), ArraySubquery(jobs.values(field)))
+
+
+def call_row_metadata(call: CallExecution) -> Any:
+    """A call's metadata as a page loaded it: the read keys, else the whole field."""
+    try:
+        # page_calls keeps call_metadata deferred and loads this subset instead.
+        return call.row_metadata
+    except AttributeError:
+        return call.call_metadata
+
+
 def authored_scenarios_for_calls(
     run_test_id: UUID,
     calls: list[CallExecution],
@@ -237,14 +271,17 @@ def authored_scenarios_for_calls(
     """Resolve linked scenarios first, optionally restricted to one execution."""
     source_keys = {}
     for call in calls:
-        metadata = call.call_metadata if isinstance(call.call_metadata, dict) else {}
+        metadata = call_row_metadata(call)
+        metadata = metadata if isinstance(metadata, dict) else {}
         key = metadata.get("harness_scenario_key")
         source_keys[call.id] = key if isinstance(key, str) and key.strip() else None
     call_ids = [call.id for call in calls]
     keys = set(source_keys.values()) - {None}
     if test_execution_id is not None:
-        own_run = Q(job__test_execution_id=test_execution_id)
-        scope = own_run | Q(job__simulation_runs__test_execution_id=test_execution_id)
+        # The run's own job and its environment as arrays: an OR across job
+        # joins makes Postgres scan every authored scenario.
+        own_run = Q(_job_in(test_execution_id, "id"))
+        scope = own_run | Q(_job_in(test_execution_id, "environment_id"))
     else:
         run_jobs = HostedHarnessJob.no_workspace_objects.filter(run_test_id=run_test_id)
         scope = Q(job_id__in=run_jobs.values("id")) | Q(

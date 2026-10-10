@@ -16,15 +16,21 @@ from collections.abc import Callable
 from typing import Any
 
 from django.core.cache import cache
-from django.db.models import QuerySet
+from django.db.models import Func, JSONField, QuerySet
 
 from simulate.models import CallExecution, SimulateEvalConfig, TestExecution
 from simulate.services.harness_scenarios import level_label
-from simulate.services.run_results_v3 import OUTCOME_LABELS
+from simulate.services.run_results_v3 import (
+    CALL_ROW_FIELDS,
+    CALL_ROW_METADATA_KEYS,
+    CALL_ROW_SCENARIO_FIELDS,
+    OUTCOME_LABELS,
+)
 from simulate.services.run_results_v3_queries import (
     EVALUATED_OUTCOMES,
     GROUP_FIELDS,
     LIST_AXES,
+    ORDERING_FIELDS,
     OUTCOMES,
     UNGROUPED,
     _configured_eval_verdict,
@@ -33,6 +39,7 @@ from simulate.services.run_results_v3_queries import (
     _summary_from_values,
     apply_run_call_query,
 )
+from simulate.services.run_results_v3_scan import scan_call_values
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +62,8 @@ METRIC_FIELDS = {
     "tokens": "result_tokens",
     "cost_cents": "result_cost_cents",
 }
+# Orderings the scan does not reproduce; the ORM path serves them.
+SQL_ORDERED_FIELDS = frozenset(ORDERING_FIELDS) - {"started_at"}
 SUBSET_PARAMS = ("search", "filters", "group_by", "group_key", "ordering")
 # CSAT and other per-call metrics can still land after the run completes
 # without moving anything in the cache key, so a cached pass stays short-lived.
@@ -140,10 +149,11 @@ def _cached_call_values(
     subset: dict[str, Any],
     columns: list[dict[str, str]],
     read_rows: Callable[[], list[dict[str, Any]]],
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], bool]:
+    """The rows, and whether they were read now rather than served from cache."""
     key = _cache_key(execution, subset, columns)
     if key and (cached := cache.get(key)) is not None:
-        return cached
+        return cached, False
     rows = read_rows()
     if key:
         try:
@@ -156,7 +166,7 @@ def _cached_call_values(
                 execution.id,
                 exc_info=True,
             )
-    return rows
+    return rows, True
 
 
 def _average(values: list[Any]) -> float | None:
@@ -271,6 +281,20 @@ def group_call_values(
     return sorted(groups, key=lambda group: (-group["total"], group["label"].lower()))
 
 
+def _scan_ordering(query: dict[str, Any]) -> str | None:
+    """The scan's ordering when ``apply_run_call_query`` would only order the run."""
+    filters = query.get("filters") or {}
+    if str(query.get("search") or "").strip() or any(filters.values()):
+        return None
+    if query.get("group_by") in GROUP_FIELDS and query.get("group_key") is not None:
+        return None
+    ordering = str(query.get("ordering") or "-started_at")
+    # ``apply_run_call_query`` orders any other field by start time.
+    if ordering.lstrip("-") in SQL_ORDERED_FIELDS:
+        return None
+    return "-started_at" if ordering.startswith("-") else "started_at"
+
+
 def run_calls_page(
     execution: TestExecution,
     query: dict[str, Any],
@@ -282,12 +306,17 @@ def run_calls_page(
     if subset["group_key"] is None:
         # A grouping with no key filters nothing, so every grouping reads the same rows.
         subset["group_by"] = None
-    rows = _cached_call_values(
+    ordering = _scan_ordering(query)
+    rows, rows_fresh = _cached_call_values(
         execution,
         subset,
         columns,
-        lambda: _call_values(
-            apply_run_call_query(base_queryset(), query), columns, scores()
+        lambda: (
+            scan_call_values(execution, columns, ordering)
+            if ordering
+            else _call_values(
+                apply_run_call_query(base_queryset(), query), columns, scores()
+            )
         ),
     )
     has_subset = bool(
@@ -295,19 +324,23 @@ def run_calls_page(
         or query.get("filters")
         or query.get("group_key") is not None
     )
-    execution_rows = (
+    execution_rows, execution_rows_fresh = (
         _cached_call_values(
             execution,
             {},
             columns,
-            lambda: _call_values(base_queryset(), columns, scores()),
+            # The model's default order; the summary and facets read these rows.
+            lambda: scan_call_values(execution, columns, "-updated_at"),
         )
         if has_subset
-        else rows
+        else (rows, rows_fresh)
     )
     start = (query["page"] - 1) * query["page_size"]
     return {
         "rows": rows,
+        "execution_rows": execution_rows,
+        # Read in this request rather than served from the page cache.
+        "execution_rows_fresh": execution_rows_fresh,
         "page_ids": [row["id"] for row in rows[start : start + query["page_size"]]],
         "summary": summarize_call_values(rows),
         "execution_summary": summarize_call_values(execution_rows),
@@ -315,13 +348,50 @@ def run_calls_page(
     }
 
 
-def page_calls(page: dict[str, Any]) -> list[CallExecution]:
-    by_id = {
-        str(call.id): call
-        for call in CallExecution.objects.filter(
-            id__in=page["page_ids"]
-        ).select_related("scenario", "test_execution__agent_definition")
-    }
+def read_call_values(queryset: QuerySet) -> list[dict[str, Any]]:
+    """Uncached, unscored call values."""
+    return _call_values(queryset, [], {})
+
+
+class JsonbKeySubset(Func):
+    """A JSON object column cut down to ``keys``; other JSON values pass through."""
+
+    output_field = JSONField()
+
+    def __init__(self, expression: Any, keys: tuple[str, ...]) -> None:
+        super().__init__(expression)
+        self.keys = list(keys)
+
+    def as_sql(
+        self, compiler: Any, connection: Any, **extra_context: Any
+    ) -> tuple[str, list[Any]]:
+        sql, params = compiler.compile(self.source_expressions[0])
+        return (
+            f"CASE WHEN jsonb_typeof({sql}) = 'object' THEN COALESCE("
+            f"(SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each({sql}) AS e"
+            f" WHERE e.key = ANY(%s)), '{{}}'::jsonb) ELSE {sql} END",
+            [*params, *params, self.keys, *params],
+        )
+
+
+def page_calls(page: dict[str, Any], execution: TestExecution) -> list[CallExecution]:
+    # A run's calls are large (prompts in call_metadata, the run's own metadata
+    # per joined row), so a page reads only what build_call_rows uses.
+    queryset = (
+        CallExecution.objects.filter(id__in=page["page_ids"])
+        .select_related("scenario")
+        .only(
+            *CALL_ROW_FIELDS,
+            *(f"scenario__{field}" for field in CALL_ROW_SCENARIO_FIELDS),
+        )
+        # call_metadata itself stays deferred; build_call_rows reads this subset.
+        .annotate(row_metadata=JsonbKeySubset("call_metadata", CALL_ROW_METADATA_KEYS))
+    )
+    by_id = {}
+    for call in queryset:
+        if call.test_execution_id == execution.id:
+            call.test_execution = execution
+        by_id[str(call.id)] = call
     goals = {row["id"]: row["result_goal"] for row in page["rows"]}
     calls = []
     for call_id in page["page_ids"]:
@@ -339,11 +409,16 @@ def page_groups(
     columns: list[dict[str, str]],
     base_queryset: Callable[[], QuerySet],
 ) -> list[dict[str, Any]]:
+    group_by = query.get("group_by")
+    if group_by not in GROUP_FIELDS or not page["page_ids"]:
+        return []
     rows = page["rows"]
-    if rows and any(str(column["id"]) not in rows[0]["scores"] for column in columns):
+    # The page rows may add harness columns the catalog had not seen yet; the
+    # cached rows predate them too, so re-read the subset whole.
+    if any(str(column["id"]) not in rows[0]["scores"] for column in columns):
         rows = _call_values(
             apply_run_call_query(base_queryset(), query),
             columns,
             _score_expressions(execution, columns),
         )
-    return group_call_values(rows, query.get("group_by"), page["page_ids"], columns)
+    return group_call_values(rows, group_by, page["page_ids"], columns)
