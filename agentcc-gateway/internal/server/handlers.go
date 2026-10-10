@@ -1244,7 +1244,13 @@ func (h *Handlers) resolveProvider(ctx context.Context, rc *models.RequestContex
 				rc.Provider = action.Provider
 				rc.Metadata["routing_rule"] = action.Name
 				if action.ModelOverride != "" {
-					rc.Request.Model = action.ModelOverride
+					if rc.EndpointType == "systemone" {
+						if action.ModelOverride != model {
+							return nil, models.ErrBadRequest("model_override_not_supported", "System One routing must preserve the requested model")
+						}
+					} else {
+						rc.Request.Model = action.ModelOverride
+					}
 				}
 				return p, nil
 			}
@@ -1261,9 +1267,20 @@ func (h *Handlers) resolveProvider(ctx context.Context, rc *models.RequestContex
 			rc.Metadata["routing_strategy"] = result.StrategyName
 		}
 		if result.ModelOverride != "" {
-			rc.Request.Model = result.ModelOverride
+			if rc.EndpointType == "systemone" {
+				if result.ModelOverride != model {
+					return nil, models.ErrBadRequest("model_override_not_supported", "System One routing must preserve the requested model")
+				}
+			} else {
+				rc.Request.Model = result.ModelOverride
+			}
 		}
 		return result.Provider, nil
+	}
+
+	// Structured decisions must never enter chat model fallback chains.
+	if rc.EndpointType == "systemone" {
+		return nil, err
 	}
 
 	// Try model fallbacks: org-level first, then global.

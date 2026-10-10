@@ -74,7 +74,7 @@ type RequestContext struct {
 	RequestHeaders http.Header
 
 	// EndpointType identifies the API endpoint: "chat", "embedding", "image",
-	// "speech", "transcription", or "rerank". Defaults to "chat".
+	// "speech", "transcription", "rerank", or "systemone". Defaults to "chat".
 	EndpointType string
 
 	// Guardrail results — populated by the guardrails plugin with triggered checks.
@@ -88,6 +88,8 @@ type RequestContext struct {
 	SpeechRequest     *SpeechRequest
 	TranscriptionReq  *TranscriptionRequest
 	TranscriptionResp *TranscriptionResponse
+	SystemOneRequest  *SystemOneRequest
+	SystemOneResponse *SystemOneResponse
 	RerankRequest     *RerankRequest
 	RerankResponse    *RerankResponse
 	TranslationReq    *TranslationRequest
@@ -170,6 +172,8 @@ func (rc *RequestContext) Release() {
 	rc.SpeechRequest = nil
 	rc.TranscriptionReq = nil
 	rc.TranscriptionResp = nil
+	rc.SystemOneRequest = nil
+	rc.SystemOneResponse = nil
 	rc.RerankRequest = nil
 	rc.RerankResponse = nil
 	rc.TranslationReq = nil

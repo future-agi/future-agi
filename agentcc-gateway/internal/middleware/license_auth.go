@@ -120,7 +120,7 @@ func LicenseAuth(cfg config.LicenseAuthConfig, store *redisstate.LicenseStore) f
 }
 
 func isManagedEndpoint(r *http.Request) bool {
-	return r.Method == http.MethodPost && r.URL.Path == "/v1/chat/completions"
+	return r.Method == http.MethodPost && (r.URL.Path == "/v1/chat/completions" || r.URL.Path == "/v1/systemone")
 }
 
 func authorizeRuntimeState(claims *licenseClaims, cfg config.LicenseAuthConfig, store *redisstate.LicenseStore) *models.APIError {
@@ -379,6 +379,8 @@ func readRequestModel(r *http.Request) (string, error) {
 
 func serviceForModel(model string) string {
 	switch {
+	case strings.HasPrefix(model, "jev-"):
+		return "jev"
 	case strings.HasPrefix(model, "turing_"):
 		return "turing"
 	case model == "falcon_ai":

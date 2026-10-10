@@ -58979,6 +58979,21 @@ export const OPENAPI_CONTRACT = Object.freeze({
     EvalTemplateCreateV2Request: {
       type: "object",
       properties: {
+        jev_mapping: {
+          title: "Jev mapping",
+          type: "object",
+          "x-nullable": true,
+        },
+        multi_choice: {
+          title: "Multi choice",
+          type: "boolean",
+          default: false,
+        },
+        input_data_types: {
+          title: "Input data types",
+          type: "object",
+          "x-nullable": true,
+        },
         name: {
           title: "Name",
           type: "string",
@@ -59203,6 +59218,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
     EvalTemplateUpdateV2Request: {
       type: "object",
       properties: {
+        jev_mapping: {
+          title: "Jev mapping",
+          type: "object",
+          "x-nullable": true,
+        },
+        input_data_types: {
+          title: "Input data types",
+          type: "object",
+          "x-nullable": true,
+        },
         name: {
           title: "Name",
           type: "string",
@@ -59344,6 +59369,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
     EvalTemplateVersionCreateRequest: {
       type: "object",
       properties: {
+        jev_mapping: {
+          title: "Jev mapping",
+          type: "object",
+          "x-nullable": true,
+        },
         criteria: {
           title: "Criteria",
           type: "string",
@@ -89323,6 +89353,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
       ],
       type: "object",
       properties: {
+        jev_mapping: {
+          title: "Jev mapping",
+          type: "object",
+          "x-nullable": true,
+        },
         id: {
           title: "Id",
           type: "string",
@@ -107461,6 +107496,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
       ],
       type: "object",
       properties: {
+        jev_mapping: {
+          title: "Jev mapping",
+          type: "object",
+          "x-nullable": true,
+        },
+        model: {
+          title: "Model",
+          type: "string",
+          "x-nullable": true,
+        },
         id: {
           title: "Id",
           type: "string",
@@ -107539,6 +107584,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
       required: ["id", "version_number", "is_default"],
       type: "object",
       properties: {
+        jev_mapping: {
+          title: "Jev mapping",
+          type: "object",
+          "x-nullable": true,
+        },
         id: {
           title: "Id",
           type: "string",

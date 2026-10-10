@@ -471,6 +471,7 @@ Every modality below has dedicated routes in the gateway. The **specific models*
 | Video generation | `/v1/videos` · `/v1/videos/{id}` |
 | Embeddings | `/v1/embeddings` |
 | Reranking | `/v1/rerank` |
+| Structured decisions (TypeSafe) | `/v1/systemone` |
 | OCR | `/v1/ocr` |
 | Search | `/v1/search` |
 | Tool calling | on all chat endpoints (provider-native schemas preserved) |
@@ -698,7 +699,7 @@ Every request flows through an ordered plugin pipeline. Each plugin is optional,
 | `alerting` | Always | Fire alerts on SLO breach / guardrail violation |
 | `logging` | Always | Structured JSON access log with redaction |
 
-### 🌐 Provider formats — 8 native (100+ upstreams)
+### 🌐 Provider formats — 9 native (100+ upstreams)
 
 One gateway HTTP endpoint, each provider's native protocol preserved — we don't lossy-convert provider-specific features.
 
@@ -710,6 +711,7 @@ One gateway HTTP endpoint, each provider's native protocol preserved — we don'
 | **Gemini** | Google AI Studio · generative-language API | — | safety settings, grounding, code-execution tool, multi-modal parts |
 | **Vertex AI** | Google Vertex AI | — | SigV4-style SA auth, `/v1beta/models/{action}:{verb}` native routing |
 | **Bedrock** | AWS Bedrock (all model families: Anthropic, Meta, Cohere, AI21, Mistral, Amazon) | — | SigV4 signing, inference profiles, cross-region invocations |
+| **TypeSafe** | TypeSafe AI | — | `/v1/systemone`, Jev noul/choice/score questions, raw typed answers and token usage |
 | **Cohere** | Cohere · AWS Bedrock (Cohere) | — | command-R family, embed-v3, rerank-3 |
 | **Google (gauth)** | Vertex, Gemini, PaLM | — | service-account + workload-identity auth flows |
 
@@ -942,6 +944,12 @@ providers:
     api_key: "${OPENAI_API_KEY}"
     models: [gpt-4o, gpt-4o-mini, o1]
 
+  typesafe:
+    api_format: typesafe
+    api_key: ${TYPESAFE_API_KEY}
+    base_url: https://api.typesafe.ai
+    models: [jev-1.13.0, jev-latest]
+
   anthropic:
     base_url: "https://api.anthropic.com"
     api_key: "${ANTHROPIC_API_KEY}"
@@ -965,6 +973,30 @@ routing:
     - openai/gpt-4o
     - anthropic/claude-sonnet-4
 ```
+
+TypeSafe uses `POST /v1/systemone` with `model`, a non-null `state`, and a
+`questions` object keyed by caller-defined IDs. Each question has a `type`
+(`noul`, `choice`, or `score`) and non-empty `instructions` (text, object, or
+array). Choice criteria contain 1–255 named options; score criteria contain
+2–10 ordered levels. Answers remain keyed by question ID, preserving provider
+fields such as `legend`, `probabilities`, and `confidence`.
+
+```json
+{"model":"jev-latest","state":"The delivery arrived on time.","questions":{"on_time":{"type":"noul","instructions":"Did the delivery arrive on time?"}}}
+```
+
+The response contains the actual returned `model`, `answers`, and `usage`
+(`input_tokens`, `output_tokens`). The gateway exposes usage to its existing
+metering plugins and keeps state, instructions, and raw answers out of chat
+logging payloads. System One does not use chat model fallback chains or model
+rewrites. TypeSafe chat and streaming chat requests return `501 not_supported`.
+
+Keep `TYPESAFE_API_KEY` in the gateway's secret configuration. With license auth
+enabled, managed tokens require service `jev` and the exact requested model ID
+in their model scope (for example, `jev-latest`); `jev-*` is not a scope wildcard.
+Provider timeout defaults to 60 seconds, including concurrency wait, and an
+earlier request deadline still applies. The adapter does not retry upstream
+requests. Tests use in-memory `httptest` servers; no provider key is needed.
 
 See [`config.example.yaml`](./config.example.yaml) for the full reference.
 

@@ -8594,10 +8594,10 @@ class EditAndRunUserEvalView(APIView):
         },
     )
     def post(self, request, dataset_id, eval_id, *args, **kwargs):
-        from tfc.ee_gates import turing_oss_gate_for_template
+        from tfc.ee_gates import managed_model_gate_for_template
 
         request_data = request.validated_data
-        gate = turing_oss_gate_for_template(
+        gate = managed_model_gate_for_template(
             request_data.get("model"),
             template_id=request_data.get("template_id"),
             eval_type=request_data.get("eval_type"),
@@ -8633,6 +8633,16 @@ class EditAndRunUserEvalView(APIView):
                     return self._gm.bad_request(
                         f"{get_error_message('COLUMN_DELETED')} {eval_metric.name}"
                     )
+
+                from model_hub.utils.jev_templates import validate_jev_binding
+
+                jev_error = validate_jev_binding(
+                    eval_metric.template,
+                    model=request_data.get("model") or eval_metric.model,
+                    runtime_config=request_data.get("config") or eval_metric.config,
+                )
+                if jev_error is not None:
+                    return jev_error
 
                 if save_as_template:
                     template = eval_metric.template
@@ -8966,10 +8976,10 @@ class AddUserEvalView(CreateAPIView):
         },
     )
     def post(self, request, dataset_id, *args, **kwargs):
-        from tfc.ee_gates import turing_oss_gate_for_template
+        from tfc.ee_gates import managed_model_gate_for_template
 
         request_data = request.validated_data
-        gate = turing_oss_gate_for_template(
+        gate = managed_model_gate_for_template(
             request_data.get("model"),
             template_id=request_data.get("template_id"),
             eval_type=request_data.get("eval_type"),
@@ -9077,6 +9087,16 @@ class AddUserEvalView(CreateAPIView):
             )
             if not template:
                 return self._gm.not_found("Eval template not found")
+            from model_hub.utils.jev_templates import validate_jev_binding
+
+            jev_error = validate_jev_binding(
+                template,
+                model=validated_data.get("model"),
+                runtime_config=validated_data.get("config"),
+            )
+            if jev_error is not None:
+                return jev_error
+
             # Inherit template-level enablement unless caller explicitly overrides.
             if "error_localizer" in request.data:
                 error_localizer = self._coerce_bool(

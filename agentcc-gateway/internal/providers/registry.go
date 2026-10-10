@@ -19,6 +19,7 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/providers/cohere"
 	"github.com/futureagi/agentcc-gateway/internal/providers/gemini"
 	"github.com/futureagi/agentcc-gateway/internal/providers/openai"
+	"github.com/futureagi/agentcc-gateway/internal/providers/typesafe"
 	"github.com/futureagi/agentcc-gateway/internal/routing"
 )
 
@@ -124,10 +125,12 @@ func createProvider(name string, cfg config.ProviderConfig) (Provider, error) {
 		return bedrock.New(name, cfg)
 	case "cohere":
 		return cohere.New(name, cfg)
+	case "typesafe":
+		return typesafe.New(name, cfg)
 	case "azure":
 		return azure.New(name, cfg)
 	default:
-		return nil, fmt.Errorf("unsupported api_format %q (supported: openai, anthropic, gemini, bedrock, cohere, azure)", cfg.APIFormat)
+		return nil, fmt.Errorf("unsupported api_format %q (supported: openai, anthropic, gemini, bedrock, cohere, azure, typesafe)", cfg.APIFormat)
 	}
 }
 

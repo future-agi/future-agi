@@ -2598,6 +2598,8 @@ class EvalTemplateListView(APIView):
                     EvalListItem(
                         id=tid,
                         name=template.name,
+                        model=template.model,
+                        jev_mapping=(template.config or {}).get("jev_mapping"),
                         template_type=template.template_type or "single",
                         eval_type=eval_type,
                         output_type=derive_output_type(template),
@@ -2964,8 +2966,11 @@ class EvalTemplateCreateV2View(APIView):
                         )
                         return self._gm.bad_request("Instructions are required.")
 
+            from model_hub.utils.jev_templates import validate_jev_template_save
+            from tfc.ee_gates import is_jev_model
+
             # 5. Validate scoring fields
-            if req.output_type == "deterministic":
+            if req.output_type == "deterministic" and not is_jev_model(req.model):
                 if not req.choice_scores:
                     return self._gm.bad_request(
                         "choice_scores is required when output_type is 'deterministic'."
@@ -3144,6 +3149,34 @@ class EvalTemplateCreateV2View(APIView):
             config["choice_scores"] = req.choice_scores
             config["error_localizer_enabled"] = bool(req.error_localizer_enabled)
 
+            if is_jev_model(req.model) or "jev_mapping" in request.validated_data:
+                if "jev_mapping" in request.validated_data:
+                    config["jev_mapping"] = req.jev_mapping
+                for key in (
+                    "tools",
+                    "knowledge_bases",
+                    "data_injection",
+                    "input_data_types",
+                ):
+                    value = getattr(req, key, None)
+                    if value is not None:
+                        config[key] = value
+                if req.mode is not None:
+                    config["agent_mode"] = req.mode
+                if req.few_shot_examples:
+                    config["few_shot_examples"] = req.few_shot_examples
+                if req.messages:
+                    config["messages"] = req.messages
+            jev_error = validate_jev_template_save(
+                config,
+                model=req.model,
+                mapping_provided="jev_mapping" in request.validated_data,
+                choice_scores=req.choice_scores,
+                multi_choice=req.multi_choice,
+            )
+            if jev_error is not None:
+                return jev_error
+
             # Build eval_tags — category tags only (not type)
             eval_tags = list(req.tags) if req.tags else []
 
@@ -3292,6 +3325,7 @@ class EvalTemplateDetailView(APIView):
                 eval_type=derive_eval_type(template),
                 instructions=detail_criteria,
                 model=detail_model,
+                jev_mapping=config.get("jev_mapping"),
                 output_type=(
                     template.output_type_normalized
                     if template.output_type_normalized
@@ -3658,6 +3692,24 @@ class EvalTemplateUpdateView(APIView):
                 template.config = {}
             template.config["template_format"] = template_format
 
+            from model_hub.utils.jev_templates import validate_jev_template_save
+
+            if "jev_mapping" in request.validated_data:
+                template.config["jev_mapping"] = req.jev_mapping
+            if req.input_data_types is not None:
+                template.config["input_data_types"] = req.input_data_types
+            jev_error = validate_jev_template_save(
+                template.config,
+                model=template.model or template.config.get("model"),
+                previous_model=_original_field_values.get("model")
+                or (_original_field_values.get("config") or {}).get("model"),
+                mapping_provided="jev_mapping" in request.validated_data,
+                choice_scores=template.choice_scores,
+                multi_choice=template.multi_choice,
+            )
+            if jev_error is not None:
+                return jev_error
+
             # Publish draft → make visible in UI
             if req.publish:
                 template.visible_ui = True
@@ -3775,6 +3827,7 @@ class EvalTemplateVersionListView(APIView):
                         criteria=v.criteria or "",
                         model=v.model or "",
                         config_snapshot=cs,
+                        jev_mapping=cs.get("jev_mapping"),
                         created_by_name=created_by_name,
                         created_at=v.created_at.isoformat() if v.created_at else "",
                         # Column-level fields the FE reads directly.
@@ -3853,7 +3906,34 @@ class EvalTemplateVersionCreateView(APIView):
                 return self._gm.not_found("Eval template not found or not editable.")
 
             # Use live template.config; FE-supplied snapshot is incomplete.
-            effective_config = template.config or {}
+            from model_hub.utils.jev_templates import validate_jev_template_save
+
+            effective_config = copy.deepcopy(template.config or {})
+            supplied_snapshot = req.config_snapshot or {}
+            mapping_provided = (
+                "jev_mapping" in request.validated_data
+                or "jev_mapping" in supplied_snapshot
+            )
+            if mapping_provided:
+                effective_config["jev_mapping"] = (
+                    req.jev_mapping
+                    if "jev_mapping" in request.validated_data
+                    else supplied_snapshot["jev_mapping"]
+                )
+            effective_model = (
+                req.model or template.model or effective_config.get("model") or ""
+            )
+            effective_config["model"] = effective_model
+            jev_error = validate_jev_template_save(
+                effective_config,
+                model=effective_model,
+                previous_model=template.model,
+                mapping_provided=mapping_provided,
+                choice_scores=template.choice_scores,
+                multi_choice=template.multi_choice,
+            )
+            if jev_error is not None:
+                return jev_error
             version = EvalTemplateVersion.objects.create_version(
                 eval_template=template,
                 prompt_messages=effective_config.get("messages") or [],
@@ -6871,10 +6951,10 @@ class EvalPlayGroundAPIView(APIView):
         reject_unknown_fields=True,
     )
     def post(self, request, *args, **kwargs):
-        from tfc.ee_gates import turing_oss_gate_for_template
+        from tfc.ee_gates import managed_model_gate_for_template
 
         validated_data = request.validated_data
-        gate = turing_oss_gate_for_template(
+        gate = managed_model_gate_for_template(
             validated_data.get("model"), validated_data.get("template_id")
         )
         if gate is not None:
@@ -7373,6 +7453,14 @@ class EvalPlayGroundAPIView(APIView):
                 eval_template = _get_accessible_eval_template(template_id, org)
             except EvalTemplate.DoesNotExist:
                 return self._gm.bad_request(get_error_message("MISSING_EVAL_TEMPLATE"))
+
+            from model_hub.utils.jev_templates import validate_jev_binding
+
+            jev_error = validate_jev_binding(
+                eval_template, model=model, runtime_config=runtime_config
+            )
+            if jev_error is not None:
+                return jev_error
 
             # Validate + coerce function params (matches Dataset / Experiments
             # paths). Without this, FE-sent blank strings flow straight into
@@ -7950,10 +8038,10 @@ class TestEvaluationTemplateAPIView(APIView):
         reject_unknown_fields=True,
     )
     def post(self, request, *args, **kwargs):
-        from tfc.ee_gates import turing_oss_gate_for_template
+        from tfc.ee_gates import managed_model_gate_for_template
 
         validated_data = request.validated_data
-        gate = turing_oss_gate_for_template(
+        gate = managed_model_gate_for_template(
             validated_data.get("model"),
             template_id=validated_data.get("template_id"),
             eval_type=validated_data.get("eval_type"),
@@ -8074,6 +8162,14 @@ class TestEvaluationTemplateAPIView(APIView):
                     multi_choice=validated_data.get("multi_choice", False),
                     model=model,
                 )
+
+            from model_hub.utils.jev_templates import validate_jev_binding
+
+            jev_error = validate_jev_binding(
+                eval_template, model=model, runtime_config=config
+            )
+            if jev_error is not None:
+                return jev_error
 
             # Run the evaluation with the provided config
             response = run_eval_func(

@@ -382,6 +382,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	router.Handle("POST", "/v1/audio/speech/stream", handlers.StreamSpeech)
 	router.Handle("POST", "/v1/audio/translations", handlers.CreateTranslation)
 	router.Handle("POST", "/v1/rerank", handlers.Rerank)
+	router.Handle("POST", "/v1/systemone", handlers.SystemOne)
 	router.Handle("POST", "/v1/responses", handlers.CreateResponse)
 	router.Handle("GET", "/v1/responses/{id}", handlers.GetResponse)
 	router.Handle("DELETE", "/v1/responses/{id}", handlers.DeleteResponse)

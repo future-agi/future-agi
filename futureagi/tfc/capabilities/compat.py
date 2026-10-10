@@ -31,6 +31,7 @@ _LEGACY_TO_CAPABILITY_ID: dict[str, str] = {
     "dedicated_support": "dedicated_support",
     "falcon_ai": "falcon_ai",
     "turing_models": "turing_models",
+    "jev_models": "jev_models",
     "protect": "protect",
     "scenarios": "scenarios",
     "error_feed": "error_feed",

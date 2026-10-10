@@ -171,7 +171,12 @@ def run_eval(request: EvalRequest) -> EvalResult:
     response["end_time"] = end_time
     response["duration"] = end_time - start_time
 
-    value = format_eval_value(response, eval_template)
+    formatter = getattr(eval_instance, "format_result", None)
+    value = (
+        formatter(response, eval_template)
+        if callable(formatter)
+        else format_eval_value(response, eval_template)
+    )
 
     logger.info(
         "eval_executed",

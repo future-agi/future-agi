@@ -10,12 +10,14 @@ from ee.licensing.activation_client import (
     dispatch_managed_stream,
     stream_managed_service,
 )
+from tfc.ee_gates import is_jev_model
 
 
 def is_managed_model(model: object) -> bool:
     value = str(model or "")
     return (
-        value == "falcon_ai"
+        is_jev_model(value)
+        or value == "falcon_ai"
         or value.startswith("turing_")
         or value.startswith("protect")
     )
@@ -23,6 +25,8 @@ def is_managed_model(model: object) -> bool:
 
 def service_for_model(model: object) -> str | None:
     value = str(model or "")
+    if is_jev_model(value):
+        return "jev"
     if value == "falcon_ai":
         return "falcon"
     if value.startswith("turing_"):
@@ -83,6 +87,8 @@ def _cloud_chat_completion(
 
 def chat_completion(payload: dict[str, Any]) -> dict[str, Any]:
     model = payload.get("model")
+    if is_jev_model(model):
+        raise ValueError("Jev models require the System One evaluator API")
     if not is_managed_model(model):
         raise ValueError(f"Model {model!r} is not a FutureAGI-managed model")
 
@@ -108,6 +114,8 @@ async def stream_chat_completion(
     payload: dict[str, Any],
 ) -> AsyncIterator[dict[str, Any]]:
     model = payload.get("model")
+    if is_jev_model(model):
+        raise ValueError("Jev models require the System One evaluator API")
     if not is_managed_model(model):
         raise ValueError(f"Model {model!r} is not a FutureAGI-managed model")
 

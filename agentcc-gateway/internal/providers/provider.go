@@ -145,3 +145,8 @@ type VectorStoresProvider interface {
 	// No streaming, no OpenAI-Beta header needed (GA API).
 	ProxyVectorStoresRequest(ctx context.Context, method string, path string, body []byte, queryParams url.Values) (respBody []byte, statusCode int, respHeaders http.Header, err error)
 }
+
+// SystemOneProvider is implemented by structured-decision providers.
+type SystemOneProvider interface {
+	SystemOne(ctx context.Context, req *models.SystemOneRequest) (*models.SystemOneResponse, error)
+}

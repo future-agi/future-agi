@@ -10561,6 +10561,14 @@ export interface CompositeEvalCreateResponseApi {
   result: CompositeEvalCreateResponseResultApi;
 }
 
+export type EvalTemplateCreateV2RequestApiJevMapping = {
+  [key: string]: unknown;
+};
+
+export type EvalTemplateCreateV2RequestApiInputDataTypes = {
+  [key: string]: unknown;
+};
+
 export type EvalTemplateCreateV2RequestApiEvalType =
   (typeof EvalTemplateCreateV2RequestApiEvalType)[keyof typeof EvalTemplateCreateV2RequestApiEvalType];
 
@@ -10625,6 +10633,9 @@ export const EvalTemplateCreateV2RequestApiTemplateFormat = {
 } as const;
 
 export interface EvalTemplateCreateV2RequestApi {
+  jev_mapping?: EvalTemplateCreateV2RequestApiJevMapping;
+  multi_choice?: boolean;
+  input_data_types?: EvalTemplateCreateV2RequestApiInputDataTypes;
   /** @maxLength 255 */
   name?: string;
   is_draft?: boolean;
@@ -10830,7 +10841,11 @@ export interface EvalListRequestApi {
   sort_order?: EvalListRequestApiSortOrder;
 }
 
+export type EvalTemplateListItemApiJevMapping = { [key: string]: unknown };
+
 export interface EvalTemplateListItemApi {
+  jev_mapping?: EvalTemplateListItemApiJevMapping;
+  model?: string;
   id: string;
   /** @minLength 1 */
   name: string;
@@ -10982,6 +10997,10 @@ export interface CompositeEvalExecuteRequestApi {
   row_context?: CompositeEvalExecuteRequestApiRowContext;
 }
 
+export type EvalTemplateDetailResponseResultApiJevMapping = {
+  [key: string]: unknown;
+};
+
 export type EvalTemplateDetailResponseResultApiChoiceScores = {
   [key: string]: unknown;
 };
@@ -10995,6 +11014,7 @@ export type EvalTemplateDetailResponseResultApiConfig = {
 };
 
 export interface EvalTemplateDetailResponseResultApi {
+  jev_mapping?: EvalTemplateDetailResponseResultApiJevMapping;
   id: string;
   /** @minLength 1 */
   name: string;
@@ -11167,6 +11187,14 @@ export interface GroundTruthUploadResponseApi {
   result: GroundTruthUploadResponseResultApi;
 }
 
+export type EvalTemplateUpdateV2RequestApiJevMapping = {
+  [key: string]: unknown;
+};
+
+export type EvalTemplateUpdateV2RequestApiInputDataTypes = {
+  [key: string]: unknown;
+};
+
 export type EvalTemplateUpdateV2RequestApiEvalType =
   (typeof EvalTemplateUpdateV2RequestApiEvalType)[keyof typeof EvalTemplateUpdateV2RequestApiEvalType];
 
@@ -11231,6 +11259,8 @@ export const EvalTemplateUpdateV2RequestApiTemplateFormat = {
 } as const;
 
 export interface EvalTemplateUpdateV2RequestApi {
+  jev_mapping?: EvalTemplateUpdateV2RequestApiJevMapping;
+  input_data_types?: EvalTemplateUpdateV2RequestApiInputDataTypes;
   /**
    * @minLength 1
    * @maxLength 255
@@ -11422,11 +11452,14 @@ export interface EvalUsageStatsResponseApi {
   result: EvalUsageStatsResponseResultApi;
 }
 
+export type EvalTemplateVersionItemApiJevMapping = { [key: string]: unknown };
+
 export type EvalTemplateVersionItemApiConfigSnapshot = {
   [key: string]: unknown;
 };
 
 export interface EvalTemplateVersionItemApi {
+  jev_mapping?: EvalTemplateVersionItemApiJevMapping;
   id: string;
   version_number: number;
   is_default: boolean;
@@ -11448,11 +11481,16 @@ export interface EvalTemplateVersionListResponseApi {
   result: EvalTemplateVersionListResponseResultApi;
 }
 
+export type EvalTemplateVersionCreateRequestApiJevMapping = {
+  [key: string]: unknown;
+};
+
 export type EvalTemplateVersionCreateRequestApiConfigSnapshot = {
   [key: string]: unknown;
 };
 
 export interface EvalTemplateVersionCreateRequestApi {
+  jev_mapping?: EvalTemplateVersionCreateRequestApiJevMapping;
   criteria?: string;
   model?: string;
   config_snapshot?: EvalTemplateVersionCreateRequestApiConfigSnapshot;

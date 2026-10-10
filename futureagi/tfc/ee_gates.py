@@ -10,6 +10,58 @@ from rest_framework.response import Response
 
 from tfc.utils.api_errors import build_error_envelope
 
+JEV_MODEL_IDS = ("jev-1.13.0", "jev-latest")
+
+
+def is_jev_model(model_name: object) -> bool:
+    return model_name in JEV_MODEL_IDS
+
+
+def _jev_denied_off_cloud() -> bool:
+    from tfc.capabilities import service as capability_service
+    from tfc.licensing.types import DeploymentLocation
+
+    if not capability_service.is_configured():
+        return _is_oss()
+    if capability_service.get_deployment_location() == DeploymentLocation.CLOUD:
+        return False
+    return not capability_service.check("jev_models").allowed
+
+
+def jev_gate_for_template(model_name: object, template_id=None, eval_type=None):
+    if isinstance(model_name, str) and model_name.lower().startswith("jev-"):
+        if not is_jev_model(model_name):
+            return Response(
+                build_error_envelope(
+                    "Unsupported Jev model. Supported: jev-1.13.0, jev-latest.",
+                    code="JEV_MODEL_UNKNOWN",
+                    extra={"attr": "model", "feature": "jev"},
+                ),
+                status=400,
+            )
+        if _jev_denied_off_cloud():
+            return Response(
+                build_error_envelope(
+                    "Jev models are not available in this deployment.",
+                    status_code=402,
+                    error_type="entitlement_error",
+                    code="ENTITLEMENT_DENIED",
+                    extra={"upgrade_required": True, "feature": "jev"},
+                ),
+                status=402,
+            )
+    return None
+
+
+def managed_model_gate_for_template(
+    model_name: object, template_id=None, eval_type=None
+):
+    gate = jev_gate_for_template(model_name, template_id, eval_type)
+    if gate is not None:
+        return gate
+    return turing_oss_gate_for_template(model_name, template_id, eval_type)
+
+
 _TURING_MODELS = frozenset(
     {
         "turing_large",

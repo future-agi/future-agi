@@ -424,3 +424,59 @@ func signTestLicenseToken(t *testing.T, privateKey *rsa.PrivateKey, claims licen
 	}
 	return header + "." + payload + "." + base64.RawURLEncoding.EncodeToString(sig)
 }
+
+func TestLicenseAuthSystemOneScopes(t *testing.T) {
+	privateKey, publicPEM := testRSAKeyPair(t)
+	for _, tt := range []struct {
+		name, model      string
+		services, models []string
+		status           int
+		reason           string
+	}{
+		{"allowed", "jev-latest", []string{"jev"}, []string{"jev-latest"}, 204, ""},
+		{"pinned_outside_scope", "jev-1.13.0", []string{"jev"}, []string{"jev-latest"}, 403, "model"},
+		{"missing_service", "jev-latest", nil, []string{"jev-latest"}, 403, "service"},
+		{"turing_token", "jev-latest", []string{"turing"}, []string{"turing_small"}, 403, "model"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			token := signTestLicenseToken(t, privateKey, licenseClaims{LicenseID: "lic_test", InstanceID: "inst_test", Scope: "enterprise", Services: tt.services, Models: tt.models, ExpiresAt: time.Now().Add(time.Hour).Unix(), JTI: "tok_test"})
+			called := false
+			body := `{"model":"` + tt.model + `"}`
+			handler := LicenseAuth(config.LicenseAuthConfig{Enabled: true, PublicKey: publicPEM}, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				called = true
+				if !IsLicenseAuthorized(r.Context()) {
+					t.Error("license context missing")
+				}
+				var got map[string]string
+				if err := json.NewDecoder(r.Body).Decode(&got); err != nil || got["model"] != tt.model {
+					t.Error("middleware consumed request body")
+				}
+				w.WriteHeader(204)
+			}))
+			req := httptest.NewRequest("POST", "/v1/systemone", strings.NewReader(body))
+			req.Header.Set("Authorization", "Bearer "+token)
+			rr := httptest.NewRecorder()
+			handler.ServeHTTP(rr, req)
+			if rr.Code != tt.status || called != (tt.status == 204) {
+				t.Fatalf("got %d called=%v body=%s, want %d", rr.Code, called, rr.Body.String(), tt.status)
+			}
+			if tt.reason != "" && !strings.Contains(rr.Body.String(), tt.reason) {
+				t.Fatalf("wrong denial reason: %s", rr.Body.String())
+			}
+		})
+	}
+}
+
+func TestSystemOneManagedEndpointAndService(t *testing.T) {
+	for _, method := range []string{http.MethodPost, http.MethodGet} {
+		req := httptest.NewRequest(method, "/v1/systemone", nil)
+		if got := isManagedEndpoint(req); got != (method == http.MethodPost) {
+			t.Errorf("managed endpoint for %s = %v", method, got)
+		}
+	}
+	for _, model := range []string{"jev-latest", "jev-1.13.0"} {
+		if serviceForModel(model) != "jev" {
+			t.Errorf("service missing for %s", model)
+		}
+	}
+}
