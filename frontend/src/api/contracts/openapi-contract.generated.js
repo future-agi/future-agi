@@ -20488,10 +20488,37 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/model-hub/get-eval-logs": {
       get: {
         operationId: "model-hub_get-eval-logs_list",
-        runtimeRequestValidation: false,
-        runtimeResponseValidation: false,
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
         requestBody: null,
-        queryParameters: {},
+        queryParameters: {
+          log_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          order: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          source: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          include_source_navigation: {
+            required: false,
+            schema: {
+              type: "string",
+              enum: ["true", "false"],
+            },
+          },
+        },
         responses: {
           200: {
             $ref: "#/definitions/EvalApiLogRowResponse",
@@ -88727,6 +88754,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           format: "uuid",
           "x-nullable": true,
         },
+        source_navigation: {
+          $ref: "#/definitions/EvalLogSourceNavigation",
+        },
       },
     },
     EvalApiLogTableResponseResult: {
@@ -106630,6 +106660,62 @@ export const OPENAPI_CONTRACT = Object.freeze({
           additionalProperties: {
             $ref: "#/definitions/EmbeddingConfigOption",
           },
+        },
+      },
+    },
+    EvalLogSourceNavigation: {
+      required: [
+        "status",
+        "kind",
+        "project_id",
+        "trace_id",
+        "span_id",
+        "retryable",
+      ],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "string",
+          enum: [
+            "ready",
+            "no_reference",
+            "unsupported_source",
+            "unsupported_target",
+            "incomplete_reference",
+            "invalid_reference",
+            "ambiguous_reference",
+            "unavailable",
+            "temporarily_unavailable",
+          ],
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["trace", "voice_call"],
+          "x-nullable": true,
+        },
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        trace_id: {
+          title: "Trace id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        span_id: {
+          title: "Span id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        retryable: {
+          title: "Retryable",
+          type: "boolean",
         },
       },
     },

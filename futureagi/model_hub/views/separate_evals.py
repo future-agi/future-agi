@@ -68,6 +68,7 @@ from model_hub.serializers.contracts import (
     CompositeEvalExecuteResponseSerializer,
     CompositeEvalUpdateRequestSerializer,
     DuplicateEvalTemplateResponseSerializer,
+    EvalApiLogRowQuerySerializer,
     EvalApiLogRowResponseSerializer,
     EvalApiLogTableQuerySerializer,
     EvalApiLogTableResponseSerializer,
@@ -124,6 +125,10 @@ from model_hub.serializers.eval_runner import (
     TestEvalTemplateSerializer,
     UpdateColumnConfigSerializer,
     UpdateEvalTemplateSerializer,
+)
+from model_hub.services.eval_log_source_navigation import (
+    SourceNavigation,
+    resolve_eval_log_source_navigation,
 )
 from model_hub.utils.api_log_config import parse_api_log_config
 from model_hub.utils.eval_playground_call_context import (
@@ -1523,12 +1528,13 @@ class GetAPICallLogView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
+    @validated_request(
+        query_serializer=EvalApiLogRowQuerySerializer,
         responses={200: EvalApiLogRowResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
     )
     def get(self, request, *args, **kwargs):
         try:
-            log_id = request.query_params.get("log_id", None)
+            log_id = request.validated_query_data["log_id"]
             try:
                 if APICallLog is None:
                     return self._gm.success_response([])
@@ -1639,6 +1645,18 @@ class GetAPICallLogView(APIView):
                                 "dataset_id": config.get("dataset_id", None),
                             }
                         )
+            if request.validated_query_data.get("include_source_navigation", False):
+                try:
+                    nav = resolve_eval_log_source_navigation(
+                        request=request, log_row=log_row, config=config
+                    )
+                except Exception:
+                    logger.exception(
+                        "eval_log_source_navigation.view_guard",
+                        log_id=str(log_row.log_id),
+                    )
+                    nav = SourceNavigation("temporarily_unavailable")
+                row_data["source_navigation"] = nav.as_dict()
             return self._gm.success_response(row_data)
         except Exception:
             logger.exception("Error fetching log row")

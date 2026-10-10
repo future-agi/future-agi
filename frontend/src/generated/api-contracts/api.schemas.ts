@@ -12487,6 +12487,38 @@ export interface ModelHubEvalConfigResponseApi {
   result: ModelHubEvalConfigResponseResultApi;
 }
 
+export type EvalLogSourceNavigationApiStatus =
+  (typeof EvalLogSourceNavigationApiStatus)[keyof typeof EvalLogSourceNavigationApiStatus];
+
+export const EvalLogSourceNavigationApiStatus = {
+  ready: "ready",
+  no_reference: "no_reference",
+  unsupported_source: "unsupported_source",
+  unsupported_target: "unsupported_target",
+  incomplete_reference: "incomplete_reference",
+  invalid_reference: "invalid_reference",
+  ambiguous_reference: "ambiguous_reference",
+  unavailable: "unavailable",
+  temporarily_unavailable: "temporarily_unavailable",
+} as const;
+
+export type EvalLogSourceNavigationApiKind =
+  (typeof EvalLogSourceNavigationApiKind)[keyof typeof EvalLogSourceNavigationApiKind];
+
+export const EvalLogSourceNavigationApiKind = {
+  trace: "trace",
+  voice_call: "voice_call",
+} as const;
+
+export interface EvalLogSourceNavigationApi {
+  status: EvalLogSourceNavigationApiStatus;
+  kind: EvalLogSourceNavigationApiKind;
+  project_id: string;
+  trace_id: string;
+  span_id: string;
+  retryable: boolean;
+}
+
 export type EvalApiLogRowResponseResultApiValues = { [key: string]: unknown };
 
 export type EvalApiLogRowResponseResultApiOutput = { [key: string]: unknown };
@@ -12517,6 +12549,7 @@ export interface EvalApiLogRowResponseResultApi {
   prompt_id?: string;
   optimization_id?: string;
   experiment_id?: string;
+  source_navigation?: EvalLogSourceNavigationApi;
 }
 
 export interface EvalApiLogRowResponseApi {
@@ -33579,6 +33612,21 @@ export type ModelHubFeedbackGetTemplateParams = {
 export type ModelHubGetEvalConfigListParams = {
   eval_id: string;
 };
+
+export type ModelHubGetEvalLogsListParams = {
+  log_id: string;
+  order?: string;
+  source?: string;
+  include_source_navigation?: ModelHubGetEvalLogsListIncludeSourceNavigation;
+};
+
+export type ModelHubGetEvalLogsListIncludeSourceNavigation =
+  (typeof ModelHubGetEvalLogsListIncludeSourceNavigation)[keyof typeof ModelHubGetEvalLogsListIncludeSourceNavigation];
+
+export const ModelHubGetEvalLogsListIncludeSourceNavigation = {
+  true: "true",
+  false: "false",
+} as const;
 
 export type ModelHubGetEvalLogsDetailsListParams = {
   eval_template_id: string;

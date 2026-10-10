@@ -37333,7 +37333,37 @@
             "get": {
                 "operationId": "model-hub_get-eval-logs_list",
                 "description": "",
-                "parameters": [],
+                "parameters": [
+                    {
+                        "name": "log_id",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "order",
+                        "in": "query",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "source",
+                        "in": "query",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "include_source_navigation",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "enum": [
+                            "true",
+                            "false"
+                        ]
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "",
@@ -37380,7 +37410,9 @@
                 },
                 "tags": [
                     "model-hub"
-                ]
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
             },
             "patch": {
                 "operationId": "model-hub_get-eval-logs_partial_update",
@@ -111779,6 +111811,65 @@
                 }
             }
         },
+        "EvalLogSourceNavigation": {
+            "required": [
+                "status",
+                "kind",
+                "project_id",
+                "trace_id",
+                "span_id",
+                "retryable"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "ready",
+                        "no_reference",
+                        "unsupported_source",
+                        "unsupported_target",
+                        "incomplete_reference",
+                        "invalid_reference",
+                        "ambiguous_reference",
+                        "unavailable",
+                        "temporarily_unavailable"
+                    ]
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "enum": [
+                        "trace",
+                        "voice_call"
+                    ],
+                    "x-nullable": true
+                },
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "trace_id": {
+                    "title": "Trace id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "span_id": {
+                    "title": "Span id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "retryable": {
+                    "title": "Retryable",
+                    "type": "boolean"
+                }
+            }
+        },
         "EvalApiLogRowResponseResult": {
             "required": [
                 "log_id",
@@ -111877,6 +111968,9 @@
                     "type": "string",
                     "format": "uuid",
                     "x-nullable": true
+                },
+                "source_navigation": {
+                    "$ref": "#/definitions/EvalLogSourceNavigation"
                 }
             }
         },

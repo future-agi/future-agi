@@ -135,6 +135,7 @@ const TraceDetailDrawerV2 = ({
   initialFullscreen = false,
   initialSpanId = null,
   refreshParentGrid,
+  hideOpenInNewTab = false,
 }) => {
   const navigate = useNavigate();
 
@@ -896,7 +897,7 @@ const TraceDetailDrawerV2 = ({
         }
         isFullscreen={isFullscreen}
         onOpenNewTab={
-          initialFullscreen
+          initialFullscreen || hideOpenInNewTab
             ? undefined
             : () => {
                 if (traceId && projectId) {
@@ -1555,6 +1556,7 @@ TraceDetailDrawerV2.propTypes = {
   initialFullscreen: PropTypes.bool,
   initialSpanId: PropTypes.string,
   refreshParentGrid: PropTypes.func,
+  hideOpenInNewTab: PropTypes.bool,
 };
 
 export default React.memo(TraceDetailDrawerV2);
