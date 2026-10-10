@@ -1,0 +1,39 @@
+# Example thresholds for the pilot; tune to the configured deadlines and budget.
+# Balance gauges describe shared Redis state on every replica: aggregate by max.
+groups:
+  - name: gateway-video
+    rules:
+      - alert: VideoSubmissionUnknown
+        expr: sum(increase(video_submission_unknown_total[10m])) > 0
+        for: 1m
+        labels: {severity: warning}
+        annotations:
+          summary: Video submission requires reconciliation
+      - alert: VideoSubmissionUnresolved
+        expr: sum(increase(video_unresolved_total[10m])) > 0
+        labels: {severity: critical}
+        annotations:
+          summary: Operator attachment may be needed for video accounting
+      - alert: VideoOutputCopyFailed
+        expr: sum(increase(video_result_copy_failures_total[10m])) > 0
+        labels: {severity: warning}
+        annotations:
+          summary: Completed video output could not be retained
+      - alert: VideoUnsettledBudget
+        expr: max(video_unsettled_micros) > 100000000
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: Unsettled video reservations exceed the example 100 USD ceiling
+      - alert: VideoQueueDelay
+        expr: histogram_quantile(0.95, sum by (le) (rate(video_queue_age_seconds_bucket[5m]))) > 30
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: Video queue age exceeds the example 30 second submit deadline
+      - alert: VideoPollErrors
+        expr: sum(rate(video_poll_requests_total{outcome!="success"}[5m])) / clamp_min(sum(rate(video_poll_requests_total[5m])), 0.001) > 0.2
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: Video provider polling error ratio exceeds 20 percent

@@ -1,0 +1,21 @@
+{
+    "id": "cgt-2025****",
+    "model": "dreamina-seedance-2-5-260628",
+    "status": "succeeded",
+    "content": {
+        "video_url": "https://ark-content-generation-ap-southeast-1.tos-ap-southeast-1.volces.com/****" 
+},
+    "usage": {
+        "completion_tokens": 246840,
+        "total_tokens": 246840
+},
+    "created_at": 1765510475,
+    "updated_at": 1765510559,
+    "seed": 58944,
+    "resolution": "1080p",
+    "ratio": "16:9",
+    "duration": 5,
+    "framespersecond": 24,
+    "service_tier": "default",
+    "execution_expires_after": 172800
+}
