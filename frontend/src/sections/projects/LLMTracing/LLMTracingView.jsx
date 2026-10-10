@@ -244,7 +244,11 @@ import { getRequestErrorMessage } from "src/utils/errorUtils";
 import { getDefaultDateRangeForMode } from "../dateRangeDefaults";
 import { useCursorAttributeInventory } from "./useCursorAttributeInventory";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
-import { isGridApiLive, withLiveGridApi } from "src/utils/gridApi";
+import {
+  isGridApiLive,
+  reloadServerSideGrid,
+  withLiveGridApi,
+} from "src/utils/gridApi";
 
 const USER_DETAIL_TAB_TYPE = "user_detail";
 const getLiveGridRefApi = (gridRef) => {
@@ -4771,10 +4775,19 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     compareCallLogsGridRef.current?.deselectAll?.();
                     setSelectedCallIds([]);
                   } else if (selectedTab === "trace") {
-                    refreshGridRef(primaryTraceGridRef, { purge: true });
+                    // The grid's own reload: a bare refreshServerSide() is
+                    // answered from its cursor page memory, and the tags
+                    // just saved would not appear.
+                    reloadServerSideGrid(
+                      getLiveGridRefApi(primaryTraceGridRef),
+                      { purge: true },
+                    );
                     deselectGridRef(primaryTraceGridRef);
                   } else {
-                    refreshGridRef(primarySpanGridRef, { purge: true });
+                    reloadServerSideGrid(
+                      getLiveGridRefApi(primarySpanGridRef),
+                      { purge: true },
+                    );
                     deselectGridRef(primarySpanGridRef);
                   }
                   setTagsAnchorEl(null);
