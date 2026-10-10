@@ -13,6 +13,7 @@ import ExecutionNode from "./ExecutionNode";
 import StartEndNode from "./StartEndNode";
 import SubgraphGroupNode from "./SubgraphGroupNode";
 import { buildExecutionGraph } from "./layoutUtils";
+import { isSkippedExecutionStatus } from "./nodeUtils";
 import "./agent-graph-animations.css";
 
 const nodeTypes = {
@@ -39,6 +40,7 @@ function AgentGraphInner({ executionData, onNodeClick, selectedNodeId }) {
   const handleNodeClick = useCallback(
     (event, node) => {
       if (!node.data?.nodeExecution) return;
+      if (isSkippedExecutionStatus(node.data.nodeExecution.status)) return;
       onNodeClick?.(event, node);
     },
     [onNodeClick],
