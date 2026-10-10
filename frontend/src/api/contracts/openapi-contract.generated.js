@@ -51683,6 +51683,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
     CallExecutionDetail: {
       type: "object",
       properties: {
+        audio_metrics: {
+          title: "Audio metrics",
+          type: "string",
+          readOnly: true,
+        },
         id: {
           title: "Id",
           type: "string",
@@ -52277,6 +52282,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
       ],
       type: "object",
       properties: {
+        audio_metrics: {
+          title: "Audio metrics",
+          type: "string",
+          readOnly: true,
+        },
         id: {
           title: "Id",
           type: "string",

@@ -128947,6 +128947,11 @@
         "CallExecutionDetail": {
             "type": "object",
             "properties": {
+                "audio_metrics": {
+                    "title": "Audio metrics",
+                    "type": "string",
+                    "readOnly": true
+                },
                 "id": {
                     "title": "Id",
                     "type": "string",
@@ -134812,6 +134817,11 @@
             ],
             "type": "object",
             "properties": {
+                "audio_metrics": {
+                    "title": "Audio metrics",
+                    "type": "string",
+                    "readOnly": true
+                },
                 "id": {
                     "title": "Id",
                     "type": "string",

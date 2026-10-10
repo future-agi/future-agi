@@ -113,3 +113,21 @@ NO_RETRY_POLICY = RetryPolicy(
     # or where retries don't make sense (e.g., monitoring loops)
     maximum_attempts=1,
 )
+
+
+# Audio analysis: bounded transient retries; deterministic failures are terminal.
+AUDIO_ANALYSIS_RETRY_POLICY = RetryPolicy(
+    maximum_attempts=3,
+    initial_interval=timedelta(seconds=30),
+    backoff_coefficient=4.0,
+    maximum_interval=timedelta(seconds=120),
+    non_retryable_error_types=[
+        "AudioDeterministicError",
+        "AudioProvenanceError",
+        "AudioLimitError",
+        "AudioModelUnavailableError",
+        "StaleAnalysisError",
+        "ProviderAuthenticationError",
+        "ValueError",
+    ],
+)

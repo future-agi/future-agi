@@ -4,6 +4,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, userEvent } from "src/utils/test-utils";
 import VoiceDetailDrawerV2 from "../VoiceDetailDrawerV2";
 
+vi.mock("notistack", async (importOriginal) => ({
+  ...(await importOriginal()),
+  enqueueSnackbar: vi.fn(),
+}));
+
 vi.mock("src/components/traceDetail/DrawerToolbar", () => ({
   default: () => <div data-testid="drawer-toolbar" />,
 }));
@@ -66,6 +71,69 @@ const renderWithClient = (ui) => {
     <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>,
   );
 };
+
+describe("VoiceDetailDrawerV2 acoustic export (R09 / AC10)", () => {
+  it("exports the API acoustic envelope verbatim without internal provenance", async () => {
+    const audioMetrics = {
+      schema_version: 1,
+      state: "partial",
+      generation: 0,
+      metrics: {
+        estimated_snr_db: {
+          value: 0,
+          unit: "dB",
+          state: "available",
+          reason: null,
+        },
+        voice_quality_index: {
+          value: null,
+          unit: "index",
+          state: "unavailable",
+          reason: "not_validated",
+        },
+      },
+    };
+    const createUrl = vi.fn().mockReturnValue("blob:call-export");
+    vi.stubGlobal(
+      "URL",
+      class extends URL {
+        static createObjectURL = createUrl;
+        static revokeObjectURL = vi.fn();
+      },
+    );
+    const click = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(() => {});
+    try {
+      renderWithClient(
+        <VoiceDetailDrawerV2
+          data={{
+            id: "call-1",
+            module: "simulate",
+            audio_metrics: audioMetrics,
+          }}
+          onClose={vi.fn()}
+        />,
+      );
+      await userEvent
+        .setup()
+        .click(screen.getByRole("button", { name: "Download raw data" }));
+      const blob = createUrl.mock.calls[0][0];
+      const text = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsText(blob);
+      });
+      const exported = JSON.parse(text);
+      expect(exported.audio_metrics).toEqual(audioMetrics);
+      expect(exported).not.toHaveProperty("audio_provenance");
+    } finally {
+      vi.unstubAllGlobals();
+      click.mockRestore();
+    }
+  });
+});
 
 describe("VoiceDetailDrawerV2 queue source", () => {
   it("adds observed voice calls to queues as traces instead of spans", async () => {

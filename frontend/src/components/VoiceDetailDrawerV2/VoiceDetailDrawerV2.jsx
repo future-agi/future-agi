@@ -64,6 +64,7 @@ const VoiceDetailDrawerV2 = ({
   onCompareBaseline,
   scenarioId,
   isLoading = false,
+  isStale = false,
   initialFullscreen = false,
   // When embedded (e.g. inside the annotation workspace content panel),
   // hide the outer drawer chrome — the DrawerToolbar (Imagine tabs) and
@@ -507,6 +508,7 @@ const VoiceDetailDrawerV2 = ({
             >
               <VoiceRightPanel
                 data={data}
+                isStale={isStale}
                 onCompareBaseline={onCompareBaseline}
                 onAction={handleVoiceAction}
                 hiddenActionIds={hiddenActionIds}
@@ -624,6 +626,7 @@ VoiceDetailDrawerV2.propTypes = {
   onCompareBaseline: PropTypes.func,
   scenarioId: PropTypes.string,
   isLoading: PropTypes.bool,
+  isStale: PropTypes.bool,
   initialFullscreen: PropTypes.bool,
   embedded: PropTypes.bool,
   hiddenActionIds: PropTypes.arrayOf(PropTypes.string),

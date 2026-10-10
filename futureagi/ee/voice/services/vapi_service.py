@@ -2459,7 +2459,7 @@ class VapiService(VoiceServiceBlueprint):
         return NormalizedTranscriptData(messages=messages, token_usage=token_usage)
 
     async def extract_and_persist_recordings(
-        self, call_execution_id: str
+        self, call_execution_id: str, *, recording_context: dict | None = None
     ) -> RecordingUrls:
         """Extract VAPI recordings and persist to S3."""
         from simulate.models.test_execution import CallExecution
@@ -2527,12 +2527,16 @@ class VapiService(VoiceServiceBlueprint):
         if main_recording_url:
             try:
                 s3_url, payload_bytes = await convert_audio_url_to_s3_async_with_size(
-                    call_id_str, main_recording_url, "recording",
+                    call_id_str,
+                    main_recording_url,
+                    "recording",
                     provider=vapi_provider,
                     api_key=self.api_key,
                     vapi_call_id=vapi_call_id,
                     artifact_type=VapiArtifactType.MONO,
                     project_id=project_id,
+                    call_scoped=True,
+                    recording_generation=getattr(call, "audio_analysis_generation", 0),
                 )
                 result.recording_url = s3_url
                 emit_recording_storage_usage("recording", payload_bytes)
@@ -2548,12 +2552,16 @@ class VapiService(VoiceServiceBlueprint):
         if stereo_url:
             try:
                 s3_url, payload_bytes = await convert_audio_url_to_s3_async_with_size(
-                    call_id_str, stereo_url, "stereo_recording",
+                    call_id_str,
+                    stereo_url,
+                    "stereo_recording",
                     provider=vapi_provider,
                     api_key=self.api_key,
                     vapi_call_id=vapi_call_id,
                     artifact_type=VapiArtifactType.STEREO,
                     project_id=project_id,
+                    call_scoped=True,
+                    recording_generation=getattr(call, "audio_analysis_generation", 0),
                 )
                 result.stereo_recording_url = s3_url
                 emit_recording_storage_usage("stereo_recording", payload_bytes)
@@ -2569,12 +2577,16 @@ class VapiService(VoiceServiceBlueprint):
         if assistant_url:
             try:
                 s3_url, payload_bytes = await convert_audio_url_to_s3_async_with_size(
-                    call_id_str, assistant_url, "assistant_recording",
+                    call_id_str,
+                    assistant_url,
+                    "assistant_recording",
                     provider=vapi_provider,
                     api_key=self.api_key,
                     vapi_call_id=vapi_call_id,
                     artifact_type=VapiArtifactType.ASSISTANT,
                     project_id=project_id,
+                    call_scoped=True,
+                    recording_generation=getattr(call, "audio_analysis_generation", 0),
                 )
                 result.assistant_recording_url = s3_url
                 emit_recording_storage_usage("assistant_recording", payload_bytes)
@@ -2590,12 +2602,16 @@ class VapiService(VoiceServiceBlueprint):
         if customer_url:
             try:
                 s3_url, payload_bytes = await convert_audio_url_to_s3_async_with_size(
-                    call_id_str, customer_url, "customer_recording",
+                    call_id_str,
+                    customer_url,
+                    "customer_recording",
                     provider=vapi_provider,
                     api_key=self.api_key,
                     vapi_call_id=vapi_call_id,
                     artifact_type=VapiArtifactType.CUSTOMER,
                     project_id=project_id,
+                    call_scoped=True,
+                    recording_generation=getattr(call, "audio_analysis_generation", 0),
                 )
                 result.customer_recording_url = s3_url
                 emit_recording_storage_usage("customer_recording", payload_bytes)
@@ -2620,6 +2636,29 @@ class VapiService(VoiceServiceBlueprint):
             _update_recording_payload(provider_data, recording_object)
             provider_call_data[ProviderChoices.VAPI.value] = provider_data
             result.provider_call_data = provider_call_data
+
+        from ee.voice.services.audio_provenance import (
+            build_vapi_provenance,
+            unsupported_provenance,
+        )
+        from ee.voice.services.recording_provenance import recording_artifacts
+
+        artifacts = await recording_artifacts(result, pin_versions=True)
+        if recording_context is None:
+            result.provenance = unsupported_provenance(
+                "unknown_agent_track",
+                artifacts=artifacts,
+                system_engine="vapi",
+                capture_origin="provider_recording",
+                provider_call_id=vapi_call_id,
+            )
+        else:
+            result.provenance = build_vapi_provenance(
+                call_id=call_id_str,
+                artifacts=artifacts,
+                provider_call_id=vapi_call_id,
+                **recording_context,
+            )
 
         return result
 
