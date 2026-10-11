@@ -836,7 +836,7 @@ function normalizeGuardrails(raw) {
     const catalogName = RULE_TO_CATALOG[rule.name] || rule.name;
     checks[catalogName] = {
       enabled: rule.enabled !== false,
-      action: rule.action || "block",
+      action: rule.action === "mask" ? "log" : rule.action || "block",
       confidence_threshold: rule.threshold ?? 0.8,
       stage: rule.stage || rule.phase,
       mode: rule.mode,
@@ -911,7 +911,8 @@ const GuardrailConfigTab = ({ guardrails, onChange }) => {
     const check = checks[name];
     const isCustom = Boolean(check);
     const enabled = check?.enabled ?? false;
-    const action = check?.action || "block";
+    const action =
+      check?.action === "mask" ? "log" : check?.action || "block";
     const threshold =
       check?.confidence_threshold ?? check?.confidenceThreshold ?? 0.8;
     const hasMeta = Boolean(meta);

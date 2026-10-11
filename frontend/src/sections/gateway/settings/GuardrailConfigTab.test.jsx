@@ -102,4 +102,22 @@ describe("GuardrailConfigTab", () => {
       "browser_guardrail_keyword",
     ]);
   });
+
+  it("displays log action for checks saved with mask action (#3232)", () => {
+    render(
+      <GuardrailConfigTab
+        guardrails={{
+          checks: {
+            "keyword-blocklist": {
+              enabled: true,
+              action: "mask",
+            },
+          },
+        }}
+        onChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Action: log")).toBeInTheDocument();
+  });
 });
