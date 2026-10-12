@@ -65,6 +65,10 @@ from model_hub.views.develop_dataset import (
     SingleRowEvaluationView,
     StopUserEvalView,
 )
+from model_hub.views.dataset_versions import (
+    DatasetVersionDetailView,
+    DatasetVersionListView,
+)
 from model_hub.views.develop_optimisation import (
     OptimisationCreateView,
     OptimizationDatasetDetailView,
@@ -1231,6 +1235,17 @@ urlpatterns = [
         "datasets/<uuid:dataset_id>/derived-variables/",
         get_dataset_derived_variables_view,
         name="get-dataset-derived-variables",
+    ),
+    # Dataset version identity and source provenance (M1 compatibility API)
+    path(
+        "datasets/<uuid:dataset_id>/versions/",
+        DatasetVersionListView.as_view(),
+        name="dataset-version-list",
+    ),
+    path(
+        "datasets/<uuid:dataset_id>/versions/<uuid:version_id>/",
+        DatasetVersionDetailView.as_view(),
+        name="dataset-version-detail",
     ),
     # V2 Experiment APIs
     path(

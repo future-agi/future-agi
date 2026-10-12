@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1058,
+  endpointCount: 1060,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -464,6 +464,8 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/model-hub/datasets/{dataset_id}/extract-entities/": ["post"],
       "/model-hub/datasets/{dataset_id}/merge/": ["post"],
       "/model-hub/datasets/{dataset_id}/preview/{operation_type}/": ["post"],
+      "/model-hub/datasets/{dataset_id}/versions/": ["get"],
+      "/model-hub/datasets/{dataset_id}/versions/{version_id}/": ["get"],
       "/model-hub/delete-eval-template/": ["post"],
       "/model-hub/develops/add-as-new/": ["post"],
       "/model-hub/develops/add_rows_from_file/": ["post"],
@@ -1758,6 +1760,8 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/model-hub/datasets/{dataset_id}/extract-entities/": ["post"],
   "/model-hub/datasets/{dataset_id}/merge/": ["post"],
   "/model-hub/datasets/{dataset_id}/preview/{operation_type}/": ["post"],
+  "/model-hub/datasets/{dataset_id}/versions/": ["get"],
+  "/model-hub/datasets/{dataset_id}/versions/{version_id}/": ["get"],
   "/model-hub/delete-eval-template/": ["post"],
   "/model-hub/develops/add-as-new/": ["post"],
   "/model-hub/develops/add_rows_from_file/": ["post"],

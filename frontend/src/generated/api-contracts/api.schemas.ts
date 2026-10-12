@@ -8845,6 +8845,78 @@ export interface PreviewDatasetOperationResponseApi {
   result: PreviewDatasetOperationResultApi;
 }
 
+export type DatasetVersionReadApiMetadata = { [key: string]: unknown };
+
+export interface DatasetVersionReadApi {
+  readonly id?: string;
+  readonly dataset?: string;
+  readonly parent_version?: string;
+  readonly created_by?: string;
+  readonly organization?: string;
+  readonly workspace?: string;
+  /** @minLength 1 */
+  readonly content_hash?: string;
+  /** @minLength 1 */
+  readonly description?: string;
+  readonly metadata?: DatasetVersionReadApiMetadata;
+  /** @minLength 1 */
+  readonly source_revision?: string;
+  readonly created_at?: string;
+  readonly updated_at?: string;
+  readonly item_count?: number;
+}
+
+export interface DatasetVersionListResultApi {
+  dataset_id: string;
+  versions: DatasetVersionReadApi[];
+  limit: number;
+  offset: number;
+  has_more: boolean;
+}
+
+export interface DatasetVersionListResponseApi {
+  status: boolean;
+  result: DatasetVersionListResultApi;
+}
+
+export type DatasetVersionItemReadApiInput = { [key: string]: unknown };
+
+export type DatasetVersionItemReadApiExpected = { [key: string]: unknown };
+
+export type DatasetVersionItemReadApiMetadata = { [key: string]: unknown };
+
+export interface DatasetVersionItemReadApi {
+  readonly id?: string;
+  readonly example_id?: string;
+  /** @minLength 1 */
+  readonly external_id?: string;
+  readonly input?: DatasetVersionItemReadApiInput;
+  readonly expected?: DatasetVersionItemReadApiExpected;
+  readonly metadata?: DatasetVersionItemReadApiMetadata;
+  /** @minLength 1 */
+  readonly source_trace_id?: string;
+  /** @minLength 1 */
+  readonly source_span_id?: string;
+  /** @minLength 1 */
+  readonly content_hash?: string;
+  readonly legacy_row?: string;
+  readonly created_at?: string;
+  readonly updated_at?: string;
+}
+
+export interface DatasetVersionDetailResultApi {
+  version: DatasetVersionReadApi;
+  items: DatasetVersionItemReadApi[];
+  limit: number;
+  offset: number;
+  has_more: boolean;
+}
+
+export interface DatasetVersionDetailResponseApi {
+  status: boolean;
+  result: DatasetVersionDetailResultApi;
+}
+
 export interface DeleteEvalTemplateApi {
   eval_template_id: string;
 }
@@ -33227,6 +33299,32 @@ export type ModelHubDatasetOptimizationList200 = {
   next?: string;
   previous?: string;
   results: DatasetOptimizationListApi[];
+};
+
+export type ModelHubDatasetsVersionsListParams = {
+  /**
+   * @minimum 1
+   * @maximum 500
+   */
+  limit?: number;
+  /**
+   * @minimum 0
+   * @maximum 2147483647
+   */
+  offset?: number;
+};
+
+export type ModelHubDatasetsVersionsReadParams = {
+  /**
+   * @minimum 1
+   * @maximum 500
+   */
+  limit?: number;
+  /**
+   * @minimum 0
+   * @maximum 2147483647
+   */
+  offset?: number;
 };
 
 export type ModelHubDevelopsGetDatasetsListParams = {

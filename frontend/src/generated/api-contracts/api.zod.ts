@@ -19409,6 +19409,128 @@ export const ModelHubDatasetsPreviewCreateResponse = zod.object({
   }),
 });
 
+/**
+ * List immutable versions for one visible dataset.
+ */
+export const ModelHubDatasetsVersionsListParams = zod.object({
+  dataset_id: zod.string(),
+});
+
+export const modelHubDatasetsVersionsListQueryLimitDefault = 100;
+export const modelHubDatasetsVersionsListQueryLimitMax = 500;
+
+export const modelHubDatasetsVersionsListQueryOffsetDefault = 0;
+export const modelHubDatasetsVersionsListQueryOffsetMin = 0;
+export const modelHubDatasetsVersionsListQueryOffsetMax = 2147483647;
+
+export const ModelHubDatasetsVersionsListQueryParams = zod.object({
+  limit: zod
+    .number()
+    .min(1)
+    .max(modelHubDatasetsVersionsListQueryLimitMax)
+    .default(modelHubDatasetsVersionsListQueryLimitDefault),
+  offset: zod
+    .number()
+    .min(modelHubDatasetsVersionsListQueryOffsetMin)
+    .max(modelHubDatasetsVersionsListQueryOffsetMax)
+    .default(modelHubDatasetsVersionsListQueryOffsetDefault),
+});
+
+export const ModelHubDatasetsVersionsListResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    dataset_id: zod.string().uuid(),
+    versions: zod.array(
+      zod.object({
+        id: zod.string().uuid().optional(),
+        dataset: zod.string().uuid().optional(),
+        parent_version: zod.string().uuid().optional(),
+        created_by: zod.string().uuid().optional(),
+        organization: zod.string().uuid().optional(),
+        workspace: zod.string().uuid().optional(),
+        content_hash: zod.string().min(1).optional(),
+        description: zod.string().min(1).optional(),
+        metadata: zod.object({}).passthrough().optional(),
+        source_revision: zod.string().min(1).optional(),
+        created_at: zod.string().datetime({ offset: true }).optional(),
+        updated_at: zod.string().datetime({ offset: true }).optional(),
+        item_count: zod.number().optional(),
+      }),
+    ),
+    limit: zod.number(),
+    offset: zod.number(),
+    has_more: zod.boolean(),
+  }),
+});
+
+/**
+ * Read one version and a bounded page of its provenance-bearing items.
+ */
+export const ModelHubDatasetsVersionsReadParams = zod.object({
+  dataset_id: zod.string(),
+  version_id: zod.string(),
+});
+
+export const modelHubDatasetsVersionsReadQueryLimitDefault = 100;
+export const modelHubDatasetsVersionsReadQueryLimitMax = 500;
+
+export const modelHubDatasetsVersionsReadQueryOffsetDefault = 0;
+export const modelHubDatasetsVersionsReadQueryOffsetMin = 0;
+export const modelHubDatasetsVersionsReadQueryOffsetMax = 2147483647;
+
+export const ModelHubDatasetsVersionsReadQueryParams = zod.object({
+  limit: zod
+    .number()
+    .min(1)
+    .max(modelHubDatasetsVersionsReadQueryLimitMax)
+    .default(modelHubDatasetsVersionsReadQueryLimitDefault),
+  offset: zod
+    .number()
+    .min(modelHubDatasetsVersionsReadQueryOffsetMin)
+    .max(modelHubDatasetsVersionsReadQueryOffsetMax)
+    .default(modelHubDatasetsVersionsReadQueryOffsetDefault),
+});
+
+export const ModelHubDatasetsVersionsReadResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    version: zod.object({
+      id: zod.string().uuid().optional(),
+      dataset: zod.string().uuid().optional(),
+      parent_version: zod.string().uuid().optional(),
+      created_by: zod.string().uuid().optional(),
+      organization: zod.string().uuid().optional(),
+      workspace: zod.string().uuid().optional(),
+      content_hash: zod.string().min(1).optional(),
+      description: zod.string().min(1).optional(),
+      metadata: zod.object({}).passthrough().optional(),
+      source_revision: zod.string().min(1).optional(),
+      created_at: zod.string().datetime({ offset: true }).optional(),
+      updated_at: zod.string().datetime({ offset: true }).optional(),
+      item_count: zod.number().optional(),
+    }),
+    items: zod.array(
+      zod.object({
+        id: zod.string().uuid().optional(),
+        example_id: zod.string().uuid().optional(),
+        external_id: zod.string().min(1).optional(),
+        input: zod.object({}).passthrough().optional(),
+        expected: zod.object({}).passthrough().optional(),
+        metadata: zod.object({}).passthrough().optional(),
+        source_trace_id: zod.string().min(1).optional(),
+        source_span_id: zod.string().min(1).optional(),
+        content_hash: zod.string().min(1).optional(),
+        legacy_row: zod.string().uuid().optional(),
+        created_at: zod.string().datetime({ offset: true }).optional(),
+        updated_at: zod.string().datetime({ offset: true }).optional(),
+      }),
+    ),
+    limit: zod.number(),
+    offset: zod.number(),
+    has_more: zod.boolean(),
+  }),
+});
+
 export const ModelHubDeleteEvalTemplateCreateBody = zod.object({
   eval_template_id: zod.string().uuid(),
 });

@@ -373,6 +373,8 @@ import type {
   DatasetUpdateCellValueRequestApi,
   DatasetUpdateColumnNameRequestApi,
   DatasetUpdateColumnTypeRequestApi,
+  DatasetVersionDetailResponseApi,
+  DatasetVersionListResponseApi,
   DeactivateUserApi,
   DeactivateUserResponseApi,
   DeepAnalysisApiResponseApi,
@@ -752,6 +754,8 @@ import type {
   ModelHubApiKeysListParams,
   ModelHubDatasetOptimizationList200,
   ModelHubDatasetOptimizationListParams,
+  ModelHubDatasetsVersionsListParams,
+  ModelHubDatasetsVersionsReadParams,
   ModelHubDevelopsGetDatasetTableListParams,
   ModelHubDevelopsGetDatasetsListParams,
   ModelHubDevelopsGetEvalStructureReadParams,
@@ -32971,6 +32975,196 @@ export const modelHubDatasetsPreviewCreate = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(previewDatasetOperationRequestApi),
+    },
+  );
+};
+
+export type modelHubDatasetsVersionsListResponse200 = {
+  data: DatasetVersionListResponseApi;
+  status: 200;
+};
+
+export type modelHubDatasetsVersionsListResponse400 = {
+  data: ModelHubErrorResponseApi;
+  status: 400;
+};
+
+export type modelHubDatasetsVersionsListResponse403 = {
+  data: ModelHubErrorResponseApi;
+  status: 403;
+};
+
+export type modelHubDatasetsVersionsListResponse404 = {
+  data: ModelHubErrorResponseApi;
+  status: 404;
+};
+
+export type modelHubDatasetsVersionsListResponse409 = {
+  data: ModelHubErrorResponseApi;
+  status: 409;
+};
+
+export type modelHubDatasetsVersionsListResponse500 = {
+  data: ModelHubErrorResponseApi;
+  status: 500;
+};
+
+export type modelHubDatasetsVersionsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
+};
+
+export type modelHubDatasetsVersionsListResponseSuccess =
+  modelHubDatasetsVersionsListResponse200 & {
+    headers: Headers;
+  };
+export type modelHubDatasetsVersionsListResponseError = (
+  | modelHubDatasetsVersionsListResponse400
+  | modelHubDatasetsVersionsListResponse403
+  | modelHubDatasetsVersionsListResponse404
+  | modelHubDatasetsVersionsListResponse409
+  | modelHubDatasetsVersionsListResponse500
+  | modelHubDatasetsVersionsListResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type modelHubDatasetsVersionsListResponse =
+  | modelHubDatasetsVersionsListResponseSuccess
+  | modelHubDatasetsVersionsListResponseError;
+
+export const getModelHubDatasetsVersionsListUrl = (
+  datasetId: string,
+  params?: ModelHubDatasetsVersionsListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/model-hub/datasets/${datasetId}/versions/?${stringifiedParams}`
+    : `/model-hub/datasets/${datasetId}/versions/`;
+};
+
+/**
+ * List immutable versions for one visible dataset.
+ */
+export const modelHubDatasetsVersionsList = async (
+  datasetId: string,
+  params?: ModelHubDatasetsVersionsListParams,
+  options?: RequestInit,
+): Promise<modelHubDatasetsVersionsListResponse> => {
+  return apiMutator<modelHubDatasetsVersionsListResponse>(
+    getModelHubDatasetsVersionsListUrl(datasetId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type modelHubDatasetsVersionsReadResponse200 = {
+  data: DatasetVersionDetailResponseApi;
+  status: 200;
+};
+
+export type modelHubDatasetsVersionsReadResponse400 = {
+  data: ModelHubErrorResponseApi;
+  status: 400;
+};
+
+export type modelHubDatasetsVersionsReadResponse403 = {
+  data: ModelHubErrorResponseApi;
+  status: 403;
+};
+
+export type modelHubDatasetsVersionsReadResponse404 = {
+  data: ModelHubErrorResponseApi;
+  status: 404;
+};
+
+export type modelHubDatasetsVersionsReadResponse409 = {
+  data: ModelHubErrorResponseApi;
+  status: 409;
+};
+
+export type modelHubDatasetsVersionsReadResponse500 = {
+  data: ModelHubErrorResponseApi;
+  status: 500;
+};
+
+export type modelHubDatasetsVersionsReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
+};
+
+export type modelHubDatasetsVersionsReadResponseSuccess =
+  modelHubDatasetsVersionsReadResponse200 & {
+    headers: Headers;
+  };
+export type modelHubDatasetsVersionsReadResponseError = (
+  | modelHubDatasetsVersionsReadResponse400
+  | modelHubDatasetsVersionsReadResponse403
+  | modelHubDatasetsVersionsReadResponse404
+  | modelHubDatasetsVersionsReadResponse409
+  | modelHubDatasetsVersionsReadResponse500
+  | modelHubDatasetsVersionsReadResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type modelHubDatasetsVersionsReadResponse =
+  | modelHubDatasetsVersionsReadResponseSuccess
+  | modelHubDatasetsVersionsReadResponseError;
+
+export const getModelHubDatasetsVersionsReadUrl = (
+  datasetId: string,
+  versionId: string,
+  params?: ModelHubDatasetsVersionsReadParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/model-hub/datasets/${datasetId}/versions/${versionId}/?${stringifiedParams}`
+    : `/model-hub/datasets/${datasetId}/versions/${versionId}/`;
+};
+
+/**
+ * Read one version and a bounded page of its provenance-bearing items.
+ */
+export const modelHubDatasetsVersionsRead = async (
+  datasetId: string,
+  versionId: string,
+  params?: ModelHubDatasetsVersionsReadParams,
+  options?: RequestInit,
+): Promise<modelHubDatasetsVersionsReadResponse> => {
+  return apiMutator<modelHubDatasetsVersionsReadResponse>(
+    getModelHubDatasetsVersionsReadUrl(datasetId, versionId, params),
+    {
+      ...options,
+      method: "GET",
     },
   );
 };

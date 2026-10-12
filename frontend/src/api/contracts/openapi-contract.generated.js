@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1058,
+  endpointCount: 1060,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -15190,6 +15190,108 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           200: {
             $ref: "#/definitions/PreviewDatasetOperationResponse",
+          },
+          400: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          409: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/model-hub/datasets/{dataset_id}/versions/": {
+      get: {
+        operationId: "model-hub_datasets_versions_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          limit: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 500,
+              default: 100,
+            },
+          },
+          offset: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 0,
+              maximum: 2147483647,
+              default: 0,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/DatasetVersionListResponse",
+          },
+          400: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          409: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/model-hub/datasets/{dataset_id}/versions/{version_id}/": {
+      get: {
+        operationId: "model-hub_datasets_versions_read",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          limit: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 500,
+              default: 100,
+            },
+          },
+          offset: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 0,
+              maximum: 2147483647,
+              default: 0,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/DatasetVersionDetailResponse",
           },
           400: {
             $ref: "#/definitions/ModelHubErrorResponse",
@@ -56567,6 +56669,32 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    DatasetVersionDetailResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/DatasetVersionDetailResult",
+        },
+      },
+    },
+    DatasetVersionListResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/DatasetVersionListResult",
+        },
+      },
+    },
     DeactivateUser: {
       required: ["user_id"],
       type: "object",
@@ -88311,6 +88439,62 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    DatasetVersionDetailResult: {
+      required: ["version", "items", "limit", "offset", "has_more"],
+      type: "object",
+      properties: {
+        version: {
+          $ref: "#/definitions/DatasetVersionRead",
+        },
+        items: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DatasetVersionItemRead",
+          },
+        },
+        limit: {
+          title: "Limit",
+          type: "integer",
+        },
+        offset: {
+          title: "Offset",
+          type: "integer",
+        },
+        has_more: {
+          title: "Has more",
+          type: "boolean",
+        },
+      },
+    },
+    DatasetVersionListResult: {
+      required: ["dataset_id", "versions", "limit", "offset", "has_more"],
+      type: "object",
+      properties: {
+        dataset_id: {
+          title: "Dataset id",
+          type: "string",
+          format: "uuid",
+        },
+        versions: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DatasetVersionRead",
+          },
+        },
+        limit: {
+          title: "Limit",
+          type: "integer",
+        },
+        offset: {
+          title: "Offset",
+          type: "integer",
+        },
+        has_more: {
+          title: "Has more",
+          type: "boolean",
+        },
+      },
+    },
     DeactivateUserResult: {
       required: ["message", "user_id", "user_email", "user_name"],
       type: "object",
@@ -106525,6 +106709,168 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Row id",
           type: "string",
           format: "uuid",
+        },
+      },
+    },
+    DatasetVersionItemRead: {
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        example_id: {
+          title: "Example id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        external_id: {
+          title: "External id",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        input: {
+          title: "Input",
+          type: "object",
+          readOnly: true,
+        },
+        expected: {
+          title: "Expected",
+          type: "object",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        metadata: {
+          title: "Metadata",
+          type: "object",
+          readOnly: true,
+        },
+        source_trace_id: {
+          title: "Source trace id",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        source_span_id: {
+          title: "Source span id",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        content_hash: {
+          title: "Content hash",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        legacy_row: {
+          title: "Legacy row",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+        updated_at: {
+          title: "Updated at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+      },
+    },
+    DatasetVersionRead: {
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        dataset: {
+          title: "Dataset",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        parent_version: {
+          title: "Parent version",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        created_by: {
+          title: "Created by",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        organization: {
+          title: "Organization",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        workspace: {
+          title: "Workspace",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        content_hash: {
+          title: "Content hash",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        description: {
+          title: "Description",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        metadata: {
+          title: "Metadata",
+          type: "object",
+          readOnly: true,
+        },
+        source_revision: {
+          title: "Source revision",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+        updated_at: {
+          title: "Updated at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+        item_count: {
+          title: "Item count",
+          type: "integer",
+          readOnly: true,
         },
       },
     },
