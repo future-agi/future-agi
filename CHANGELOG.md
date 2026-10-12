@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.49.0](https://github.com/future-agi/future-agi/compare/v1.48.0...v1.49.0) (2026-10-12)
+
+
+### Features
+
+* **simulate:** connect hosted LiveKit agents to RL environments ([b38288c](https://github.com/future-agi/future-agi/commit/b38288ce87c3a6b677d58f1375879e6bfafad6a9))
+* **simulate:** re-run selected scenarios as a new simulation [TH-8196] ([7275e8c](https://github.com/future-agi/future-agi/commit/7275e8cef0b5da28a078191bd078c41819e3a603))
+* **simulate:** tick a whole group of calls from its row ([04677be](https://github.com/future-agi/future-agi/commit/04677bec919edfd81ff06d11117c19410b51d502))
+
+
+### Bug Fixes
+
+* **gateway:** reject org configs the gateway cannot accept ([ea12cc3](https://github.com/future-agi/future-agi/commit/ea12cc3f4456fc568d9694a215c661b15be1cea2))
+* **prompt-editor:** atomic media selection, text-only clipboard and restorable undo (TH-150) ([8b0e046](https://github.com/future-agi/future-agi/commit/8b0e0460810dd7429dd56880cd3636b74bf4e487))
+* **simulate:** keep Run again for runs with no call to tick ([882b4ce](https://github.com/future-agi/future-agi/commit/882b4ce7fd378608c5b0e08eef4bab569dd985e1))
+
 ## [1.48.0](https://github.com/future-agi/future-agi/compare/v1.47.1...v1.48.0) (2026-10-09)
 
 
