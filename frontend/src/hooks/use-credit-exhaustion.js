@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { ENTERPRISE_GATE_CODE } from "src/components/feature-gate/enterprise-gate";
 import { paths } from "src/routes/paths";
 import { trackPostHogEvent } from "src/utils/PostHog/posthog";
 
@@ -12,13 +13,27 @@ const CREDIT_ERROR_CODES = [
 ];
 
 /**
+ * Check if an API error is a self-hosted Enterprise gate (402
+ * ENTERPRISE_FEATURE_REQUIRED or any 402 carrying `enterprise_gate`). It is
+ * not a usage limit and must never get the Cloud credits/pricing nudge.
+ */
+export function isEnterpriseGateError(error) {
+  if (!error) return false;
+  return (
+    error.code === ENTERPRISE_GATE_CODE ||
+    error.error?.code === ENTERPRISE_GATE_CODE ||
+    Boolean(error.enterprise_gate)
+  );
+}
+
+/**
  * Check if an API error is a credit/usage exhaustion error.
  */
 export function isCreditExhaustionError(error) {
   if (!error) return false;
+  if (isEnterpriseGateError(error)) return false;
   return (
-    error.statusCode === 402 ||
-    CREDIT_ERROR_CODES.includes(error.error_code)
+    error.statusCode === 402 || CREDIT_ERROR_CODES.includes(error.error_code)
   );
 }
 

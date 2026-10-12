@@ -87,6 +87,13 @@ COMPOSE_BACKEND_DEFAULTS = (
     "USAGE_EVENTS_ENABLED",
 )
 COMPOSE_DEFAULT = re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*:?-([^${}]*)\}")
+# The same for the Go services, by component. Future AGI Cloud's commercial
+# quotas are on in the binaries unless COMMERCIAL_QUOTAS_ENABLED says
+# otherwise, so every self-hosted setup has to turn them off.
+COMPOSE_GO_DEFAULTS = {
+    "fi-collector": ("COMMERCIAL_QUOTAS_ENABLED",),
+    "agentcc-gateway": ("COMMERCIAL_QUOTAS_ENABLED",),
+}
 
 # Argo CD's sync order, as gitops-engine computes it (pkg/sync: hook/hook.go,
 # hook/helm/type.go, syncwaves/waves.go, sync_phase.go, sync_tasks.go). Its own
@@ -835,17 +842,22 @@ def check_render(name: str, docs: list[dict]) -> list[str]:
 
 def check_compose_defaults(name: str, docs: list[dict], compose: Path) -> list[str]:
     """The long-running Python containers against the compose service of the
-    same name (x-backend-env for one it does not have)."""
+    same name (x-backend-env for one it does not have), and the Go services'
+    COMPOSE_GO_DEFAULTS against theirs."""
     config = yaml.safe_load(compose.read_text())
     failed = []
     for doc in (d for d in docs if d["kind"] == "Deployment"):
         service = config["services"].get(component(doc), {})
         compose_env = service.get("environment") or config["x-backend-env"]
-        for container in containers(doc):
+        go_keys = COMPOSE_GO_DEFAULTS.get(component(doc), ())
+        for container in pod_spec(doc)["containers"] if go_keys else containers(doc):
             values = env_values(container)
-            if "DJANGO_SETTINGS_MODULE" not in values:
+            if not go_keys and "DJANGO_SETTINGS_MODULE" not in values:
                 continue
-            for key in COMPOSE_BACKEND_DEFAULTS:
+            for key in go_keys or COMPOSE_BACKEND_DEFAULTS:
+                if key not in compose_env:
+                    failed.append(f"{compose.name}: {component(doc)} does not set {key}")
+                    continue
                 expected = str(compose_env[key])
                 while COMPOSE_DEFAULT.search(expected):
                     expected = COMPOSE_DEFAULT.sub(r"\1", expected)

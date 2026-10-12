@@ -75,6 +75,9 @@ WARNING  Bundled datastores run as single replicas with no backups, for evaluati
    or set bootstrap.admin.existingSecret and the bootstrap job does it)
 {{- end }}
 
+   More accounts: run create_user again. On Community each joins the first
+   account's organization as a member (up to 3 members).
+
 4. Send traces (OpenTelemetry, with an API key created in the UI)
 {{ if $otlpUrl }}
    Future AGI SDKs: FI_BASE_URL={{ $otlpUrl }}

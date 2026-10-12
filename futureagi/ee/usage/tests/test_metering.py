@@ -17,16 +17,21 @@ from ee.usage.services.config import BillingConfig
 # billing.yaml ships only with the private cloud overlay; these tests
 # resolve real call types/plans from it. Missing-file behavior is covered
 # by test_billing_config_missing.py.
-pytestmark = pytest.mark.skipif(
-    not os.path.exists(
-        getattr(
-            _settings,
-            "BILLING_CONFIG_PATH",
-            os.path.join(_settings.BASE_DIR, "billing.yaml"),
-        )
+# check_usage enforces only on Future AGI Cloud (TH-8084); these cases pin the
+# Cloud behaviour, so they run in Cloud mode.
+pytestmark = [
+    pytest.mark.skipif(
+        not os.path.exists(
+            getattr(
+                _settings,
+                "BILLING_CONFIG_PATH",
+                os.path.join(_settings.BASE_DIR, "billing.yaml"),
+            )
+        ),
+        reason="billing.yaml ships only with the private cloud overlay",
     ),
-    reason="billing.yaml ships only with the private cloud overlay",
-)
+    pytest.mark.usefixtures("edition_cloud"),
+]
 
 # ---------------------------------------------------------------------------
 # Unit tests (no Redis needed — mocked)

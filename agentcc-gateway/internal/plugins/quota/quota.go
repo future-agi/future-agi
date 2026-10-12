@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
@@ -31,6 +32,23 @@ type Plugin struct {
 
 func New(rdb RedisClient, enabled bool) *Plugin {
 	return &Plugin{rdb: rdb, enabled: enabled}
+}
+
+// CommercialQuotasEnabled reads COMMERCIAL_QUOTAS_ENABLED, the switch for
+// Future AGI Cloud's gateway request quota. Unset means on, so Cloud needs no
+// new setting; self-hosted manifests set it to false so quota:, usage: and
+// pause: keys carried over from Cloud never cap them. Customer budgets are a
+// separate plugin and stay on. Anything but an on/off value is an error, so a
+// typo never silently picks a side.
+func CommercialQuotasEnabled(getenv func(string) string) (bool, error) {
+	v := getenv("COMMERCIAL_QUOTAS_ENABLED")
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "", "true", "1", "yes", "on":
+		return true, nil
+	case "false", "0", "no", "off":
+		return false, nil
+	}
+	return false, fmt.Errorf("COMMERCIAL_QUOTAS_ENABLED: %q is not true or false", v)
 }
 
 func (p *Plugin) Name() string  { return "quota" }

@@ -101,6 +101,10 @@ class DenialReason(str, Enum):
     # Cloud-specific
     PLAN_FEATURE_MISSING = "PLAN_FEATURE_MISSING"
 
+    # Self-hosted Community edition rule (more organizations, workspaces or
+    # members need an Enterprise licence). Never a quota.
+    ENTERPRISE_FEATURE_REQUIRED = "ENTERPRISE_FEATURE_REQUIRED"
+
     # Runtime compatibility
     LICENSE_VERSION_UNSUPPORTED = "LICENSE_VERSION_UNSUPPORTED"
 

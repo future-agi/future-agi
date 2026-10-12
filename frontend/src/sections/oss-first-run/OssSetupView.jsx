@@ -18,7 +18,7 @@ export default function OssSetupView() {
   const navigate = useNavigate();
   const { authenticated } = useAuthContext();
   const postLoginPath = usePostLoginPath();
-  const { isOSS, isLoading, isSuccess } = useDeploymentMode();
+  const { isSelfHosted, isLoading, isSuccess } = useDeploymentMode();
   const [step, setStep] = useState(0);
   const [mode, setMode] = useState(DEFAULT_LAUNCH_MODE);
   const [validationProgress, setValidationProgress] = useState(0);
@@ -35,9 +35,11 @@ export default function OssSetupView() {
     navigate(accountExists ? paths.auth.jwt.login : paths.auth.jwt.register);
   };
 
-  // Self-hosted only — a typed URL must not drop a cloud user into a wizard.
+  // Self-hosted only, licensed or not (TH-8084) — a typed URL must not drop a
+  // cloud user into a wizard.
   if (isLoading) return <SplashScreen />;
-  if (isSuccess && !isOSS) return <Navigate to={postLoginPath} replace />;
+  if (isSuccess && !isSelfHosted)
+    return <Navigate to={postLoginPath} replace />;
 
   return (
     <OssSetupShell

@@ -1,4 +1,5 @@
 import { enqueueSnackbar } from "notistack";
+import { isEditionGate } from "src/components/feature-gate/enterprise-gate";
 import { RESPONSE_CODES } from "./constants";
 import { getSafeActionErrorMessage } from "./errorUtils";
 
@@ -26,6 +27,8 @@ const extractErrorMessage = (result) =>
 // write unless its caller reports the failure itself (meta.errorHandled).
 export const handleError = (error, variable, context, mutation) => {
   if (error?.statusCode == RESPONSE_CODES.LIMIT_REACHED) return;
+  // EnterpriseGateHost already shows refused creations as a dialog.
+  if (isEditionGate(error?.enterprise_gate)) return;
   if (
     mutation?.options?.meta?.errorHandled ||
     variable?.options?.meta?.errorHandled

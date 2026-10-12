@@ -53,6 +53,8 @@ def ensure_org_membership(user, organization, *, invited_by=None):
     if user is None or organization is None:
         return None
 
+    from tfc.capabilities import edition
+    from tfc.capabilities.edition import EditionResource
     from tfc.constants.levels import Level
     from tfc.constants.roles import OrganizationRoles
 
@@ -61,16 +63,32 @@ def ensure_org_membership(user, organization, *, invited_by=None):
     # get_or_create also closes the race where two concurrent invite flows both
     # find no row: the loser's INSERT hits the unique constraint, Django catches
     # the IntegrityError and re-fetches the winner's row instead of raising.
-    membership, _created = OrganizationMembership.no_workspace_objects.get_or_create(
-        user=user,
-        organization=organization,
-        defaults={
-            "role": OrganizationRoles.MEMBER_VIEW_ONLY,
-            "level": Level.VIEWER,
-            "invited_by": invited_by,
-            "is_active": True,
-        },
-    )
+    with edition.creation_lock():
+        # Community edition backstop: views check seats first, so this only
+        # refuses a new membership reached through an unlisted path.
+        if (
+            edition.edition_rule_applies()
+            and not OrganizationMembership.no_workspace_objects.filter(
+                user=user, organization=organization
+            ).exists()
+        ):
+            edition.assert_can_create(
+                EditionResource.MEMBER,
+                organization=organization,
+                new_member_emails=[user.email],
+            )
+        membership, _created = (
+            OrganizationMembership.no_workspace_objects.get_or_create(
+                user=user,
+                organization=organization,
+                defaults={
+                    "role": OrganizationRoles.MEMBER_VIEW_ONLY,
+                    "level": Level.VIEWER,
+                    "invited_by": invited_by,
+                    "is_active": True,
+                },
+            )
+        )
     # Active → use it; inactive → the user was deliberately removed from the org,
     # so respect the removal (fail-closed) and leave the workspace FK NULL.
     return membership if membership.is_active else None

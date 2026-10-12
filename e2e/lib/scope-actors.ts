@@ -106,7 +106,7 @@ export class ScopeActors {
     expect(invited.status).toBe(200);
     expect(invited.body.result.invited).toEqual([email]);
     const links = invited.body.result.invites?.filter(item => item.email === email);
-    if (links?.length !== 1) throw new Error('H1 blocked: public OSS invite link missing; no SQL/mail shortcut');
+    if (links?.length !== 1) throw new Error('H1 blocked: public self-hosted invite link missing; no SQL/mail shortcut');
     // accounts/utils.py:394 supplies this public link; never derive tokens.
     // Only its route parameters are used against E2E.apiUrl, never its origin.
     // The current local stack has APP_URL=None, yielding the literal prefix

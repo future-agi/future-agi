@@ -17,6 +17,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { LoadingButton } from "@mui/lab";
 import { enqueueSnackbar } from "src/components/snackbar";
+import { isEnterpriseGateError } from "src/hooks/use-credit-exhaustion";
 import { useOrganization } from "src/contexts/OrganizationContext";
 import { z } from "zod";
 
@@ -57,6 +58,11 @@ const CreateOrganizationForm = () => {
       }
     },
     onError: (error) => {
+      // A 2nd organization on Community: the Enterprise gate dialog explains.
+      if (isEnterpriseGateError(error)) {
+        setOpen(false);
+        return;
+      }
       enqueueSnackbar(
         error?.response?.data?.result ||
           error?.message ||

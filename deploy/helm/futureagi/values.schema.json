@@ -229,6 +229,10 @@
           "type": "boolean",
           "description": "[USAGE_EVENTS_ENABLED] billing usage events on the Redis stream usage:events, from the backend, workers and fi-collector. Only for installs that run the usage consumer (Future AGI Cloud): anywhere else nothing drains the stream and it fills Redis."
         },
+        "commercialQuotas": {
+          "type": "boolean",
+          "description": "[COMMERCIAL_QUOTAS_ENABLED] Future AGI Cloud's plan quotas in fi-collector and agentcc-gateway (free-tier caps, budget pauses). Off on every self-hosted install: Redis keys carried over from Cloud can then never cap it. Customer gateway budgets, auth and key revocation are unaffected."
+        },
         "cdcMode": {
           "type": "string",
           "enum": [

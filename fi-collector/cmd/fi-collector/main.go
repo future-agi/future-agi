@@ -39,6 +39,7 @@ import (
 	"github.com/future-agi/future-agi/fi-collector/pkg/pricing"
 	"github.com/future-agi/future-agi/fi-collector/pkg/server"
 	"github.com/future-agi/future-agi/fi-collector/pkg/traceavailable"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"gopkg.in/yaml.v3"
 )
@@ -97,15 +98,14 @@ func main() {
 	defer authenticator.Close()
 
 	var usageEmitter server.UsageEmitter = server.NoopUsageEmitter{}
-	var metering server.Metering = server.NoopMetering{}
 	if rdb != nil {
 		if cfg.Auth.UsageEventsOn() {
 			usageEmitter = auth.NewUsageEmitter(rdb, authenticator.PGRead(), log, cfg.Auth.UsageEventsMaxLen)
 		} else {
 			log.Info("usage events off (USAGE_EVENTS_ENABLED=false): nothing writes the usage:events stream")
 		}
-		metering = auth.NewMetering(rdb, authenticator.PGRead(), log)
 	}
+	metering := newMetering(cfg.Auth, rdb, authenticator.PGRead(), log)
 
 	priceTable := loadPriceTable(log, os.Getenv("FI_PRICING_JSON"))
 	var pricer *pricing.Pricer
@@ -347,6 +347,13 @@ func applyEnvOverrides(log *slog.Logger, c *rootConfig) error {
 		}
 		c.Auth.UsageEvents = &on
 	}
+	if v := os.Getenv("COMMERCIAL_QUOTAS_ENABLED"); v != "" {
+		on, err := parseSwitch(v)
+		if err != nil {
+			return fmt.Errorf("COMMERCIAL_QUOTAS_ENABLED: %w", err)
+		}
+		c.Auth.CommercialQuotas = &on
+	}
 	if v := strings.TrimSpace(os.Getenv("USAGE_EVENTS_MAX_LEN")); v != "" {
 		n, err := strconv.ParseInt(v, 10, 64)
 		if err != nil || n <= 0 {
@@ -369,6 +376,32 @@ func applyEnvOverrides(log *slog.Logger, c *rootConfig) error {
 }
 
 // runAdmin serves /healthz for container health checks.
+// newMetering returns Future AGI Cloud's commercial quota checks (free-tier
+// hard caps and budget pauses), or a no-op without Redis or when
+// COMMERCIAL_QUOTAS_ENABLED=false (self-hosted).
+func newMetering(cfg auth.Config, rdb *redis.Client, pgRead *pgxpool.Pool, log *slog.Logger) server.Metering {
+	if rdb == nil {
+		return server.NoopMetering{}
+	}
+	if !cfg.CommercialQuotasOn() {
+		log.Info("commercial quotas off (COMMERCIAL_QUOTAS_ENABLED=false): no free-tier caps or budget pauses")
+		return server.NoopMetering{}
+	}
+	return auth.NewMetering(rdb, pgRead, log)
+}
+
+// parseSwitch reads an on/off setting. Anything else is an error, so a typo
+// never silently picks a side.
+func parseSwitch(v string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "true", "1", "yes", "on":
+		return true, nil
+	case "false", "0", "no", "off":
+		return false, nil
+	}
+	return false, fmt.Errorf("%q is not true or false", v)
+}
+
 func runAdmin(addr string, w *chwriter.Writer, log *slog.Logger) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(rw http.ResponseWriter, r *http.Request) {

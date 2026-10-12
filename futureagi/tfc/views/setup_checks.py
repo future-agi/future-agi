@@ -92,7 +92,7 @@ from agentic_eval.core.embeddings.serving_client import (
     serving_base_url,
 )
 from model_hub.utils import is_forbidden_vendor_endpoint
-from tfc.ee_gating import is_oss
+from tfc.capabilities import edition
 from tfc.settings import settings
 from tfc.temporal import TEMPORAL_HOST
 from tfc.utils.api_contracts import validated_request
@@ -895,10 +895,10 @@ class SetupChecksView(APIView):
     Returns ``{"status": "ok"|"issues", "mode": ..., "setup":
     "standalone"|"distributed"|"helm", "collector_http_url": ...,
     "account_exists": true|false, "checks": [...]}``. No auth — it runs
-    before anyone can sign in. Self-hosted only:
-    on cloud and EE the route answers 404, so neither the internal service
-    topology nor the outbound probes it triggers are reachable by an
-    anonymous caller.
+    before anyone can sign in. Self-hosted only, licensed or not (TH-8084):
+    on Cloud the route answers 404, so neither the internal service topology
+    nor the outbound probes it triggers are reachable by an anonymous caller
+    there. A self-hosted operator already controls who can reach the install.
     """
 
     authentication_classes = []
@@ -914,7 +914,7 @@ class SetupChecksView(APIView):
     def get(self, request, *args, **kwargs):
         gm = GeneralMethods(request)
 
-        if not is_oss():
+        if edition.is_cloud():
             return gm.custom_error_response(status.HTTP_404_NOT_FOUND, "Not found.")
 
         mode = request.query_params.get("mode", LIVE)

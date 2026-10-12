@@ -1381,7 +1381,13 @@ else:
 MAX_LOGIN_ATTEMPTS = 10  # Maximum failed login attempts before account lockout
 ACCOUNT_LOCKOUT_DURATION = 1800  # 30 minutes in seconds
 FAILED_ATTEMPTS_TIMEOUT = 3600  # 1 hour in seconds
-MAX_LOGIN_ATTEMPTS_PER_HOUR = 10  # Rate limiting per IP
+# Login, token and signup requests allowed per client IP per hour before that
+# IP is blocked for IP_BLOCK_DURATION (accounts.authentication
+# AuthMonitoringMiddleware, off on unlicensed self-hosted installs). The E2E
+# stacks raise it: every actor reaches their licensed API from one address.
+MAX_LOGIN_ATTEMPTS_PER_HOUR = _bounded_env_int(
+    "MAX_LOGIN_ATTEMPTS_PER_HOUR", 10, minimum=1, maximum=1_000_000
+)
 IP_BLOCK_DURATION = 3600  # 1 hour in seconds
 
 DATA_UPLOAD_MAX_MEMORY_SIZE = 1024 * 1024 * 1024  # 1GB in bytes

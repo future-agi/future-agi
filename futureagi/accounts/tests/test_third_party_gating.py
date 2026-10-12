@@ -740,7 +740,7 @@ class TestAuthPathWithoutThirdPartyKeys:
     ):
         with (
             patch.dict("os.environ", {"ALLOW_ANY_EMAIL": "true"}),
-            patch("accounts.views.signup.is_oss", return_value=True),
+            patch("accounts.views.signup.is_self_hosted", return_value=True),
         ):
             response = api_client.post(
                 "/accounts/signup/",

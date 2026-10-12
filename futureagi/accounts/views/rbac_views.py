@@ -15,7 +15,10 @@ from accounts.models.organization_invite import InviteStatus, OrganizationInvite
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import User
 from accounts.models.workspace import Workspace, WorkspaceMembership
-from accounts.serializers.contracts import ACCOUNTS_ERROR_RESPONSES
+from accounts.serializers.contracts import (
+    ACCOUNTS_ERROR_RESPONSES,
+    ACCOUNTS_GATED_CREATE_ERROR_RESPONSES,
+)
 from accounts.serializers.rbac import (
     InviteCancelSerializer,
     InviteCreateResponseSerializer,
@@ -43,6 +46,8 @@ from accounts.utils import (
     resolve_org,
     send_invite_email,
 )
+from tfc.capabilities import edition
+from tfc.capabilities.edition import EditionResource
 from tfc.constants.levels import Level
 from tfc.permissions.rbac import (
     CanManageTargetUser,
@@ -98,7 +103,10 @@ class InviteCreateAPIView(APIView):
 
     @validated_request(
         request_serializer=InviteCreateSerializer,
-        responses={200: InviteCreateResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={
+            200: InviteCreateResponseSerializer,
+            **ACCOUNTS_GATED_CREATE_ERROR_RESPONSES,
+        },
         reject_unknown_fields=True,
     )
     def post(self, request):
@@ -154,86 +162,96 @@ class InviteCreateAPIView(APIView):
             if email == user.email.lower():
                 return gm.bad_request(get_error_message("CANNOT_INVITE_SELF"))
 
-        created_invites = []
-        already_members = []
+        # Community edition: up to 3 organization members (no-op on Cloud and
+        # when licensed). Emails that already hold a seat (member or pending
+        # invite) need none, and the request is all-or-nothing.
+        with edition.creation_lock():
+            edition.assert_can_create(
+                EditionResource.MEMBER,
+                organization=organization,
+                new_member_emails=emails,
+            )
 
-        for email in emails:
-            try:
-                # For already-active org members, add them to the requested
-                # workspaces without creating a new invite.
-                existing_user = User.objects.filter(email=email).first()
-                if existing_user and existing_user.is_active:
-                    if OrganizationMembership.all_objects.filter(
-                        user=existing_user,
-                        organization=organization,
-                        is_active=True,
-                        deleted=False,
-                    ).exists():
-                        access_will_change = existing_member_access_will_change(
-                            existing_user,
-                            organization,
-                            target_org_level,
-                            workspace_access,
-                        )
-                        with transaction.atomic():
-                            self._dual_write_legacy(
-                                email,
+            created_invites = []
+            already_members = []
+
+            for email in emails:
+                try:
+                    # For already-active org members, add them to the requested
+                    # workspaces without creating a new invite.
+                    existing_user = User.objects.filter(email=email).first()
+                    if existing_user and existing_user.is_active:
+                        if OrganizationMembership.all_objects.filter(
+                            user=existing_user,
+                            organization=organization,
+                            is_active=True,
+                            deleted=False,
+                        ).exists():
+                            access_will_change = existing_member_access_will_change(
+                                existing_user,
                                 organization,
-                                user,
                                 target_org_level,
                                 workspace_access,
                             )
-                        if access_will_change:
-                            send_invite_email(email, organization, user)
-                        already_members.append(email)
-                        continue
+                            with transaction.atomic():
+                                self._dual_write_legacy(
+                                    email,
+                                    organization,
+                                    user,
+                                    target_org_level,
+                                    workspace_access,
+                                )
+                            if access_will_change:
+                                send_invite_email(email, organization, user)
+                            already_members.append(email)
+                            continue
 
-                with transaction.atomic():
-                    invite, created = OrganizationInvite.objects.update_or_create(
-                        organization=organization,
-                        target_email=email,
-                        status=InviteStatus.PENDING,
-                        defaults={
-                            "level": target_org_level,
-                            "workspace_access": workspace_access,
-                            "invited_by": user,
-                        },
-                    )
-                    invite_id = invite.id
+                    with transaction.atomic():
+                        invite, created = OrganizationInvite.objects.update_or_create(
+                            organization=organization,
+                            target_email=email,
+                            status=InviteStatus.PENDING,
+                            defaults={
+                                "level": target_org_level,
+                                "workspace_access": workspace_access,
+                                "invited_by": user,
+                            },
+                        )
+                        invite_id = invite.id
 
-                    self._dual_write_legacy(
-                        email,
-                        organization,
-                        user,
-                        target_org_level,
-                        workspace_access,
-                    )
+                        self._dual_write_legacy(
+                            email,
+                            organization,
+                            user,
+                            target_org_level,
+                            workspace_access,
+                        )
 
-                    existing = User.objects.filter(email=email).first()
-                    if existing and existing.is_active:
-                        invite.status = InviteStatus.ACCEPTED
-                        invite.save(update_fields=["status"])
+                        existing = User.objects.filter(email=email).first()
+                        if existing and existing.is_active:
+                            invite.status = InviteStatus.ACCEPTED
+                            invite.save(update_fields=["status"])
 
-                    send_invite_email(email, organization, user)
+                        send_invite_email(email, organization, user)
 
-                    log_audit(
-                        organization=organization,
-                        action="member.invited",
-                        scope="organization",
-                        target_id=invite_id,
-                        changes={
-                            "email": email,
-                            "level": target_org_level,
-                            "workspace_access": workspace_access,
-                        },
-                    )
+                        log_audit(
+                            organization=organization,
+                            action="member.invited",
+                            scope="organization",
+                            target_id=invite_id,
+                            changes={
+                                "email": email,
+                                "level": target_org_level,
+                                "workspace_access": workspace_access,
+                            },
+                        )
 
-                    created_invites.append(email)
+                        created_invites.append(email)
 
-            except IntegrityError:
-                logger.error("invite_integrity_error", email=email)
-            except Exception:
-                logger.exception("invite_unexpected_error", email=email)
+                except IntegrityError:
+                    logger.error("invite_integrity_error", email=email)
+                except Exception:
+                    logger.exception("invite_unexpected_error", email=email)
 
         result = {"invited": created_invites}
         if already_members:
@@ -381,7 +399,10 @@ class InviteResendAPIView(APIView):
 
     @validated_request(
         request_serializer=InviteResendSerializer,
-        responses={200: RBACMessageResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={
+            200: RBACMessageResponseSerializer,
+            **ACCOUNTS_GATED_CREATE_ERROR_RESPONSES,
+        },
         reject_unknown_fields=True,
     )
     def post(self, request):
@@ -419,7 +440,17 @@ class InviteResendAPIView(APIView):
             invite.level = new_org_level
             invite.save(update_fields=["level"])
 
-        invite.refresh_expiration()
+        # Community edition: an unexpired invite already holds its seat; a
+        # resend that revives an expired one needs a new seat.
+        with transaction.atomic():
+            if invite.is_expired:
+                with edition.creation_lock():
+                    edition.assert_can_create(
+                        EditionResource.MEMBER,
+                        organization=organization,
+                        new_member_emails=[invite.target_email],
+                    )
+            invite.refresh_expiration()
 
         send_invite_email(invite.target_email, organization, request.user)
 
@@ -534,9 +565,7 @@ class MemberListAPIView(APIView):
         # workspace_id is NOT used here (it's only for workspace-scoped endpoints).
 
         viewer_membership = get_org_membership(request.user)
-        viewer_org_level = (
-            viewer_membership.level_or_legacy if viewer_membership else 0
-        )
+        viewer_org_level = viewer_membership.level_or_legacy if viewer_membership else 0
 
         # Build pending/expired invites
         invites = self._get_invites(organization, viewer_org_level)
@@ -1022,7 +1051,7 @@ class MemberReactivateAPIView(APIView):
         request_serializer=MemberRemoveSerializer,
         responses={
             200: MemberUserMutationResponseSerializer,
-            **ACCOUNTS_ERROR_RESPONSES,
+            **ACCOUNTS_GATED_CREATE_ERROR_RESPONSES,
         },
         reject_unknown_fields=True,
     )
@@ -1059,6 +1088,14 @@ class MemberReactivateAPIView(APIView):
 
         # D1: Wrap DB operations in transaction.atomic()
         with transaction.atomic():
+            # Community edition: reactivating a member takes a seat.
+            with edition.creation_lock():
+                edition.assert_can_create(
+                    EditionResource.MEMBER,
+                    organization=organization,
+                    new_member_emails=[target_membership.user.email],
+                )
+
             # Re-activate org membership
             target_membership.is_active = True
             target_membership.save(update_fields=["is_active"])

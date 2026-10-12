@@ -63,10 +63,10 @@ const UserManagementV2 = ({ workspaceScope = false }) => {
 
   const { allowed: canSendInvite } = useCanSendInvite(orgLevel, effectiveLevel);
 
-  const { isOSS, isSuccess: modeConfirmed } = useDeploymentMode();
-  // Gated on canManageUsers: the link embeds the accept token, so it is a
-  // shareable credential.
-  const useInviteLinks = modeConfirmed && isOSS && canManageUsers;
+  // Self-hosted, licensed or not (TH-8084). Gated on canManageUsers: the link
+  // embeds the accept token, so it is a shareable credential.
+  const { isSelfHosted, isSuccess: modeConfirmed } = useDeploymentMode();
+  const useInviteLinks = modeConfirmed && isSelfHosted && canManageUsers;
 
   const columnDefs = useMemo(
     () => [

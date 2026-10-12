@@ -15,6 +15,8 @@ from accounts.models.organization import Organization
 from accounts.models.user import User
 from accounts.services.aws_marketplace import AWSMarketplaceService
 from accounts.utils import generate_password, process_post_registration
+from tfc.capabilities import edition
+from tfc.capabilities.edition import EditionResource
 from tfc.constants.roles import OrganizationRoles
 
 logger = structlog.get_logger(__name__)
@@ -71,11 +73,15 @@ def get_or_create_aws_customer(
 def create_organization_for_aws_customer(aws_customer, customer_aws_account_id):
     organization_name = f"AWS Account {customer_aws_account_id}"
 
-    organization = Organization.objects.create(
-        name=organization_name,
-        display_name=organization_name,
-        region=settings.REGION,
-    )
+    # Marketplace is a Cloud flow, but its URLs also mount on self-hosted
+    # installs with any EE_LICENSE_KEY: keep the Community rule there.
+    with edition.creation_lock():
+        edition.assert_can_create(EditionResource.ORGANIZATION)
+        organization = Organization.objects.create(
+            name=organization_name,
+            display_name=organization_name,
+            region=settings.REGION,
+        )
 
     aws_customer.organization = organization
     aws_customer.save()

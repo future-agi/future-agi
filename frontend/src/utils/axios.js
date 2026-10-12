@@ -14,6 +14,10 @@ import {
 import { HOST_API } from "src/config-global";
 import { apiPath } from "src/api/contracts/api-surface";
 import {
+  dispatchEnterpriseGate,
+  isEditionGate,
+} from "src/components/feature-gate/enterprise-gate";
+import {
   assertContractedRequestConfig,
   assertContractedResponse,
   findOpenApiEndpoint,
@@ -124,7 +128,14 @@ axiosInstance.interceptors.response.use(
     // Handle 402 Payment Required — EE feature unavailable on OSS. Surface
     // the backend-provided message via the shared snackbar so every EE
     // endpoint gets consistent UX without each caller having to handle it.
+    // A refused organization, workspace or member creation on Community is an
+    // Enterprise gate, not an error: EnterpriseGateHost shows it as a dialog.
     if (
+      status === RESPONSE_CODES.PAYMENT_REQUIRED &&
+      isEditionGate(error?.response?.data?.enterprise_gate)
+    ) {
+      dispatchEnterpriseGate(error.response.data.enterprise_gate);
+    } else if (
       status === RESPONSE_CODES.PAYMENT_REQUIRED &&
       error?.response?.data?.upgrade_required
     ) {

@@ -5,9 +5,8 @@ import Typography from "@mui/material/Typography";
 import CircularProgress from "@mui/material/CircularProgress";
 import Iconify from "src/components/iconify";
 import OSSUpgradeGate from "src/components/oss-upgrade-gate";
+import { CONTACT_URL } from "src/components/oss-upgrade-gate/constants";
 import { CAPABILITY, useCapabilities } from "src/hooks/useCapabilities";
-
-const CONTACT_URL = "https://futureagi.com/talk-to-human";
 
 const CAPABILITY_PREVIEW = Object.freeze({
   [CAPABILITY.ERROR_FEED]: "errorFeed",

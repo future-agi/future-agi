@@ -74,3 +74,19 @@ def _bypass_plan_entitlement_check_for_accounts_tests():
         side_effect=check_feature,
     ):
         yield
+
+
+@pytest.fixture
+def empty_instance(transactional_db):
+    """An install with no rows, for edition counts that span the instance.
+
+    The Community rule counts organizations and workspaces across the whole
+    install, and a ``manage.py`` subprocess sees every committed row.
+    pytest-django flushes the database only after a transactional test, so
+    rows a non-transactional test committed through another connection (a
+    thread, a subprocess) earlier in the run are still there when the first
+    transactional test starts. Flush first, as that teardown does.
+    """
+    from django.core.management import call_command
+
+    call_command("flush", interactive=False, verbosity=0)

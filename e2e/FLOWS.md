@@ -1270,3 +1270,39 @@
 - PG mcp_server_mcptoolgroupconfig.enabled_groups equals that exact set for the actor connection
 - GET /mcp/internal/tools/ equals the initial tool set minus all dataset tools
 - POST /mcp/internal/tool-call/ list_datasets returns 403 while whoami and list_projects still succeed
+
+### SET-E2E-002 — a Community admin meets the Enterprise gate and activates a licence without losing data
+
+**Goal:** An admin of a fresh self-hosted Community install sees its edition, uses its one organization, one workspace and three member seats, gets an actionable Enterprise gate at the next creation, and activates a test-signed licence without losing identities or data  
+**Spec:** `flows/settings/community-edition.spec.ts:132`  
+**Tags:** —
+
+**User steps:**
+
+1. run the first-run checks at /setup and sign up the install's first owner, then name the organization
+2. land on Get started
+3. open Settings > Plan & License: Community · Self-hosted with 1 / 1, 1 / 1 and 1 / 3, Contact sales and Activate license
+4. invite two admins from Settings > Users
+5. invite a fourth member: the Enterprise gate dialog opens; Activate license leads to Plan & License
+6. create a second workspace from Settings > Workspaces: the Enterprise gate dialog opens
+7. create a second organization from the workspace switcher: the Enterprise gate dialog opens
+8. the operator sets a test-signed EE_LICENSE_KEY and restarts the app (bin/e2e licence enterprise)
+9. Plan & License shows Enterprise · Self-hosted; the fourth invite, the second workspace and the second organization now succeed
+10. the licence expires (restart with an expired licence): Plan & License shows Community, expired and over the limit
+11. a new workspace is refused again from Settings > Workspaces
+12. the licence is removed (restart without a key): still Community, still refused, nothing lost
+
+**Backend state verified:**
+
+- the first sign-up creates the install's only organization (PG accounts_organization) and the owner lands on Get started, not Falcon AI
+- GET /api/edition/ (the page's own request) reports community with limits 1/1, 1/1, 3/1 and licence state missing
+- on Community 201 MCP tool calls inside one minute all succeed: the Free-tier 200/min cap does not apply
+- the two invites are exactly two Pending admin rows in PG accounts_organization_invite
+- the fourth invite is HTTP 402 ENTERPRISE_FEATURE_REQUIRED with enterprise_gate members 3/3, and writes no invite or user row
+- the second workspace is HTTP 402 with enterprise_gate workspaces 1/1 and PG keeps exactly one active workspace
+- the second organization is HTTP 402 with enterprise_gate organizations 1/1 and PG keeps exactly one organization
+- after activation GET /api/edition/ reports enterprise with the test licence active and the owner, organization, workspace, API key and invite ids are unchanged
+- with the licence the fourth invite, the second workspace and the second organization are written to PG
+- after expiry GET /api/edition/ reports community, licence expired, over_limit, with 2 organizations, 3 workspaces and 4 member seats kept
+- after expiry PG keeps every organization, workspace, membership level and invite, and a new member, workspace and organization are each HTTP 402
+- after removal GET /api/edition/ reports community with licence missing and a new workspace is still HTTP 402

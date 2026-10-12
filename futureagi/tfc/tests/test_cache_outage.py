@@ -59,7 +59,8 @@ def test_setup_checks_report_the_cache_as_down_instead_of_failing(
     probes = {check["id"]: True for check in CHECKS}
     probes["cache"] = False
     with (
-        patch("tfc.views.setup_checks.is_oss", return_value=True),
+        # Self-hosted: the endpoint answers everywhere except Cloud (TH-8084).
+        patch("tfc.capabilities.edition.is_cloud", return_value=False),
         patch("tfc.views.setup_checks._run_probes", return_value=probes),
     ):
         response = api_client.get("/api/setup-checks/")

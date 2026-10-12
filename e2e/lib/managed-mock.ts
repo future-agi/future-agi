@@ -7,6 +7,7 @@ import { E2E } from './env';
 import type { TestActor } from './provisioning';
 import type { StateProbe } from './state-probe';
 import { standaloneMockStack } from './managed-mock-standalone';
+import { CLOSED_LICENCE_SERVICE, licensedMockValues, readLaneLicence, type LaneLicence } from './test-licence-guard';
 
 // docker-compose.distributed.yml backend-env; gateway.e2e.yaml providers.openai.
 export const MOCK_MODEL = 'gpt-4o';
@@ -54,8 +55,9 @@ export function validateMockRouting(source: string, evalBackground = false): voi
 /** Refused in every E2E container: a proxy or preload can reroute or rewrite any call. */
 const PROXY_OR_PRELOAD = /^(https?_proxy|all_proxy|node_options|ld_preload|pythonpath|pythonstartup)$/i;
 /** Licence, notification and credential settings, refused wherever the inspection
- * is strict: the Distributed background opt-in, and always in Standalone. */
-const CREDENTIAL_OVERRIDE = /^(EE_LICENSE_KEY|SENTRY_DSN|SLACK_.*|DEPLOYMENT_TELEMETRY_SLACK_WEBHOOK|ERROR_LOGS_WEBHOOK|MIX_PANEL_TOKEN|MAILGUN_.*|SMTP_.*|SENDGRID_.*|RESEND_.*|AWS_SESSION_TOKEN|GOOGLE_APPLICATION_CREDENTIALS|DAYTONA_API_KEY|E2B_API_KEY)$/;
+ * is strict: the Distributed background opt-in, and always in Standalone. The one
+ * exception is the lane's own test-signed licence (lib/test-licence-guard.ts). */
+const CREDENTIAL_OVERRIDE = /^(EE_LICENSE_KEY|FUTUREAGI_CLOUD_GATEWAY_URL|SENTRY_DSN|SLACK_.*|DEPLOYMENT_TELEMETRY_SLACK_WEBHOOK|ERROR_LOGS_WEBHOOK|MIX_PANEL_TOKEN|MAILGUN_.*|SMTP_.*|SENDGRID_.*|RESEND_.*|AWS_SESSION_TOKEN|GOOGLE_APPLICATION_CREDENTIALS|DAYTONA_API_KEY|E2B_API_KEY)$/;
 
 /** Where the gateway, the API it syncs from and Temporal listen: their own
  * services in Distributed, loopback inside Standalone's one `app` container. */
@@ -78,10 +80,12 @@ function gatewayValues({ gateway, controlPlane }: MockTopology) {
 
 /** The checks every variable of one container passes, in both stacks. `strict`
  * adds the licence, notification and credential refusals and the local-mail and
- * Sentry-off pins. Empty values mean unset: disabled per settings.py.
+ * Sentry-off pins. Empty values mean unset: disabled per settings.py. `licence`
+ * is the lane's verified test licence (readLaneLicence), the only one admitted,
+ * and only with the licence service closed and the heartbeat off.
  */
 export function validateEnvironmentEntries(service: string, env: Record<string, string>, topology: MockTopology,
-  strict: boolean, mounts: Container['Mounts'] = []): void {
+  strict: boolean, mounts: Container['Mounts'] = [], licence?: LaneLicence): void {
   const { allowed, wiring } = gatewayValues(topology);
   for (const [key, value] of Object.entries(env)) {
     if (!value) continue;
@@ -95,6 +99,11 @@ export function validateEnvironmentEntries(service: string, env: Record<string, 
       requireSafe(value === MOCK_KEY || value === 'e2e-mock', `${service} has a non-mock provider key (${key})`);
     }
     if (!strict) continue;
+    if (key === 'EE_LICENSE_KEY' && licence && value === licence.key) continue; // Pinned below.
+    if (key === 'FUTURE_AGI_LICENSE_URL') {
+      requireSafe(value === CLOSED_LICENCE_SERVICE, `${service} licence service is not the closed loopback port`);
+      continue;
+    }
     if (service === 'agentcc-gateway' && key === 'GOOGLE_APPLICATION_CREDENTIALS' &&
         value === '/app/Vertex_AI_Creds.json') {
       validateBackgroundMockMounts(service, mounts);
@@ -104,27 +113,36 @@ export function validateEnvironmentEntries(service: string, env: Record<string, 
     if (key === 'EMAIL_BACKEND') requireSafe(value === 'django.core.mail.backends.console.EmailBackend', 'nonlocal email backend');
     if (key === 'SENTRY_ENABLED') requireSafe(value === 'false', 'Sentry must be disabled');
   }
+  if (strict && env.EE_LICENSE_KEY && licence) {
+    // Admitted above as the lane's test licence: no licence-service call can leave the stack.
+    for (const [key, value] of Object.entries(licensedMockValues(licence))) {
+      requireSafe(env[key] === value, `${service} is licensed without ${key} pinned`);
+    }
+  }
 }
 
 /** Values the containers running the API and the workers must carry, checked
  * even when absent: the gateway wiring and the telemetry opt-out, plus, with the
- * background opt-in, the mock serving URL, the local Temporal and no licence or
- * mail key. Distributed checks them with the opt-in only; Standalone always.
+ * background opt-in, the mock serving URL, the local Temporal, no mail key and
+ * either no licence or exactly the lane's test licence with the licence service
+ * closed. Distributed checks them with the opt-in only; Standalone always.
  */
-export function requiredMockValues(topology: MockTopology, evalBackground: boolean): Record<string, string> {
+export function requiredMockValues(topology: MockTopology, evalBackground: boolean,
+  licence?: LaneLicence): Record<string, string> {
   const pins = { ...gatewayValues(topology).allowed, FUTURE_AGI_TELEMETRY_DISABLED: 'true' };
   if (!evalBackground) return pins;
   return { ...pins, MODEL_SERVING_URL: MOCK_SERVING_BASE, ENV_TYPE: 'local', EE_LICENSE_KEY: '',
     NO_STARTUP_DB_MUTATIONS: 'true', OTEL_ENABLED: 'false', TEMPORAL_HOST: topology.temporal,
-    TEMPORAL_NAMESPACE: 'default', DJANGO_SETTINGS_MODULE: 'tfc.settings.settings', MAILGUN_API_KEY: '' };
+    TEMPORAL_NAMESPACE: 'default', DJANGO_SETTINGS_MODULE: 'tfc.settings.settings', MAILGUN_API_KEY: '',
+    ...(licence ? licensedMockValues(licence) : {}) };
 }
 
 /** Required values are checked even when absent. No license or generic-provider
  * fallback. Pure validation so offline tests never need Docker, API or SDK requests.
  */
 export function validateMockEnvironment(service: string, env: Record<string, string>, evalBackground = false,
-  mounts: Container['Mounts'] = []): void {
-  validateEnvironmentEntries(service, env, DISTRIBUTED, evalBackground, mounts);
+  mounts: Container['Mounts'] = [], licence?: LaneLicence): void {
+  validateEnvironmentEntries(service, env, DISTRIBUTED, evalBackground, mounts, licence);
   if (!evalBackground) return;
   const { allowed } = gatewayValues(DISTRIBUTED);
   if (service === 'agentcc-gateway') {
@@ -133,7 +151,7 @@ export function validateMockEnvironment(service: string, env: Record<string, str
     }
   }
   if (!['backend', 'worker'].includes(service)) return;
-  for (const [key, value] of Object.entries(requiredMockValues(DISTRIBUTED, true))) {
+  for (const [key, value] of Object.entries(requiredMockValues(DISTRIBUTED, true, licence))) {
     requireSafe(env[key] === value, `required ${service} ${key} mismatch`);
   }
   if (service === 'worker') {
@@ -169,6 +187,8 @@ export function validateBackgroundMockMounts(service: string, mounts: Container[
 }
 export interface MockReceipt {
   context: string; project: string; networkId: string; gatewaySha: string; mockSha: string;
+  /** Strict inspections only: the lane licence state admitted, or 'none'. */
+  licence?: string;
   services: { service: string; id: string; image: string; startedAt: string }[];
   background?: { capability: 'eval-clustering'; sourceHashes: Record<string, string>; probeSha: string;
     processes: unknown[] };
@@ -193,6 +213,8 @@ export function managedMockInspectionError(error: unknown): Error {
 export interface MockStack {
   /** The Compose project bin/e2e must resolve to, where the stack pins one. */
   project?: string;
+  /** Every inspection of this stack is strict (Standalone), not only the background opt-in. */
+  alwaysStrict?: boolean;
   /** Compose SERVICE keys, never machine-specific/generated container names. */
   services: string[];
   /** Exact extra_hosts per service; every other service has none. */
@@ -205,6 +227,8 @@ export interface MockStack {
 }
 export interface StackInspection {
   context: string; network: string; selected: Record<string, Container>;
+  /** The lane's verified test licence, read only for strict inspections. */
+  licence?: LaneLicence;
   config: { services: Record<string, { image: string }> };
   run(file: string, args: string[], input?: string): string;
   docker(...args: string[]): string;
@@ -282,9 +306,14 @@ function inspectMockStack(stack: MockStack, evalBackground: boolean): MockReceip
     requireSafe(statSync(source).mtimeMs <= Date.parse(c.State.StartedAt), `${service} source changed after startup`);
   }
   validateMockRouting(readFileSync(gatewayFile, 'utf8'), evalBackground);
-  const background = stack.check({ context, network, selected, config, run, docker });
+  // The licence bin/e2e wrote for this project (lib/test-licence-guard.ts): read
+  // and signature-checked only where a licence would otherwise be refused.
+  const strict = evalBackground || Boolean(stack.alwaysStrict);
+  const licence = strict ? readLaneLicence(config.name) : undefined;
+  const background = stack.check({ context, network, selected, config, run, docker, licence });
   return { context, project: config.name, networkId, gatewaySha: hash(readFileSync(gatewayFile)),
-    mockSha: hash(readFileSync(mockFile)), ...(background ? { background } : {}), services: stack.services.map(service => ({ service,
+    mockSha: hash(readFileSync(mockFile)), ...(strict ? { licence: licence?.state ?? 'none' } : {}),
+    ...(background ? { background } : {}), services: stack.services.map(service => ({ service,
       id: selected[service].Id, image: selected[service].Image, startedAt: selected[service].State.StartedAt })) };
 }
 
@@ -301,7 +330,7 @@ function distributedMockStack(evalBackground: boolean): MockStack {
       ['agentcc-gateway', '/app/config.yaml', gatewayFile, ['--config', '/app/config.yaml']],
       ['mock-llm', '/srv/server.mjs', mockFile, ['node', '/srv/server.mjs']],
     ],
-    check: ({ context, network, selected, config, run, docker }) => {
+    check: ({ context, network, selected, config, run, docker, licence }) => {
       if (evalBackground) {
         for (const service of ['agentcc-gateway', 'mock-llm']) validateBackgroundMockMounts(service, selected[service].Mounts);
       }
@@ -310,7 +339,7 @@ function distributedMockStack(evalBackground: boolean): MockStack {
       const environments: Record<string, Record<string, string>> = {};
       for (const service of ['agentcc-gateway', 'mock-llm', 'backend', 'worker']) {
         const env = environments[service] = containerEnvironment(selected[service]);
-        validateMockEnvironment(service, env, evalBackground, selected[service].Mounts);
+        validateMockEnvironment(service, env, evalBackground, selected[service].Mounts, licence);
       }
       if (!evalBackground) return undefined;
       // No tag resolution against a registry: local image inspect only. Main must

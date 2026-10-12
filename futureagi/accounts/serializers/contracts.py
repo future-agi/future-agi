@@ -1,5 +1,6 @@
 from rest_framework import serializers
 
+from tfc.capabilities.contracts import EnterpriseGateErrorResponseSerializer
 from tfc.utils.api_serializers import ApiErrorResponseSerializer, EmptyRequestSerializer
 
 ACCOUNTS_ERROR_RESULT_SCHEMA = {
@@ -1064,4 +1065,11 @@ ACCOUNTS_ERROR_RESPONSES = {
     403: AccountsErrorResponseSerializer,
     404: AccountsErrorResponseSerializer,
     500: AccountsErrorResponseSerializer,
+}
+
+# Endpoints that can refuse one more organization, workspace or member on
+# Community (tfc.capabilities.edition) also declare the typed 402 gate.
+ACCOUNTS_GATED_CREATE_ERROR_RESPONSES = {
+    **ACCOUNTS_ERROR_RESPONSES,
+    402: EnterpriseGateErrorResponseSerializer,
 }

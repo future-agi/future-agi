@@ -109,10 +109,14 @@ def _clear_snapshot_cache():
 
 
 @pytest.fixture(autouse=True)
-def _self_hosted():
-    """The endpoint is self-hosted only — cloud and EE answer 404 — so every
-    test here has to stand in an OSS deployment to reach the view at all."""
-    with patch("tfc.views.setup_checks.is_oss", return_value=True):
+def _self_hosted(request):
+    """The endpoint is self-hosted only (Cloud answers 404), so every test here
+    stands in a self-hosted deployment to reach the view at all. Tests that set
+    the deployment themselves (``deployment_mode``) keep the real detection."""
+    if "deployment_mode" in request.fixturenames:
+        yield
+        return
+    with patch("tfc.capabilities.edition.is_cloud", return_value=False):
         yield
 
 
@@ -770,8 +774,8 @@ class TestCheckInventory:
                 )
 
     def test_no_row_promises_a_feature_the_open_source_app_lacks(self, api_client):
-        """The screen only runs on open-source installs (404 on EE and cloud),
-        where Error Feed is a locked cloud feature."""
+        """The screen runs on every self-hosted install (404 on Cloud); Error
+        Feed is not part of the open-source app, so no row may promise it."""
         for probe_results in (all_up(), all_down()):
             result = get_checks(api_client, probe_results=probe_results)
             assert "Error Feed" not in str(result)
@@ -1092,3 +1096,34 @@ class TestLocalInstallSkipsSsl:
             api_client.get(SETUP_CHECKS_URL, HTTP_HOST="127.0.0.1:8000")
 
         assert probes.call_count == 2
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.requires_ee
+class TestEverySelfHostedInstallGetsTheChecks:
+    """A licence buys products and lifts the Community limits; it does not
+    take the first-run screen away (TH-8084, approved: Nikhil 2026-10-03
+    blanket, option 1). Only Cloud answers 404."""
+
+    def test_a_licensed_self_hosted_install_gets_the_checks(
+        self, api_client, deployment_mode
+    ):
+        deployment_mode("ee")
+
+        with patch("tfc.views.setup_checks._run_probes", return_value=all_up()):
+            response = api_client.get(SETUP_CHECKS_URL)
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        assert response.json()["result"]["checks"]
+
+    def test_cloud_answers_404(self, api_client, deployment_mode):
+        deployment_mode("cloud")
+
+        with patch(
+            "tfc.views.setup_checks._run_probes", side_effect=AssertionError("probed")
+        ):
+            response = api_client.get(SETUP_CHECKS_URL)
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+

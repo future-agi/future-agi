@@ -45,6 +45,9 @@ export GRANIAN_THREADS="${GRANIAN_THREADS:-2}"
 export GOOGLE_API_KEY="${GOOGLE_API_KEY:-}"
 # Empty: code-executor/server.py's default, 80,443.
 export CODE_EXECUTOR_EGRESS_PORTS="${CODE_EXECUTOR_EGRESS_PORTS:-}"
+# This image is self-hosted only: fi-collector and agentcc-gateway never run
+# Future AGI Cloud's plan quotas here, Compose or not.
+export COMMERCIAL_QUOTAS_ENABLED="${COMMERCIAL_QUOTAS_ENABLED:-false}"
 
 # Development (docker-compose.dev.yml, ./bin/dev): reload the API, and the
 # Temporal worker embedded in it, when code under /app/backend changes.

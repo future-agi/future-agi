@@ -1,0 +1,20 @@
+# Overlay for the Community edition lane (`E2E_STACK=community`), applied after
+# docker-compose.yml and docker-compose.standalone-e2e.yml with
+# e2e/stack/community-e2e.env, as Compose project futureagi-e2e-community.
+#
+# The Standalone file publishes the UI, API and gateway ports on every
+# interface for users; a test fixture keeps all of them on loopback. Postgres
+# and ClickHouse already bind 127.0.0.1 in the Standalone E2E overlay.
+#
+# The licence (EE_LICENSE_KEY and the test public key) comes from the lane's
+# licence env file, which `bin/e2e up` writes as Community and
+# `bin/e2e licence <state>` rewrites before recreating `app` alone.
+services:
+  app:
+    ports: !override
+      - "127.0.0.1:${FRONTEND_PORT}:3000"
+      - "127.0.0.1:${BACKEND_PORT}:8000"
+      - "127.0.0.1:${FI_COLLECTOR_OTLP_PORT}:4317"
+      - "127.0.0.1:${FI_COLLECTOR_OTLP_HTTP_PORT}:4318"
+      - "127.0.0.1:${AGENTCC_GATEWAY_PORT}:8080"
+      - "127.0.0.1:${MINIO_API_PORT}:9005"

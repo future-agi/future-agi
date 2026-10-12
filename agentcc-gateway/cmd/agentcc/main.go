@@ -241,10 +241,20 @@ func main() {
 		}
 	}
 
-	// Create quota enforcement plugin (free tier gateway request limits).
+	// Create quota enforcement plugin (Future AGI Cloud free tier gateway
+	// request limits; off when COMMERCIAL_QUOTAS_ENABLED=false).
 	if redisClient != nil {
-		plugins = append(plugins, quotaplugin.New(redisClient.Redis(), true))
-		slog.Info("quota enforcement enabled")
+		commercialQuotas, err := quotaplugin.CommercialQuotasEnabled(os.Getenv)
+		if err != nil {
+			slog.Error("invalid configuration", "error", err)
+			os.Exit(1)
+		}
+		plugins = append(plugins, quotaplugin.New(redisClient.Redis(), commercialQuotas))
+		if commercialQuotas {
+			slog.Info("quota enforcement enabled")
+		} else {
+			slog.Info("commercial quotas off (COMMERCIAL_QUOTAS_ENABLED=false): no free tier gateway request limit")
+		}
 	}
 
 	// Create guardrail plugin.

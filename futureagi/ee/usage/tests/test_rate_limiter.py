@@ -1,5 +1,9 @@
 """
 Rate limiter tests — Redis sliding window, plan-aware.
+
+RateLimiter enforces only on Future AGI Cloud (TH-8084); these cases pin the
+Cloud behaviour, so they run in Cloud mode. Off-cloud cases live in
+test_rate_limiter_off_cloud.py.
 """
 
 from unittest.mock import MagicMock, patch
@@ -10,6 +14,7 @@ from ee.usage.services.rate_limiter import RateLimiter, RateLimitResult
 
 
 @pytest.mark.unit
+@pytest.mark.usefixtures("edition_cloud")
 class TestRateLimiter:
 
     def test_unlimited_always_allowed(self):

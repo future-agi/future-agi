@@ -33,6 +33,9 @@ from analytics.utils import (
     track_mixpanel_event,
 )
 from saml2_auth.models import SAMLMetadataModel
+from tfc.capabilities import edition
+from tfc.capabilities.edition import EditionResource
+from tfc.capabilities.errors import EnterpriseFeatureRequired
 from tfc.constants.email import FREE_EMAIL_DOMAINS
 from tfc.constants.levels import Level
 from tfc.ee_loader import is_cloud_env
@@ -303,10 +306,15 @@ def first_signup(data, mode=None):
 
     serializer = UserSignupSerializer(data=data)
     if serializer.is_valid():
-        user = serializer.save()
-        organization = Organization.objects.create(
-            name=data["company_name"], region=settings.REGION
-        )
+        # Community edition: one organization per install (no-op on Cloud and
+        # when licensed). Checked before the user is saved so a refused signup
+        # leaves nothing behind.
+        with edition.creation_lock():
+            edition.assert_can_create(EditionResource.ORGANIZATION)
+            user = serializer.save()
+            organization = Organization.objects.create(
+                name=data["company_name"], region=settings.REGION
+            )
         user.organization = organization
         user.organization_role = "Owner"
         user.is_active = True
@@ -370,12 +378,15 @@ def first_signup(data, mode=None):
         raise Exception(str(error_messages))
 
 
-def create_owner_account(email, full_name, password):
-    """An account that owns a new organization, as a first signup creates it:
-    ``manage.py create_user`` and the Helm chart's first admin
-    (``bootstrap_install``). Raises ValidationError, with messages for the
-    operator, for a missing field, a malformed or taken email, or a password
-    AUTH_PASSWORD_VALIDATORS reject, before anything is created."""
+COMMUNITY_OWNER_ACCOUNT_REFUSAL = (
+    "Community includes one organization; invite the user from Settings, "
+    "or activate an Enterprise license."
+)
+
+
+def _validate_new_account(email, full_name, password):
+    """The operator-facing checks every command-line account shares, run
+    before anything is created."""
     if not email or not full_name or not password:
         raise ValidationError("Email, name, and password are all required.")
     validate_email(email)
@@ -384,14 +395,118 @@ def create_owner_account(email, full_name, password):
         raise ValidationError(f"A user with the email {email} already exists.")
     # UserSignupSerializer trims the password before it validates and stores it.
     validate_password(password.strip())
-    return first_signup(
-        {
-            "email": email,
-            "full_name": full_name,
-            "password": password,
-            "allow_email": True,
-        }
-    )
+
+
+def create_owner_account(email, full_name, password):
+    """An account that owns a new organization, as a first signup creates it:
+    the Helm chart's first admin (``bootstrap_install``), and
+    ``manage.py create_user`` while the install has no organization yet.
+    Raises ValidationError, with messages for the operator, for a missing
+    field, a malformed or taken email, a password AUTH_PASSWORD_VALIDATORS
+    reject, or a second organization on Community, before anything is created."""
+    _validate_new_account(email, full_name, password)
+    try:
+        return first_signup(
+            {
+                "email": email,
+                "full_name": full_name,
+                "password": password,
+                "allow_email": True,
+            }
+        )
+    except EnterpriseFeatureRequired:
+        raise ValidationError(COMMUNITY_OWNER_ACCOUNT_REFUSAL) from None
+
+
+def create_install_account(email, full_name, password):
+    """``manage.py create_user`` (install notes step 3; bin/install and
+    bin/install.ps1 pipe the first account's password into it).
+
+    The first account on an install owns its new organization, as before.
+    On Community, once the install has its one organization, a later account
+    joins that organization and its workspace as a member, under the same
+    locked seat check as the invite endpoints; a 4th member is refused with
+    the member gate's text. Licensed and Cloud installs are unchanged: every
+    account owns a new organization.
+    """
+    if not edition.edition_rule_applies() or not Organization.objects.exists():
+        return create_owner_account(email, full_name, password)
+    _validate_new_account(email, full_name, password)
+    try:
+        return _join_community_organization(email, full_name, password.strip())
+    except EnterpriseFeatureRequired as exc:
+        raise ValidationError(str(exc.detail)) from None
+
+
+def _join_community_organization(email, full_name, password):
+    from accounts.models.workspace import Workspace
+    from accounts.services.workspace_membership import create_workspace_membership
+    from tfc.constants.roles import OrganizationRoles
+
+    email = email.strip().lower()
+    with edition.creation_lock():
+        # Community has one organization; an install already over the limit
+        # (grandfathered) uses its oldest, the one the first account created.
+        organization = Organization.objects.order_by("created_at").first()
+        edition.assert_can_create(
+            EditionResource.MEMBER,
+            organization=organization,
+            new_member_emails=[email],
+        )
+        user = User.objects.create_user(
+            email=email,
+            password=password,
+            name=full_name,
+            organization=organization,
+            organization_role=OrganizationRoles.MEMBER,
+            is_active=True,
+        )
+        membership, _ = OrganizationMembership.all_objects.update_or_create(
+            user=user,
+            organization=organization,
+            defaults={
+                "level": Level.MEMBER,
+                "role": Level.to_org_string(Level.MEMBER),
+                "is_active": True,
+                "deleted": False,
+                "deleted_at": None,
+            },
+        )
+        workspace = (
+            Workspace.no_workspace_objects.filter(
+                organization=organization, is_active=True
+            )
+            .order_by("-is_default", "created_at")
+            .first()
+        )
+        if workspace is None:
+            # The owner has not signed in yet, so the organization has no
+            # workspace. Create its default one here: otherwise this member's
+            # first sign-in would create it and make them its admin.
+            owner = (
+                OrganizationMembership.no_workspace_objects.filter(
+                    organization=organization, level=Level.OWNER, is_active=True
+                )
+                .select_related("user")
+                .order_by("joined_at")
+                .first()
+            )
+            workspace = Workspace.objects.create(
+                name="Default Workspace",
+                organization=organization,
+                is_default=True,
+                is_active=True,
+                created_by=owner.user if owner else user,
+            )
+        create_workspace_membership(
+            workspace=workspace,
+            user=user,
+            role=OrganizationRoles.WORKSPACE_MEMBER,
+            level=Level.WORKSPACE_MEMBER,
+            organization_membership=membership,
+            is_active=True,
+        )
+    return user
 
 
 def persist_pending_org_invite(
@@ -427,8 +542,9 @@ def persist_pending_org_invite(
 def build_invite_accept_link(user):
     """Build the accept-invite link for an inactive invited user.
 
-    Same URL that goes out in invite_user.html — OSS deployments surface it in
-    the API so an admin can share it manually when SMTP isn't configured.
+    Same URL that goes out in invite_user.html. Self-hosted installs (licensed
+    or not) surface it in the API so an admin can share it manually when mail
+    delivery isn't configured.
     """
     uid = urlsafe_base64_encode(force_bytes(user.pk))
     token = default_token_generator.make_token(user)
@@ -436,14 +552,15 @@ def build_invite_accept_link(user):
 
 
 def build_invite_links(emails):
-    """Map lowercased email -> accept-invite link, OSS only.
+    """Map lowercased email -> accept-invite link, self-hosted only.
 
     Shared by invite creation and both member lists so they cannot disagree
-    about who gets a link.
+    about who gets a link. Keyed on where the install runs, not on its
+    licence: Enterprise lifts the member limit, and a licensed self-hosted
+    install still often has no mail delivery (TH-8084). Cloud invites stay
+    email-only.
     """
-    from tfc.ee_gating import is_oss
-
-    if not emails or not is_oss():
+    if not emails or edition.is_cloud():
         return {}
 
     lowered = {email.lower() for email in emails}

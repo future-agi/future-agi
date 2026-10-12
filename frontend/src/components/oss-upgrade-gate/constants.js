@@ -4,12 +4,15 @@ import optimizationPreview from "src/assets/oss-gate/optimization_light.png";
 import optimizationPreviewDark from "src/assets/oss-gate/optimization_dark.png";
 import falconAIPreview from "src/assets/oss-gate/falcon_ai_light.png";
 import falconAIPreviewDark from "src/assets/oss-gate/falcon_ai_dark.png";
+import { SALES_MAILTO } from "src/components/feature-gate/enterprise-gate";
 
-export const CONTACT_URL = "https://futureagi.com/talk-to-human";
+// Every Enterprise gate routes to sales (TH-8084): requests, licence
+// delivery, renewals and activation help.
+export const CONTACT_URL = SALES_MAILTO;
 export const DOCS_URL = "https://docs.futureagi.com";
 
 export const LICENSE_CTA = "Manage license";
-export const CONTACT_CTA = "Talk to us";
+export const CONTACT_CTA = "Contact sales";
 export const UPGRADE_CTA = "Upgrade to EE license key";
 export const DOCS_CTA = "Read docs";
 

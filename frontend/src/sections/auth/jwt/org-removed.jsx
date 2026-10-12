@@ -9,6 +9,7 @@ import { paths } from "src/routes/paths";
 import Iconify from "src/components/iconify";
 import RightSectionAuth from "./RightSectionAuth";
 import logger from "src/utils/logger";
+import { isEnterpriseGateError } from "src/hooks/use-credit-exhaustion";
 
 export default function OrgRemovedPage() {
   const { initialize } = useAuthContext();
@@ -39,6 +40,8 @@ export default function OrgRemovedPage() {
         });
     },
     onError: (error) => {
+      // A 2nd organization on Community: the Enterprise gate dialog explains.
+      if (isEnterpriseGateError(error)) return;
       logger.error("Failed to create organization:", error);
       enqueueSnackbar(
         error?.message || error?.detail || "Failed to create organization",

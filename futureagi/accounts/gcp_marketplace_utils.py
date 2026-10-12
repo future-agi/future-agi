@@ -41,6 +41,8 @@ from accounts.utils import (
     is_disposable_email_domain,
     process_post_registration,
 )
+from tfc.capabilities import edition
+from tfc.capabilities.edition import EditionResource
 from tfc.constants.levels import Level
 from tfc.constants.roles import OrganizationRoles
 
@@ -203,11 +205,15 @@ def _create_organization(gcp_account: GCPMarketplaceAccount) -> Organization:
     """
     placeholder = f"GCP Marketplace {gcp_account.procurement_account_id[:8]}"
 
-    organization = Organization.objects.create(
-        name=placeholder,
-        display_name=placeholder,
-        region=settings.REGION,
-    )
+    # Marketplace is a Cloud flow, but its URLs also mount on self-hosted
+    # installs with any EE_LICENSE_KEY: keep the Community rule there.
+    with edition.creation_lock():
+        edition.assert_can_create(EditionResource.ORGANIZATION)
+        organization = Organization.objects.create(
+            name=placeholder,
+            display_name=placeholder,
+            region=settings.REGION,
+        )
 
     gcp_account.organization = organization
     gcp_account.save(update_fields=["organization", "updated_at"])

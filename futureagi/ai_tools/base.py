@@ -99,6 +99,16 @@ class ToolResult:
         )
 
     @classmethod
+    def enterprise_gate(cls, exc) -> ToolResult:
+        """A self-hosted Enterprise gate (tfc.capabilities.errors.EnterpriseFeatureRequired)."""
+        return cls(
+            content=f"**Enterprise Feature:** {exc.detail}",
+            data={"enterprise_gate": exc.enterprise_gate, "upgrade_required": True},
+            is_error=True,
+            error_code=exc.error_code,
+        )
+
+    @classmethod
     def validation_error(cls, message: str) -> ToolResult:
         return cls(
             content=f"**Validation Error:** {message}",

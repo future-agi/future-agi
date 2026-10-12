@@ -40,15 +40,13 @@ class InviteUsersTool(BaseTool):
     input_model = InviteUsersInput
 
     def execute(self, params: InviteUsersInput, context: ToolContext) -> ToolResult:
-        from django.db import transaction
-
-        from accounts.models.user import User
         from accounts.models.workspace import (
             OrganizationRoles,
             Workspace,
-            WorkspaceMembership,
         )
-        from accounts.utils import generate_password
+        from tfc.capabilities import edition
+        from tfc.capabilities.edition import EditionResource
+        from tfc.capabilities.errors import EnterpriseFeatureRequired
         from tfc.constants.roles import RoleMapping, RolePermissions
 
         org = context.organization
@@ -113,10 +111,57 @@ class InviteUsersTool(BaseTool):
         else:
             workspace_role = role
 
+        # Community edition: up to 3 organization members, checked before any
+        # user is created (users this tool creates count by their legacy FK).
+        # The check and every insert share edition.creation_lock(), as the
+        # invite/team endpoints do: these users get no OrganizationMembership,
+        # so the ensure_org_membership backstop never sees them, and two
+        # concurrent calls could otherwise both pass at two used seats.
         results = []
         errors = []
+        try:
+            with edition.creation_lock():
+                edition.assert_can_create(
+                    EditionResource.MEMBER,
+                    organization=org,
+                    new_member_emails=params.emails,
+                )
+                self._invite_each(
+                    params.emails,
+                    org=org,
+                    inviter=inviter,
+                    role=role,
+                    workspace_role=workspace_role,
+                    workspaces=workspaces,
+                    organization_level_roles=organization_level_roles,
+                    results=results,
+                    errors=errors,
+                )
+        except EnterpriseFeatureRequired as exc:
+            return ToolResult.enterprise_gate(exc)
 
-        for email in params.emails:
+        return self._build_response(results, errors)
+
+    @staticmethod
+    def _invite_each(
+        emails,
+        *,
+        org,
+        inviter,
+        role,
+        workspace_role,
+        workspaces,
+        organization_level_roles,
+        results,
+        errors,
+    ):
+        from django.db import transaction
+
+        from accounts.models.user import User
+        from accounts.models.workspace import OrganizationRoles, WorkspaceMembership
+        from accounts.utils import generate_password
+
+        for email in emails:
             email = email.lower().strip()
             try:
                 with transaction.atomic():
@@ -202,7 +247,8 @@ class InviteUsersTool(BaseTool):
             except Exception as e:
                 errors.append({"email": email, "error": str(e)})
 
-        # Build response
+    @staticmethod
+    def _build_response(results, errors) -> ToolResult:
         rows = []
         for r in results:
             rows.append(

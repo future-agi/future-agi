@@ -10,6 +10,7 @@ from accounts.models.organization import Organization
 from accounts.models.user import User
 from accounts.serializers.contracts import (
     ACCOUNTS_ERROR_RESPONSES,
+    ACCOUNTS_GATED_CREATE_ERROR_RESPONSES,
     AccountsPaginatedUserResponseSerializer,
     AccountsTokenPairResponseSerializer,
     AppsmithPasswordUpdateResponseSerializer,
@@ -22,6 +23,8 @@ from accounts.serializers.user import (
     UserSerializer,
 )
 from accounts.services.sos_service import start_sos_session
+from tfc.capabilities import edition
+from tfc.capabilities.edition import EditionResource
 from tfc.constants.roles import OrganizationRoles
 from tfc.permissions.permissions import APIKeyPermission
 from tfc.utils.api_contracts import validated_request
@@ -63,16 +66,20 @@ class UserApiView(APIView):
         request_serializer=UserCreateSerializer,
         responses={
             201: AppsmithUserCreateResponseSerializer,
-            **ACCOUNTS_ERROR_RESPONSES,
+            **ACCOUNTS_GATED_CREATE_ERROR_RESPONSES,
         },
         reject_unknown_fields=True,
     )
     def post(self, request):
         data = request.validated_data
 
-        organization = Organization.objects.create(
-            name=data["organization_name"], region=settings.REGION
-        )
+        # Community edition: one organization per install (no-op on Cloud and
+        # when licensed).
+        with edition.creation_lock():
+            edition.assert_can_create(EditionResource.ORGANIZATION)
+            organization = Organization.objects.create(
+                name=data["organization_name"], region=settings.REGION
+            )
 
         # Create the user
         user = User.objects.create(

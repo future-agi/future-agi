@@ -22,6 +22,7 @@ import { LoadingButton } from "@mui/lab";
 import axios, { endpoints } from "src/utils/axios";
 import { orgRoleOptions, wsRoleOptions, LEVELS } from "./constant";
 import { useDeploymentMode } from "src/hooks/useDeploymentMode";
+import { isEnterpriseGateError } from "src/hooks/use-credit-exhaustion";
 import { InviteLinksResult, normalizeInvites } from "./invite-links";
 import { ShowComponent } from "src/components/show";
 import { useAuthContext } from "src/auth/hooks";
@@ -106,8 +107,9 @@ const AllActionForm = ({
   const theme = useTheme();
   const queryClient = useQueryClient();
   // Opt-in, for mounts with no member list behind them to read links off.
-  const { isOSS, isSuccess: modeConfirmed } = useDeploymentMode();
-  const revealInviteLinks = showInviteLinks && modeConfirmed && isOSS;
+  // Self-hosted, licensed or not (TH-8084): no mail delivery is assumed.
+  const { isSelfHosted, isSuccess: modeConfirmed } = useDeploymentMode();
+  const revealInviteLinks = showInviteLinks && modeConfirmed && isSelfHosted;
   const [inviteLinks, setInviteLinks] = useState(null);
   // The request outlives a close, so the next open would show the old batch.
   const awaitingInviteRef = useRef(false);
@@ -274,6 +276,11 @@ const AllActionForm = ({
     // `error.result`: the interceptor rejects with the flattened body.
     meta: { errorHandled: true },
     onError: (error) => {
+      // A 4th member on Community: the Enterprise gate dialog explains.
+      if (isEnterpriseGateError(error)) {
+        handleOnClose();
+        return;
+      }
       enqueueSnackbar(error?.result || "Failed to send invite", {
         variant: "error",
       });

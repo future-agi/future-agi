@@ -29,7 +29,7 @@ export default function Router() {
   const { user } = useAuthContext();
   const { currentWorkspaceRole } = useWorkspace();
   const {
-    isOSS,
+    isSelfHosted,
     isSuccess: isDeploymentModeConfirmed,
     isLoading: isDeploymentModeLoading,
     isCloud,
@@ -43,7 +43,8 @@ export default function Router() {
 
   // Confirmed read required, or a failed probe sends cloud users to /setup.
   let rootTarget = postLoginPath;
-  if (isDeploymentModeConfirmed && isOSS && !isValidationDone()) {
+  // Every self-hosted install, licensed or not, runs the checks first (TH-8084).
+  if (isDeploymentModeConfirmed && isSelfHosted && !isValidationDone()) {
     rootTarget = paths.ossSetup;
   }
 

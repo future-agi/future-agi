@@ -1,10 +1,14 @@
 import { test, expect } from '@playwright/test';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { generateKeyPairSync, sign, type KeyObject } from 'node:crypto';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse, stringify } from 'yaml';
 import { E2E } from '../lib/env';
 import { inspectManagedMock, managedMockInspectionError, MOCK_BASE, MOCK_MODEL, registerMockModel, validateBackgroundMockMounts, validateMockEnvironment, validateMockRouting } from '../lib/managed-mock';
 import { validateStandaloneAppEnvironment } from '../lib/managed-mock-standalone';
+import { CLOSED_LICENCE_SERVICE, laneLicenceFile, readLaneLicence, type LaneLicence } from '../lib/test-licence-guard';
 import { test as isolatedTest } from '../lib/mock-model-fixtures';
 import type { TestActor } from '../lib/provisioning';
 import type { StateProbe } from '../lib/state-probe';
@@ -376,10 +380,11 @@ function withFakeDocker<T>(dir: string, stack: 'standalone' | 'distributed', fil
   mkdirSync(dir, { recursive: true });
   writeFileSync(`${dir}/docker`, fakeDockerScript, { mode: 0o755 });
   for (const [name, body] of Object.entries(files)) writeFileSync(`${dir}/${name}`, typeof body === 'string' ? body : JSON.stringify(body));
-  const saved = Object.fromEntries(['PATH', 'DOCKER_CONTEXT', 'DOCKER_HOST', 'E2E_STACK', 'FAKE_DOCKER', 'FAKE_DOCKER_FAIL']
-    .map(key => [key, process.env[key]]));
+  const saved = Object.fromEntries(['PATH', 'DOCKER_CONTEXT', 'DOCKER_HOST', 'E2E_STACK', 'FAKE_DOCKER', 'FAKE_DOCKER_FAIL',
+    'E2E_LICENCE_DIR'].map(key => [key, process.env[key]]));
+  // Lane licences come from <dir>/licences only, never a real stack's under TMPDIR.
   Object.assign(process.env, { PATH: `${dir}:${process.env.PATH}`, DOCKER_CONTEXT: 'e2e-fake', E2E_STACK: stack,
-    FAKE_DOCKER: dir, FAKE_DOCKER_FAIL: fail });
+    FAKE_DOCKER: dir, FAKE_DOCKER_FAIL: fail, E2E_LICENCE_DIR: `${dir}/licences` });
   delete process.env.DOCKER_HOST;
   try {
     return inspect();
@@ -457,3 +462,142 @@ for (const ordinal of [1, 2]) {
       body: JSON.stringify({ rows, route: MOCK_BASE }) });
   });
 }
+
+// ---------------------------------------------------------------------------
+// The lane's test-signed licence (lib/test-licence-guard.ts). The shared stacks
+// boot licensed so each actor keeps its own organization; the strict inspection
+// admits only that lane's own test licence, with the licence service closed.
+// ---------------------------------------------------------------------------
+
+/** A lane licence written the way bin/e2e writes it: the real test-licence.mjs CLI. */
+function writeLane(base: string, project: string, state: 'enterprise' | 'expired' | 'removed'): string {
+  const dir = path.join(base, project);
+  execFileSync(process.execPath, [repoFile('scripts/test-licence.mjs'), 'write-env', dir, state], { stdio: 'pipe' });
+  return dir;
+}
+
+const encodePart = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
+function forgeLicence(privateKey: KeyObject | string, claims: Record<string, unknown>): string {
+  const input = `${encodePart({ alg: 'RS256', typ: 'JWT', kid: 'default' })}.${encodePart(claims)}`;
+  return `${input}.${sign('sha256', Buffer.from(input), privateKey).toString('base64url')}`;
+}
+
+function rewriteLaneKey(dir: string, key: string): void {
+  const file = path.join(dir, 'licence.env');
+  writeFileSync(file, readFileSync(file, 'utf8').replace(/^EE_LICENSE_KEY=.*$/m, `EE_LICENSE_KEY=${key}`));
+}
+
+const licensedEnvironment = (licence: LaneLicence, base: Record<string, string> = backgroundEnvironment) => ({
+  ...base, EE_LICENSE_KEY: licence.key, EE_LICENSE_PUBLIC_KEY: licence.publicKey,
+  FUTURE_AGI_LICENSE_URL: CLOSED_LICENCE_SERVICE, FUTURE_AGI_ENTERPRISE_HEARTBEAT_DISABLED: 'true' });
+
+function laneLicence(base: string, project = 'futureagi-e2e'): LaneLicence {
+  const licence = readLaneLicence(project, { E2E_LICENCE_DIR: base });
+  expect(licence).toBeDefined();
+  return licence as LaneLicence;
+}
+
+for (const state of ['enterprise', 'expired'] as const) {
+  test(`managed mock background admits the lane's own test-signed licence with the licence service closed (${state})`, ({}, testInfo) => {
+    const base = testInfo.outputPath('licences');
+    writeLane(base, 'futureagi-e2e', state);
+    const licence = laneLicence(base);
+    expect(licence.state).toBe(state);
+    for (const service of ['backend', 'worker']) {
+      validateMockEnvironment(service, licensedEnvironment(licence), true, [], licence);
+    }
+    for (const evalBackground of [false, true]) {
+      validateStandaloneAppEnvironment(licensedEnvironment(licence, composedStandaloneEnvironment()), evalBackground, licence);
+    }
+  });
+}
+
+test('managed mock background refuses a licence when the lane has none', ({}, testInfo) => {
+  const base = testInfo.outputPath('licences');
+  writeLane(base, 'futureagi-e2e', 'enterprise');
+  const licence = laneLicence(base);
+  expect(() => validateMockEnvironment('worker', licensedEnvironment(licence), true, [], undefined))
+    .toThrow('STOP: managed mock worker has a license, notification or credential override (EE_LICENSE_KEY)');
+  expect(() => validateStandaloneAppEnvironment(licensedEnvironment(licence, composedStandaloneEnvironment()), false))
+    .toThrow('STOP: managed mock app has a license, notification or credential override (EE_LICENSE_KEY)');
+});
+
+for (const [name, change, reason] of [
+  ['a licence the lane did not write', (env: Record<string, string>, other: { key: string }) =>
+    ({ ...env, EE_LICENSE_KEY: other.key }), 'credential override (EE_LICENSE_KEY)'],
+  ['the real licence service', (env: Record<string, string>) =>
+    ({ ...env, FUTURE_AGI_LICENSE_URL: 'https://api.futureagi.com' }), 'licence service is not the closed loopback port'],
+  ['no licence service pin', (env: Record<string, string>) => {
+    const { FUTURE_AGI_LICENSE_URL: _url, ...rest } = env; return rest;
+  }, 'FUTURE_AGI_LICENSE_URL'],
+  ['the Enterprise heartbeat on', (env: Record<string, string>) =>
+    ({ ...env, FUTURE_AGI_ENTERPRISE_HEARTBEAT_DISABLED: 'false' }), 'FUTURE_AGI_ENTERPRISE_HEARTBEAT_DISABLED'],
+  ['another trusted public key', (env: Record<string, string>, other: { publicKey: string }) =>
+    ({ ...env, EE_LICENSE_PUBLIC_KEY: other.publicKey }), 'EE_LICENSE_PUBLIC_KEY'],
+  ['a managed gateway override', (env: Record<string, string>) =>
+    ({ ...env, FUTUREAGI_CLOUD_GATEWAY_URL: 'https://gateway.futureagi.com' }), 'credential override (FUTUREAGI_CLOUD_GATEWAY_URL)'],
+  ['an unlicensed process where the lane is licensed', (env: Record<string, string>) =>
+    ({ ...env, EE_LICENSE_KEY: '' }), 'EE_LICENSE_KEY'],
+] as [string, (env: Record<string, string>, other: LaneLicence) => Record<string, string>, string][]) {
+  test(`managed mock background refuses a licensed stack with ${name} before registration`, async ({}, testInfo) => {
+    const base = testInfo.outputPath('licences');
+    writeLane(base, 'futureagi-e2e', 'enterprise');
+    writeLane(base, 'another-project', 'enterprise');
+    const licence = laneLicence(base);
+    const other = laneLicence(base, 'another-project');
+    const fake = registrationDouble();
+    await expect(registerMockModel(fake.actor, fake.probe, async () => {
+      await Promise.resolve();
+      validateMockEnvironment('worker', change(licensedEnvironment(licence), other), true, [], licence);
+    })).rejects.toThrow(reason);
+    expect(fake.calls).toEqual([]);
+    expect(fake.readCount()).toBe(0);
+    expect(() => validateStandaloneAppEnvironment(change(licensedEnvironment(licence, composedStandaloneEnvironment()), other),
+      true, licence)).toThrow('STOP: managed mock');
+  });
+}
+
+test('managed mock reads no lane licence when it is removed or missing', ({}, testInfo) => {
+  const base = testInfo.outputPath('licences');
+  expect(readLaneLicence('futureagi-e2e', { E2E_LICENCE_DIR: base })).toBeUndefined();
+  writeLane(base, 'futureagi-e2e', 'removed');
+  expect(readLaneLicence('futureagi-e2e', { E2E_LICENCE_DIR: base })).toBeUndefined();
+  // bin/e2e LICENCE_DIR: ${E2E_LICENCE_DIR:-${TMPDIR:-/tmp}/futureagi-e2e-licence}/$PROJECT
+  expect(laneLicenceFile('p', { TMPDIR: '/t' })).toBe('/t/futureagi-e2e-licence/p/licence.env');
+  expect(laneLicenceFile('p', { TMPDIR: '' })).toBe('/tmp/futureagi-e2e-licence/p/licence.env');
+  expect(laneLicenceFile('p', { E2E_LICENCE_DIR: '/l', TMPDIR: '/t' })).toBe('/l/p/licence.env');
+});
+
+for (const [name, forge, reason] of [
+  ['signed by another key', (claims: Record<string, unknown>) =>
+    forgeLicence(generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey, claims), 'licence is not signed by the lane test key'],
+  ['that enables product features', (claims: Record<string, unknown>, lane: string) =>
+    forgeLicence(lane, { ...claims, features: ['falcon_ai'] }), 'test licence enables product features'],
+  ['issued to someone else', (claims: Record<string, unknown>, lane: string) =>
+    forgeLicence(lane, { ...claims, license_id: 'lic_customer_0001' }), 'licence is not the E2E test licence'],
+  ['that is not a licence', () => 'not-a-licence', 'licence is not a compact JWT'],
+] as [string, (claims: Record<string, unknown>, lanePrivateKey: string) => string, string][]) {
+  test(`managed mock refuses a lane licence ${name}`, ({}, testInfo) => {
+    const base = testInfo.outputPath('licences');
+    const dir = writeLane(base, 'futureagi-e2e', 'enterprise');
+    const claims = JSON.parse(Buffer.from(laneLicence(base).key.split('.')[1], 'base64url').toString('utf8'));
+    rewriteLaneKey(dir, forge(claims, readFileSync(path.join(dir, 'signing-key.pem'), 'utf8')));
+    expect(() => readLaneLicence('futureagi-e2e', { E2E_LICENCE_DIR: base })).toThrow(`STOP: managed mock ${reason}`);
+  });
+}
+
+test('managed mock inspects a licensed standalone stack offline only with its own lane licence', ({}, testInfo) => {
+  test.skip(!offlineEndpoints(), 'attach mode points the harness at another host');
+  const dir = testInfo.outputPath('docker');
+  const lane = writeLane(path.join(dir, 'licences'), 'futureagi-e2e-standalone', 'enterprise');
+  const licence = laneLicence(path.join(dir, 'licences'), 'futureagi-e2e-standalone');
+  const files = fakeStack('standalone');
+  const app = files['containers.json'].find((c: any) => c.Config.Labels['com.docker.compose.service'] === 'app');
+  const licensed = licensedEnvironment(licence, composedStandaloneEnvironment());
+  app.Config.Env = Object.entries(licensed).map(([key, value]) => `${key}=${value}`);
+  const receipt = withFakeDocker(dir, 'standalone', files, () => inspectManagedMock());
+  expect(receipt.licence).toBe('enterprise');
+  rmSync(lane, { recursive: true, force: true });
+  expect(() => withFakeDocker(dir, 'standalone', files, () => inspectManagedMock()))
+    .toThrow('STOP: managed mock app has a license, notification or credential override (EE_LICENSE_KEY)');
+});
