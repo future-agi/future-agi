@@ -656,10 +656,12 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
   // auto-expand the largest one that actually has something behind it.
   const firstExpandableWarningGroup = warningGroups.find(
     (group) =>
-      (group.empty_keys || []).length > 0 || (group.filled_keys || []).length > 0,
+      (group.empty_keys || []).length > 0 ||
+      (group.filled_keys || []).length > 0,
   );
   const processedCount = successCount + errorsCount + skippedCount;
   const isDrained = totalCount > 0 && processedCount >= totalCount;
+  const allSucceeded = isDrained && successCount === totalCount;
   const isHighErrorRate = errorRate > 50;
 
   return (
@@ -747,6 +749,15 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
           color="error.main"
           bgColor={alpha(theme.palette.error.main, 0.1)}
         />
+        {skippedCount > 0 && (
+          <StatCard
+            icon="solar:info-circle-linear"
+            label="Skipped"
+            value={skippedCount}
+            color="info.main"
+            bgColor={alpha(theme.palette.info.main, 0.1)}
+          />
+        )}
         {warningsCount > 0 && (
           <StatCard
             icon="solar:danger-triangle-linear"
@@ -871,8 +882,8 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
               color="text.disabled"
               sx={{ fontSize: "11px" }}
             >
-              {warningsCount} run{warningsCount !== 1 ? "s" : ""} with
-              warnings, grouped by type below
+              {warningsCount} run{warningsCount !== 1 ? "s" : ""} with warnings,
+              grouped by type below
             </Typography>
           </Box>
           {warningGroupsTruncated && (
@@ -999,7 +1010,7 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
         </Box>
       )}
 
-      {/* Empty state for no errors */}
+      {/* Drained runs can include skipped or failed evaluations. */}
       {!hasErrors && !hasWarnings && isDrained && (
         <Box
           sx={{
@@ -1011,16 +1022,22 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
           }}
         >
           <Iconify
-            icon="solar:check-circle-bold"
+            icon={
+              allSucceeded
+                ? "solar:check-circle-bold"
+                : "solar:info-circle-bold"
+            }
             width={32}
-            sx={{ color: "success.main", mb: 1 }}
+            sx={{ color: allSucceeded ? "success.main" : "info.main", mb: 1 }}
           />
           <Typography
             variant="body2"
             color="text.secondary"
             sx={{ fontSize: "13px" }}
           >
-            All evaluations completed successfully
+            {allSucceeded
+              ? "All evaluations completed successfully"
+              : "Evaluation processing completed"}
           </Typography>
         </Box>
       )}
