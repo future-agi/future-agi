@@ -230,6 +230,109 @@ class TestScenarioDatasetColumnFilter:
         assert {str(ce.id) for ce in result} == {str(ce1.id)}
 
 
+class TestExecutionNumberNullFilters:
+    @staticmethod
+    def _apply_filter(test_execution, column_id, filter_op):
+        return TestExecutionUtils()._apply_filters(
+            CallExecution.objects.filter(test_execution=test_execution),
+            [
+                {
+                    "column_id": column_id,
+                    "filter_config": {
+                        "filter_type": "number",
+                        "filter_op": filter_op,
+                        "filter_value": None,
+                    },
+                }
+            ],
+            [],
+            {},
+        )
+
+    def test_number_null_filters_distinguish_null_from_zero(self, test_execution):
+        missing = CallExecution.objects.create(
+            test_execution=test_execution,
+            avg_agent_latency_ms=None,
+        )
+        zero = CallExecution.objects.create(
+            test_execution=test_execution,
+            avg_agent_latency_ms=0,
+        )
+
+        null_ids = set(
+            self._apply_filter(
+                test_execution, "avg_agent_latency_ms", "is_null"
+            ).values_list("id", flat=True)
+        )
+        present_ids = set(
+            self._apply_filter(
+                test_execution, "avg_agent_latency_ms", "is_not_null"
+            ).values_list("id", flat=True)
+        )
+
+        assert null_ids == {missing.id}
+        assert present_ids == {zero.id}
+
+    def test_cost_null_filters_require_both_cost_fields_to_be_missing(
+        self, test_execution
+    ):
+        missing = CallExecution.objects.create(
+            test_execution=test_execution,
+            cost_cents=None,
+            customer_cost_cents=None,
+        )
+        zero_cost = CallExecution.objects.create(
+            test_execution=test_execution,
+            cost_cents=0,
+            customer_cost_cents=None,
+        )
+        customer_cost = CallExecution.objects.create(
+            test_execution=test_execution,
+            cost_cents=None,
+            customer_cost_cents=12,
+        )
+
+        null_ids = set(
+            self._apply_filter(test_execution, "cost", "is_null").values_list(
+                "id", flat=True
+            )
+        )
+        present_ids = set(
+            self._apply_filter(test_execution, "cost", "is_not_null").values_list(
+                "id", flat=True
+            )
+        )
+
+        assert null_ids == {missing.id}
+        assert present_ids == {zero_cost.id, customer_cost.id}
+
+    def test_response_time_null_filters_do_not_require_a_filter_value(
+        self, test_execution
+    ):
+        missing = CallExecution.objects.create(
+            test_execution=test_execution,
+            response_time_ms=None,
+        )
+        zero = CallExecution.objects.create(
+            test_execution=test_execution,
+            response_time_ms=0,
+        )
+
+        null_ids = set(
+            self._apply_filter(test_execution, "responseTime", "is_null").values_list(
+                "id", flat=True
+            )
+        )
+        present_ids = set(
+            self._apply_filter(
+                test_execution, "responseTime", "is_not_null"
+            ).values_list("id", flat=True)
+        )
+
+        assert null_ids == {missing.id}
+        assert present_ids == {zero.id}
+
+
 class TestScenarioDatasetGrouping:
     def test_groups_across_datasets(
         self, organization, workspace, user, test_execution

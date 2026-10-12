@@ -22,6 +22,7 @@ import { useNavigate, useParams } from "react-router";
 import FormSearchSelectFieldState from "src/components/FromSearchSelectField/FormSearchSelectFieldState";
 import { LLM_TABS } from "../../../sections/projects/LLMTracing/common";
 import { coreSpanFields } from "../common";
+import { getAddToDatasetStatus } from "./status";
 
 const AddExistingDataset = ({
   handleclose,
@@ -260,10 +261,13 @@ const AddExistingDataset = ({
       axios.post(endpoints.project.addExistingDataset, payload),
     onSuccess: (res) => {
       if (res.data?.status) {
+        const { message, variant } = getAddToDatasetStatus(
+          res.data?.result,
+          "Data added successfully",
+        );
         enqueueSnackbar(
           <>
-            <span>Data added successfully</span>
-            {/* {res.data.result.message} */}
+            <span>{message}</span>
             <span
               onClick={() =>
                 navigate(`/dashboard/develop/${selectedDataset}?tab=data`, {
@@ -281,7 +285,7 @@ const AddExistingDataset = ({
               View Dataset
             </span>
           </>,
-          { variant: "success" },
+          { variant },
         );
         handleclose();
         if (onSuccess) {
