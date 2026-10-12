@@ -298,6 +298,8 @@ func parseAction(s string) Action {
 		return ActionWarn
 	case "log":
 		return ActionLog
+	case "mask":
+		return ActionMask
 	default:
 		return ActionLog
 	}

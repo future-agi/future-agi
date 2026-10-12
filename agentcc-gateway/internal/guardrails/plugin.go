@@ -226,6 +226,15 @@ func (p *GuardrailPlugin) runOrgGuardrails(ctx context.Context, rc *models.Reque
 				"threshold", threshold,
 				"message", cr.Message,
 			)
+		case ActionMask:
+			// ActionMask: allow request but log masked data
+			slog.Info("guardrail triggered (mask mode)",
+				"guardrail", name,
+				"org_id", orgID,
+				"score", cr.Score,
+				"threshold", threshold,
+				"message", cr.Message,
+			)
 		}
 	}
 
@@ -513,6 +522,8 @@ func actionString(a Action) string {
 		return "warn"
 	case ActionLog:
 		return "log"
+	case ActionMask:
+		return "mask"
 	default:
 		return "unknown"
 	}
