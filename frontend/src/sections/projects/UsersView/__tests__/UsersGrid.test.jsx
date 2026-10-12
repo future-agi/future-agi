@@ -290,6 +290,44 @@ describe("UsersGrid deterministic pagination", () => {
     });
   });
 
+  it("manual refresh discards later-page cursors and restarts on page one", async () => {
+    const firstRows = Array.from({ length: 25 }, (_, index) => row(index));
+    getMock
+      .mockResolvedValueOnce(
+        usersResponse({
+          rows: firstRows,
+          totalCount: 26,
+          hasMore: true,
+          nextCursor: "old-page-two",
+        }),
+      )
+      .mockResolvedValueOnce(usersResponse({ rows: [row(25)], totalCount: 26 }))
+      .mockResolvedValueOnce(usersResponse({ rows: [row(100)] }));
+    const gridRef = React.createRef();
+    renderGrid({ ref: gridRef });
+    const firstPage = makeGridParams();
+    await readPage(firstPage);
+    const secondPage = makeGridParams({ startRow: 25, endRow: 50 });
+    secondPage.api.paginationGoToFirstPage = vi.fn();
+    await readPage(secondPage);
+    expect(getMock.mock.calls[1][1].params.cursor).toBe("old-page-two");
+
+    act(() => gridRef.current.refresh());
+    expect(secondPage.api.paginationGoToFirstPage).toHaveBeenCalledOnce();
+    expect(secondPage.api.refreshServerSide).toHaveBeenCalledWith({
+      purge: false,
+    });
+    const freshPage = makeGridParams();
+    await readPage(freshPage);
+    expect(getMock).toHaveBeenCalledTimes(3);
+    expect(getMock.mock.calls[2][1].params).not.toHaveProperty("cursor");
+    expect(getMock.mock.calls[2][1].params.current_page_index).toBe(0);
+    expect(freshPage.success).toHaveBeenCalledWith({
+      rowData: [row(100)],
+      rowCount: 1,
+    });
+  });
+
   it("opts the first unsorted request into cursor mode with the active filters", async () => {
     getMock.mockResolvedValue(usersResponse());
     renderGrid();
