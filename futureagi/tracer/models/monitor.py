@@ -1,11 +1,10 @@
 import uuid
 
+from accounts.models.organization import Organization
+from accounts.models.user import User
 from django.contrib.postgres.fields import ArrayField
 from django.core.validators import MinValueValidator
 from django.db import models
-
-from accounts.models.organization import Organization
-from accounts.models.user import User
 from tfc.utils.base_model import BaseModel
 from tracer.models.project import Project
 
@@ -133,6 +132,7 @@ class UserAlertMonitor(BaseModel):
     notification_emails: ArrayField = ArrayField(models.EmailField(), default=list)
     slack_webhook_url = models.URLField(null=True, blank=True)
     slack_notes = models.TextField(null=True, blank=True)
+    webhook_url = models.URLField(null=True, blank=True)
 
     # Monitor state and configuration
     is_mute = models.BooleanField(default=False)
