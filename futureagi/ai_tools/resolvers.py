@@ -12,6 +12,7 @@ import uuid
 from typing import Optional
 
 import structlog
+from django.db.models import Q
 
 # Module-scope imports so unit tests can patch these symbols
 from model_hub.models.develop_dataset import Dataset
@@ -117,27 +118,36 @@ def resolve_project(identifier: str, organization, workspace=None):
     return None, f"No project found matching '{identifier}'."
 
 
+def visible_eval_templates(organization):
+    """The set a caller is allowed to READ: this organization's templates, plus the
+    system ones, which carry no organization and no workspace.
+
+    This is the predicate `list_eval_templates` and `run_evaluation` already use. It has
+    to be `no_workspace_objects`, because the default manager filters by the current
+    workspace and a system template has none, so `EvalTemplate.objects` cannot see one at
+    all. Write paths stay on `EvalTemplate.objects` on purpose: a system template is not
+    yours to edit or delete.
+    """
+    return EvalTemplate.no_workspace_objects.filter(
+        Q(organization=organization) | Q(organization__isnull=True),
+        deleted=False,
+    )
+
+
 def resolve_eval_template(identifier: str, organization, workspace=None):
     """Resolve an eval template by name or UUID."""
     if not identifier:
         return None, "Eval template identifier is required."
 
+    visible = visible_eval_templates(organization)
+
     if is_uuid(identifier):
         try:
-            return (
-                EvalTemplate.objects.get(
-                    id=identifier, organization=organization, deleted=False
-                ),
-                None,
-            )
+            return visible.get(id=identifier), None
         except EvalTemplate.DoesNotExist:
             return None, f"Eval template with ID `{identifier}` not found."
 
-    matches = EvalTemplate.objects.filter(
-        name__iexact=identifier.strip(),
-        organization=organization,
-        deleted=False,
-    )
+    matches = visible.filter(name__iexact=identifier.strip())
     if matches.count() == 1:
         return matches.first(), None
     elif matches.count() > 1:
@@ -145,11 +155,7 @@ def resolve_eval_template(identifier: str, organization, workspace=None):
         return None, f"Multiple templates match '{identifier}': {', '.join(names)}."
 
     # Try fuzzy
-    fuzzy = EvalTemplate.objects.filter(
-        name__icontains=identifier.strip(),
-        organization=organization,
-        deleted=False,
-    )[:5]
+    fuzzy = visible.filter(name__icontains=identifier.strip())[:5]
     if fuzzy.exists():
         suggestions = [f"`{t.name}` (ID: {t.id})" for t in fuzzy]
         return (
