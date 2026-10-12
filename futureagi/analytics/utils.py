@@ -31,11 +31,14 @@ def mixpanel_slack_notfy(msg):
         logger.error(f"Failed to send Slack notification: {str(e)}")
 
 
-def track_mixpanel_event(event_name, properties):
+def track_mixpanel_event(event_name, properties, raise_on_error=False):
     try:
-        mixpanel_tracker.track_event(
-            event_name,
-            properties,
+        return bool(
+            mixpanel_tracker.track_event(
+                event_name,
+                properties,
+                raise_on_error=raise_on_error,
+            )
         )
     except Exception as e:
         error_message = f"""
@@ -45,6 +48,9 @@ def track_mixpanel_event(event_name, properties):
             """
         mixpanel_slack_notfy(error_message.strip())
         logger.error(f"Error tracking Mixpanel event '{event_name}': {str(e)}")
+        if raise_on_error:
+            raise
+        return False
 
 
 def get_mixpanel_properties(

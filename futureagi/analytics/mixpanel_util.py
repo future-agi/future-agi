@@ -121,10 +121,10 @@ class MixpanelTracker:
             },
         )
 
-    def track_event(self, event_name, properties=None):
-        """Send event data to Mixpanel"""
+    def track_event(self, event_name, properties=None, raise_on_error=False):
+        """Send event data to Mixpanel."""
         if not self._is_enabled():
-            return
+            return False
         try:
             properties = properties or {}
             if "org_id" in properties and "org_name" in properties:
@@ -143,8 +143,12 @@ class MixpanelTracker:
                 )
             user_id = str(properties.get("$user_id", "unknown"))
             self.mp.track(user_id, event_name, properties)
+            return True
         except Exception as e:
             logger.exception(f"Error tracking Mixpanel event: {e}")
+            if raise_on_error:
+                raise
+            return False
 
 
 mixpanel_tracker = MixpanelTracker()

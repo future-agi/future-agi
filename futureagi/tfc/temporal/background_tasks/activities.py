@@ -22,6 +22,18 @@ def run_post_registration_activity(user_id: str, generated_password: str):
     return _run_post_registration(user_id, generated_password)
 
 
+@temporal_activity(time_limit=600, queue="default")
+def run_invite_acceptance_reporting_activity(user_id: str):
+    """Report a first invite acceptance to HubSpot, Slack, and Mixpanel.
+
+    Separate from owner post-registration so it does not email a generated
+    password or seed demo traces into the inviting organization.
+    """
+    from accounts.utils import report_invite_acceptance
+
+    return report_invite_acceptance(user_id)
+
+
 @temporal_activity(time_limit=3600, queue="tasks_l")
 def process_huggingface_dataset_activity(
     dataset_id: str,
@@ -125,6 +137,7 @@ def ingest_kb_files_activity(file_metadata: dict, kb_id: str, org_id: str):
 
 __all__ = [
     "run_post_registration_activity",
+    "run_invite_acceptance_reporting_activity",
     "process_huggingface_dataset_activity",
     "delete_compare_folder_activity",
     "prepare_compare_dataset_activity",

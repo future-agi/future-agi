@@ -53,7 +53,14 @@ from accounts.serializers.contracts import (
 )
 from accounts.serializers.user import UpdateUserSerializer
 from accounts.services.token_service import issue_tokens
-from accounts.utils import WorkEmailRequired, build_password_reset_link, first_signup
+from accounts.utils import (
+    WorkEmailRequired,
+    build_password_reset_link,
+    first_signup,
+    mark_invite_acceptance_reporting_pending,
+    retry_pending_invite_acceptance_reporting,
+    schedule_invite_acceptance_reporting,
+)
 from accounts.views.workspace_management import clear_user_redis_cache
 from analytics.utils import (
     MixpanelEvents,
@@ -697,13 +704,14 @@ def accept_invitation_mail(request, uidb64, token):
         if not org:
             return _gm.bad_request("Invitation link is invalid or has expired.")
 
-        invite_exists = OrganizationInvite.objects.filter(
+        invite = OrganizationInvite.objects.filter(
             target_email__iexact=user.email,
             organization=org,
             status=InviteStatus.PENDING,
-        ).exists()
-
-        if not invite_exists:
+        ).first()
+        if not invite:
+            return _gm.bad_request("This invitation has been cancelled or expired.")
+        if invite.is_expired:
             return _gm.bad_request("This invitation has been cancelled or expired.")
 
         # ------------------------------------------------------------------
@@ -760,33 +768,47 @@ def accept_invitation_mail(request, uidb64, token):
         except ValidationError as e:
             return _gm.bad_request("\n".join(e.messages))
 
-        user.password = make_password(new_password)
-        user.is_active = True
-        user.save()  # this consumes the token
-
-        # Accept the invite — activates OrganizationMembership and
-        # WorkspaceMembership records created during dual-write.
-        from accounts.models.organization_invite import InviteStatus, OrganizationInvite
-
-        invite = OrganizationInvite.objects.filter(
-            target_email__iexact=user.email,
-            organization=org,
-            status=InviteStatus.PENDING,
-        ).first()
-        if invite:
-            try:
-                invite.accept(user)
-            except ValueError:
+        # Accept the invite and activate the account atomically. Capture the
+        # pre-acceptance state so existing users joining another org are not
+        # treated as new signups.
+        is_new_invitee = not user.is_active and bool(user.invited_by_id)
+        with transaction.atomic():
+            invite = OrganizationInvite.objects.select_for_update().filter(
+                target_email__iexact=user.email,
+                organization=org,
+                status=InviteStatus.PENDING,
+            ).first()
+            if not invite:
+                return _gm.bad_request("This invitation has been cancelled or expired.")
+            if invite.is_expired:
                 invite.status = InviteStatus.EXPIRED
                 invite.save(update_fields=["status"])
-                _activate_memberships(user)
-        else:
-            _activate_memberships(user)
+                return _gm.bad_request("This invitation has been cancelled or expired.")
 
-        # Set selected org so the auth layer picks it up on first request.
-        user.config["selected_organization_id"] = str(org.id)
-        user.config["currentOrganizationId"] = str(org.id)
-        user.save(update_fields=["config"])
+            if is_new_invitee:
+                mark_invite_acceptance_reporting_pending(user)
+
+            user.password = make_password(new_password)
+            user.is_active = True
+            user.save()  # this consumes the token
+            invite.accept(user)
+
+            # Set selected org so the auth layer picks it up on first request.
+            user.config["selected_organization_id"] = str(org.id)
+            user.config["currentOrganizationId"] = str(org.id)
+            user.save(update_fields=["config"])
+
+        # First acceptance of a new invitee. Existing users joining another
+        # org already have an account and are not a signup. The pending marker
+        # is durable if Temporal is unavailable and is retried on later login.
+        if is_new_invitee:
+            try:
+                schedule_invite_acceptance_reporting(user)
+            except Exception:
+                logger.exception(
+                    "invite_signup_reporting_schedule_failed",
+                    user_id=str(user.id),
+                )
 
         # Generate JWT tokens (same pattern as CustomTokenObtainPairView).
         AuthToken.objects.filter(
