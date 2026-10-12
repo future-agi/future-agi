@@ -21,6 +21,7 @@ from .dataset_optimization_trial_item import (
     DatasetOptimizationTrialItem,
 )
 from .dataset_properties import DatasetProperties
+from .dataset_versions import DatasetVersion, DatasetVersionItem
 from .develop import DevelopAI
 from .eval_summary_template import EvalSummaryTemplate
 from .evaluation import Evaluation
