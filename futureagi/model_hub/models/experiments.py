@@ -7,6 +7,7 @@ from pydantic import BaseModel as PydanticBaseModel
 
 from accounts.models import User
 from model_hub.models.choices import StatusType
+from model_hub.models.dataset_versions import DatasetVersion
 from model_hub.models.develop_dataset import Column, Dataset, Row
 from model_hub.models.evals_metric import UserEvalMetric
 from model_hub.models.run_prompt import ModelConfig, PromptTemplate, PromptVersion
@@ -138,6 +139,158 @@ class ExperimentsTable(BaseModel):
         if self.prompt_config:
             validate_prompt_config(self.prompt_config)
         super().save(*args, **kwargs)
+
+
+class ExperimentRun(BaseModel):
+    """One execution of an experiment task against a dataset version.
+
+    Dataset versions are immutable, so the protected foreign key keeps every
+    run tied to the exact case set that produced its results.
+    """
+
+    class TaskKind(models.TextChoices):
+        PROMPT = "prompt", "Prompt"
+        GRAPH = "graph", "Graph"
+        EXTERNAL = "external", "External"
+
+    class Status(models.TextChoices):
+        DRAFT = "draft", "Draft"
+        QUEUED = "queued", "Queued"
+        RUNNING = "running", "Running"
+        PARTIAL = "partial", "Partial"
+        COMPLETED = "completed", "Completed"
+        FAILED = "failed", "Failed"
+        CANCELLED = "cancelled", "Cancelled"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    experiment = models.ForeignKey(
+        ExperimentsTable,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="runs",
+    )
+    dataset_version = models.ForeignKey(
+        DatasetVersion,
+        on_delete=models.PROTECT,
+        related_name="experiment_runs",
+    )
+    task_kind = models.CharField(
+        max_length=32,
+        choices=TaskKind.choices,
+        default=TaskKind.PROMPT,
+    )
+    status = models.CharField(
+        max_length=32,
+        choices=Status.choices,
+        default=Status.DRAFT,
+        db_index=True,
+    )
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    model_config = models.JSONField(default=dict, blank=True)
+    prompt_version_id = models.UUIDField(null=True, blank=True)
+    agent_version_id = models.UUIDField(null=True, blank=True)
+    evaluator_versions = models.JSONField(default=list, blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(
+                fields=["dataset_version", "status"],
+                name="exp_run_dataset_status_idx",
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        if (
+            self.experiment_id
+            and self.dataset_version_id
+            and self.experiment.dataset_id != self.dataset_version.dataset_id
+        ):
+            raise ValidationError(
+                {
+                    "dataset_version": "Run version must belong to the experiment dataset."
+                }
+            )
+        if (
+            self.started_at
+            and self.completed_at
+            and self.completed_at < self.started_at
+        ):
+            raise ValidationError(
+                {"completed_at": "Completion cannot precede the run start."}
+            )
+
+
+class ExperimentRunItem(BaseModel):
+    """One dataset example/trial result belonging to an :class:`ExperimentRun`."""
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        RUNNING = "running", "Running"
+        COMPLETED = "completed", "Completed"
+        FAILED = "failed", "Failed"
+        SKIPPED = "skipped", "Skipped"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    run = models.ForeignKey(
+        ExperimentRun,
+        on_delete=models.CASCADE,
+        related_name="items",
+    )
+    example_id = models.UUIDField(db_index=True)
+    trial_number = models.PositiveIntegerField(default=1)
+    status = models.CharField(
+        max_length=32,
+        choices=Status.choices,
+        default=Status.PENDING,
+        db_index=True,
+    )
+    input = models.JSONField(null=True, blank=True)
+    expected = models.JSONField(null=True, blank=True)
+    output = models.JSONField(null=True, blank=True)
+    error = models.JSONField(null=True, blank=True)
+    trace_id = models.CharField(max_length=255, null=True, blank=True, db_index=True)
+    root_span_id = models.CharField(max_length=255, null=True, blank=True)
+    latency_ms = models.FloatField(null=True, blank=True)
+    token_usage = models.JSONField(null=True, blank=True)
+    cost = models.FloatField(null=True, blank=True)
+    score_refs = models.JSONField(default=list, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["run", "example_id", "trial_number"],
+                name="experiment_run_item_example_trial_unique",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["run", "status"],
+                name="exp_run_item_status_idx",
+            ),
+            models.Index(
+                fields=["run", "example_id"],
+                name="exp_run_item_example_idx",
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        errors = {}
+        if self.trial_number is None or self.trial_number <= 0:
+            errors["trial_number"] = "Trial number must be greater than zero."
+        if self.latency_ms is not None and self.latency_ms < 0:
+            errors["latency_ms"] = "Latency cannot be negative."
+        if self.cost is not None and self.cost < 0:
+            errors["cost"] = "Cost cannot be negative."
+        if not isinstance(self.score_refs, list):
+            errors["score_refs"] = "Score references must be a list."
+        if errors:
+            raise ValidationError(errors)
 
 
 class ExperimentPromptConfig(BaseModel):

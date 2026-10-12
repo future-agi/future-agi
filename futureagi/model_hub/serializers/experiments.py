@@ -1,27 +1,152 @@
 # serializers.py
+from django.core.exceptions import ValidationError as ModelValidationError
 from rest_framework import serializers
-from tfc.utils.serializer_fields import (
-    JsonValueField,
-    StringOrArrayField,
-    StringOrObjectField,
-)
 
 from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManager
 from model_hub.models.choices import ProviderLogoUrls
+from model_hub.models.dataset_versions import DatasetVersion
 from model_hub.models.develop_dataset import Column, Dataset
 from model_hub.models.evals_metric import UserEvalMetric
 from model_hub.models.experiments import (
     ExperimentAgentConfig,
     ExperimentDatasetTable,
     ExperimentPromptConfig,
+    ExperimentRun,
+    ExperimentRunItem,
     ExperimentsTable,
 )
 from model_hub.utils.workspace_scope import (
     scoped_column_queryset,
     scoped_dataset_queryset,
+    scoped_dataset_version_queryset,
     scoped_user_eval_metric_queryset,
 )
 from tfc.middleware.workspace_context import get_current_organization
+from tfc.utils.serializer_fields import (
+    JsonValueField,
+    StringOrArrayField,
+    StringOrObjectField,
+)
+
+
+class ExperimentRunSerializer(serializers.ModelSerializer):
+    """Stable write/read contract for an experiment execution.
+
+    Dataset versions are represented by their stable primary key and validated
+    through the DatasetVersion relation.
+    """
+
+    experiment_id = serializers.PrimaryKeyRelatedField(
+        source="experiment",
+        queryset=ExperimentsTable.objects.all(),
+        required=False,
+        allow_null=True,
+    )
+    dataset_version_id = serializers.PrimaryKeyRelatedField(
+        source="dataset_version",
+        queryset=DatasetVersion.objects.all(),
+    )
+    metadata = serializers.DictField(required=False)
+    model_config = serializers.DictField(required=False)
+    evaluator_versions = serializers.ListField(
+        child=serializers.JSONField(), required=False
+    )
+
+    class Meta:
+        model = ExperimentRun
+        fields = [
+            "id",
+            "experiment_id",
+            "dataset_version_id",
+            "task_kind",
+            "status",
+            "started_at",
+            "completed_at",
+            "metadata",
+            "model_config",
+            "prompt_version_id",
+            "agent_version_id",
+            "evaluator_versions",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get("request") if self.context else None
+        dataset_versions = scoped_dataset_version_queryset(request)
+        self.fields["dataset_version_id"].queryset = dataset_versions
+        self.fields["experiment_id"].queryset = ExperimentsTable.objects.filter(
+            dataset__in=scoped_dataset_queryset(request),
+            deleted=False,
+        )
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        candidate = ExperimentRun(
+            **{
+                field: attrs.get(field, getattr(self.instance, field, None))
+                for field in (
+                    "experiment",
+                    "dataset_version",
+                    "started_at",
+                    "completed_at",
+                )
+            }
+        )
+        try:
+            candidate.clean()
+        except ModelValidationError as exc:
+            raise serializers.ValidationError(exc.message_dict) from exc
+        return attrs
+
+
+class ExperimentRunItemSerializer(serializers.ModelSerializer):
+    """Stable write/read contract for one example/trial result."""
+
+    run_id = serializers.PrimaryKeyRelatedField(
+        source="run",
+        queryset=ExperimentRun.objects.all(),
+    )
+    trial_number = serializers.IntegerField(required=False, min_value=1)
+    latency_ms = serializers.FloatField(required=False, allow_null=True, min_value=0)
+    cost = serializers.FloatField(required=False, allow_null=True, min_value=0)
+    metadata = serializers.DictField(required=False)
+    score_refs = serializers.ListField(child=serializers.JSONField(), required=False)
+
+    class Meta:
+        model = ExperimentRunItem
+        fields = [
+            "id",
+            "run_id",
+            "example_id",
+            "trial_number",
+            "status",
+            "input",
+            "expected",
+            "output",
+            "error",
+            "trace_id",
+            "root_span_id",
+            "latency_ms",
+            "token_usage",
+            "cost",
+            "score_refs",
+            "metadata",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get("request") if self.context else None
+        runs = ExperimentRun.objects.filter(
+            dataset_version__in=scoped_dataset_version_queryset(request),
+            deleted=False,
+        )
+        self.fields["run_id"].queryset = runs
 
 
 class ExperimentsTableSerializer(serializers.ModelSerializer):
