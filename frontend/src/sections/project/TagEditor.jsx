@@ -63,21 +63,30 @@ const fetchAllKnownTags = async ({ signal } = {}) => {
   return Array.from(tagSet).sort();
 };
 
+const setPageProjectTags = (page, projectId, tags) =>
+  page && {
+    ...page,
+    rows: page.rows.map((project) =>
+      project.id === projectId ? { ...project, tags } : project,
+    ),
+  };
+
 // ── Component ──
 
-const TagEditor = ({ projectId, variant = "grid" }) => {
+const TagEditor = ({ projectId, tags: listTags, variant = "grid" }) => {
   const [anchorEl, setAnchorEl] = useState(null);
   const [search, setSearch] = useState("");
   const [newTagInput, setNewTagInput] = useState("");
   const queryClient = useQueryClient();
 
   // ── Fetch this project's tags ──
-  const { data: tags = [] } = useQuery({
+  const { data: fetchedTags = [] } = useQuery({
     queryKey: ["project-tags", projectId],
     queryFn: () => fetchProjectTags(projectId),
-    enabled: !!projectId,
+    enabled: !!projectId && listTags === undefined,
     staleTime: 30_000,
   });
+  const tags = listTags ?? fetchedTags;
 
   // ── Fetch all known tags (for the dropdown list) — only when popover is open ──
   const {
@@ -98,19 +107,41 @@ const TagEditor = ({ projectId, variant = "grid" }) => {
     mutationFn: (newTags) => updateProjectTags(projectId, newTags),
     onMutate: async (newTags) => {
       // Cancel outgoing refetches
-      await queryClient.cancelQueries({
-        queryKey: ["project-tags", projectId],
-      });
+      await Promise.all([
+        queryClient.cancelQueries({ queryKey: ["project-tags", projectId] }),
+        queryClient.cancelQueries({ queryKey: ["observe-projects"] }),
+      ]);
       // Snapshot previous
-      const prev = queryClient.getQueryData(["project-tags", projectId]);
+      const prev =
+        queryClient.getQueryData(["project-tags", projectId]) ?? tags;
+      const previousPages = queryClient
+        .getQueriesData({ queryKey: ["observe-projects"] })
+        .flatMap(([queryKey, page]) => {
+          const project = page?.rows.find((row) => row.id === projectId);
+          return project ? [[queryKey, project.tags]] : [];
+        });
       // Optimistically set new tags
       queryClient.setQueryData(["project-tags", projectId], newTags);
-      return { prev };
+      queryClient.setQueriesData({ queryKey: ["observe-projects"] }, (page) =>
+        setPageProjectTags(page, projectId, newTags),
+      );
+      return { prev, previousPages };
     },
     onError: (_err, _newTags, context) => {
       // Revert on error
       queryClient.setQueryData(["project-tags", projectId], context?.prev);
+      context?.previousPages.forEach(([queryKey, previousTags]) => {
+        queryClient.setQueryData(queryKey, (page) =>
+          setPageProjectTags(page, projectId, previousTags),
+        );
+      });
       enqueueSnackbar("Failed to update tags", { variant: "error" });
+    },
+    onSuccess: (savedTags) => {
+      queryClient.setQueryData(["project-tags", projectId], savedTags);
+      queryClient.setQueriesData({ queryKey: ["observe-projects"] }, (page) =>
+        setPageProjectTags(page, projectId, savedTags),
+      );
     },
     onSettled: () => {
       // Refetch to ensure server state
@@ -360,6 +391,7 @@ const TagEditor = ({ projectId, variant = "grid" }) => {
 
 TagEditor.propTypes = {
   projectId: PropTypes.string.isRequired,
+  tags: PropTypes.arrayOf(PropTypes.string),
   variant: PropTypes.oneOf(["grid", "header"]),
 };
 
