@@ -102,6 +102,9 @@ func (t *Translator) RequestToCanonical(body []byte) (*models.ChatCompletionRequ
 	}
 
 	// ── thinking config → Extra ────────────────────────────────────────────────
+	// The translator does not know the resolved backend. The /v1/messages
+	// handler removes this carrier and records thinking_unsupported_on_backend
+	// once it knows the provider is not Anthropic-native.
 	if req.Thinking != nil {
 		b, err := json.Marshal(req.Thinking)
 		if err != nil {
