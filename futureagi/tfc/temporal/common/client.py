@@ -429,6 +429,28 @@ def cancel_workflow_sync(workflow_id: str) -> bool:
     return _run_async_in_sync_context(lambda: cancel_workflow_async(workflow_id))
 
 
+async def terminate_workflow_async(workflow_id: str) -> bool:
+    """Bound best-effort cleanup so a Temporal outage cannot stall a delete.
+
+    Returns True when a running workflow was terminated, False when none
+    exists or Temporal is unreachable. Never raises.
+    """
+
+    async def terminate():
+        client = await get_client()
+        await client.get_workflow_handle(workflow_id).terminate(reason="call_deleted")
+
+    try:
+        await asyncio.wait_for(terminate(), timeout=3)
+        return True
+    except Exception:
+        return False
+
+
+def terminate_workflow_sync(workflow_id: str) -> bool:
+    return _run_async_in_sync_context(lambda: terminate_workflow_async(workflow_id))
+
+
 async def signal_workflow_async(workflow_id: str, signal: str, *args) -> bool:
     """Send a signal to a running workflow.
 

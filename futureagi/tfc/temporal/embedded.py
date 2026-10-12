@@ -154,6 +154,16 @@ def _worker_plans() -> list[_QueuePlan]:
                 max_workflow_tasks=1,
             )
         )
+    from tfc.temporal.common.worker import audio_worker_options
+
+    plans = [
+        plan._replace(
+            max_activities=audio_worker_options(plan.queue)["max_concurrent_activities"]
+        )
+        if plan.queue == "tasks_audio"
+        else plan
+        for plan in plans
+    ]
     return plans
 
 
@@ -528,6 +538,10 @@ class EmbeddedTemporalWorker:
             return
 
         plans = _worker_plans()
+        if any(plan.queue == "tasks_audio" for plan in plans):
+            from ee.voice.services.audio_worker import sweep_audio_temp_files
+
+            sweep_audio_temp_files()
         pools: list[concurrent.futures.ThreadPoolExecutor] = []
         try:
             workers = []

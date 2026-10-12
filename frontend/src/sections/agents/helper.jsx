@@ -9,7 +9,12 @@ import VoiceTokenCell from "./CallLogs/VoiceTokenCell";
 import TalkRatioCell from "./CallLogs/TalkRatioCell";
 import EvalCellRenderer from "../test-detail/CellRenderers/EvalCellRenderer";
 import CallLogsHeaderCellRenderer from "./CallLogs/CallLogsHeaderCellRenderer";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  callDetailRefetchInterval,
+  callDetailRetry,
+  isCallDetailAccessError,
+} from "src/api/simulate-environments/callDetailPolling";
 import axios, { readQuery, endpoints } from "src/utils/axios";
 import { Box, Skeleton } from "@mui/material";
 import EvaluationCell from "src/sections/projects/LLMTracing/Renderers/EvaluationCell";
@@ -1172,13 +1177,22 @@ export const prefetchCallLogs = (
 };
 
 export const useCallExecutionDetail = (callExecutionId, enabled = false) => {
+  const queryClient = useQueryClient();
+  const queryKey = ["callExecutionDetail", callExecutionId];
+  const retry =
+    queryClient.getQueryDefaults(queryKey).retry ??
+    queryClient.getDefaultOptions().queries?.retry;
   return useQuery({
-    queryKey: ["callExecutionDetail", callExecutionId],
+    queryKey,
     queryFn: () =>
       axios.get(endpoints.runTests.callExecutionDetail(callExecutionId)),
-    enabled: !!callExecutionId && enabled,
+    enabled: (query) =>
+      !!callExecutionId && enabled && !isCallDetailAccessError(query.state.error),
     select: (data) => data?.data,
     staleTime: 5 * 60 * 1000,
+    retry: callDetailRetry(retry),
+    refetchInterval: (query) =>
+      callDetailRefetchInterval(query.state.data?.data, query.state.error),
     meta: { errorHandled: true },
   });
 };

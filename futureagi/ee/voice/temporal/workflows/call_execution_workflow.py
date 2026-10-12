@@ -16,10 +16,21 @@ from datetime import timedelta
 from typing import Optional
 
 from temporalio import workflow
-from temporalio.workflow import ActivityCancellationType
+from temporalio.common import WorkflowIDReusePolicy
+from temporalio.exceptions import WorkflowAlreadyStartedError
+from temporalio.workflow import ActivityCancellationType, ParentClosePolicy
+
+with workflow.unsafe.imports_passed_through():
+    from ee.voice.temporal.activities.audio_analysis import (
+        AudioAnalysisInput,
+        ScheduleAudioAnalysisInput,
+        ScheduleAudioAnalysisOutput,
+    )
+    from ee.voice.temporal.workflows.audio_analysis_workflow import AudioAnalysisWorkflow
 
 from simulate.semantics import CallType
 from simulate.temporal.constants import (
+    QUEUE_AUDIO,
     QUEUE_L,
     QUEUE_S,
     QUEUE_XL,
@@ -752,6 +763,46 @@ class CallExecutionWorkflow:
                     task_name = task_names[i] if i < len(task_names) else f"task_{i}"
                     workflow.logger.warning(
                         f"Post-persistence task '{task_name}' failed for call {input.call_id}: {result}"
+                    )
+
+            # ========================================
+            # PHASE 5.5: AUDIO ANALYSIS
+            # ========================================
+            if workflow.patched("audio-metrics-v1"):
+                try:
+                    sched = await workflow.execute_activity(
+                        "schedule_audio_analysis",
+                        ScheduleAudioAnalysisInput(
+                            input.call_id, input.org_id, input.workspace_id
+                        ),
+                        start_to_close_timeout=timedelta(seconds=30),
+                        retry_policy=DB_RETRY_POLICY,
+                        task_queue=QUEUE_S,
+                        result_type=ScheduleAudioAnalysisOutput,
+                    )
+                    if sched.scheduled:
+                        await workflow.start_child_workflow(
+                            AudioAnalysisWorkflow.run,
+                            AudioAnalysisInput(
+                                input.call_id,
+                                sched.analysis_id,
+                                sched.generation,
+                                sched.deadline_at,
+                                input.org_id,
+                                input.workspace_id,
+                            ),
+                            id=f"audio-analysis-{sched.analysis_id}",
+                            task_queue=QUEUE_AUDIO,
+                            parent_close_policy=ParentClosePolicy.ABANDON,
+                            id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+                            execution_timeout=timedelta(minutes=30),
+                        )
+                except WorkflowAlreadyStartedError:
+                    workflow.logger.info("Audio analysis identity already started")
+                except Exception:
+                    workflow.logger.warning(
+                        "Audio analysis scheduling failed",
+                        extra={"call_id": input.call_id},
                     )
 
             # ========================================

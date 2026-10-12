@@ -106,11 +106,14 @@ const TestDetailSideDrawerChild = ({
     (data?.call_type != null ||
       data?.observation_span?.[0]?.observation_type === "conversation" ||
       data?.simulation_call_type === "voice");
-  const { data: voiceDetail, isLoading: isVoiceDetailLoading } =
-    useVoiceCallDetail(traceId, {
-      enabled: urlModule === "project" && isVoiceCall && !!traceId,
-      projectId: resolvedProjectId,
-    });
+  const {
+    data: voiceDetail,
+    isLoading: isVoiceDetailLoading,
+    isError: isVoiceDetailError,
+  } = useVoiceCallDetail(traceId, {
+    enabled: urlModule === "project" && isVoiceCall && !!traceId,
+    projectId: resolvedProjectId,
+  });
 
   // Fetch full call execution detail for simulate calls. The list response
   // strips `transcript` when `detail_mode=false` (see
@@ -124,8 +127,11 @@ const TestDetailSideDrawerChild = ({
     urlOrigin === "agent-definition";
   const isChatSim = data?.simulation_call_type === AGENT_TYPES.CHAT;
   const needsDetailFetch = isSimulate && (isVoiceCall || isChatSim);
-  const { data: callExecDetail, isLoading: _isCallExecDetailLoading } =
-    useCallExecutionDetail(data?.id, needsDetailFetch && !!data?.id);
+  const {
+    data: callExecDetail,
+    isLoading: _isCallExecDetailLoading,
+    isError: isCallExecDetailError,
+  } = useCallExecutionDetail(data?.id, needsDetailFetch && !!data?.id);
 
   // When `voiceDetail` or `callExecDetail` arrives async, the transcript
   // shape can differ from the list-response shape (e.g. the list row has
@@ -660,6 +666,11 @@ const TestDetailSideDrawerChild = ({
           }
           scenarioId={scenarioId}
           isLoading={isVoiceDetailLoading}
+          isStale={
+            voiceDetail
+              ? isVoiceDetailError
+              : !!callExecDetail && isCallExecDetailError
+          }
         />
       </ShowComponent>
 

@@ -13,6 +13,7 @@ import Iconify from "src/components/iconify";
 import { fmtMs } from "src/utils/utils";
 import { computeCallMetrics, enrichTurns } from "./transcriptUtils";
 import { fmtWpm } from "./formatters";
+import AcousticMetricsSection from "./AcousticMetricsSection";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Formatting helpers
@@ -674,6 +675,8 @@ const CallAnalyticsView = ({
   costBreakdown,
   isLiveKit,
   apiMetrics,
+  audioMetrics,
+  isStale = false,
 }) => {
   const metrics = useMemo(() => {
     const turns = enrichTurns(transcript);
@@ -688,7 +691,8 @@ const CallAnalyticsView = ({
     latencies ||
     costBreakdown ||
     analysisSummary ||
-    hasApiMetrics;
+    hasApiMetrics ||
+    audioMetrics !== undefined;
 
   if (!hasAny) {
     return (
@@ -712,6 +716,10 @@ const CallAnalyticsView = ({
       {/* KPI strip — always render if we have transcript or API metrics */}
       {(transcript?.length > 0 || hasApiMetrics) && (
         <KpiStrip metrics={metrics} apiMetrics={apiMetrics} />
+      )}
+
+      {audioMetrics !== undefined && (
+        <AcousticMetricsSection data={audioMetrics} isStale={isStale} />
       )}
 
       {/* Latency pipeline */}
@@ -756,6 +764,8 @@ CallAnalyticsView.propTypes = {
   analysisSummary: PropTypes.string,
   costBreakdown: PropTypes.object,
   isLiveKit: PropTypes.bool,
+  audioMetrics: PropTypes.object,
+  isStale: PropTypes.bool,
   apiMetrics: PropTypes.shape({
     turnCount: PropTypes.number,
     talkRatio: PropTypes.number,

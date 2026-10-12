@@ -40966,6 +40966,7 @@ export const simulateCallExecutionsReadResponseCustomerCallIdMax = 255;
 export const simulateCallExecutionsReadResponsePhoneNumberMax = 20;
 
 export const SimulateCallExecutionsReadResponse = zod.object({
+  audio_metrics: zod.string().optional(),
   id: zod.string().uuid().optional(),
   service_provider_call_id: zod.string().min(1).optional(),
   session_id: zod.string().optional(),
@@ -46834,6 +46835,7 @@ export const simulateV3CallExecutionDetailResponseCustomerCallIdMax = 255;
 export const simulateV3CallExecutionDetailResponsePhoneNumberMax = 20;
 
 export const SimulateV3CallExecutionDetailResponse = zod.object({
+  audio_metrics: zod.string().optional(),
   id: zod.string().uuid().optional(),
   service_provider_call_id: zod.string().min(1).optional(),
   session_id: zod.string().optional(),

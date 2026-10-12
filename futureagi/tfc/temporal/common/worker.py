@@ -25,6 +25,15 @@ from tfc.temporal.common.sentry_interceptor import (
 )
 
 
+def audio_worker_options(task_queue: str) -> dict:
+    """Apply the EE audio budget in dedicated and combined worker processes."""
+    if task_queue != "tasks_audio":
+        return {}
+    from django.conf import settings
+
+    return {"max_concurrent_activities": max(1, settings.VOICE_AUDIO_METRICS_WORKER_MAX_CONCURRENT_ACTIVITIES)}
+
+
 async def run_worker(
     task_queue: str,
     *,
@@ -197,6 +206,12 @@ async def run_worker(
         worker_kwargs["max_concurrent_workflow_tasks"] = max_concurrent_workflow_tasks
         log.info("worker_tuning_mode", mode="fixed_concurrency")
 
+    if audio_options := audio_worker_options(task_queue):
+        worker_kwargs.pop("tuner", None)
+        worker_kwargs.update(audio_options)
+        from ee.voice.services.audio_worker import sweep_audio_temp_files
+
+        sweep_audio_temp_files()
     worker = Worker(**worker_kwargs)
     await worker.run()
 

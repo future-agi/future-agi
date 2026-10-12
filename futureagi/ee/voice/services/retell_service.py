@@ -620,6 +620,17 @@ class RetellService(VoiceServiceBlueprint):
             except Exception:
                 logger.exception("simulation_recording_storage_usage_failed")
 
+        from ee.voice.services.audio_provenance import unsupported_provenance
+        from ee.voice.services.recording_provenance import recording_artifacts
+
+        result.provenance = unsupported_provenance(
+            "unknown_agent_track",
+            system_engine="retell",
+            capture_origin="provider_recording",
+            provider_call_id=retell_data.get("call_id"),
+            artifacts=await recording_artifacts(result),
+        )
+
         return result
 
     # ------------------------------------------------------------------

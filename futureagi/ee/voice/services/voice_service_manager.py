@@ -176,10 +176,33 @@ class VoiceServiceManager:
         return await self.engine.get_normalized_transcript_data(call_execution_id)
 
     async def extract_and_persist_recordings(
-        self, call_execution_id: str
+        self, call_execution_id: str, *, recording_context: dict | None = None
     ) -> RecordingUrls:
-        """Extract recordings from provider and persist to S3."""
-        return await self.engine.extract_and_persist_recordings(call_execution_id)
+        """Extract recordings and carry the persisted call's ownership context."""
+        if self.system_voice_provider == ProviderChoices.VAPI:
+            # Role mapping belongs to the Vapi producer; system engine metadata
+            # can differ from the client-owned recording provider on outbound.
+            vapi_context = dict(recording_context) if recording_context else None
+            if vapi_context:
+                vapi_context.pop("system_engine", None)
+            result = await self.engine.extract_and_persist_recordings(
+                call_execution_id, recording_context=vapi_context
+            )
+        else:
+            result = await self.engine.extract_and_persist_recordings(call_execution_id)
+        if result.provenance and recording_context:
+            for field in (
+                "direction",
+                "recording_owner_account",
+                "tested_agent_platform",
+                "is_web_bridge",
+                "system_engine",
+            ):
+                if field in recording_context:
+                    setattr(result.provenance, field, recording_context[field])
+            if recording_context.get("is_web_bridge"):
+                result.provenance.transport = "web_bridge"
+        return result
 
     async def extract_costs(self, call_execution_id: str) -> CostBreakdown:
         """Extract cost breakdown from provider data."""

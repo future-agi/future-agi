@@ -3,6 +3,7 @@ import traceback
 from datetime import datetime
 
 import structlog
+from django.conf import settings
 from django.db.models import Count, Q
 from drf_yasg.utils import swagger_serializer_method
 from rest_framework import serializers
@@ -18,6 +19,7 @@ from simulate.models import (
 from simulate.serializers.chat_message import ChatMessageSerializer
 from simulate.utils.eval_summary import iter_live_eval_outputs
 from simulate.utils.test_execution_utils import canonical_scenario_column_name
+from tfc.ee_loader import has_ee
 from tracer.models.observability_provider import ProviderChoices
 from tracer.serializers.filters import (
     StrictInputSerializer,
@@ -147,8 +149,46 @@ class CallBranchDeviationCreateResponseSerializer(serializers.Serializer):
     message = serializers.CharField(read_only=True)
 
 
+def _audio_metrics_visible(context):
+    # This core serializer also runs in CE images without the EE package.
+    return (
+        context.get("include_audio_metrics") is True
+        and getattr(settings, "VOICE_AUDIO_METRICS_ENABLED", False)
+        and has_ee("ee.voice")
+    )
+
+
+def _audio_metrics_projection(call, raw, generation):
+    from ee.voice.services.audio_analysis.constants import audio_metrics_enabled_for_org
+    from ee.voice.services.audio_analysis.envelope import (
+        empty_envelope,
+        sanitize_for_api,
+    )
+
+    org_id = call.test_execution.run_test.organization_id
+    if not audio_metrics_enabled_for_org(org_id):
+        return empty_envelope(generation, "not_enabled")
+    if call.simulation_call_type == CallExecution.SimulationCallType.TEXT:
+        return empty_envelope(generation, "not_applicable")
+    return sanitize_for_api(raw, generation)
+
+
 class CallExecutionSnapshotSerializer(serializers.ModelSerializer):
     """Serializer for CallExecutionSnapshot model"""
+
+    audio_metrics = serializers.SerializerMethodField()
+
+    def get_audio_metrics(self, obj):
+        if not _audio_metrics_visible(self.context):
+            return None
+        # Old snapshots have no generation column; the envelope retains it.
+        return _audio_metrics_projection(obj.call_execution, obj.audio_metrics, 0)
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        if not _audio_metrics_visible(self.context):
+            data.pop("audio_metrics", None)
+        return data
 
     # Return customer_call_id from parent CallExecution for frontend compatibility
     service_provider_call_id = serializers.SerializerMethodField()
@@ -162,6 +202,7 @@ class CallExecutionSnapshotSerializer(serializers.ModelSerializer):
     class Meta:
         model = CallExecutionSnapshot
         fields = [
+            "audio_metrics",
             "id",
             "snapshot_timestamp",
             "rerun_type",
@@ -308,6 +349,21 @@ def _normalize_eval_value(value, output_type):
 class CallExecutionDetailSerializer(serializers.ModelSerializer):
     """Serializer for CallExecution model with new payload structure"""
 
+    audio_metrics = serializers.SerializerMethodField()
+
+    def get_audio_metrics(self, obj):
+        if not _audio_metrics_visible(self.context):
+            return None
+        return _audio_metrics_projection(
+            obj, obj.audio_metrics, obj.audio_analysis_generation
+        )
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        if not _audio_metrics_visible(self.context):
+            data.pop("audio_metrics", None)
+        return data
+
     test_execution_id = serializers.UUIDField(read_only=True)
     timestamp = serializers.DateTimeField(source="updated_at", read_only=True)
     call_type = serializers.SerializerMethodField()
@@ -389,6 +445,7 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = CallExecution
         fields = [
+            "audio_metrics",
             "id",
             "service_provider_call_id",
             "session_id",
@@ -1208,7 +1265,9 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                 ).order_by("-snapshot_timestamp")
 
             # Serialize the snapshots
-            snapshot_serializer = CallExecutionSnapshotSerializer(snapshots, many=True)
+            snapshot_serializer = CallExecutionSnapshotSerializer(
+                snapshots, many=True, context=self.context
+            )
             return snapshot_serializer.data
 
         except Exception as e:

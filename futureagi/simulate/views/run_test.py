@@ -199,6 +199,7 @@ from simulate.utils.test_execution_utils import (
 )
 from simulate.views.scoping import run_test_workspace_filter
 from tfc.ee_gates import strip_turing_from_config_options
+from tfc.temporal.common.client import terminate_workflow_sync
 from tfc.settings import settings as app_settings
 from tfc.settings.settings import VAPI_INDIAN_PHONE_NUMBER_ID
 from tfc.utils.api_contracts import validated_request
@@ -3793,6 +3794,7 @@ class CallExecutionDetailView(APIView):
                     "cells_by_row": {},
                     "snapshots_by_call": {},
                     "detail_mode": True,
+                    "include_audio_metrics": True,
                 },
             )
 
@@ -4504,7 +4506,22 @@ class CallExecutionDeleteView(APIView):
             # Soft delete the call execution
             call_execution.deleted = True
             call_execution.deleted_at = timezone.now()
-            call_execution.save()
+            call_execution.save(update_fields=["deleted", "deleted_at"])
+
+            envelope = call_execution.audio_metrics or {}
+            if envelope.get("state") == "pending" and envelope.get("analysis_id"):
+                try:
+                    terminate_workflow_sync(f"audio-analysis-{envelope['analysis_id']}")
+                except Exception as exc:
+                    # The tombstone above is the correctness boundary. Never
+                    # fail deletion because a child is absent or Temporal is down.
+                    import logging
+
+                    logging.getLogger(__name__).warning(
+                        "audio_metrics.delete_termination_failed: %s",
+                        type(exc).__name__,
+                        extra={"analysis_id": envelope["analysis_id"]},
+                    )
 
             response_serializer = CallExecutionDeleteResponseSerializer(
                 {"message": "Call execution deleted successfully"}
@@ -6601,6 +6618,7 @@ def _clear_call_execution_data(call_execution):
 
     # Create snapshot of current state before clearing
     CallExecutionSnapshot.objects.create(
+        audio_metrics=call_execution.audio_metrics,
         call_execution=call_execution,
         rerun_type=CallExecutionSnapshot.RerunType.CALL_AND_EVAL,
         service_provider_call_id=call_execution.service_provider_call_id,
@@ -6695,6 +6713,11 @@ def _clear_call_execution_data(call_execution):
     call_execution.ai_interruption_rate = None
     call_execution.avg_stop_time_after_interruption_ms = None
     call_execution.conversation_metrics_data = None
+    call_execution.audio_metrics = None
+    call_execution.audio_provenance = None
+    call_execution.audio_analysis_generation = (
+        call_execution.audio_analysis_generation or 0
+    ) + 1
     # Keep the dataset row linkage: the results grid resolves each call's
     # Scenario Information cells via row_id. Everything else (the ALK
     # alk_batch_claimed claim, eval flags) is intentionally dropped so /batch
@@ -6711,6 +6734,7 @@ def _save_eval_snapshot(call_execution):
 
     # Create snapshot with only evaluation data
     CallExecutionSnapshot.objects.create(
+        audio_metrics=call_execution.audio_metrics,
         call_execution=call_execution,
         rerun_type=CallExecutionSnapshot.RerunType.EVAL_ONLY,
         eval_outputs=call_execution.eval_outputs,
@@ -7447,6 +7471,7 @@ class CallExecutionRerunView(APIView):
 
         # Create snapshot of current state before clearing
         CallExecutionSnapshot.objects.create(
+            audio_metrics=call_execution.audio_metrics,
             call_execution=call_execution,
             rerun_type=CallExecutionSnapshot.RerunType.CALL_AND_EVAL,
             service_provider_call_id=call_execution.service_provider_call_id,
@@ -7508,6 +7533,7 @@ class CallExecutionRerunView(APIView):
 
         # Create snapshot with only evaluation data
         CallExecutionSnapshot.objects.create(
+            audio_metrics=call_execution.audio_metrics,
             call_execution=call_execution,
             rerun_type=CallExecutionSnapshot.RerunType.EVAL_ONLY,
             eval_outputs=call_execution.eval_outputs,

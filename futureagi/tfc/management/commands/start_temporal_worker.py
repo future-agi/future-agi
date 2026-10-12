@@ -365,9 +365,18 @@ class Command(BaseCommand):
                         max_concurrent_workflow_tasks
                     )
 
+                from tfc.temporal.common.worker import audio_worker_options
+
+                if audio_options := audio_worker_options(queue_name):
+                    kwargs.pop("tuner", None)
+                    kwargs.update(audio_options)
                 return kwargs
 
             # Create workers for each queue
+            if "tasks_audio" in queues_to_poll:
+                from ee.voice.services.audio_worker import sweep_audio_temp_files
+
+                sweep_audio_temp_files()
             workers = []
             for queue_name in queues_to_poll:
                 worker_kwargs = create_worker_kwargs(queue_name)

@@ -396,6 +396,16 @@ def _ensure_workflows_registered() -> None:
             "could_not_load_simulation_orchestration_workflows", error=str(e)
         )
 
+    try:
+        from ee.voice.temporal.workflows.audio_analysis_workflow import (
+            AudioAnalysisWorkflow,
+        )
+        from simulate.temporal.constants import QUEUE_AUDIO
+
+        register_workflows(QUEUE_AUDIO, [AudioAnalysisWorkflow])
+    except ImportError:
+        pass  # CE images do not ship the EE audio worker.
+
     # Register voice call execution workflows for tasks_l queue.
     # CallExecutionWorkflow: Individual call lifecycle (outbound/inbound)
     # CallDispatcherWorkflow: Singleton rate limiter for call slots
@@ -759,6 +769,21 @@ def _ensure_activities_registered() -> None:
         log.info("registered_hosted_runner_activities", count=8)
     except ImportError as e:
         log.warning("could_not_load_hosted_runner_activities", error=str(e))
+
+    try:
+        from ee.voice.temporal.activities.audio_analysis import (
+            analyze_call_audio,
+            finalize_audio_analysis_failure,
+            schedule_audio_analysis,
+        )
+        from simulate.temporal.constants import QUEUE_AUDIO, QUEUE_S
+
+        register_activities(QUEUE_AUDIO, [analyze_call_audio])
+        register_activities(
+            QUEUE_S, [schedule_audio_analysis, finalize_audio_analysis_failure]
+        )
+    except ImportError as e:
+        log.warning("could_not_load_audio_analysis_activities", error=str(e))
 
     # Voice small activities (Enterprise Edition)
     try:
