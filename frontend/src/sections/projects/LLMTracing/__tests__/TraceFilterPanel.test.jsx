@@ -5707,51 +5707,178 @@ describe("filter-value picker bounded-read UX", () => {
     document.body.removeChild(anchorEl);
   });
 
-  it("matches a trimmed catalog value to the selected filter value", () => {
-    dashboardFilterValuesMock.mockReturnValue({
-      ...defaultDashboardFilterValues(),
-      data: [
-        { value: "True ", label: "True", type: "string" },
-        { value: "False", label: "False", type: "string" },
-      ],
-    });
-    const annotationProperty = {
-      id: "Anno-Tate",
-      name: "Anno-Tate",
+  describe("OQA-10 exact stored annotation picker values", () => {
+    const annotationProperty = (type) => ({
+      id: "categorical-label",
+      name: "Categorical label",
       category: "annotation",
-      type: "string",
+      type,
       apiColType: "ANNOTATION",
-    };
-    const { anchorEl } = renderPanel({
-      currentFilters: [
-        {
-          field: "Anno-Tate",
-          fieldName: "Anno-Tate",
-          fieldCategory: "annotation",
-          fieldType: "string",
-          apiColType: "ANNOTATION",
-          operator: "equals",
-          value: ["True"],
-          valueTypes: ["string"],
-        },
-      ],
-      properties: [annotationProperty],
+    });
+    const annotationFilter = (type, operator, value = []) => ({
+      field: "categorical-label",
+      fieldName: "Categorical label",
+      fieldCategory: "annotation",
+      fieldType: type,
+      apiColType: "ANNOTATION",
+      operator,
+      value,
+      valueTypes: value.map(() => "string"),
+    });
+    const openAnnotationPicker = () =>
+      fireEvent.click(
+        document.querySelector(
+          '[data-filter-value-trigger="categorical-label"]',
+        ),
+      );
+
+    it.each([
+      ["categorical", "True ", "equals"],
+      ["categorical", " True", "not_equals"],
+      ["categorical", "True ", "contains"],
+      ["categorical", " True", "not_contains"],
+      ["string", "True ", "in"],
+      ["string", " True", "not_in"],
+    ])(
+      "keeps %s option %j exact in the %s wire filter",
+      async (type, value, operator) => {
+        dashboardFilterValuesMock.mockReturnValue({
+          ...defaultDashboardFilterValues(),
+          data: [
+            { value, label: "True", type: "string" },
+            { value: "False", label: "False", type: "string" },
+          ],
+        });
+        const { anchorEl, onApply } = renderPanel({
+          source: type === "categorical" ? "voice_calls" : "traces",
+          tab: "voiceCalls",
+          currentFilters: [annotationFilter(type, operator)],
+          properties: [annotationProperty(type)],
+        });
+        openAnnotationPicker();
+        const option = screen.getByRole(
+          ["in", "not_in"].includes(operator) ? "checkbox" : "radio",
+          { name: "True", exact: true },
+        );
+        expect(option).toHaveTextContent("True");
+        expect(option).toHaveAttribute("aria-checked", "false");
+        fireEvent.click(option);
+        await waitFor(() =>
+          expect(onApply.mock.lastCall[0][0]).toMatchObject({
+            value: [value],
+            valueTypes: ["string"],
+          }),
+        );
+        expect(
+          buildApiFilterFromPanelRow(onApply.mock.lastCall[0][0]),
+        ).toMatchObject({
+          filter_config: {
+            filter_op: operator,
+            filter_value: ["in", "not_in"].includes(operator) ? [value] : value,
+            col_type: "ANNOTATION",
+          },
+        });
+        expect(option).toHaveAttribute("aria-checked", "true");
+        document.body.removeChild(anchorEl);
+      },
+    );
+
+    it("retains saved whitespace-distinct choices through adding, reopening, and clearing", async () => {
+      dashboardFilterValuesMock.mockReturnValue({
+        ...defaultDashboardFilterValues(),
+        data: [
+          { value: "True ", label: "True", type: "string" },
+          { value: "True", label: "True", type: "string" },
+          { value: "False", label: "False", type: "string" },
+        ],
+      });
+      const { anchorEl, onApply, rerenderPanel } = renderPanel({
+        currentFilters: [annotationFilter("string", "in", ["True "])],
+        properties: [annotationProperty("string")],
+      });
+      openAnnotationPicker();
+      expect(
+        document.querySelector('[data-filter-value-option="True "]'),
+      ).toHaveAttribute("aria-checked", "true");
+      const trimmedOption = document.querySelector(
+        '[data-filter-value-option="True"]',
+      );
+      expect(trimmedOption).toHaveAttribute("aria-checked", "false");
+      fireEvent.click(trimmedOption);
+      await waitFor(() =>
+        expect(onApply.mock.lastCall[0][0].value).toEqual(["True ", "True"]),
+      );
+      const applied = onApply.mock.lastCall[0];
+      fireEvent.keyDown(screen.getByPlaceholderText("Search values..."), {
+        key: "Escape",
+      });
+      rerenderPanel({ open: false, currentFilters: applied });
+      rerenderPanel({ open: true, currentFilters: applied });
+      openAnnotationPicker();
+      const rawOption = document.querySelector(
+        '[data-filter-value-option="True "]',
+      );
+      expect(rawOption).toHaveAttribute("aria-checked", "true");
+      expect(
+        document.querySelector('[data-filter-value-option="True"]'),
+      ).toHaveAttribute("aria-checked", "true");
+      fireEvent.click(rawOption);
+      await waitFor(() =>
+        expect(onApply.mock.lastCall[0][0].value).toEqual(["True"]),
+      );
+      fireEvent.click(
+        document.querySelector('[data-filter-value-option="True"]'),
+      );
+      await waitFor(() => expect(onApply.mock.lastCall[0]).toBeNull());
+      document.body.removeChild(anchorEl);
     });
 
-    fireEvent.click(
-      document.querySelector('[data-filter-value-trigger="Anno-Tate"]'),
-    );
+    it("keeps a saved categorical value distinct from its trimmed choice", async () => {
+      dashboardFilterValuesMock.mockReturnValue({
+        ...defaultDashboardFilterValues(),
+        data: [
+          { value: "True ", label: "True", type: "string" },
+          { value: "True", label: "True", type: "string" },
+        ],
+      });
+      const { anchorEl, onApply } = renderPanel({
+        source: "voice_calls",
+        currentFilters: [annotationFilter("categorical", "equals", ["True "])],
+        properties: [annotationProperty("categorical")],
+      });
+      openAnnotationPicker();
+      const rawOption = document.querySelector(
+        '[data-filter-value-option="True "]',
+      );
+      expect(rawOption).toHaveAttribute("aria-checked", "true");
+      expect(
+        document.querySelector('[data-filter-value-option="True"]'),
+      ).toHaveAttribute("aria-checked", "false");
+      fireEvent.click(rawOption);
+      await waitFor(() => expect(onApply.mock.lastCall[0]).toBeNull());
+      document.body.removeChild(anchorEl);
+    });
 
-    const trueOption = document.querySelector(
-      '[data-filter-value-option="True"]',
-    );
-    const falseOption = document.querySelector(
-      '[data-filter-value-option="False"]',
-    );
-    expect(trueOption).toHaveAttribute("aria-checked", "true");
-    expect(falseOption).toHaveAttribute("aria-checked", "false");
-
-    document.body.removeChild(anchorEl);
+    it("continues trimming manually specified annotation values", async () => {
+      const { anchorEl, onApply } = renderPanel({
+        currentFilters: [annotationFilter("categorical", "equals")],
+        properties: [annotationProperty("categorical")],
+      });
+      openAnnotationPicker();
+      fireEvent.change(screen.getByPlaceholderText("Search values..."), {
+        target: { value: "  Manual choice  " },
+      });
+      fireEvent.click(
+        document.querySelector('[data-filter-value-option="Manual choice"]'),
+      );
+      await waitFor(() =>
+        expect(
+          buildApiFilterFromPanelRow(onApply.mock.lastCall[0][0]).filter_config
+            .filter_value,
+        ).toBe("Manual choice"),
+      );
+      document.body.removeChild(anchorEl);
+    });
   });
 
   it("offers Retry and exact free-text entry only for a real request error", () => {

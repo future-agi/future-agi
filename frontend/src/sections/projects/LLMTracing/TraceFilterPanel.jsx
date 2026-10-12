@@ -3038,6 +3038,9 @@ function ValuePicker({
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounce(search, FILTER_VALUE_SEARCH_DEBOUNCE_MS);
   const valueOptionsListRef = useRef(null);
+  const preserveValueWhitespace =
+    propertyCategory === "annotation" &&
+    ["categorical", "string"].includes(property?.type);
 
   // If the property declares its own static choices (e.g. the Project filter
   // on the cross-project user-detail page), use them directly. Skips both
@@ -3225,11 +3228,13 @@ function ValuePicker({
   ]);
 
   const selectedValues = useMemo(() => {
-    const normalized = normalizePickerValues(value);
+    const normalized = normalizePickerValues(value, {
+      preserveWhitespace: preserveValueWhitespace,
+    });
     return isCanonicalVoiceStatus
       ? normalizeVoiceCallStatus(normalized)
       : normalized;
-  }, [isCanonicalVoiceStatus, value]);
+  }, [isCanonicalVoiceStatus, preserveValueWhitespace, value]);
   const selectedValueTypes = useMemo(
     () =>
       selectedValues.map((_, index) =>
@@ -3255,7 +3260,9 @@ function ValuePicker({
     (val) => {
       // Use the shared helper to read the picker option's stable value
       // (handles both string and {value, label} object shapes).
-      const optionValue = getPickerOptionValue(val);
+      const optionValue = getPickerOptionValue(val, {
+        preserveWhitespace: preserveValueWhitespace,
+      });
       const optionType = getPickerOptionType(val);
       const selectedIndex = selectedIndexFor(optionValue, optionType);
       if (singleSelect) {
@@ -3284,6 +3291,7 @@ function ValuePicker({
       selectedValueTypes,
       selectedValues,
       onChange,
+      preserveValueWhitespace,
       singleSelect,
     ],
   );
@@ -3574,7 +3582,9 @@ function ValuePicker({
               block — keeps a single source of truth for the "Specify"
               fallback (search did not match any fetched option). */}
           {filtered.map((opt) => {
-            const optionValue = getPickerOptionValue(opt);
+            const optionValue = getPickerOptionValue(opt, {
+              preserveWhitespace: preserveValueWhitespace,
+            });
             const optionType = getPickerOptionType(opt);
             const label = getPickerOptionLabel(opt);
             const secondaryLabel = getPickerOptionSecondaryLabel(opt, {
