@@ -1,4 +1,4 @@
-import { Box } from "@mui/material";
+import { Box, Typography } from "@mui/material";
 import React from "react";
 import {
   CustomPersonaAccordion,
@@ -23,7 +23,13 @@ const PersonaBehavioralSetting = ({
   showClearButton = false,
   type = AGENT_TYPES.VOICE,
 }) => {
-  const { control } = useFormContext();
+  const {
+    control,
+    formState: { errors },
+  } = useFormContext();
+
+  const personalityError = errors?.personality?.message;
+
   return (
     <Box>
       <CustomPersonaAccordion disableGutters defaultExpanded>
@@ -36,14 +42,26 @@ const PersonaBehavioralSetting = ({
         </CustomPersonaAccordionHeader>
         <CustomPersonaAccordionContent>
           <Box sx={{ display: "flex", flexDirection: "column", gap: "24px" }}>
-            <OptionSelectors
-              label="Select Personality"
-              description="Define your persona’s personality type for realistic simulations."
-              fieldName="personality"
-              options={PersonalityOptions}
-              multiple={multiple}
-              showClearButton={showClearButton}
-            />
+            <Box>
+              <OptionSelectors
+                label="Select Personality"
+                description="Define your persona’s personality type for realistic simulations."
+                fieldName="personality"
+                options={PersonalityOptions}
+                multiple={multiple}
+                showClearButton={showClearButton}
+              />
+              {personalityError ? (
+                <Typography
+                  variant="body2"
+                  color="error"
+                  role="alert"
+                  sx={{ mt: 0.5 }}
+                >
+                  {personalityError}
+                </Typography>
+              ) : null}
+            </Box>
             <FormSearchSelectFieldControl
               control={control}
               fieldName="communicationStyle"
