@@ -361,8 +361,8 @@ export const getPersonaDefaultValues = (editPersona) => {
 
 const PersonCreateBaseValidationSchema = z.object({
   simulationType: z.enum(["voice", "text"]),
-  name: z.string().min(1, "Name is required"),
-  description: z.string().min(1, "Description is required"),
+  name: z.string().trim().min(1, "Name is required"),
+  description: z.string().trim().min(1, "Description is required"),
   gender: z.array(z.string()).transform((val) => (val.length ? val : null)),
   ageGroup: z.array(z.string()).transform((val) => (val.length ? val : null)),
   location: z.array(z.string()).transform((val) => (val.length ? val : null)),
