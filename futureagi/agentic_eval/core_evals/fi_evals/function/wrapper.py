@@ -1012,3 +1012,15 @@ class LatencyCheck(FunctionEvaluator):
 class FleissKappa(FunctionEvaluator):
     def __init__(self, display_name: str | None = None):
         super().__init__(function_name=FunctionEvalTypeId.FLEISS_KAPPA.value, function_arguments={}, display_name=display_name)
+
+
+class CodeExecutionPass(FunctionEvaluator):
+    def __init__(self, timeout: int = 5, display_name: str | None = None):
+        """Initialize CodeExecutionPass: run candidate code against tests in a subprocess."""
+        super().__init__(function_name=FunctionEvalTypeId.CODE_EXECUTION_PASS.value, function_arguments={"timeout": timeout}, display_name=display_name)
+
+
+class CodeSafety(FunctionEvaluator):
+    def __init__(self, display_name: str | None = None):
+        """Initialize CodeSafety: static scan for risky patterns."""
+        super().__init__(function_name=FunctionEvalTypeId.CODE_SAFETY.value, function_arguments={}, display_name=display_name)
