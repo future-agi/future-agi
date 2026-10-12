@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -8,15 +8,25 @@ const rootDir = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
 );
-const prettier = path.join(
+// Resolve prettier's bin script so it can run with the current Node binary.
+// The .bin shim cannot be used here: on Windows it is a .cmd file, which
+// Node refuses to spawn without a shell (the extensionless POSIX shim is not
+// executable there at all).
+const prettierPkgDir = path.join(
   rootDir,
   "frontend",
   "node_modules",
-  ".bin",
   "prettier",
 );
+const prettier = (() => {
+  const pkgJsonPath = path.join(prettierPkgDir, "package.json");
+  if (!existsSync(pkgJsonPath)) return null;
+  const { bin } = JSON.parse(readFileSync(pkgJsonPath, "utf8"));
+  const relative = typeof bin === "string" ? bin : bin?.prettier;
+  return relative ? path.join(prettierPkgDir, relative) : null;
+})();
 
-if (!existsSync(prettier)) {
+if (!prettier || !existsSync(prettier)) {
   console.error('Missing prettier. Run "yarn --cwd frontend install" first.');
   process.exit(1);
 }
@@ -43,9 +53,13 @@ const files = process.argv
 const uniqueFiles = [...new Set(files)];
 if (uniqueFiles.length === 0) process.exit(0);
 
-const result = spawnSync(prettier, ["--write", ...uniqueFiles], {
-  cwd: rootDir,
-  stdio: "inherit",
-});
+const result = spawnSync(
+  process.execPath,
+  [prettier, "--write", ...uniqueFiles],
+  {
+    cwd: rootDir,
+    stdio: "inherit",
+  },
+);
 
 process.exit(result.status ?? 1);
