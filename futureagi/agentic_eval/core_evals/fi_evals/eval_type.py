@@ -102,6 +102,9 @@ class FunctionEvalTypeId(Enum):
     IS_REFUSAL = "IsRefusal"
     LATENCY_CHECK = "LatencyCheck"
     FLEISS_KAPPA = "FleissKappa"
+    BOUNDING_BOX_IOU = "BoundingBoxIoU"
+    ELEMENT_GROUNDING = "ElementGrounding"
+    REGION_SIMILARITY = "RegionSimilarity"
 
 
 class GroundedEvalTypeId(Enum):
