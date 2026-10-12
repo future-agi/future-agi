@@ -227,7 +227,7 @@ import {
 } from "../SessionsView/ReplaySessions/store";
 import { REPLAY_MODULES } from "../SessionsView/ReplaySessions/configurations";
 import { REPLAY_TYPES } from "../SessionsView/ReplaySessions/constants";
-import { filtersContentEqual } from "../saved-view-utils";
+import { dateFilterEqual, filtersContentEqual } from "../saved-view-utils";
 import { useCreateReplaySessions } from "src/api/project/replay-sessions";
 import { enqueueSnackbar } from "notistack";
 import {
@@ -500,6 +500,7 @@ export const CompareGraphHeader = ({
         open={customDateOpen}
         onClose={() => setCustomDateOpen(false)}
         anchorEl={dateButtonRef.current}
+        value={dateFilter?.dateFilter}
         setDateFilter={(range) => {
           setDateFilter?.((prev) => ({
             ...prev,
@@ -2835,6 +2836,19 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     setActiveViewConfig,
   ]);
 
+  // Filter-bar Save on a saved view. Moving the baseline on success keeps
+  // Save view from staying visible for changes that were just saved.
+  const saveFiltersToActiveView = useCallback(() => {
+    const config = buildViewConfig();
+    updateSavedView(
+      { id: activeViewTabId, config },
+      {
+        onSuccess: (response) =>
+          setActiveViewConfig(response?.data?.result?.config ?? config),
+      },
+    );
+  }, [activeViewTabId, buildViewConfig, updateSavedView, setActiveViewConfig]);
+
   // Default tab only — saved views go through handleSaveView instead.
   useEffect(() => {
     if (activeViewTabId) return;
@@ -3050,7 +3064,6 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     const baselineExtraFilters = hydrateProjectFilterList(
       activeViewConfig.extra_filters,
     );
-    const baselineDateOption = baselineDisplay.dateFilter?.dateOption ?? null;
     const baselineColumnFilters = hydrateProjectFilterList(
       activeViewConfig.filters,
     );
@@ -3072,11 +3085,48 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
 
     const currentDate =
       viewTabType === "trace" ? primaryTraceDateFilter : primarySpanDateFilter;
-    if ((currentDate?.dateOption ?? null) !== baselineDateOption) return true;
+    if (!dateFilterEqual(currentDate, baselineDisplay.dateFilter)) return true;
 
     const columnFilters =
       viewTabType === "trace" ? primaryTraceFilters : primarySpanFilters;
     if (!filtersContentEqual(columnFilters, baselineColumnFilters)) return true;
+
+    // Compare-mode state is persisted by buildViewConfig only while compare
+    // is on, so only edits made in compare mode can diverge from the saved
+    // view. Check the same three fields the config writes.
+    if (showCompare) {
+      const compareFilters =
+        viewTabType === "trace" ? compareTraceFilters : compareSpansFilters;
+      if (
+        !filtersContentEqual(
+          compareFilters,
+          hydrateProjectFilterList(activeViewConfig.compare_filters),
+        )
+      ) {
+        return true;
+      }
+      if (
+        !filtersContentEqual(
+          compareExtraFilters,
+          hydrateProjectFilterList(activeViewConfig.compare_extra_filters),
+        )
+      ) {
+        return true;
+      }
+      // A view saved before compare mode has no compare_date_filter; the
+      // live default range is not a user edit in that case.
+      if (
+        activeViewConfig.compare_date_filter !== undefined &&
+        !dateFilterEqual(
+          viewTabType === "trace"
+            ? compareTraceDateFilter
+            : compareSpansDateFilter,
+          activeViewConfig.compare_date_filter,
+        )
+      ) {
+        return true;
+      }
+    }
 
     if (
       baselineDisplay.viewMode !== undefined &&
@@ -3149,6 +3199,11 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     primarySpanDateFilter,
     primaryTraceFilters,
     primarySpanFilters,
+    compareTraceFilters,
+    compareSpansFilters,
+    compareTraceDateFilter,
+    compareSpansDateFilter,
+    compareExtraFilters,
     viewMode,
     cellHeight,
     showErrors,
@@ -3575,10 +3630,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
           onSave={() => {
             setFilterChipsSaved(true);
             if (activeViewTabId) {
-              updateSavedView({
-                id: activeViewTabId,
-                config: buildViewConfig(),
-              });
+              saveFiltersToActiveView();
             } else {
               try {
                 localStorage.setItem(
@@ -3642,10 +3694,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
               onClick={() => {
                 setFilterChipsSaved(true);
                 if (activeViewTabId) {
-                  updateSavedView({
-                    id: activeViewTabId,
-                    config: buildViewConfig(),
-                  });
+                  saveFiltersToActiveView();
                 } else {
                   try {
                     localStorage.setItem(
