@@ -273,3 +273,39 @@ def test_encode_path_emits_urlsafe_alphabet_only(manager_module):
     encoded = manager.encode_path("https://example.com/cat+dog/?q=1")
     for forbidden in ("+", "/"):
         assert forbidden not in encoded
+
+
+def test_delete_chunks_uses_parameterized_query(manager_module):
+    patcher, cls, instance = _patch_db()
+    try:
+        manager = manager_module.EmbeddingManager()
+        instance.client.execute.side_effect = [
+            [[1]],  # EXISTS TABLE
+            None,   # ALTER TABLE DELETE
+        ]
+
+        manager.delete_chunks(
+            file_id="file-123",
+            kb_id="kb-456",
+            table_name="test_embeddings",
+            organization_id="org-789",
+        )
+
+        assert instance.client.execute.call_count == 2
+        delete_call = instance.client.execute.call_args_list[1]
+        query = delete_call[0][0]
+        params = delete_call[0][1]
+
+        # Verify placeholders in query
+        assert "eval_id = %(kb_id)s" in query
+        assert "= %(file_id)s" in query
+        assert "= %(organization_id)s" in query
+
+        # Verify parameter dictionary passed to ClickHouse driver
+        assert params == {
+            "kb_id": "kb-456",
+            "file_id": "file-123",
+            "organization_id": "org-789",
+        }
+    finally:
+        patcher.stop()
