@@ -57,31 +57,17 @@ describe("OptionCard", () => {
 });
 
 describe("TemplateHeroCard", () => {
-  it("renders the coming-soon prebuilt hero and is inert", () => {
+  it("renders the prebuilt hero and opens it on click or Enter", () => {
     const onClick = vi.fn();
     render(<TemplateHeroCard onClick={onClick} />);
 
     expect(screen.getByText("Prebuilt Environments")).toBeInTheDocument();
     expect(screen.getByText("· Fastest")).toBeInTheDocument();
-    expect(screen.getByText("Customer Support Line")).toBeInTheDocument();
-    expect(screen.getByText("Coding")).toBeInTheDocument();
-    expect(screen.getByText("Browser")).toBeInTheDocument();
-    expect(screen.getByText("Airline Rebooking")).toBeInTheDocument();
-    expect(screen.getByText("+ 10 more")).toBeInTheDocument();
-    expect(screen.getByLabelText("Coming soon")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Coming soon")).toBeNull();
 
     fireEvent.click(screen.getByRole("button"));
-    expect(onClick).not.toHaveBeenCalled();
-  });
-
-  it("does not activate on Enter while coming soon", () => {
-    const onClick = vi.fn();
-    render(<TemplateHeroCard onClick={onClick} />);
-
-    const btn = screen.getByRole("button");
-    expect(btn).toHaveAttribute("tabindex", "-1");
-    fireEvent.keyDown(btn, { key: "Enter" });
-    expect(onClick).not.toHaveBeenCalled();
+    fireEvent.keyDown(screen.getByRole("button"), { key: "Enter" });
+    expect(onClick).toHaveBeenCalledTimes(2);
   });
 });
 
