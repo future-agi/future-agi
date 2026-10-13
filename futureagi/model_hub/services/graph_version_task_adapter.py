@@ -14,7 +14,9 @@ from django.db import IntegrityError, connection, transaction
 from django.db.models import Q
 from opentelemetry.context import Context
 from opentelemetry.trace import Status, StatusCode, Tracer
+from temporalio.client import WorkflowFailureError
 from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
+from temporalio.exceptions import CancelledError as TemporalCancelledError
 
 from agent_playground.models import GraphExecution, GraphVersion
 from agent_playground.models.choices import GraphExecutionStatus, GraphVersionStatus
@@ -91,6 +93,12 @@ def _default_executor(
             result = await asyncio.wait_for(handle.result(), timeout=timeout_seconds)
         except TimeoutError as exc:
             raise GraphRunIndeterminateError("graph execution timed out") from exc
+        except WorkflowFailureError as exc:
+            if isinstance(exc.cause, TemporalCancelledError):
+                return GraphExecutionResult("CANCELLED", error="workflow cancelled")
+            raise GraphRunIndeterminateError(
+                f"graph execution ended without a result: {exc}"
+            ) from exc
         except Exception as exc:
             raise GraphRunIndeterminateError(
                 f"graph execution ended without a result: {exc}"
@@ -356,7 +364,9 @@ def run_graph_experiment(
                     "graph execution output does not match persisted execution"
                 )
             if result.status != "SUCCESS" and persisted[2] and result.error is None:
-                result = GraphExecutionResult(result.status, result.output_payload, persisted[2])
+                result = GraphExecutionResult(
+                    result.status, result.output_payload, persisted[2]
+                )
             task_latency = (perf_counter() - started) * 1000
             if result.status == "SUCCESS":
                 _canonical(result.output_payload)
