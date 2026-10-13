@@ -25,10 +25,7 @@ from model_hub.services.dataset_version_service import (
     create_dataset_version,
 )
 from model_hub.utils.json_parser import BoundedJSONParser
-from model_hub.utils.workspace_scope import (
-    request_organization,
-    scoped_dataset_queryset,
-)
+from model_hub.utils.workspace_scope import scoped_dataset_queryset
 from tfc.routers import primary_required
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.general_methods import GeneralMethods
@@ -44,7 +41,7 @@ class BoundedSnapshotJSONParser(BoundedJSONParser):
 def _scoped_version_queryset(request, dataset_id):
     """Return non-deleted versions for a dataset visible to this tenant."""
 
-    if request_organization(request) is None:
+    if getattr(request, "organization", None) is None:
         return DatasetVersion.objects.none()
     return DatasetVersion.objects.filter(
         dataset__in=scoped_dataset_queryset(request).filter(id=dataset_id),
@@ -126,7 +123,7 @@ class DatasetVersionListView(APIView):
         },
     )
     def get(self, request, dataset_id):
-        if request_organization(request) is None:
+        if getattr(request, "organization", None) is None:
             return _gm.not_found("Dataset not found")
         dataset = scoped_dataset_queryset(request).filter(id=dataset_id).first()
         if dataset is None:

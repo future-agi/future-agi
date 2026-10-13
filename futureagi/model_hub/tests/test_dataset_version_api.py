@@ -185,6 +185,29 @@ def test_version_routes_deny_missing_organization_without_database_access(view):
     assert response.data["status"] is False
 
 
+@pytest.mark.unit
+@pytest.mark.parametrize("view", [DatasetVersionListView, DatasetVersionDetailView])
+def test_version_reads_do_not_restore_denied_scope_from_legacy_user(view):
+    organization = Organization(id=uuid.uuid4(), name="Revoked organization")
+    request = APIRequestFactory().get("/")
+    request.organization = None
+    force_authenticate(
+        request,
+        user=User(email="revoked@example.invalid", organization=organization),
+    )
+    kwargs = {"dataset_id": uuid.uuid4()}
+    if view is DatasetVersionDetailView:
+        kwargs["version_id"] = uuid.uuid4()
+
+    # A denied authenticated scope must return before any ORM lookup, even if
+    # the legacy user relationship and ambient context still reference an org.
+    with workspace_context(None, organization=organization):
+        response = view.as_view()(request, **kwargs)
+
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+    assert response.data["status"] is False
+
+
 @pytest.mark.django_db
 @pytest.mark.parametrize("hidden_by", ["organization", "workspace", "deleted"])
 def test_version_routes_do_not_expose_inaccessible_dataset(
