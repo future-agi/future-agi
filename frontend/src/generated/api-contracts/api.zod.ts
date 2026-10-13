@@ -25296,6 +25296,13 @@ export const ModelHubGetEvalConfigListResponse = zod.object({
   }),
 });
 
+export const ModelHubGetEvalLogsListQueryParams = zod.object({
+  log_id: zod.string().uuid(),
+  order: zod.string().optional(),
+  source: zod.string().optional(),
+  include_source_navigation: zod.enum(["true", "false"]).optional(),
+});
+
 export const ModelHubGetEvalLogsListResponse = zod.object({
   status: zod.boolean(),
   result: zod.object({
@@ -25316,6 +25323,26 @@ export const ModelHubGetEvalLogsListResponse = zod.object({
     prompt_id: zod.string().uuid().optional(),
     optimization_id: zod.string().uuid().optional(),
     experiment_id: zod.string().uuid().optional(),
+    source_navigation: zod
+      .object({
+        status: zod.enum([
+          "ready",
+          "no_reference",
+          "unsupported_source",
+          "unsupported_target",
+          "incomplete_reference",
+          "invalid_reference",
+          "ambiguous_reference",
+          "unavailable",
+          "temporarily_unavailable",
+        ]),
+        kind: zod.enum(["trace", "voice_call"]),
+        project_id: zod.string().uuid(),
+        trace_id: zod.string().uuid(),
+        span_id: zod.string().uuid(),
+        retryable: zod.boolean(),
+      })
+      .optional(),
   }),
 });
 

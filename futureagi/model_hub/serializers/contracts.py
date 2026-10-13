@@ -2160,6 +2160,39 @@ class FeedbackDetailsResponseSerializer(serializers.Serializer):
     result = FeedbackDetailsResultSerializer()
 
 
+class EvalApiLogRowQuerySerializer(serializers.Serializer):
+    log_id = serializers.UUIDField(required=True)
+    order = serializers.CharField(required=False, allow_blank=True)
+    source = serializers.CharField(required=False, allow_blank=True)
+    include_source_navigation = serializers.ChoiceField(
+        choices=("true", "false"), required=False
+    )
+
+    def validate_include_source_navigation(self, value):
+        return value == "true"
+
+
+class EvalLogSourceNavigationSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(
+        choices=(
+            "ready",
+            "no_reference",
+            "unsupported_source",
+            "unsupported_target",
+            "incomplete_reference",
+            "invalid_reference",
+            "ambiguous_reference",
+            "unavailable",
+            "temporarily_unavailable",
+        )
+    )
+    kind = serializers.ChoiceField(choices=("trace", "voice_call"), allow_null=True)
+    project_id = serializers.UUIDField(allow_null=True)
+    trace_id = serializers.UUIDField(allow_null=True)
+    span_id = serializers.UUIDField(allow_null=True)
+    retryable = serializers.BooleanField()
+
+
 class EvalApiLogRowResponseResultSerializer(serializers.Serializer):
     log_id = serializers.UUIDField()
     created_at = serializers.DateTimeField()
@@ -2178,6 +2211,7 @@ class EvalApiLogRowResponseResultSerializer(serializers.Serializer):
     prompt_id = serializers.UUIDField(required=False, allow_null=True)
     optimization_id = serializers.UUIDField(required=False, allow_null=True)
     experiment_id = serializers.UUIDField(required=False, allow_null=True)
+    source_navigation = EvalLogSourceNavigationSerializer(required=False)
 
 
 class EvalApiLogRowResponseSerializer(serializers.Serializer):

@@ -14,7 +14,7 @@ import { copyToClipboard } from "src/utils/utils";
 import DatapointCard from "src/sections/common/DatapointCard";
 import LogDrawerRight from "./LogDrawerRight";
 import { enqueueSnackbar } from "notistack";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { format } from "date-fns";
 import AudioDatapointCard from "src/components/custom-audio/AudioDatapointCard";
@@ -22,6 +22,9 @@ import ImageDatapointCard from "src/sections/common/ImageDatapointCard";
 import { AudioPlaybackProvider } from "src/components/custom-audio/context-provider/AudioPlaybackContext";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import AddEvalsFeedbackDrawer from "./../EvalsFeedback/AddEvalsFeedbackDrawer";
+import { useOrganization } from "src/contexts/OrganizationContext";
+import { useWorkspace } from "src/contexts/WorkspaceContext";
+import EvalLogSourceHost from "./EvalLogSourceHost";
 
 const LogsDrawerChild = ({
   onClose,
@@ -29,6 +32,7 @@ const LogsDrawerChild = ({
   evalsId,
   refreshGrid,
   evalOutputTypes,
+  onLogUnavailable,
 }) => {
   const [openAddFeedback, setOpenAddFeedback] = useState(false);
   const isNumericOutput = useMemo(
@@ -179,6 +183,10 @@ const LogsDrawerChild = ({
             );
           })}
         </Box>
+        <EvalLogSourceHost
+          logId={data.log_id}
+          onLogUnavailable={onLogUnavailable}
+        />
         <Divider orientation="horizontal" />
       </Box>
       <Box display={"flex"} gap="16px" height="calc(100% - 80px)">
@@ -261,6 +269,7 @@ LogsDrawerChild.propTypes = {
   evalsId: PropTypes.string,
   refreshGrid: PropTypes.func,
   evalOutputTypes: PropTypes.object,
+  onLogUnavailable: PropTypes.func,
 };
 
 const LogsDrawer = ({
@@ -271,18 +280,29 @@ const LogsDrawer = ({
   refreshGrid,
   evalOutputTypes,
 }) => {
+  const { currentOrganizationId } = useOrganization();
+  const { currentWorkspaceId } = useWorkspace();
+  const queryClient = useQueryClient();
+  const queryKey = [
+    "evalslogsData",
+    currentOrganizationId,
+    currentWorkspaceId,
+    selectedRow?.logId,
+  ];
   const { data, isPending, isRefetching, isLoading, isFetching } = useQuery({
-    queryKey: ["evalslogsData", selectedRow?.logId],
-    queryFn: async () =>
+    queryKey,
+    queryFn: async ({ signal }) =>
       axios.get(endpoints.develop.eval.getEvalLogs, {
+        signal,
         params: {
           log_id: selectedRow.logId,
           order: selectedRow.order,
           source: "logs",
         },
       }),
-    enabled: !!selectedRow?.logId,
-    staleTime: 1000,
+    enabled: open && !!selectedRow?.logId && !!currentOrganizationId,
+    staleTime: 0,
+    gcTime: 0,
   });
 
   return (
@@ -310,15 +330,24 @@ const LogsDrawer = ({
     >
       {isPending || isRefetching || isLoading || isFetching ? (
         <LoaderDrawer onClose={onClose} />
-      ) : (
+      ) : open && data?.data?.result?.log_id ? (
         <LogsDrawerChild
+          key={JSON.stringify(queryKey)}
           selectedRow={selectedRow}
           onClose={onClose}
           data={data?.data?.result}
           evalsId={evalsId}
           refreshGrid={refreshGrid}
           evalOutputTypes={evalOutputTypes}
+          onLogUnavailable={() => queryClient.setQueryData(queryKey, null)}
         />
+      ) : (
+        <Box sx={{ p: 2 }}>
+          <IconButton onClick={onClose} size="small" aria-label="Close">
+            <Iconify icon="akar-icons:cross" />
+          </IconButton>
+          <Typography>Evaluation log is unavailable.</Typography>
+        </Box>
       )}
     </Drawer>
   );
