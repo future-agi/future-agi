@@ -1026,6 +1026,8 @@ import type {
   RootSpansResponseApi,
   RunAnalyticsV3ResponseApi,
   RunCallsV3ResponseApi,
+  RunComparisonRequestApi,
+  RunComparisonResponseApi,
   RunExportV3RequestApi,
   RunNewEvalsOnTestExecutionApi,
   RunNewEvalsResponseApi,
@@ -40377,6 +40379,82 @@ export const modelHubExperimentDetailList = async (
     {
       ...options,
       method: "GET",
+    },
+  );
+};
+
+export type experimentRunsCompareResponse200 = {
+  data: RunComparisonResponseApi;
+  status: 200;
+};
+
+export type experimentRunsCompareResponse400 = {
+  data: ModelHubErrorResponseApi;
+  status: 400;
+};
+
+export type experimentRunsCompareResponse403 = {
+  data: ModelHubErrorResponseApi;
+  status: 403;
+};
+
+export type experimentRunsCompareResponse404 = {
+  data: ModelHubErrorResponseApi;
+  status: 404;
+};
+
+export type experimentRunsCompareResponse409 = {
+  data: ModelHubErrorResponseApi;
+  status: 409;
+};
+
+export type experimentRunsCompareResponse500 = {
+  data: ModelHubErrorResponseApi;
+  status: 500;
+};
+
+export type experimentRunsCompareResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
+};
+
+export type experimentRunsCompareResponseSuccess =
+  experimentRunsCompareResponse200 & {
+    headers: Headers;
+  };
+export type experimentRunsCompareResponseError = (
+  | experimentRunsCompareResponse400
+  | experimentRunsCompareResponse403
+  | experimentRunsCompareResponse404
+  | experimentRunsCompareResponse409
+  | experimentRunsCompareResponse500
+  | experimentRunsCompareResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type experimentRunsCompareResponse =
+  | experimentRunsCompareResponseSuccess
+  | experimentRunsCompareResponseError;
+
+export const getExperimentRunsCompareUrl = () => {
+  return `/model-hub/experiment-runs/compare/`;
+};
+
+/**
+ * Compare compatible persisted runs. Requires the same dataset version, exact example/trial plan and selected evaluator binding. At most 10,000 planned and recorded items per run; excess evidence is rejected, never truncated. Tenant and workspace scope come from authentication. This endpoint does not execute tasks or make a CI decision.
+ */
+export const experimentRunsCompare = async (
+  runComparisonRequestApi: RunComparisonRequestApi,
+  options?: RequestInit,
+): Promise<experimentRunsCompareResponse> => {
+  return apiMutator<experimentRunsCompareResponse>(
+    getExperimentRunsCompareUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(runComparisonRequestApi),
     },
   );
 };

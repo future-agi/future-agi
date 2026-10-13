@@ -23399,6 +23399,287 @@ export const ModelHubExperimentDetailListResponse = zod.object({
   ),
 });
 
+/**
+ * Compare compatible persisted runs. Requires the same dataset version, exact example/trial plan and selected evaluator binding. At most 10,000 planned and recorded items per run; excess evidence is rejected, never truncated. Tenant and workspace scope come from authentication. This endpoint does not execute tasks or make a CI decision.
+ */
+export const experimentRunsCompareBodyHigherIsBetterDefault = true;
+
+export const ExperimentRunsCompareBody = zod.object({
+  baseline_run_id: zod.string().uuid(),
+  candidate_run_id: zod.string().uuid(),
+  metric_id: zod.string().uuid(),
+  passing_score: zod.number().optional(),
+  higher_is_better: zod
+    .boolean()
+    .default(experimentRunsCompareBodyHigherIsBetterDefault),
+});
+
+export const experimentRunsCompareResponseResultComparisonBaselineItemCountMin = 0;
+
+export const experimentRunsCompareResponseResultComparisonBaselineCompletedCountMin = 0;
+
+export const experimentRunsCompareResponseResultComparisonBaselineFailedCountMin = 0;
+
+export const experimentRunsCompareResponseResultComparisonBaselineScoreCountMin = 0;
+
+export const experimentRunsCompareResponseResultComparisonBaselinePassCountMin = 0;
+
+export const experimentRunsCompareResponseResultComparisonBaselineStatusCountsMinOne = 0;
+
+export const experimentRunsCompareResponseResultComparisonBaselineScoreStatusCountsMinOne = 0;
+
+export const experimentRunsCompareResponseResultComparisonCandidateItemCountMin = 0;
+
+export const experimentRunsCompareResponseResultComparisonCandidateCompletedCountMin = 0;
+
+export const experimentRunsCompareResponseResultComparisonCandidateFailedCountMin = 0;
+
+export const experimentRunsCompareResponseResultComparisonCandidateScoreCountMin = 0;
+
+export const experimentRunsCompareResponseResultComparisonCandidatePassCountMin = 0;
+
+export const experimentRunsCompareResponseResultComparisonCandidateStatusCountsMinOne = 0;
+
+export const experimentRunsCompareResponseResultComparisonCandidateScoreStatusCountsMinOne = 0;
+
+export const experimentRunsCompareResponseResultComparisonStatusCountsMinOne = 0;
+
+export const experimentRunsCompareResponseResultComparisonComparableCountMin = 0;
+
+export const experimentRunsCompareResponseResultBaselineCountsExpectedMin = 0;
+
+export const experimentRunsCompareResponseResultBaselineCountsRecordedMin = 0;
+
+export const experimentRunsCompareResponseResultBaselineCountsMissingMin = 0;
+
+export const experimentRunsCompareResponseResultBaselineCountsCompletedMin = 0;
+
+export const experimentRunsCompareResponseResultBaselineCountsFailedMin = 0;
+
+export const experimentRunsCompareResponseResultBaselineCountsAssessedMin = 0;
+
+export const experimentRunsCompareResponseResultCandidateCountsExpectedMin = 0;
+
+export const experimentRunsCompareResponseResultCandidateCountsRecordedMin = 0;
+
+export const experimentRunsCompareResponseResultCandidateCountsMissingMin = 0;
+
+export const experimentRunsCompareResponseResultCandidateCountsCompletedMin = 0;
+
+export const experimentRunsCompareResponseResultCandidateCountsFailedMin = 0;
+
+export const experimentRunsCompareResponseResultCandidateCountsAssessedMin = 0;
+
+export const ExperimentRunsCompareResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    baseline_run_id: zod.string().uuid(),
+    candidate_run_id: zod.string().uuid(),
+    dataset_version_id: zod.string().uuid(),
+    metric_id: zod.string().uuid(),
+    evaluator_version_id: zod.string().uuid(),
+    comparison: zod.object({
+      baseline: zod.object({
+        item_count: zod
+          .number()
+          .min(
+            experimentRunsCompareResponseResultComparisonBaselineItemCountMin,
+          ),
+        completed_count: zod
+          .number()
+          .min(
+            experimentRunsCompareResponseResultComparisonBaselineCompletedCountMin,
+          ),
+        failed_count: zod
+          .number()
+          .min(
+            experimentRunsCompareResponseResultComparisonBaselineFailedCountMin,
+          ),
+        score_count: zod
+          .number()
+          .min(
+            experimentRunsCompareResponseResultComparisonBaselineScoreCountMin,
+          ),
+        score_average: zod.number(),
+        score_min: zod.number(),
+        score_max: zod.number(),
+        pass_count: zod
+          .number()
+          .min(
+            experimentRunsCompareResponseResultComparisonBaselinePassCountMin,
+          ),
+        pass_rate: zod.number(),
+        status_counts: zod.record(
+          zod.string(),
+          zod
+            .number()
+            .min(
+              experimentRunsCompareResponseResultComparisonBaselineStatusCountsMinOne,
+            ),
+        ),
+        score_status_counts: zod.record(
+          zod.string(),
+          zod
+            .number()
+            .min(
+              experimentRunsCompareResponseResultComparisonBaselineScoreStatusCountsMinOne,
+            ),
+        ),
+      }),
+      candidate: zod.object({
+        item_count: zod
+          .number()
+          .min(
+            experimentRunsCompareResponseResultComparisonCandidateItemCountMin,
+          ),
+        completed_count: zod
+          .number()
+          .min(
+            experimentRunsCompareResponseResultComparisonCandidateCompletedCountMin,
+          ),
+        failed_count: zod
+          .number()
+          .min(
+            experimentRunsCompareResponseResultComparisonCandidateFailedCountMin,
+          ),
+        score_count: zod
+          .number()
+          .min(
+            experimentRunsCompareResponseResultComparisonCandidateScoreCountMin,
+          ),
+        score_average: zod.number(),
+        score_min: zod.number(),
+        score_max: zod.number(),
+        pass_count: zod
+          .number()
+          .min(
+            experimentRunsCompareResponseResultComparisonCandidatePassCountMin,
+          ),
+        pass_rate: zod.number(),
+        status_counts: zod.record(
+          zod.string(),
+          zod
+            .number()
+            .min(
+              experimentRunsCompareResponseResultComparisonCandidateStatusCountsMinOne,
+            ),
+        ),
+        score_status_counts: zod.record(
+          zod.string(),
+          zod
+            .number()
+            .min(
+              experimentRunsCompareResponseResultComparisonCandidateScoreStatusCountsMinOne,
+            ),
+        ),
+      }),
+      cases: zod.array(
+        zod.object({
+          example_id: zod.string().uuid(),
+          trial_number: zod.number().min(1),
+          status: zod.enum([
+            "improved",
+            "regressed",
+            "tie",
+            "missing",
+            "duplicate",
+            "invalid",
+            "error",
+            "unknown",
+            "unsupported",
+            "not_assessed",
+          ]),
+          baseline_status: zod.string().min(1),
+          candidate_status: zod.string().min(1),
+          baseline_score: zod.number(),
+          candidate_score: zod.number(),
+          score_delta: zod.number(),
+          missing_side: zod.enum(["baseline", "candidate"]),
+        }),
+      ),
+      status_counts: zod.record(
+        zod.string(),
+        zod
+          .number()
+          .min(experimentRunsCompareResponseResultComparisonStatusCountsMinOne),
+      ),
+      comparable_count: zod
+        .number()
+        .min(experimentRunsCompareResponseResultComparisonComparableCountMin),
+    }),
+    baseline_counts: zod.object({
+      expected: zod
+        .number()
+        .min(experimentRunsCompareResponseResultBaselineCountsExpectedMin),
+      recorded: zod
+        .number()
+        .min(experimentRunsCompareResponseResultBaselineCountsRecordedMin),
+      missing: zod
+        .number()
+        .min(experimentRunsCompareResponseResultBaselineCountsMissingMin),
+      completed: zod
+        .number()
+        .min(experimentRunsCompareResponseResultBaselineCountsCompletedMin),
+      failed: zod
+        .number()
+        .min(experimentRunsCompareResponseResultBaselineCountsFailedMin),
+      assessed: zod
+        .number()
+        .min(experimentRunsCompareResponseResultBaselineCountsAssessedMin),
+    }),
+    candidate_counts: zod.object({
+      expected: zod
+        .number()
+        .min(experimentRunsCompareResponseResultCandidateCountsExpectedMin),
+      recorded: zod
+        .number()
+        .min(experimentRunsCompareResponseResultCandidateCountsRecordedMin),
+      missing: zod
+        .number()
+        .min(experimentRunsCompareResponseResultCandidateCountsMissingMin),
+      completed: zod
+        .number()
+        .min(experimentRunsCompareResponseResultCandidateCountsCompletedMin),
+      failed: zod
+        .number()
+        .min(experimentRunsCompareResponseResultCandidateCountsFailedMin),
+      assessed: zod
+        .number()
+        .min(experimentRunsCompareResponseResultCandidateCountsAssessedMin),
+    }),
+    missing_by_side: zod.object({
+      baseline: zod.array(
+        zod.object({
+          example_id: zod.string().uuid(),
+          trial_number: zod.number().min(1),
+        }),
+      ),
+      candidate: zod.array(
+        zod.object({
+          example_id: zod.string().uuid(),
+          trial_number: zod.number().min(1),
+        }),
+      ),
+    }),
+    trace_refs: zod.array(
+      zod.object({
+        example_id: zod.string().uuid(),
+        trial_number: zod.number().min(1),
+        baseline: zod.object({
+          run_item_id: zod.string().uuid(),
+          trace_id: zod.string(),
+          root_span_id: zod.string(),
+        }),
+        candidate: zod.object({
+          run_item_id: zod.string().uuid(),
+          trace_id: zod.string(),
+          root_span_id: zod.string(),
+        }),
+      }),
+    ),
+  }),
+});
+
 export const modelHubExperimentsListResponseResultNameMax = 255;
 
 export const ModelHubExperimentsListResponse = zod.object({

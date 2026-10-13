@@ -185,6 +185,7 @@ from model_hub.views.prompt_template import (  # UserResponseSchemaView,
     UploadFileView,
     UserResponseSchemaViewSet,
 )
+from model_hub.views.run_comparison import RunComparisonView
 from model_hub.views.run_prompt import *  # noqa: F403
 from model_hub.views.run_prompt import (
     ApiKeyViewSet,
@@ -1246,6 +1247,11 @@ urlpatterns = [
         "datasets/<uuid:dataset_id>/versions/<uuid:version_id>/",
         DatasetVersionDetailView.as_view(),
         name="dataset-version-detail",
+    ),
+    path(
+        "experiment-runs/compare/",
+        RunComparisonView.as_view(),
+        name="experiment-run-compare",
     ),
     # V2 Experiment APIs
     path(

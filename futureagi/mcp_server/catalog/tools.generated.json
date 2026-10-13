@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "source_contract_sha256": "239df74d7b5f808b4a6a149b6365758c1c9e10bb79acf86175a64a996199379f",
-  "tool_count": 92,
+  "source_contract_sha256": "d282db905550d297271a77d77dbe4b44aec7ad576b77333d04feff4ed19db5c3",
+  "tool_count": 93,
   "tools": [
     {
       "name": "whoami",
@@ -5955,6 +5955,80 @@
       },
       "source": {
         "operationId": "model-hub_experiments_v2_create"
+      }
+    },
+    {
+      "name": "compare_experiment_runs",
+      "description": "Compare persisted baseline and candidate experiment runs for one metric in the current workspace. Returns case/trial comparisons, missing evidence, assessment counts, and trace references. Both runs must use compatible dataset versions and evaluation plans. This reads stored results without executing tasks or evaluations.",
+      "group": "experiments",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "baseline_run_id": {
+            "title": "Baseline run id",
+            "type": "string",
+            "format": "uuid"
+          },
+          "candidate_run_id": {
+            "title": "Candidate run id",
+            "type": "string",
+            "format": "uuid"
+          },
+          "metric_id": {
+            "title": "Metric id",
+            "type": "string",
+            "format": "uuid"
+          },
+          "passing_score": {
+            "anyOf": [
+              {
+                "title": "Passing score",
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "higher_is_better": {
+            "title": "Higher is better",
+            "type": "boolean",
+            "default": true
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "baseline_run_id",
+          "candidate_run_id",
+          "metric_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/model-hub/experiment-runs/compare/",
+        "parameters": {
+          "path": [],
+          "query": [],
+          "body": [
+            "baseline_run_id",
+            "candidate_run_id",
+            "metric_id",
+            "passing_score",
+            "higher_is_better"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "experiment_runs_compare"
       }
     },
     {

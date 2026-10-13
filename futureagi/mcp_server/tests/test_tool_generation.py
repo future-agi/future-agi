@@ -19,7 +19,7 @@ CATALOG_PATH = Path(__file__).resolve().parents[1] / "catalog/tools.yaml"
 def test_committed_catalog_generates_expected_tools():
     manifest = generate_tool_manifest(CONTRACT_PATH, CATALOG_PATH)
 
-    assert manifest["tool_count"] == 92
+    assert manifest["tool_count"] == 93
     tool_names = [tool["name"] for tool in manifest["tools"]]
     assert len(tool_names) == len(set(tool_names))
     assert {
@@ -30,6 +30,7 @@ def test_committed_catalog_generates_expected_tools():
         "search_traces",
         "submit_annotation",
         "create_experiment",
+        "compare_experiment_runs",
         "get_test_execution_analytics",
         "get_gateway_analytics",
         "list_dashboards",
@@ -63,6 +64,43 @@ def test_generator_maps_path_query_and_body_parameters():
             name for fields in request["parameters"].values() for name in fields
         }
         assert mapped_fields <= set(tool["inputSchema"]["properties"])
+
+
+def test_run_comparison_is_a_scoped_read_with_typed_body():
+    tools = {
+        tool["name"]: tool
+        for tool in generate_tool_manifest(CONTRACT_PATH, CATALOG_PATH)["tools"]
+    }
+    tool = tools["compare_experiment_runs"]
+    assert tool["group"] == "experiments"
+    assert tool["request"]["method"] == "POST"
+    assert tool["request"]["path"] == "/model-hub/experiment-runs/compare/"
+    assert tool["annotations"] == {
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    }
+    required = {"baseline_run_id", "candidate_run_id", "metric_id"}
+    fields = required | {"passing_score", "higher_is_better"}
+    schema = tool["inputSchema"]
+    assert set(schema["required"]) == required
+    assert set(schema["properties"]) == fields
+    assert set(tool["request"]["parameters"]["body"]) == fields
+    assert tool["request"]["parameters"]["path"] == []
+    assert tool["request"]["parameters"]["query"] == []
+    arguments = dict.fromkeys(required, "bd8958a7-8eea-46d6-906f-cae2e77d9d61")
+    validator = Draft7Validator(schema)
+    assert validator.is_valid(arguments)
+    assert validator.is_valid({**arguments, "passing_score": None})
+    assert validator.is_valid(
+        {**arguments, "passing_score": 0.8, "higher_is_better": False}
+    )
+    assert not validator.is_valid({**arguments, "workspace_id": "other"})
+    assert not validator.is_valid({**arguments, "organization_id": "other"})
+    assert not validator.is_valid({**arguments, "passing_score": "invalid"})
+    assert not validator.is_valid({**arguments, "higher_is_better": "false"})
+    assert not validator.is_valid({"baseline_run_id": arguments["baseline_run_id"]})
 
 
 def test_open_world_hint_is_reviewed_catalog_metadata():

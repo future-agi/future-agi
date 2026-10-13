@@ -11604,6 +11604,145 @@ export interface ExperimentsTableGetApi {
   name: string;
 }
 
+export interface RunComparisonRequestApi {
+  baseline_run_id: string;
+  candidate_run_id: string;
+  metric_id: string;
+  passing_score?: number;
+  higher_is_better?: boolean;
+}
+
+export type RunAggregateApiStatusCounts = { [key: string]: number };
+
+export type RunAggregateApiScoreStatusCounts = { [key: string]: number };
+
+export interface RunAggregateApi {
+  /** @minimum 0 */
+  item_count: number;
+  /** @minimum 0 */
+  completed_count: number;
+  /** @minimum 0 */
+  failed_count: number;
+  /** @minimum 0 */
+  score_count: number;
+  score_average: number;
+  score_min: number;
+  score_max: number;
+  /** @minimum 0 */
+  pass_count: number;
+  pass_rate: number;
+  status_counts: RunAggregateApiStatusCounts;
+  score_status_counts: RunAggregateApiScoreStatusCounts;
+}
+
+export type RunCaseComparisonApiStatus =
+  (typeof RunCaseComparisonApiStatus)[keyof typeof RunCaseComparisonApiStatus];
+
+export const RunCaseComparisonApiStatus = {
+  improved: "improved",
+  regressed: "regressed",
+  tie: "tie",
+  missing: "missing",
+  duplicate: "duplicate",
+  invalid: "invalid",
+  error: "error",
+  unknown: "unknown",
+  unsupported: "unsupported",
+  not_assessed: "not_assessed",
+} as const;
+
+export type RunCaseComparisonApiMissingSide =
+  (typeof RunCaseComparisonApiMissingSide)[keyof typeof RunCaseComparisonApiMissingSide];
+
+export const RunCaseComparisonApiMissingSide = {
+  baseline: "baseline",
+  candidate: "candidate",
+} as const;
+
+export interface RunCaseComparisonApi {
+  example_id: string;
+  /** @minimum 1 */
+  trial_number: number;
+  status: RunCaseComparisonApiStatus;
+  /** @minLength 1 */
+  baseline_status: string;
+  /** @minLength 1 */
+  candidate_status: string;
+  baseline_score: number;
+  candidate_score: number;
+  score_delta: number;
+  missing_side: RunCaseComparisonApiMissingSide;
+}
+
+export type RunComparisonSummaryApiStatusCounts = { [key: string]: number };
+
+export interface RunComparisonSummaryApi {
+  baseline: RunAggregateApi;
+  candidate: RunAggregateApi;
+  cases: RunCaseComparisonApi[];
+  status_counts: RunComparisonSummaryApiStatusCounts;
+  /** @minimum 0 */
+  comparable_count: number;
+}
+
+export interface RunCountsApi {
+  /** @minimum 0 */
+  expected: number;
+  /** @minimum 0 */
+  recorded: number;
+  /** @minimum 0 */
+  missing: number;
+  /** @minimum 0 */
+  completed: number;
+  /** @minimum 0 */
+  failed: number;
+  /** @minimum 0 */
+  assessed: number;
+}
+
+export interface RunItemIdentityApi {
+  example_id: string;
+  /** @minimum 1 */
+  trial_number: number;
+}
+
+export interface MissingRunItemsApi {
+  baseline: RunItemIdentityApi[];
+  candidate: RunItemIdentityApi[];
+}
+
+export interface RunTraceReferenceApi {
+  run_item_id: string;
+  trace_id: string;
+  root_span_id: string;
+}
+
+export interface RunCaseTraceReferencesApi {
+  example_id: string;
+  /** @minimum 1 */
+  trial_number: number;
+  baseline: RunTraceReferenceApi;
+  candidate: RunTraceReferenceApi;
+}
+
+export interface RunComparisonResultApi {
+  baseline_run_id: string;
+  candidate_run_id: string;
+  dataset_version_id: string;
+  metric_id: string;
+  evaluator_version_id: string;
+  comparison: RunComparisonSummaryApi;
+  baseline_counts: RunCountsApi;
+  candidate_counts: RunCountsApi;
+  missing_by_side: MissingRunItemsApi;
+  trace_refs: RunCaseTraceReferencesApi[];
+}
+
+export interface RunComparisonResponseApi {
+  status: boolean;
+  result: RunComparisonResultApi;
+}
+
 export type ExperimentsTableApiPromptConfig = { [key: string]: unknown };
 
 export interface ExperimentsTableApi {

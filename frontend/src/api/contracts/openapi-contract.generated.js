@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1060,
+  endpointCount: 1061,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -18690,6 +18690,40 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 },
               },
             },
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/model-hub/experiment-runs/compare/": {
+      post: {
+        operationId: "experiment_runs_compare",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/RunComparisonRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/RunComparisonResponse",
+          },
+          400: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          409: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ModelHubErrorResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -72985,6 +73019,50 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    RunComparisonRequest: {
+      required: ["baseline_run_id", "candidate_run_id", "metric_id"],
+      type: "object",
+      properties: {
+        baseline_run_id: {
+          title: "Baseline run id",
+          type: "string",
+          format: "uuid",
+        },
+        candidate_run_id: {
+          title: "Candidate run id",
+          type: "string",
+          format: "uuid",
+        },
+        metric_id: {
+          title: "Metric id",
+          type: "string",
+          format: "uuid",
+        },
+        passing_score: {
+          title: "Passing score",
+          type: "number",
+          "x-nullable": true,
+        },
+        higher_is_better: {
+          title: "Higher is better",
+          type: "boolean",
+          default: true,
+        },
+      },
+    },
+    RunComparisonResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/RunComparisonResult",
+        },
+      },
+    },
     RunExportV3Request: {
       type: "object",
       properties: {
@@ -99775,6 +99853,66 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    RunComparisonResult: {
+      required: [
+        "baseline_run_id",
+        "candidate_run_id",
+        "dataset_version_id",
+        "metric_id",
+        "evaluator_version_id",
+        "comparison",
+        "baseline_counts",
+        "candidate_counts",
+        "missing_by_side",
+        "trace_refs",
+      ],
+      type: "object",
+      properties: {
+        baseline_run_id: {
+          title: "Baseline run id",
+          type: "string",
+          format: "uuid",
+        },
+        candidate_run_id: {
+          title: "Candidate run id",
+          type: "string",
+          format: "uuid",
+        },
+        dataset_version_id: {
+          title: "Dataset version id",
+          type: "string",
+          format: "uuid",
+        },
+        metric_id: {
+          title: "Metric id",
+          type: "string",
+          format: "uuid",
+        },
+        evaluator_version_id: {
+          title: "Evaluator version id",
+          type: "string",
+          format: "uuid",
+        },
+        comparison: {
+          $ref: "#/definitions/RunComparisonSummary",
+        },
+        baseline_counts: {
+          $ref: "#/definitions/RunCounts",
+        },
+        candidate_counts: {
+          $ref: "#/definitions/RunCounts",
+        },
+        missing_by_side: {
+          $ref: "#/definitions/MissingRunItems",
+        },
+        trace_refs: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/RunCaseTraceReferences",
+          },
+        },
+      },
+    },
     RunPromptColumnConfigResult: {
       required: ["config"],
       type: "object",
@@ -113467,6 +113605,126 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    MissingRunItems: {
+      required: ["baseline", "candidate"],
+      type: "object",
+      properties: {
+        baseline: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/RunItemIdentity",
+          },
+        },
+        candidate: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/RunItemIdentity",
+          },
+        },
+      },
+    },
+    RunCaseTraceReferences: {
+      required: ["example_id", "trial_number", "baseline", "candidate"],
+      type: "object",
+      properties: {
+        example_id: {
+          title: "Example id",
+          type: "string",
+          format: "uuid",
+        },
+        trial_number: {
+          title: "Trial number",
+          type: "integer",
+          minimum: 1,
+        },
+        baseline: {
+          $ref: "#/definitions/RunTraceReference",
+        },
+        candidate: {
+          $ref: "#/definitions/RunTraceReference",
+        },
+      },
+    },
+    RunComparisonSummary: {
+      required: [
+        "baseline",
+        "candidate",
+        "cases",
+        "status_counts",
+        "comparable_count",
+      ],
+      type: "object",
+      properties: {
+        baseline: {
+          $ref: "#/definitions/RunAggregate",
+        },
+        candidate: {
+          $ref: "#/definitions/RunAggregate",
+        },
+        cases: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/RunCaseComparison",
+          },
+        },
+        status_counts: {
+          title: "Status counts",
+          type: "object",
+          additionalProperties: {
+            type: "integer",
+            minimum: 0,
+          },
+        },
+        comparable_count: {
+          title: "Comparable count",
+          type: "integer",
+          minimum: 0,
+        },
+      },
+    },
+    RunCounts: {
+      required: [
+        "expected",
+        "recorded",
+        "missing",
+        "completed",
+        "failed",
+        "assessed",
+      ],
+      type: "object",
+      properties: {
+        expected: {
+          title: "Expected",
+          type: "integer",
+          minimum: 0,
+        },
+        recorded: {
+          title: "Recorded",
+          type: "integer",
+          minimum: 0,
+        },
+        missing: {
+          title: "Missing",
+          type: "integer",
+          minimum: 0,
+        },
+        completed: {
+          title: "Completed",
+          type: "integer",
+          minimum: 0,
+        },
+        failed: {
+          title: "Failed",
+          type: "integer",
+          minimum: 0,
+        },
+        assessed: {
+          title: "Assessed",
+          type: "integer",
+          minimum: 0,
+        },
+      },
+    },
     RunPromptChoiceOption: {
       required: ["value", "label"],
       type: "object",
@@ -117451,6 +117709,199 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Failure label",
           type: "string",
           minLength: 1,
+        },
+      },
+    },
+    RunItemIdentity: {
+      required: ["example_id", "trial_number"],
+      type: "object",
+      properties: {
+        example_id: {
+          title: "Example id",
+          type: "string",
+          format: "uuid",
+        },
+        trial_number: {
+          title: "Trial number",
+          type: "integer",
+          minimum: 1,
+        },
+      },
+    },
+    RunTraceReference: {
+      required: ["run_item_id", "trace_id", "root_span_id"],
+      type: "object",
+      properties: {
+        run_item_id: {
+          title: "Run item id",
+          type: "string",
+          format: "uuid",
+        },
+        trace_id: {
+          title: "Trace id",
+          type: "string",
+          "x-nullable": true,
+        },
+        root_span_id: {
+          title: "Root span id",
+          type: "string",
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
+    },
+    RunAggregate: {
+      required: [
+        "item_count",
+        "completed_count",
+        "failed_count",
+        "score_count",
+        "score_average",
+        "score_min",
+        "score_max",
+        "pass_count",
+        "pass_rate",
+        "status_counts",
+        "score_status_counts",
+      ],
+      type: "object",
+      properties: {
+        item_count: {
+          title: "Item count",
+          type: "integer",
+          minimum: 0,
+        },
+        completed_count: {
+          title: "Completed count",
+          type: "integer",
+          minimum: 0,
+        },
+        failed_count: {
+          title: "Failed count",
+          type: "integer",
+          minimum: 0,
+        },
+        score_count: {
+          title: "Score count",
+          type: "integer",
+          minimum: 0,
+        },
+        score_average: {
+          title: "Score average",
+          type: "number",
+          "x-nullable": true,
+        },
+        score_min: {
+          title: "Score min",
+          type: "number",
+          "x-nullable": true,
+        },
+        score_max: {
+          title: "Score max",
+          type: "number",
+          "x-nullable": true,
+        },
+        pass_count: {
+          title: "Pass count",
+          type: "integer",
+          minimum: 0,
+          "x-nullable": true,
+        },
+        pass_rate: {
+          title: "Pass rate",
+          type: "number",
+          "x-nullable": true,
+        },
+        status_counts: {
+          title: "Status counts",
+          type: "object",
+          additionalProperties: {
+            type: "integer",
+            minimum: 0,
+          },
+        },
+        score_status_counts: {
+          title: "Score status counts",
+          type: "object",
+          additionalProperties: {
+            type: "integer",
+            minimum: 0,
+          },
+        },
+      },
+    },
+    RunCaseComparison: {
+      required: [
+        "example_id",
+        "trial_number",
+        "status",
+        "baseline_status",
+        "candidate_status",
+        "baseline_score",
+        "candidate_score",
+        "score_delta",
+        "missing_side",
+      ],
+      type: "object",
+      properties: {
+        example_id: {
+          title: "Example id",
+          type: "string",
+          format: "uuid",
+        },
+        trial_number: {
+          title: "Trial number",
+          type: "integer",
+          minimum: 1,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: [
+            "improved",
+            "regressed",
+            "tie",
+            "missing",
+            "duplicate",
+            "invalid",
+            "error",
+            "unknown",
+            "unsupported",
+            "not_assessed",
+          ],
+        },
+        baseline_status: {
+          title: "Baseline status",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        candidate_status: {
+          title: "Candidate status",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        baseline_score: {
+          title: "Baseline score",
+          type: "number",
+          "x-nullable": true,
+        },
+        candidate_score: {
+          title: "Candidate score",
+          type: "number",
+          "x-nullable": true,
+        },
+        score_delta: {
+          title: "Score delta",
+          type: "number",
+          "x-nullable": true,
+        },
+        missing_side: {
+          title: "Missing side",
+          type: "string",
+          enum: ["baseline", "candidate"],
+          "x-nullable": true,
         },
       },
     },

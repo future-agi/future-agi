@@ -1,5 +1,5 @@
 version: 1
-expected_tool_count: 92
+expected_tool_count: 93
 
 # Pagination is an MCP-only page-size ceiling, so an oversized page is rejected
 # before the REST view queries and serializes it. The generator keeps a stricter
@@ -330,6 +330,12 @@ tools:
     operation: {method: POST, path: "/model-hub/experiments/v2/"}
     access: write
     open_world: true
+  - name: compare_experiment_runs
+    group: experiments
+    description: Compare persisted baseline and candidate experiment runs for one metric in the current workspace. Returns case/trial comparisons, missing evidence, assessment counts, and trace references. Both runs must use compatible dataset versions and evaluation plans. This reads stored results without executing tasks or evaluations.
+    operation: {method: POST, path: "/model-hub/experiment-runs/compare/"}
+    access: read
+    idempotent: true
   # optimization
   - name: list_optimization_runs
     group: optimization
