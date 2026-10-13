@@ -59,7 +59,7 @@ def get_eval_reasons(
 
     # Process reason columns
     for column in reason_columns:
-        eval_name = column.name.split("-reason")[0]
+        eval_name = column.name.removesuffix("-reason")
         # Extract user_eval_metric_id from source_id (format: "prefix-sourceid-id")
         user_eval_metric_id = None
         if column.source_id and "-sourceid-" in str(column.source_id):
