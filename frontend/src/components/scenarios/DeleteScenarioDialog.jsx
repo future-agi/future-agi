@@ -13,7 +13,7 @@ import {
 import PropTypes from "prop-types";
 import axios, { endpoints } from "src/utils/axios";
 
-const DeleteScenarioDialog = ({ open, onClose, scenario, onDeleteSuccess }) => {
+const DeleteScenarioDialog = ({ open, onClose, scenario, scenarios, onDeleteSuccess }) => {
   const [isDeleting, setIsDeleting] = useState(false);
   const [error, setError] = useState("");
 
@@ -24,18 +24,24 @@ const DeleteScenarioDialog = ({ open, onClose, scenario, onDeleteSuccess }) => {
     }
   };
 
+  const items = scenarios || (scenario ? [scenario] : []);
+  const isBulk = items.length > 1;
+
   const handleDelete = async () => {
-    if (!scenario?.id) return;
+    if (!items.length) return;
 
     setIsDeleting(true);
     setError("");
 
     try {
-      await axios.delete(endpoints.scenarios.delete(scenario.id));
+      await axios.delete(endpoints.scenarios.delete, {
+        data: {
+          scenario_ids: items.map((s) => s.id),
+        },
+      });
       onDeleteSuccess?.();
       handleClose();
     } catch (err) {
-      // console.error("Error deleting scenario:", err);
       setError(
         err.response?.data?.error ||
           err.message ||
@@ -60,43 +66,73 @@ const DeleteScenarioDialog = ({ open, onClose, scenario, onDeleteSuccess }) => {
     >
       <DialogTitle>
         <Typography variant="h6" fontWeight="fontWeightSemiBold">
-          Delete Scenario
+          Delete Scenario{isBulk && "s"}
         </Typography>
       </DialogTitle>
 
       <DialogContent>
         <Box sx={{ pt: 1 }}>
           <Typography variant="body1" color="text.primary" gutterBottom>
-            Are you sure you want to delete this scenario?
+            {isBulk
+              ? `Are you sure you want to delete these ${items.length} scenarios?`
+              : "Are you sure you want to delete this scenario?"}
           </Typography>
 
-          <Box
-            sx={{
-              backgroundColor: "background.default",
-              p: 2,
-              borderRadius: 1,
-              mt: 2,
-              border: "1px solid",
-              borderColor: "divider",
-            }}
-          >
-            <Typography variant="subtitle2" fontWeight="fontWeightSemiBold">
-              {scenario?.name}
-            </Typography>
-            {scenario?.description && (
-              <Typography
-                variant="body2"
-                color="text.secondary"
-                sx={{ mt: 0.5 }}
-              >
-                {scenario.description}
+          {!isBulk && items[0] && (
+            <Box
+              sx={{
+                backgroundColor: "background.default",
+                p: 2,
+                borderRadius: 1,
+                mt: 2,
+                border: "1px solid",
+                borderColor: "divider",
+              }}
+            >
+              <Typography variant="subtitle2" fontWeight="fontWeightSemiBold">
+                {items[0].name}
               </Typography>
-            )}
-          </Box>
+              {items[0].description && (
+                <Typography
+                  variant="body2"
+                  color="text.secondary"
+                  sx={{ mt: 0.5 }}
+                >
+                  {items[0].description}
+                </Typography>
+              )}
+            </Box>
+          )}
+
+          {isBulk && (
+            <Box
+              sx={{
+                backgroundColor: "background.default",
+                p: 2,
+                borderRadius: 1,
+                mt: 2,
+                border: "1px solid",
+                borderColor: "divider",
+                maxHeight: "150px",
+                overflowY: "auto",
+              }}
+            >
+              {items.map((item, idx) => (
+                <Typography
+                  key={item.id || idx}
+                  variant="subtitle2"
+                  sx={{ mb: idx < items.length - 1 ? 1 : 0 }}
+                >
+                  • {item.name}
+                </Typography>
+              ))}
+            </Box>
+          )}
 
           <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
-            This action cannot be undone. The scenario and its associated data
-            will be permanently removed.
+            This action cannot be undone. The scenario{isBulk && "s"} and{" "}
+            {isBulk ? "their" : "its"} associated data will be permanently
+            removed.
           </Typography>
 
           {error && (
@@ -120,7 +156,7 @@ const DeleteScenarioDialog = ({ open, onClose, scenario, onDeleteSuccess }) => {
             isDeleting ? <CircularProgress size={16} color="inherit" /> : null
           }
         >
-          {isDeleting ? "Deleting..." : "Delete Scenario"}
+          {isDeleting ? "Deleting..." : `Delete Scenario${isBulk ? "s" : ""}`}
         </Button>
       </DialogActions>
     </Dialog>
@@ -131,6 +167,7 @@ DeleteScenarioDialog.propTypes = {
   open: PropTypes.bool.isRequired,
   onClose: PropTypes.func.isRequired,
   scenario: PropTypes.object,
+  scenarios: PropTypes.arrayOf(PropTypes.object),
   onDeleteSuccess: PropTypes.func,
 };
 
