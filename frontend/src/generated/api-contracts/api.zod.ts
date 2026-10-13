@@ -19444,11 +19444,11 @@ export const ModelHubDatasetsVersionsListResponse = zod.object({
       zod.object({
         id: zod.string().uuid().optional(),
         dataset: zod.string().uuid().optional(),
-        parent_version: zod.string().uuid().optional(),
-        created_by: zod.string().uuid().optional(),
-        organization: zod.string().uuid().optional(),
-        workspace: zod.string().uuid().optional(),
-        content_hash: zod.string().min(1).optional(),
+        parent_version: zod.string().uuid().optional().nullable(),
+        created_by: zod.string().uuid().optional().nullable(),
+        organization: zod.string().uuid().optional().nullable(),
+        workspace: zod.string().uuid().optional().nullable(),
+        content_hash: zod.string().optional(),
         description: zod.string().optional(),
         metadata: zod.object({}).passthrough().optional(),
         source_revision: zod.string().optional(),
@@ -19562,11 +19562,11 @@ export const ModelHubDatasetsVersionsReadResponse = zod.object({
     version: zod.object({
       id: zod.string().uuid().optional(),
       dataset: zod.string().uuid().optional(),
-      parent_version: zod.string().uuid().optional(),
-      created_by: zod.string().uuid().optional(),
-      organization: zod.string().uuid().optional(),
-      workspace: zod.string().uuid().optional(),
-      content_hash: zod.string().min(1).optional(),
+      parent_version: zod.string().uuid().optional().nullable(),
+      created_by: zod.string().uuid().optional().nullable(),
+      organization: zod.string().uuid().optional().nullable(),
+      workspace: zod.string().uuid().optional().nullable(),
+      content_hash: zod.string().optional(),
       description: zod.string().optional(),
       metadata: zod.object({}).passthrough().optional(),
       source_revision: zod.string().optional(),
@@ -19578,14 +19578,22 @@ export const ModelHubDatasetsVersionsReadResponse = zod.object({
       zod.object({
         id: zod.string().uuid().optional(),
         example_id: zod.string().uuid().optional(),
-        external_id: zod.string().min(1).optional(),
-        input: zod.object({}).passthrough().optional(),
-        expected: zod.object({}).passthrough().optional(),
-        metadata: zod.object({}).passthrough().optional(),
-        source_trace_id: zod.string().min(1).optional(),
-        source_span_id: zod.string().min(1).optional(),
-        content_hash: zod.string().min(1).optional(),
-        legacy_row: zod.string().uuid().optional(),
+        external_id: zod.string().optional().nullable(),
+        input: jsonValueSchema
+          .refine((value) => value !== null)
+          .optional()
+          .describe("Any non-null JSON value; nested nulls are allowed."),
+        expected: jsonValueSchema.optional().describe("Any valid JSON value."),
+        metadata: zod
+          .record(
+            zod.string(),
+            jsonValueSchema.describe("Any valid JSON value."),
+          )
+          .optional(),
+        source_trace_id: zod.string().optional(),
+        source_span_id: zod.string().optional(),
+        content_hash: zod.string().optional(),
+        legacy_row: zod.string().uuid().optional().nullable(),
         created_at: zod.string().datetime({ offset: true }).optional(),
         updated_at: zod.string().datetime({ offset: true }).optional(),
       }),
@@ -23583,7 +23591,7 @@ export const ExperimentRunsCompareBody = zod.object({
   baseline_run_id: zod.string().uuid(),
   candidate_run_id: zod.string().uuid(),
   metric_id: zod.string().uuid(),
-  passing_score: zod.number().optional(),
+  passing_score: zod.number().optional().nullable(),
   higher_is_better: zod
     .boolean()
     .default(experimentRunsCompareBodyHigherIsBetterDefault),
@@ -23675,15 +23683,16 @@ export const ExperimentRunsCompareResponse = zod.object({
           .min(
             experimentRunsCompareResponseResultComparisonBaselineScoreCountMin,
           ),
-        score_average: zod.number(),
-        score_min: zod.number(),
-        score_max: zod.number(),
+        score_average: zod.number().nullable(),
+        score_min: zod.number().nullable(),
+        score_max: zod.number().nullable(),
         pass_count: zod
           .number()
           .min(
             experimentRunsCompareResponseResultComparisonBaselinePassCountMin,
-          ),
-        pass_rate: zod.number(),
+          )
+          .nullable(),
+        pass_rate: zod.number().nullable(),
         status_counts: zod.record(
           zod.string(),
           zod
@@ -23722,15 +23731,16 @@ export const ExperimentRunsCompareResponse = zod.object({
           .min(
             experimentRunsCompareResponseResultComparisonCandidateScoreCountMin,
           ),
-        score_average: zod.number(),
-        score_min: zod.number(),
-        score_max: zod.number(),
+        score_average: zod.number().nullable(),
+        score_min: zod.number().nullable(),
+        score_max: zod.number().nullable(),
         pass_count: zod
           .number()
           .min(
             experimentRunsCompareResponseResultComparisonCandidatePassCountMin,
-          ),
-        pass_rate: zod.number(),
+          )
+          .nullable(),
+        pass_rate: zod.number().nullable(),
         status_counts: zod.record(
           zod.string(),
           zod
@@ -23764,12 +23774,12 @@ export const ExperimentRunsCompareResponse = zod.object({
             "unsupported",
             "not_assessed",
           ]),
-          baseline_status: zod.string().min(1),
-          candidate_status: zod.string().min(1),
-          baseline_score: zod.number(),
-          candidate_score: zod.number(),
-          score_delta: zod.number(),
-          missing_side: zod.enum(["baseline", "candidate"]),
+          baseline_status: zod.string().min(1).nullable(),
+          candidate_status: zod.string().min(1).nullable(),
+          baseline_score: zod.number().nullable(),
+          candidate_score: zod.number().nullable(),
+          score_delta: zod.number().nullable(),
+          missing_side: zod.enum(["baseline", "candidate"]).nullable(),
         }),
       ),
       status_counts: zod.record(
@@ -23840,16 +23850,20 @@ export const ExperimentRunsCompareResponse = zod.object({
       zod.object({
         example_id: zod.string().uuid(),
         trial_number: zod.number().min(1),
-        baseline: zod.object({
-          run_item_id: zod.string().uuid(),
-          trace_id: zod.string(),
-          root_span_id: zod.string(),
-        }),
-        candidate: zod.object({
-          run_item_id: zod.string().uuid(),
-          trace_id: zod.string(),
-          root_span_id: zod.string(),
-        }),
+        baseline: zod
+          .object({
+            run_item_id: zod.string().uuid(),
+            trace_id: zod.string().nullable(),
+            root_span_id: zod.string().nullable(),
+          })
+          .nullable(),
+        candidate: zod
+          .object({
+            run_item_id: zod.string().uuid(),
+            trace_id: zod.string().nullable(),
+            root_span_id: zod.string().nullable(),
+          })
+          .nullable(),
       }),
     ),
   }),

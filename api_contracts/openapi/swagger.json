@@ -102998,8 +102998,7 @@
                 "content_hash": {
                     "title": "Content hash",
                     "type": "string",
-                    "readOnly": true,
-                    "minLength": 1
+                    "readOnly": true
                 },
                 "description": {
                     "title": "Description",
@@ -103225,42 +103224,49 @@
                     "title": "External id",
                     "type": "string",
                     "readOnly": true,
-                    "minLength": 1,
                     "x-nullable": true
                 },
                 "input": {
                     "title": "Input",
                     "type": "object",
-                    "readOnly": true
+                    "readOnly": true,
+                    "x-json-value": true,
+                    "x-nullable": false,
+                    "description": "Any non-null JSON value; nested nulls are allowed."
                 },
                 "expected": {
                     "title": "Expected",
                     "type": "object",
                     "readOnly": true,
-                    "x-nullable": true
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
                 },
                 "metadata": {
                     "title": "Metadata",
                     "type": "object",
+                    "additionalProperties": {
+                        "type": "object",
+                        "x-nullable": true,
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
+                    },
                     "readOnly": true
                 },
                 "source_trace_id": {
                     "title": "Source trace id",
                     "type": "string",
-                    "readOnly": true,
-                    "minLength": 1
+                    "readOnly": true
                 },
                 "source_span_id": {
                     "title": "Source span id",
                     "type": "string",
-                    "readOnly": true,
-                    "minLength": 1
+                    "readOnly": true
                 },
                 "content_hash": {
                     "title": "Content hash",
                     "type": "string",
-                    "readOnly": true,
-                    "minLength": 1
+                    "readOnly": true
                 },
                 "legacy_row": {
                     "title": "Legacy row",

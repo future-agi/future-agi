@@ -8850,11 +8850,10 @@ export type DatasetVersionReadApiMetadata = { [key: string]: unknown };
 export interface DatasetVersionReadApi {
   readonly id?: string;
   readonly dataset?: string;
-  readonly parent_version?: string;
-  readonly created_by?: string;
-  readonly organization?: string;
-  readonly workspace?: string;
-  /** @minLength 1 */
+  readonly parent_version?: string | null;
+  readonly created_by?: string | null;
+  readonly organization?: string | null;
+  readonly workspace?: string | null;
   readonly content_hash?: string;
   readonly description?: string;
   readonly metadata?: DatasetVersionReadApiMetadata;
@@ -8924,27 +8923,31 @@ export interface DatasetVersionCreateResponseApi {
   result: DatasetVersionReadApi;
 }
 
-export type DatasetVersionItemReadApiInput = { [key: string]: unknown };
+/**
+ * Any non-null JSON value; nested nulls are allowed.
+ */
+export type DatasetVersionItemReadApiInput = Exclude<JsonValueApi, null>;
 
-export type DatasetVersionItemReadApiExpected = { [key: string]: unknown };
+/**
+ * Any valid JSON value.
+ */
+export type DatasetVersionItemReadApiExpected = JsonValueApi;
 
-export type DatasetVersionItemReadApiMetadata = { [key: string]: unknown };
+export type DatasetVersionItemReadApiMetadata = { [key: string]: JsonValueApi };
 
 export interface DatasetVersionItemReadApi {
   readonly id?: string;
   readonly example_id?: string;
-  /** @minLength 1 */
-  readonly external_id?: string;
+  readonly external_id?: string | null;
+  /** Any non-null JSON value; nested nulls are allowed. */
   readonly input?: DatasetVersionItemReadApiInput;
+  /** Any valid JSON value. */
   readonly expected?: DatasetVersionItemReadApiExpected;
   readonly metadata?: DatasetVersionItemReadApiMetadata;
-  /** @minLength 1 */
   readonly source_trace_id?: string;
-  /** @minLength 1 */
   readonly source_span_id?: string;
-  /** @minLength 1 */
   readonly content_hash?: string;
-  readonly legacy_row?: string;
+  readonly legacy_row?: string | null;
   readonly created_at?: string;
   readonly updated_at?: string;
 }
@@ -11770,7 +11773,7 @@ export interface RunComparisonRequestApi {
   baseline_run_id: string;
   candidate_run_id: string;
   metric_id: string;
-  passing_score?: number;
+  passing_score?: number | null;
   higher_is_better?: boolean;
 }
 
@@ -11787,12 +11790,12 @@ export interface RunAggregateApi {
   failed_count: number;
   /** @minimum 0 */
   score_count: number;
-  score_average: number;
-  score_min: number;
-  score_max: number;
+  score_average: number | null;
+  score_min: number | null;
+  score_max: number | null;
   /** @minimum 0 */
-  pass_count: number;
-  pass_rate: number;
+  pass_count: number | null;
+  pass_rate: number | null;
   status_counts: RunAggregateApiStatusCounts;
   score_status_counts: RunAggregateApiScoreStatusCounts;
 }
@@ -11827,13 +11830,13 @@ export interface RunCaseComparisonApi {
   trial_number: number;
   status: RunCaseComparisonApiStatus;
   /** @minLength 1 */
-  baseline_status: string;
+  baseline_status: string | null;
   /** @minLength 1 */
-  candidate_status: string;
-  baseline_score: number;
-  candidate_score: number;
-  score_delta: number;
-  missing_side: RunCaseComparisonApiMissingSide;
+  candidate_status: string | null;
+  baseline_score: number | null;
+  candidate_score: number | null;
+  score_delta: number | null;
+  missing_side: RunCaseComparisonApiMissingSide | null;
 }
 
 export type RunComparisonSummaryApiStatusCounts = { [key: string]: number };
@@ -11875,16 +11878,16 @@ export interface MissingRunItemsApi {
 
 export interface RunTraceReferenceApi {
   run_item_id: string;
-  trace_id: string;
-  root_span_id: string;
+  trace_id: string | null;
+  root_span_id: string | null;
 }
 
 export interface RunCaseTraceReferencesApi {
   example_id: string;
   /** @minimum 1 */
   trial_number: number;
-  baseline: RunTraceReferenceApi;
-  candidate: RunTraceReferenceApi;
+  baseline: RunTraceReferenceApi | null;
+  candidate: RunTraceReferenceApi | null;
 }
 
 export interface RunComparisonResultApi {

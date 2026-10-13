@@ -443,6 +443,7 @@ export type SpanAttributeTopValueApiValue = JsonValueApi;`,
       "TraceObserveColumnConfigApiChoicesMap",
       "TraceObserveColumnConfigApiAnnotators",
       "DatasetVersionItemCreateApiExpected",
+      "DatasetVersionItemReadApiExpected",
       "ExternalRunBindingApiBindingConfig",
       "ExternalRunBindingApiPromptMessages",
       "ExternalRunBindingApiConfigSnapshot",
@@ -465,15 +466,21 @@ export type ${jsonAlias} = JsonValueApi;`,
       );
     }
 
-    schemas = assertReplace(
-      schemas,
-      "export type DatasetVersionItemCreateApiInput = { [key: string]: unknown };",
-      "export type DatasetVersionItemCreateApiInput = Exclude<JsonValueApi, null>;",
-      "snapshot input excludes top-level null",
-    );
+    for (const alias of [
+      "DatasetVersionItemCreateApiInput",
+      "DatasetVersionItemReadApiInput",
+    ]) {
+      schemas = assertReplace(
+        schemas,
+        `export type ${alias} = { [key: string]: unknown };`,
+        `export type ${alias} = Exclude<JsonValueApi, null>;`,
+        `${alias} excludes top-level null`,
+      );
+    }
     for (const alias of [
       "DatasetVersionCreateApiMetadata",
       "DatasetVersionItemCreateApiMetadata",
+      "DatasetVersionItemReadApiMetadata",
     ]) {
       schemas = assertReplaceInNamedBlock(
         schemas,
@@ -539,12 +546,35 @@ export type ${jsonAlias} = JsonValueApi;`,
       ],
       ["ExternalRunScoreApi", ["value", "explanation", "trace_id", "span_id"]],
       ["ExternalRunItemReceiptApi", ["trace_id", "root_span_id"]],
+      [
+        "DatasetVersionReadApi",
+        ["parent_version", "created_by", "organization", "workspace"],
+      ],
+      ["DatasetVersionItemReadApi", ["external_id", "legacy_row"]],
+      ["RunComparisonRequestApi", ["passing_score"]],
+      [
+        "RunAggregateApi",
+        ["score_average", "score_min", "score_max", "pass_count", "pass_rate"],
+      ],
+      [
+        "RunCaseComparisonApi",
+        [
+          "baseline_status",
+          "candidate_status",
+          "baseline_score",
+          "candidate_score",
+          "score_delta",
+          "missing_side",
+        ],
+      ],
+      ["RunTraceReferenceApi", ["trace_id", "root_span_id"]],
+      ["RunCaseTraceReferencesApi", ["baseline", "candidate"]],
     ]) {
       for (const field of fields) {
         schemas = assertReplaceRegexInNamedBlock(
           schemas,
           `export interface ${typeName} {`,
-          new RegExp(`(^\\s*${field}\\??: [^;]+)(;)$`, "m"),
+          new RegExp(`(^\\s*(?:readonly )?${field}\\??: [^;]+)(;)$`, "m"),
           "$1 | null$2",
           `${typeName}.${field} nullable`,
         );
@@ -997,6 +1027,76 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
         );
       }
     }
+
+    for (const [exportName, nullableFields] of [
+      [
+        "ModelHubDatasetsVersionsListResponse",
+        ["parent_version", "created_by", "organization", "workspace"],
+      ],
+      [
+        "ModelHubDatasetsVersionsReadResponse",
+        [
+          "parent_version",
+          "created_by",
+          "organization",
+          "workspace",
+          "external_id",
+          "legacy_row",
+        ],
+      ],
+      ["ExperimentRunsCompareBody", ["passing_score"]],
+      [
+        "ExperimentRunsCompareResponse",
+        [
+          "score_average",
+          "score_min",
+          "score_max",
+          "pass_count",
+          "pass_rate",
+          "baseline_status",
+          "candidate_status",
+          "baseline_score",
+          "candidate_score",
+          "score_delta",
+          "missing_side",
+          "trace_id",
+          "root_span_id",
+        ],
+      ],
+    ]) {
+      for (const field of nullableFields) {
+        zod = assertReplaceRegexInNamedBlock(
+          zod,
+          `export const ${exportName} = zod.object({`,
+          new RegExp(`("${field}": zod\\.[^\\n]+?)(,?)$`, "gm"),
+          "$1.nullable()$2",
+          `${exportName}.${field} nullable`,
+        );
+      }
+    }
+    zod = assertReplaceRegexInNamedBlock(
+      zod,
+      "export const ExperimentRunsCompareResponse = zod.object({",
+      /("(?:baseline|candidate)": zod\.object\(\{\n\s*"run_item_id":[\s\S]*?\n\s*\}\))/g,
+      "$1.nullable()",
+      "missing comparison trace references are nullable",
+    );
+    const versionRead =
+      "export const ModelHubDatasetsVersionsReadResponse = zod.object({";
+    zod = assertReplaceRegexInNamedBlock(
+      zod,
+      versionRead,
+      /zod\.object\(\{\n\n\}\)\.passthrough\(\)(?=(?:\.(?:optional|nullish|nullable)\(\)|\.default\([^)]*\))*\.describe\('Any valid JSON value\.'\))/g,
+      "jsonValueSchema",
+      "dataset item expected and metadata JSON values",
+    );
+    zod = assertReplaceInNamedBlock(
+      zod,
+      versionRead,
+      "zod.object({\n\n}).passthrough().optional().describe('Any non-null JSON value; nested nulls are allowed.')",
+      "jsonValueSchema.refine((value) => value !== null).optional().describe('Any non-null JSON value; nested nulls are allowed.')",
+      "dataset read input preserves non-null JSON values",
+    );
 
     const snapshotBody =
       "export const DatasetVersionsCreateBody = zod.object({";

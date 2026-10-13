@@ -91,6 +91,18 @@ class DatasetVersionPageQuerySerializer(serializers.Serializer):
 class DatasetVersionItemReadSerializer(serializers.ModelSerializer):
     """Stable example identity and source provenance for one version item."""
 
+    input = SnapshotInputField(read_only=True)
+    expected = JsonValueField(read_only=True, allow_null=True)
+    metadata = serializers.DictField(
+        child=JsonValueField(allow_null=True), read_only=True
+    )
+    external_id = serializers.CharField(
+        read_only=True, allow_blank=True, allow_null=True
+    )
+    source_trace_id = serializers.CharField(read_only=True, allow_blank=True)
+    source_span_id = serializers.CharField(read_only=True, allow_blank=True)
+    content_hash = serializers.CharField(read_only=True, allow_blank=True)
+
     class Meta:
         model = DatasetVersionItem
         fields = [
@@ -114,6 +126,7 @@ class DatasetVersionReadSerializer(serializers.ModelSerializer):
     """Version metadata returned by list and detail endpoints."""
 
     item_count = serializers.IntegerField(read_only=True)
+    content_hash = serializers.CharField(read_only=True, allow_blank=True)
     description = serializers.CharField(read_only=True, allow_blank=True)
     source_revision = serializers.CharField(read_only=True, allow_blank=True)
 
