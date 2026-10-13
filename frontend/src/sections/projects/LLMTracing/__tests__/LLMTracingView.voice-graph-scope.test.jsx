@@ -35,6 +35,17 @@ const harness = vi.hoisted(() => ({
   },
   selectedTab: "trace",
   testDetailState: { setTestDetailDrawerOpen: vi.fn() },
+  addTagsProps: [],
+  snackbar: vi.fn(),
+  traceGridSelectedNodes: null,
+  traceGridApiExtras: {},
+  spanGridSelectedNodes: null,
+  spanGridApiExtras: {},
+}));
+
+vi.mock("notistack", async (importOriginal) => ({
+  ...(await importOriginal()),
+  enqueueSnackbar: (...args) => harness.snackbar(...args),
 }));
 
 vi.mock("src/auth/hooks", () => ({
@@ -125,8 +136,21 @@ vi.mock("../TraceGrid", async () => {
     "../LLMTracingTraceDetailDrawer"
   );
   return {
-    default: ReactModule.forwardRef((props, _ref) => {
+    default: ReactModule.forwardRef((props, ref) => {
       harness.traceGridProps.push(props);
+      // Bulk actions read the grid's selection through its ref. Only the
+      // trace-grid bulk tests expose it; other tests keep a ref-less grid.
+      ReactModule.useImperativeHandle(ref, () =>
+        harness.traceGridSelectedNodes
+          ? {
+              api: {
+                getSelectedNodes: () => harness.traceGridSelectedNodes,
+                sizeColumnsToFit: () => {},
+                ...harness.traceGridApiExtras,
+              },
+            }
+          : null,
+      );
       return <LLMTracingTraceDetailDrawer />;
     }),
   };
@@ -141,7 +165,23 @@ vi.mock("src/components/traceDetail/TraceDetailDrawerV2", () => ({
 
 vi.mock("../SpanGrid", async () => {
   const ReactModule = await import("react");
-  return { default: ReactModule.forwardRef((_props, _ref) => null) };
+  return {
+    default: ReactModule.forwardRef((_props, ref) => {
+      // Only the span bulk-tag test exposes a grid API through the ref.
+      ReactModule.useImperativeHandle(ref, () =>
+        harness.spanGridSelectedNodes
+          ? {
+              api: {
+                getSelectedNodes: () => harness.spanGridSelectedNodes,
+                sizeColumnsToFit: () => {},
+                ...harness.spanGridApiExtras,
+              },
+            }
+          : null,
+      );
+      return null;
+    }),
+  };
 });
 
 vi.mock("src/sections/agents/CallLogs/CallLogsGrid", async () => {
@@ -239,6 +279,9 @@ vi.mock("../GraphSection/PrimaryGraph", () => ({
 vi.mock("../GraphSection/AgentGraph", () => ({ default: () => null }));
 vi.mock("../GraphSection/AgentPath", () => ({ default: () => null }));
 vi.mock("../SelectAllBanner", () => ({ default: () => null }));
+vi.mock("src/sections/develop-detail/Common/TotalRowsStatusBar", () => ({
+  default: () => null,
+}));
 vi.mock("../FilterChips", () => ({ default: () => null }));
 vi.mock("../TracingControls", () => ({ default: () => null }));
 vi.mock("../CustomColumnDialog", () => ({ default: () => null }));
@@ -249,7 +292,10 @@ vi.mock("src/components/tooltip", () => ({
   default: ({ children }) => children,
 }));
 vi.mock("src/components/traceDetail/AddTagsPopover", () => ({
-  default: () => null,
+  default: (props) => {
+    harness.addTagsProps.push(props);
+    return null;
+  },
 }));
 vi.mock("src/components/traceDetailDrawer/addToDataset/add-dataset", () => ({
   default: () => null,
@@ -348,17 +394,33 @@ describe("LLMTracingView graph population", () => {
 // A voice call's trace id can exist in several projects (a provider account
 // shared by several voice projects). Bulk "Add tags" reads each selected
 // call's current tags; that read must come from this project's copy.
+// GET /tracer/trace/{id}/ returns TraceDetailResult: the tags live under
+// `result.trace.tags`.
+const traceDetailResponse = (tags) => ({
+  data: {
+    status: true,
+    result: {
+      trace: { id: "trace", tags },
+      observation_spans: [],
+      summary: {},
+      graph: {},
+    },
+  },
+});
+
 describe("LLMTracingView voice bulk tags", () => {
   beforeEach(() => {
     harness.callLogsGridProps = [];
     harness.toolbarProps = [];
+    harness.addTagsProps = [];
+    harness.snackbar.mockReset();
     harness.selectedTab = "trace";
     harness.projectDetail = { source: "simulator" };
     axios.get.mockReset();
-    axios.get.mockResolvedValue({ data: { result: { tags: ["vip"] } } });
+    axios.get.mockResolvedValue(traceDetailResponse(["vip"]));
   });
 
-  it("reads each selected call's current tags from this project's copy", async () => {
+  const openBulkTags = async (callIds) => {
     renderView();
     await waitFor(() =>
       expect(harness.callLogsGridProps.some((props) => props.enabled)).toBe(
@@ -369,19 +431,206 @@ describe("LLMTracingView voice bulk tags", () => {
     await act(async () => {
       harness.callLogsGridProps
         .findLast((props) => props.enabled)
-        .onSelectionChanged(["trace-a", "trace-b"]);
+        .onSelectionChanged(callIds);
     });
     await act(async () => {
       harness.toolbarProps
         .at(-1)
         .onBulkAction("tags", { currentTarget: document.body });
     });
+  };
+
+  it("reads each selected call's current tags from this project's copy", async () => {
+    await openBulkTags(["trace-a", "trace-b"]);
 
     await waitFor(() => expect(axios.get).toHaveBeenCalledTimes(2));
     for (const [url, config] of axios.get.mock.calls) {
       expect(url).toBe("/traces/detail/");
       expect(config?.params).toEqual({ project_id: "project-1" });
     }
+  });
+
+  // TH-8026: the merge base came from `result.tags`, which the detail
+  // response does not have, so every call merged into [] and a bulk add
+  // would replace the call's existing tags.
+  it("merges into each call's stored tags", async () => {
+    axios.get
+      .mockResolvedValueOnce(traceDetailResponse(["vip"]))
+      .mockResolvedValueOnce(
+        traceDetailResponse([{ name: "prod", color: "#3B82F6" }]),
+      );
+
+    await openBulkTags(["trace-a", "trace-b"]);
+
+    await waitFor(() => expect(harness.addTagsProps.at(-1)?.open).toBe(true));
+    expect(harness.addTagsProps.at(-1).bulkItems).toEqual([
+      { id: "trace-a", type: "trace", currentTags: ["vip"] },
+      {
+        id: "trace-b",
+        type: "trace",
+        currentTags: [{ name: "prod", color: "#3B82F6" }],
+      },
+    ]);
+  });
+
+  // A failed read must not become an empty merge base: the bulk write would
+  // then replace that call's tags with only the new ones.
+  it("does not open the tag popover when a call's tags cannot be read", async () => {
+    axios.get
+      .mockResolvedValueOnce(traceDetailResponse(["vip"]))
+      .mockRejectedValueOnce(new Error("network"));
+
+    await openBulkTags(["trace-a", "trace-b"]);
+
+    await waitFor(() =>
+      expect(harness.snackbar).toHaveBeenCalledWith(
+        "Couldn't load the current tags of 1 of 2 selected calls. No tags were changed.",
+        { variant: "error" },
+      ),
+    );
+    expect(harness.addTagsProps.some((props) => props.open)).toBe(false);
+  });
+});
+
+// TH-8026: on the trace grid, bulk "Add tags" merges into each selected row's
+// tags. Trace-list rows can carry them as the raw JSON string stored in
+// ClickHouse; reading that as "no tags" would make the bulk PATCH (which
+// replaces the list) drop them.
+describe("LLMTracingView trace grid bulk tags", () => {
+  beforeEach(() => {
+    harness.toolbarProps = [];
+    harness.addTagsProps = [];
+    harness.snackbar.mockReset();
+    harness.selectedTab = "trace";
+    harness.projectDetail = { source: "observe" };
+  });
+
+  afterEach(() => {
+    harness.traceGridSelectedNodes = null;
+    harness.traceGridApiExtras = {};
+    harness.spanGridSelectedNodes = null;
+    harness.spanGridApiExtras = {};
+    harness.selectedTab = "trace";
+  });
+
+  // The popover is lazy; its first load in a cold run can take over the
+  // default 1 s waitFor timeout.
+  const POPOVER_OPEN = { timeout: 5000 };
+
+  // `nodes` are the trace grid's selection; span tests set
+  // harness.spanGridSelectedNodes and pass null.
+  const openGridBulkTags = async (nodes) => {
+    harness.traceGridSelectedNodes = nodes;
+    renderView();
+    await waitFor(() => expect(harness.toolbarProps.length).toBeGreaterThan(0));
+    // On a cold run the view suspends on its lazy children, and toolbar props
+    // captured before that commit belong to a discarded render: their
+    // handlers update nothing. The lazy popover rendering means the view has
+    // committed, so the latest toolbar props are live.
+    await waitFor(
+      () => expect(harness.addTagsProps.length).toBeGreaterThan(0),
+      POPOVER_OPEN,
+    );
+    await act(async () => {
+      harness.toolbarProps
+        .at(-1)
+        .onBulkAction("tags", { currentTarget: document.body });
+    });
+  };
+
+  it("merges into each row's stored tags, string or array", async () => {
+    await openGridBulkTags([
+      { data: { trace_id: "trace-a", tags: '["prod"]' } },
+      { data: { trace_id: "trace-b", tags: ["vip"] } },
+      { data: { trace_id: "trace-c", tags: "[]" } },
+    ]);
+
+    await waitFor(
+      () => expect(harness.addTagsProps.at(-1)?.open).toBe(true),
+      POPOVER_OPEN,
+    );
+    expect(harness.addTagsProps.at(-1).bulkItems).toEqual([
+      { id: "trace-a", type: "trace", currentTags: ["prod"] },
+      { id: "trace-b", type: "trace", currentTags: ["vip"] },
+      { id: "trace-c", type: "trace", currentTags: [] },
+    ]);
+  });
+
+  it("does not open the tag popover when a row's tags cannot be read", async () => {
+    await openGridBulkTags([
+      { data: { trace_id: "trace-a", tags: ["prod"] } },
+      { data: { trace_id: "trace-b", tags: "not-a-list" } },
+    ]);
+
+    await waitFor(() =>
+      expect(harness.snackbar).toHaveBeenCalledWith(
+        "Couldn't load the current tags of 1 of 2 selected rows. No tags were changed.",
+        { variant: "error" },
+      ),
+    );
+    expect(harness.addTagsProps.some((props) => props.open)).toBe(false);
+  });
+
+  // The grid keeps visited pages for cursor pagination; a bare
+  // refreshServerSide() is answered from that memory, so the saved tags never
+  // appeared until a manual Reload (OBS-E2E-037 on CI). The popover's close
+  // must use the grid's own reload.
+  it("re-reads the trace list through the grid's reload when the tag popover closes", async () => {
+    const reloadList = vi.fn();
+    const refreshServerSide = vi.fn();
+    const deselectAll = vi.fn();
+    harness.traceGridApiExtras = {
+      getGridOption: (key) => (key === "context" ? { reloadList } : undefined),
+      refreshServerSide,
+      deselectAll,
+    };
+    await openGridBulkTags([{ data: { trace_id: "trace-a", tags: ["prod"] } }]);
+    await waitFor(
+      () => expect(harness.addTagsProps.at(-1)?.open).toBe(true),
+      POPOVER_OPEN,
+    );
+
+    await act(async () => {
+      harness.addTagsProps.at(-1).onClose();
+    });
+
+    expect(reloadList).toHaveBeenCalledOnce();
+    expect(reloadList).toHaveBeenCalledWith(true);
+    expect(refreshServerSide).not.toHaveBeenCalled();
+    expect(deselectAll).toHaveBeenCalled();
+    await waitFor(() => expect(harness.addTagsProps.at(-1)?.open).toBe(false));
+  });
+
+  it("re-reads the span list through the grid's reload when the tag popover closes", async () => {
+    const reloadList = vi.fn();
+    const refreshServerSide = vi.fn();
+    const deselectAll = vi.fn();
+    harness.selectedTab = "spans";
+    harness.spanGridSelectedNodes = [
+      { data: { span_id: "span-a", tags: [{ name: "prod", color: "#000" }] } },
+    ];
+    harness.spanGridApiExtras = {
+      getGridOption: (key) => (key === "context" ? { reloadList } : undefined),
+      refreshServerSide,
+      deselectAll,
+    };
+    await openGridBulkTags(null);
+    await waitFor(
+      () => expect(harness.addTagsProps.at(-1)?.open).toBe(true),
+      POPOVER_OPEN,
+    );
+    expect(harness.addTagsProps.at(-1).bulkItems).toEqual([
+      expect.objectContaining({ id: "span-a", type: "span" }),
+    ]);
+
+    await act(async () => {
+      harness.addTagsProps.at(-1).onClose();
+    });
+
+    expect(reloadList).toHaveBeenCalledOnce();
+    expect(reloadList).toHaveBeenCalledWith(true);
+    expect(refreshServerSide).not.toHaveBeenCalled();
+    expect(deselectAll).toHaveBeenCalled();
   });
 });
 

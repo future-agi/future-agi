@@ -133,7 +133,7 @@ type DockerRow = [name: string, ports: string];
  * whose Postgres publishes `E2E_PG_URL`'s port: the same setting every other
  * storage-lane assertion is steered by.
  */
-function resolveBackendContainer(): string {
+export function resolveBackendContainer(): string {
   const override = process.env.SIMULATE_SEED_CONTAINER;
   if (override) return override;
 

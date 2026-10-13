@@ -53,6 +53,25 @@ export function normalizeTags(tags) {
   return tags.map(normalizeTag);
 }
 
+/**
+ * Read a stored tag list. Trace-list rows can carry it as the raw JSON string
+ * stored in ClickHouse ('["prod"]'); other payloads carry an array. A missing
+ * value means no tags. Returns null when the value is present but is not a
+ * list, so callers that write tags back (the PATCH replaces the whole list)
+ * can refuse instead of dropping what is stored.
+ */
+export function parseTagList(value) {
+  if (Array.isArray(value)) return value;
+  if (value === undefined || value === null || value === "") return [];
+  if (typeof value !== "string") return null;
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Get the display name of a tag (handles both formats). */
 export function tagName(tag) {
   return typeof tag === "string" ? tag : tag?.name || "";

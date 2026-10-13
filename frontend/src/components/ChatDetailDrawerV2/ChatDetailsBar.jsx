@@ -11,6 +11,7 @@ import Iconify from "src/components/iconify";
 import TagChip from "src/components/traceDetail/TagChip";
 import TagInput from "src/components/traceDetail/TagInput";
 import { normalizeTags } from "src/components/traceDetail/tagUtils";
+import { serializeTraceTags } from "src/components/traceDetail/traceTagPayload";
 import { useGetTraceDetail } from "src/api/project/trace-detail";
 import VoiceActionsDropdown, {
   VOICE_ACTIONS,
@@ -124,7 +125,7 @@ const InlineTagsRow = ({ tags = [], traceId }) => {
   const { mutate: saveTags, isPending } = useMutation({
     mutationFn: (newTags) =>
       axios.patch(apiPath("/tracer/trace/{id}/tags/", { id: traceId }), {
-        tags: newTags,
+        tags: serializeTraceTags(newTags),
       }),
     onSuccess: () => {
       TAG_INVALIDATION_QUERY_KEYS.forEach((queryKey) =>

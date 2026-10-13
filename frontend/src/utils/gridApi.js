@@ -19,3 +19,19 @@ export function withLiveGridApi(api, callback) {
   callback(api);
   return true;
 }
+
+/**
+ * Re-read a server-side grid's rows from its datasource.
+ *
+ * Observe list grids (TraceGrid, SpanGrid) keep each visited page for cursor
+ * pagination, and a bare refreshServerSide() is answered from that memory
+ * without a request. Those grids put `reloadList(purge)` on their grid context;
+ * it clears the memory first. Other grids get refreshServerSide().
+ */
+export function reloadServerSideGrid(api, { purge = false } = {}) {
+  return withLiveGridApi(api, (liveApi) => {
+    const reloadList = liveApi.getGridOption?.("context")?.reloadList;
+    if (typeof reloadList === "function") reloadList(purge);
+    else liveApi.refreshServerSide?.({ purge });
+  });
+}

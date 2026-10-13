@@ -83,6 +83,13 @@ def _get_client():
                 host=cfg["host"], port=cfg["http_port"],
                 username=cfg["user"], password=cfg["password"] or "",
                 database=cfg["database"], send_receive_timeout=15,
+                # Request threads share this client (update_tags mirrors
+                # inside the request, and bulk tagging sends PATCHes in
+                # parallel). A pinned session id makes clickhouse-connect
+                # refuse a second in-flight query; the writer uses no
+                # session state, so go without one (as 9195be2a5 did for
+                # the application read client).
+                autogenerate_session_id=False,
             )
     return _client
 
