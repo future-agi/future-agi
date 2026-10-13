@@ -53,7 +53,6 @@ import {
   readable,
   stages,
 } from "./harnessShared";
-import ReleaseGallery from "./ReleaseGallery";
 import { prepareSourceFolder } from "./sourceUpload";
 import {
   deriveEgressDomains,
@@ -803,8 +802,6 @@ export default function HarnessCreate() {
               pipeline end to end.
             </Typography>
           </Box>
-
-          <ReleaseGallery />
 
           <Box
             sx={{

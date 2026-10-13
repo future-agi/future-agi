@@ -22,12 +22,6 @@ vi.mock("src/api/harness/harness", () => ({
   uploadHarnessSource: vi.fn(),
 }));
 
-vi.mock("src/api/harness/releases", () => ({
-  useHarnessReleases: () => ({ data: [], isLoading: false, error: null }),
-  createHarnessAdaptation: vi.fn(),
-  createHarnessComposition: vi.fn(),
-}));
-
 vi.mock("react-router-dom", async () => {
   const actual = await vi.importActual("react-router-dom");
   return { ...actual, useNavigate: () => vi.fn() };

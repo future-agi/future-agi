@@ -12,6 +12,7 @@ import TemplateRow from "./cards/TemplateRow";
 import TemplateBuildPanel from "./cards/TemplateBuildPanel";
 import { groupByAgentGroup } from "./helpers/groupByAgentGroup";
 import { BROWSE_COPY } from "./prebuiltEnvironments.constants";
+import ReleaseGallery from "src/pages/dashboard/harness/ReleaseGallery";
 
 /**
  * Prebuilt environments browse — master/detail.
@@ -114,6 +115,9 @@ export default function PrebuiltEnvironmentsBrowse() {
             borderColor: { lg: "divider" },
           }}
         >
+          <Box sx={{ mb: 3 }}>
+            <ReleaseGallery />
+          </Box>
           {!isLoading && totalShown === 0 ? (
             <Typography sx={{ typography: "s2", color: "text.subtitle", py: 6, textAlign: "center" }}>
               {query.trim() ? BROWSE_COPY.noMatch(query) : BROWSE_COPY.emptyLibrary}
