@@ -9,8 +9,10 @@ const callKeys = ['call_execution_id', 'status', 'simulation_call_type', 'scenar
 const transcriptKeys = ['id', 'speaker', 'content', 'start_time', 'end_time'];
 const evaluationKeys = ['name', 'value', 'passed', 'reason'];
 const goalKeys = ['use_case', 'sub_goals', 'expected_outcome'];
+const callMetricsKeys = ['avg_agent_latency_ms', 'interruption_count', 'interruption_rate'];
 // Optional so this worker accepts pages from platforms that predate them.
-const optionalCallKeys = ['evaluations', 'goals'];
+const optionalCallKeys = ['evaluations', 'goals', 'call_metrics'];
+const optionalTranscriptKeys = ['gap_ms'];
 
 function exactKeys(value, keys, label) {
   if (!value || typeof value !== 'object' || Array.isArray(value)
@@ -29,6 +31,23 @@ function optionalText(value, maxLength, label) {
 
 function validTime(value) {
   return value === null || (typeof value === 'number' && Number.isFinite(value) && value >= 0);
+}
+
+// Unlike start_time/end_time, a gap may be negative: the next turn started
+// before the previous one ended, i.e. an interruption.
+function validGap(value) {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function validateCallMetrics(metrics) {
+  if (metrics === null) return;
+  exactKeys(metrics, callMetricsKeys, 'simulation call metrics');
+  for (const key of callMetricsKeys) {
+    const value = metrics[key];
+    if (value !== null && (typeof value !== 'number' || !Number.isFinite(value))) {
+      throw new Error('Invalid simulation call metric ' + key);
+    }
+  }
 }
 
 function validateEvaluations(evaluations) {
@@ -56,6 +75,7 @@ function validateCall(call) {
     'simulation call');
   if (Object.hasOwn(call, 'evaluations')) validateEvaluations(call.evaluations);
   if (Object.hasOwn(call, 'goals')) validateGoals(call.goals);
+  if (Object.hasOwn(call, 'call_metrics')) validateCallMetrics(call.call_metrics);
   if (!uuid.test(call.call_execution_id ?? '')) throw new Error('Invalid simulation call identity');
   requiredText(call.status, 64, 'simulation call status');
   requiredText(call.simulation_call_type, 128, 'simulation call type');
@@ -66,12 +86,14 @@ function validateCall(call) {
   if (!Array.isArray(call.transcript)) throw new Error('Invalid simulation transcript');
   const transcriptIds = new Set();
   for (const item of call.transcript) {
-    exactKeys(item, transcriptKeys, 'simulation transcript entry');
+    exactKeys(item, [...transcriptKeys, ...optionalTranscriptKeys.filter(key => Object.hasOwn(item ?? {}, key))],
+      'simulation transcript entry');
     if (!uuid.test(item.id ?? '') || transcriptIds.has(item.id)) throw new Error('Invalid simulation transcript identity');
     transcriptIds.add(item.id);
     requiredText(item.speaker, 128, 'simulation transcript speaker');
     if (typeof item.content !== 'string' || item.content.length > pageBytesLimit) throw new Error('Invalid simulation transcript content');
     if (!validTime(item.start_time) || !validTime(item.end_time)) throw new Error('Invalid simulation transcript time');
+    if (Object.hasOwn(item, 'gap_ms') && !validGap(item.gap_ms)) throw new Error('Invalid simulation transcript gap');
   }
 }
 

@@ -12,7 +12,7 @@ from django.utils import timezone
 from simulate.models import Scenarios
 from simulate.models.hosted_harness import HostedHarnessJob, HostedHarnessScenario
 from simulate.models.run_test import RunTest
-from simulate.models.test_execution import CallExecution, TestExecution
+from simulate.models.test_execution import CallExecution, CallTranscript, TestExecution
 from tracer.models.trace_grouping import (
     GroupingFeatureState,
     TraceGroupingFeatureJob,
@@ -106,6 +106,88 @@ def test_debug_claim_reads_only_the_selected_execution(
         simulation_evidence_page(
             attempt_id=claim["attempt_id"], lease_token="wrong-lease", cursor=0
         )
+
+
+def test_debug_evidence_carries_open_silence_turn_latency_and_interruptions(
+    auth_client, organization, workspace
+):
+    """TH-8096: the gap before each turn (greeting delay, then turn latency),
+    and the customer/ALK-reported call metrics when that call has any."""
+    scenario = Scenarios.objects.create(
+        name="Refund",
+        source="Refund policy",
+        organization=organization,
+        workspace=workspace,
+    )
+    execution, call = _execution(
+        organization, workspace, scenario, "timed", CallExecution.CallStatus.FAILED
+    )
+    call.avg_agent_latency_ms = 820
+    call.user_interruption_count = 1
+    call.user_interruption_rate = 0.5
+    call.save(
+        update_fields=[
+            "avg_agent_latency_ms",
+            "user_interruption_count",
+            "user_interruption_rate",
+        ]
+    )
+    # Greeting only starts 10s into the call; turn 2 follows a normal 1.5s
+    # gap; turn 3 starts 200ms before turn 2 ends -- an interruption.
+    CallTranscript.objects.create(
+        call_execution=call,
+        speaker_role=CallTranscript.SpeakerRole.ASSISTANT,
+        content="Hello, how can I help?",
+        start_time_ms=10_000,
+        end_time_ms=12_000,
+    )
+    CallTranscript.objects.create(
+        call_execution=call,
+        speaker_role=CallTranscript.SpeakerRole.USER,
+        content="I need a refund.",
+        start_time_ms=13_500,
+        end_time_ms=15_000,
+    )
+    CallTranscript.objects.create(
+        call_execution=call,
+        speaker_role=CallTranscript.SpeakerRole.ASSISTANT,
+        content="Sure, let me check.",
+        start_time_ms=14_800,
+        end_time_ms=16_000,
+    )
+    other_execution, other_call = _execution(
+        organization, workspace, scenario, "untimed", CallExecution.CallStatus.FAILED
+    )
+
+    url = f"/simulate/test-executions/{execution.id}/debug-analysis/"
+    auth_client.post(url)
+    claim = claim_due_investigations(
+        worker_id="test-worker", engine_version="omega-v1", limit=1
+    )["claims"][0]
+    page = simulation_evidence_page(
+        attempt_id=claim["attempt_id"], lease_token=claim["lease_token"], cursor=0
+    )
+
+    transcript = page["calls"][0]["transcript"]
+    assert [entry["gap_ms"] for entry in transcript] == [10_000, 1_500, -200]
+    assert page["calls"][0]["call_metrics"] == {
+        "avg_agent_latency_ms": 820,
+        "interruption_count": 1,
+        "interruption_rate": 0.5,
+    }
+
+    other_url = f"/simulate/test-executions/{other_execution.id}/debug-analysis/"
+    auth_client.post(other_url)
+    other_claim = claim_due_investigations(
+        worker_id="test-worker", engine_version="omega-v1", limit=1
+    )["claims"][0]
+    other_page = simulation_evidence_page(
+        attempt_id=other_claim["attempt_id"],
+        lease_token=other_claim["lease_token"],
+        cursor=0,
+    )
+    assert other_page["calls"][0]["transcript"] == []
+    assert other_page["calls"][0]["call_metrics"] is None
 
 
 def _failure_result(claim, call):
