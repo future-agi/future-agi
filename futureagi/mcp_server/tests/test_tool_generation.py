@@ -126,7 +126,12 @@ def test_run_comparison_is_a_scoped_read_with_typed_body():
         "openWorldHint": False,
     }
     required = {"baseline_run_id", "candidate_run_id", "metric_id"}
-    fields = required | {"passing_score", "higher_is_better", "release_gate"}
+    fields = required | {
+        "passing_score",
+        "higher_is_better",
+        "release_gate",
+        "include_trial_stability",
+    }
     schema = tool["inputSchema"]
     assert set(schema["required"]) == required
     assert set(schema["properties"]) == fields
@@ -143,6 +148,8 @@ def test_run_comparison_is_a_scoped_read_with_typed_body():
     assert not validator.is_valid({**arguments, "workspace_id": "other"})
     assert not validator.is_valid({**arguments, "organization_id": "other"})
     assert not validator.is_valid({**arguments, "passing_score": "invalid"})
+    assert validator.is_valid({**arguments, "include_trial_stability": True})
+    assert not validator.is_valid({**arguments, "include_trial_stability": None})
     assert validator.is_valid({**arguments, "release_gate": {}})
     critical = {"example_id": arguments["baseline_run_id"], "trial_number": 1}
     assert validator.is_valid(

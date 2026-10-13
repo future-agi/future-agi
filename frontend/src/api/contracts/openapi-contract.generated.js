@@ -73297,6 +73297,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "boolean",
           default: true,
         },
+        include_trial_stability: {
+          title: "Include trial stability",
+          type: "boolean",
+          default: false,
+        },
         release_gate: {
           $ref: "#/definitions/ReleaseGatePolicy",
         },
@@ -100550,6 +100555,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         release_gate: {
           $ref: "#/definitions/ReleaseGateReport",
         },
+        trial_stability: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/TrialStability",
+          },
+        },
       },
     },
     RunPromptColumnConfigResult: {
@@ -114552,6 +114563,37 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    TrialStability: {
+      required: [
+        "example_id",
+        "expected_trial_count",
+        "baseline",
+        "candidate",
+        "paired",
+      ],
+      type: "object",
+      properties: {
+        example_id: {
+          title: "Example id",
+          type: "string",
+          format: "uuid",
+        },
+        expected_trial_count: {
+          title: "Expected trial count",
+          type: "integer",
+          minimum: 1,
+        },
+        baseline: {
+          $ref: "#/definitions/TrialAggregate",
+        },
+        candidate: {
+          $ref: "#/definitions/TrialAggregate",
+        },
+        paired: {
+          $ref: "#/definitions/TrialDeltaAggregate",
+        },
+      },
+    },
     RunPromptChoiceOption: {
       required: ["value", "label"],
       type: "object",
@@ -118763,6 +118805,76 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Missing side",
           type: "string",
           enum: ["baseline", "candidate"],
+          "x-nullable": true,
+        },
+      },
+    },
+    TrialAggregate: {
+      required: [
+        "recorded_trial_count",
+        "missing_trial_count",
+        "assessed_trial_count",
+        "score_average",
+        "score_min",
+        "score_max",
+        "score_stddev",
+      ],
+      type: "object",
+      properties: {
+        recorded_trial_count: {
+          title: "Recorded trial count",
+          type: "integer",
+          minimum: 0,
+        },
+        missing_trial_count: {
+          title: "Missing trial count",
+          type: "integer",
+          minimum: 0,
+        },
+        assessed_trial_count: {
+          title: "Assessed trial count",
+          type: "integer",
+          minimum: 0,
+        },
+        score_average: {
+          title: "Score average",
+          type: "number",
+          "x-nullable": true,
+        },
+        score_min: {
+          title: "Score min",
+          type: "number",
+          "x-nullable": true,
+        },
+        score_max: {
+          title: "Score max",
+          type: "number",
+          "x-nullable": true,
+        },
+        score_stddev: {
+          title: "Score stddev",
+          type: "number",
+          "x-nullable": true,
+        },
+      },
+    },
+    TrialDeltaAggregate: {
+      required: ["paired_trial_count", "delta_average", "delta_stddev"],
+      type: "object",
+      properties: {
+        paired_trial_count: {
+          title: "Paired trial count",
+          type: "integer",
+          minimum: 0,
+        },
+        delta_average: {
+          title: "Delta average",
+          type: "number",
+          "x-nullable": true,
+        },
+        delta_stddev: {
+          title: "Delta stddev",
+          type: "number",
           "x-nullable": true,
         },
       },

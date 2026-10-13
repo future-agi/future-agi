@@ -145,6 +145,75 @@ it("accepts and preserves a case-level release gate report", () => {
   expect(runtime(response, comparisonUrl, "post")).toBe(true);
 });
 
+it("accepts and preserves optional repeated-trial stability analysis", () => {
+  const response = structuredClone(assessed);
+  const exampleId = response.result.comparison.cases[0].example_id;
+  response.result.trial_stability = [
+    {
+      example_id: exampleId,
+      expected_trial_count: 2,
+      baseline: {
+        recorded_trial_count: 2,
+        missing_trial_count: 0,
+        assessed_trial_count: 2,
+        score_average: 0.5,
+        score_min: 0,
+        score_max: 1,
+        score_stddev: 0.5,
+      },
+      candidate: {
+        recorded_trial_count: 2,
+        missing_trial_count: 0,
+        assessed_trial_count: 2,
+        score_average: 0.5,
+        score_min: 0.5,
+        score_max: 0.5,
+        score_stddev: 0,
+      },
+      paired: { paired_trial_count: 2, delta_average: 0, delta_stddev: 0.5 },
+    },
+  ];
+  expect(ExperimentRunsCompareResponse.parse(response)).toEqual(response);
+  expect(runtime(response, comparisonUrl, "post")).toBe(true);
+
+  response.result.trial_stability[0].baseline.score_stddev = "0.5";
+  expect(ExperimentRunsCompareResponse.safeParse(response).success).toBe(false);
+  expect(runtime(response, comparisonUrl, "post")).toBe(false);
+
+  response.result.trial_stability[0].baseline = {
+    recorded_trial_count: 0,
+    missing_trial_count: 2,
+    assessed_trial_count: 0,
+    score_average: null,
+    score_min: null,
+    score_max: null,
+    score_stddev: null,
+  };
+  response.result.trial_stability[0].paired = {
+    paired_trial_count: 0,
+    delta_average: null,
+    delta_stddev: null,
+  };
+  expect(ExperimentRunsCompareResponse.parse(response)).toEqual(response);
+  expect(runtime(response, comparisonUrl, "post")).toBe(true);
+  const body = {
+    baseline_run_id: assessed.result.baseline_run_id,
+    candidate_run_id: assessed.result.candidate_run_id,
+    metric_id: assessed.result.metric_id,
+    include_trial_stability: true,
+  };
+  expect(ExperimentRunsCompareBody.parse(body).include_trial_stability).toBe(
+    true,
+  );
+  expect(
+    validateContractedRequestConfig({
+      url: comparisonUrl,
+      method: "post",
+      data: body,
+    }).ok,
+  ).toBe(true);
+});
+
 describe.each([
   ["generated", (data) => ExperimentRunsCompareBody.safeParse(data).success],
   ["runtime", (data) => validateContractedRequestConfig({ url: comparisonUrl, method: "post", data }).ok],

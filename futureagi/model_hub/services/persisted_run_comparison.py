@@ -26,6 +26,7 @@ from model_hub.services.experiment_run_writes import (
     _scope,
     _uuid,
 )
+from model_hub.services.trial_stability import TrialStability, summarize_trial_stability
 from tfc.routers import primary_required
 
 _MAX_ITEMS = 10_000
@@ -73,6 +74,7 @@ class PersistedRunComparison:
     candidate_counts: RunCounts
     missing_by_side: Mapping[str, tuple[ItemIdentity, ...]]
     trace_refs: tuple[CaseTraceReferences, ...]
+    trial_stability: tuple[TrialStability, ...] | None = None
 
 
 def _load_run(
@@ -230,6 +232,7 @@ def compare_experiment_runs(
     workspace_id: UUID | str | None = None,
     passing_score: float | None = None,
     higher_is_better: bool = True,
+    include_trial_stability: bool = False,
 ) -> PersistedRunComparison:
     """Compare exact version/plan/evaluator pins; no inferred alignment or CI verdict.
 
@@ -267,9 +270,13 @@ def compare_experiment_runs(
     except RunWriteError as exc:
         raise RunComparisonError(str(exc)) from exc
 
-    comparison = compare_run_items(
+    baseline_records, candidate_records = (
         _records(baseline_items, baseline_bindings, metric_id),
         _records(candidate_items, candidate_bindings, metric_id),
+    )
+    comparison = compare_run_items(
+        baseline_records,
+        candidate_records,
         metric=metric_id,
         passing_score=passing_score,
         higher_is_better=higher_is_better,
@@ -299,5 +306,15 @@ def compare_experiment_runs(
                 candidate_traces.get((example_id, trial)),
             )
             for example_id, trial in sorted(plan)
+        ),
+        trial_stability=(
+            summarize_trial_stability(
+                baseline_records,
+                candidate_records,
+                expected_identities=plan,
+                metric=metric_id,
+            )
+            if include_trial_stability
+            else None
         ),
     )

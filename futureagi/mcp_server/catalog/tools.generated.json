@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "source_contract_sha256": "a23da381c931e5a2bd89c76ea4600ebbc189edb1696d73fca016b3ba0914f043",
+  "source_contract_sha256": "6a0a5abd6b90688e63258c6e83e079d4c14900d937027c088430f53df7460804",
   "tool_count": 96,
   "tools": [
     {
@@ -6166,6 +6166,11 @@
             "type": "boolean",
             "default": true
           },
+          "include_trial_stability": {
+            "title": "Include trial stability",
+            "type": "boolean",
+            "default": false
+          },
           "release_gate": {
             "$ref": "#/definitions/ReleaseGatePolicy"
           }
@@ -6238,6 +6243,7 @@
             "metric_id",
             "passing_score",
             "higher_is_better",
+            "include_trial_stability",
             "release_gate"
           ]
         }

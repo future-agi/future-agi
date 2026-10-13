@@ -23583,9 +23583,10 @@ export const ExternalExperimentRunsCreateResponse = zod.object({
 });
 
 /**
- * Compare compatible persisted runs. Requires the same dataset version, exact example/trial plan and selected evaluator binding. At most 10,000 planned and recorded items per run; excess evidence is rejected, never truncated. Tenant and workspace scope come from authentication. An optional release_gate derives a case-level verdict requiring valid evidence for the complete plan on both sides; a failed gate still returns 200. This endpoint does not execute tasks or attest caller-supplied evidence.
+ * Compare compatible persisted runs. Requires the same dataset version, exact example/trial plan and selected evaluator binding. At most 10,000 planned and recorded items per run; excess evidence is rejected, never truncated. Tenant and workspace scope come from authentication. Optional include_trial_stability returns per-example counts, observed assessed-score population standard deviations and paired candidate-minus-baseline deltas; deviations are null below two assessed trials and imply no statistical significance. An optional release_gate derives a case-level verdict requiring valid evidence for the complete plan on both sides; a failed gate still returns 200. This endpoint does not execute tasks or attest caller-supplied evidence.
  */
 export const experimentRunsCompareBodyHigherIsBetterDefault = true;
+export const experimentRunsCompareBodyIncludeTrialStabilityDefault = false;
 export const experimentRunsCompareBodyReleaseGateMaxRegressionsDefault = 0;
 export const experimentRunsCompareBodyReleaseGateMaxRegressionsMin = 0;
 
@@ -23603,6 +23604,9 @@ export const ExperimentRunsCompareBody = zod
     higher_is_better: zod
       .boolean()
       .default(experimentRunsCompareBodyHigherIsBetterDefault),
+    include_trial_stability: zod
+      .boolean()
+      .default(experimentRunsCompareBodyIncludeTrialStabilityDefault),
     release_gate: zod
       .object({
         max_regressions: zod
@@ -23703,6 +23707,20 @@ export const experimentRunsCompareResponseResultReleaseGatePolicyCriticalCasesIt
 export const experimentRunsCompareResponseResultReleaseGatePolicyCriticalCasesDefault =
   [];
 export const experimentRunsCompareResponseResultReleaseGatePolicyCriticalCasesMax = 10000;
+
+export const experimentRunsCompareResponseResultTrialStabilityItemBaselineRecordedTrialCountMin = 0;
+
+export const experimentRunsCompareResponseResultTrialStabilityItemBaselineMissingTrialCountMin = 0;
+
+export const experimentRunsCompareResponseResultTrialStabilityItemBaselineAssessedTrialCountMin = 0;
+
+export const experimentRunsCompareResponseResultTrialStabilityItemCandidateRecordedTrialCountMin = 0;
+
+export const experimentRunsCompareResponseResultTrialStabilityItemCandidateMissingTrialCountMin = 0;
+
+export const experimentRunsCompareResponseResultTrialStabilityItemCandidateAssessedTrialCountMin = 0;
+
+export const experimentRunsCompareResponseResultTrialStabilityItemPairedPairedTrialCountMin = 0;
 
 export const ExperimentRunsCompareResponse = zod.object({
   status: zod.boolean(),
@@ -23983,6 +24001,65 @@ export const ExperimentRunsCompareResponse = zod.object({
           }),
         ),
       })
+      .optional(),
+    trial_stability: zod
+      .array(
+        zod.object({
+          example_id: zod.string().uuid(),
+          expected_trial_count: zod.number().min(1),
+          baseline: zod.object({
+            recorded_trial_count: zod
+              .number()
+              .min(
+                experimentRunsCompareResponseResultTrialStabilityItemBaselineRecordedTrialCountMin,
+              ),
+            missing_trial_count: zod
+              .number()
+              .min(
+                experimentRunsCompareResponseResultTrialStabilityItemBaselineMissingTrialCountMin,
+              ),
+            assessed_trial_count: zod
+              .number()
+              .min(
+                experimentRunsCompareResponseResultTrialStabilityItemBaselineAssessedTrialCountMin,
+              ),
+            score_average: zod.number().nullable(),
+            score_min: zod.number().nullable(),
+            score_max: zod.number().nullable(),
+            score_stddev: zod.number().nullable(),
+          }),
+          candidate: zod.object({
+            recorded_trial_count: zod
+              .number()
+              .min(
+                experimentRunsCompareResponseResultTrialStabilityItemCandidateRecordedTrialCountMin,
+              ),
+            missing_trial_count: zod
+              .number()
+              .min(
+                experimentRunsCompareResponseResultTrialStabilityItemCandidateMissingTrialCountMin,
+              ),
+            assessed_trial_count: zod
+              .number()
+              .min(
+                experimentRunsCompareResponseResultTrialStabilityItemCandidateAssessedTrialCountMin,
+              ),
+            score_average: zod.number().nullable(),
+            score_min: zod.number().nullable(),
+            score_max: zod.number().nullable(),
+            score_stddev: zod.number().nullable(),
+          }),
+          paired: zod.object({
+            paired_trial_count: zod
+              .number()
+              .min(
+                experimentRunsCompareResponseResultTrialStabilityItemPairedPairedTrialCountMin,
+              ),
+            delta_average: zod.number().nullable(),
+            delta_stddev: zod.number().nullable(),
+          }),
+        }),
+      )
       .optional(),
   }),
 });

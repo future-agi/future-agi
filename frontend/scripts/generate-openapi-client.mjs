@@ -559,6 +559,11 @@ export type ${jsonAlias} = JsonValueApi;`,
         ["score_average", "score_min", "score_max", "pass_count", "pass_rate"],
       ],
       [
+        "TrialAggregateApi",
+        ["score_average", "score_min", "score_max", "score_stddev"],
+      ],
+      ["TrialDeltaAggregateApi", ["delta_average", "delta_stddev"]],
+      [
         "RunCaseComparisonApi",
         [
           "baseline_status",
@@ -1061,6 +1066,9 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
           "candidate_score",
           "score_delta",
           "missing_side",
+          "score_stddev",
+          "delta_average",
+          "delta_stddev",
           "trace_id",
           "root_span_id",
           "passing_score",

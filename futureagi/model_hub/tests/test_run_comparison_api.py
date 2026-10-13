@@ -129,6 +129,7 @@ def test_compare_route_returns_cases_counts_missing_and_traces(
     assert contract.is_valid(), contract.errors
     result = response.json()["result"]
     assert "release_gate" not in result
+    assert "trial_stability" not in result
     assert result["baseline_run_id"] == str(fixture["baseline"].id)
     assert result["candidate_run_id"] == str(fixture["candidate"].id)
     assert result["baseline_counts"] == {
@@ -159,6 +160,123 @@ def test_compare_route_returns_cases_counts_missing_and_traces(
 
 
 @pytest.mark.django_db
+def test_trial_stability_uses_repeated_trials_and_keeps_missing_both(
+    auth_client, comparison_api_fixture
+):
+    fixture = comparison_api_fixture
+    example, absent = fixture["examples"]
+    plan = sorted(
+        [
+            {"example_id": str(item.example_id), "trial_number": trial}
+            for item in (example, absent)
+            for trial in (1, 2)
+        ],
+        key=lambda item: (item["example_id"], item["trial_number"]),
+    )
+    for run, values in (
+        (fixture["baseline"], (0, 1)),
+        (fixture["candidate"], (0.5, 0.5)),
+    ):
+        run.metadata["_futureagi_run_write"]["plan"] = {
+            "identities": plan,
+            "plan_hash": _digest(plan),
+        }
+        run.save(update_fields=["metadata"])
+        ExperimentRunItem.no_workspace_objects.filter(run=run).delete()
+        for trial, value in enumerate(values, 1):
+            ExperimentRunItem.no_workspace_objects.create(
+                run=run,
+                example_id=example.example_id,
+                trial_number=trial,
+                status="completed",
+                score_refs=[
+                    {
+                        "metric_id": fixture["binding"]["metric_id"],
+                        "evaluator_version_id": fixture["binding"][
+                            "evaluator_version_id"
+                        ],
+                        "status": "assessed",
+                        "value": value,
+                    }
+                ],
+            )
+    response = auth_client.post(
+        reverse("experiment-run-compare"),
+        {**fixture["scope"], "include_trial_stability": True, "release_gate": {}},
+        format="json",
+    )
+    assert response.status_code == status.HTTP_200_OK
+    contract = RunComparisonResponseSerializer(data=response.json())
+    assert contract.is_valid(), contract.errors
+    result = response.json()["result"]
+    rows = result["trial_stability"]
+    assert [row["example_id"] for row in rows] == sorted(
+        str(item.example_id) for item in (example, absent)
+    )
+    by_id = {row["example_id"]: row for row in rows}
+    repeated = by_id[str(example.example_id)]
+    assert repeated["expected_trial_count"] == 2
+    assert repeated["baseline"] == {
+        "recorded_trial_count": 2,
+        "missing_trial_count": 0,
+        "assessed_trial_count": 2,
+        "score_average": 0.5,
+        "score_min": 0,
+        "score_max": 1,
+        "score_stddev": 0.5,
+    }
+    assert repeated["candidate"]["score_average"] == 0.5
+    assert repeated["candidate"]["score_stddev"] == 0
+    assert repeated["paired"] == {
+        "paired_trial_count": 2,
+        "delta_average": 0,
+        "delta_stddev": 0.5,
+    }
+    missing = by_id[str(absent.example_id)]
+    assert missing["expected_trial_count"] == 2
+    assert (
+        missing["baseline"]
+        == missing["candidate"]
+        == {
+            "recorded_trial_count": 0,
+            "missing_trial_count": 2,
+            "assessed_trial_count": 0,
+            "score_average": None,
+            "score_min": None,
+            "score_max": None,
+            "score_stddev": None,
+        }
+    )
+    assert missing["paired"] == {
+        "paired_trial_count": 0,
+        "delta_average": None,
+        "delta_stddev": None,
+    }
+    assert result["release_gate"]["verdict"] == "fail"
+    ordinary = auth_client.post(
+        reverse("experiment-run-compare"),
+        {**fixture["scope"], "include_trial_stability": False},
+        format="json",
+    )
+    assert ordinary.status_code == status.HTTP_200_OK
+    assert "trial_stability" not in ordinary.json()["result"]
+    assert ordinary.json()["result"]["comparison"] == result["comparison"]
+
+
+@pytest.mark.parametrize("value", [None, [], {}, "invalid"])
+@pytest.mark.django_db
+def test_trial_stability_rejects_invalid_flag(
+    auth_client, comparison_api_fixture, value
+):
+    response = auth_client.post(
+        reverse("experiment-run-compare"),
+        {**comparison_api_fixture["scope"], "include_trial_stability": value},
+        format="json",
+    )
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+
+@pytest.mark.django_db
 def test_compare_route_does_not_expose_other_organization(
     auth_client, comparison_api_fixture, user, workspace
 ):
@@ -186,6 +304,7 @@ def test_compare_route_does_not_expose_other_organization(
     response = auth_client.post(
         reverse("experiment-run-compare"),
         {
+            "include_trial_stability": True,
             "baseline_run_id": str(fixture["baseline"].id),
             "candidate_run_id": str(hidden_run.id),
             "metric_id": fixture["binding"]["metric_id"],
@@ -426,6 +545,7 @@ def test_compare_route_has_typed_checked_in_contract():
         "metric_id",
         "passing_score",
         "higher_is_better",
+        "include_trial_stability",
         "release_gate",
     }
     assert operation["responses"]["200"]["schema"] == {
@@ -443,6 +563,7 @@ def test_compare_route_has_typed_checked_in_contract():
         "missing_by_side",
         "trace_refs",
         "release_gate",
+        "trial_stability",
     }
     assert (
         "comparable_count"

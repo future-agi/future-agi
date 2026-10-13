@@ -11791,6 +11791,7 @@ export interface RunComparisonRequestApi {
   metric_id: string;
   passing_score?: number | null;
   higher_is_better?: boolean;
+  include_trial_stability?: boolean;
   release_gate?: ReleaseGatePolicyApi;
 }
 
@@ -11953,6 +11954,35 @@ export interface ReleaseGateReportApi {
   blockers: ReleaseGateBlockerApi[];
 }
 
+export interface TrialAggregateApi {
+  /** @minimum 0 */
+  recorded_trial_count: number;
+  /** @minimum 0 */
+  missing_trial_count: number;
+  /** @minimum 0 */
+  assessed_trial_count: number;
+  score_average: number | null;
+  score_min: number | null;
+  score_max: number | null;
+  score_stddev: number | null;
+}
+
+export interface TrialDeltaAggregateApi {
+  /** @minimum 0 */
+  paired_trial_count: number;
+  delta_average: number | null;
+  delta_stddev: number | null;
+}
+
+export interface TrialStabilityApi {
+  example_id: string;
+  /** @minimum 1 */
+  expected_trial_count: number;
+  baseline: TrialAggregateApi;
+  candidate: TrialAggregateApi;
+  paired: TrialDeltaAggregateApi;
+}
+
 export interface RunComparisonResultApi {
   baseline_run_id: string;
   candidate_run_id: string;
@@ -11965,6 +11995,7 @@ export interface RunComparisonResultApi {
   missing_by_side: MissingRunItemsApi;
   trace_refs: RunCaseTraceReferencesApi[];
   release_gate?: ReleaseGateReportApi;
+  trial_stability?: TrialStabilityApi[];
 }
 
 export interface RunComparisonResponseApi {

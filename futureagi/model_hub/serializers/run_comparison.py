@@ -56,6 +56,7 @@ class RunComparisonRequestSerializer(serializers.Serializer):
     metric_id = serializers.UUIDField()
     passing_score = FiniteScoreField(required=False, allow_null=True, default=None)
     higher_is_better = serializers.BooleanField(default=True)
+    include_trial_stability = serializers.BooleanField(default=False)
     release_gate = ReleaseGatePolicySerializer(required=False)
 
 
@@ -171,6 +172,30 @@ class ReleaseGateReportSerializer(serializers.Serializer):
     blockers = ReleaseGateBlockerSerializer(many=True)
 
 
+class TrialAggregateSerializer(serializers.Serializer):
+    recorded_trial_count = serializers.IntegerField(min_value=0)
+    missing_trial_count = serializers.IntegerField(min_value=0)
+    assessed_trial_count = serializers.IntegerField(min_value=0)
+    score_average = serializers.FloatField(allow_null=True)
+    score_min = serializers.FloatField(allow_null=True)
+    score_max = serializers.FloatField(allow_null=True)
+    score_stddev = serializers.FloatField(allow_null=True)
+
+
+class TrialDeltaAggregateSerializer(serializers.Serializer):
+    paired_trial_count = serializers.IntegerField(min_value=0)
+    delta_average = serializers.FloatField(allow_null=True)
+    delta_stddev = serializers.FloatField(allow_null=True)
+
+
+class TrialStabilitySerializer(serializers.Serializer):
+    example_id = serializers.UUIDField()
+    expected_trial_count = serializers.IntegerField(min_value=1)
+    baseline = TrialAggregateSerializer()
+    candidate = TrialAggregateSerializer()
+    paired = TrialDeltaAggregateSerializer()
+
+
 class RunComparisonResultSerializer(serializers.Serializer):
     baseline_run_id = serializers.UUIDField()
     candidate_run_id = serializers.UUIDField()
@@ -183,6 +208,7 @@ class RunComparisonResultSerializer(serializers.Serializer):
     missing_by_side = MissingRunItemsSerializer()
     trace_refs = RunCaseTraceReferencesSerializer(many=True)
     release_gate = ReleaseGateReportSerializer(required=False)
+    trial_stability = TrialStabilitySerializer(many=True, required=False)
 
 
 class RunComparisonResponseSerializer(serializers.Serializer):
