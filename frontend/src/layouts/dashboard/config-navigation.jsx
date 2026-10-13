@@ -112,6 +112,12 @@ export function useNavData() {
       //   },
       // },
       {
+        title: "Omega Squad",
+        path: paths.dashboard.squad,
+        icon: <Iconify icon="mdi:account-group-outline" />,
+      },
+      // omega-squad-extension: managed by omega-squad
+      {
         title: "Knowledge base",
         path: paths.dashboard.knowledge_base,
         icon: ICONS.knowledge_base,

@@ -143,6 +143,8 @@ export const paths = {
       experiments: `${ROOTS.DASHBOARD}/gateway/experiments`,
       settings: `${ROOTS.DASHBOARD}/gateway/settings`,
     },
+    squad: `${ROOTS.DASHBOARD}/squad`,
+    // omega-squad-extension: managed by omega-squad
     agents: `${ROOTS.DASHBOARD}/agents`,
     falconAI: `${ROOTS.DASHBOARD}/falcon-ai`,
   },
