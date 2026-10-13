@@ -5,6 +5,7 @@ import { Box, Stack, Typography, Button, Popover, TextField } from "@mui/materia
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
 import { BUILD_TONES } from "../../buildEnvironment/buildTones";
+import { CompositionLabels } from "../composition/CompositionPanel";
 
 // Trial presets — 1 is the single-shot; 3/5/8 are the common repeat counts;
 // Custom covers anything else in 1–20. Same set as the header TrialsPicker so
@@ -36,7 +37,7 @@ const RED = BUILD_TONES.red;
  * disabled, with the reason on hover, rather than leaving it out.
  */
 export default function SelectionBar({
-  count, trials, onTrialsChange, onRun, runBlockedReason, onDelete, onClear, matching,
+  count, trials, onTrialsChange, onRun, runBlockedReason, onDelete, onClear, matching, composition = null,
 }) {
   const [trialsAnchor, setTrialsAnchor] = useState(null);
   const [customOpen, setCustomOpen] = useState(false);
@@ -257,6 +258,11 @@ export default function SelectionBar({
           <Typography sx={{ typography: "s3", color: "text.subtitle", fontSize: 11.5, mt: 0.25 }}>
             {count} {count === 1 ? "scenario" : "scenarios"} × {k} {k === 1 ? "repeat" : "repeats"} = {totalRuns} runs
           </Typography>
+          {composition && (
+            <Box sx={{ mt: 1 }}>
+              <CompositionLabels composition={composition} dense />
+            </Box>
+          )}
         </Box>
         {TRIAL_PRESETS.map((v) => {
           const active = v === k;
@@ -388,4 +394,6 @@ SelectionBar.propTypes = {
     pageCount: PropTypes.number,
     onSelectAll: PropTypes.func,
   }),
+  // The composition every run is pinned to, shown beside the repeats.
+  composition: PropTypes.object,
 };

@@ -46,7 +46,14 @@ import {
   partitionConfigurationValues,
   updateCredential,
 } from "./credentialValues";
-import { errorMessage, readable, stages } from "./harnessShared";
+import {
+  errorMessage,
+  parseProviderDynamicVariables,
+  providerCredentialName,
+  readable,
+  stages,
+} from "./harnessShared";
+import ReleaseGallery from "./ReleaseGallery";
 import { prepareSourceFolder } from "./sourceUpload";
 import {
   deriveEgressDomains,
@@ -61,30 +68,6 @@ const readableSize = (bytes = 0) => {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
-};
-
-export const parseProviderDynamicVariables = (text) => {
-  if (!text.trim()) return {};
-  let value;
-  try {
-    value = JSON.parse(text);
-  } catch {
-    throw new Error("Dynamic variables must be valid JSON.");
-  }
-  if (
-    !value ||
-    Array.isArray(value) ||
-    typeof value !== "object" ||
-    Object.entries(value).some(
-      ([name, item]) =>
-        !name || !["string", "number", "boolean"].includes(typeof item),
-    )
-  ) {
-    throw new Error(
-      "Dynamic variables must be a JSON object with string, number, or boolean values.",
-    );
-  }
-  return value;
 };
 
 // `run()` always performs a fresh preflight before it creates the job.  Keep
@@ -102,13 +85,6 @@ export const callLimitConfig = (value) =>
   String(value ?? "").trim() && Number(value) > 0
     ? { voice_call_timeout_seconds: Number(value) }
     : {};
-
-const providerCredentialName = (connector) =>
-  connector === "vapi"
-    ? "VAPI_API_KEY"
-    : ["retell", "retell_chat"].includes(connector)
-      ? "RETELL_API_KEY"
-      : null;
 
 function Section({ title, description, children }) {
   return (
@@ -827,6 +803,8 @@ export default function HarnessCreate() {
               pipeline end to end.
             </Typography>
           </Box>
+
+          <ReleaseGallery />
 
           <Box
             sx={{

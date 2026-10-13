@@ -481,6 +481,77 @@ def environment_detail(job: HostedHarnessJob) -> dict[str, Any]:
         "scenarios": scenarios,
         "evaluations": {"selected": selected, "results": _results(receipts)},
         "settings": _settings(job),
+        "composition": _composition_section(job),
+    }
+
+
+def _composition_section(job: HostedHarnessJob) -> dict[str, Any] | None:
+    """What a composition is made of (contract §7.6); None for an authored environment."""
+    from simulate.models import AgentVersion, HarnessSuiteRelease
+    from simulate.services.harness_releases import _visible, composition_of
+
+    composition = composition_of(job)
+    if composition is None:
+        return None
+    binding = composition["binding"]
+    suite = _visible(
+        HarnessSuiteRelease, job.organization, composition["suite"]["digest"]
+    )
+    manifest = suite.manifest if suite is not None else {}
+    version = (
+        AgentVersion.no_workspace_objects.filter(
+            id=binding["agent"]["agent_version_id"]
+        )
+        .select_related("agent_definition")
+        .first()
+    )
+    proof = composition.get("binding_proof")
+    return {
+        "environment": [
+            {"digest": entry["digest"], "name": entry["name"]}
+            for entry in composition["environment"]
+        ],
+        "suite": {
+            "digest": composition["suite"]["digest"],
+            "name": composition["suite"]["name"],
+            "parent_digest": (manifest.get("parent") or {}).get("digest"),
+            "policy_profile": manifest.get("policy_profile") or {},
+            "scenarios": [
+                {
+                    "key": entry["key"],
+                    "origin": entry["origin"],
+                    "derived_from": entry.get("derived_from"),
+                }
+                for entry in manifest.get("scenarios") or []
+            ],
+        },
+        "binding": {
+            "digest": binding["digest"],
+            "mode": binding["mode"],
+            "agent_tools": binding.get("agent_tools") or [],
+            "tools": binding.get("tools") or [],
+        },
+        "agent": {
+            **{
+                key: binding["agent"][key]
+                for key in ("agent_definition_id", "agent_version_id", "connector")
+            },
+            "name": (
+                version.agent_definition.agent_name or None
+                if version is not None
+                else None
+            ),
+            "version_name": (version.version_name or None) if version else None,
+        },
+        "alignment": composition.get("alignment"),
+        "binding_proof": (
+            {
+                "passed": bool(proof.get("passed")),
+                "scenarios": proof.get("scenarios") or {},
+            }
+            if isinstance(proof, dict)
+            else None
+        ),
     }
 
 

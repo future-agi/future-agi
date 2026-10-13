@@ -501,8 +501,63 @@ class HarnessEnvironmentSettingsSerializer(serializers.Serializer):
     enable_tool_evaluation = serializers.BooleanField()
 
 
+class HarnessCompositionReleaseSerializer(serializers.Serializer):
+    digest = serializers.CharField()
+    name = serializers.CharField()
+
+
+class HarnessCompositionScenarioSerializer(serializers.Serializer):
+    key = serializers.CharField()
+    origin = serializers.ChoiceField(choices=("base", "specialized", "custom"))
+    derived_from = serializers.CharField(allow_null=True)
+
+
+class HarnessCompositionSuiteSerializer(serializers.Serializer):
+    digest = serializers.CharField()
+    name = serializers.CharField()
+    parent_digest = serializers.CharField(allow_null=True)
+    policy_profile = serializers.JSONField()
+    scenarios = HarnessCompositionScenarioSerializer(many=True)
+
+
+class HarnessCompositionBindingSerializer(serializers.Serializer):
+    digest = serializers.CharField()
+    mode = serializers.ChoiceField(choices=("canonical", "tool_routed"))
+    agent_tools = serializers.ListField(child=serializers.JSONField())
+    tools = serializers.ListField(child=serializers.JSONField())
+
+
+class HarnessCompositionAgentSerializer(serializers.Serializer):
+    agent_definition_id = serializers.UUIDField()
+    agent_version_id = serializers.UUIDField()
+    connector = serializers.CharField()
+    name = serializers.CharField(allow_null=True)
+    version_name = serializers.CharField(allow_null=True)
+
+
+class HarnessCompositionProofSerializer(serializers.Serializer):
+    passed = serializers.BooleanField()
+    scenarios = serializers.JSONField()
+
+
+class HarnessCompositionSerializer(serializers.Serializer):
+    """What a composition is made of: releases, suite, binding and its proof.
+
+    ``alignment`` is the adaptation's alignment (admission, mapped and unsupported tools,
+    extension candidates, unscorable scenarios); null for a canonical composition.
+    """
+
+    environment = HarnessCompositionReleaseSerializer(many=True)
+    suite = HarnessCompositionSuiteSerializer()
+    binding = HarnessCompositionBindingSerializer()
+    agent = HarnessCompositionAgentSerializer()
+    alignment = serializers.JSONField(allow_null=True)
+    binding_proof = HarnessCompositionProofSerializer(allow_null=True)
+
+
 class HarnessEnvironmentDetailSerializer(serializers.Serializer):
-    """One environment. ``contract`` and ``world`` are null until authoring finishes."""
+    """One environment. ``contract`` and ``world`` are null until authoring finishes;
+    ``composition`` is null unless the environment is a release composition."""
 
     id = serializers.UUIDField()
     overview = HarnessEnvironmentOverviewSerializer()
@@ -511,3 +566,4 @@ class HarnessEnvironmentDetailSerializer(serializers.Serializer):
     scenarios = HarnessEnvironmentScenarioSerializer(many=True)
     evaluations = HarnessEnvironmentEvaluationsSerializer()
     settings = HarnessEnvironmentSettingsSerializer()
+    composition = HarnessCompositionSerializer(allow_null=True)

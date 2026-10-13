@@ -1075,12 +1075,6 @@ class HostedHarnessProvider:
     name = "hosted"
 
     def create(self, request) -> Response:
-        from simulate.services.hosted_harness import (
-            HostedHarnessError,
-            create_hosted_job,
-        )
-        from simulate.temporal.client import start_hosted_harness_gateway_workflow
-
         organization = request_organization(request)
         if organization is None:
             return Response(
@@ -1093,7 +1087,52 @@ class HostedHarnessProvider:
                 {"detail": "Idempotency-Key header is required"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        payload = request.validated_data
+        return self._submit(
+            request, organization, request.validated_data, idempotency_key
+        )
+
+    def create_adaptation(self, request) -> Response:
+        """Start adapting an agent to a release suite (contract §7.5): a hosted job like any
+        other, whose payload carries `metadata.adaptation`."""
+        from simulate.services.harness_releases import (
+            adaptation_payload,
+            organization_agent_version,
+            visible_suite,
+        )
+        from simulate.services.hosted_harness import HostedHarnessError
+
+        organization = request_organization(request)
+        if organization is None:
+            return Response(
+                {"detail": "Organization not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        data = request.validated_data
+        try:
+            payload = adaptation_payload(
+                organization,
+                suite=visible_suite(organization, data["suite_id"]),
+                # Re-validated as a hosted job agent; the request serializer only shapes it.
+                agent=request.data["agent"],
+                agent_version=organization_agent_version(
+                    organization, data["agent_version_id"]
+                ),
+                name=data["name"],
+            )
+        except HostedHarnessError as exc:
+            return Response(exc.as_dict(), status=exc.status_code)
+        return self._submit(request, organization, payload, data["idempotency_key"])
+
+    def _submit(
+        self, request, organization, payload: dict, idempotency_key: str
+    ) -> Response:
+        """Admit one validated hosted job payload and start its gateway workflow."""
+        from simulate.services.hosted_harness import (
+            HostedHarnessError,
+            create_hosted_job,
+        )
+        from simulate.temporal.client import start_hosted_harness_gateway_workflow
+
         base_url = (
             getattr(settings, "HARNESS_PUBLIC_BASE_URL", "")
             or request.build_absolute_uri("/")
@@ -1542,6 +1581,18 @@ class HostedHarnessProvider:
             HostedHarnessJob.State.FAILED,
             HostedHarnessJob.State.CANCELED,
         }
+        if job.state in terminal_states and (
+            (job.payload or {}).get("metadata") or {}
+        ).get("adaptation"):
+            # Only the adaptation process answers its conversation, and it has exited.
+            return Response(
+                {
+                    "error": "conversation_closed",
+                    "message": "This adaptation has finished; start a new one to change it.",
+                    "retryable": False,
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
         if job.state in terminal_states:
             conversation = (
                 HostedHarnessConversation.no_workspace_objects.filter(job=job)

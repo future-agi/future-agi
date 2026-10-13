@@ -1864,6 +1864,7 @@ def test_tool_call_switch_toggles(env_client, user, workspace):
         "scenarios",
         "evaluations",
         "settings",
+        "composition",
     }
     environment.run_test.refresh_from_db()
     assert environment.run_test.enable_tool_evaluation is True
