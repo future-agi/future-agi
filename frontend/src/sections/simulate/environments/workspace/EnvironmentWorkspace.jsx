@@ -92,6 +92,9 @@ export default function EnvironmentWorkspace() {
   // Shares the ["harness-environment", id] cache the Evals tab already uses.
   const backed = source === "harness";
   const evalDetailQuery = useQuery(harnessEnvironmentQuery(envId, { enabled: backed }));
+  // A composition (a released environment bound to an agent) rides on `env` so the
+  // alignment tab, the run picker and the run report can read it without a second fetch.
+  const composition = (backed && evalDetailQuery.data?.composition) || null;
   // While the job is still deriving, the harness bootstrap is only a placeholder
   // (an endpoint-agent stub with whatever scenarios the run has emitted so far, if
   // any) — and useEnvState seeds byEnv once, so seeding it now would freeze that
@@ -322,7 +325,7 @@ export default function EnvironmentWorkspace() {
             picker on it. */}
         <Outlet
           context={{
-            env,
+            env: composition ? { ...env, composition } : env,
             envState,
             backed,
             onStartRun: startRun,
@@ -376,7 +379,15 @@ export default function EnvironmentWorkspace() {
   // rename shows
   // everywhere the moment it lands, not only in the Settings field.
   const backedName = evalDetailQuery.data?.overview?.name;
-  const displayEnv = env && backed && backedName ? { ...env, name: backedName } : env;
+  const renamed = Boolean(env && backed && backedName);
+  const displayEnv =
+    renamed || composition
+      ? {
+          ...env,
+          ...(renamed ? { name: backedName } : {}),
+          ...(composition ? { composition } : {}),
+        }
+      : env;
 
   // Overview summary tiles need the detail's real counts: the job poll (which
   // drives

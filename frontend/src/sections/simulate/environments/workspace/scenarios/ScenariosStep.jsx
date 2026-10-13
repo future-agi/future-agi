@@ -457,6 +457,7 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
                       runBlockedReason={onStartRun && !canRun ? runBlockedReason : undefined}
                       trials={trials}
                       onTrialsChange={setTrials}
+                      composition={env?.composition}
                       matching={{
                         mode: sel.mode,
                         total: pageData.total,

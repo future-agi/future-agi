@@ -52,6 +52,7 @@ OPERATOR_STARTUP_MUTATION_COMMANDS = frozenset(
         "requeue_budget_grouping",
         "requeue_failed_grouping",
         "requeue_investigations",
+        "register_harness_release",
         "register_temporal_schedules",
         "seed_system_evals",
     }

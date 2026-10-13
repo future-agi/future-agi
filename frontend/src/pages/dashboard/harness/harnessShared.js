@@ -337,6 +337,135 @@ export const displayText = (value, fallback = "") => {
   }
 };
 
+export const providerCredentialName = (connector) =>
+  connector === "vapi"
+    ? "VAPI_API_KEY"
+    : ["retell", "retell_chat"].includes(connector)
+      ? "RETELL_API_KEY"
+      : null;
+
+export const parseProviderDynamicVariables = (text) => {
+  if (!text.trim()) return {};
+  let value;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    throw new Error("Dynamic variables must be valid JSON.");
+  }
+  if (
+    !value ||
+    Array.isArray(value) ||
+    typeof value !== "object" ||
+    Object.entries(value).some(
+      ([name, item]) =>
+        !name || !["string", "number", "boolean"].includes(typeof item),
+    )
+  ) {
+    throw new Error(
+      "Dynamic variables must be a JSON object with string, number, or boolean values.",
+    );
+  }
+  return value;
+};
+
+// "sha256:<64 hex>" reads as noise in a label; the first 12 hex digits identify it on screen.
+export const shortDigest = (digest) => {
+  const text = String(digest || "");
+  const hex = text.startsWith("sha256:") ? text.slice(7) : text;
+  return hex ? hex.slice(0, 12) : "";
+};
+
+// The adaptation stages ALK reports through stage_changed, in order (environment-releases.md §7.5).
+export const ADAPTATION_STAGES = [
+  "inspecting",
+  "mapping",
+  "proving",
+  "asking",
+  "proposing",
+  "sealing",
+];
+
+// Where an adaptation is: the latest stage ALK moved to. The conversation keeps the stage
+// itself; the stage_changed events cover a conversation read before it caught up.
+export const adaptationStage = (conversation) => {
+  if (ADAPTATION_STAGES.includes(conversation?.stage))
+    return conversation.stage;
+  const moves = (conversation?.events || []).filter(
+    (event) =>
+      event?.kind === "stage_changed" &&
+      ADAPTATION_STAGES.includes(event?.payload?.to),
+  );
+  return moves.length ? moves[moves.length - 1].payload.to : null;
+};
+
+// The request body adaptation and composition share (environment-releases.md §7.6). The
+// agent block is the hosted-job agent in provider_import mode, so each run clones the agent.
+export const releaseUsePayload = ({
+  suiteId,
+  agentVersionId,
+  name,
+  connector,
+  targetId,
+  dynamicVariables,
+  secretRefs,
+  idempotencyKey,
+}) => ({
+  suite_id: suiteId,
+  agent_version_id: agentVersionId,
+  name: name.trim(),
+  idempotency_key: idempotencyKey,
+  agent: {
+    connector,
+    mode: "provider_import",
+    config: {
+      ...(connector === "vapi"
+        ? { assistant_id: targetId.trim() }
+        : { agent_id: targetId.trim() }),
+      ...(connector === "retell_chat" && dynamicVariables.trim()
+        ? { dynamic_variables: parseProviderDynamicVariables(dynamicVariables) }
+        : {}),
+    },
+    secret_refs: secretRefs,
+  },
+});
+
+export const BINDING_MODE_LABELS = {
+  canonical: "Canonical",
+  tool_routed: "Tool-routed",
+  conversation_only: "Conversation only",
+};
+
+export const SCENARIO_ORIGIN_LABELS = {
+  base: "Base",
+  specialized: "Specialized",
+  custom: "Custom",
+};
+
+// Adaptation questions carry `{value, label}` options; older builder questions carry strings.
+export const questionOptions = (payload) =>
+  (Array.isArray(payload?.options) ? payload.options : []).map((option) =>
+    option && typeof option === "object"
+      ? {
+          value: option.value,
+          label: displayText(option.label ?? option.value),
+        }
+      : { value: option, label: displayText(option) },
+  );
+
+// Message ids the user already answered: a question or proposal is settled once a user turn
+// replies to it, so its buttons must not offer a second answer.
+export const answeredMessageIds = (messages = []) =>
+  new Set(
+    (Array.isArray(messages) ? messages : [])
+      .filter((message) => message?.role === "user" && message?.reply_to)
+      .map((message) => String(message.reply_to)),
+  );
+
+export const percent = (rate) =>
+  typeof rate === "number" && Number.isFinite(rate)
+    ? `${Math.round(rate * 100)}%`
+    : "\u2014";
+
 // StatusChip infers its state from the string it is given, and "completed" matches
 // neither "pass" nor "ok". Map the stages explicitly: the terminal outcomes get
 // pass/error/canceled, and everything still in flight reads running.

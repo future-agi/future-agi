@@ -38,6 +38,7 @@ import BetaChip from "./fixmyagent/BetaChip";
 import { useSelfImprovementOpen } from "./fixmyagent/selfImprovement";
 import RunAnalytics from "./RunAnalytics";
 import ReliabilityHeadline from "./ReliabilityHeadline";
+import RunReport from "./RunReport";
 import useCallListNavigation from "./useCallListNavigation";
 import useOpenCallParam from "./useOpenCallParam";
 
@@ -363,6 +364,9 @@ export default function RunDetail({
               />
             )}
             <Tab value="analytics" label="Analytics" sx={{ minHeight: 38 }} />
+            {env?.composition && (
+              <Tab value="report" label="Report" sx={{ minHeight: 38 }} />
+            )}
           </CustomTabs>
 
           {tab === "tasks" && (
@@ -449,6 +453,10 @@ export default function RunDetail({
               }
               onOpenCalls={openCallsWith}
             />
+          )}
+
+          {tab === "report" && env?.composition && (
+            <RunReport env={env} executionId={executionId} live={live} />
           )}
         </Box>
       </Box>
@@ -551,6 +559,8 @@ RunDetail.propTypes = {
       runTestId: PropTypes.string,
       testExecutionId: PropTypes.string,
     }),
+    // Present on a composition: its runs have a report (environment-releases.md §7.7).
+    composition: PropTypes.object,
   }).isRequired,
   // Client store state — only read for a non-backed env, to drive the
   // fixture-only `AddEvalsDrawer` fallback the same way it always has.
