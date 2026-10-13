@@ -202,6 +202,7 @@ def _score_refs(
     if not isinstance(refs, (list, tuple)):
         raise RunWriteError("score_refs must be a list")
     allowed: set[str] = set()
+    bindings: set[tuple[str, str]] = set()
     if not isinstance(run.evaluator_versions, list):
         raise RunWriteError("evaluator_versions must be a list")
     for version in run.evaluator_versions:
@@ -214,15 +215,27 @@ def _score_refs(
             if identifier is None:
                 raise RunWriteError("each evaluator version must identify a UUID")
             allowed.add(_uuid(identifier))
+            if version.get("metric_id") is not None:
+                bindings.add((_uuid(version["metric_id"]), _uuid(identifier)))
         else:
             raise RunWriteError("each evaluator version must identify a UUID")
     checked: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
     for ref in refs:
         if not isinstance(ref, Mapping):
             raise RunWriteError("each score reference must be a mapping")
         identifier = ref.get("evaluator_version_id", ref.get("version_id"))
         if identifier is None or _uuid(identifier) not in allowed:
             raise RunWriteError("score reference evaluator version is not pinned")
+        if bindings:
+            pair = (_uuid(ref.get("metric_id")), _uuid(identifier))
+            if pair not in bindings:
+                raise RunWriteError(
+                    "score reference metric/evaluator pair is not pinned"
+                )
+            if pair in seen:
+                raise RunWriteError("duplicate score reference metric/evaluator pair")
+            seen.add(pair)
         value = ref.get("value", ref.get("score"))
         status = ref.get("status", "assessed" if value is not None else "not_assessed")
         if not isinstance(status, str) or status not in _SCORE_STATUSES:
