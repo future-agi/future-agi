@@ -519,7 +519,17 @@ export type ${jsonAlias} = JsonValueApi;`,
       "ExternalRunCreateRequestApiMetadata",
       "ExternalRunHeaderApiModelConfig",
       "ExternalRunHeaderApiMetadata",
+      "OutputDiffSideApiOutputPreview",
     ]) {
+      if (alias === "OutputDiffSideApiOutputPreview") {
+        schemas = assertReplace(
+          schemas,
+          `export type ${alias} = { [key: string]: unknown };`,
+          `export type ${alias} = JsonValueApi;`,
+          `${alias} recursive JSON value`,
+        );
+        continue;
+      }
       schemas = assertReplace(
         schemas,
         `export type ${alias} = {[key: string]: unknown};`,

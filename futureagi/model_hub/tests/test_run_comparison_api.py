@@ -519,6 +519,95 @@ def test_compare_route_reports_size_refusal_without_partial_results(
     assert "comparison" not in response.json()
 
 
+@pytest.mark.django_db
+def test_compare_route_returns_selected_case_output_diff(
+    auth_client, comparison_api_fixture
+):
+    fixture = comparison_api_fixture
+    example = fixture["examples"][0]
+    baseline_item = ExperimentRunItem.no_workspace_objects.get(
+        run=fixture["baseline"], example_id=example.example_id, trial_number=1
+    )
+    candidate_item = ExperimentRunItem.no_workspace_objects.get(
+        run=fixture["candidate"], example_id=example.example_id, trial_number=1
+    )
+    baseline_item.output = {"answer": "old", "score": 1.0}
+    candidate_item.output = {"score": 1, "answer": "new"}
+    baseline_item.save(update_fields=["output"])
+    candidate_item.save(update_fields=["output"])
+
+    response = auth_client.post(
+        reverse("experiment-run-compare"),
+        {
+            **fixture["scope"],
+            "diff_case": {
+                "example_id": str(example.example_id),
+                "trial_number": 1,
+            },
+        },
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    result = response.json()["result"]
+    assert result["case_diff"]["example_id"] == str(example.example_id)
+    assert result["case_diff"]["baseline"]["output_state"] == "available"
+    assert result["case_diff"]["candidate"]["output_state"] == "available"
+    assert result["case_diff"]["output_comparison"] == {
+        "status": "changed",
+        "missing_side": None,
+        "changed_paths": ["/answer"],
+        "changed_path_count": 1,
+        "truncated": False,
+    }
+    assert "trace" not in result["case_diff"]
+
+
+@pytest.mark.django_db
+def test_compare_route_keeps_missing_and_failed_output_explicit(
+    auth_client, comparison_api_fixture
+):
+    fixture = comparison_api_fixture
+    example = fixture["examples"][0]
+    candidate_item = ExperimentRunItem.no_workspace_objects.get(
+        run=fixture["candidate"], example_id=example.example_id, trial_number=1
+    )
+    candidate_item.deleted = True
+    candidate_item.save(update_fields=["deleted"])
+    response = auth_client.post(
+        reverse("experiment-run-compare"),
+        {
+            **fixture["scope"],
+            "diff_case": {
+                "example_id": str(example.example_id),
+                "trial_number": 1,
+            },
+        },
+        format="json",
+    )
+    assert response.status_code == status.HTTP_200_OK
+    diff = response.json()["result"]["case_diff"]
+    assert diff["candidate"]["output_state"] == "missing"
+    assert diff["output_comparison"]["missing_side"] == "candidate"
+    assert diff["output_comparison"]["status"] == "not_comparable"
+
+
+@pytest.mark.django_db
+def test_compare_route_rejects_out_of_plan_diff_case(
+    auth_client, comparison_api_fixture
+):
+    response = auth_client.post(
+        reverse("experiment-run-compare"),
+        {
+            **comparison_api_fixture["scope"],
+            "diff_case": {"example_id": str(uuid.uuid4()), "trial_number": 1},
+        },
+        format="json",
+    )
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert "diff_case identity is not in the pinned run plan" in str(response.json())
+
+
 def test_compare_route_has_typed_checked_in_contract():
     import json
     from pathlib import Path
@@ -547,6 +636,7 @@ def test_compare_route_has_typed_checked_in_contract():
         "higher_is_better",
         "include_trial_stability",
         "release_gate",
+        "diff_case",
     }
     assert operation["responses"]["200"]["schema"] == {
         "$ref": "#/definitions/RunComparisonResponse"
@@ -564,6 +654,7 @@ def test_compare_route_has_typed_checked_in_contract():
         "trace_refs",
         "release_gate",
         "trial_stability",
+        "case_diff",
     }
     assert (
         "comparable_count"

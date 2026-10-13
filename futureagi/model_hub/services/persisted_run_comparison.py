@@ -8,6 +8,9 @@ from math import isfinite
 from typing import TypeAlias
 from uuid import UUID
 
+from django.db.models import TextField
+from django.db.models.functions import Cast, Length
+
 from model_hub.models.experiments import ExperimentRun, ExperimentRunItem
 from model_hub.services.experiment_analysis import (
     ASSESSED,
@@ -18,6 +21,10 @@ from model_hub.services.experiment_analysis import (
     RunAggregate,
     RunItemRecord,
     compare_run_items,
+)
+from model_hub.services.experiment_output_diff import (
+    compare_output_items,
+    output_diff_payload,
 )
 from model_hub.services.experiment_run_writes import (
     RunWriteError,
@@ -75,6 +82,7 @@ class PersistedRunComparison:
     missing_by_side: Mapping[str, tuple[ItemIdentity, ...]]
     trace_refs: tuple[CaseTraceReferences, ...]
     trial_stability: tuple[TrialStability, ...] | None = None
+    case_diff: Mapping[str, object] | None = None
 
 
 def _load_run(
@@ -185,6 +193,43 @@ def _items(run: ExperimentRun, plan: set[ItemIdentity]) -> list[ExperimentRunIte
     return items
 
 
+def _selected_item(
+    run: ExperimentRun, identity: ItemIdentity
+) -> ExperimentRunItem | None:
+    """Load one selected output only; ordinary comparisons never load outputs."""
+
+    item_headers = list(
+        ExperimentRunItem.no_workspace_objects.filter(
+            run=run,
+            deleted=False,
+            example_id=identity[0],
+            trial_number=identity[1],
+        )
+        .annotate(_output_size=Length(Cast("output", output_field=TextField())))
+        .only("id", "example_id", "trial_number", "status", "error")
+        .order_by("id")[:2]
+    )
+    if len(item_headers) > 1:
+        raise RunComparisonError("selected case has duplicate recorded items")
+    if not item_headers:
+        return None
+    header = item_headers[0]
+    # PostgreSQL computes this cast/length before Django materializes output.
+    # A value over the bound is classified without fetching or hashing it.
+    if (
+        getattr(header, "_output_size", None) is not None
+        and int(header._output_size) > 1 * 1024 * 1024
+    ):
+        header._output_over_limit = True
+        return header
+    item = (
+        ExperimentRunItem.no_workspace_objects.filter(id=header.id, deleted=False)
+        .only("id", "example_id", "trial_number", "status", "output", "error")
+        .get()
+    )
+    return item
+
+
 def _records(
     items: list[ExperimentRunItem], bindings: dict[str, dict], metric_id: str
 ) -> list[RunItemRecord]:
@@ -233,6 +278,7 @@ def compare_experiment_runs(
     passing_score: float | None = None,
     higher_is_better: bool = True,
     include_trial_stability: bool = False,
+    diff_case: Mapping[str, object] | None = None,
 ) -> PersistedRunComparison:
     """Compare exact version/plan/evaluator pins; no inferred alignment or CI verdict.
 
@@ -281,6 +327,34 @@ def compare_experiment_runs(
         passing_score=passing_score,
         higher_is_better=higher_is_better,
     )
+    case_diff = None
+    if diff_case is not None:
+        if not isinstance(diff_case, Mapping):
+            raise RunComparisonError("diff_case must be an object")
+        try:
+            selected_identity = (
+                _uuid(diff_case["example_id"]),
+                diff_case["trial_number"],
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise RunComparisonError(
+                "diff_case must contain example_id and trial_number"
+            ) from exc
+        if type(selected_identity[1]) is not int or selected_identity[1] < 1:
+            raise RunComparisonError(
+                "diff_case trial_number must be a positive integer"
+            )
+        if selected_identity not in plan:
+            raise RunComparisonError("diff_case identity is not in the pinned run plan")
+        baseline_selected = _selected_item(baseline, selected_identity)
+        candidate_selected = _selected_item(candidate, selected_identity)
+        case_diff = {
+            "example_id": selected_identity[0],
+            "trial_number": selected_identity[1],
+            **output_diff_payload(
+                compare_output_items(baseline_selected, candidate_selected)
+            ),
+        }
     baseline_traces, candidate_traces = (
         _traces(baseline_items),
         _traces(candidate_items),
@@ -317,4 +391,5 @@ def compare_experiment_runs(
             if include_trial_stability
             else None
         ),
+        case_diff=case_diff,
     )

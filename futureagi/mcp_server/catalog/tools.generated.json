@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "source_contract_sha256": "6a0a5abd6b90688e63258c6e83e079d4c14900d937027c088430f53df7460804",
+  "source_contract_sha256": "f45ab776e9119d4ba00fd503fc4ee76de1b074294b8991f724815290bffd6a48",
   "tool_count": 96,
   "tools": [
     {
@@ -6173,6 +6173,9 @@
           },
           "release_gate": {
             "$ref": "#/definitions/ReleaseGatePolicy"
+          },
+          "diff_case": {
+            "$ref": "#/definitions/DiffCaseRequest"
           }
         },
         "additionalProperties": false,
@@ -6182,6 +6185,27 @@
           "metric_id"
         ],
         "definitions": {
+          "DiffCaseRequest": {
+            "required": [
+              "example_id",
+              "trial_number"
+            ],
+            "type": "object",
+            "properties": {
+              "example_id": {
+                "title": "Example id",
+                "type": "string",
+                "format": "uuid"
+              },
+              "trial_number": {
+                "title": "Trial number",
+                "type": "integer",
+                "maximum": 2147483647,
+                "minimum": 1
+              }
+            },
+            "additionalProperties": false
+          },
           "ReleaseGateCase": {
             "required": [
               "example_id",
@@ -6244,7 +6268,8 @@
             "passing_score",
             "higher_is_better",
             "include_trial_stability",
-            "release_gate"
+            "release_gate",
+            "diff_case"
           ]
         }
       },

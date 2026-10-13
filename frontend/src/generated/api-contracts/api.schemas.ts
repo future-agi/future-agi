@@ -11785,6 +11785,15 @@ export interface ReleaseGatePolicyApi {
   critical_cases?: ReleaseGateCaseApi[];
 }
 
+export interface DiffCaseRequestApi {
+  example_id: string;
+  /**
+   * @minimum 1
+   * @maximum 2147483647
+   */
+  trial_number: number;
+}
+
 export interface RunComparisonRequestApi {
   baseline_run_id: string;
   candidate_run_id: string;
@@ -11793,6 +11802,7 @@ export interface RunComparisonRequestApi {
   higher_is_better?: boolean;
   include_trial_stability?: boolean;
   release_gate?: ReleaseGatePolicyApi;
+  diff_case?: DiffCaseRequestApi;
 }
 
 export type RunAggregateApiStatusCounts = { [key: string]: number };
@@ -11983,6 +11993,67 @@ export interface TrialStabilityApi {
   paired: TrialDeltaAggregateApi;
 }
 
+export type OutputDiffSideApiOutputState =
+  (typeof OutputDiffSideApiOutputState)[keyof typeof OutputDiffSideApiOutputState];
+
+export const OutputDiffSideApiOutputState = {
+  missing: "missing",
+  unavailable: "unavailable",
+  over_limit: "over_limit",
+  invalid: "invalid",
+  available: "available",
+} as const;
+
+export type OutputDiffSideApiOutputPreview = JsonValueApi;
+
+export interface OutputDiffSideApi {
+  item_id: string | null;
+  status: string | null;
+  output_state: OutputDiffSideApiOutputState;
+  output_digest: string | null;
+  /** @minimum 0 */
+  output_bytes: number | null;
+  output_preview: OutputDiffSideApiOutputPreview | null;
+  preview_omitted: boolean;
+}
+
+export type OutputDiffComparisonApiStatus =
+  (typeof OutputDiffComparisonApiStatus)[keyof typeof OutputDiffComparisonApiStatus];
+
+export const OutputDiffComparisonApiStatus = {
+  unchanged: "unchanged",
+  changed: "changed",
+  not_comparable: "not_comparable",
+} as const;
+
+export type OutputDiffComparisonApiMissingSide =
+  (typeof OutputDiffComparisonApiMissingSide)[keyof typeof OutputDiffComparisonApiMissingSide];
+
+export const OutputDiffComparisonApiMissingSide = {
+  baseline: "baseline",
+  candidate: "candidate",
+  both: "both",
+} as const;
+
+export interface OutputDiffComparisonApi {
+  status: OutputDiffComparisonApiStatus;
+  missing_side: OutputDiffComparisonApiMissingSide | null;
+  /** @maxItems 100 */
+  changed_paths: string[];
+  /** @minimum 0 */
+  changed_path_count: number | null;
+  truncated: boolean;
+}
+
+export interface CaseOutputDiffApi {
+  example_id: string;
+  /** @minimum 1 */
+  trial_number: number;
+  baseline: OutputDiffSideApi;
+  candidate: OutputDiffSideApi;
+  output_comparison: OutputDiffComparisonApi;
+}
+
 export interface RunComparisonResultApi {
   baseline_run_id: string;
   candidate_run_id: string;
@@ -11996,6 +12067,7 @@ export interface RunComparisonResultApi {
   trace_refs: RunCaseTraceReferencesApi[];
   release_gate?: ReleaseGateReportApi;
   trial_stability?: TrialStabilityApi[];
+  case_diff?: CaseOutputDiffApi;
 }
 
 export interface RunComparisonResponseApi {

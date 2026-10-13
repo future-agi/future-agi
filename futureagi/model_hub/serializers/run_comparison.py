@@ -5,6 +5,7 @@ from math import isfinite
 from rest_framework import serializers
 
 from tfc.utils.api_serializers import StrictInputSerializer
+from tfc.utils.serializer_fields import JsonValueField
 
 
 class GateIntegerField(serializers.IntegerField):
@@ -40,6 +41,14 @@ class ReleaseGatePolicySerializer(StrictInputSerializer):
         return values
 
 
+class DiffCaseRequestSerializer(StrictInputSerializer):
+    class Meta:
+        swagger_schema_fields = {"additionalProperties": False}
+
+    example_id = serializers.UUIDField()
+    trial_number = serializers.IntegerField(min_value=1, max_value=2147483647)
+
+
 class FiniteScoreField(serializers.FloatField):
     def to_internal_value(self, data):
         if isinstance(data, bool):
@@ -58,6 +67,7 @@ class RunComparisonRequestSerializer(serializers.Serializer):
     higher_is_better = serializers.BooleanField(default=True)
     include_trial_stability = serializers.BooleanField(default=False)
     release_gate = ReleaseGatePolicySerializer(required=False)
+    diff_case = DiffCaseRequestSerializer(required=False)
 
 
 class RunAggregateSerializer(serializers.Serializer):
@@ -196,6 +206,36 @@ class TrialStabilitySerializer(serializers.Serializer):
     paired = TrialDeltaAggregateSerializer()
 
 
+class OutputDiffSideSerializer(serializers.Serializer):
+    item_id = serializers.UUIDField(allow_null=True)
+    status = serializers.CharField(allow_null=True)
+    output_state = serializers.ChoiceField(
+        choices=["missing", "unavailable", "over_limit", "invalid", "available"]
+    )
+    output_digest = serializers.CharField(allow_null=True, allow_blank=True)
+    output_bytes = serializers.IntegerField(min_value=0, allow_null=True)
+    output_preview = JsonValueField(allow_null=True)
+    preview_omitted = serializers.BooleanField()
+
+
+class OutputDiffComparisonSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=["unchanged", "changed", "not_comparable"])
+    missing_side = serializers.ChoiceField(
+        choices=["baseline", "candidate", "both"], allow_null=True
+    )
+    changed_paths = serializers.ListField(child=serializers.CharField(), max_length=100)
+    changed_path_count = serializers.IntegerField(min_value=0, allow_null=True)
+    truncated = serializers.BooleanField()
+
+
+class CaseOutputDiffSerializer(serializers.Serializer):
+    example_id = serializers.UUIDField()
+    trial_number = serializers.IntegerField(min_value=1)
+    baseline = OutputDiffSideSerializer()
+    candidate = OutputDiffSideSerializer()
+    output_comparison = OutputDiffComparisonSerializer()
+
+
 class RunComparisonResultSerializer(serializers.Serializer):
     baseline_run_id = serializers.UUIDField()
     candidate_run_id = serializers.UUIDField()
@@ -209,6 +249,7 @@ class RunComparisonResultSerializer(serializers.Serializer):
     trace_refs = RunCaseTraceReferencesSerializer(many=True)
     release_gate = ReleaseGateReportSerializer(required=False)
     trial_stability = TrialStabilitySerializer(many=True, required=False)
+    case_diff = CaseOutputDiffSerializer(required=False)
 
 
 class RunComparisonResponseSerializer(serializers.Serializer):

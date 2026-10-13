@@ -214,6 +214,54 @@ it("accepts and preserves optional repeated-trial stability analysis", () => {
   ).toBe(true);
 });
 
+it("accepts selected-case output diff and broad JSON previews", () => {
+  const response = structuredClone(assessed);
+  const exampleId = response.result.comparison.cases[0].example_id;
+  response.result.case_diff = {
+    example_id: exampleId,
+    trial_number: 1,
+    baseline: {
+      item_id: response.result.trace_refs[0].baseline.run_item_id,
+      status: "completed",
+      output_state: "available",
+      output_digest: "a".repeat(64),
+      output_bytes: 20,
+      output_preview: { answer: "old", values: [1, true, null] },
+      preview_omitted: false,
+    },
+    candidate: {
+      item_id: response.result.trace_refs[0].candidate.run_item_id,
+      status: "completed",
+      output_state: "available",
+      output_digest: "b".repeat(64),
+      output_bytes: 20,
+      output_preview: "new",
+      preview_omitted: false,
+    },
+    output_comparison: {
+      status: "changed",
+      missing_side: null,
+      changed_paths: ["/answer"],
+      changed_path_count: 1,
+      truncated: false,
+    },
+  };
+  expect(ExperimentRunsCompareResponse.parse(response)).toEqual(response);
+  expect(runtime(response, comparisonUrl, "post")).toBe(true);
+  const body = {
+    baseline_run_id: response.result.baseline_run_id,
+    candidate_run_id: response.result.candidate_run_id,
+    metric_id: response.result.metric_id,
+    diff_case: { example_id: exampleId, trial_number: 1 },
+  };
+  expect(ExperimentRunsCompareBody.parse(body).diff_case).toEqual(
+    body.diff_case,
+  );
+  expect(
+    validateContractedRequestConfig({ url: comparisonUrl, method: "post", data: body }).ok,
+  ).toBe(true);
+});
+
 describe.each([
   ["generated", (data) => ExperimentRunsCompareBody.safeParse(data).success],
   ["runtime", (data) => validateContractedRequestConfig({ url: comparisonUrl, method: "post", data }).ok],

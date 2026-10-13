@@ -73305,6 +73305,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         release_gate: {
           $ref: "#/definitions/ReleaseGatePolicy",
         },
+        diff_case: {
+          $ref: "#/definitions/DiffCaseRequest",
+        },
       },
     },
     RunComparisonResponse: {
@@ -100474,6 +100477,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    DiffCaseRequest: {
+      required: ["example_id", "trial_number"],
+      type: "object",
+      properties: {
+        example_id: {
+          title: "Example id",
+          type: "string",
+          format: "uuid",
+        },
+        trial_number: {
+          title: "Trial number",
+          type: "integer",
+          maximum: 2147483647,
+          minimum: 1,
+        },
+      },
+      additionalProperties: false,
+    },
     ReleaseGatePolicy: {
       type: "object",
       properties: {
@@ -100560,6 +100581,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/TrialStability",
           },
+        },
+        case_diff: {
+          $ref: "#/definitions/CaseOutputDiff",
         },
       },
     },
@@ -114390,6 +114414,37 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       additionalProperties: false,
     },
+    CaseOutputDiff: {
+      required: [
+        "example_id",
+        "trial_number",
+        "baseline",
+        "candidate",
+        "output_comparison",
+      ],
+      type: "object",
+      properties: {
+        example_id: {
+          title: "Example id",
+          type: "string",
+          format: "uuid",
+        },
+        trial_number: {
+          title: "Trial number",
+          type: "integer",
+          minimum: 1,
+        },
+        baseline: {
+          $ref: "#/definitions/OutputDiffSide",
+        },
+        candidate: {
+          $ref: "#/definitions/OutputDiffSide",
+        },
+        output_comparison: {
+          $ref: "#/definitions/OutputDiffComparison",
+        },
+      },
+    },
     MissingRunItems: {
       required: ["baseline", "candidate"],
       type: "object",
@@ -118578,6 +118633,106 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Failure label",
           type: "string",
           minLength: 1,
+        },
+      },
+    },
+    OutputDiffComparison: {
+      required: [
+        "status",
+        "missing_side",
+        "changed_paths",
+        "changed_path_count",
+        "truncated",
+      ],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["unchanged", "changed", "not_comparable"],
+        },
+        missing_side: {
+          title: "Missing side",
+          type: "string",
+          enum: ["baseline", "candidate", "both"],
+          "x-nullable": true,
+        },
+        changed_paths: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          maxItems: 100,
+        },
+        changed_path_count: {
+          title: "Changed path count",
+          type: "integer",
+          minimum: 0,
+          "x-nullable": true,
+        },
+        truncated: {
+          title: "Truncated",
+          type: "boolean",
+        },
+      },
+    },
+    OutputDiffSide: {
+      required: [
+        "item_id",
+        "status",
+        "output_state",
+        "output_digest",
+        "output_bytes",
+        "output_preview",
+        "preview_omitted",
+      ],
+      type: "object",
+      properties: {
+        item_id: {
+          title: "Item id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        output_state: {
+          title: "Output state",
+          type: "string",
+          enum: [
+            "missing",
+            "unavailable",
+            "over_limit",
+            "invalid",
+            "available",
+          ],
+        },
+        output_digest: {
+          title: "Output digest",
+          type: "string",
+          "x-nullable": true,
+        },
+        output_bytes: {
+          title: "Output bytes",
+          type: "integer",
+          minimum: 0,
+          "x-nullable": true,
+        },
+        output_preview: {
+          title: "Output preview",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        preview_omitted: {
+          title: "Preview omitted",
+          type: "boolean",
         },
       },
     },

@@ -23595,6 +23595,8 @@ export const experimentRunsCompareBodyReleaseGateCriticalCasesItemTrialNumberMax
 export const experimentRunsCompareBodyReleaseGateCriticalCasesDefault = [];
 export const experimentRunsCompareBodyReleaseGateCriticalCasesMax = 10000;
 
+export const experimentRunsCompareBodyDiffCaseTrialNumberMax = 2147483647;
+
 export const ExperimentRunsCompareBody = zod
   .object({
     baseline_run_id: zod.string().uuid(),
@@ -23631,6 +23633,17 @@ export const ExperimentRunsCompareBody = zod
           )
           .max(experimentRunsCompareBodyReleaseGateCriticalCasesMax)
           .default(experimentRunsCompareBodyReleaseGateCriticalCasesDefault),
+      })
+      .strict()
+      .optional(),
+    diff_case: zod
+      .object({
+        example_id: zod.string().uuid(),
+        trial_number: zod
+          .number()
+          .int()
+          .min(1)
+          .max(experimentRunsCompareBodyDiffCaseTrialNumberMax),
       })
       .strict()
       .optional(),
@@ -24060,6 +24073,51 @@ export const ExperimentRunsCompareResponse = zod.object({
           }),
         }),
       )
+      .optional(),
+    case_diff: zod
+      .object({
+        example_id: zod.string().uuid(),
+        trial_number: zod.number().min(1),
+        baseline: zod.object({
+          item_id: zod.string().uuid().nullable(),
+          status: zod.string().nullable(),
+          output_state: zod.enum([
+            "missing",
+            "unavailable",
+            "over_limit",
+            "invalid",
+            "available",
+          ]),
+          output_digest: zod.string().nullable(),
+          output_bytes: zod.number().min(0).nullable(),
+          output_preview: zod.any().nullable(),
+          preview_omitted: zod.boolean(),
+        }),
+        candidate: zod.object({
+          item_id: zod.string().uuid().nullable(),
+          status: zod.string().nullable(),
+          output_state: zod.enum([
+            "missing",
+            "unavailable",
+            "over_limit",
+            "invalid",
+            "available",
+          ]),
+          output_digest: zod.string().nullable(),
+          output_bytes: zod.number().min(0).nullable(),
+          output_preview: zod.any().nullable(),
+          preview_omitted: zod.boolean(),
+        }),
+        output_comparison: zod.object({
+          status: zod.enum(["unchanged", "changed", "not_comparable"]),
+          missing_side: zod
+            .enum(["baseline", "candidate", "both"])
+            .nullable(),
+          changed_paths: zod.array(zod.string()).max(100),
+          changed_path_count: zod.number().min(0).nullable(),
+          truncated: zod.boolean(),
+        }),
+      })
       .optional(),
   }),
 });
