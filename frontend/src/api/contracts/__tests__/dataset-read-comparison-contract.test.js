@@ -116,3 +116,59 @@ it("preserves optional null passing_score in both request validators", () => {
     }).ok,
   ).toBe(true);
 });
+
+it("accepts and preserves a case-level release gate report", () => {
+  const body = {
+    baseline_run_id: assessed.result.baseline_run_id,
+    candidate_run_id: assessed.result.candidate_run_id,
+    metric_id: assessed.result.metric_id,
+    release_gate: {
+      max_regressions: 0,
+      critical_cases: [
+        { example_id: assessed.result.comparison.cases[0].example_id, trial_number: 1 },
+      ],
+    },
+  };
+  expect(ExperimentRunsCompareBody.safeParse(body).success).toBe(true);
+  const response = structuredClone(assessed);
+  response.result.release_gate = {
+    verdict: "fail",
+    expected_count: 2,
+    comparable_count: 2,
+    regression_count: 1,
+    policy: body.release_gate,
+    passing_score: null,
+    higher_is_better: true,
+    blockers: [{ ...body.release_gate.critical_cases[0], reason: "critical_regression" }],
+  };
+  expect(ExperimentRunsCompareResponse.safeParse(response).success).toBe(true);
+  expect(runtime(response, comparisonUrl, "post")).toBe(true);
+});
+
+describe.each([
+  ["generated", (data) => ExperimentRunsCompareBody.safeParse(data).success],
+  ["runtime", (data) => validateContractedRequestConfig({ url: comparisonUrl, method: "post", data }).ok],
+])("release gate %s request contract", (_name, accepts) => {
+  const identity = { example_id: assessed.result.comparison.cases[0].example_id, trial_number: 1 };
+  it.each([
+    null, [], { unexpected: true }, { max_regressions: true }, { max_regressions: -1 }, { max_regressions: 0.5 },
+    { critical_cases: [{ ...identity, trial_number: 0 }] },
+    { critical_cases: [{ ...identity, extra: true }] },
+  ])("rejects malformed gate policy %j", (release_gate) => {
+    expect(accepts({ baseline_run_id: assessed.result.baseline_run_id, candidate_run_id: assessed.result.candidate_run_id, metric_id: assessed.result.metric_id, release_gate })).toBe(false);
+  });
+});
+
+it("preserves explicit null identity in an empty-plan blocker", () => {
+  const response = structuredClone(missing);
+  response.result.release_gate = {
+    verdict: "fail", expected_count: 0, comparable_count: 0, regression_count: 0,
+    policy: { max_regressions: 0, critical_cases: [] }, passing_score: null,
+    higher_is_better: true, blockers: [{ example_id: null, trial_number: null, reason: "empty_plan" }],
+  };
+  expect(ExperimentRunsCompareResponse.parse(response)).toEqual(response);
+  expect(runtime(response, comparisonUrl, "post")).toBe(true);
+  response.result.release_gate.verdict = "unknown";
+  expect(ExperimentRunsCompareResponse.safeParse(response).success).toBe(false);
+  expect(runtime(response, comparisonUrl, "post")).toBe(false);
+});

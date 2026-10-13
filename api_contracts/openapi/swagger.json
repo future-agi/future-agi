@@ -34307,7 +34307,7 @@
         "/model-hub/experiment-runs/compare/": {
             "post": {
                 "operationId": "experiment_runs_compare",
-                "description": "Compare compatible persisted runs. Requires the same dataset version, exact example/trial plan and selected evaluator binding. At most 10,000 planned and recorded items per run; excess evidence is rejected, never truncated. Tenant and workspace scope come from authentication. This endpoint does not execute tasks or make a CI decision.",
+                "description": "Compare compatible persisted runs. Requires the same dataset version, exact example/trial plan and selected evaluator binding. At most 10,000 planned and recorded items per run; excess evidence is rejected, never truncated. Tenant and workspace scope come from authentication. An optional release_gate derives a case-level verdict requiring valid evidence for the complete plan on both sides; a failed gate still returns 200. This endpoint does not execute tasks or attest caller-supplied evidence.",
                 "parameters": [
                     {
                         "name": "data",
@@ -110358,6 +110358,47 @@
                 }
             }
         },
+        "ReleaseGateCase": {
+            "required": [
+                "example_id",
+                "trial_number"
+            ],
+            "type": "object",
+            "properties": {
+                "example_id": {
+                    "title": "Example id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "trial_number": {
+                    "title": "Trial number",
+                    "type": "integer",
+                    "maximum": 2147483647,
+                    "minimum": 1
+                }
+            },
+            "additionalProperties": false
+        },
+        "ReleaseGatePolicy": {
+            "type": "object",
+            "properties": {
+                "max_regressions": {
+                    "title": "Max regressions",
+                    "type": "integer",
+                    "default": 0,
+                    "minimum": 0
+                },
+                "critical_cases": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/ReleaseGateCase"
+                    },
+                    "default": [],
+                    "maxItems": 10000
+                }
+            },
+            "additionalProperties": false
+        },
         "RunComparisonRequest": {
             "required": [
                 "baseline_run_id",
@@ -110390,6 +110431,9 @@
                     "title": "Higher is better",
                     "type": "boolean",
                     "default": true
+                },
+                "release_gate": {
+                    "$ref": "#/definitions/ReleaseGatePolicy"
                 }
             }
         },
@@ -110724,6 +110768,101 @@
                 }
             }
         },
+        "ReleaseGateBlocker": {
+            "required": [
+                "example_id",
+                "trial_number",
+                "reason"
+            ],
+            "type": "object",
+            "properties": {
+                "example_id": {
+                    "title": "Example id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "trial_number": {
+                    "title": "Trial number",
+                    "type": "integer",
+                    "minimum": 1,
+                    "x-nullable": true
+                },
+                "reason": {
+                    "title": "Reason",
+                    "type": "string",
+                    "enum": [
+                        "missing",
+                        "duplicate",
+                        "invalid",
+                        "error",
+                        "unknown",
+                        "unsupported",
+                        "not_assessed",
+                        "critical_regression",
+                        "critical_threshold",
+                        "regression_limit_exceeded",
+                        "empty_plan"
+                    ]
+                }
+            }
+        },
+        "ReleaseGateReport": {
+            "required": [
+                "verdict",
+                "expected_count",
+                "comparable_count",
+                "regression_count",
+                "policy",
+                "passing_score",
+                "higher_is_better",
+                "blockers"
+            ],
+            "type": "object",
+            "properties": {
+                "verdict": {
+                    "title": "Verdict",
+                    "type": "string",
+                    "enum": [
+                        "pass",
+                        "fail"
+                    ]
+                },
+                "expected_count": {
+                    "title": "Expected count",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "comparable_count": {
+                    "title": "Comparable count",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "regression_count": {
+                    "title": "Regression count",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "policy": {
+                    "$ref": "#/definitions/ReleaseGatePolicy"
+                },
+                "passing_score": {
+                    "title": "Passing score",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "higher_is_better": {
+                    "title": "Higher is better",
+                    "type": "boolean"
+                },
+                "blockers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/ReleaseGateBlocker"
+                    }
+                }
+            }
+        },
         "RunComparisonResult": {
             "required": [
                 "baseline_run_id",
@@ -110781,6 +110920,9 @@
                     "items": {
                         "$ref": "#/definitions/RunCaseTraceReferences"
                     }
+                },
+                "release_gate": {
+                    "$ref": "#/definitions/ReleaseGateReport"
                 }
             }
         },

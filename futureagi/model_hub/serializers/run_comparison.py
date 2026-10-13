@@ -4,6 +4,41 @@ from math import isfinite
 
 from rest_framework import serializers
 
+from tfc.utils.api_serializers import StrictInputSerializer
+
+
+class GateIntegerField(serializers.IntegerField):
+    def to_internal_value(self, data):
+        if type(data) is not int:
+            self.fail("invalid")
+        return super().to_internal_value(data)
+
+
+class ReleaseGateCaseSerializer(StrictInputSerializer):
+    class Meta:
+        swagger_schema_fields = {"additionalProperties": False}
+
+    example_id = serializers.UUIDField()
+    trial_number = GateIntegerField(min_value=1, max_value=2147483647)
+
+
+class ReleaseGatePolicySerializer(StrictInputSerializer):
+    class Meta:
+        swagger_schema_fields = {"additionalProperties": False}
+
+    max_regressions = GateIntegerField(default=0, min_value=0)
+    critical_cases = serializers.ListField(
+        child=ReleaseGateCaseSerializer(), default=list, max_length=10000
+    )
+
+    def validate_critical_cases(self, values):
+        identities = [(value["example_id"], value["trial_number"]) for value in values]
+        if len(identities) != len(set(identities)):
+            raise serializers.ValidationError(
+                "Critical case identities must be unique."
+            )
+        return values
+
 
 class FiniteScoreField(serializers.FloatField):
     def to_internal_value(self, data):
@@ -21,6 +56,7 @@ class RunComparisonRequestSerializer(serializers.Serializer):
     metric_id = serializers.UUIDField()
     passing_score = FiniteScoreField(required=False, allow_null=True, default=None)
     higher_is_better = serializers.BooleanField(default=True)
+    release_gate = ReleaseGatePolicySerializer(required=False)
 
 
 class RunAggregateSerializer(serializers.Serializer):
@@ -104,6 +140,37 @@ class RunCaseTraceReferencesSerializer(RunItemIdentitySerializer):
     candidate = RunTraceReferenceSerializer(allow_null=True)
 
 
+class ReleaseGateBlockerSerializer(serializers.Serializer):
+    example_id = serializers.UUIDField(allow_null=True)
+    trial_number = serializers.IntegerField(min_value=1, allow_null=True)
+    reason = serializers.ChoiceField(
+        choices=[
+            "missing",
+            "duplicate",
+            "invalid",
+            "error",
+            "unknown",
+            "unsupported",
+            "not_assessed",
+            "critical_regression",
+            "critical_threshold",
+            "regression_limit_exceeded",
+            "empty_plan",
+        ]
+    )
+
+
+class ReleaseGateReportSerializer(serializers.Serializer):
+    verdict = serializers.ChoiceField(choices=["pass", "fail"])
+    expected_count = serializers.IntegerField(min_value=0)
+    comparable_count = serializers.IntegerField(min_value=0)
+    regression_count = serializers.IntegerField(min_value=0)
+    policy = ReleaseGatePolicySerializer()
+    passing_score = serializers.FloatField(allow_null=True)
+    higher_is_better = serializers.BooleanField()
+    blockers = ReleaseGateBlockerSerializer(many=True)
+
+
 class RunComparisonResultSerializer(serializers.Serializer):
     baseline_run_id = serializers.UUIDField()
     candidate_run_id = serializers.UUIDField()
@@ -115,6 +182,7 @@ class RunComparisonResultSerializer(serializers.Serializer):
     candidate_counts = RunCountsSerializer()
     missing_by_side = MissingRunItemsSerializer()
     trace_refs = RunCaseTraceReferencesSerializer(many=True)
+    release_gate = ReleaseGateReportSerializer(required=False)
 
 
 class RunComparisonResponseSerializer(serializers.Serializer):

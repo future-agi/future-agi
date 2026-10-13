@@ -128,6 +128,7 @@ def test_compare_route_returns_cases_counts_missing_and_traces(
     contract = RunComparisonResponseSerializer(data=response.json())
     assert contract.is_valid(), contract.errors
     result = response.json()["result"]
+    assert "release_gate" not in result
     assert result["baseline_run_id"] == str(fixture["baseline"].id)
     assert result["candidate_run_id"] == str(fixture["candidate"].id)
     assert result["baseline_counts"] == {
@@ -425,6 +426,7 @@ def test_compare_route_has_typed_checked_in_contract():
         "metric_id",
         "passing_score",
         "higher_is_better",
+        "release_gate",
     }
     assert operation["responses"]["200"]["schema"] == {
         "$ref": "#/definitions/RunComparisonResponse"
@@ -440,6 +442,7 @@ def test_compare_route_has_typed_checked_in_contract():
         "candidate_counts",
         "missing_by_side",
         "trace_refs",
+        "release_gate",
     }
     assert (
         "comparable_count"
@@ -472,3 +475,267 @@ def test_compare_route_does_not_fallback_from_denied_auth_organization():
     response = RunComparisonView.as_view()(request)
     assert response.status_code == 404
     assert response.data["status"] is False
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("allowance,verdict", [(0, "fail"), (1, "pass")])
+def test_case_release_gate_returns_200_for_a_verdict_without_writes(
+    auth_client, comparison_api_fixture, allowance, verdict
+):
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    with CaptureQueriesContext(connection) as queries:
+        response = auth_client.post(
+            reverse("experiment-run-compare"),
+            {
+                **comparison_api_fixture["scope"],
+                "release_gate": {"max_regressions": allowance},
+            },
+            format="json",
+        )
+    assert not any(
+        query["sql"].lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE"))
+        for query in queries
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] is True
+    contract = RunComparisonResponseSerializer(data=response.json())
+    assert contract.is_valid(), contract.errors
+    report = response.json()["result"]["release_gate"]
+    assert report["verdict"] == verdict
+    assert report["expected_count"] == report["comparable_count"] == 2
+    assert report["regression_count"] == 1
+    assert report["policy"] == {"max_regressions": allowance, "critical_cases": []}
+    assert report["passing_score"] is None
+    assert report["higher_is_better"] is True
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "candidate_missing",
+        "both_missing",
+        "invalid_ref",
+        "unknown",
+        "unsupported",
+        "not_assessed",
+        "error",
+        "failed_task",
+    ],
+)
+def test_case_release_gate_never_passes_incomplete_or_invalid_evidence(
+    auth_client, comparison_api_fixture, mode
+):
+    fixture = comparison_api_fixture
+    identity = fixture["examples"][0].example_id
+    items = ExperimentRunItem.no_workspace_objects.filter(example_id=identity)
+    if mode in {"candidate_missing", "both_missing"}:
+        (
+            items if mode == "both_missing" else items.filter(run=fixture["candidate"])
+        ).delete()
+    elif mode == "failed_task":
+        items.filter(run=fixture["candidate"]).update(status="failed")
+    else:
+        item = items.get(run=fixture["candidate"])
+        refs = item.score_refs
+        if mode == "invalid_ref":
+            refs.append(dict(refs[0]))
+        else:
+            refs[0]["status"] = mode
+        items.filter(id=item.id).update(score_refs=refs)
+    response = auth_client.post(
+        reverse("experiment-run-compare"),
+        {**fixture["scope"], "release_gate": {"max_regressions": 100}},
+        format="json",
+    )
+    assert response.status_code == 200
+    report = response.json()["result"]["release_gate"]
+    assert report["verdict"] == "fail"
+    assert report["expected_count"] == 2
+    assert report["comparable_count"] == 1
+    assert report["blockers"][0]["example_id"] == str(identity)
+    assert report["blockers"][0]["reason"] == (
+        {
+            "candidate_missing": "missing",
+            "both_missing": "missing",
+            "invalid_ref": "invalid",
+            "failed_task": "error",
+        }.get(mode, mode)
+    )
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "policy",
+    [
+        None,
+        [],
+        {"unknown": True},
+        {"max_regressions": -1},
+        {"max_regressions": True},
+        {"max_regressions": "1"},
+        {"max_regressions": 0.5},
+        {"max_regressions": "Infinity"},
+        {"critical_cases": [{"example_id": "bad", "trial_number": 1}]},
+        {
+            "critical_cases": [
+                {
+                    "example_id": "00000000-0000-4000-8000-000000000001",
+                    "trial_number": True,
+                }
+            ]
+        },
+        {
+            "critical_cases": [
+                {
+                    "example_id": "00000000-0000-4000-8000-000000000001",
+                    "trial_number": 0,
+                }
+            ]
+        },
+        {
+            "critical_cases": [
+                {
+                    "example_id": "00000000-0000-4000-8000-000000000001",
+                    "trial_number": 1,
+                    "tenant": "override",
+                }
+            ]
+        },
+    ],
+)
+def test_case_release_gate_rejects_malformed_policy(
+    auth_client, comparison_api_fixture, policy
+):
+    response = auth_client.post(
+        reverse("experiment-run-compare"),
+        {**comparison_api_fixture["scope"], "release_gate": policy},
+        format="json",
+    )
+    assert response.status_code == 400
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("mode", ["duplicate", "outside_plan", "wrong_trial"])
+def test_case_release_gate_rejects_ambiguous_or_unknown_critical_case(
+    auth_client, comparison_api_fixture, mode
+):
+    identity = {
+        "example_id": str(comparison_api_fixture["examples"][0].example_id),
+        "trial_number": 1,
+    }
+    critical = [identity]
+    if mode == "duplicate":
+        critical.append(dict(identity))
+    elif mode == "outside_plan":
+        identity["example_id"] = str(uuid.uuid4())
+    else:
+        identity["trial_number"] = 2
+    response = auth_client.post(
+        reverse("experiment-run-compare"),
+        {
+            **comparison_api_fixture["scope"],
+            "release_gate": {"critical_cases": critical},
+        },
+        format="json",
+    )
+    assert response.status_code == 400
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "higher_is_better,threshold,reason",
+    [(True, 0.8, "critical_threshold"), (False, 0.8, "critical_regression")],
+)
+def test_case_release_gate_honors_critical_case_and_score_direction(
+    auth_client, comparison_api_fixture, higher_is_better, threshold, reason
+):
+    critical = {
+        "example_id": str(comparison_api_fixture["examples"][0].example_id),
+        "trial_number": 1,
+    }
+    response = auth_client.post(
+        reverse("experiment-run-compare"),
+        {
+            **comparison_api_fixture["scope"],
+            "passing_score": threshold,
+            "higher_is_better": higher_is_better,
+            "release_gate": {"max_regressions": 1, "critical_cases": [critical]},
+        },
+        format="json",
+    )
+    assert response.status_code == 200
+    report = response.json()["result"]["release_gate"]
+    assert report["verdict"] == "fail"
+    assert report["blockers"] == [{**critical, "reason": reason}]
+
+
+@pytest.mark.django_db
+def test_case_release_gate_does_not_require_unrelated_bindings_to_match(
+    auth_client, comparison_api_fixture
+):
+    candidate = comparison_api_fixture["candidate"]
+    candidate.evaluator_versions = [*candidate.evaluator_versions, _binding()]
+    candidate.save(update_fields=["evaluator_versions"])
+    response = auth_client.post(
+        reverse("experiment-run-compare"),
+        {**comparison_api_fixture["scope"], "release_gate": {"max_regressions": 1}},
+        format="json",
+    )
+    assert response.status_code == 200
+    assert response.json()["result"]["release_gate"]["verdict"] == "pass"
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("access", ["anonymous", "hidden_workspace", "viewer"])
+def test_case_release_gate_preserves_authenticated_read_scope(
+    api_client, comparison_api_fixture, user, organization, workspace, access
+):
+    from accounts.models.organization_membership import OrganizationMembership
+    from accounts.models.workspace import Workspace, WorkspaceMembership
+    from tfc.constants.levels import Level
+
+    fixture = comparison_api_fixture
+    headers = {}
+    if access != "anonymous":
+        OrganizationMembership.no_workspace_objects.filter(
+            user=user, organization=organization
+        ).update(level=Level.VIEWER, role="Viewer")
+        WorkspaceMembership.no_workspace_objects.filter(
+            user=user, workspace=workspace
+        ).update(level=Level.WORKSPACE_VIEWER, role="workspace_viewer")
+        assert user.can_write_to_workspace(workspace) is False
+        key = OrgApiKey.no_workspace_objects.create(
+            name="release-gate-viewer",
+            organization=organization,
+            user=user,
+            type="user",
+            workspace=workspace,
+            api_key="release-gate-key",
+            secret_key="release-gate-secret",
+        )
+        headers = {"HTTP_X_API_KEY": key.api_key, "HTTP_X_SECRET_KEY": key.secret_key}
+    if access == "hidden_workspace":
+        hidden = Workspace.no_workspace_objects.create(
+            name="hidden-gate",
+            organization=organization,
+            created_by=user,
+            is_default=False,
+        )
+        Dataset.no_workspace_objects.filter(id=fixture["dataset"].id).update(
+            workspace=hidden
+        )
+    response = api_client.post(
+        reverse("experiment-run-compare"),
+        {**fixture["scope"], "release_gate": {}},
+        format="json",
+        **headers,
+    )
+    assert (
+        response.status_code
+        == {"anonymous": 401, "hidden_workspace": 404, "viewer": 200}[access]
+    )
+    if access == "viewer":
+        assert response.json()["result"]["release_gate"]["verdict"] == "fail"

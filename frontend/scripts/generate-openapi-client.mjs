@@ -552,6 +552,8 @@ export type ${jsonAlias} = JsonValueApi;`,
       ],
       ["DatasetVersionItemReadApi", ["external_id", "legacy_row"]],
       ["RunComparisonRequestApi", ["passing_score"]],
+      ["ReleaseGateReportApi", ["passing_score"]],
+      ["ReleaseGateBlockerApi", ["example_id", "trial_number"]],
       [
         "RunAggregateApi",
         ["score_average", "score_min", "score_max", "pass_count", "pass_rate"],
@@ -1061,6 +1063,7 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
           "missing_side",
           "trace_id",
           "root_span_id",
+          "passing_score",
         ],
       ],
     ]) {
@@ -1080,6 +1083,35 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
       /("(?:baseline|candidate)": zod\.object\(\{\n\s*"run_item_id":[\s\S]*?\n\s*\}\))/g,
       "$1.nullable()",
       "missing comparison trace references are nullable",
+    );
+    for (const field of ["max_regressions", "trial_number"]) {
+      zod = assertReplaceRegexInNamedBlock(
+        zod,
+        "export const ExperimentRunsCompareBody = zod.object({",
+        new RegExp(`("${field}": zod\\.number\\(\\))`, "g"),
+        "$1.int()",
+        `release gate ${field} is an integer`,
+      );
+    }
+    for (const [anchor, replacement] of [
+      [/("trial_number": [^\n]+)\n\}\)\)/, "$1\n}).strict())"],
+      [/(\.default\(experimentRunsCompareBodyReleaseGateCriticalCasesDefault\))\n\}\)\.optional\(\)/, "$1\n}).strict().optional()"],
+      [/(\.strict\(\)\.optional\(\))\n\}\)/, "$1\n}).strict()"],
+    ]) {
+      zod = assertReplaceRegexInNamedBlock(
+        zod,
+        "export const ExperimentRunsCompareBody = zod.object({",
+        anchor,
+        replacement,
+        "release gate rejects unknown request and nested fields",
+      );
+    }
+    zod = assertReplaceRegexInNamedBlock(
+      zod,
+      "export const ExperimentRunsCompareResponse = zod.object({",
+      /("blockers": zod\.array\(zod\.object\(\{\n\s*"example_id": [^\n]+?)(,?)\n(\s*"trial_number": [^\n]+?)(,?)\n/g,
+      "$1.nullable()$2\n$3.nullable()$4\n",
+      "release gate empty-plan blocker preserves null identity",
     );
     const versionRead =
       "export const ModelHubDatasetsVersionsReadResponse = zod.object({";

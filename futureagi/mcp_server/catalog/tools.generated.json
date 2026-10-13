@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "source_contract_sha256": "d3a18f82340ee8685878337cbb6ae5a9c8adb1cb1c710f3437b2c16aea19f60f",
+  "source_contract_sha256": "a23da381c931e5a2bd89c76ea4600ebbc189edb1696d73fca016b3ba0914f043",
   "tool_count": 96,
   "tools": [
     {
@@ -6165,6 +6165,9 @@
             "title": "Higher is better",
             "type": "boolean",
             "default": true
+          },
+          "release_gate": {
+            "$ref": "#/definitions/ReleaseGatePolicy"
           }
         },
         "additionalProperties": false,
@@ -6172,7 +6175,50 @@
           "baseline_run_id",
           "candidate_run_id",
           "metric_id"
-        ]
+        ],
+        "definitions": {
+          "ReleaseGateCase": {
+            "required": [
+              "example_id",
+              "trial_number"
+            ],
+            "type": "object",
+            "properties": {
+              "example_id": {
+                "title": "Example id",
+                "type": "string",
+                "format": "uuid"
+              },
+              "trial_number": {
+                "title": "Trial number",
+                "type": "integer",
+                "maximum": 2147483647,
+                "minimum": 1
+              }
+            },
+            "additionalProperties": false
+          },
+          "ReleaseGatePolicy": {
+            "type": "object",
+            "properties": {
+              "max_regressions": {
+                "title": "Max regressions",
+                "type": "integer",
+                "default": 0,
+                "minimum": 0
+              },
+              "critical_cases": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/ReleaseGateCase"
+                },
+                "default": [],
+                "maxItems": 10000
+              }
+            },
+            "additionalProperties": false
+          }
+        }
       },
       "annotations": {
         "readOnlyHint": true,
@@ -6191,7 +6237,8 @@
             "candidate_run_id",
             "metric_id",
             "passing_score",
-            "higher_is_better"
+            "higher_is_better",
+            "release_gate"
           ]
         }
       },

@@ -73297,6 +73297,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "boolean",
           default: true,
         },
+        release_gate: {
+          $ref: "#/definitions/ReleaseGatePolicy",
+        },
       },
     },
     RunComparisonResponse: {
@@ -100466,6 +100469,26 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    ReleaseGatePolicy: {
+      type: "object",
+      properties: {
+        max_regressions: {
+          title: "Max regressions",
+          type: "integer",
+          default: 0,
+          minimum: 0,
+        },
+        critical_cases: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/ReleaseGateCase",
+          },
+          default: [],
+          maxItems: 10000,
+        },
+      },
+      additionalProperties: false,
+    },
     RunComparisonResult: {
       required: [
         "baseline_run_id",
@@ -100523,6 +100546,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/RunCaseTraceReferences",
           },
+        },
+        release_gate: {
+          $ref: "#/definitions/ReleaseGateReport",
         },
       },
     },
@@ -114335,6 +114361,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    ReleaseGateCase: {
+      required: ["example_id", "trial_number"],
+      type: "object",
+      properties: {
+        example_id: {
+          title: "Example id",
+          type: "string",
+          format: "uuid",
+        },
+        trial_number: {
+          title: "Trial number",
+          type: "integer",
+          maximum: 2147483647,
+          minimum: 1,
+        },
+      },
+      additionalProperties: false,
+    },
     MissingRunItems: {
       required: ["baseline", "candidate"],
       type: "object",
@@ -114349,6 +114393,59 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "array",
           items: {
             $ref: "#/definitions/RunItemIdentity",
+          },
+        },
+      },
+    },
+    ReleaseGateReport: {
+      required: [
+        "verdict",
+        "expected_count",
+        "comparable_count",
+        "regression_count",
+        "policy",
+        "passing_score",
+        "higher_is_better",
+        "blockers",
+      ],
+      type: "object",
+      properties: {
+        verdict: {
+          title: "Verdict",
+          type: "string",
+          enum: ["pass", "fail"],
+        },
+        expected_count: {
+          title: "Expected count",
+          type: "integer",
+          minimum: 0,
+        },
+        comparable_count: {
+          title: "Comparable count",
+          type: "integer",
+          minimum: 0,
+        },
+        regression_count: {
+          title: "Regression count",
+          type: "integer",
+          minimum: 0,
+        },
+        policy: {
+          $ref: "#/definitions/ReleaseGatePolicy",
+        },
+        passing_score: {
+          title: "Passing score",
+          type: "number",
+          "x-nullable": true,
+        },
+        higher_is_better: {
+          title: "Higher is better",
+          type: "boolean",
+        },
+        blockers: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/ReleaseGateBlocker",
           },
         },
       },
@@ -118455,6 +118552,41 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Trial number",
           type: "integer",
           minimum: 1,
+        },
+      },
+    },
+    ReleaseGateBlocker: {
+      required: ["example_id", "trial_number", "reason"],
+      type: "object",
+      properties: {
+        example_id: {
+          title: "Example id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        trial_number: {
+          title: "Trial number",
+          type: "integer",
+          minimum: 1,
+          "x-nullable": true,
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+          enum: [
+            "missing",
+            "duplicate",
+            "invalid",
+            "error",
+            "unknown",
+            "unsupported",
+            "not_assessed",
+            "critical_regression",
+            "critical_threshold",
+            "regression_limit_exceeded",
+            "empty_plan",
+          ],
         },
       },
     },

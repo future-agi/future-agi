@@ -126,7 +126,7 @@ def test_run_comparison_is_a_scoped_read_with_typed_body():
         "openWorldHint": False,
     }
     required = {"baseline_run_id", "candidate_run_id", "metric_id"}
-    fields = required | {"passing_score", "higher_is_better"}
+    fields = required | {"passing_score", "higher_is_better", "release_gate"}
     schema = tool["inputSchema"]
     assert set(schema["required"]) == required
     assert set(schema["properties"]) == fields
@@ -143,6 +143,23 @@ def test_run_comparison_is_a_scoped_read_with_typed_body():
     assert not validator.is_valid({**arguments, "workspace_id": "other"})
     assert not validator.is_valid({**arguments, "organization_id": "other"})
     assert not validator.is_valid({**arguments, "passing_score": "invalid"})
+    assert validator.is_valid({**arguments, "release_gate": {}})
+    critical = {"example_id": arguments["baseline_run_id"], "trial_number": 1}
+    assert validator.is_valid(
+        {
+            **arguments,
+            "release_gate": {"max_regressions": 1, "critical_cases": [critical]},
+        }
+    )
+    for policy in (
+        None,
+        {"max_regressions": True},
+        {"max_regressions": -1},
+        {"max_regressions": 0.5},
+        {"unexpected": True},
+        {"critical_cases": [{**critical, "unexpected": True}]},
+    ):
+        assert not validator.is_valid({**arguments, "release_gate": policy})
     assert not validator.is_valid({**arguments, "higher_is_better": "false"})
     assert not validator.is_valid({"baseline_run_id": arguments["baseline_run_id"]})
 

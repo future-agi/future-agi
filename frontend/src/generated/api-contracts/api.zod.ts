@@ -23583,19 +23583,55 @@ export const ExternalExperimentRunsCreateResponse = zod.object({
 });
 
 /**
- * Compare compatible persisted runs. Requires the same dataset version, exact example/trial plan and selected evaluator binding. At most 10,000 planned and recorded items per run; excess evidence is rejected, never truncated. Tenant and workspace scope come from authentication. This endpoint does not execute tasks or make a CI decision.
+ * Compare compatible persisted runs. Requires the same dataset version, exact example/trial plan and selected evaluator binding. At most 10,000 planned and recorded items per run; excess evidence is rejected, never truncated. Tenant and workspace scope come from authentication. An optional release_gate derives a case-level verdict requiring valid evidence for the complete plan on both sides; a failed gate still returns 200. This endpoint does not execute tasks or attest caller-supplied evidence.
  */
 export const experimentRunsCompareBodyHigherIsBetterDefault = true;
+export const experimentRunsCompareBodyReleaseGateMaxRegressionsDefault = 0;
+export const experimentRunsCompareBodyReleaseGateMaxRegressionsMin = 0;
 
-export const ExperimentRunsCompareBody = zod.object({
-  baseline_run_id: zod.string().uuid(),
-  candidate_run_id: zod.string().uuid(),
-  metric_id: zod.string().uuid(),
-  passing_score: zod.number().optional().nullable(),
-  higher_is_better: zod
-    .boolean()
-    .default(experimentRunsCompareBodyHigherIsBetterDefault),
-});
+export const experimentRunsCompareBodyReleaseGateCriticalCasesItemTrialNumberMax = 2147483647;
+
+export const experimentRunsCompareBodyReleaseGateCriticalCasesDefault = [];
+export const experimentRunsCompareBodyReleaseGateCriticalCasesMax = 10000;
+
+export const ExperimentRunsCompareBody = zod
+  .object({
+    baseline_run_id: zod.string().uuid(),
+    candidate_run_id: zod.string().uuid(),
+    metric_id: zod.string().uuid(),
+    passing_score: zod.number().optional().nullable(),
+    higher_is_better: zod
+      .boolean()
+      .default(experimentRunsCompareBodyHigherIsBetterDefault),
+    release_gate: zod
+      .object({
+        max_regressions: zod
+          .number()
+          .int()
+          .min(experimentRunsCompareBodyReleaseGateMaxRegressionsMin)
+          .default(experimentRunsCompareBodyReleaseGateMaxRegressionsDefault),
+        critical_cases: zod
+          .array(
+            zod
+              .object({
+                example_id: zod.string().uuid(),
+                trial_number: zod
+                  .number()
+                  .int()
+                  .min(1)
+                  .max(
+                    experimentRunsCompareBodyReleaseGateCriticalCasesItemTrialNumberMax,
+                  ),
+              })
+              .strict(),
+          )
+          .max(experimentRunsCompareBodyReleaseGateCriticalCasesMax)
+          .default(experimentRunsCompareBodyReleaseGateCriticalCasesDefault),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
 
 export const experimentRunsCompareResponseResultComparisonBaselineItemCountMin = 0;
 
@@ -23652,6 +23688,21 @@ export const experimentRunsCompareResponseResultCandidateCountsCompletedMin = 0;
 export const experimentRunsCompareResponseResultCandidateCountsFailedMin = 0;
 
 export const experimentRunsCompareResponseResultCandidateCountsAssessedMin = 0;
+
+export const experimentRunsCompareResponseResultReleaseGateExpectedCountMin = 0;
+
+export const experimentRunsCompareResponseResultReleaseGateComparableCountMin = 0;
+
+export const experimentRunsCompareResponseResultReleaseGateRegressionCountMin = 0;
+
+export const experimentRunsCompareResponseResultReleaseGatePolicyMaxRegressionsDefault = 0;
+export const experimentRunsCompareResponseResultReleaseGatePolicyMaxRegressionsMin = 0;
+
+export const experimentRunsCompareResponseResultReleaseGatePolicyCriticalCasesItemTrialNumberMax = 2147483647;
+
+export const experimentRunsCompareResponseResultReleaseGatePolicyCriticalCasesDefault =
+  [];
+export const experimentRunsCompareResponseResultReleaseGatePolicyCriticalCasesMax = 10000;
 
 export const ExperimentRunsCompareResponse = zod.object({
   status: zod.boolean(),
@@ -23866,6 +23917,73 @@ export const ExperimentRunsCompareResponse = zod.object({
           .nullable(),
       }),
     ),
+    release_gate: zod
+      .object({
+        verdict: zod.enum(["pass", "fail"]),
+        expected_count: zod
+          .number()
+          .min(experimentRunsCompareResponseResultReleaseGateExpectedCountMin),
+        comparable_count: zod
+          .number()
+          .min(
+            experimentRunsCompareResponseResultReleaseGateComparableCountMin,
+          ),
+        regression_count: zod
+          .number()
+          .min(
+            experimentRunsCompareResponseResultReleaseGateRegressionCountMin,
+          ),
+        policy: zod.object({
+          max_regressions: zod
+            .number()
+            .min(
+              experimentRunsCompareResponseResultReleaseGatePolicyMaxRegressionsMin,
+            )
+            .default(
+              experimentRunsCompareResponseResultReleaseGatePolicyMaxRegressionsDefault,
+            ),
+          critical_cases: zod
+            .array(
+              zod.object({
+                example_id: zod.string().uuid(),
+                trial_number: zod
+                  .number()
+                  .min(1)
+                  .max(
+                    experimentRunsCompareResponseResultReleaseGatePolicyCriticalCasesItemTrialNumberMax,
+                  ),
+              }),
+            )
+            .max(
+              experimentRunsCompareResponseResultReleaseGatePolicyCriticalCasesMax,
+            )
+            .default(
+              experimentRunsCompareResponseResultReleaseGatePolicyCriticalCasesDefault,
+            ),
+        }),
+        passing_score: zod.number().nullable(),
+        higher_is_better: zod.boolean(),
+        blockers: zod.array(
+          zod.object({
+            example_id: zod.string().uuid().nullable(),
+            trial_number: zod.number().min(1).nullable(),
+            reason: zod.enum([
+              "missing",
+              "duplicate",
+              "invalid",
+              "error",
+              "unknown",
+              "unsupported",
+              "not_assessed",
+              "critical_regression",
+              "critical_threshold",
+              "regression_limit_exceeded",
+              "empty_plan",
+            ]),
+          }),
+        ),
+      })
+      .optional(),
   }),
 });
 

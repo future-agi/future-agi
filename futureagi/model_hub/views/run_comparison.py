@@ -15,6 +15,11 @@ from model_hub.serializers.run_comparison import (
     RunComparisonResponseSerializer,
     RunComparisonResultSerializer,
 )
+from model_hub.services.experiment_release_gate import (
+    GateCaseIdentity,
+    ReleaseGatePolicy,
+    evaluate_release_gate,
+)
 from model_hub.services.persisted_run_comparison import (
     RunComparisonError,
     compare_experiment_runs,
@@ -38,14 +43,15 @@ class RunComparisonView(APIView):
         responses={200: RunComparisonResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
         reject_unknown_fields=True,
         operation_id="experiment_runs_compare",
-        operation_description="Compare compatible persisted runs. Requires the same dataset version, exact example/trial plan and selected evaluator binding. At most 10,000 planned and recorded items per run; excess evidence is rejected, never truncated. Tenant and workspace scope come from authentication. This endpoint does not execute tasks or make a CI decision.",
+        operation_description="Compare compatible persisted runs. Requires the same dataset version, exact example/trial plan and selected evaluator binding. At most 10,000 planned and recorded items per run; excess evidence is rejected, never truncated. Tenant and workspace scope come from authentication. An optional release_gate derives a case-level verdict requiring valid evidence for the complete plan on both sides; a failed gate still returns 200. This endpoint does not execute tasks or attest caller-supplied evidence.",
     )
     @primary_required
     def post(self, request: Request) -> Response:
         organization = getattr(request, "organization", None)
         if organization is None:
             return _gm.not_found("Experiment run not found")
-        data = request.validated_data
+        data = dict(request.validated_data)
+        gate_policy = data.pop("release_gate", None)
         run_ids = {data["baseline_run_id"], data["candidate_run_id"]}
         # Reuse default-workspace visibility, including authorized legacy nulls.
         visible = dict(
@@ -67,6 +73,29 @@ class RunComparisonView(APIView):
         except RunComparisonError as exc:
             return _gm.bad_request(str(exc))
         payload = asdict(result)
+        if gate_policy is not None:
+            try:
+                gate = evaluate_release_gate(
+                    result.comparison,
+                    expected_cases=(
+                        GateCaseIdentity(ref.example_id, ref.trial_number)
+                        for ref in result.trace_refs
+                    ),
+                    policy=ReleaseGatePolicy(
+                        max_regressions=gate_policy["max_regressions"],
+                        critical_cases=tuple(
+                            GateCaseIdentity(
+                                str(case["example_id"]), case["trial_number"]
+                            )
+                            for case in gate_policy["critical_cases"]
+                        ),
+                    ),
+                    passing_score=data["passing_score"],
+                    higher_is_better=data["higher_is_better"],
+                )
+            except ValueError as exc:
+                return _gm.bad_request(str(exc))
+            payload["release_gate"] = asdict(gate)
         payload["comparison"]["comparable_count"] = result.comparison.comparable_count
         payload["missing_by_side"] = {
             side: [

@@ -11769,12 +11769,29 @@ export interface ExternalRunCreateResponseApi {
   result: ExternalRunHeaderApi;
 }
 
+export interface ReleaseGateCaseApi {
+  example_id: string;
+  /**
+   * @minimum 1
+   * @maximum 2147483647
+   */
+  trial_number: number;
+}
+
+export interface ReleaseGatePolicyApi {
+  /** @minimum 0 */
+  max_regressions?: number;
+  /** @maxItems 10000 */
+  critical_cases?: ReleaseGateCaseApi[];
+}
+
 export interface RunComparisonRequestApi {
   baseline_run_id: string;
   candidate_run_id: string;
   metric_id: string;
   passing_score?: number | null;
   higher_is_better?: boolean;
+  release_gate?: ReleaseGatePolicyApi;
 }
 
 export type RunAggregateApiStatusCounts = { [key: string]: number };
@@ -11890,6 +11907,52 @@ export interface RunCaseTraceReferencesApi {
   candidate: RunTraceReferenceApi | null;
 }
 
+export type ReleaseGateReportApiVerdict =
+  (typeof ReleaseGateReportApiVerdict)[keyof typeof ReleaseGateReportApiVerdict];
+
+export const ReleaseGateReportApiVerdict = {
+  pass: "pass",
+  fail: "fail",
+} as const;
+
+export type ReleaseGateBlockerApiReason =
+  (typeof ReleaseGateBlockerApiReason)[keyof typeof ReleaseGateBlockerApiReason];
+
+export const ReleaseGateBlockerApiReason = {
+  missing: "missing",
+  duplicate: "duplicate",
+  invalid: "invalid",
+  error: "error",
+  unknown: "unknown",
+  unsupported: "unsupported",
+  not_assessed: "not_assessed",
+  critical_regression: "critical_regression",
+  critical_threshold: "critical_threshold",
+  regression_limit_exceeded: "regression_limit_exceeded",
+  empty_plan: "empty_plan",
+} as const;
+
+export interface ReleaseGateBlockerApi {
+  example_id: string | null;
+  /** @minimum 1 */
+  trial_number: number | null;
+  reason: ReleaseGateBlockerApiReason;
+}
+
+export interface ReleaseGateReportApi {
+  verdict: ReleaseGateReportApiVerdict;
+  /** @minimum 0 */
+  expected_count: number;
+  /** @minimum 0 */
+  comparable_count: number;
+  /** @minimum 0 */
+  regression_count: number;
+  policy: ReleaseGatePolicyApi;
+  passing_score: number | null;
+  higher_is_better: boolean;
+  blockers: ReleaseGateBlockerApi[];
+}
+
 export interface RunComparisonResultApi {
   baseline_run_id: string;
   candidate_run_id: string;
@@ -11901,6 +11964,7 @@ export interface RunComparisonResultApi {
   candidate_counts: RunCountsApi;
   missing_by_side: MissingRunItemsApi;
   trace_refs: RunCaseTraceReferencesApi[];
+  release_gate?: ReleaseGateReportApi;
 }
 
 export interface RunComparisonResponseApi {
