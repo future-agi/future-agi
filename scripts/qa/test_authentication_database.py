@@ -61,6 +61,8 @@ def load_definitions():
         "custom_exception_handler",
         "DatabaseUnavailable",
         "_database_unavailable_metadata",
+        "_read_auth_token_cache",
+        "_write_auth_token_cache",
     }
     nodes = [
         node
@@ -72,7 +74,22 @@ def load_definitions():
     assert {node.name for node in nodes} >= names - {
         "DatabaseUnavailable",
         "_database_unavailable_metadata",
+        "_read_auth_token_cache",
+        "_write_auth_token_cache",
     }
+
+    class ConnectionInterrupted(Exception):
+        """Stand-in for django_redis.exceptions.ConnectionInterrupted."""
+
+    class RedisError(Exception):
+        """Stand-in for redis.exceptions.RedisError."""
+
+    class RedisTimeoutError(RedisError):
+        """Stand-in for redis.exceptions.TimeoutError."""
+
+    class RedisConnectionError(RedisError):
+        """Stand-in for redis.exceptions.ConnectionError."""
+
     ns = {
         "BaseAuthentication": BaseAuthentication,
         "APIException": APIException,
@@ -82,6 +99,9 @@ def load_definitions():
         "InterfaceError": InterfaceError,
         "OperationalError": OperationalError,
         "IntegrityError": IntegrityError,
+        "ConnectionInterrupted": ConnectionInterrupted,
+        "RedisError": RedisError,
+        "_AUTH_CACHE_TRANSPORT_ERRORS": (ConnectionInterrupted, RedisError),
         "Response": Response,
         "status": status,
         "settings": settings,
@@ -97,10 +117,25 @@ def load_definitions():
         "logger": MagicMock(),
         "structlog": MagicMock(),
         "traceback": MagicMock(),
+        "Any": object,
     }
     ns.update(runpy.run_path(str(ROOT / "tfc/utils/api_errors.py")))
     ns["__name__"] = "accounts.authentication"
     exec(compile(ast.Module(body=nodes, type_ignores=[]), str(SOURCE), "exec"), ns)
+    ns["_ConnectionInterrupted"] = ConnectionInterrupted
+    ns["_RedisTimeoutError"] = RedisTimeoutError
+    ns["_RedisConnectionError"] = RedisConnectionError
+    # Older source without the helpers still calls cache.get/set directly.
+    if "_read_auth_token_cache" not in ns:
+
+        def _read_auth_token_cache(cache_key):
+            return ns["cache"].get(cache_key)
+
+        def _write_auth_token_cache(cache_key, value, *, timeout):
+            ns["cache"].set(cache_key, value, timeout=timeout)
+
+        ns["_read_auth_token_cache"] = _read_auth_token_cache
+        ns["_write_auth_token_cache"] = _write_auth_token_cache
     return ns
 
 
@@ -518,6 +553,62 @@ class AuthenticationDatabaseTests(unittest.TestCase):
         self.tokens.create.assert_not_called()
         self.assertEqual(self.cache.get.return_value["token"], "fixture-access")
         self.assertEqual(self.ns["logger"].mock_calls, [])
+
+    def test_cache_get_transport_errors_fall_through_to_database(self):
+        """Redis read failures must not look like a bad token (issue #3174)."""
+        for error_type in (
+            self.ns["_RedisTimeoutError"],
+            self.ns["_RedisConnectionError"],
+            self.ns["_ConnectionInterrupted"],
+        ):
+            with self.subTest(error_type=error_type.__name__):
+                self.prepare_auth()
+                self.cache.get.side_effect = error_type("Timeout reading from socket")
+                self.cache.get.return_value = None
+                response = self.request()
+                self.assertEqual(
+                    response.status_code,
+                    200,
+                    f"{error_type.__name__} on cache.get must still authenticate",
+                )
+                self.tokens.get.assert_called_once()
+                self.auth._set_workspace_context.assert_called_once()
+                self.ns["logger"].warning.assert_called()
+                warning_event = self.ns["logger"].warning.call_args.args[0]
+                self.assertEqual(warning_event, "auth_token_cache_get_failed")
+
+    def test_cache_set_transport_errors_do_not_reject_valid_token(self):
+        """Redis write failures after DB validation must still authenticate."""
+        for stage in ("cache-hit-refresh", "cold-write"):
+            for error_type in (
+                self.ns["_RedisTimeoutError"],
+                self.ns["_RedisConnectionError"],
+                self.ns["_ConnectionInterrupted"],
+            ):
+                with self.subTest(stage=stage, error_type=error_type.__name__):
+                    self.prepare_auth()
+                    if stage == "cold-write":
+                        self.cache.get.return_value = None
+                    self.cache.set.side_effect = error_type(
+                        "Timeout reading from socket"
+                    )
+                    response = self.request()
+                    self.assertEqual(
+                        response.status_code,
+                        200,
+                        f"{error_type.__name__} on cache.set ({stage}) must still authenticate",
+                    )
+                    self.auth._set_workspace_context.assert_called_once()
+                    self.ns["logger"].warning.assert_called()
+                    warning_event = self.ns["logger"].warning.call_args.args[0]
+                    self.assertEqual(warning_event, "auth_token_cache_set_failed")
+
+    def test_cache_hit_set_failure_still_touches_token(self):
+        self.cache.set.side_effect = self.ns["_RedisTimeoutError"](
+            "Timeout reading from socket"
+        )
+        self.assertEqual(self.request().status_code, 200)
+        self.tokens.filter.return_value.update.assert_called_once_with(last_used_at=NOW)
 
     def test_drf_rollback_is_once_per_503_and_only_for_active_atomic_request(self):
         response = self.ns["custom_exception_handler"](OperationalError("private"), {})
