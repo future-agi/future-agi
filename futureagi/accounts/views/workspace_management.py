@@ -1344,7 +1344,14 @@ class ResendInviteAPIView(APIView):
                 current_workspace = None
 
             # Generate new password and send email
-            from accounts.utils import generate_password
+            from accounts.utils import (
+                generate_password,
+                refresh_pending_invite_expiration,
+            )
+
+            # Refresh the matching OrganizationInvite's expiry too, so this
+            # path behaves the same as InviteResendAPIView (#2437).
+            refresh_pending_invite_expiration(organization, target_user.email)
 
             new_password = generate_password()
             target_user.set_password(new_password)
