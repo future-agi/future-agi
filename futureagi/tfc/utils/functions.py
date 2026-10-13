@@ -686,6 +686,21 @@ def calculate_eval_average(eval_template, api_logs):
                                 valid_logs += 1
                             case _:
                                 valid_logs += 1
+                    elif choices_map and eval_template.multi_choice:
+                        # Multi-choice logs select several choices; score each
+                        # through choices_map and average the pass/neutral/fail
+                        # weight (mirrors _calculate_numeric_choices_average's
+                        # multi-choice path) instead of counting every log as a
+                        # blanket success, which forced the average to 100%.
+                        weights = {"pass": 1.0, "neutral": 0.5}
+                        selected = output.get("output") or []
+                        scores = [
+                            weights.get(choices_map.get(choice), 0.0)
+                            for choice in selected
+                        ]
+                        if scores:
+                            success_count += sum(scores) / len(scores)
+                            valid_logs += 1
                     else:
                         success_count += 1
                         valid_logs += 1
