@@ -661,6 +661,9 @@ class SingleEvaluationConfigSerializer(serializers.Serializer):
     kb_id = serializers.CharField(
         required=False, allow_null=True, allow_blank=True, default=None
     )
+    pinned_version_id = serializers.UUIDField(
+        required=False, allow_null=True, default=None
+    )
 
     def validate(self, data):
         """Validate the evaluation configuration"""
