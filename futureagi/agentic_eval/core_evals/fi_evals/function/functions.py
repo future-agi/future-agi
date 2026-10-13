@@ -9,7 +9,8 @@ from typing import Any, List
 import Levenshtein
 import numpy as np
 import requests
-from jinja2 import Environment
+import jinja2
+from jinja2.sandbox import SandboxedEnvironment
 
 from agentic_eval.core_evals.fi_evals.grounded.similarity import CosineSimilarity
 from agentic_eval.core_evals.fi_utils.exceptions import (
@@ -1841,16 +1842,38 @@ def _validate_llm_similarity(actual_value: str, expected_value: str, validation:
         logger.error(error_message)
         return False, error_message
 
+def _render_validation_message(template: str, render_context: dict) -> str:
+    """Render a JsonValidation LLM prompt. Templates are caller-supplied.
+
+    A plain Environment lets ``{{ ''.__class__... }}`` reach subprocess/os
+    before the string is sent to the model. Sandbox rejection and parse
+    failure fall back to literal substitution, matching the other eval
+    renders, so the payload is not executed and the worker does not crash.
+    """
+    env = SandboxedEnvironment(
+        variable_start_string="{{",
+        variable_end_string="}}",
+        undefined=PreserveUndefined,
+    )
+    try:
+        return env.from_string(template).render(render_context)
+    except (jinja2.TemplateSyntaxError, jinja2.exceptions.SecurityError):
+        rendered = template
+        for key, value in render_context.items():
+            rendered = rendered.replace("{{" + key + "}}", str(value))
+            rendered = rendered.replace("{{ " + key + " }}", str(value))
+        return rendered
+
+
 def _get_messages(validation: dict, actual_value: Any, expected_value: Any) -> list:
     if validation.get("system_message") and validation.get("user_message"):
-        env = Environment(
-            variable_start_string='{{',
-            variable_end_string='}}',
-            undefined=PreserveUndefined
-        )
         render_context = {"actual": actual_value, "expected": expected_value}
-        system_message = env.from_string(validation.get("system_message")).render(render_context)
-        user_message = env.from_string(validation.get("user_message")).render(render_context)
+        system_message = _render_validation_message(
+            validation.get("system_message"), render_context
+        )
+        user_message = _render_validation_message(
+            validation.get("user_message"), render_context
+        )
         return [
             {"role": "system", "content": system_message},
             {"role": "user", "content": user_message},
