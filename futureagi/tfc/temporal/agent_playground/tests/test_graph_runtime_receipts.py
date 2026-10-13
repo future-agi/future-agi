@@ -34,6 +34,7 @@ from model_hub.models.run_prompt import PromptTemplate, PromptVersion
 from model_hub.services import graph_version_task_adapter as adapter
 from model_hub.services.experiment_run_creation import create_experiment_run
 from model_hub.services.experiment_run_writes import transition_run
+from model_hub.services.graph_result_recovery import recover_graph_run_item
 from tfc.constants.levels import Level
 from tfc.temporal.agent_playground.activities import ALL_ACTIVITIES
 from tfc.temporal.agent_playground.tests import test_experiment_run_adapter
@@ -157,7 +158,43 @@ async def test_queued_graph_survives_adapter_timeout_without_duplicate_dispatch(
     assert item.status == "running" and item.output is None
 
 
+async def test_completed_graph_result_has_explicit_no_dispatch_recovery(
+    graph_run_factory, workflow_environment, monkeypatch
+):
+    create, _, scope = graph_run_factory
+    run, _ = await sync_to_async(create)(inputs=({"question": "recover me"},))
+    client = await _client(workflow_environment, monkeypatch, NoOpTracer())
+    queue = f"graph-recovery-{uuid.uuid4().hex}"
+    with pytest.raises(adapter.GraphRunIndeterminateError, match="timed out"):
+        await asyncio.to_thread(
+            adapter.run_graph_experiment,
+            run_id=run.id,
+            task_queue=queue,
+            timeout_seconds=0.2,
+            **scope,
+        )
+    item = await sync_to_async(ExperimentRunItem.no_workspace_objects.get)(run=run)
+    workflow_id = item.metadata["_futureagi_run_write"]["graph_execution"][
+        "workflow_id"
+    ]
+    async with _worker(client, queue):
+        completed = await asyncio.wait_for(
+            client.get_workflow_handle(workflow_id).result(), 30
+        )
+    assert completed["status"] == "SUCCESS"
+    recovered = await asyncio.to_thread(
+        recover_graph_run_item, item_id=item.id, **scope
+    )
+    replay = await asyncio.to_thread(recover_graph_run_item, item_id=item.id, **scope)
+    assert recovered.id == replay.id == item.id
+    assert recovered.status == replay.status == "completed"
+    assert recovered.output == {"answer": "recover me"}
+    assert all(ref["status"] == "not_assessed" for ref in recovered.score_refs)
+    assert await sync_to_async(GraphExecution.no_workspace_objects.count)() == 1
+
+
 @pytest.mark.live_llm
+@pytest.mark.parametrize("recover_after_timeout", [False, True])
 @pytest.mark.skipif(
     not os.getenv("GRAPH_RUNTIME_MODEL"),
     reason="set GRAPH_RUNTIME_MODEL for local model receipt",
@@ -170,6 +207,7 @@ async def test_real_two_node_llm_graph_persists_output_and_trace_context(
     user,
     register_llm_runner,
     monkeypatch,
+    recover_after_timeout,
 ):
     from traceai_litellm import LiteLLMInstrumentor
 
@@ -271,7 +309,33 @@ async def test_real_two_node_llm_graph_persists_output_and_trace_context(
     queue = f"graph-model-{uuid.uuid4().hex}"
     scope = {"organization_id": organization.id, "workspace_id": workspace.id}
     try:
+        if recover_after_timeout:
+            with pytest.raises(adapter.GraphRunIndeterminateError, match="timed out"):
+                await asyncio.to_thread(
+                    adapter.run_graph_experiment,
+                    run_id=run.id,
+                    task_queue=queue,
+                    timeout_seconds=0.2,
+                    tracer=tracer,
+                    **scope,
+                )
+            claimed = await sync_to_async(ExperimentRunItem.no_workspace_objects.get)(
+                run=run
+            )
         async with _worker(client, queue):
+            if recover_after_timeout:
+                workflow_id = claimed.metadata["_futureagi_run_write"][
+                    "graph_execution"
+                ]["workflow_id"]
+                await asyncio.wait_for(
+                    client.get_workflow_handle(workflow_id).result(), 90
+                )
+                await asyncio.to_thread(
+                    recover_graph_run_item, item_id=claimed.id, **scope
+                )
+                await asyncio.to_thread(
+                    recover_graph_run_item, item_id=claimed.id, **scope
+                )
             result = await asyncio.to_thread(
                 adapter.run_graph_experiment,
                 run_id=run.id,
@@ -320,6 +384,7 @@ async def test_real_two_node_llm_graph_persists_output_and_trace_context(
                 "root_span_id": item.root_span_id,
                 "llm_spans": len(llm_spans),
                 "observe_ingestion": "not exercised",
+                "recovered_after_timeout": recover_after_timeout,
             }
         )
     finally:

@@ -311,6 +311,12 @@ def run_graph_experiment(
             root_span_id = (
                 f"{span_context.span_id:016x}" if span_context.is_valid else None
             )
+            # Capture the original context before dispatch so a later explicit
+            # recovery does not create a replacement identity for executed work.
+            item.metadata[_RUN_KEY]["graph_execution"].update(
+                trace_id=trace_id, root_span_id=root_span_id
+            )
+            item.save(update_fields=["metadata"])
             try:
                 _validate_version(run, organization_id)
                 if _load_run(str(run_id), **scope).status == "cancelled":
