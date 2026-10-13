@@ -182,7 +182,6 @@ class GraphExecutionWorkflow:
         running: dict[asyncio.Task, str] = {}  # task -> node_id
 
         while True:
-
             if len(running) < input.max_concurrent_nodes:
                 # Get ready, skip, and pending nodes
                 ready_result = await workflow.execute_activity(
@@ -322,12 +321,29 @@ class GraphExecutionWorkflow:
         )
 
         output_payload = get_result_field(collect_result, "output_payload", {})
+        # Preserve command arguments and completion results for histories written
+        # before collection/finalization failures became part of the contract.
+        validate_results = workflow.patched("graph-result-failures-v1")
+        collection_failed = (
+            validate_results and get_result_field(collect_result, "status") != "SUCCESS"
+        )
+        self._failed = self._failed or collection_failed
+        collection_error = (
+            get_result_field(collect_result, "error")
+            or "Graph output collection failed"
+        )
 
         final_status = "FAILED" if self._failed else "SUCCESS"
-        final_error = "One or more nodes failed" if self._failed else None
+        final_error = (
+            collection_error
+            if collection_failed
+            else "One or more nodes failed"
+            if self._failed
+            else None
+        )
 
         # Phase 5: Update GraphExecution DB record with final status
-        await workflow.execute_activity(
+        finalized = await workflow.execute_activity(
             "finalize_graph_execution_activity",
             FinalizeGraphExecutionInput(
                 graph_execution_id=self._graph_execution_id,
@@ -338,6 +354,11 @@ class GraphExecutionWorkflow:
             start_to_close_timeout=timedelta(minutes=2),
             retry_policy=SETUP_RETRY_POLICY,
         )
+        if validate_results and get_result_field(finalized, "status") != "SUCCESS":
+            final_status = "FAILED"
+            final_error = (
+                get_result_field(finalized, "error") or "Graph finalization failed"
+            )
 
         return ExecuteGraphOutput(
             graph_execution_id=self._graph_execution_id,
