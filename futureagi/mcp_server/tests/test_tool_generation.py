@@ -19,7 +19,7 @@ CATALOG_PATH = Path(__file__).resolve().parents[1] / "catalog/tools.yaml"
 def test_committed_catalog_generates_expected_tools():
     manifest = generate_tool_manifest(CONTRACT_PATH, CATALOG_PATH)
 
-    assert manifest["tool_count"] == 92
+    assert manifest["tool_count"] == 95
     tool_names = [tool["name"] for tool in manifest["tools"]]
     assert len(tool_names) == len(set(tool_names))
     assert {
@@ -35,6 +35,10 @@ def test_committed_catalog_generates_expected_tools():
         "list_dashboards",
         "query_dashboard_widget",
         "get_usage_overview",
+        "list_custom_eval_configs",
+        "create_custom_eval_config",
+        "check_eval_config_exists",
+        "create_eval_task",
     }.issubset(tool_names)
     assert len(manifest["source_contract_sha256"]) == 64
     for tool in manifest["tools"]:

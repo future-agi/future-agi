@@ -1,5 +1,5 @@
 version: 1
-expected_tool_count: 92
+expected_tool_count: 95
 
 # Pagination is an MCP-only page-size ceiling, so an oversized page is rejected
 # before the REST view queries and serializes it. The generator keeps a stricter
@@ -250,7 +250,7 @@ tools:
     access: read
   - name: create_eval_task
     group: observability
-    description: Create an online evaluation task.
+    description: Create an online evaluation task. The evals field must be CustomEvalConfig IDs from list_custom_eval_configs or create_custom_eval_config, not EvalTemplate IDs.
     operation: {method: POST, path: "/tracer/eval-task/"}
     access: write
     open_world: true
@@ -272,6 +272,23 @@ tools:
     operation: {method: POST, path: "/tracer/eval-task/unpause_eval_task/"}
     access: write
     open_world: true
+  - name: list_custom_eval_configs
+    group: observability
+    description: List CustomEvalConfig rows on tracing projects. Use the returned IDs as evals when calling create_eval_task.
+    operation: {method: GET, path: "/tracer/custom-eval-config/list_custom_eval_configs/"}
+    access: read
+    pagination:
+      limit: {maximum: 100}
+  - name: create_custom_eval_config
+    group: observability
+    description: Create a CustomEvalConfig from an EvalTemplate on a tracing project. Supply eval_template, project, name, and mapping. Use the returned ID with create_eval_task.
+    operation: {method: POST, path: "/tracer/custom-eval-config/"}
+    access: write
+  - name: check_eval_config_exists
+    group: observability
+    description: Check whether custom eval configurations already exist or conflict on a project before creating new ones.
+    operation: {method: POST, path: "/tracer/custom-eval-config/check_exists/"}
+    access: write
   # error_feed
   - name: list_error_clusters
     group: error_feed
