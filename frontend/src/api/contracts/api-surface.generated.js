@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1058,
+  endpointCount: 1059,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -1177,6 +1177,7 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/tracer/project/update_project_name/": ["post"],
       "/tracer/project/update_project_session_config/": ["post"],
       "/tracer/project/{id}/": ["delete", "get", "patch", "put"],
+      "/tracer/project/{id}/tag-definitions/": ["delete", "get", "patch"],
       "/tracer/project/{id}/tags/": ["patch"],
       "/tracer/replay-session/": ["get", "post"],
       "/tracer/replay-session/eval-configs/": ["get"],
@@ -2445,6 +2446,7 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/tracer/project/update_project_name/": ["post"],
   "/tracer/project/update_project_session_config/": ["post"],
   "/tracer/project/{id}/": ["delete", "get", "patch", "put"],
+  "/tracer/project/{id}/tag-definitions/": ["delete", "get", "patch"],
   "/tracer/project/{id}/tags/": ["patch"],
   "/tracer/replay-session/": ["get", "post"],
   "/tracer/replay-session/eval-configs/": ["get"],

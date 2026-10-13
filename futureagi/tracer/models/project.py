@@ -99,6 +99,38 @@ class Project(BaseModel):
         ]
 
 
+class ProjectTagDefinition(BaseModel):
+    """A reusable tag belonging to one project.
+
+    Colour lives here, not on the span assignment. ClickHouse ``spans.tags``
+    stays a JSON array of names so filters and SDK-set tags keep working.
+    """
+
+    project = models.ForeignKey(
+        Project,
+        on_delete=models.CASCADE,
+        related_name="tag_definitions",
+    )
+    name = models.CharField(max_length=255)
+    color = models.CharField(max_length=7, blank=True, default="")
+
+    class Meta:
+        db_table = "tracer_project_tag_definition"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["project", "name"],
+                condition=models.Q(deleted=False),
+                name="unique_project_tag_name",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["project", "name"]),
+        ]
+
+    def __str__(self):
+        return f"{self.project_id}:{self.name}"
+
+
 class TranscriptEntry(PydanticBaseModel):
     id: Optional[str] = None
     role: Optional[str] = None

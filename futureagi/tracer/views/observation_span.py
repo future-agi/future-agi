@@ -1749,29 +1749,58 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
     @action(detail=False, methods=["post"], url_path="update-tags")
     def update_tags(self, request, *args, **kwargs):
-        """Update tags for an observation span."""
+        """Set a span's tags in ClickHouse, scoped to the request project."""
+        from tracer.models.project import Project
+        from tracer.services.project_tags import (
+            TagNotFound,
+            TagStoreUnavailable,
+            set_span_tags,
+        )
+
+        span_id = request.data.get("span_id")
+        project_id = request.data.get("project_id") or request.query_params.get(
+            "project_id"
+        )
+        if not span_id:
+            return self._gm.bad_request("span_id is required")
+        organization = _get_request_organization(request)
+        project_qs = Project.no_workspace_objects.filter(
+            _project_workspace_scope_q(request, project_prefix=""),
+            organization=organization,
+        )
+        if project_id:
+            project = project_qs.filter(id=project_id).first() if organization else None
+            if project is None:
+                return self._gm.bad_request("Observation span not found")
+        else:
+            from tracer.services.project_tags import find_span_in_projects
+
+            try:
+                located = find_span_in_projects(
+                    project_ids=[str(item) for item in project_qs.values_list("id", flat=True)],
+                    span_id=str(span_id),
+                )
+            except TagNotFound:
+                return self._gm.bad_request("Observation span not found")
+            project = project_qs.filter(id=located["project_id"]).first()
+            if project is None:
+                return self._gm.bad_request("Observation span not found")
         try:
-            span_id = request.data.get("span_id")
-            if not span_id:
-                return self._gm.bad_request("span_id is required")
-            span = ObservationSpan.objects.get(
-                _project_workspace_scope_q(request),
-                id=span_id,
-                project__organization=_get_request_organization(request),
+            names = set_span_tags(
+                project=project,
+                span_id=str(span_id),
+                raw_tags=request.data.get("tags"),
             )
-            tags = request.data.get("tags")
-            if tags is None:
-                return self._gm.bad_request("tags field is required")
-            if not isinstance(tags, list):
-                return self._gm.bad_request("tags must be a list")
-            span.tags = tags
-            span.save(update_fields=["tags"])
-            return self._gm.success_response({"id": str(span.id), "tags": span.tags})
-        except ObservationSpan.DoesNotExist:
+        except TagNotFound:
             return self._gm.bad_request("Observation span not found")
-        except Exception as e:
-            logger.exception(f"Error updating span tags: {e}")
-            return self._gm.bad_request("Error updating tags")
+        except TagStoreUnavailable:
+            return self._gm.custom_error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Tag store is temporarily unavailable",
+            )
+        except ValueError as exc:
+            return self._gm.bad_request(str(exc))
+        return self._gm.success_response({"id": str(span_id), "tags": names})
 
     @action(detail=False, methods=["post"])
     def submit_feedback_action_type(self, request, *args, **kwargs):

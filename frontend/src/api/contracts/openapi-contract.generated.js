@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1058,
+  endpointCount: 1059,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -37638,6 +37638,52 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       delete: {
         operationId: "tracer_project_delete",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/project/{id}/tag-definitions/": {
+      get: {
+        operationId: "tracer_project_tag-definitions_read",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/Project",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      patch: {
+        operationId: "tracer_project_tag-definitions_partial_update",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: {
+          $ref: "#/definitions/Project",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/Project",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      delete: {
+        operationId: "tracer_project_tag-definitions_delete",
         runtimeRequestValidation: false,
         runtimeResponseValidation: false,
         requestBody: null,
@@ -79141,7 +79187,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "array",
           items: {
             type: "string",
-            minLength: 1,
+            "x-nullable": true,
           },
         },
       },

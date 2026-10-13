@@ -59600,7 +59600,7 @@ export const TracerObservationSpanSubmitFeedbackActionTypeBody = zod.object({
 });
 
 /**
- * Update tags for an observation span.
+ * Set a span's tags in ClickHouse, scoped to the request project.
  */
 export const tracerObservationSpanUpdateTagsBodyParentSpanIdMax = 255;
 
@@ -61824,6 +61824,160 @@ export const TracerProjectPartialUpdateResponse = zod.object({
 });
 
 export const TracerProjectDeleteParams = zod.object({
+  id: zod.string(),
+});
+
+/**
+ * List, rename/recolour, or delete a project's reusable tags.
+ */
+export const TracerProjectTagDefinitionsReadParams = zod.object({
+  id: zod.string(),
+});
+
+export const tracerProjectTagDefinitionsReadResponseNameMax = 255;
+
+export const TracerProjectTagDefinitionsReadResponse = zod.object({
+  id: zod.string().uuid().optional(),
+  model_type: zod.enum([
+    "Numeric",
+    "ScoreCategorical",
+    "Ranking",
+    "BinaryClassification",
+    "Regression",
+    "ObjectDetection",
+    "Segmentation",
+    "GenerativeLLM",
+    "GenerativeImage",
+    "GenerativeVideo",
+    "TTS",
+    "STT",
+    "MultiModal",
+  ]),
+  name: zod.string().min(1).max(tracerProjectTagDefinitionsReadResponseNameMax),
+  trace_type: zod.enum(["experiment", "observe"]),
+  metadata: zod.object({}).passthrough().optional(),
+  organization: zod.string().uuid().optional(),
+  workspace: zod.string().uuid().optional(),
+  created_at: zod.string().datetime({ offset: true }).optional(),
+  updated_at: zod.string().datetime({ offset: true }).optional(),
+  config: zod
+    .object({})
+    .passthrough()
+    .optional()
+    .describe("Any valid JSON value."),
+  source: zod.enum(["demo", "prototype", "simulator"]).optional(),
+  session_config: zod
+    .object({})
+    .passthrough()
+    .optional()
+    .describe("Any valid JSON value."),
+  tags: zod
+    .object({})
+    .passthrough()
+    .optional()
+    .describe("Any valid JSON value."),
+});
+
+/**
+ * List, rename/recolour, or delete a project's reusable tags.
+ */
+export const TracerProjectTagDefinitionsPartialUpdateParams = zod.object({
+  id: zod.string(),
+});
+
+export const tracerProjectTagDefinitionsPartialUpdateBodyNameMax = 255;
+
+export const TracerProjectTagDefinitionsPartialUpdateBody = zod.object({
+  model_type: zod.enum([
+    "Numeric",
+    "ScoreCategorical",
+    "Ranking",
+    "BinaryClassification",
+    "Regression",
+    "ObjectDetection",
+    "Segmentation",
+    "GenerativeLLM",
+    "GenerativeImage",
+    "GenerativeVideo",
+    "TTS",
+    "STT",
+    "MultiModal",
+  ]),
+  name: zod
+    .string()
+    .min(1)
+    .max(tracerProjectTagDefinitionsPartialUpdateBodyNameMax),
+  trace_type: zod.enum(["experiment", "observe"]),
+  metadata: zod.object({}).passthrough().optional(),
+  config: zod
+    .object({})
+    .passthrough()
+    .optional()
+    .describe("Any valid JSON value."),
+  source: zod.enum(["demo", "prototype", "simulator"]).optional(),
+  session_config: zod
+    .object({})
+    .passthrough()
+    .optional()
+    .describe("Any valid JSON value."),
+  tags: zod
+    .object({})
+    .passthrough()
+    .optional()
+    .describe("Any valid JSON value."),
+});
+
+export const tracerProjectTagDefinitionsPartialUpdateResponseNameMax = 255;
+
+export const TracerProjectTagDefinitionsPartialUpdateResponse = zod.object({
+  id: zod.string().uuid().optional(),
+  model_type: zod.enum([
+    "Numeric",
+    "ScoreCategorical",
+    "Ranking",
+    "BinaryClassification",
+    "Regression",
+    "ObjectDetection",
+    "Segmentation",
+    "GenerativeLLM",
+    "GenerativeImage",
+    "GenerativeVideo",
+    "TTS",
+    "STT",
+    "MultiModal",
+  ]),
+  name: zod
+    .string()
+    .min(1)
+    .max(tracerProjectTagDefinitionsPartialUpdateResponseNameMax),
+  trace_type: zod.enum(["experiment", "observe"]),
+  metadata: zod.object({}).passthrough().optional(),
+  organization: zod.string().uuid().optional(),
+  workspace: zod.string().uuid().optional(),
+  created_at: zod.string().datetime({ offset: true }).optional(),
+  updated_at: zod.string().datetime({ offset: true }).optional(),
+  config: zod
+    .object({})
+    .passthrough()
+    .optional()
+    .describe("Any valid JSON value."),
+  source: zod.enum(["demo", "prototype", "simulator"]).optional(),
+  session_config: zod
+    .object({})
+    .passthrough()
+    .optional()
+    .describe("Any valid JSON value."),
+  tags: zod
+    .object({})
+    .passthrough()
+    .optional()
+    .describe("Any valid JSON value."),
+});
+
+/**
+ * List, rename/recolour, or delete a project's reusable tags.
+ */
+export const TracerProjectTagDefinitionsDeleteParams = zod.object({
   id: zod.string(),
 });
 
@@ -65777,18 +65931,20 @@ export const TracerTraceDeleteParams = zod.object({
 });
 
 /**
- * Update tags for a trace.
+ * The trace often has no Postgres row after the CH25 cutover. Colour is
+stored on the project tag definition; the assignment is a name list.
+ * @summary Set a trace's tags on its ClickHouse root span.
  */
 export const TracerTraceUpdateTagsParams = zod.object({
   id: zod.string(),
 });
 
 export const TracerTraceUpdateTagsBody = zod.object({
-  tags: zod.array(zod.string().min(1)),
+  tags: zod.array(zod.string()),
 });
 
 export const TracerTraceUpdateTagsResponse = zod.object({
-  tags: zod.array(zod.string().min(1)),
+  tags: zod.array(zod.string()),
 });
 
 export const TracerUserAlertLogsListQueryParams = zod.object({

@@ -75191,7 +75191,7 @@ export const getTracerObservationSpanUpdateTagsUrl = () => {
 };
 
 /**
- * Update tags for an observation span.
+ * Set a span's tags in ClickHouse, scoped to the request project.
  */
 export const tracerObservationSpanUpdateTags = async (
   observationSpanApi: NonReadonly<ObservationSpanApi>,
@@ -76989,6 +76989,138 @@ export const tracerProjectDelete = async (
 ): Promise<tracerProjectDeleteResponse> => {
   return apiMutator<tracerProjectDeleteResponse>(
     getTracerProjectDeleteUrl(id),
+    {
+      ...options,
+      method: "DELETE",
+    },
+  );
+};
+
+export type tracerProjectTagDefinitionsReadResponse200 = {
+  data: ProjectApi;
+  status: 200;
+};
+
+export type tracerProjectTagDefinitionsReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerProjectTagDefinitionsReadResponseSuccess =
+  tracerProjectTagDefinitionsReadResponse200 & {
+    headers: Headers;
+  };
+export type tracerProjectTagDefinitionsReadResponseError =
+  tracerProjectTagDefinitionsReadResponseDefault & {
+    headers: Headers;
+  };
+
+export type tracerProjectTagDefinitionsReadResponse =
+  | tracerProjectTagDefinitionsReadResponseSuccess
+  | tracerProjectTagDefinitionsReadResponseError;
+
+export const getTracerProjectTagDefinitionsReadUrl = (id: string) => {
+  return `/tracer/project/${id}/tag-definitions/`;
+};
+
+/**
+ * List, rename/recolour, or delete a project's reusable tags.
+ */
+export const tracerProjectTagDefinitionsRead = async (
+  id: string,
+  options?: RequestInit,
+): Promise<tracerProjectTagDefinitionsReadResponse> => {
+  return apiMutator<tracerProjectTagDefinitionsReadResponse>(
+    getTracerProjectTagDefinitionsReadUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerProjectTagDefinitionsPartialUpdateResponse200 = {
+  data: ProjectApi;
+  status: 200;
+};
+
+export type tracerProjectTagDefinitionsPartialUpdateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerProjectTagDefinitionsPartialUpdateResponseSuccess =
+  tracerProjectTagDefinitionsPartialUpdateResponse200 & {
+    headers: Headers;
+  };
+export type tracerProjectTagDefinitionsPartialUpdateResponseError =
+  tracerProjectTagDefinitionsPartialUpdateResponseDefault & {
+    headers: Headers;
+  };
+
+export type tracerProjectTagDefinitionsPartialUpdateResponse =
+  | tracerProjectTagDefinitionsPartialUpdateResponseSuccess
+  | tracerProjectTagDefinitionsPartialUpdateResponseError;
+
+export const getTracerProjectTagDefinitionsPartialUpdateUrl = (id: string) => {
+  return `/tracer/project/${id}/tag-definitions/`;
+};
+
+/**
+ * List, rename/recolour, or delete a project's reusable tags.
+ */
+export const tracerProjectTagDefinitionsPartialUpdate = async (
+  id: string,
+  projectApi: NonReadonly<ProjectApi>,
+  options?: RequestInit,
+): Promise<tracerProjectTagDefinitionsPartialUpdateResponse> => {
+  return apiMutator<tracerProjectTagDefinitionsPartialUpdateResponse>(
+    getTracerProjectTagDefinitionsPartialUpdateUrl(id),
+    {
+      ...options,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(projectApi),
+    },
+  );
+};
+
+export type tracerProjectTagDefinitionsDeleteResponse204 = {
+  data: void;
+  status: 204;
+};
+
+export type tracerProjectTagDefinitionsDeleteResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 204>;
+};
+
+export type tracerProjectTagDefinitionsDeleteResponseSuccess =
+  tracerProjectTagDefinitionsDeleteResponse204 & {
+    headers: Headers;
+  };
+export type tracerProjectTagDefinitionsDeleteResponseError =
+  tracerProjectTagDefinitionsDeleteResponseDefault & {
+    headers: Headers;
+  };
+
+export type tracerProjectTagDefinitionsDeleteResponse =
+  | tracerProjectTagDefinitionsDeleteResponseSuccess
+  | tracerProjectTagDefinitionsDeleteResponseError;
+
+export const getTracerProjectTagDefinitionsDeleteUrl = (id: string) => {
+  return `/tracer/project/${id}/tag-definitions/`;
+};
+
+/**
+ * List, rename/recolour, or delete a project's reusable tags.
+ */
+export const tracerProjectTagDefinitionsDelete = async (
+  id: string,
+  options?: RequestInit,
+): Promise<tracerProjectTagDefinitionsDeleteResponse> => {
+  return apiMutator<tracerProjectTagDefinitionsDeleteResponse>(
+    getTracerProjectTagDefinitionsDeleteUrl(id),
     {
       ...options,
       method: "DELETE",
@@ -80852,7 +80984,9 @@ export const getTracerTraceUpdateTagsUrl = (id: string) => {
 };
 
 /**
- * Update tags for a trace.
+ * The trace often has no Postgres row after the CH25 cutover. Colour is
+stored on the project tag definition; the assignment is a name list.
+ * @summary Set a trace's tags on its ClickHouse root span.
  */
 export const tracerTraceUpdateTags = async (
   id: string,

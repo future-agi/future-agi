@@ -65226,7 +65226,7 @@
         "/tracer/observation-span/update-tags/": {
             "post": {
                 "operationId": "tracer_observation-span_update_tags",
-                "description": "Update tags for an observation span.",
+                "description": "Set a span's tags in ClickHouse, scoped to the request project.",
                 "parameters": [
                     {
                         "name": "data",
@@ -66890,6 +66890,88 @@
             "delete": {
                 "operationId": "tracer_project_delete",
                 "description": "",
+                "parameters": [],
+                "responses": {
+                    "204": {
+                        "description": ""
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ]
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/tracer/project/{id}/tag-definitions/": {
+            "get": {
+                "operationId": "tracer_project_tag-definitions_read",
+                "description": "List, rename/recolour, or delete a project's reusable tags.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/Project"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ]
+            },
+            "patch": {
+                "operationId": "tracer_project_tag-definitions_partial_update",
+                "description": "List, rename/recolour, or delete a project's reusable tags.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/Project"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/Project"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ]
+            },
+            "delete": {
+                "operationId": "tracer_project_tag-definitions_delete",
+                "description": "List, rename/recolour, or delete a project's reusable tags.",
                 "parameters": [],
                 "responses": {
                     "204": {
@@ -70415,7 +70497,8 @@
         "/tracer/trace/{id}/tags/": {
             "patch": {
                 "operationId": "tracer_trace_update_tags",
-                "description": "Update tags for a trace.",
+                "summary": "Set a trace's tags on its ClickHouse root span.",
+                "description": "The trace often has no Postgres row after the CH25 cutover. Colour is\nstored on the project tag definition; the assignment is a name list.",
                 "parameters": [
                     {
                         "name": "data",
@@ -152656,7 +152739,7 @@
                     "type": "array",
                     "items": {
                         "type": "string",
-                        "minLength": 1
+                        "x-nullable": true
                     }
                 }
             }

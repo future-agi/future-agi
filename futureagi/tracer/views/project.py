@@ -849,6 +849,43 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 get_error_message("ERROR_FETCHING_PROJECT_LISTS")
             )
 
+    @action(detail=True, methods=["get", "patch", "delete"], url_path="tag-definitions")
+    def tag_definitions(self, request, *args, **kwargs):
+        """List, rename/recolour, or delete a project's reusable tags."""
+        from tracer.services.project_tags import (
+            TagNotFound,
+            TagStoreUnavailable,
+            delete_definition,
+            list_definitions,
+            update_definition,
+        )
+
+        project = self.get_object()
+        try:
+            if request.method == "GET":
+                return self._gm.success_response(
+                    {"tags": list_definitions(project=project)}
+                )
+            if request.method == "DELETE":
+                delete_definition(project=project, name=request.query_params.get("name", ""))
+                return self._gm.success_response({"deleted": True})
+            result = update_definition(
+                project=project,
+                name=request.data.get("name", ""),
+                new_name=request.data.get("new_name"),
+                color=request.data.get("color"),
+            )
+        except TagNotFound:
+            return self._gm.bad_request("Tag not found")
+        except TagStoreUnavailable:
+            return self._gm.custom_error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Tag store is temporarily unavailable",
+            )
+        except ValueError as exc:
+            return self._gm.bad_request(str(exc))
+        return self._gm.success_response(result)
+
     @action(detail=True, methods=["patch"], url_path="tags")
     def update_tags(self, request, *args, **kwargs):
         """Update tags for a project."""
