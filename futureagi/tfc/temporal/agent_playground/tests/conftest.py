@@ -541,7 +541,12 @@ class GraphBuilder:
                 ref_port = child_boundary_ports.get((key, "input"))
                 port = Port(
                     node=node,
-                    key="custom",
+                    key=(
+                        key
+                        if node.node_template
+                        and node.node_template.input_mode == PortMode.STRICT
+                        else "custom"
+                    ),
                     display_name=key,
                     direction=PortDirection.INPUT,
                     data_schema={},
@@ -556,7 +561,12 @@ class GraphBuilder:
                 ref_port = child_boundary_ports.get((key, "output"))
                 port = Port(
                     node=node,
-                    key="custom",
+                    key=(
+                        key
+                        if node.node_template
+                        and node.node_template.output_mode == PortMode.STRICT
+                        else "custom"
+                    ),
                     display_name=key,
                     direction=PortDirection.OUTPUT,
                     data_schema={},
