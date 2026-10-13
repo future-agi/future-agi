@@ -105,6 +105,10 @@ from model_hub.views.experiment_feedback_v2 import (
     ExperimentFeedbackGetTemplateV2View,
     ExperimentFeedbackSubmitV2View,
 )
+from model_hub.views.experiment_run_api import (
+    ExternalRunCreateView,
+    ExternalRunResultsView,
+)
 from model_hub.views.experiments import (
     AddExperimentEvalView,
     DatasetExperimentsView,
@@ -1252,6 +1256,16 @@ urlpatterns = [
         "experiment-runs/compare/",
         RunComparisonView.as_view(),
         name="experiment-run-compare",
+    ),
+    path(
+        "experiment-runs/",
+        ExternalRunCreateView.as_view(),
+        name="external-experiment-run-create",
+    ),
+    path(
+        "experiment-runs/<uuid:run_id>/results/",
+        ExternalRunResultsView.as_view(),
+        name="external-experiment-run-results",
     ),
     # V2 Experiment APIs
     path(

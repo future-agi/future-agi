@@ -1,0 +1,58 @@
+{
+  "status": true,
+  "result": {
+    "id": "90118217-b804-4ab5-86ab-e237ac70c06e",
+    "dataset_version_id": "a32176c5-abc5-41ac-8369-b20bcf5cb226",
+    "experiment_id": null,
+    "task_kind": "external",
+    "status": "draft",
+    "expected_items": [
+      {
+        "example_id": "611fda28-2468-4b37-a5ac-212d3989d6bf",
+        "trial_number": 1
+      },
+      {
+        "example_id": "611fda28-2468-4b37-a5ac-212d3989d6bf",
+        "trial_number": 2
+      },
+      {
+        "example_id": "a2af1067-fab5-4132-9ec9-51c86e0bccc0",
+        "trial_number": 1
+      },
+      {
+        "example_id": "a2af1067-fab5-4132-9ec9-51c86e0bccc0",
+        "trial_number": 2
+      }
+    ],
+    "evaluator_bindings": [
+      {
+        "metric_id": "6841f172-4f7c-412d-91da-6d9db56fdb5f",
+        "evaluator_version_id": "38930bbb-eacb-4771-a2e2-5bf4208285d3",
+        "template_id": "1913a9e8-5908-4629-9207-1d63441086be",
+        "version_number": 1,
+        "binding_config": {},
+        "binding_model": "turing_large",
+        "prompt_messages": [],
+        "config_snapshot": {
+          "threshold": 0.5
+        },
+        "criteria": "",
+        "model": "",
+        "output_type_normalized": null,
+        "pass_threshold": null,
+        "choice_scores": null
+      }
+    ],
+    "model_config": {
+      "model": "deterministic",
+      "provider": "fixture"
+    },
+    "metadata": {
+      "code_revision": "fixture-v1"
+    },
+    "started_at": null,
+    "completed_at": null,
+    "created_at": "2026-10-13T08:40:10.925387Z",
+    "updated_at": "2026-10-13T08:40:10.931573Z"
+  }
+}

@@ -4,7 +4,7 @@ import uuid
 from pathlib import Path
 
 import pytest
-from jsonschema import Draft7Validator
+from jsonschema import Draft7Validator, FormatChecker
 
 from mcp_server.tool_generation import (
     ToolGenerationError,
@@ -20,7 +20,7 @@ CATALOG_PATH = Path(__file__).resolve().parents[1] / "catalog/tools.yaml"
 def test_committed_catalog_generates_expected_tools():
     manifest = generate_tool_manifest(CONTRACT_PATH, CATALOG_PATH)
 
-    assert manifest["tool_count"] == 94
+    assert manifest["tool_count"] == 96
     tool_names = [tool["name"] for tool in manifest["tools"]]
     assert len(tool_names) == len(set(tool_names))
     assert {
@@ -32,6 +32,8 @@ def test_committed_catalog_generates_expected_tools():
         "search_traces",
         "submit_annotation",
         "create_experiment",
+        "create_external_experiment_run",
+        "ingest_external_experiment_results",
         "compare_experiment_runs",
         "get_test_execution_analytics",
         "get_gateway_analytics",
@@ -143,6 +145,139 @@ def test_run_comparison_is_a_scoped_read_with_typed_body():
     assert not validator.is_valid({**arguments, "passing_score": "invalid"})
     assert not validator.is_valid({**arguments, "higher_is_better": "false"})
     assert not validator.is_valid({"baseline_run_id": arguments["baseline_run_id"]})
+
+
+def test_external_run_creation_tool_pins_a_bounded_plan_without_tenant_overrides():
+    tools = {
+        tool["name"]: tool
+        for tool in generate_tool_manifest(CONTRACT_PATH, CATALOG_PATH)["tools"]
+    }
+    tool = tools["create_external_experiment_run"]
+    assert tool["group"] == "experiments"
+    assert tool["request"]["method"] == "POST"
+    assert tool["request"]["path"] == "/model-hub/experiment-runs/"
+    assert tool["annotations"] == {
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    }
+    schema = tool["inputSchema"]
+    assert set(schema["required"]) == {"run_id", "dataset_version_id", "expected_items"}
+    assert schema["properties"]["expected_items"]["minItems"] == 1
+    assert schema["properties"]["expected_items"]["maxItems"] == 10000
+    assert schema["properties"]["evaluator_metric_ids"]["maxItems"] == 100
+    assert tool["request"]["parameters"]["path"] == []
+    assert tool["request"]["parameters"]["query"] == []
+    assert set(tool["request"]["parameters"]["body"]) == set(schema["properties"])
+    validator = Draft7Validator(schema, format_checker=FormatChecker())
+    identity = {"example_id": str(uuid.uuid4())}
+    arguments = {
+        "run_id": str(uuid.uuid4()),
+        "dataset_version_id": str(uuid.uuid4()),
+        "expected_items": [identity],
+        "experiment_id": None,
+        "model_config": {"temperature": 0.5, "optional": None},
+        "metadata": {"tags": ["candidate", None]},
+    }
+    assert validator.is_valid(arguments)
+    for field in ("organization_id", "workspace_id", "created_by", "task_kind"):
+        assert not validator.is_valid({**arguments, field: "override"})
+    assert not validator.is_valid({**arguments, "run_id": "not-a-uuid"})
+    assert not validator.is_valid({**arguments, "expected_items": []})
+    assert not validator.is_valid({**arguments, "expected_items": [identity] * 10001})
+    assert not validator.is_valid(
+        {**arguments, "evaluator_metric_ids": [str(uuid.uuid4())] * 101}
+    )
+    assert not validator.is_valid({**arguments, "model_config": None})
+    assert not validator.is_valid({**arguments, "metadata": []})
+    for extra in (
+        {"trial_number": 0},
+        {"trial_number": 2147483648},
+        {"workspace_id": "override"},
+    ):
+        assert not validator.is_valid(
+            {**arguments, "expected_items": [{**identity, **extra}]}
+        )
+
+
+def test_external_result_tool_preserves_json_outputs_and_strict_nested_scores():
+    tools = {
+        tool["name"]: tool
+        for tool in generate_tool_manifest(CONTRACT_PATH, CATALOG_PATH)["tools"]
+    }
+    tool = tools["ingest_external_experiment_results"]
+    assert tool["group"] == "experiments"
+    assert tool["request"]["method"] == "POST"
+    assert tool["request"]["path"] == "/model-hub/experiment-runs/{run_id}/results/"
+    assert tool["annotations"] == {
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    }
+    assert tool["request"]["parameters"] == {
+        "path": ["run_id"],
+        "query": [],
+        "body": ["items"],
+    }
+    schema = tool["inputSchema"]
+    assert set(schema["required"]) == {"run_id", "items"}
+    assert schema["properties"]["items"]["minItems"] == 1
+    assert schema["properties"]["items"]["maxItems"] == 100
+    result_schema = schema["definitions"]["ExternalRunResult"]
+    assert result_schema["properties"]["score_refs"]["maxItems"] == 100
+    validator = Draft7Validator(schema, format_checker=FormatChecker())
+    score = {
+        "metric_id": str(uuid.uuid4()),
+        "evaluator_version_id": str(uuid.uuid4()),
+        "status": "assessed",
+        "value": 0.8,
+    }
+    item = {
+        "example_id": str(uuid.uuid4()),
+        "receipt_key": "candidate-case-1-trial-1",
+        "status": "completed",
+        "score_refs": [score],
+    }
+    arguments = {"run_id": str(uuid.uuid4()), "items": [item]}
+    for output in (
+        "answer",
+        ["answer", None, {"tool": "search"}],
+        None,
+        {"answer": True},
+    ):
+        assert validator.is_valid({**arguments, "items": [{**item, "output": output}]})
+    for field in ("organization_id", "workspace_id", "created_by"):
+        assert not validator.is_valid({**arguments, field: "override"})
+        assert not validator.is_valid(
+            {**arguments, "items": [{**item, field: "override"}]}
+        )
+        assert not validator.is_valid(
+            {
+                **arguments,
+                "items": [{**item, "score_refs": [{**score, field: "override"}]}],
+            }
+        )
+    assert not validator.is_valid({**arguments, "items": []})
+    assert not validator.is_valid({**arguments, "items": [item] * 101})
+    for extra in (
+        {"status": "running"},
+        {"receipt_key": ""},
+        {"latency_ms": -1},
+        {"cost": -1},
+        {"score_refs": [score] * 101},
+    ):
+        assert not validator.is_valid({**arguments, "items": [{**item, **extra}]})
+    for extra in (
+        {"value": True},
+        {"value": "0.8"},
+        {"status": "invented"},
+        {"evaluator_version_id": None},
+    ):
+        assert not validator.is_valid(
+            {**arguments, "items": [{**item, "score_refs": [{**score, **extra}]}]}
+        )
 
 
 def test_open_world_hint_is_reviewed_catalog_metadata():

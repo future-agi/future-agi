@@ -1,13 +1,9 @@
 """Create and inspect immutable dataset versions and source provenance."""
 
-from io import BytesIO
-from typing import BinaryIO
 from uuid import UUID
 
 from django.core.exceptions import ValidationError
 from django.db.models import Count, Q
-from rest_framework.exceptions import ParseError
-from rest_framework.parsers import JSONParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -28,6 +24,7 @@ from model_hub.services.dataset_version_service import (
     DatasetVersionItemInput,
     create_dataset_version,
 )
+from model_hub.utils.json_parser import BoundedJSONParser
 from model_hub.utils.workspace_scope import (
     request_organization,
     scoped_dataset_queryset,
@@ -40,21 +37,8 @@ _gm = GeneralMethods()
 _MAX_SNAPSHOT_BODY_BYTES = 10 * 1024 * 1024
 
 
-class BoundedSnapshotJSONParser(JSONParser):
-    """Reject oversized snapshot bodies before validation or database work."""
-
-    def parse(
-        self,
-        stream: BinaryIO,
-        media_type: str | None = None,
-        parser_context: dict | None = None,
-    ) -> object:
-        body = stream.read(_MAX_SNAPSHOT_BODY_BYTES + 1)
-        if len(body) > _MAX_SNAPSHOT_BODY_BYTES:
-            raise ParseError(
-                f"Snapshot request body must be at most {_MAX_SNAPSHOT_BODY_BYTES} bytes."
-            )
-        return super().parse(BytesIO(body), media_type, parser_context)
+class BoundedSnapshotJSONParser(BoundedJSONParser):
+    max_body_bytes = _MAX_SNAPSHOT_BODY_BYTES
 
 
 def _scoped_version_queryset(request, dataset_id):

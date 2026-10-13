@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "source_contract_sha256": "c5bda8bd315446e1b721f1cd4665166f13629f23ac67c6a75d1a60c600407332",
-  "tool_count": 94,
+  "source_contract_sha256": "b0eaf0862c7df010f4293d06db69c30862253759da218cd898062b2e31455a79",
+  "tool_count": 96,
   "tools": [
     {
       "name": "whoami",
@@ -6200,6 +6200,365 @@
       },
       "source": {
         "operationId": "experiment_runs_compare"
+      }
+    },
+    {
+      "name": "create_external_experiment_run",
+      "description": "Create or replay a pinned external-task run using a caller UUID, immutable dataset version, exact example/trial plan and evaluator bindings. Does not execute any task. Code/config metadata is caller-supplied provenance.",
+      "group": "experiments",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "run_id": {
+            "title": "Run id",
+            "type": "string",
+            "format": "uuid"
+          },
+          "dataset_version_id": {
+            "title": "Dataset version id",
+            "type": "string",
+            "format": "uuid"
+          },
+          "expected_items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/ExternalRunIdentity"
+            },
+            "maxItems": 10000,
+            "minItems": 1
+          },
+          "evaluator_metric_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "default": [],
+            "maxItems": 100
+          },
+          "experiment_id": {
+            "anyOf": [
+              {
+                "title": "Experiment id",
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "model_config": {
+            "title": "Model config",
+            "type": "object",
+            "default": {},
+            "additionalProperties": {}
+          },
+          "metadata": {
+            "title": "Metadata",
+            "type": "object",
+            "default": {},
+            "additionalProperties": {}
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "run_id",
+          "dataset_version_id",
+          "expected_items"
+        ],
+        "definitions": {
+          "ExternalRunIdentity": {
+            "required": [
+              "example_id"
+            ],
+            "type": "object",
+            "properties": {
+              "example_id": {
+                "title": "Example id",
+                "type": "string",
+                "format": "uuid"
+              },
+              "trial_number": {
+                "title": "Trial number",
+                "type": "integer",
+                "default": 1,
+                "maximum": 2147483647,
+                "minimum": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/model-hub/experiment-runs/",
+        "parameters": {
+          "path": [],
+          "query": [],
+          "body": [
+            "run_id",
+            "dataset_version_id",
+            "expected_items",
+            "evaluator_metric_ids",
+            "experiment_id",
+            "model_config",
+            "metadata"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "external_experiment_runs_create"
+      }
+    },
+    {
+      "name": "ingest_external_experiment_results",
+      "description": "Atomically ingest 1\u2013100 completed, failed or skipped external results for a pinned run. Identical per-item receipt/payload replay is safe; conflicts roll back the batch. Does not execute tasks or verify external trace/evaluator provenance.",
+      "group": "experiments",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "run_id": {
+            "type": "string"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/ExternalRunResult"
+            },
+            "maxItems": 100,
+            "minItems": 1
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "run_id",
+          "items"
+        ],
+        "definitions": {
+          "ExternalRunResult": {
+            "required": [
+              "example_id",
+              "receipt_key",
+              "status"
+            ],
+            "type": "object",
+            "properties": {
+              "example_id": {
+                "title": "Example id",
+                "type": "string",
+                "format": "uuid"
+              },
+              "trial_number": {
+                "title": "Trial number",
+                "type": "integer",
+                "default": 1,
+                "maximum": 2147483647,
+                "minimum": 1
+              },
+              "receipt_key": {
+                "title": "Receipt key",
+                "type": "string",
+                "maxLength": 255,
+                "minLength": 1
+              },
+              "status": {
+                "title": "Status",
+                "type": "string",
+                "enum": [
+                  "completed",
+                  "failed",
+                  "skipped"
+                ]
+              },
+              "output": {
+                "title": "Output",
+                "description": "Any valid JSON value."
+              },
+              "error": {
+                "title": "Error",
+                "description": "Any valid JSON value."
+              },
+              "trace_id": {
+                "anyOf": [
+                  {
+                    "title": "Trace id",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "root_span_id": {
+                "anyOf": [
+                  {
+                    "title": "Root span id",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "latency_ms": {
+                "anyOf": [
+                  {
+                    "title": "Latency ms",
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "token_usage": {
+                "title": "Token usage",
+                "description": "Any valid JSON value."
+              },
+              "cost": {
+                "anyOf": [
+                  {
+                    "title": "Cost",
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "score_refs": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/ExternalRunScore"
+                },
+                "default": [],
+                "maxItems": 100
+              }
+            },
+            "additionalProperties": false
+          },
+          "ExternalRunScore": {
+            "required": [
+              "metric_id",
+              "evaluator_version_id",
+              "status"
+            ],
+            "type": "object",
+            "properties": {
+              "metric_id": {
+                "title": "Metric id",
+                "type": "string",
+                "format": "uuid"
+              },
+              "evaluator_version_id": {
+                "title": "Evaluator version id",
+                "type": "string",
+                "format": "uuid"
+              },
+              "status": {
+                "title": "Status",
+                "type": "string",
+                "enum": [
+                  "assessed",
+                  "error",
+                  "unknown",
+                  "not_assessed",
+                  "unsupported"
+                ]
+              },
+              "value": {
+                "anyOf": [
+                  {
+                    "title": "Value",
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "explanation": {
+                "anyOf": [
+                  {
+                    "title": "Explanation",
+                    "type": "string",
+                    "maxLength": 16384
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "trace_id": {
+                "anyOf": [
+                  {
+                    "title": "Trace id",
+                    "type": "string",
+                    "maxLength": 255
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "span_id": {
+                "anyOf": [
+                  {
+                    "title": "Span id",
+                    "type": "string",
+                    "maxLength": 255
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/model-hub/experiment-runs/{run_id}/results/",
+        "parameters": {
+          "path": [
+            "run_id"
+          ],
+          "query": [],
+          "body": [
+            "items"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "external_experiment_run_results_ingest"
       }
     },
     {

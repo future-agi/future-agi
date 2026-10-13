@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1061,
+  endpointCount: 1063,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -572,7 +572,9 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/model-hub/eval-user-template/create/": ["post"],
       "/model-hub/evaluate-rows/": ["post"],
       "/model-hub/experiment-detail/": ["get"],
+      "/model-hub/experiment-runs/": ["post"],
       "/model-hub/experiment-runs/compare/": ["post"],
+      "/model-hub/experiment-runs/{run_id}/results/": ["post"],
       "/model-hub/experiments/": ["get", "post", "put"],
       "/model-hub/experiments/data/": ["get"],
       "/model-hub/experiments/delete/": ["delete"],
@@ -1863,7 +1865,9 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/model-hub/eval-user-template/create/": ["post"],
   "/model-hub/evaluate-rows/": ["post"],
   "/model-hub/experiment-detail/": ["get"],
+  "/model-hub/experiment-runs/": ["post"],
   "/model-hub/experiment-runs/compare/": ["post"],
+  "/model-hub/experiment-runs/{run_id}/results/": ["post"],
   "/model-hub/experiments/": ["get", "post", "put"],
   "/model-hub/experiments/data/": ["get"],
   "/model-hub/experiments/delete/": ["delete"],

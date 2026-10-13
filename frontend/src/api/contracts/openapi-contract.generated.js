@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1061,
+  endpointCount: 1063,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -18729,6 +18729,40 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/model-hub/experiment-runs/": {
+      post: {
+        operationId: "external_experiment_runs_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/ExternalRunCreateRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/ExternalRunCreateResponse",
+          },
+          400: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          409: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/model-hub/experiment-runs/compare/": {
       post: {
         operationId: "experiment_runs_compare",
@@ -18741,6 +18775,40 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           200: {
             $ref: "#/definitions/RunComparisonResponse",
+          },
+          400: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          409: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/model-hub/experiment-runs/{run_id}/results/": {
+      post: {
+        operationId: "external_experiment_run_results_ingest",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/ExternalRunResultsRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/ExternalRunResultsResponse",
           },
           400: {
             $ref: "#/definitions/ModelHubErrorResponse",
@@ -60478,6 +60546,103 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    ExternalRunCreateRequest: {
+      required: ["run_id", "dataset_version_id", "expected_items"],
+      type: "object",
+      properties: {
+        run_id: {
+          title: "Run id",
+          type: "string",
+          format: "uuid",
+        },
+        dataset_version_id: {
+          title: "Dataset version id",
+          type: "string",
+          format: "uuid",
+        },
+        expected_items: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/ExternalRunIdentity",
+          },
+          maxItems: 10000,
+          minItems: 1,
+        },
+        evaluator_metric_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            format: "uuid",
+          },
+          default: [],
+          maxItems: 100,
+        },
+        experiment_id: {
+          title: "Experiment id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        model_config: {
+          title: "Model config",
+          type: "object",
+          default: {},
+          additionalProperties: {
+            "x-json-value": true,
+          },
+        },
+        metadata: {
+          title: "Metadata",
+          type: "object",
+          default: {},
+          additionalProperties: {
+            "x-json-value": true,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    ExternalRunCreateResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/ExternalRunHeader",
+        },
+      },
+    },
+    ExternalRunResultsRequest: {
+      required: ["items"],
+      type: "object",
+      properties: {
+        items: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/ExternalRunResult",
+          },
+          maxItems: 100,
+          minItems: 1,
+        },
+      },
+      additionalProperties: false,
+    },
+    ExternalRunResultsResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/ExternalRunResultsResult",
+        },
+      },
+    },
     ExtractEntitiesRequest: {
       required: ["column_id", "instruction"],
       type: "object",
@@ -90881,6 +91046,227 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    ExternalRunIdentity: {
+      required: ["example_id"],
+      type: "object",
+      properties: {
+        example_id: {
+          title: "Example id",
+          type: "string",
+          format: "uuid",
+        },
+        trial_number: {
+          title: "Trial number",
+          type: "integer",
+          default: 1,
+          maximum: 2147483647,
+          minimum: 1,
+        },
+      },
+      additionalProperties: false,
+    },
+    ExternalRunHeader: {
+      required: [
+        "id",
+        "dataset_version_id",
+        "experiment_id",
+        "task_kind",
+        "status",
+        "expected_items",
+        "evaluator_bindings",
+        "model_config",
+        "metadata",
+        "started_at",
+        "completed_at",
+        "created_at",
+        "updated_at",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        dataset_version_id: {
+          title: "Dataset version id",
+          type: "string",
+          format: "uuid",
+        },
+        experiment_id: {
+          title: "Experiment id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        task_kind: {
+          title: "Task kind",
+          type: "string",
+          enum: ["external"],
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: [
+            "draft",
+            "queued",
+            "running",
+            "partial",
+            "completed",
+            "failed",
+            "cancelled",
+          ],
+        },
+        expected_items: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/ExternalRunIdentity",
+          },
+        },
+        evaluator_bindings: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/ExternalRunBinding",
+          },
+        },
+        model_config: {
+          title: "Model config",
+          type: "object",
+          additionalProperties: {
+            "x-json-value": true,
+          },
+        },
+        metadata: {
+          title: "Metadata",
+          type: "object",
+          additionalProperties: {
+            "x-json-value": true,
+          },
+        },
+        started_at: {
+          title: "Started at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        completed_at: {
+          title: "Completed at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+        },
+        updated_at: {
+          title: "Updated at",
+          type: "string",
+          format: "date-time",
+        },
+      },
+    },
+    ExternalRunResult: {
+      required: ["example_id", "receipt_key", "status"],
+      type: "object",
+      properties: {
+        example_id: {
+          title: "Example id",
+          type: "string",
+          format: "uuid",
+        },
+        trial_number: {
+          title: "Trial number",
+          type: "integer",
+          default: 1,
+          maximum: 2147483647,
+          minimum: 1,
+        },
+        receipt_key: {
+          title: "Receipt key",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["completed", "failed", "skipped"],
+        },
+        output: {
+          title: "Output",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        error: {
+          title: "Error",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        trace_id: {
+          title: "Trace id",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        root_span_id: {
+          title: "Root span id",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        latency_ms: {
+          title: "Latency ms",
+          type: "number",
+          minimum: 0,
+          "x-nullable": true,
+        },
+        token_usage: {
+          title: "Token usage",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        cost: {
+          title: "Cost",
+          type: "number",
+          minimum: 0,
+          "x-nullable": true,
+        },
+        score_refs: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/ExternalRunScore",
+          },
+          default: [],
+          maxItems: 100,
+        },
+      },
+      additionalProperties: false,
+    },
+    ExternalRunResultsResult: {
+      required: ["run", "items"],
+      type: "object",
+      properties: {
+        run: {
+          $ref: "#/definitions/ExternalRunHeader",
+        },
+        items: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/ExternalRunItemReceipt",
+          },
+        },
+      },
+    },
     FalconMemory: {
       required: ["key", "value"],
       type: "object",
@@ -108821,6 +109207,201 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
         },
       },
+    },
+    ExternalRunBinding: {
+      required: [
+        "metric_id",
+        "evaluator_version_id",
+        "template_id",
+        "version_number",
+        "binding_config",
+        "binding_model",
+        "prompt_messages",
+        "config_snapshot",
+        "criteria",
+        "model",
+        "output_type_normalized",
+        "pass_threshold",
+        "choice_scores",
+      ],
+      type: "object",
+      properties: {
+        metric_id: {
+          title: "Metric id",
+          type: "string",
+          format: "uuid",
+        },
+        evaluator_version_id: {
+          title: "Evaluator version id",
+          type: "string",
+          format: "uuid",
+        },
+        template_id: {
+          title: "Template id",
+          type: "string",
+          format: "uuid",
+        },
+        version_number: {
+          title: "Version number",
+          type: "integer",
+        },
+        binding_config: {
+          title: "Binding config",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        binding_model: {
+          title: "Binding model",
+          type: "string",
+          "x-nullable": true,
+        },
+        prompt_messages: {
+          title: "Prompt messages",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        config_snapshot: {
+          title: "Config snapshot",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        criteria: {
+          title: "Criteria",
+          type: "string",
+          "x-nullable": true,
+        },
+        model: {
+          title: "Model",
+          type: "string",
+          "x-nullable": true,
+        },
+        output_type_normalized: {
+          title: "Output type normalized",
+          type: "string",
+          "x-nullable": true,
+        },
+        pass_threshold: {
+          title: "Pass threshold",
+          type: "number",
+          "x-nullable": true,
+        },
+        choice_scores: {
+          title: "Choice scores",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+      },
+    },
+    ExternalRunScore: {
+      required: ["metric_id", "evaluator_version_id", "status"],
+      type: "object",
+      properties: {
+        metric_id: {
+          title: "Metric id",
+          type: "string",
+          format: "uuid",
+        },
+        evaluator_version_id: {
+          title: "Evaluator version id",
+          type: "string",
+          format: "uuid",
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["assessed", "error", "unknown", "not_assessed", "unsupported"],
+        },
+        value: {
+          title: "Value",
+          type: "number",
+          "x-nullable": true,
+        },
+        explanation: {
+          title: "Explanation",
+          type: "string",
+          maxLength: 16384,
+          "x-nullable": true,
+        },
+        trace_id: {
+          title: "Trace id",
+          type: "string",
+          maxLength: 255,
+          "x-nullable": true,
+        },
+        span_id: {
+          title: "Span id",
+          type: "string",
+          maxLength: 255,
+          "x-nullable": true,
+        },
+      },
+      additionalProperties: false,
+    },
+    ExternalRunItemReceipt: {
+      required: [
+        "example_id",
+        "id",
+        "receipt_key",
+        "status",
+        "trace_id",
+        "root_span_id",
+        "score_refs",
+      ],
+      type: "object",
+      properties: {
+        example_id: {
+          title: "Example id",
+          type: "string",
+          format: "uuid",
+        },
+        trial_number: {
+          title: "Trial number",
+          type: "integer",
+          default: 1,
+          maximum: 2147483647,
+          minimum: 1,
+        },
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        receipt_key: {
+          title: "Receipt key",
+          type: "string",
+          minLength: 1,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["completed", "failed", "skipped"],
+        },
+        trace_id: {
+          title: "Trace id",
+          type: "string",
+          "x-nullable": true,
+        },
+        root_span_id: {
+          title: "Root span id",
+          type: "string",
+          "x-nullable": true,
+        },
+        score_refs: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/ExternalRunScore",
+          },
+        },
+      },
+      additionalProperties: false,
     },
     FeedListRow: {
       required: [

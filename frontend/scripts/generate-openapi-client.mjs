@@ -317,7 +317,10 @@ async function runGeneration(schemaPath) {
 
   const interruptionNullableFields = {
     RunCallApi: ["avg_stop_time_after_interruption", "ai_interruption_count"],
-    GroupAggregatesApi: ["avg_stop_time_after_interruption", "ai_interruptions"],
+    GroupAggregatesApi: [
+      "avg_stop_time_after_interruption",
+      "ai_interruptions",
+    ],
   };
   const voiceCallDetailNullableFields = [
     "provider_call_id",
@@ -368,7 +371,9 @@ async function runGeneration(schemaPath) {
   if (fs.existsSync(schemasOutputPath)) {
     let schemas = fs.readFileSync(schemasOutputPath, "utf8");
 
-    for (const [typeName, fields] of Object.entries(interruptionNullableFields)) {
+    for (const [typeName, fields] of Object.entries(
+      interruptionNullableFields,
+    )) {
       for (const field of fields) {
         schemas = assertReplaceInNamedBlock(
           schemas,
@@ -438,6 +443,13 @@ export type SpanAttributeTopValueApiValue = JsonValueApi;`,
       "TraceObserveColumnConfigApiChoicesMap",
       "TraceObserveColumnConfigApiAnnotators",
       "DatasetVersionItemCreateApiExpected",
+      "ExternalRunBindingApiBindingConfig",
+      "ExternalRunBindingApiPromptMessages",
+      "ExternalRunBindingApiConfigSnapshot",
+      "ExternalRunBindingApiChoiceScores",
+      "ExternalRunResultApiOutput",
+      "ExternalRunResultApiError",
+      "ExternalRunResultApiTokenUsage",
     ]) {
       schemas = assertReplace(
         schemas,
@@ -490,6 +502,50 @@ export type ${jsonAlias} = JsonValueApi;`,
           `export interface ${typeName} {`,
           `${field}?: string;`,
           `${field}?: string | null;`,
+          `${typeName}.${field} nullable`,
+        );
+      }
+    }
+
+    for (const alias of [
+      "ExternalRunCreateRequestApiModelConfig",
+      "ExternalRunCreateRequestApiMetadata",
+      "ExternalRunHeaderApiModelConfig",
+      "ExternalRunHeaderApiMetadata",
+    ]) {
+      schemas = assertReplace(
+        schemas,
+        `export type ${alias} = {[key: string]: unknown};`,
+        `export type ${alias} = { [key: string]: JsonValueApi };`,
+        `${alias} recursive JSON object values`,
+      );
+    }
+    for (const [typeName, fields] of [
+      ["ExternalRunCreateRequestApi", ["experiment_id"]],
+      ["ExternalRunHeaderApi", ["experiment_id", "started_at", "completed_at"]],
+      [
+        "ExternalRunBindingApi",
+        [
+          "binding_model",
+          "criteria",
+          "model",
+          "output_type_normalized",
+          "pass_threshold",
+        ],
+      ],
+      [
+        "ExternalRunResultApi",
+        ["trace_id", "root_span_id", "latency_ms", "cost"],
+      ],
+      ["ExternalRunScoreApi", ["value", "explanation", "trace_id", "span_id"]],
+      ["ExternalRunItemReceiptApi", ["trace_id", "root_span_id"]],
+    ]) {
+      for (const field of fields) {
+        schemas = assertReplaceRegexInNamedBlock(
+          schemas,
+          `export interface ${typeName} {`,
+          new RegExp(`(^\\s*${field}\\??: [^;]+)(;)$`, "m"),
+          "$1 | null$2",
           `${typeName}.${field} nullable`,
         );
       }
@@ -765,7 +821,9 @@ export type ${jsonAlias} = JsonValueApi;`,
   if (fs.existsSync(zodOutputPath)) {
     let zod = fs.readFileSync(zodOutputPath, "utf8");
 
-    for (const field of new Set(Object.values(interruptionNullableFields).flat())) {
+    for (const field of new Set(
+      Object.values(interruptionNullableFields).flat(),
+    )) {
       zod = assertReplaceInNamedBlock(
         zod,
         "export const SimulateV3TestExecutionCallsResponse =",
@@ -837,6 +895,109 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
         `${exportName} JSON cells → recursive JSON value`,
       );
     }
+    const externalRunExports = [
+      "ExternalExperimentRunsCreateBody",
+      "ExternalExperimentRunsCreateResponse",
+      "ExternalExperimentRunResultsIngestBody",
+      "ExternalExperimentRunResultsIngestResponse",
+    ];
+    for (const exportName of externalRunExports) {
+      const declaration = `export const ${exportName} = zod.object({`;
+      if (exportName !== "ExternalExperimentRunsCreateBody") {
+        zod = assertReplaceRegexInNamedBlock(
+          zod,
+          declaration,
+          /zod\.object\(\{\n\n\}\)\.passthrough\(\)(?=(?:\.(?:optional|nullish|nullable)\(\)|\.default\([^)]*\))*\.describe\('Any valid JSON value\.'\))/g,
+          "jsonValueSchema",
+          `${exportName} arbitrary JSON values`,
+        );
+      }
+      if (exportName !== "ExternalExperimentRunResultsIngestBody") {
+        zod = assertReplaceInNamedBlock(
+          zod,
+          declaration,
+          "zod.record(zod.string(), zod.unknown())",
+          "zod.record(zod.string(), jsonValueSchema)",
+          `${exportName} JSON object values`,
+        );
+      }
+      const nullableFields =
+        exportName === "ExternalExperimentRunsCreateBody"
+          ? ["experiment_id"]
+          : exportName === "ExternalExperimentRunResultsIngestBody"
+            ? [
+                "trace_id",
+                "root_span_id",
+                "span_id",
+                "value",
+                "explanation",
+                "latency_ms",
+                "cost",
+              ]
+            : [
+                "experiment_id",
+                "started_at",
+                "completed_at",
+                "binding_model",
+                "criteria",
+                "model",
+                "output_type_normalized",
+                "pass_threshold",
+                ...(exportName.endsWith("IngestResponse")
+                  ? [
+                      "trace_id",
+                      "root_span_id",
+                      "span_id",
+                      "value",
+                      "explanation",
+                    ]
+                  : []),
+              ];
+      for (const field of nullableFields) {
+        zod = assertReplaceRegexInNamedBlock(
+          zod,
+          declaration,
+          new RegExp(`("${field}": zod\\.[^\\n]+?)(,?)$`, "gm"),
+          "$1.nullable()$2",
+          `${exportName}.${field} nullable`,
+        );
+      }
+    }
+
+    for (const [exportName, anchors] of [
+      [
+        "ExternalExperimentRunsCreateBody",
+        [
+          [/("trial_number": [^\n]+)\n\}\)\)/, "$1\n}).strict())"],
+          [/("metadata": [^\n]+)\n\}\)/, "$1\n}).strict()"],
+        ],
+      ],
+      [
+        "ExternalExperimentRunResultsIngestBody",
+        [
+          [/("span_id": [^\n]+)\n\}\)\)/, "$1\n}).strict())"],
+          [
+            /(\.default\(externalExperimentRunResultsIngestBodyItemsItemScoreRefsDefault\))\n\}\)\)/,
+            "$1\n}).strict())",
+          ],
+          [
+            /(\.max\(externalExperimentRunResultsIngestBodyItemsMax\))\n\}\)/,
+            "$1\n}).strict()",
+          ],
+        ],
+      ],
+    ]) {
+      for (const [pattern, replacement] of anchors) {
+        zod = assertReplaceRegexInNamedBlock(
+          zod,
+          `export const ${exportName} = zod.object({`,
+          pattern,
+          replacement,
+          `${exportName} rejects unknown nested/request fields`,
+        );
+      }
+    }
+
     const snapshotBody =
       "export const DatasetVersionsCreateBody = zod.object({";
     zod = assertReplaceRegexInNamedBlock(

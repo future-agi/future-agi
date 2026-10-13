@@ -23465,6 +23465,116 @@ export const ModelHubExperimentDetailListResponse = zod.object({
 });
 
 /**
+ * Create or replay a pinned external-task run. Both first creation and identical UUID replay return 200; no task is executed. Tenant, workspace and actor come from authentication. Creation body is limited to 10485760 bytes; JSON config/metadata fields to 262144 bytes. Configuration and code revision metadata are caller-supplied provenance, not executable-code attestation.
+ */
+export const externalExperimentRunsCreateBodyExpectedItemsItemTrialNumberDefault = 1;
+export const externalExperimentRunsCreateBodyExpectedItemsItemTrialNumberMax = 2147483647;
+
+export const externalExperimentRunsCreateBodyExpectedItemsMax = 10000;
+
+export const externalExperimentRunsCreateBodyEvaluatorMetricIdsDefault = [];
+export const externalExperimentRunsCreateBodyEvaluatorMetricIdsMax = 100;
+
+export const externalExperimentRunsCreateBodyModelConfigDefault = {};
+export const externalExperimentRunsCreateBodyMetadataDefault = {};
+
+export const ExternalExperimentRunsCreateBody = zod
+  .object({
+    run_id: zod.string().uuid(),
+    dataset_version_id: zod.string().uuid(),
+    expected_items: zod
+      .array(
+        zod
+          .object({
+            example_id: zod.string().uuid(),
+            trial_number: zod
+              .number()
+              .min(1)
+              .max(
+                externalExperimentRunsCreateBodyExpectedItemsItemTrialNumberMax,
+              )
+              .default(
+                externalExperimentRunsCreateBodyExpectedItemsItemTrialNumberDefault,
+              ),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(externalExperimentRunsCreateBodyExpectedItemsMax),
+    evaluator_metric_ids: zod
+      .array(zod.string().uuid())
+      .max(externalExperimentRunsCreateBodyEvaluatorMetricIdsMax)
+      .default(externalExperimentRunsCreateBodyEvaluatorMetricIdsDefault),
+    experiment_id: zod.string().uuid().optional().nullable(),
+    model_config: zod
+      .record(zod.string(), jsonValueSchema)
+      .default(externalExperimentRunsCreateBodyModelConfigDefault),
+    metadata: zod
+      .record(zod.string(), jsonValueSchema)
+      .default(externalExperimentRunsCreateBodyMetadataDefault),
+  })
+  .strict();
+
+export const externalExperimentRunsCreateResponseResultExpectedItemsItemTrialNumberDefault = 1;
+export const externalExperimentRunsCreateResponseResultExpectedItemsItemTrialNumberMax = 2147483647;
+
+export const ExternalExperimentRunsCreateResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    id: zod.string().uuid(),
+    dataset_version_id: zod.string().uuid(),
+    experiment_id: zod.string().uuid().nullable(),
+    task_kind: zod.enum(["external"]),
+    status: zod.enum([
+      "draft",
+      "queued",
+      "running",
+      "partial",
+      "completed",
+      "failed",
+      "cancelled",
+    ]),
+    expected_items: zod.array(
+      zod.object({
+        example_id: zod.string().uuid(),
+        trial_number: zod
+          .number()
+          .min(1)
+          .max(
+            externalExperimentRunsCreateResponseResultExpectedItemsItemTrialNumberMax,
+          )
+          .default(
+            externalExperimentRunsCreateResponseResultExpectedItemsItemTrialNumberDefault,
+          ),
+      }),
+    ),
+    evaluator_bindings: zod.array(
+      zod.object({
+        metric_id: zod.string().uuid(),
+        evaluator_version_id: zod.string().uuid(),
+        template_id: zod.string().uuid(),
+        version_number: zod.number(),
+        binding_config: jsonValueSchema.describe("Any valid JSON value."),
+        binding_model: zod.string().nullable(),
+        prompt_messages: jsonValueSchema.describe("Any valid JSON value."),
+        config_snapshot: jsonValueSchema.describe("Any valid JSON value."),
+        criteria: zod.string().nullable(),
+        model: zod.string().nullable(),
+        output_type_normalized: zod.string().nullable(),
+        pass_threshold: zod.number().nullable(),
+        choice_scores: jsonValueSchema.describe("Any valid JSON value."),
+      }),
+    ),
+    model_config: zod.record(zod.string(), jsonValueSchema),
+    metadata: zod.record(zod.string(), jsonValueSchema),
+    started_at: zod.string().datetime({ offset: true }).nullable(),
+    completed_at: zod.string().datetime({ offset: true }).nullable(),
+    created_at: zod.string().datetime({ offset: true }),
+    updated_at: zod.string().datetime({ offset: true }),
+  }),
+});
+
+/**
  * Compare compatible persisted runs. Requires the same dataset version, exact example/trial plan and selected evaluator binding. At most 10,000 planned and recorded items per run; excess evidence is rejected, never truncated. Tenant and workspace scope come from authentication. This endpoint does not execute tasks or make a CI decision.
  */
 export const experimentRunsCompareBodyHigherIsBetterDefault = true;
@@ -23740,6 +23850,264 @@ export const ExperimentRunsCompareResponse = zod.object({
           trace_id: zod.string(),
           root_span_id: zod.string(),
         }),
+      }),
+    ),
+  }),
+});
+
+/**
+ * Atomically ingest 1–100 caller-executed results for a pinned external run. Identical receipt/payload replay is a no-op, including after completion. Conflicts roll back the whole batch. Finalization is derived only when every planned identity is terminal. Body is limited to 2097152 bytes, each item to 1048576 bytes and each output/error/usage JSON field to 262144 bytes. This endpoint does not execute tasks or attest trace/evaluator provenance.
+ */
+export const ExternalExperimentRunResultsIngestParams = zod.object({
+  run_id: zod.string(),
+});
+
+export const externalExperimentRunResultsIngestBodyItemsItemTrialNumberDefault = 1;
+export const externalExperimentRunResultsIngestBodyItemsItemTrialNumberMax = 2147483647;
+
+export const externalExperimentRunResultsIngestBodyItemsItemReceiptKeyMax = 255;
+
+export const externalExperimentRunResultsIngestBodyItemsItemTraceIdMax = 255;
+
+export const externalExperimentRunResultsIngestBodyItemsItemRootSpanIdMax = 255;
+
+export const externalExperimentRunResultsIngestBodyItemsItemLatencyMsMin = 0;
+
+export const externalExperimentRunResultsIngestBodyItemsItemCostMin = 0;
+
+export const externalExperimentRunResultsIngestBodyItemsItemScoreRefsItemExplanationMax = 16384;
+
+export const externalExperimentRunResultsIngestBodyItemsItemScoreRefsItemTraceIdMax = 255;
+
+export const externalExperimentRunResultsIngestBodyItemsItemScoreRefsItemSpanIdMax = 255;
+
+export const externalExperimentRunResultsIngestBodyItemsItemScoreRefsDefault =
+  [];
+export const externalExperimentRunResultsIngestBodyItemsItemScoreRefsMax = 100;
+
+export const externalExperimentRunResultsIngestBodyItemsMax = 100;
+
+export const ExternalExperimentRunResultsIngestBody = zod
+  .object({
+    items: zod
+      .array(
+        zod
+          .object({
+            example_id: zod.string().uuid(),
+            trial_number: zod
+              .number()
+              .min(1)
+              .max(
+                externalExperimentRunResultsIngestBodyItemsItemTrialNumberMax,
+              )
+              .default(
+                externalExperimentRunResultsIngestBodyItemsItemTrialNumberDefault,
+              ),
+            receipt_key: zod
+              .string()
+              .min(1)
+              .max(
+                externalExperimentRunResultsIngestBodyItemsItemReceiptKeyMax,
+              ),
+            status: zod.enum(["completed", "failed", "skipped"]),
+            output: jsonValueSchema
+              .optional()
+              .describe("Any valid JSON value."),
+            error: jsonValueSchema.optional().describe("Any valid JSON value."),
+            trace_id: zod
+              .string()
+              .min(1)
+              .max(externalExperimentRunResultsIngestBodyItemsItemTraceIdMax)
+              .optional()
+              .nullable(),
+            root_span_id: zod
+              .string()
+              .min(1)
+              .max(externalExperimentRunResultsIngestBodyItemsItemRootSpanIdMax)
+              .optional()
+              .nullable(),
+            latency_ms: zod
+              .number()
+              .min(externalExperimentRunResultsIngestBodyItemsItemLatencyMsMin)
+              .optional()
+              .nullable(),
+            token_usage: jsonValueSchema
+              .optional()
+              .describe("Any valid JSON value."),
+            cost: zod
+              .number()
+              .min(externalExperimentRunResultsIngestBodyItemsItemCostMin)
+              .optional()
+              .nullable(),
+            score_refs: zod
+              .array(
+                zod
+                  .object({
+                    metric_id: zod.string().uuid(),
+                    evaluator_version_id: zod.string().uuid(),
+                    status: zod.enum([
+                      "assessed",
+                      "error",
+                      "unknown",
+                      "not_assessed",
+                      "unsupported",
+                    ]),
+                    value: zod.number().optional().nullable(),
+                    explanation: zod
+                      .string()
+                      .max(
+                        externalExperimentRunResultsIngestBodyItemsItemScoreRefsItemExplanationMax,
+                      )
+                      .optional()
+                      .nullable(),
+                    trace_id: zod
+                      .string()
+                      .max(
+                        externalExperimentRunResultsIngestBodyItemsItemScoreRefsItemTraceIdMax,
+                      )
+                      .optional()
+                      .nullable(),
+                    span_id: zod
+                      .string()
+                      .max(
+                        externalExperimentRunResultsIngestBodyItemsItemScoreRefsItemSpanIdMax,
+                      )
+                      .optional()
+                      .nullable(),
+                  })
+                  .strict(),
+              )
+              .max(externalExperimentRunResultsIngestBodyItemsItemScoreRefsMax)
+              .default(
+                externalExperimentRunResultsIngestBodyItemsItemScoreRefsDefault,
+              ),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(externalExperimentRunResultsIngestBodyItemsMax),
+  })
+  .strict();
+
+export const externalExperimentRunResultsIngestResponseResultRunExpectedItemsItemTrialNumberDefault = 1;
+export const externalExperimentRunResultsIngestResponseResultRunExpectedItemsItemTrialNumberMax = 2147483647;
+
+export const externalExperimentRunResultsIngestResponseResultItemsItemTrialNumberDefault = 1;
+export const externalExperimentRunResultsIngestResponseResultItemsItemTrialNumberMax = 2147483647;
+
+export const externalExperimentRunResultsIngestResponseResultItemsItemScoreRefsItemExplanationMax = 16384;
+
+export const externalExperimentRunResultsIngestResponseResultItemsItemScoreRefsItemTraceIdMax = 255;
+
+export const externalExperimentRunResultsIngestResponseResultItemsItemScoreRefsItemSpanIdMax = 255;
+
+export const ExternalExperimentRunResultsIngestResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    run: zod.object({
+      id: zod.string().uuid(),
+      dataset_version_id: zod.string().uuid(),
+      experiment_id: zod.string().uuid().nullable(),
+      task_kind: zod.enum(["external"]),
+      status: zod.enum([
+        "draft",
+        "queued",
+        "running",
+        "partial",
+        "completed",
+        "failed",
+        "cancelled",
+      ]),
+      expected_items: zod.array(
+        zod.object({
+          example_id: zod.string().uuid(),
+          trial_number: zod
+            .number()
+            .min(1)
+            .max(
+              externalExperimentRunResultsIngestResponseResultRunExpectedItemsItemTrialNumberMax,
+            )
+            .default(
+              externalExperimentRunResultsIngestResponseResultRunExpectedItemsItemTrialNumberDefault,
+            ),
+        }),
+      ),
+      evaluator_bindings: zod.array(
+        zod.object({
+          metric_id: zod.string().uuid(),
+          evaluator_version_id: zod.string().uuid(),
+          template_id: zod.string().uuid(),
+          version_number: zod.number(),
+          binding_config: jsonValueSchema.describe("Any valid JSON value."),
+          binding_model: zod.string().nullable(),
+          prompt_messages: jsonValueSchema.describe("Any valid JSON value."),
+          config_snapshot: jsonValueSchema.describe("Any valid JSON value."),
+          criteria: zod.string().nullable(),
+          model: zod.string().nullable(),
+          output_type_normalized: zod.string().nullable(),
+          pass_threshold: zod.number().nullable(),
+          choice_scores: jsonValueSchema.describe("Any valid JSON value."),
+        }),
+      ),
+      model_config: zod.record(zod.string(), jsonValueSchema),
+      metadata: zod.record(zod.string(), jsonValueSchema),
+      started_at: zod.string().datetime({ offset: true }).nullable(),
+      completed_at: zod.string().datetime({ offset: true }).nullable(),
+      created_at: zod.string().datetime({ offset: true }),
+      updated_at: zod.string().datetime({ offset: true }),
+    }),
+    items: zod.array(
+      zod.object({
+        example_id: zod.string().uuid(),
+        trial_number: zod
+          .number()
+          .min(1)
+          .max(
+            externalExperimentRunResultsIngestResponseResultItemsItemTrialNumberMax,
+          )
+          .default(
+            externalExperimentRunResultsIngestResponseResultItemsItemTrialNumberDefault,
+          ),
+        id: zod.string().uuid(),
+        receipt_key: zod.string().min(1),
+        status: zod.enum(["completed", "failed", "skipped"]),
+        trace_id: zod.string().nullable(),
+        root_span_id: zod.string().nullable(),
+        score_refs: zod.array(
+          zod.object({
+            metric_id: zod.string().uuid(),
+            evaluator_version_id: zod.string().uuid(),
+            status: zod.enum([
+              "assessed",
+              "error",
+              "unknown",
+              "not_assessed",
+              "unsupported",
+            ]),
+            value: zod.number().optional().nullable(),
+            explanation: zod
+              .string()
+              .max(
+                externalExperimentRunResultsIngestResponseResultItemsItemScoreRefsItemExplanationMax,
+              )
+              .optional()
+              .nullable(),
+            trace_id: zod
+              .string()
+              .max(
+                externalExperimentRunResultsIngestResponseResultItemsItemScoreRefsItemTraceIdMax,
+              )
+              .optional()
+              .nullable(),
+            span_id: zod
+              .string()
+              .max(
+                externalExperimentRunResultsIngestResponseResultItemsItemScoreRefsItemSpanIdMax,
+              )
+              .optional()
+              .nullable(),
+          }),
+        ),
       }),
     ),
   }),

@@ -502,6 +502,10 @@ import type {
   ExperimentWorkflowResponseApi,
   ExperimentsTableApi,
   ExperimentsTableUpdateApi,
+  ExternalRunCreateRequestApi,
+  ExternalRunCreateResponseApi,
+  ExternalRunResultsRequestApi,
+  ExternalRunResultsResponseApi,
   ExtractEntitiesRequestApi,
   ExtractJsonColumnRequestApi,
   FalconAiFilesUploadCreateBody,
@@ -40462,6 +40466,82 @@ export const modelHubExperimentDetailList = async (
   );
 };
 
+export type externalExperimentRunsCreateResponse200 = {
+  data: ExternalRunCreateResponseApi;
+  status: 200;
+};
+
+export type externalExperimentRunsCreateResponse400 = {
+  data: ModelHubErrorResponseApi;
+  status: 400;
+};
+
+export type externalExperimentRunsCreateResponse403 = {
+  data: ModelHubErrorResponseApi;
+  status: 403;
+};
+
+export type externalExperimentRunsCreateResponse404 = {
+  data: ModelHubErrorResponseApi;
+  status: 404;
+};
+
+export type externalExperimentRunsCreateResponse409 = {
+  data: ModelHubErrorResponseApi;
+  status: 409;
+};
+
+export type externalExperimentRunsCreateResponse500 = {
+  data: ModelHubErrorResponseApi;
+  status: 500;
+};
+
+export type externalExperimentRunsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
+};
+
+export type externalExperimentRunsCreateResponseSuccess =
+  externalExperimentRunsCreateResponse200 & {
+    headers: Headers;
+  };
+export type externalExperimentRunsCreateResponseError = (
+  | externalExperimentRunsCreateResponse400
+  | externalExperimentRunsCreateResponse403
+  | externalExperimentRunsCreateResponse404
+  | externalExperimentRunsCreateResponse409
+  | externalExperimentRunsCreateResponse500
+  | externalExperimentRunsCreateResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type externalExperimentRunsCreateResponse =
+  | externalExperimentRunsCreateResponseSuccess
+  | externalExperimentRunsCreateResponseError;
+
+export const getExternalExperimentRunsCreateUrl = () => {
+  return `/model-hub/experiment-runs/`;
+};
+
+/**
+ * Create or replay a pinned external-task run. Both first creation and identical UUID replay return 200; no task is executed. Tenant, workspace and actor come from authentication. Creation body is limited to 10485760 bytes; JSON config/metadata fields to 262144 bytes. Configuration and code revision metadata are caller-supplied provenance, not executable-code attestation.
+ */
+export const externalExperimentRunsCreate = async (
+  externalRunCreateRequestApi: ExternalRunCreateRequestApi,
+  options?: RequestInit,
+): Promise<externalExperimentRunsCreateResponse> => {
+  return apiMutator<externalExperimentRunsCreateResponse>(
+    getExternalExperimentRunsCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(externalRunCreateRequestApi),
+    },
+  );
+};
+
 export type experimentRunsCompareResponse200 = {
   data: RunComparisonResponseApi;
   status: 200;
@@ -40534,6 +40614,83 @@ export const experimentRunsCompare = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(runComparisonRequestApi),
+    },
+  );
+};
+
+export type externalExperimentRunResultsIngestResponse200 = {
+  data: ExternalRunResultsResponseApi;
+  status: 200;
+};
+
+export type externalExperimentRunResultsIngestResponse400 = {
+  data: ModelHubErrorResponseApi;
+  status: 400;
+};
+
+export type externalExperimentRunResultsIngestResponse403 = {
+  data: ModelHubErrorResponseApi;
+  status: 403;
+};
+
+export type externalExperimentRunResultsIngestResponse404 = {
+  data: ModelHubErrorResponseApi;
+  status: 404;
+};
+
+export type externalExperimentRunResultsIngestResponse409 = {
+  data: ModelHubErrorResponseApi;
+  status: 409;
+};
+
+export type externalExperimentRunResultsIngestResponse500 = {
+  data: ModelHubErrorResponseApi;
+  status: 500;
+};
+
+export type externalExperimentRunResultsIngestResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
+};
+
+export type externalExperimentRunResultsIngestResponseSuccess =
+  externalExperimentRunResultsIngestResponse200 & {
+    headers: Headers;
+  };
+export type externalExperimentRunResultsIngestResponseError = (
+  | externalExperimentRunResultsIngestResponse400
+  | externalExperimentRunResultsIngestResponse403
+  | externalExperimentRunResultsIngestResponse404
+  | externalExperimentRunResultsIngestResponse409
+  | externalExperimentRunResultsIngestResponse500
+  | externalExperimentRunResultsIngestResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type externalExperimentRunResultsIngestResponse =
+  | externalExperimentRunResultsIngestResponseSuccess
+  | externalExperimentRunResultsIngestResponseError;
+
+export const getExternalExperimentRunResultsIngestUrl = (runId: string) => {
+  return `/model-hub/experiment-runs/${runId}/results/`;
+};
+
+/**
+ * Atomically ingest 1–100 caller-executed results for a pinned external run. Identical receipt/payload replay is a no-op, including after completion. Conflicts roll back the whole batch. Finalization is derived only when every planned identity is terminal. Body is limited to 2097152 bytes, each item to 1048576 bytes and each output/error/usage JSON field to 262144 bytes. This endpoint does not execute tasks or attest trace/evaluator provenance.
+ */
+export const externalExperimentRunResultsIngest = async (
+  runId: string,
+  externalRunResultsRequestApi: ExternalRunResultsRequestApi,
+  options?: RequestInit,
+): Promise<externalExperimentRunResultsIngestResponse> => {
+  return apiMutator<externalExperimentRunResultsIngestResponse>(
+    getExternalExperimentRunResultsIngestUrl(runId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(externalRunResultsRequestApi),
     },
   );
 };

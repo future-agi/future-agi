@@ -1,5 +1,5 @@
 version: 1
-expected_tool_count: 94
+expected_tool_count: 96
 
 # Pagination is an MCP-only page-size ceiling, so an oversized page is rejected
 # before the REST view queries and serializes it. The generator keeps a stricter
@@ -341,6 +341,18 @@ tools:
     description: Compare persisted baseline and candidate experiment runs for one metric in the current workspace. Returns case/trial comparisons, missing evidence, assessment counts, and trace references. Both runs must use compatible dataset versions and evaluation plans. This reads stored results without executing tasks or evaluations.
     operation: {method: POST, path: "/model-hub/experiment-runs/compare/"}
     access: read
+    idempotent: true
+  - name: create_external_experiment_run
+    group: experiments
+    description: Create or replay a pinned external-task run using a caller UUID, immutable dataset version, exact example/trial plan and evaluator bindings. Does not execute any task. Code/config metadata is caller-supplied provenance.
+    operation: {method: POST, path: "/model-hub/experiment-runs/"}
+    access: write
+    idempotent: true
+  - name: ingest_external_experiment_results
+    group: experiments
+    description: Atomically ingest 1–100 completed, failed or skipped external results for a pinned run. Identical per-item receipt/payload replay is safe; conflicts roll back the batch. Does not execute tasks or verify external trace/evaluator provenance.
+    operation: {method: POST, path: "/model-hub/experiment-runs/{run_id}/results/"}
+    access: write
     idempotent: true
   # optimization
   - name: list_optimization_runs

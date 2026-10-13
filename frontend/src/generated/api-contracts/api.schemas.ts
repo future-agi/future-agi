@@ -11649,6 +11649,123 @@ export interface ExperimentsTableGetApi {
   name: string;
 }
 
+export type ExternalRunCreateRequestApiModelConfig = {
+  [key: string]: JsonValueApi;
+};
+
+export type ExternalRunCreateRequestApiMetadata = {
+  [key: string]: JsonValueApi;
+};
+
+export interface ExternalRunIdentityApi {
+  example_id: string;
+  /**
+   * @minimum 1
+   * @maximum 2147483647
+   */
+  trial_number?: number;
+}
+
+export interface ExternalRunCreateRequestApi {
+  run_id: string;
+  dataset_version_id: string;
+  /**
+   * @minItems 1
+   * @maxItems 10000
+   */
+  expected_items: ExternalRunIdentityApi[];
+  /** @maxItems 100 */
+  evaluator_metric_ids?: string[];
+  experiment_id?: string | null;
+  model_config?: ExternalRunCreateRequestApiModelConfig;
+  metadata?: ExternalRunCreateRequestApiMetadata;
+}
+
+export type ExternalRunHeaderApiTaskKind =
+  (typeof ExternalRunHeaderApiTaskKind)[keyof typeof ExternalRunHeaderApiTaskKind];
+
+export const ExternalRunHeaderApiTaskKind = {
+  external: "external",
+} as const;
+
+export type ExternalRunHeaderApiStatus =
+  (typeof ExternalRunHeaderApiStatus)[keyof typeof ExternalRunHeaderApiStatus];
+
+export const ExternalRunHeaderApiStatus = {
+  draft: "draft",
+  queued: "queued",
+  running: "running",
+  partial: "partial",
+  completed: "completed",
+  failed: "failed",
+  cancelled: "cancelled",
+} as const;
+
+/**
+ * Any valid JSON value.
+ */
+export type ExternalRunBindingApiBindingConfig = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ExternalRunBindingApiPromptMessages = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ExternalRunBindingApiConfigSnapshot = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ExternalRunBindingApiChoiceScores = JsonValueApi;
+
+export interface ExternalRunBindingApi {
+  metric_id: string;
+  evaluator_version_id: string;
+  template_id: string;
+  version_number: number;
+  /** Any valid JSON value. */
+  binding_config: ExternalRunBindingApiBindingConfig;
+  binding_model: string | null;
+  /** Any valid JSON value. */
+  prompt_messages: ExternalRunBindingApiPromptMessages;
+  /** Any valid JSON value. */
+  config_snapshot: ExternalRunBindingApiConfigSnapshot;
+  criteria: string | null;
+  model: string | null;
+  output_type_normalized: string | null;
+  pass_threshold: number | null;
+  /** Any valid JSON value. */
+  choice_scores: ExternalRunBindingApiChoiceScores;
+}
+
+export type ExternalRunHeaderApiModelConfig = { [key: string]: JsonValueApi };
+
+export type ExternalRunHeaderApiMetadata = { [key: string]: JsonValueApi };
+
+export interface ExternalRunHeaderApi {
+  id: string;
+  dataset_version_id: string;
+  experiment_id: string | null;
+  task_kind: ExternalRunHeaderApiTaskKind;
+  status: ExternalRunHeaderApiStatus;
+  expected_items: ExternalRunIdentityApi[];
+  evaluator_bindings: ExternalRunBindingApi[];
+  model_config: ExternalRunHeaderApiModelConfig;
+  metadata: ExternalRunHeaderApiMetadata;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ExternalRunCreateResponseApi {
+  status: boolean;
+  result: ExternalRunHeaderApi;
+}
+
 export interface RunComparisonRequestApi {
   baseline_run_id: string;
   candidate_run_id: string;
@@ -11786,6 +11903,134 @@ export interface RunComparisonResultApi {
 export interface RunComparisonResponseApi {
   status: boolean;
   result: RunComparisonResultApi;
+}
+
+export type ExternalRunResultApiStatus =
+  (typeof ExternalRunResultApiStatus)[keyof typeof ExternalRunResultApiStatus];
+
+export const ExternalRunResultApiStatus = {
+  completed: "completed",
+  failed: "failed",
+  skipped: "skipped",
+} as const;
+
+export type ExternalRunScoreApiStatus =
+  (typeof ExternalRunScoreApiStatus)[keyof typeof ExternalRunScoreApiStatus];
+
+export const ExternalRunScoreApiStatus = {
+  assessed: "assessed",
+  error: "error",
+  unknown: "unknown",
+  not_assessed: "not_assessed",
+  unsupported: "unsupported",
+} as const;
+
+export interface ExternalRunScoreApi {
+  metric_id: string;
+  evaluator_version_id: string;
+  status: ExternalRunScoreApiStatus;
+  value?: number | null;
+  /** @maxLength 16384 */
+  explanation?: string | null;
+  /** @maxLength 255 */
+  trace_id?: string | null;
+  /** @maxLength 255 */
+  span_id?: string | null;
+}
+
+/**
+ * Any valid JSON value.
+ */
+export type ExternalRunResultApiOutput = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ExternalRunResultApiError = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ExternalRunResultApiTokenUsage = JsonValueApi;
+
+export interface ExternalRunResultApi {
+  example_id: string;
+  /**
+   * @minimum 1
+   * @maximum 2147483647
+   */
+  trial_number?: number;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  receipt_key: string;
+  status: ExternalRunResultApiStatus;
+  /** Any valid JSON value. */
+  output?: ExternalRunResultApiOutput;
+  /** Any valid JSON value. */
+  error?: ExternalRunResultApiError;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  trace_id?: string | null;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  root_span_id?: string | null;
+  /** @minimum 0 */
+  latency_ms?: number | null;
+  /** Any valid JSON value. */
+  token_usage?: ExternalRunResultApiTokenUsage;
+  /** @minimum 0 */
+  cost?: number | null;
+  /** @maxItems 100 */
+  score_refs?: ExternalRunScoreApi[];
+}
+
+export interface ExternalRunResultsRequestApi {
+  /**
+   * @minItems 1
+   * @maxItems 100
+   */
+  items: ExternalRunResultApi[];
+}
+
+export type ExternalRunItemReceiptApiStatus =
+  (typeof ExternalRunItemReceiptApiStatus)[keyof typeof ExternalRunItemReceiptApiStatus];
+
+export const ExternalRunItemReceiptApiStatus = {
+  completed: "completed",
+  failed: "failed",
+  skipped: "skipped",
+} as const;
+
+export interface ExternalRunItemReceiptApi {
+  example_id: string;
+  /**
+   * @minimum 1
+   * @maximum 2147483647
+   */
+  trial_number?: number;
+  id: string;
+  /** @minLength 1 */
+  receipt_key: string;
+  status: ExternalRunItemReceiptApiStatus;
+  trace_id: string | null;
+  root_span_id: string | null;
+  score_refs: ExternalRunScoreApi[];
+}
+
+export interface ExternalRunResultsResultApi {
+  run: ExternalRunHeaderApi;
+  items: ExternalRunItemReceiptApi[];
+}
+
+export interface ExternalRunResultsResponseApi {
+  status: boolean;
+  result: ExternalRunResultsResultApi;
 }
 
 export type ExperimentsTableApiPromptConfig = { [key: string]: unknown };
