@@ -92,6 +92,7 @@ const PersonaBasicInfo = ({ viewOptions, multiple = true }) => {
                 control={control}
                 fieldName="location"
                 label="Location"
+                required
                 fullWidth
                 placeholder="United States"
                 size="small"
