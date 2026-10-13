@@ -1,25 +1,49 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
 import IconButton from "@mui/material/IconButton";
 import Iconify from "src/components/iconify";
 import useFalconStore from "../store/useFalconStore";
+import useSkillPlan from "../hooks/useSkillPlan";
+import { groupBlocks } from "../helpers/toolTrail";
+import { looksLikeReport } from "../helpers/falconReport";
+import downloadReportPdf from "../helpers/downloadReportPdf";
 import TextBlock from "./TextBlock";
-import ToolCallCard from "./ToolCallCard";
+import ThinkingTrail from "./ThinkingTrail";
 import CompletionCard from "./CompletionCard";
 
 export default function AssistantMessage({ message, onFeedback }) {
   const [hovered, setHovered] = useState(false);
   const [feedback, setFeedback] = useState(message.feedback || null);
   const toolCalls = message.tool_calls || [];
-  const blocks = message.blocks || [];
+  const blocks = useMemo(() => message.blocks || [], [message.blocks]);
   const hasBlocks = blocks.length > 0;
   const isStreaming = useFalconStore((s) => s.isStreaming);
   const streamingMessageId = useFalconStore((s) => s.streamingMessageId);
   const isThisStreaming = isStreaming && streamingMessageId === message.id;
   const isEmpty =
     !message.content && toolCalls.length === 0 && !hasBlocks && !message.error;
+  const hasRunningTool = toolCalls.some((tc) => tc.status === "running");
+
+  const grouped = useMemo(
+    () => (hasBlocks ? groupBlocks(blocks) : []),
+    [hasBlocks, blocks],
+  );
+  const trails = grouped.filter((b) => b.type === "trail");
+  const runCalls = hasBlocks ? trails.flatMap((b) => b.toolCalls) : toolCalls;
+  // The flow belongs to the turn, so only the last trail reports progress.
+  const lastTrailId = trails.length ? trails[trails.length - 1].id : null;
+  const plan = useSkillPlan(message.id, runCalls);
+
+  const answer = useMemo(() => {
+    if (!hasBlocks) return message.content || "";
+    return grouped
+      .filter((b) => b.type === "text" && b.content)
+      .map((b) => b.content)
+      .join("\n\n");
+  }, [hasBlocks, grouped, message.content]);
+  const isReport = looksLikeReport(answer);
 
   return (
     <Box
@@ -78,12 +102,21 @@ export default function AssistantMessage({ message, onFeedback }) {
 
         {/* Content blocks — sequential rendering */}
         {hasBlocks ? (
-          blocks.map((block) => {
+          grouped.map((block) => {
             if (block.type === "text" && block.content) {
               return <TextBlock key={block.id} content={block.content} />;
             }
-            if (block.type === "tool_call") {
-              return <ToolCallCard key={block.id} toolCall={block.toolCall} />;
+            if (block.type === "trail") {
+              const carriesFlow = block.id === lastTrailId;
+              return (
+                <ThinkingTrail
+                  key={block.id}
+                  toolCalls={block.toolCalls}
+                  isStreaming={isThisStreaming}
+                  plan={carriesFlow ? plan : null}
+                  planRun={carriesFlow ? runCalls : null}
+                />
+              );
             }
             if (block.type === "completion_card" && block.card) {
               return <CompletionCard key={block.id} card={block.card} />;
@@ -92,9 +125,13 @@ export default function AssistantMessage({ message, onFeedback }) {
           })
         ) : (
           <>
-            {toolCalls.map((tc) => (
-              <ToolCallCard key={tc.call_id} toolCall={tc} />
-            ))}
+            {toolCalls.length > 0 && (
+              <ThinkingTrail
+                toolCalls={toolCalls}
+                isStreaming={isThisStreaming}
+                plan={plan}
+              />
+            )}
             <TextBlock content={message.content} />
           </>
         )}
@@ -117,8 +154,8 @@ export default function AssistantMessage({ message, onFeedback }) {
           <CompletionCard card={message.completion_card} />
         )}
 
-        {/* Persistent loading indicator while streaming — shows between tool calls and during LLM thinking */}
-        {isThisStreaming && !isEmpty && (
+        {/* The trail carries its own live line while a tool is running. */}
+        {isThisStreaming && !isEmpty && !hasRunningTool && (
           <Box
             sx={{
               display: "flex",
@@ -168,6 +205,21 @@ export default function AssistantMessage({ message, onFeedback }) {
               transition: "opacity 0.15s ease",
             }}
           >
+            {isReport && (
+              <IconButton
+                size="small"
+                onClick={() => downloadReportPdf(answer)}
+                sx={{
+                  p: 0.4,
+                  color: "text.disabled",
+                  "&:hover": { color: "text.secondary" },
+                }}
+                title="Download as PDF"
+              >
+                <Iconify icon="mdi:file-pdf-box" width={15} />
+              </IconButton>
+            )}
+
             <IconButton
               size="small"
               onClick={() => {
