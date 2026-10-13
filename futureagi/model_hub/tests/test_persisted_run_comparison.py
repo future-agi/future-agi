@@ -87,7 +87,9 @@ def _ref(metric_id, evaluator_id, value, **extra):
     }
 
 
-def _item(run, example, status="completed", refs=None, trace=None, error=None):
+def _item(
+    run, example, status="completed", refs=None, trace=None, error=None, metadata=None
+):
     return ExperimentRunItem.objects.create(
         run=run,
         example_id=example.example_id,
@@ -97,6 +99,7 @@ def _item(run, example, status="completed", refs=None, trace=None, error=None):
         trace_id=None if trace is None else f"trace-{trace}",
         root_span_id=None if trace is None else f"span-{trace}",
         error=error,
+        metadata={} if metadata is None else metadata,
     )
 
 
@@ -636,3 +639,53 @@ def test_snapshot_header_task_evaluator_and_persisted_comparison_flow(
     for refs in result.trace_refs:
         assert roots[refs.baseline.trace_id] == refs.baseline.root_span_id
         assert roots[refs.candidate.trace_id] == refs.candidate.root_span_id
+
+
+@pytest.mark.django_db
+def test_metadata_slice_selects_whole_identity_and_reports_selection(
+    comparison_fixture,
+):
+    _, _, examples, make_run, metric_id, evaluator_id, _, scope = comparison_fixture
+    baseline, candidate = make_run(), make_run()
+    _item(
+        baseline,
+        examples[0],
+        refs=[_ref(metric_id, evaluator_id, 0.2)],
+        metadata={"cohort": "A", "split_name": "holdout"},
+    )
+    _item(
+        candidate,
+        examples[0],
+        refs=[_ref(metric_id, evaluator_id, 0.7)],
+        metadata={"cohort": "B", "split_name": "holdout"},
+    )
+    result = compare_experiment_runs(
+        baseline_run_id=baseline.id,
+        candidate_run_id=candidate.id,
+        metric_id=metric_id,
+        metadata_equals={"cohort": "A"},
+        split_name="holdout",
+        **scope,
+    )
+    assert result.selection == {
+        "total_plan_count": 4,
+        "selected_count": 1,
+        "metadata_equals": {"cohort": "A"},
+        "split_name": "holdout",
+    }
+    assert result.baseline_counts.expected == result.candidate_counts.expected == 1
+    assert len(result.comparison.cases) == 1
+
+
+@pytest.mark.django_db
+def test_metadata_slice_rejects_more_than_twenty_keys(comparison_fixture):
+    _, _, _, make_run, metric_id, _, _, scope = comparison_fixture
+    baseline, candidate = make_run(), make_run()
+    with pytest.raises(RunComparisonError, match="at most 20"):
+        compare_experiment_runs(
+            baseline_run_id=baseline.id,
+            candidate_run_id=candidate.id,
+            metric_id=metric_id,
+            metadata_equals={str(index): index for index in range(21)},
+            **scope,
+        )

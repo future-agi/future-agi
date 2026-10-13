@@ -73308,6 +73308,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         diff_case: {
           $ref: "#/definitions/DiffCaseRequest",
         },
+        metadata_equals: { type: "object", maxProperties: 20, additionalProperties: { "x-json-value": true } },
+        split_name: { type: "string", minLength: 1, maxLength: 255 },
       },
     },
     RunComparisonResponse: {
@@ -100585,6 +100587,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
         case_diff: {
           $ref: "#/definitions/CaseOutputDiff",
         },
+        selection: { $ref: "#/definitions/ComparisonSelection" },
+      },
+    },
+    ComparisonSelection: {
+      required: ["total_plan_count", "selected_count", "metadata_equals", "split_name"],
+      type: "object",
+      properties: {
+        total_plan_count: { type: "integer", minimum: 0 },
+        selected_count: { type: "integer", minimum: 0 },
+        metadata_equals: { type: "object", additionalProperties: { "x-json-value": true } },
+        split_name: { type: "string", "x-nullable": true },
       },
     },
     RunPromptColumnConfigResult: {

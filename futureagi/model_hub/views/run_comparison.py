@@ -43,7 +43,7 @@ class RunComparisonView(APIView):
         responses={200: RunComparisonResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
         reject_unknown_fields=True,
         operation_id="experiment_runs_compare",
-        operation_description="Compare compatible persisted runs. Requires the same dataset version, exact example/trial plan and selected evaluator binding. At most 10,000 planned and recorded items per run; excess evidence is rejected, never truncated. Tenant and workspace scope come from authentication. Optional include_trial_stability returns per-example counts, observed assessed-score population standard deviations and paired candidate-minus-baseline deltas; deviations are null below two assessed trials and imply no statistical significance. An optional release_gate derives a case-level verdict requiring valid evidence for the complete plan on both sides; a failed gate still returns 200. Optional diff_case returns one bounded canonical output comparison for an exact pinned case/trial; it does not read traces or make writes. This endpoint does not execute tasks or attest caller-supplied evidence.",
+        operation_description="Compare compatible persisted runs. Requires the same dataset version, exact example/trial plan and selected evaluator binding. At most 10,000 planned and recorded items per run; excess evidence is rejected, never truncated. Tenant and workspace scope comes from authentication. Optional metadata_equals and split_name selectors select whole case/trial identities when either side matches; the response preserves both sides and reports selected/total counts. Optional include_trial_stability returns per-example counts, observed assessed-score population standard deviations and paired candidate-minus-baseline deltas; deviations are null below two assessed trials and imply no statistical significance. An optional release_gate derives a case-level verdict requiring valid evidence for the complete plan on both sides; a failed gate still returns 200. Optional diff_case returns one bounded canonical output comparison for an exact pinned case/trial; it does not read traces or make writes. This endpoint does not execute tasks or attest caller-supplied evidence.",
     )
     @primary_required
     def post(self, request: Request) -> Response:
@@ -77,6 +77,8 @@ class RunComparisonView(APIView):
             payload.pop("trial_stability")
         if result.case_diff is None:
             payload.pop("case_diff")
+        if result.selection is None:
+            payload.pop("selection")
         if gate_policy is not None:
             try:
                 gate = evaluate_release_gate(

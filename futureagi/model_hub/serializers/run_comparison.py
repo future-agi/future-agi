@@ -68,6 +68,17 @@ class RunComparisonRequestSerializer(serializers.Serializer):
     include_trial_stability = serializers.BooleanField(default=False)
     release_gate = ReleaseGatePolicySerializer(required=False)
     diff_case = DiffCaseRequestSerializer(required=False)
+    metadata_equals = serializers.DictField(child=JsonValueField(), required=False)
+    split_name = serializers.CharField(
+        required=False, allow_blank=False, max_length=255
+    )
+
+    def validate_metadata_equals(self, value):
+        if len(value) > 20:
+            raise serializers.ValidationError(
+                "metadata_equals supports at most 20 keys"
+            )
+        return value
 
 
 class RunAggregateSerializer(serializers.Serializer):
@@ -236,6 +247,13 @@ class CaseOutputDiffSerializer(serializers.Serializer):
     output_comparison = OutputDiffComparisonSerializer()
 
 
+class ComparisonSelectionSerializer(serializers.Serializer):
+    total_plan_count = serializers.IntegerField(min_value=0)
+    selected_count = serializers.IntegerField(min_value=0)
+    metadata_equals = serializers.DictField(child=JsonValueField())
+    split_name = serializers.CharField(allow_null=True)
+
+
 class RunComparisonResultSerializer(serializers.Serializer):
     baseline_run_id = serializers.UUIDField()
     candidate_run_id = serializers.UUIDField()
@@ -250,6 +268,7 @@ class RunComparisonResultSerializer(serializers.Serializer):
     release_gate = ReleaseGateReportSerializer(required=False)
     trial_stability = TrialStabilitySerializer(many=True, required=False)
     case_diff = CaseOutputDiffSerializer(required=False)
+    selection = ComparisonSelectionSerializer(required=False)
 
 
 class RunComparisonResponseSerializer(serializers.Serializer):

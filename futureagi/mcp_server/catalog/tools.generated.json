@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "source_contract_sha256": "f45ab776e9119d4ba00fd503fc4ee76de1b074294b8991f724815290bffd6a48",
+  "source_contract_sha256": "8e3de58ed208f4e2208a4f792acc16ef369c003d507776d93daa3cf6c70a0ba0",
   "tool_count": 96,
   "tools": [
     {
@@ -6176,6 +6176,18 @@
           },
           "diff_case": {
             "$ref": "#/definitions/DiffCaseRequest"
+          },
+          "metadata_equals": {
+            "title": "Metadata equals",
+            "type": "object",
+            "additionalProperties": {},
+            "maxProperties": 20
+          },
+          "split_name": {
+            "title": "Split name",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
           }
         },
         "additionalProperties": false,
@@ -6269,7 +6281,9 @@
             "higher_is_better",
             "include_trial_stability",
             "release_gate",
-            "diff_case"
+            "diff_case",
+            "metadata_equals",
+            "split_name"
           ]
         }
       },

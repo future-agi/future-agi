@@ -11803,6 +11803,8 @@ export interface RunComparisonRequestApi {
   include_trial_stability?: boolean;
   release_gate?: ReleaseGatePolicyApi;
   diff_case?: DiffCaseRequestApi;
+  metadata_equals?: { [key: string]: JsonValueApi };
+  split_name?: string;
 }
 
 export type RunAggregateApiStatusCounts = { [key: string]: number };
@@ -12054,6 +12056,13 @@ export interface CaseOutputDiffApi {
   output_comparison: OutputDiffComparisonApi;
 }
 
+export interface ComparisonSelectionApi {
+  total_plan_count: number;
+  selected_count: number;
+  metadata_equals: { [key: string]: JsonValueApi };
+  split_name: string | null;
+}
+
 export interface RunComparisonResultApi {
   baseline_run_id: string;
   candidate_run_id: string;
@@ -12068,6 +12077,7 @@ export interface RunComparisonResultApi {
   release_gate?: ReleaseGateReportApi;
   trial_stability?: TrialStabilityApi[];
   case_diff?: CaseOutputDiffApi;
+  selection?: ComparisonSelectionApi;
 }
 
 export interface RunComparisonResponseApi {

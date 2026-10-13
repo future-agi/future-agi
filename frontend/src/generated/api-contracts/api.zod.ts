@@ -23647,6 +23647,8 @@ export const ExperimentRunsCompareBody = zod
       })
       .strict()
       .optional(),
+    metadata_equals: zod.record(zod.any()).refine(value => Object.keys(value).length <= 20).optional(),
+    split_name: zod.string().min(1).max(255).optional(),
   })
   .strict();
 
@@ -24119,6 +24121,12 @@ export const ExperimentRunsCompareResponse = zod.object({
         }),
       })
       .optional(),
+    selection: zod.object({
+      total_plan_count: zod.number().min(0),
+      selected_count: zod.number().min(0),
+      metadata_equals: zod.record(zod.any()),
+      split_name: zod.string().nullable(),
+    }).optional(),
   }),
 });
 

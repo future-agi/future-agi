@@ -17,6 +17,7 @@ from model_hub.services.experiment_analysis import (
     INVALID,
     NOT_ASSESSED,
     SCORE_STATUSES,
+    AnalysisFilter,
     ComparisonSummary,
     RunAggregate,
     RunItemRecord,
@@ -83,6 +84,7 @@ class PersistedRunComparison:
     trace_refs: tuple[CaseTraceReferences, ...]
     trial_stability: tuple[TrialStability, ...] | None = None
     case_diff: Mapping[str, object] | None = None
+    selection: Mapping[str, object] | None = None
 
 
 def _load_run(
@@ -183,6 +185,7 @@ def _items(run: ExperimentRun, plan: set[ItemIdentity]) -> list[ExperimentRunIte
             "score_refs",
             "trace_id",
             "root_span_id",
+            "metadata",
         )
         .order_by("example_id", "trial_number")[: _MAX_ITEMS + 1]
     )
@@ -242,9 +245,25 @@ def _records(
             if item.status == "completed" and item.error is not None
             else item.status,
             scores={metric_id: _score(item.score_refs, bindings, metric_id)},
+            metadata=item.metadata if isinstance(item.metadata, Mapping) else {},
+            split_names=_split_names(item.metadata),
         )
         for item in items
     ]
+
+
+def _split_names(metadata: object) -> tuple[str, ...]:
+    if not isinstance(metadata, Mapping):
+        return ()
+    split_names = metadata.get("split_names")
+    if isinstance(split_names, str):
+        return (split_names,)
+    if isinstance(split_names, (list, tuple)) and all(
+        isinstance(value, str) for value in split_names
+    ):
+        return tuple(split_names)
+    split_name = metadata.get("split_name")
+    return (split_name,) if isinstance(split_name, str) else ()
 
 
 def _counts(expected: int, summary: RunAggregate) -> RunCounts:
@@ -279,6 +298,8 @@ def compare_experiment_runs(
     higher_is_better: bool = True,
     include_trial_stability: bool = False,
     diff_case: Mapping[str, object] | None = None,
+    metadata_equals: Mapping[str, object] | None = None,
+    split_name: str | None = None,
 ) -> PersistedRunComparison:
     """Compare exact version/plan/evaluator pins; no inferred alignment or CI verdict.
 
@@ -320,13 +341,43 @@ def compare_experiment_runs(
         _records(baseline_items, baseline_bindings, metric_id),
         _records(candidate_items, candidate_bindings, metric_id),
     )
+    if metadata_equals is not None and not isinstance(metadata_equals, Mapping):
+        raise RunComparisonError("metadata_equals must be an object")
+    if metadata_equals is not None and len(metadata_equals) > 20:
+        raise RunComparisonError("metadata_equals supports at most 20 keys")
+    if split_name is not None and (not isinstance(split_name, str) or not split_name):
+        raise RunComparisonError("split_name must be a non-empty string")
+    filters = (
+        AnalysisFilter(
+            metadata_equals=metadata_equals or {},
+            split_name=split_name,
+        )
+        if metadata_equals is not None or split_name is not None
+        else None
+    )
     comparison = compare_run_items(
         baseline_records,
         candidate_records,
         metric=metric_id,
         passing_score=passing_score,
         higher_is_better=higher_is_better,
+        filters=filters,
     )
+    selected_plan = (
+        {(case.example_id, case.trial_number) for case in comparison.cases}
+        if filters is not None
+        else plan
+    )
+    selected_baseline_records = [
+        record
+        for record in baseline_records
+        if (str(record.example_id), record.trial_number) in selected_plan
+    ]
+    selected_candidate_records = [
+        record
+        for record in candidate_records
+        if (str(record.example_id), record.trial_number) in selected_plan
+    ]
     case_diff = None
     if diff_case is not None:
         if not isinstance(diff_case, Mapping):
@@ -344,8 +395,12 @@ def compare_experiment_runs(
             raise RunComparisonError(
                 "diff_case trial_number must be a positive integer"
             )
-        if selected_identity not in plan:
-            raise RunComparisonError("diff_case identity is not in the pinned run plan")
+        if selected_identity not in selected_plan:
+            raise RunComparisonError(
+                "diff_case identity is not in the selected comparison"
+                if filters is not None
+                else "diff_case identity is not in the pinned run plan"
+            )
         baseline_selected = _selected_item(baseline, selected_identity)
         candidate_selected = _selected_item(candidate, selected_identity)
         case_diff = {
@@ -366,11 +421,11 @@ def compare_experiment_runs(
         metric_id=metric_id,
         evaluator_version_id=_uuid(before["evaluator_version_id"]),
         comparison=comparison,
-        baseline_counts=_counts(len(plan), comparison.baseline),
-        candidate_counts=_counts(len(plan), comparison.candidate),
+        baseline_counts=_counts(len(selected_plan), comparison.baseline),
+        candidate_counts=_counts(len(selected_plan), comparison.candidate),
         missing_by_side={
-            "baseline": tuple(sorted(plan - baseline_traces.keys())),
-            "candidate": tuple(sorted(plan - candidate_traces.keys())),
+            "baseline": tuple(sorted(selected_plan - baseline_traces.keys())),
+            "candidate": tuple(sorted(selected_plan - candidate_traces.keys())),
         },
         trace_refs=tuple(
             CaseTraceReferences(
@@ -379,17 +434,27 @@ def compare_experiment_runs(
                 baseline_traces.get((example_id, trial)),
                 candidate_traces.get((example_id, trial)),
             )
-            for example_id, trial in sorted(plan)
+            for example_id, trial in sorted(selected_plan)
         ),
         trial_stability=(
             summarize_trial_stability(
-                baseline_records,
-                candidate_records,
-                expected_identities=plan,
+                selected_baseline_records,
+                selected_candidate_records,
+                expected_identities=selected_plan,
                 metric=metric_id,
             )
             if include_trial_stability
             else None
         ),
         case_diff=case_diff,
+        selection=(
+            {
+                "total_plan_count": len(plan),
+                "selected_count": len(selected_plan),
+                "metadata_equals": dict(metadata_equals or {}),
+                "split_name": split_name,
+            }
+            if filters is not None
+            else None
+        ),
     )
