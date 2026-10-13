@@ -5,8 +5,6 @@ the new run contract is rolled out.  These two small models give callers a
 stable version and example identity without copying the cell table.
 """
 
-import hashlib
-import json
 import uuid
 
 from django.core.exceptions import ValidationError
@@ -173,11 +171,13 @@ class DatasetVersionItem(BaseModel):
 
     @staticmethod
     def calculate_content_hash(*, input, expected, metadata):
-        payload = {"input": input, "expected": expected, "metadata": metadata}
-        canonical = json.dumps(
-            payload, sort_keys=True, separators=(",", ":"), default=str
+        from model_hub.services.dataset_version_service import canonical_content_hash
+
+        return canonical_content_hash(
+            input=input,
+            expected=expected,
+            metadata=metadata,
         )
-        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
     def save(self, *args, **kwargs):
         if not self.content_hash:
