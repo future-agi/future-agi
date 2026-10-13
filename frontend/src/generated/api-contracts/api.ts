@@ -373,6 +373,8 @@ import type {
   DatasetUpdateCellValueRequestApi,
   DatasetUpdateColumnNameRequestApi,
   DatasetUpdateColumnTypeRequestApi,
+  DatasetVersionCreateApi,
+  DatasetVersionCreateResponseApi,
   DatasetVersionDetailResponseApi,
   DatasetVersionListResponseApi,
   DeactivateUserApi,
@@ -33071,6 +33073,83 @@ export const modelHubDatasetsVersionsList = async (
     {
       ...options,
       method: "GET",
+    },
+  );
+};
+
+export type datasetVersionsCreateResponse201 = {
+  data: DatasetVersionCreateResponseApi;
+  status: 201;
+};
+
+export type datasetVersionsCreateResponse400 = {
+  data: ModelHubErrorResponseApi;
+  status: 400;
+};
+
+export type datasetVersionsCreateResponse403 = {
+  data: ModelHubErrorResponseApi;
+  status: 403;
+};
+
+export type datasetVersionsCreateResponse404 = {
+  data: ModelHubErrorResponseApi;
+  status: 404;
+};
+
+export type datasetVersionsCreateResponse409 = {
+  data: ModelHubErrorResponseApi;
+  status: 409;
+};
+
+export type datasetVersionsCreateResponse500 = {
+  data: ModelHubErrorResponseApi;
+  status: 500;
+};
+
+export type datasetVersionsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201 | 400 | 403 | 404 | 409 | 500>;
+};
+
+export type datasetVersionsCreateResponseSuccess =
+  datasetVersionsCreateResponse201 & {
+    headers: Headers;
+  };
+export type datasetVersionsCreateResponseError = (
+  | datasetVersionsCreateResponse400
+  | datasetVersionsCreateResponse403
+  | datasetVersionsCreateResponse404
+  | datasetVersionsCreateResponse409
+  | datasetVersionsCreateResponse500
+  | datasetVersionsCreateResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type datasetVersionsCreateResponse =
+  | datasetVersionsCreateResponseSuccess
+  | datasetVersionsCreateResponseError;
+
+export const getDatasetVersionsCreateUrl = (datasetId: string) => {
+  return `/model-hub/datasets/${datasetId}/versions/`;
+};
+
+/**
+ * Create an immutable dataset snapshot from an explicit items list of at most 10,000 entries and a JSON request body at most 10 MiB (10,485,760 bytes). Oversized bodies return 400 before JSON parsing. An empty list creates an empty version; mutable dataset rows are never read implicitly. Requires workspace write access. Parent versions must belong to the same visible dataset. Returns version metadata; read items through the detail endpoint. This POST is not idempotent: every accepted request, including a retry, creates a fresh version.
+ */
+export const datasetVersionsCreate = async (
+  datasetId: string,
+  datasetVersionCreateApi: DatasetVersionCreateApi,
+  options?: RequestInit,
+): Promise<datasetVersionsCreateResponse> => {
+  return apiMutator<datasetVersionsCreateResponse>(
+    getDatasetVersionsCreateUrl(datasetId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(datasetVersionCreateApi),
     },
   );
 };

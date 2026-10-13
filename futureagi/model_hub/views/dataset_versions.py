@@ -1,32 +1,60 @@
-"""Read-only dataset-version identity and provenance endpoints.
+"""Create and inspect immutable dataset versions and source provenance."""
 
-The legacy ``Dataset -> Row -> Cell`` API remains unchanged.  These endpoints
-only expose the small immutable projection introduced by the dataset-version
-MVP, so callers can inspect stable example IDs and source trace/span links
-before experiment runs start writing against the contract.
-"""
+from io import BytesIO
+from typing import BinaryIO
+from uuid import UUID
 
+from django.core.exceptions import ValidationError
 from django.db.models import Count, Q
+from rest_framework.exceptions import ParseError
+from rest_framework.parsers import JSONParser
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.request import Request
+from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from model_hub.models.dataset_versions import DatasetVersion, DatasetVersionItem
 from model_hub.serializers.contracts import MODEL_HUB_ERROR_RESPONSES
 from model_hub.serializers.dataset_versions import (
+    DatasetVersionCreateResponseSerializer,
+    DatasetVersionCreateSerializer,
     DatasetVersionDetailResponseSerializer,
     DatasetVersionItemReadSerializer,
     DatasetVersionListResponseSerializer,
     DatasetVersionPageQuerySerializer,
     DatasetVersionReadSerializer,
 )
+from model_hub.services.dataset_version_service import (
+    DatasetVersionItemInput,
+    create_dataset_version,
+)
 from model_hub.utils.workspace_scope import (
     request_organization,
     scoped_dataset_queryset,
 )
+from tfc.routers import primary_required
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.general_methods import GeneralMethods
 
 _gm = GeneralMethods()
+_MAX_SNAPSHOT_BODY_BYTES = 10 * 1024 * 1024
+
+
+class BoundedSnapshotJSONParser(JSONParser):
+    """Reject oversized snapshot bodies before validation or database work."""
+
+    def parse(
+        self,
+        stream: BinaryIO,
+        media_type: str | None = None,
+        parser_context: dict | None = None,
+    ) -> object:
+        body = stream.read(_MAX_SNAPSHOT_BODY_BYTES + 1)
+        if len(body) > _MAX_SNAPSHOT_BODY_BYTES:
+            raise ParseError(
+                f"Snapshot request body must be at most {_MAX_SNAPSHOT_BODY_BYTES} bytes."
+            )
+        return super().parse(BytesIO(body), media_type, parser_context)
 
 
 def _scoped_version_queryset(request, dataset_id):
@@ -44,6 +72,67 @@ class DatasetVersionListView(APIView):
     """List immutable versions for one visible dataset."""
 
     permission_classes = [IsAuthenticated]
+    parser_classes = (BoundedSnapshotJSONParser,)
+
+    @validated_request(
+        request_serializer=DatasetVersionCreateSerializer,
+        responses={
+            201: DatasetVersionCreateResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+        operation_id="dataset_versions_create",
+        operation_description=(
+            "Create an immutable dataset snapshot from an explicit items list "
+            "of at most 10,000 entries and a JSON request body at most 10 MiB "
+            "(10,485,760 bytes). Oversized bodies return 400 before JSON parsing. "
+            "An empty list creates an empty version; "
+            "mutable dataset rows are never read implicitly. Requires workspace "
+            "write access. Parent versions must belong to the same visible "
+            "dataset. Returns version metadata; read items through the detail "
+            "endpoint. This POST is not idempotent: every accepted request, "
+            "including a retry, creates a fresh version."
+        ),
+    )
+    @primary_required
+    def post(self, request: Request, dataset_id: UUID) -> Response:
+        if getattr(request, "organization", None) is None:
+            return _gm.not_found("Dataset not found")
+        dataset = scoped_dataset_queryset(request).filter(id=dataset_id).first()
+        if dataset is None:
+            return _gm.not_found("Dataset not found")
+
+        data = request.validated_data
+        parent_id = data.get("parent_version_id")
+        parent = None
+        if parent_id is not None:
+            parent = DatasetVersion.no_workspace_objects.filter(
+                id=parent_id,
+                dataset=dataset,
+                deleted=False,
+            ).first()
+            if parent is None:
+                return _gm.not_found("Parent dataset version not found")
+        items = [DatasetVersionItemInput(**item) for item in data["items"]]
+        try:
+            version = create_dataset_version(
+                dataset=dataset,
+                items=items,
+                created_by=request.user,
+                parent_version=parent,
+                description=data.get("description", ""),
+                metadata=data.get("metadata"),
+                source_revision=data.get("source_revision", ""),
+            )
+        except ValidationError as exc:
+            return _gm.bad_request(
+                exc.message_dict if hasattr(exc, "message_dict") else exc.messages
+            )
+        version.item_count = len(items)
+        return _gm.success_response(
+            DatasetVersionReadSerializer(version).data,
+            status=201,
+        )
 
     @validated_request(
         query_serializer=DatasetVersionPageQuerySerializer,

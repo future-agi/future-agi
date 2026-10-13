@@ -15262,6 +15262,38 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
         },
       },
+      post: {
+        operationId: "dataset_versions_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/DatasetVersionCreate",
+        },
+        queryParameters: {},
+        responses: {
+          201: {
+            $ref: "#/definitions/DatasetVersionCreateResponse",
+          },
+          400: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          409: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
     },
     "/model-hub/datasets/{dataset_id}/versions/{version_id}/": {
       get: {
@@ -56703,6 +56735,58 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    DatasetVersionCreate: {
+      required: ["items"],
+      type: "object",
+      properties: {
+        items: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DatasetVersionItemCreate",
+          },
+          maxItems: 10000,
+        },
+        parent_version_id: {
+          title: "Parent version id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        description: {
+          title: "Description",
+          type: "string",
+        },
+        metadata: {
+          title: "Metadata",
+          type: "object",
+          additionalProperties: {
+            type: "object",
+            "x-nullable": true,
+            "x-json-value": true,
+            description: "Any valid JSON value.",
+          },
+        },
+        source_revision: {
+          title: "Source revision",
+          type: "string",
+          maxLength: 255,
+        },
+      },
+      additionalProperties: false,
+    },
+    DatasetVersionCreateResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/DatasetVersionRead",
+        },
+      },
+    },
     DatasetVersionDetailResponse: {
       required: ["status", "result"],
       type: "object",
@@ -88517,6 +88601,150 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    DatasetVersionItemCreate: {
+      required: ["input"],
+      type: "object",
+      properties: {
+        input: {
+          title: "Input",
+          type: "object",
+          "x-json-value": true,
+          "x-nullable": false,
+          description: "Any non-null JSON value; nested nulls are allowed.",
+        },
+        expected: {
+          title: "Expected",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        metadata: {
+          title: "Metadata",
+          type: "object",
+          additionalProperties: {
+            type: "object",
+            "x-nullable": true,
+            "x-json-value": true,
+            description: "Any valid JSON value.",
+          },
+        },
+        example_id: {
+          title: "Example id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        external_id: {
+          title: "External id",
+          type: "string",
+          maxLength: 500,
+          "x-nullable": true,
+        },
+        source_trace_id: {
+          title: "Source trace id",
+          type: "string",
+          maxLength: 255,
+          "x-nullable": true,
+        },
+        source_span_id: {
+          title: "Source span id",
+          type: "string",
+          maxLength: 255,
+          "x-nullable": true,
+        },
+        legacy_row_id: {
+          title: "Legacy row id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+      },
+      additionalProperties: false,
+    },
+    DatasetVersionRead: {
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        dataset: {
+          title: "Dataset",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        parent_version: {
+          title: "Parent version",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        created_by: {
+          title: "Created by",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        organization: {
+          title: "Organization",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        workspace: {
+          title: "Workspace",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        content_hash: {
+          title: "Content hash",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        description: {
+          title: "Description",
+          type: "string",
+          readOnly: true,
+        },
+        metadata: {
+          title: "Metadata",
+          type: "object",
+          readOnly: true,
+        },
+        source_revision: {
+          title: "Source revision",
+          type: "string",
+          readOnly: true,
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+        updated_at: {
+          title: "Updated at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+        item_count: {
+          title: "Item count",
+          type: "integer",
+          readOnly: true,
+        },
+      },
+    },
     DatasetVersionDetailResult: {
       required: ["version", "items", "limit", "offset", "has_more"],
       type: "object",
@@ -106923,91 +107151,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Updated at",
           type: "string",
           format: "date-time",
-          readOnly: true,
-        },
-      },
-    },
-    DatasetVersionRead: {
-      type: "object",
-      properties: {
-        id: {
-          title: "Id",
-          type: "string",
-          format: "uuid",
-          readOnly: true,
-        },
-        dataset: {
-          title: "Dataset",
-          type: "string",
-          format: "uuid",
-          readOnly: true,
-        },
-        parent_version: {
-          title: "Parent version",
-          type: "string",
-          format: "uuid",
-          readOnly: true,
-          "x-nullable": true,
-        },
-        created_by: {
-          title: "Created by",
-          type: "string",
-          format: "uuid",
-          readOnly: true,
-          "x-nullable": true,
-        },
-        organization: {
-          title: "Organization",
-          type: "string",
-          format: "uuid",
-          readOnly: true,
-          "x-nullable": true,
-        },
-        workspace: {
-          title: "Workspace",
-          type: "string",
-          format: "uuid",
-          readOnly: true,
-          "x-nullable": true,
-        },
-        content_hash: {
-          title: "Content hash",
-          type: "string",
-          readOnly: true,
-          minLength: 1,
-        },
-        description: {
-          title: "Description",
-          type: "string",
-          readOnly: true,
-          minLength: 1,
-        },
-        metadata: {
-          title: "Metadata",
-          type: "object",
-          readOnly: true,
-        },
-        source_revision: {
-          title: "Source revision",
-          type: "string",
-          readOnly: true,
-          minLength: 1,
-        },
-        created_at: {
-          title: "Created at",
-          type: "string",
-          format: "date-time",
-          readOnly: true,
-        },
-        updated_at: {
-          title: "Updated at",
-          type: "string",
-          format: "date-time",
-          readOnly: true,
-        },
-        item_count: {
-          title: "Item count",
-          type: "integer",
           readOnly: true,
         },
       },

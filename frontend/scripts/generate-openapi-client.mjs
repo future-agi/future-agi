@@ -437,6 +437,7 @@ export type SpanAttributeTopValueApiValue = JsonValueApi;`,
       "TraceObserveColumnConfigApiSettings",
       "TraceObserveColumnConfigApiChoicesMap",
       "TraceObserveColumnConfigApiAnnotators",
+      "DatasetVersionItemCreateApiExpected",
     ]) {
       schemas = assertReplace(
         schemas,
@@ -450,6 +451,48 @@ export type ${jsonAlias} = { [key: string]: unknown };`,
 export type ${jsonAlias} = JsonValueApi;`,
         `${jsonAlias} → recursive JSON value`,
       );
+    }
+
+    schemas = assertReplace(
+      schemas,
+      "export type DatasetVersionItemCreateApiInput = { [key: string]: unknown };",
+      "export type DatasetVersionItemCreateApiInput = Exclude<JsonValueApi, null>;",
+      "snapshot input excludes top-level null",
+    );
+    for (const alias of [
+      "DatasetVersionCreateApiMetadata",
+      "DatasetVersionItemCreateApiMetadata",
+    ]) {
+      schemas = assertReplaceInNamedBlock(
+        schemas,
+        `export type ${alias} = {`,
+        "[key: string]: { [key: string]: unknown }",
+        "[key: string]: JsonValueApi",
+        `${alias} JSON values`,
+      );
+    }
+    for (const [typeName, fields] of [
+      ["DatasetVersionCreateApi", ["parent_version_id"]],
+      [
+        "DatasetVersionItemCreateApi",
+        [
+          "example_id",
+          "external_id",
+          "source_trace_id",
+          "source_span_id",
+          "legacy_row_id",
+        ],
+      ],
+    ]) {
+      for (const field of fields) {
+        schemas = assertReplaceInNamedBlock(
+          schemas,
+          `export interface ${typeName} {`,
+          `${field}?: string;`,
+          `${field}?: string | null;`,
+          `${typeName}.${field} nullable`,
+        );
+      }
     }
 
     for (const rowType of [
@@ -794,6 +837,52 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
         `${exportName} JSON cells → recursive JSON value`,
       );
     }
+    const snapshotBody =
+      "export const DatasetVersionsCreateBody = zod.object({";
+    zod = assertReplaceRegexInNamedBlock(
+      zod,
+      snapshotBody,
+      /zod\.object\(\{\n\n\}\)\.passthrough\(\)(?=(?:\.(?:optional|nullish|nullable)\(\)|\.default\([^)]*\))*\.describe\('Any valid JSON value\.'\))/g,
+      "jsonValueSchema",
+      "snapshot expected and metadata JSON values",
+    );
+    zod = assertReplaceInNamedBlock(
+      zod,
+      snapshotBody,
+      "zod.object({\n\n}).passthrough().describe('Any non-null JSON value; nested nulls are allowed.')",
+      "jsonValueSchema.refine((value) => value !== null).describe('Any non-null JSON value; nested nulls are allowed.')",
+      "snapshot input excludes top-level null",
+    );
+    for (const field of [
+      "parent_version_id",
+      "example_id",
+      "external_id",
+      "source_trace_id",
+      "source_span_id",
+      "legacy_row_id",
+    ]) {
+      zod = assertReplaceRegexInNamedBlock(
+        zod,
+        snapshotBody,
+        new RegExp(`("${field}": zod\\.[^\\n]+)\\.optional\\(\\)`),
+        "$1.nullish()",
+        `snapshot ${field} nullable`,
+      );
+    }
+    zod = assertReplaceInNamedBlock(
+      zod,
+      snapshotBody,
+      '"legacy_row_id": zod.string().uuid().nullish()\n}))',
+      '"legacy_row_id": zod.string().uuid().nullish()\n}).strict())',
+      "snapshot item rejects unknown fields",
+    );
+    zod = assertReplaceInNamedBlock(
+      zod,
+      snapshotBody,
+      '"source_revision": zod.string().max(datasetVersionsCreateBodySourceRevisionMax).optional()\n})',
+      '"source_revision": zod.string().max(datasetVersionsCreateBodySourceRevisionMax).optional()\n}).strict()',
+      "snapshot body rejects unknown fields",
+    );
     const conversationEvidenceResponse =
       "export const TracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponse = zod.object({";
     zod = assertReplaceRegexInNamedBlock(

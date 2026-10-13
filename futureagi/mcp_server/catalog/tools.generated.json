@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "source_contract_sha256": "d282db905550d297271a77d77dbe4b44aec7ad576b77333d04feff4ed19db5c3",
-  "tool_count": 93,
+  "source_contract_sha256": "c5bda8bd315446e1b721f1cd4665166f13629f23ac67c6a75d1a60c600407332",
+  "tool_count": 94,
   "tools": [
     {
       "name": "whoami",
@@ -323,6 +323,177 @@
       },
       "source": {
         "operationId": "model-hub_develops_create-empty-dataset_create"
+      }
+    },
+    {
+      "name": "create_dataset_version",
+      "description": "Create an immutable snapshot for a dataset from an explicit items list of at most 10,000 entries. Empty items creates an empty version. Optional parent_version_id preserves stable example identity by external_id. Requires workspace write access. Returns version metadata only. Not idempotent; every accepted retry creates a new version.",
+      "group": "datasets",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "dataset_id": {
+            "type": "string"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/DatasetVersionItemCreate"
+            },
+            "maxItems": 10000
+          },
+          "parent_version_id": {
+            "anyOf": [
+              {
+                "title": "Parent version id",
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "metadata": {
+            "title": "Metadata",
+            "type": "object",
+            "additionalProperties": {
+              "description": "Any valid JSON value."
+            }
+          },
+          "source_revision": {
+            "title": "Source revision",
+            "type": "string",
+            "maxLength": 255
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "dataset_id",
+          "items"
+        ],
+        "definitions": {
+          "DatasetVersionItemCreate": {
+            "required": [
+              "input"
+            ],
+            "type": "object",
+            "properties": {
+              "input": {
+                "title": "Input",
+                "description": "Any non-null JSON value; nested nulls are allowed.",
+                "not": {
+                  "type": "null"
+                }
+              },
+              "expected": {
+                "title": "Expected",
+                "description": "Any valid JSON value."
+              },
+              "metadata": {
+                "title": "Metadata",
+                "type": "object",
+                "additionalProperties": {
+                  "description": "Any valid JSON value."
+                }
+              },
+              "example_id": {
+                "anyOf": [
+                  {
+                    "title": "Example id",
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "external_id": {
+                "anyOf": [
+                  {
+                    "title": "External id",
+                    "type": "string",
+                    "maxLength": 500
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "source_trace_id": {
+                "anyOf": [
+                  {
+                    "title": "Source trace id",
+                    "type": "string",
+                    "maxLength": 255
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "source_span_id": {
+                "anyOf": [
+                  {
+                    "title": "Source span id",
+                    "type": "string",
+                    "maxLength": 255
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "legacy_row_id": {
+                "anyOf": [
+                  {
+                    "title": "Legacy row id",
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/model-hub/datasets/{dataset_id}/versions/",
+        "parameters": {
+          "path": [
+            "dataset_id"
+          ],
+          "query": [],
+          "body": [
+            "items",
+            "parent_version_id",
+            "description",
+            "metadata",
+            "source_revision"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "dataset_versions_create"
       }
     },
     {

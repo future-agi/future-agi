@@ -27576,6 +27576,69 @@
                 "x-runtime-request-validation": true,
                 "x-runtime-response-validation": true
             },
+            "post": {
+                "operationId": "dataset_versions_create",
+                "description": "Create an immutable dataset snapshot from an explicit items list of at most 10,000 entries and a JSON request body at most 10 MiB (10,485,760 bytes). Oversized bodies return 400 before JSON parsing. An empty list creates an empty version; mutable dataset rows are never read implicitly. Requires workspace write access. Parent versions must belong to the same visible dataset. Returns version metadata; read items through the detail endpoint. This POST is not idempotent: every accepted request, including a retry, creates a fresh version.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/DatasetVersionCreate"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/DatasetVersionCreateResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "model-hub"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
             "parameters": [
                 {
                     "name": "dataset_id",
@@ -102802,8 +102865,7 @@
                 "description": {
                     "title": "Description",
                     "type": "string",
-                    "readOnly": true,
-                    "minLength": 1
+                    "readOnly": true
                 },
                 "metadata": {
                     "title": "Metadata",
@@ -102813,8 +102875,7 @@
                 "source_revision": {
                     "title": "Source revision",
                     "type": "string",
-                    "readOnly": true,
-                    "minLength": 1
+                    "readOnly": true
                 },
                 "created_at": {
                     "title": "Created at",
@@ -102883,6 +102944,126 @@
                 },
                 "result": {
                     "$ref": "#/definitions/DatasetVersionListResult"
+                }
+            }
+        },
+        "DatasetVersionItemCreate": {
+            "required": [
+                "input"
+            ],
+            "type": "object",
+            "properties": {
+                "input": {
+                    "title": "Input",
+                    "type": "object",
+                    "x-json-value": true,
+                    "x-nullable": false,
+                    "description": "Any non-null JSON value; nested nulls are allowed."
+                },
+                "expected": {
+                    "title": "Expected",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "metadata": {
+                    "title": "Metadata",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "object",
+                        "x-nullable": true,
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
+                    }
+                },
+                "example_id": {
+                    "title": "Example id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "external_id": {
+                    "title": "External id",
+                    "type": "string",
+                    "maxLength": 500,
+                    "x-nullable": true
+                },
+                "source_trace_id": {
+                    "title": "Source trace id",
+                    "type": "string",
+                    "maxLength": 255,
+                    "x-nullable": true
+                },
+                "source_span_id": {
+                    "title": "Source span id",
+                    "type": "string",
+                    "maxLength": 255,
+                    "x-nullable": true
+                },
+                "legacy_row_id": {
+                    "title": "Legacy row id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                }
+            },
+            "additionalProperties": false
+        },
+        "DatasetVersionCreate": {
+            "required": [
+                "items"
+            ],
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/DatasetVersionItemCreate"
+                    },
+                    "maxItems": 10000
+                },
+                "parent_version_id": {
+                    "title": "Parent version id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string"
+                },
+                "metadata": {
+                    "title": "Metadata",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "object",
+                        "x-nullable": true,
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
+                    }
+                },
+                "source_revision": {
+                    "title": "Source revision",
+                    "type": "string",
+                    "maxLength": 255
+                }
+            },
+            "additionalProperties": false
+        },
+        "DatasetVersionCreateResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/DatasetVersionRead"
                 }
             }
         },

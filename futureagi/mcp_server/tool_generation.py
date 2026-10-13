@@ -99,11 +99,14 @@ def _json_schema(schema: dict[str, Any]) -> dict[str, Any]:
     """Translate Swagger extensions without changing the accepted request values."""
     result = copy.deepcopy(schema)
     if result.pop("x-json-value", False):
-        return {
+        json_value = {
             key: value
             for key, value in result.items()
             if key in {"description", "title", "default"}
         }
+        if result.get("x-nullable") is False:
+            json_value["not"] = {"type": "null"}
+        return json_value
     for extension, kind in (
         ("x-string-or-object", "object"),
         ("x-string-or-array", "array"),

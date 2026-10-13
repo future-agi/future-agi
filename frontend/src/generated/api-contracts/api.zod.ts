@@ -19449,9 +19449,9 @@ export const ModelHubDatasetsVersionsListResponse = zod.object({
         organization: zod.string().uuid().optional(),
         workspace: zod.string().uuid().optional(),
         content_hash: zod.string().min(1).optional(),
-        description: zod.string().min(1).optional(),
+        description: zod.string().optional(),
         metadata: zod.object({}).passthrough().optional(),
-        source_revision: zod.string().min(1).optional(),
+        source_revision: zod.string().optional(),
         created_at: zod.string().datetime({ offset: true }).optional(),
         updated_at: zod.string().datetime({ offset: true }).optional(),
         item_count: zod.number().optional(),
@@ -19462,6 +19462,71 @@ export const ModelHubDatasetsVersionsListResponse = zod.object({
     has_more: zod.boolean(),
   }),
 });
+
+/**
+ * Create an immutable dataset snapshot from an explicit items list of at most 10,000 entries and a JSON request body at most 10 MiB (10,485,760 bytes). Oversized bodies return 400 before JSON parsing. An empty list creates an empty version; mutable dataset rows are never read implicitly. Requires workspace write access. Parent versions must belong to the same visible dataset. Returns version metadata; read items through the detail endpoint. This POST is not idempotent: every accepted request, including a retry, creates a fresh version.
+ */
+export const DatasetVersionsCreateParams = zod.object({
+  dataset_id: zod.string(),
+});
+
+export const datasetVersionsCreateBodyItemsItemExternalIdMax = 500;
+
+export const datasetVersionsCreateBodyItemsItemSourceTraceIdMax = 255;
+
+export const datasetVersionsCreateBodyItemsItemSourceSpanIdMax = 255;
+
+export const datasetVersionsCreateBodyItemsMax = 10000;
+
+export const datasetVersionsCreateBodySourceRevisionMax = 255;
+
+export const DatasetVersionsCreateBody = zod
+  .object({
+    items: zod
+      .array(
+        zod
+          .object({
+            input: jsonValueSchema
+              .refine((value) => value !== null)
+              .describe("Any non-null JSON value; nested nulls are allowed."),
+            expected: jsonValueSchema
+              .optional()
+              .describe("Any valid JSON value."),
+            metadata: zod
+              .record(
+                zod.string(),
+                jsonValueSchema.describe("Any valid JSON value."),
+              )
+              .optional(),
+            example_id: zod.string().uuid().nullish(),
+            external_id: zod
+              .string()
+              .max(datasetVersionsCreateBodyItemsItemExternalIdMax)
+              .nullish(),
+            source_trace_id: zod
+              .string()
+              .max(datasetVersionsCreateBodyItemsItemSourceTraceIdMax)
+              .nullish(),
+            source_span_id: zod
+              .string()
+              .max(datasetVersionsCreateBodyItemsItemSourceSpanIdMax)
+              .nullish(),
+            legacy_row_id: zod.string().uuid().nullish(),
+          })
+          .strict(),
+      )
+      .max(datasetVersionsCreateBodyItemsMax),
+    parent_version_id: zod.string().uuid().nullish(),
+    description: zod.string().optional(),
+    metadata: zod
+      .record(zod.string(), jsonValueSchema.describe("Any valid JSON value."))
+      .optional(),
+    source_revision: zod
+      .string()
+      .max(datasetVersionsCreateBodySourceRevisionMax)
+      .optional(),
+  })
+  .strict();
 
 /**
  * Read one version and a bounded page of its provenance-bearing items.
@@ -19502,9 +19567,9 @@ export const ModelHubDatasetsVersionsReadResponse = zod.object({
       organization: zod.string().uuid().optional(),
       workspace: zod.string().uuid().optional(),
       content_hash: zod.string().min(1).optional(),
-      description: zod.string().min(1).optional(),
+      description: zod.string().optional(),
       metadata: zod.object({}).passthrough().optional(),
-      source_revision: zod.string().min(1).optional(),
+      source_revision: zod.string().optional(),
       created_at: zod.string().datetime({ offset: true }).optional(),
       updated_at: zod.string().datetime({ offset: true }).optional(),
       item_count: zod.number().optional(),

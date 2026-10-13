@@ -8856,10 +8856,8 @@ export interface DatasetVersionReadApi {
   readonly workspace?: string;
   /** @minLength 1 */
   readonly content_hash?: string;
-  /** @minLength 1 */
   readonly description?: string;
   readonly metadata?: DatasetVersionReadApiMetadata;
-  /** @minLength 1 */
   readonly source_revision?: string;
   readonly created_at?: string;
   readonly updated_at?: string;
@@ -8877,6 +8875,53 @@ export interface DatasetVersionListResultApi {
 export interface DatasetVersionListResponseApi {
   status: boolean;
   result: DatasetVersionListResultApi;
+}
+
+export type DatasetVersionCreateApiMetadata = { [key: string]: JsonValueApi };
+
+/**
+ * Any non-null JSON value; nested nulls are allowed.
+ */
+export type DatasetVersionItemCreateApiInput = Exclude<JsonValueApi, null>;
+
+/**
+ * Any valid JSON value.
+ */
+export type DatasetVersionItemCreateApiExpected = JsonValueApi;
+
+export type DatasetVersionItemCreateApiMetadata = {
+  [key: string]: JsonValueApi;
+};
+
+export interface DatasetVersionItemCreateApi {
+  /** Any non-null JSON value; nested nulls are allowed. */
+  input: DatasetVersionItemCreateApiInput;
+  /** Any valid JSON value. */
+  expected?: DatasetVersionItemCreateApiExpected;
+  metadata?: DatasetVersionItemCreateApiMetadata;
+  example_id?: string | null;
+  /** @maxLength 500 */
+  external_id?: string | null;
+  /** @maxLength 255 */
+  source_trace_id?: string | null;
+  /** @maxLength 255 */
+  source_span_id?: string | null;
+  legacy_row_id?: string | null;
+}
+
+export interface DatasetVersionCreateApi {
+  /** @maxItems 10000 */
+  items: DatasetVersionItemCreateApi[];
+  parent_version_id?: string | null;
+  description?: string;
+  metadata?: DatasetVersionCreateApiMetadata;
+  /** @maxLength 255 */
+  source_revision?: string;
+}
+
+export interface DatasetVersionCreateResponseApi {
+  status: boolean;
+  result: DatasetVersionReadApi;
 }
 
 export type DatasetVersionItemReadApiInput = { [key: string]: unknown };

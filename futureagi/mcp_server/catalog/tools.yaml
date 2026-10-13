@@ -1,5 +1,5 @@
 version: 1
-expected_tool_count: 93
+expected_tool_count: 94
 
 # Pagination is an MCP-only page-size ceiling, so an oversized page is rejected
 # before the REST view queries and serializes it. The generator keeps a stricter
@@ -44,6 +44,12 @@ tools:
     description: Create an empty dataset in the current workspace. Use create_dataset_column before add_dataset_rows.
     operation: {method: POST, path: "/model-hub/develops/create-empty-dataset/"}
     access: write
+  - name: create_dataset_version
+    group: datasets
+    description: Create an immutable snapshot for a dataset from an explicit items list of at most 10,000 entries. Empty items creates an empty version. Optional parent_version_id preserves stable example identity by external_id. Requires workspace write access. Returns version metadata only. Not idempotent; every accepted retry creates a new version.
+    operation: {method: POST, path: "/model-hub/datasets/{dataset_id}/versions/"}
+    access: write
+    idempotent: false
   - name: add_dataset_rows
     group: datasets
     description: Add rows to an existing dataset using cells with column_name and value. Column names must already exist in the dataset.

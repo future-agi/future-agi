@@ -1,5 +1,6 @@
 import json
 import re
+import uuid
 from pathlib import Path
 
 import pytest
@@ -19,12 +20,13 @@ CATALOG_PATH = Path(__file__).resolve().parents[1] / "catalog/tools.yaml"
 def test_committed_catalog_generates_expected_tools():
     manifest = generate_tool_manifest(CONTRACT_PATH, CATALOG_PATH)
 
-    assert manifest["tool_count"] == 93
+    assert manifest["tool_count"] == 94
     tool_names = [tool["name"] for tool in manifest["tools"]]
     assert len(tool_names) == len(set(tool_names))
     assert {
         "whoami",
         "list_datasets",
+        "create_dataset_version",
         "create_prompt_template",
         "test_evaluation",
         "search_traces",
@@ -64,6 +66,46 @@ def test_generator_maps_path_query_and_body_parameters():
             name for fields in request["parameters"].values() for name in fields
         }
         assert mapped_fields <= set(tool["inputSchema"]["properties"])
+
+
+def test_snapshot_creation_tool_is_bounded_non_idempotent_write():
+    tools = {
+        tool["name"]: tool
+        for tool in generate_tool_manifest(CONTRACT_PATH, CATALOG_PATH)["tools"]
+    }
+    tool = tools["create_dataset_version"]
+    assert tool["annotations"] == {
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    }
+    schema = tool["inputSchema"]
+    assert set(schema["required"]) == {"dataset_id", "items"}
+    assert schema["properties"]["items"]["maxItems"] == 10_000
+    assert tool["request"]["parameters"]["path"] == ["dataset_id"]
+    validator = Draft7Validator(schema)
+    arguments = {"dataset_id": str(uuid.uuid4()), "items": [{"input": "question"}]}
+    assert validator.is_valid(arguments)
+    assert validator.is_valid({**arguments, "items": []})
+    assert validator.is_valid(
+        {
+            **arguments,
+            "items": [
+                {
+                    "input": {"nested": None},
+                    "expected": None,
+                    "metadata": {"nullable": None},
+                }
+            ],
+        }
+    )
+    assert not validator.is_valid({**arguments, "items": [{"input": None}]})
+    assert not validator.is_valid({**arguments, "organization": "other"})
+    assert not validator.is_valid({**arguments, "items": [{}]})
+    assert not validator.is_valid(
+        {**arguments, "items": [{"input": "ok", "created_by": "other"}]}
+    )
 
 
 def test_run_comparison_is_a_scoped_read_with_typed_body():
