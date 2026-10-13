@@ -30,6 +30,8 @@ import ScenarioOutcome from "./ScenarioOutcome";
 import CustomTooltip from "src/components/tooltip";
 
 import StageOutput from "./StageOutput";
+import ConversationPrompt from "./ConversationPrompt";
+import AdaptationProgress from "./AdaptationProgress";
 import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 import EnvironmentSwitcher from "src/components/harness/EnvironmentSwitcher";
 import { compactActivityEvents } from "./activityEvents";
@@ -46,6 +48,7 @@ import { useCreditExhaustion } from "src/hooks/use-credit-exhaustion";
 
 import {
   adjustmentStatus,
+  answeredMessageIds,
   completedStageCount,
   degradeReasonCopy,
   errorMessage,
@@ -316,7 +319,12 @@ export default function HarnessDetail() {
   });
 
   const { mutate: sendMessage, isPending: sendingMessage } = useMutation({
-    mutationFn: async ({ content, replyTo = null, kind = "user_message" }) => {
+    mutationFn: async ({
+      content,
+      replyTo = null,
+      kind = "user_message",
+      payload = null,
+    }) => {
       const randomUUID = window.crypto?.randomUUID;
       const requestId =
         typeof randomUUID === "function"
@@ -327,6 +335,7 @@ export default function HarnessDetail() {
         client_request_id: requestId,
         kind,
         ...(replyTo ? { reply_to: replyTo } : {}),
+        ...(payload ? { payload } : {}),
       });
       return { conversation };
     },
@@ -421,9 +430,16 @@ export default function HarnessDetail() {
   const progress = jobProgress(status);
   const isTerminal = terminalStages.has(status?.stage);
   const conversationComposerAvailable = chatAvailable || !isTerminal;
-  const blockingReplyTo = chatAvailable
-    ? current?.conversation?.blocking_input?.message_id || null
+  const blockingInput = chatAvailable
+    ? current?.conversation?.blocking_input
     : null;
+  const blockingReplyTo = blockingInput?.message_id || null;
+  // An adaptation question takes its answer as `{value}`; typing one is the same answer as
+  // clicking an option.
+  const typedAnswerPayload = (content) =>
+    blockingInput?.question ? { value: content } : null;
+  const answeredIds = answeredMessageIds(current?.conversation?.messages);
+  const isAdaptation = Boolean(current?.job?.metadata?.adaptation);
 
   // Only the finished prefix folds away, so the stage a run failed or stopped on is never
   // hidden by collapsing — it is the first row still on screen.
@@ -978,6 +994,13 @@ export default function HarnessDetail() {
               )}
             </Box>
             <Divider sx={{ my: 2 }} />
+            {isAdaptation && (
+              <AdaptationProgress
+                job={current.job}
+                conversation={current.conversation}
+                stage={status?.stage}
+              />
+            )}
 
             {/* Finished stages fold away: on a completed run the full list is fifteen ticks
                 carrying no information. A run that ended badly always stays expanded. */}
@@ -1571,28 +1594,16 @@ export default function HarnessDetail() {
                               </Typography>
                             </Stack>
                           )}
-                          {item.kind === "question" &&
-                            Boolean(item.payload?.options?.length) && (
-                              <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
-                                {item.payload.options.map((option) => (
-                                  <Button
-                                    key={option}
-                                    size="small"
-                                    variant="outlined"
-                                    disabled={sendingMessage}
-                                    onClick={() =>
-                                      sendMessage({
-                                        content: option,
-                                        replyTo: item.message_id,
-                                        kind: "user_response",
-                                      })
-                                    }
-                                  >
-                                    {option}
-                                  </Button>
-                                ))}
-                              </Stack>
-                            )}
+                          {["question", "confirmation"].includes(item.kind) && (
+                            <ConversationPrompt
+                              item={item}
+                              answered={answeredIds.has(
+                                String(item.message_id),
+                              )}
+                              disabled={sendingMessage || isTerminal}
+                              onAnswer={sendMessage}
+                            />
+                          )}
                         </Paper>
                       );
                     })}
@@ -1650,6 +1661,9 @@ export default function HarnessDetail() {
                           kind: blockingReplyTo
                             ? "user_response"
                             : "user_message",
+                          payload: blockingReplyTo
+                            ? typedAnswerPayload(content)
+                            : null,
                         });
                       } else if (isTerminal) {
                         if (extending) return;
@@ -1686,6 +1700,9 @@ export default function HarnessDetail() {
                               kind: blockingReplyTo
                                 ? "user_response"
                                 : "user_message",
+                              payload: blockingReplyTo
+                                ? typedAnswerPayload(content)
+                                : null,
                             });
                         }}
                         disabled={sendingMessage || !message.trim()}

@@ -195,6 +195,27 @@ Finished sessions (incl. a full 30-scenario run) ship in `artifacts/sessions/`,
 so nearly the whole UI can be built against real data. Keys are only needed to
 trigger new work (`POST say` / `POST run`).
 
+## Prebuilt environments: releases, adaptation, compositions, run reports
+
+These are platform routes under `/simulate/api/` (not the `/simulate/harness/`
+proxy above). Their request and response shapes and the adaptation message
+kinds are defined once, in `environment-releases.md`; this section only says
+where the frontend uses them.
+
+| Route / message | Shape | Frontend |
+|---|---|---|
+| `GET harness-releases/` | §7.6 | Create environment page: "Prebuilt environments" gallery (`pages/dashboard/harness/ReleaseGallery.jsx`) |
+| `POST harness-adaptations/` | §7.6 | "Use with my agent" dialog, *Adapt to my agent*; navigates to the returned job's detail page |
+| `POST harness-compositions/` | §7.6 | Same dialog, *Compose without adaptation*; navigates to the composed environment |
+| `stage_changed` with an adaptation stage | §7.5 | Job detail: adaptation checklist (`AdaptationProgress.jsx`); `job.metadata.adaptation_result.composition_id` links to the environment |
+| `question` message (`question_requested`) | §7.5 | Option buttons; the answer is `kind: "user_response"`, `reply_to` the question, `payload: {value}` |
+| `confirmation` message (`confirmation_requested`) | §7.5 | Proposal preview with Approve/Reject; the answer is `kind: "approval"`, `reply_to` the proposal, `payload: {approved}` |
+| `GET harness-environments/{id}/` `composition` | §7.6 | Environment workspace: Alignment tab, header summary, labels in the run repeats pickers |
+| `GET harness-environments/{id}/runs/{run_id}/report/?baseline=` | §7.7 | Run detail: Report tab; `run_id` and `baseline` are test execution ids |
+
+A question or proposal counts as answered once a user message replies to it;
+its buttons stay visible and disabled.
+
 ## Not in v0
 
 - **Single-user.** Session state is one module-level global with one process

@@ -12,6 +12,12 @@ from .harness_environment_credentials import (
     HarnessCredentialFile,
     HarnessEnvironmentCredentials,
 )
+from .harness_release import (
+    HarnessAgentBinding,
+    HarnessEnvironmentRelease,
+    HarnessRunManifest,
+    HarnessSuiteRelease,
+)
 from .eval_config import SimulateEvalConfig
 from .hosted_harness import (
     HostedHarnessArtifact,
@@ -58,6 +64,10 @@ __all__ = [
     "ComponentEvaluation",
     "HarnessCredentialFile",
     "HarnessEnvironmentCredentials",
+    "HarnessAgentBinding",
+    "HarnessEnvironmentRelease",
+    "HarnessRunManifest",
+    "HarnessSuiteRelease",
     "PromptTrial",
     "SimulatorAgent",
     "RunTest",

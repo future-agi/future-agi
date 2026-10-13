@@ -25,9 +25,12 @@ export const DERIVING_LABEL = {
 };
 
 // The tab rail on the building pane: the workspace tabs, rendered pointer-dead.
-// Runs is left out — the workspace only shows it once a run exists, and an
-// environment that is still building (or failed to build) has none.
-export const BUILDING_TABS = WORKSPACE_TABS.filter((t) => t.id !== "runs");
+// Runs and Alignment are left out — the workspace only shows Runs once a run
+// exists and Alignment on a composition, and an environment that is still
+// building (or failed to build) has neither.
+export const BUILDING_TABS = WORKSPACE_TABS.filter(
+  (t) => t.id !== "runs" && t.id !== "composition",
+);
 
 export const CONSOLE_COPY = {
   working: "Working on your last message…",
