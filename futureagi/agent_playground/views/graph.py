@@ -191,14 +191,19 @@ class GraphViewSet(ModelViewSet):
             workspace = request.workspace
 
             with transaction.atomic():
-                graph = Graph.no_workspace_objects.create(
-                    name=serializer.validated_data["name"],
-                    description=serializer.validated_data.get("description"),
-                    organization=organization,
-                    workspace=workspace,
-                    created_by=user,
-                    is_template=False,  # we are not allowing user to create templates for now
-                )
+                create_kwargs = {
+                    "name": serializer.validated_data["name"],
+                    "description": serializer.validated_data.get("description"),
+                    "organization": organization,
+                    "workspace": workspace,
+                    "created_by": user,
+                    "is_template": False,  # we are not allowing user to create templates for now
+                }
+                if "max_concurrent_nodes" in serializer.validated_data:
+                    create_kwargs["max_concurrent_nodes"] = serializer.validated_data[
+                        "max_concurrent_nodes"
+                    ]
+                graph = Graph.no_workspace_objects.create(**create_kwargs)
 
                 # Create empty draft version
                 GraphVersion.no_workspace_objects.create(
@@ -267,7 +272,7 @@ class GraphViewSet(ModelViewSet):
 
     def _update_graph_metadata(self, request):
         """
-        Update graph metadata only (name, description).
+        Update graph metadata only (name, description, max_concurrent_nodes).
 
         Does NOT touch versions.
         """
@@ -275,6 +280,10 @@ class GraphViewSet(ModelViewSet):
             instance = self.get_object()
             serializer = GraphUpdateSerializer(data=request.data, partial=True)
             if not serializer.is_valid():
+                if serializer.errors.get("max_concurrent_nodes"):
+                    return self._gm.bad_request(
+                        get_error_message("MAX_CONCURRENT_NODES_NOT_POSITIVE")
+                    )
                 return self._gm.bad_request(serializer.errors)
 
             # Update only provided fields

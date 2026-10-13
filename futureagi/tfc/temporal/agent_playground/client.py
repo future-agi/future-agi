@@ -11,6 +11,10 @@ from uuid import UUID
 from channels.db import database_sync_to_async
 from django.utils import timezone
 
+from tfc.temporal.agent_playground.types import (
+    DEFAULT_MAX_CONCURRENT_NODES,
+    validate_max_concurrent_nodes,
+)
 from tfc.temporal.common.client import (
     cancel_workflow_async,
     cancel_workflow_sync,
@@ -83,7 +87,7 @@ def _mark_graph_execution_start_failed(
 async def start_graph_execution_async(
     graph_version_id: str,
     input_payload: dict[str, Any],
-    max_concurrent_nodes: int = 10,
+    max_concurrent_nodes: int = DEFAULT_MAX_CONCURRENT_NODES,
     task_queue: str = "tasks_l",
 ) -> str:
     """
@@ -102,6 +106,8 @@ async def start_graph_execution_async(
         ExecuteGraphInput,
         GraphExecutionWorkflow,
     )
+
+    max_concurrent_nodes = validate_max_concurrent_nodes(max_concurrent_nodes)
 
     # Create GraphExecution record
     graph_execution_id = await database_sync_to_async(_create_graph_execution)(
@@ -137,7 +143,7 @@ async def start_graph_execution_async(
 def start_graph_execution(
     graph_version_id: str,
     input_payload: dict[str, Any],
-    max_concurrent_nodes: int = 10,
+    max_concurrent_nodes: int = DEFAULT_MAX_CONCURRENT_NODES,
     task_queue: str = "tasks_l",
 ) -> str:
     """
@@ -158,6 +164,8 @@ def start_graph_execution(
         ExecuteGraphInput,
         GraphExecutionWorkflow,
     )
+
+    max_concurrent_nodes = validate_max_concurrent_nodes(max_concurrent_nodes)
 
     # Create GraphExecution record
     graph_execution_id = _create_graph_execution(

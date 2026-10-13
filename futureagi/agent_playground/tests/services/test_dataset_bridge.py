@@ -167,6 +167,7 @@ class TestExecuteRows:
         mock_start.assert_called_once_with(
             graph_version_id=str(graph_version.id),
             input_payload={},
+            max_concurrent_nodes=10,
             task_queue="tasks_l",
         )
 
@@ -260,6 +261,82 @@ class TestExecuteRows:
 
         assert result == [fake_exec_id]
         assert mock_start.call_args[1]["task_queue"] == "agent-playground-test"
+        assert mock_start.call_args[1]["max_concurrent_nodes"] == 10
+
+    def test_forwards_explicit_max_concurrent_nodes(
+        self,
+        graph_version,
+        dataset,
+        dataset_columns,
+        dataset_row_with_cells,
+    ):
+        """The chosen step concurrency is forwarded to Temporal dispatch."""
+        port_names = [col.name for col in dataset_columns]
+        fake_exec_id = str(uuid.uuid4())
+
+        with (
+            patch(
+                self.EXPOSED_PORTS_PATH,
+                side_effect=self._mock_exposed_ports(graph_version.id, port_names),
+            ),
+            patch(
+                self.START_EXEC_PATH,
+                return_value=fake_exec_id,
+            ) as mock_start,
+        ):
+            result = execute_rows(
+                graph_version,
+                dataset,
+                row_ids=None,
+                max_concurrent_nodes=3,
+            )
+
+        assert result == [fake_exec_id]
+        assert mock_start.call_args[1]["max_concurrent_nodes"] == 3
+
+    def test_uses_graph_stored_concurrency_when_not_passed(
+        self,
+        graph_version,
+        dataset,
+        dataset_columns,
+        dataset_row_with_cells,
+    ):
+        """If the caller omits concurrency, the agent's stored value is used."""
+        graph_version.graph.max_concurrent_nodes = 4
+        graph_version.graph.save()
+        port_names = [col.name for col in dataset_columns]
+        fake_exec_id = str(uuid.uuid4())
+
+        with (
+            patch(
+                self.EXPOSED_PORTS_PATH,
+                side_effect=self._mock_exposed_ports(graph_version.id, port_names),
+            ),
+            patch(
+                self.START_EXEC_PATH,
+                return_value=fake_exec_id,
+            ) as mock_start,
+        ):
+            result = execute_rows(graph_version, dataset, row_ids=None)
+
+        assert result == [fake_exec_id]
+        assert mock_start.call_args[1]["max_concurrent_nodes"] == 4
+
+    def test_rejects_non_positive_max_concurrent_nodes(
+        self, graph_version, dataset
+    ):
+        """Zero/negative values are refused before any run is started."""
+        with patch(self.START_EXEC_PATH) as mock_start:
+            with pytest.raises(ValueError, match="greater than zero"):
+                execute_rows(
+                    graph_version, dataset, row_ids=None, max_concurrent_nodes=0
+                )
+            with pytest.raises(ValueError, match="greater than zero"):
+                execute_rows(
+                    graph_version, dataset, row_ids=None, max_concurrent_nodes=-2
+                )
+
+        mock_start.assert_not_called()
 
 
 @pytest.mark.unit
