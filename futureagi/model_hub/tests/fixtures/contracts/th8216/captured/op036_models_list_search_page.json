@@ -1,0 +1,34 @@
+{
+  "body": {
+    "count": "<int>",
+    "current_page": 1,
+    "next": "<str>",
+    "previous": null,
+    "results": [
+      {
+        "best_for": "<list>",
+        "cutoff": null,
+        "is_available": "<bool>",
+        "latency": "<int>",
+        "logo_url": "<str>",
+        "model_name": "<str>",
+        "pricing": "<dict>",
+        "providers": "<str>",
+        "rate_limits": "<dict>",
+        "type": "<str>",
+        "use_case": "<list>"
+      }
+    ],
+    "total_pages": "<int>"
+  },
+  "label": "captured",
+  "method": "GET",
+  "note": "search branch, two-row page with a next link; values reduced to JSON types",
+  "operation": "OP-036",
+  "path": "/model-hub/api/models_list/",
+  "request": {
+    "limit": 2,
+    "search": "gpt-4o-mini"
+  },
+  "status": 200
+}

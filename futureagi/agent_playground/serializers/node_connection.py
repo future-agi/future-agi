@@ -17,6 +17,7 @@ class NodeConnectionReadSerializer(serializers.ModelSerializer):
             "target_node_id",
         ]
         read_only_fields = fields
+        swagger_schema_fields = {"required": fields}
 
 
 class NodeConnectionWriteSerializer(serializers.Serializer):

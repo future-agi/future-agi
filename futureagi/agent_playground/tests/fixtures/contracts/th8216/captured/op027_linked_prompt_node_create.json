@@ -1,0 +1,108 @@
+{
+  "body": {
+    "result": {
+      "config": {},
+      "id": "00000000-0000-4000-8000-000000000001",
+      "input_mappings": null,
+      "name": "th8216_llm",
+      "node_connection": null,
+      "node_template_id": "00000000-0000-4000-8000-000000000002",
+      "ports": [
+        {
+          "data_schema": {
+            "type": "string"
+          },
+          "default_value": null,
+          "direction": "input",
+          "display_name": "topic",
+          "id": "00000000-0000-4000-8000-000000000005",
+          "key": "custom",
+          "metadata": {},
+          "ref_port_id": null,
+          "required": true
+        },
+        {
+          "data_schema": {
+            "type": "string"
+          },
+          "default_value": null,
+          "direction": "output",
+          "display_name": "response",
+          "id": "00000000-0000-4000-8000-000000000006",
+          "key": "response",
+          "metadata": {},
+          "ref_port_id": null,
+          "required": true
+        }
+      ],
+      "position": {},
+      "prompt_template": {
+        "frequency_penalty": null,
+        "is_draft": true,
+        "max_tokens": null,
+        "messages": [
+          {
+            "content": [
+              {
+                "text": "Summarise {{topic}}",
+                "type": "text"
+              }
+            ],
+            "id": "msg-0",
+            "role": "user"
+          }
+        ],
+        "metadata": {},
+        "model": "gpt-4o-mini",
+        "model_detail": {
+          "is_available": true,
+          "model_name": "gpt-4o-mini",
+          "providers": "openai",
+          "type": "chat"
+        },
+        "output_format": null,
+        "presence_penalty": null,
+        "prompt_template_id": "00000000-0000-4000-8000-000000000003",
+        "prompt_version_id": "00000000-0000-4000-8000-000000000004",
+        "response_format": {
+          "type": "json_object"
+        },
+        "response_schema": null,
+        "temperature": 0.1,
+        "template_format": "mustache",
+        "template_version": "v1",
+        "tool_choice": null,
+        "tools": [
+          {
+            "function": {
+              "name": "lookup",
+              "parameters": {
+                "properties": {},
+                "type": "object"
+              }
+            },
+            "type": "function"
+          }
+        ],
+        "top_p": null,
+        "variable_names": {
+          "topic": []
+        }
+      },
+      "ref_graph_id": null,
+      "ref_graph_name": null,
+      "ref_graph_version_id": null,
+      "type": "atomic"
+    },
+    "status": true
+  },
+  "label": "captured",
+  "method": "POST",
+  "note": "",
+  "operation": "OP-027",
+  "path": "/agent-playground/graphs/{id}/versions/{version_id}/nodes/",
+  "request": {
+    "body": "see _linked_prompt_write()"
+  },
+  "status": 201
+}

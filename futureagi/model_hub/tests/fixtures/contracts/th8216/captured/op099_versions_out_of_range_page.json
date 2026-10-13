@@ -1,0 +1,20 @@
+{
+  "body": {
+    "code": "server_error",
+    "detail": "Invalid page.",
+    "error": "Invalid page.",
+    "message": "Invalid page.",
+    "result": "Invalid page.",
+    "status": false,
+    "type": "server_error"
+  },
+  "label": "captured",
+  "method": "GET",
+  "note": "legacy: out-of-range page is a 500, not a 404",
+  "operation": "OP-099",
+  "path": "/model-hub/prompt-templates/{id}/versions/",
+  "request": {
+    "page": 9
+  },
+  "status": 500
+}

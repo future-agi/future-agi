@@ -1,0 +1,46 @@
+{
+  "body": {
+    "result": {
+      "metadata": {
+        "next_page": null,
+        "page_number": 1,
+        "page_size": 10,
+        "previous_page": null,
+        "total_count": 2,
+        "total_pages": 1
+      },
+      "versions": [
+        {
+          "commit_message": null,
+          "created_at": "2026-01-01T00:00:00Z",
+          "global_variables": [],
+          "id": "00000000-0000-4000-8000-000000000001",
+          "status": "inactive",
+          "tags": [
+            "legacy"
+          ],
+          "version_number": 3
+        },
+        {
+          "commit_message": "th8216 draft",
+          "created_at": "2026-01-01T00:00:00Z",
+          "global_variables": [
+            "question"
+          ],
+          "id": "00000000-0000-4000-8000-000000000002",
+          "status": "draft",
+          "tags": [],
+          "version_number": 1
+        }
+      ]
+    },
+    "status": true
+  },
+  "label": "captured",
+  "method": "GET",
+  "note": "",
+  "operation": "OP-018",
+  "path": "/agent-playground/graphs/{id}/versions/",
+  "request": {},
+  "status": 200
+}

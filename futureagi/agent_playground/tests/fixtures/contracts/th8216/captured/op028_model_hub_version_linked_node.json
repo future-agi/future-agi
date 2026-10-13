@@ -1,0 +1,64 @@
+{
+  "body": {
+    "result": {
+      "config": {},
+      "id": "00000000-0000-4000-8000-000000000001",
+      "input_mappings": null,
+      "name": "Test Node",
+      "node_connection": null,
+      "node_template_id": "00000000-0000-4000-8000-000000000002",
+      "ports": [],
+      "position": {
+        "x": 100,
+        "y": 100
+      },
+      "prompt_template": {
+        "frequency_penalty": null,
+        "is_draft": true,
+        "max_tokens": "1024",
+        "messages": [
+          {
+            "content": [
+              {
+                "text": "Hi {{topic}}",
+                "type": "text"
+              }
+            ],
+            "role": "user"
+          }
+        ],
+        "metadata": {},
+        "model": "gpt-4o-mini",
+        "model_detail": {
+          "providers": "openai",
+          "type": "chat"
+        },
+        "output_format": "",
+        "presence_penalty": null,
+        "prompt_template_id": "00000000-0000-4000-8000-000000000003",
+        "prompt_version_id": "00000000-0000-4000-8000-000000000004",
+        "response_format": "text",
+        "response_schema": null,
+        "temperature": 0.3,
+        "template_format": null,
+        "template_version": "v1",
+        "tool_choice": null,
+        "tools": null,
+        "top_p": null,
+        "variable_names": {}
+      },
+      "ref_graph_id": null,
+      "ref_graph_name": null,
+      "ref_graph_version_id": null,
+      "type": "atomic"
+    },
+    "status": true
+  },
+  "label": "captured",
+  "method": "GET",
+  "note": "version created through model_hub add-new-draft, then linked",
+  "operation": "OP-028",
+  "path": "/agent-playground/graphs/{id}/versions/{version_id}/nodes/{node_id}/",
+  "request": {},
+  "status": 200
+}

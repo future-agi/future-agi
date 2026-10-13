@@ -1,0 +1,61 @@
+{
+  "body": {
+    "result": {
+      "created_by": "00000000-0000-4000-8000-000000000003",
+      "description": "",
+      "id": "00000000-0000-4000-8000-000000000001",
+      "is_draft": false,
+      "labels": [],
+      "metadata": {},
+      "name": "TH8216 blank description",
+      "organization": "00000000-0000-4000-8000-000000000002",
+      "output": [],
+      "placeholders": {},
+      "prompt_config": [
+        {
+          "configuration": {
+            "model": "gpt-4o-mini",
+            "temperature": 0.2,
+            "template_format": "mustache"
+          },
+          "messages": [
+            {
+              "content": [
+                {
+                  "text": "Be brief.",
+                  "type": "text"
+                }
+              ],
+              "role": "system"
+            },
+            {
+              "content": [
+                {
+                  "text": "Version 1 {{name}}",
+                  "type": "text"
+                }
+              ],
+              "role": "user"
+            }
+          ]
+        }
+      ],
+      "prompt_folder": null,
+      "variable_names": {
+        "name": ["Ada"]
+      },
+      "version": "v1"
+    },
+    "status": true
+  },
+  "label": "captured",
+  "method": "GET",
+  "note": "",
+  "operation": "OP-059",
+  "path": "/model-hub/prompt-labels/get-by-name/",
+  "request": {
+    "name": "<template>",
+    "version": "v1"
+  },
+  "status": 200
+}

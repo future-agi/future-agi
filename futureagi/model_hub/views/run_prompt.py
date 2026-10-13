@@ -50,7 +50,6 @@ from model_hub.serializers.contracts import (
     MODEL_HUB_ERROR_RESPONSES,
     DatasetRunPromptStatsResponseSerializer,
     LiteLLMModelVoicesResponseSerializer,
-    ModelHubPaginatedResponseSerializer,
     ModelHubStringResultResponseSerializer,
     ModelHubSuccessMessageResponseSerializer,
     ModelParametersResponseSerializer,
@@ -61,6 +60,11 @@ from model_hub.serializers.contracts import (
 from model_hub.serializers.develop_dataset_contracts import (
     DevelopDatasetMessageResponseSerializer,
     RunPromptColumnPreviewResponseSerializer,
+)
+from model_hub.serializers.prompt_read_contracts import (
+    MODEL_PARAMETERS_QUERY_PARAMETERS,
+    MODELS_LIST_QUERY_PARAMETERS,
+    ModelCatalogPageSerializer,
 )
 from model_hub.serializers.run_prompt import (
     AddRunPromptSerializer,
@@ -2468,10 +2472,11 @@ class LiteLLMModelListView(APIView):
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
+        manual_parameters=MODELS_LIST_QUERY_PARAMETERS,
         responses={
-            200: ModelHubPaginatedResponseSerializer,
+            200: ModelCatalogPageSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
-        }
+        },
     )
     def get(self, request, *args, **kwargs):
         # Get the organization from the request
@@ -2710,7 +2715,8 @@ class ModelParametersView(APIView):
     _gm = GeneralMethods()
 
     @swagger_auto_schema(
-        responses={200: ModelParametersResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+        manual_parameters=MODEL_PARAMETERS_QUERY_PARAMETERS,
+        responses={200: ModelParametersResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
     )
     def get(self, request, *args, **kwargs):
         try:

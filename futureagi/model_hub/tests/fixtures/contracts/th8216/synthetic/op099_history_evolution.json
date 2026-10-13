@@ -1,0 +1,38 @@
+{
+  "label": "synthetic",
+  "note": "Hand-written future-evolution cases, NOT captured handler output. Each case is one PromptHistoryExecution row derived from captured/op099_versions_default_page.json with a single change; 'declared' is whether swagger.json (strict: undeclared keys rejected) accepts it.",
+  "operation": "OP-099",
+  "definition": "PromptHistoryExecution",
+  "cases": [
+    {
+      "id": "unknown-provider-key-in-open-snapshot",
+      "change": "prompt_config_snapshot.configuration.model_detail gains reasoning_tiers",
+      "declared": true,
+      "why": "prompt_config_snapshot is x-json-value (open JSON)"
+    },
+    {
+      "id": "null-snapshot-legacy-row",
+      "change": "prompt_config_snapshot is null",
+      "declared": true,
+      "why": "nullable column, returned as stored"
+    },
+    {
+      "id": "future-label-type",
+      "change": "labels[0].type is 'experiment'",
+      "declared": false,
+      "why": "label type is a closed enum (system, custom); a new value is a contract change"
+    },
+    {
+      "id": "new-top-level-field",
+      "change": "row gains archived_at",
+      "declared": false,
+      "why": "an additive response field must be declared before it ships; the FE runtime mapper (passthrough) would still accept it"
+    },
+    {
+      "id": "string-output",
+      "change": "output is a plain string",
+      "declared": true,
+      "why": "output is x-json-value; legacy rows are not guaranteed to hold a list"
+    }
+  ]
+}

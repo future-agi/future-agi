@@ -1,0 +1,33 @@
+{
+  "body": {
+    "count": 1,
+    "current_page": 1,
+    "next": null,
+    "previous": null,
+    "results": [
+      {
+        "best_for": "<list>",
+        "cutoff": "<str>",
+        "is_available": false,
+        "latency": "<int>",
+        "logo_url": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/openai-icon.png",
+        "model_name": "gpt-4o-mini",
+        "pricing": "<dict>",
+        "providers": "openai",
+        "rate_limits": "<dict>",
+        "type": "chat",
+        "use_case": "<list>"
+      }
+    ],
+    "total_pages": 1
+  },
+  "label": "captured",
+  "method": "GET",
+  "note": "one exact model; catalogue values reduced to their JSON types",
+  "operation": "OP-036",
+  "path": "/model-hub/api/models_list/",
+  "request": {
+    "name": "gpt-4o-mini"
+  },
+  "status": 200
+}

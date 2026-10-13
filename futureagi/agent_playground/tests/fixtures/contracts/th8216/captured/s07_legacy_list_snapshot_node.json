@@ -1,0 +1,61 @@
+{
+  "body": {
+    "result": {
+      "config": {},
+      "id": "00000000-0000-4000-8000-000000000001",
+      "input_mappings": null,
+      "name": "Legacy Prompt Node",
+      "node_connection": null,
+      "node_template_id": "00000000-0000-4000-8000-000000000002",
+      "ports": [],
+      "position": {},
+      "prompt_template": {
+        "frequency_penalty": null,
+        "is_draft": false,
+        "max_tokens": null,
+        "messages": [
+          {
+            "content": [
+              {
+                "text": "Hi {{topic}}",
+                "type": "text"
+              }
+            ],
+            "role": "user"
+          }
+        ],
+        "metadata": null,
+        "model": "gpt-4o-mini",
+        "model_detail": {
+          "providers": "openai",
+          "type": "chat"
+        },
+        "output_format": null,
+        "presence_penalty": null,
+        "prompt_template_id": "00000000-0000-4000-8000-000000000003",
+        "prompt_version_id": "00000000-0000-4000-8000-000000000004",
+        "response_format": "text",
+        "response_schema": null,
+        "temperature": 0.3,
+        "template_format": "mustache",
+        "template_version": "v7",
+        "tool_choice": null,
+        "tools": null,
+        "top_p": null,
+        "variable_names": null
+      },
+      "ref_graph_id": null,
+      "ref_graph_name": null,
+      "ref_graph_version_id": null,
+      "type": "atomic"
+    },
+    "status": true
+  },
+  "label": "captured",
+  "method": "GET",
+  "note": "legacy list snapshot: read projects only the first entry",
+  "operation": "OP-028",
+  "path": "/agent-playground/graphs/{id}/versions/{version_id}/nodes/{node_id}/",
+  "request": {},
+  "status": 200
+}

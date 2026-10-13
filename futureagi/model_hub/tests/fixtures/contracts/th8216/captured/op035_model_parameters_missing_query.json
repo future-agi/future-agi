@@ -1,0 +1,20 @@
+{
+  "body": {
+    "code": "invalid",
+    "detail": "Missing required query parameters: 'model', 'provider', and 'model_type'",
+    "error": "Missing required query parameters: 'model', 'provider', and 'model_type'",
+    "message": "Missing required query parameters: 'model', 'provider', and 'model_type'",
+    "result": "Missing required query parameters: 'model', 'provider', and 'model_type'",
+    "status": false,
+    "type": "validation_error"
+  },
+  "label": "captured",
+  "method": "GET",
+  "note": "",
+  "operation": "OP-035",
+  "path": "/model-hub/api/model_parameters/",
+  "request": {
+    "model": "gpt-4o-mini"
+  },
+  "status": 400
+}

@@ -5,7 +5,10 @@ from model_hub.models.prompt_label import LabelTypeChoices, PromptLabel
 
 
 class PromptLabelSerializer(serializers.ModelSerializer):
-    organization = serializers.UUIDField(source="organization_id", read_only=True)
+    # System labels are global rows with no organization.
+    organization = serializers.UUIDField(
+        source="organization_id", read_only=True, allow_null=True
+    )
 
     class Meta:
         model = PromptLabel

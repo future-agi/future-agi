@@ -1,0 +1,80 @@
+{
+  "body": {
+    "count": 3,
+    "current_page": 2,
+    "next": "http://testserver/model-hub/prompt-templates/00000000-0000-4000-8000-000000000001/versions/?limit=1&page=3",
+    "previous": "http://testserver/model-hub/prompt-templates/00000000-0000-4000-8000-000000000001/versions/?limit=1",
+    "results": [
+      {
+        "commit_message": null,
+        "created_at": "2026-01-01T00:00:00Z",
+        "evaluation_configs": null,
+        "evaluation_results": {},
+        "id": "00000000-0000-4000-8000-000000000002",
+        "is_default": false,
+        "is_draft": false,
+        "labels": [],
+        "metadata": null,
+        "original_template": "00000000-0000-4000-8000-000000000001",
+        "output": null,
+        "placeholders": {},
+        "prompt_base_template": null,
+        "prompt_config_snapshot": [
+          {
+            "configuration": {
+              "model": "gpt-4o-mini",
+              "model_detail": {
+                "is_available": true,
+                "logo_url": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/openai-icon.png",
+                "model_name": "gpt-4o-mini",
+                "providers": "openai",
+                "type": "chat"
+              },
+              "temperature": 0.2,
+              "template_format": "mustache"
+            },
+            "messages": [
+              {
+                "content": [
+                  {
+                    "text": "Be brief.",
+                    "type": "text"
+                  }
+                ],
+                "role": "system"
+              },
+              {
+                "content": [
+                  {
+                    "text": "Legacy list snapshot",
+                    "type": "text"
+                  }
+                ],
+                "role": "user"
+              }
+            ]
+          }
+        ],
+        "template_name": "TH8216 contract prompt",
+        "template_version": "v2",
+        "updated_at": "2026-01-01T00:00:00Z",
+        "variable_names": {
+          "name": [
+            "Ada"
+          ]
+        }
+      }
+    ],
+    "total_pages": 3
+  },
+  "label": "captured",
+  "method": "GET",
+  "note": "",
+  "operation": "OP-099",
+  "path": "/model-hub/prompt-templates/{id}/versions/",
+  "request": {
+    "limit": 1,
+    "page": 2
+  },
+  "status": 200
+}
