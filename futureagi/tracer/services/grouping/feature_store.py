@@ -24,23 +24,50 @@ MAX_BUCKETS_PER_FEATURE = 8
 MAX_QUERY_BYTES = 16 * 1024 * 1024
 SOURCE_DIGEST = re.compile(r"^sha256:[a-f0-9]{64}$")
 HEX_DIGEST = re.compile(r"^[a-f0-9]{64}$")
-NEAREST_SQL = f"""SELECT q.pending_id AS pending_id,
-    toString(c.occurrence_id) AS candidate_id,
-    min(cosineDistance(c.vector, q.vector)) AS distance
+
+
+def nearest_sql(pending_count: int) -> str:
+    """Exact cosine top-``limit`` per pending vector in one candidate scan.
+
+    The pending vectors are a constant, so each candidate row is read once and
+    keeps one minimum distance per pending vector, and only a running top
+    ``limit`` per pending vector is sorted. Cost is linear in candidates; a
+    join would copy both vectors into every pair. The distance terms are
+    unrolled because a lambda over ``vector`` copies it once per pending.
+    No FINAL: a feature digest hashes its whole record, vector included, so a
+    replicated row has the same distances and the GROUP BY folds it. Self is
+    scored ``inf`` so it never takes a top-``limit`` slot. A pending digest
+    missing from ClickHouse fails the statement on an array size mismatch.
+    """
+    distances = ", ".join(
+        f"cosineDistance(vector, pending.2[{index}])"
+        for index in range(1, pending_count + 1)
+    )
+    return f"""WITH (
+    SELECT (groupArray(pending_occurrence), groupArray(pending_vector)) FROM (
+        SELECT feature_digest, any(occurrence_id) AS pending_occurrence,
+            any(vector) AS pending_vector
+        FROM {VECTOR_TABLE}
+        WHERE organization_id = %(org)s AND project_id = %(project)s
+          AND view = %(view)s AND feature_digest IN %(pending)s
+        GROUP BY feature_digest ORDER BY feature_digest)
+) AS pending
+SELECT toString(pending.1[k]) AS pending_id, nearest.2 AS candidate_id,
+    nearest.1 AS distance
 FROM (
-    SELECT occurrence_id, vector FROM {VECTOR_TABLE} FINAL
-    WHERE organization_id = %(org)s AND project_id = %(project)s
-      AND view = %(view)s AND feature_digest IN %(candidates)s
-) AS c
-CROSS JOIN (
-    SELECT toString(occurrence_id) AS pending_id, vector FROM {VECTOR_TABLE} FINAL
-    WHERE organization_id = %(org)s AND project_id = %(project)s
-      AND view = %(view)s AND feature_digest IN %(pending)s
-) AS q
-WHERE q.pending_id != toString(c.occurrence_id)
-GROUP BY pending_id, candidate_id
-ORDER BY pending_id, distance, candidate_id
-LIMIT %(limit)s BY pending_id"""
+    SELECT groupArraySortedForEach(%(limit)s)(arrayMap(
+        (d, p) -> (if(p = occurrence_id, inf, d), toString(occurrence_id)),
+        distances, pending.1)) AS ranked
+    FROM (
+        SELECT occurrence_id, minForEach([{distances}]) AS distances
+        FROM {VECTOR_TABLE}
+        WHERE organization_id = %(org)s AND project_id = %(project)s
+          AND view = %(view)s AND feature_digest IN %(candidates)s
+        GROUP BY occurrence_id))
+ARRAY JOIN ranked AS top, arrayEnumerate(ranked) AS k
+ARRAY JOIN top AS nearest
+WHERE candidate_id != pending_id
+ORDER BY pending_id, distance, candidate_id"""
 
 
 def _bucket_key(view: str, item: dict) -> str:
@@ -315,7 +342,7 @@ class GroupingFeatureStore:
                 continue
             try:
                 rows = self.client.execute_read(
-                    NEAREST_SQL,
+                    nearest_sql(len(set(pending_digests))),
                     {
                         "org": organization_id,
                         "project": project_id,

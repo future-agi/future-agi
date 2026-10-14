@@ -919,6 +919,42 @@ def test_claim_reads_only_window_members_and_is_deterministic(
     ERROR_FEED_GROUPING_WORK_BUDGET_USD="10",
     ERROR_FEED_GROUPING_TENANT_BUDGET_USD="10",
 )
+def test_offered_vector_from_another_release_fails_the_claim(
+    observe_project, monkeypatch
+):
+    ((_, member),) = _grouped_issues(observe_project, monkeypatch, 1)
+    _prepare_runtime(observe_project, monkeypatch, identity=uuid.uuid4())
+    monkeypatch.setattr(
+        FakeFeatureStore, "candidate_occurrences", nearest_to([str(member.id)])
+    )
+    real_read = FakeFeatureStore.read_vectors
+
+    def read_vectors(self, **kwargs):
+        # The PG receipt is current, but ClickHouse holds another release.
+        return [
+            (
+                {**row, "serving_release": "other-release"}
+                if row["occurrence_id"] == str(member.id)
+                else row
+            )
+            for row in real_read(self, **kwargs)
+        ]
+
+    monkeypatch.setattr(FakeFeatureStore, "read_vectors", read_vectors)
+
+    assert claim_grouping_work(worker_id="identity", limit=1) == {"claims": []}
+    attempt = TraceGroupingAttempt.no_workspace_objects.get(worker_id="identity")
+    assert attempt.failure_code == "control_rejected"
+
+
+@override_settings(
+    ERROR_FEED_GROUPING_ENABLED=True,
+    ERROR_FEED_GROUPING_ALL_PROJECTS=True,
+    ERROR_FEED_GROUPING_DEBOUNCE_SECONDS=0,
+    ERROR_FEED_GROUPING_PROJECT_BUDGET_USD="10",
+    ERROR_FEED_GROUPING_WORK_BUDGET_USD="10",
+    ERROR_FEED_GROUPING_TENANT_BUDGET_USD="10",
+)
 def test_stale_or_foreign_features_are_never_candidates(observe_project, monkeypatch):
     (current, current_finding), (_, stale_finding), (_, foreign_finding) = (
         _grouped_issues(observe_project, monkeypatch, 3)

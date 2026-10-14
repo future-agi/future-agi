@@ -1,4 +1,4 @@
-"""NEAREST_SQL on a real ClickHouse: order, ties, self, view, digests, dedupe."""
+"""nearest_sql on a real ClickHouse: order, ties, self, view, digests, dedupe."""
 
 import hashlib
 import uuid
@@ -87,20 +87,28 @@ def test_nearest_sql_ranks_exact_cosine_per_pending_view():
                 pending=[
                     {
                         "view": "semantics",
-                        "feature_digest": _digest("seed", "semantics", "v1"),
+                        "feature_digest": _digest(name, "semantics", "v1"),
                     }
+                    for name in ("seed", "far")
                 ],
                 candidates=candidates,
                 limit=4,
             )
 
     # Self excluded, the twin tie broken by id, the outside row and the other
-    # view never scored, and the duplicate occurrence ranked once.
+    # view never scored, and the duplicate occurrence ranked once at its
+    # nearest feature: v1 for the seed, v2 for the far pending vector.
     assert nearest == {
         (str(ids["seed"]), "semantics"): [
             str(ids["near"]),
             str(ids["mid"]),
             str(ids["twin"]),
             str(ids["far"]),
-        ]
+        ],
+        (str(ids["far"]), "semantics"): [
+            str(ids["near"]),
+            str(ids["mid"]),
+            str(ids["twin"]),
+            str(ids["seed"]),
+        ],
     }

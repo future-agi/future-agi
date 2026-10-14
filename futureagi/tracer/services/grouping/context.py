@@ -261,19 +261,6 @@ def build_claim_context(
     for issue_id, members in hit_by_issue.items():
         if any("semantics" not in hit_feature_map[str(item.id)] for item in members):
             ineligible_issues.add(issue_id)
-    pending_vectors = store.read_vectors(
-        organization_id=scope.organization_id,
-        project_id=scope.project_id,
-        receipts=[_receipt(row) for row in receipts],
-    )
-    if any(
-        (row["model"], row["model_revision"], row["serving_release"], row["dimension"])
-        != identity
-        for row in pending_vectors
-    ):
-        raise GroupingConflict(
-            "ClickHouse vector model identity differs from ready receipt"
-        )
     ranked_hits = rank_f6_occurrences(
         nearest=nearest,
         eligible_ids={
@@ -452,6 +439,15 @@ def build_claim_context(
         project_id=scope.project_id,
         receipts=list(receipt_map.values()),
     )
+    # One read covers the pending vectors and every offered member.
+    if any(
+        (row["model"], row["model_revision"], row["serving_release"], row["dimension"])
+        != identity
+        for row in features
+    ):
+        raise GroupingConflict(
+            "ClickHouse vector model identity differs from ready receipt"
+        )
     feature_by_id = {row["occurrence_id"]: row for row in features}
     for issue in issues:
         for member in issue["members"]:

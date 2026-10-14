@@ -10,8 +10,8 @@ from clickhouse_driver.errors import ServerException
 from tracer.services.grouping.context import rank_f6_occurrences
 from tracer.services.grouping.feature_store import (
     MAX_QUERY_BYTES,
-    NEAREST_SQL,
     GroupingFeatureStore,
+    nearest_sql,
 )
 
 
@@ -120,7 +120,7 @@ def _digest(name):
 
 
 class _NearestClient:
-    """Answers NEAREST_SQL like ClickHouse: per pending id, nearest distinct
+    """Answers nearest_sql like ClickHouse: per pending id, nearest distinct
     candidates first, ties by id, at most ``limit``."""
 
     def __init__(self, features, error=None):
@@ -194,7 +194,7 @@ def test_nearest_candidates_are_one_statement_per_view_in_index_order():
     }
     assert [params["view"] for _, params, _ in client.calls] == ["semantics", "task"]
     for sql, params, settings in client.calls:
-        assert sql == NEAREST_SQL
+        assert sql == nearest_sql(1)
         assert settings == {"max_query_size": MAX_QUERY_BYTES}
         assert params["limit"] == 3
         assert sorted(params["candidates"]) == sorted(
