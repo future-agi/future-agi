@@ -169,7 +169,7 @@ def resolve_experiment(identifier: str, organization, workspace=None):
         try:
             return (
                 ExperimentsTable.objects.get(
-                    id=identifier, organization=organization, deleted=False
+                    id=identifier, dataset__organization=organization, deleted=False
                 ),
                 None,
             )
@@ -178,9 +178,11 @@ def resolve_experiment(identifier: str, organization, workspace=None):
 
     matches = ExperimentsTable.objects.filter(
         name__iexact=identifier.strip(),
-        organization=organization,
+        dataset__organization=organization,
         deleted=False,
     )
+    if workspace:
+        matches = matches.filter(dataset__workspace=workspace)
     if matches.count() == 1:
         return matches.first(), None
 
