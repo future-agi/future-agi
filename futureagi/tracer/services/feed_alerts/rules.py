@@ -42,7 +42,8 @@ _WRITE_KEYS = {
     "enabled",
     "project_id",
     "trigger_type",
-    "trigger_value",
+    "severity_threshold",
+    "occurrence_threshold",
     "filters",
     "slack_connection_id",
     "slack_channel_id",
@@ -172,16 +173,18 @@ def _validate_trigger(trigger_type, trigger_value):
         raise FeedAlertError("Unsupported Error Feed trigger.", field="trigger_type")
     if trigger_type == FeedAlertTrigger.SEVERITY_REACHED:
         if not isinstance(trigger_value, str) or trigger_value not in _SEVERITIES:
-            raise FeedAlertError("Select a severity threshold.", field="trigger_value")
+            raise FeedAlertError(
+                "Select a severity threshold.", field="severity_threshold"
+            )
     elif trigger_type == FeedAlertTrigger.OCCURRENCES_CROSSED:
         if type(trigger_value) is not int or not 1 <= trigger_value <= 1_000_000:
             raise FeedAlertError(
                 "Occurrence threshold must be between 1 and 1000000.",
-                field="trigger_value",
+                field="occurrence_threshold",
             )
     elif trigger_value is not None:
         raise FeedAlertError(
-            "This trigger does not take a value.", field="trigger_value"
+            "This trigger does not take a value.", field="trigger_type"
         )
 
 
@@ -192,7 +195,12 @@ class FeedAlertRuleSerializer(serializers.Serializer):
     enabled = serializers.BooleanField(required=False)
     project_id = serializers.UUIDField(required=False, allow_null=True)
     trigger_type = serializers.ChoiceField(choices=FeedAlertTrigger.choices)
-    trigger_value = serializers.JSONField(required=False, allow_null=True)
+    severity_threshold = serializers.ChoiceField(
+        choices=["low", "medium", "high", "critical"], required=False
+    )
+    occurrence_threshold = serializers.IntegerField(
+        required=False, min_value=1, max_value=1_000_000
+    )
     filters = serializers.JSONField(required=False)
     slack_connection_id = serializers.UUIDField()
     slack_channel_id = serializers.CharField(max_length=80)
@@ -215,14 +223,13 @@ class FeedAlertRuleSerializer(serializers.Serializer):
     def to_representation(self, rule):
         latest_status = getattr(rule, "latest_delivery_status", None)
         latest_error = getattr(rule, "latest_delivery_error", None)
-        return {
+        data = {
             "id": str(rule.id),
             "kind": "error_feed",
             "name": rule.name,
             "enabled": rule.enabled,
             "project_id": str(rule.project_id) if rule.project_id else None,
             "trigger_type": rule.trigger_type,
-            "trigger_value": rule.trigger_value,
             "filters": rule.filters,
             "slack_connection_id": str(rule.slack_connection_id),
             "slack_channel_id": rule.slack_channel_id,
@@ -234,6 +241,11 @@ class FeedAlertRuleSerializer(serializers.Serializer):
             "created_at": rule.created_at,
             "updated_at": rule.updated_at,
         }
+        if rule.trigger_type == FeedAlertTrigger.SEVERITY_REACHED:
+            data["severity_threshold"] = rule.trigger_value
+        elif rule.trigger_type == FeedAlertTrigger.OCCURRENCES_CROSSED:
+            data["occurrence_threshold"] = rule.trigger_value
+        return data
 
     def validate(self, attrs):
         current = self.context.get("current")
@@ -241,15 +253,34 @@ class FeedAlertRuleSerializer(serializers.Serializer):
         workspace = self.context["workspace"]
         merged = self.to_representation(current) if current is not None else {}
         merged.update(attrs)
+        trigger_type = merged.get("trigger_type")
         if (
-            "trigger_type" in attrs
-            and "trigger_value" not in attrs
-            and attrs["trigger_type"]
-            in {FeedAlertTrigger.NEW_ISSUE, FeedAlertTrigger.ESCALATING}
+            "severity_threshold" in attrs
+            and trigger_type != FeedAlertTrigger.SEVERITY_REACHED
         ):
-            merged["trigger_value"] = None
+            raise serializers.ValidationError(
+                {"severity_threshold": ["This threshold requires a severity trigger."]}
+            )
+        if (
+            "occurrence_threshold" in attrs
+            and trigger_type != FeedAlertTrigger.OCCURRENCES_CROSSED
+        ):
+            raise serializers.ValidationError(
+                {
+                    "occurrence_threshold": [
+                        "This threshold requires an occurrence trigger."
+                    ]
+                }
+            )
+        trigger_value = (
+            merged.get("severity_threshold")
+            if trigger_type == FeedAlertTrigger.SEVERITY_REACHED
+            else merged.get("occurrence_threshold")
+            if trigger_type == FeedAlertTrigger.OCCURRENCES_CROSSED
+            else None
+        )
         try:
-            _validate_trigger(merged.get("trigger_type"), merged.get("trigger_value"))
+            _validate_trigger(trigger_type, trigger_value)
             filters = _validate_filters(merged.get("filters", {}))
             project = _project(merged.get("project_id"), organization, workspace)
             connection = _connection(
@@ -273,7 +304,7 @@ class FeedAlertRuleSerializer(serializers.Serializer):
             "enabled": merged.get("enabled", True),
             "project": project,
             "trigger_type": merged["trigger_type"],
-            "trigger_value": merged.get("trigger_value"),
+            "trigger_value": trigger_value,
             "filters": filters,
             "slack_connection": connection,
             "slack_channel_id": channel_id,

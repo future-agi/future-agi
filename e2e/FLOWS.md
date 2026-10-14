@@ -642,7 +642,7 @@
 ### ERR-E2E-002 — every issue trigger sends only after its selected transition
 
 **Goal:** A developer chooses each issue trigger and receives a Slack alert when its condition occurs  
-**Spec:** `flows/error-feed/trigger-matrix.spec.ts:29`  
+**Spec:** `flows/error-feed/trigger-matrix.spec.ts:30`  
 **Tags:** —
 
 **User steps:**

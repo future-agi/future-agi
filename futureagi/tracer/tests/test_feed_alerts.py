@@ -73,7 +73,7 @@ def _payload(slack_connection, observe_project, **overrides):
         "enabled": True,
         "project_id": str(observe_project.id),
         "trigger_type": FeedAlertTrigger.SEVERITY_REACHED,
-        "trigger_value": "high",
+        "severity_threshold": "high",
         "filters": {"sources": ["scanner"]},
         "slack_connection_id": str(slack_connection.id),
         "slack_channel_id": "C0123456789",
@@ -260,19 +260,63 @@ class TestAlertRuleService:
         assert post.call_args.args[1] == "C0123456789"
 
 
-def test_rule_serializer_keys_invalid_trigger_value():
+def test_rule_serializer_keys_invalid_occurrence_threshold():
     serializer = rules.FeedAlertRuleSerializer(
         data={
             "name": "Critical issues",
             "trigger_type": "occurrences_crossed",
-            "trigger_value": 0,
+            "occurrence_threshold": 0,
             "slack_connection_id": "0050b1f4-0b65-4787-bd3f-f4ad4b61e661",
             "slack_channel_id": "C0123456789",
         },
         context={"organization": object(), "workspace": object(), "current": None},
     )
     assert not serializer.is_valid()
-    assert list(serializer.errors) == ["trigger_value"]
+    assert list(serializer.errors) == ["occurrence_threshold"]
+
+
+def test_rule_serializer_exposes_typed_thresholds():
+    rule = SimpleNamespace(
+        id=uuid.uuid4(),
+        name="Occurrence alert",
+        enabled=True,
+        project_id=None,
+        trigger_type=FeedAlertTrigger.OCCURRENCES_CROSSED,
+        trigger_value=7,
+        filters={},
+        slack_connection_id=uuid.uuid4(),
+        slack_channel_id="C0123456789",
+        slack_channel_name="production-alerts",
+        cooldown_seconds=300,
+        last_triggered_at=None,
+        created_at=timezone.now(),
+        updated_at=timezone.now(),
+    )
+    data = rules.serialize_rule(rule)
+    assert data["occurrence_threshold"] == 7
+    assert "severity_threshold" not in data
+    assert "trigger_value" not in data
+
+
+def test_rule_serializer_maps_occurrence_threshold_to_stored_value(monkeypatch):
+    connection_id = uuid.uuid4()
+    connection = SimpleNamespace(id=connection_id)
+    monkeypatch.setattr(rules, "_project", lambda *args: None)
+    monkeypatch.setattr(rules, "_connection", lambda *args: connection)
+    monkeypatch.setattr(rules, "_channel", lambda *args, **kwargs: "production-alerts")
+    values = rules._validated(
+        {
+            "name": "Occurrence alert",
+            "trigger_type": "occurrences_crossed",
+            "occurrence_threshold": 7,
+            "slack_connection_id": str(connection_id),
+            "slack_channel_id": "C0123456789",
+        },
+        organization=object(),
+        workspace=object(),
+    )
+    assert values["trigger_value"] == 7
+    assert "occurrence_threshold" not in values
 
 
 def test_alert_field_error_uses_common_envelope():
@@ -671,10 +715,20 @@ class TestCentralAlertAPI:
             )
         assert created.status_code == status.HTTP_201_CREATED
         alert_id = created.json()["result"]["id"]
+        assert created.json()["result"]["severity_threshold"] == "high"
 
         listed = auth_client.get("/tracer/alerts/?kind=error_feed")
         assert listed.status_code == status.HTTP_200_OK
         assert [row["id"] for row in listed.json()["result"]["alerts"]] == [alert_id]
+
+        threshold_update = auth_client.patch(
+            f"/tracer/alerts/error_feed/{alert_id}/",
+            {"trigger_type": "occurrences_crossed", "occurrence_threshold": 7},
+            format="json",
+        )
+        assert threshold_update.status_code == status.HTTP_200_OK
+        assert threshold_update.json()["result"]["occurrence_threshold"] == 7
+        assert "severity_threshold" not in threshold_update.json()["result"]
 
         updated = auth_client.patch(
             f"/tracer/alerts/error_feed/{alert_id}/", {"enabled": False}, format="json"

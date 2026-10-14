@@ -47232,7 +47232,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         livekit_max_concurrency: {
           title: "Livekit max concurrency",
           type: "integer",
-          maximum: 25,
+          maximum: 20,
           minimum: 1,
           "x-nullable": true,
         },
@@ -47386,7 +47386,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         livekit_max_concurrency: {
           title: "Livekit max concurrency",
           type: "integer",
-          maximum: 25,
+          maximum: 20,
           minimum: 1,
           "x-nullable": true,
         },
@@ -48377,7 +48377,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         livekit_max_concurrency: {
           title: "Livekit max concurrency",
           type: "integer",
-          maximum: 25,
+          maximum: 20,
           minimum: 1,
         },
         commit_message: {
@@ -50272,9 +50272,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           minLength: 1,
         },
-        trigger_value: {
-          title: "Trigger value",
-          type: "object",
+        severity_threshold: {
+          title: "Severity threshold",
+          type: "string",
+          enum: ["low", "medium", "high", "critical"],
+        },
+        occurrence_threshold: {
+          title: "Occurrence threshold",
+          type: "integer",
+          maximum: 1000000,
+          minimum: 1,
         },
         filters: {
           title: "Filters",
@@ -85066,10 +85073,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           minLength: 1,
         },
-        trigger_value: {
-          title: "Trigger value",
-          type: "object",
-          "x-nullable": true,
+        severity_threshold: {
+          title: "Severity threshold",
+          type: "string",
+          enum: ["low", "medium", "high", "critical"],
+        },
+        occurrence_threshold: {
+          title: "Occurrence threshold",
+          type: "integer",
         },
         filters: {
           title: "Filters",

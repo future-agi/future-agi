@@ -15512,7 +15512,7 @@ export interface AgentDefinitionCreateRequestApi {
   livekit_config_json?: AgentDefinitionCreateRequestApiLivekitConfigJson;
   /**
    * @minimum 1
-   * @maximum 25
+   * @maximum 20
    */
   livekit_max_concurrency?: number;
 }
@@ -15753,7 +15753,7 @@ export interface AgentDefinitionEditRequestApi {
   livekit_config_json?: AgentDefinitionEditRequestApiLivekitConfigJson;
   /**
    * @minimum 1
-   * @maximum 25
+   * @maximum 20
    */
   livekit_max_concurrency?: number;
 }
@@ -15866,7 +15866,7 @@ export interface AgentVersionCreateRequestApi {
   livekit_config_json?: AgentVersionCreateRequestApiLivekitConfigJson;
   /**
    * @minimum 1
-   * @maximum 25
+   * @maximum 20
    */
   livekit_max_concurrency?: number;
   commit_message?: string;
@@ -23373,7 +23373,15 @@ export const AlertItemApiKind = {
   error_feed: "error_feed",
 } as const;
 
-export type AlertItemApiTriggerValue = { [key: string]: unknown };
+export type AlertItemApiSeverityThreshold =
+  (typeof AlertItemApiSeverityThreshold)[keyof typeof AlertItemApiSeverityThreshold];
+
+export const AlertItemApiSeverityThreshold = {
+  low: "low",
+  medium: "medium",
+  high: "high",
+  critical: "critical",
+} as const;
 
 export type AlertItemApiFilters = { [key: string]: unknown };
 
@@ -23388,7 +23396,8 @@ export interface AlertItemApi {
   project_id?: string;
   /** @minLength 1 */
   trigger_type?: string;
-  trigger_value?: AlertItemApiTriggerValue;
+  severity_threshold?: AlertItemApiSeverityThreshold;
+  occurrence_threshold?: number;
   filters?: AlertItemApiFilters;
   slack_connection_id?: string;
   /** @minLength 1 */
@@ -23448,7 +23457,15 @@ export const AlertWriteRequestApiKind = {
   error_feed: "error_feed",
 } as const;
 
-export type AlertWriteRequestApiTriggerValue = { [key: string]: unknown };
+export type AlertWriteRequestApiSeverityThreshold =
+  (typeof AlertWriteRequestApiSeverityThreshold)[keyof typeof AlertWriteRequestApiSeverityThreshold];
+
+export const AlertWriteRequestApiSeverityThreshold = {
+  low: "low",
+  medium: "medium",
+  high: "high",
+  critical: "critical",
+} as const;
 
 export type AlertWriteRequestApiFilters = { [key: string]: unknown };
 
@@ -23460,7 +23477,12 @@ export interface AlertWriteRequestApi {
   project_id?: string;
   /** @minLength 1 */
   trigger_type?: string;
-  trigger_value?: AlertWriteRequestApiTriggerValue;
+  severity_threshold?: AlertWriteRequestApiSeverityThreshold;
+  /**
+   * @minimum 1
+   * @maximum 1000000
+   */
+  occurrence_threshold?: number;
   filters?: AlertWriteRequestApiFilters;
   slack_connection_id?: string;
   /** @minLength 1 */

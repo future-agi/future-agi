@@ -64,7 +64,8 @@ function alertErrorField(attr) {
     name: "name",
     project_id: "project",
     trigger_type: "trigger",
-    trigger_value: "triggerValue",
+    severity_threshold: "triggerValue",
+    occurrence_threshold: "triggerValue",
     slack_connection_id: "connection",
     slack_channel_id: "channel",
     cooldown_seconds: "cooldown",
@@ -125,7 +126,10 @@ const toTags = (value) =>
 
 function summaryFor(rule) {
   const type = rule.trigger_type || rule.configuration?.trigger_type;
-  const value = rule.trigger_value ?? rule.configuration?.trigger_value;
+  const value =
+    type === "severity_reached"
+      ? rule.severity_threshold ?? rule.configuration?.severity_threshold
+      : rule.occurrence_threshold ?? rule.configuration?.occurrence_threshold;
   const trigger =
     TRIGGERS.find((item) => item.value === type)?.label ||
     type ||
@@ -159,7 +163,11 @@ function AlertRuleForm({ rule, draft, onClose }) {
     draft?.trigger ?? config.trigger_type ?? "new_issue",
   );
   const [triggerValue, setTriggerValue] = useState(
-    draft?.triggerValue ?? config.trigger_value ?? "high",
+    draft?.triggerValue ??
+      (config.trigger_type === "occurrences_crossed"
+        ? config.occurrence_threshold
+        : config.severity_threshold) ??
+      "high",
   );
   const [sources, setSources] = useState(
     draft?.sources ?? config.filters?.sources ?? [],
@@ -321,9 +329,11 @@ function AlertRuleForm({ rule, draft, onClose }) {
       enabled: rule?.enabled ?? true,
       project_id: projectId || null,
       trigger_type: trigger,
-      ...(trigger === "severity_reached" || trigger === "occurrences_crossed"
-        ? { trigger_value: triggerValue }
-        : {}),
+      ...(trigger === "severity_reached"
+        ? { severity_threshold: triggerValue }
+        : trigger === "occurrences_crossed"
+          ? { occurrence_threshold: triggerValue }
+          : {}),
       filters: {
         sources,
         severities,
@@ -531,7 +541,9 @@ function AlertRuleForm({ rule, draft, onClose }) {
               inputProps={{ min: 1 }}
               value={triggerValue}
               onChange={(e) => {
-                setTriggerValue(e.target.value);
+                setTriggerValue(
+                  e.target.value === "" ? "" : Number(e.target.value),
+                );
                 clearFieldError("triggerValue");
               }}
               error={Boolean(fieldErrors.triggerValue)}

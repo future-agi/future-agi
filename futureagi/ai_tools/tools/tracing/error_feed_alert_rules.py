@@ -78,12 +78,15 @@ class CreateErrorFeedAlertRuleInput(PydanticBaseModel):
             "occurrences_crossed."
         )
     )
-    trigger_value: int | str | None = Field(
+    severity_threshold: Literal["low", "medium", "high", "critical"] | None = Field(
         default=None,
-        description=(
-            "Severity level for severity_reached, or a positive occurrence count "
-            "for occurrences_crossed. Leave empty for new_issue and escalating."
-        ),
+        description="Severity level for severity_reached.",
+    )
+    occurrence_threshold: int | None = Field(
+        default=None,
+        ge=1,
+        le=1_000_000,
+        description="Positive occurrence count for occurrences_crossed.",
     )
     filters: ErrorFeedAlertFilters | None = Field(
         default=None, description="Optional ANDed Error Feed issue filters."
@@ -110,7 +113,10 @@ class UpdateErrorFeedAlertRuleInput(PydanticBaseModel):
     enabled: bool | None = Field(default=None, description="Enable or pause the rule.")
     project_id: UUID | None = Field(default=None, description="Updated project scope.")
     trigger_type: TriggerType | None = Field(default=None)
-    trigger_value: int | str | None = Field(default=None)
+    severity_threshold: Literal["low", "medium", "high", "critical"] | None = Field(
+        default=None
+    )
+    occurrence_threshold: int | None = Field(default=None, ge=1, le=1_000_000)
     filters: ErrorFeedAlertFilters | None = Field(default=None)
     slack_connection_id: UUID | None = Field(default=None)
     slack_channel_id: str | None = Field(
@@ -174,7 +180,8 @@ def _rule_summary(rule: dict[str, Any]) -> str:
             ("Status", "Enabled" if rule.get("enabled") else "Paused"),
             ("Project ID", rule.get("project_id")),
             ("Trigger", rule.get("trigger_type")),
-            ("Trigger value", rule.get("trigger_value")),
+            ("Severity threshold", rule.get("severity_threshold")),
+            ("Occurrence threshold", rule.get("occurrence_threshold")),
             (
                 "Slack channel",
                 rule.get("slack_channel_name") or rule.get("slack_channel_id"),
@@ -390,7 +397,11 @@ class ListSlackAlertIntegrationsTool(BaseTool):
     input_model = EmptyInput
 
     def execute(self, params: EmptyInput, context: ToolContext) -> ToolResult:
-        from integrations.models import ConnectionStatus, IntegrationConnection, IntegrationPlatform
+        from integrations.models import (
+            ConnectionStatus,
+            IntegrationConnection,
+            IntegrationPlatform,
+        )
 
         connections = IntegrationConnection.objects.filter(
             organization=context.organization,

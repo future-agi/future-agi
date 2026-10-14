@@ -122,7 +122,12 @@ class AlertWriteRequestSerializer(serializers.Serializer):
     enabled = serializers.BooleanField(required=False)
     project_id = serializers.UUIDField(required=False, allow_null=True)
     trigger_type = serializers.CharField(required=False)
-    trigger_value = serializers.JSONField(required=False)
+    severity_threshold = serializers.ChoiceField(
+        choices=["low", "medium", "high", "critical"], required=False
+    )
+    occurrence_threshold = serializers.IntegerField(
+        required=False, min_value=1, max_value=1_000_000
+    )
     filters = serializers.JSONField(required=False)
     slack_connection_id = serializers.UUIDField(required=False)
     slack_channel_id = serializers.CharField(required=False)
@@ -174,7 +179,10 @@ class AlertItemSerializer(serializers.Serializer):
     enabled = serializers.BooleanField()
     project_id = serializers.UUIDField(required=False, allow_null=True)
     trigger_type = serializers.CharField(required=False)
-    trigger_value = serializers.JSONField(required=False, allow_null=True)
+    severity_threshold = serializers.ChoiceField(
+        choices=["low", "medium", "high", "critical"], required=False
+    )
+    occurrence_threshold = serializers.IntegerField(required=False)
     filters = serializers.JSONField(required=False)
     slack_connection_id = serializers.UUIDField(required=False)
     slack_channel_id = serializers.CharField(required=False)

@@ -15,7 +15,8 @@ const SLACK_INSTALL_PATH = '/integrations/slack/install/';
 const UI_READY = 60_000;
 
 interface Install { result: { authorization_url: string } }
-interface Rule { id: string; name: string; trigger_type: string; filters: { issue_groups: string[] } }
+interface Rule { id: string; name: string; trigger_type: string; occurrence_threshold?: number | null;
+  severity_threshold?: string | null; filters: { issue_groups: string[] } }
 interface AlertList { result: { alerts: Rule[] } }
 interface SeededIssue { issue_id: string; cluster_id: string }
 
@@ -89,7 +90,7 @@ test('ERR-E2E-002: every issue trigger sends only after its selected transition'
         await page.getByRole('option', { name: 'High' }).click();
       }
       if (item.trigger === 'occurrences_crossed') {
-        await page.getByRole('spinbutton', { name: 'Occurrence threshold' }).fill('5');
+        await page.getByRole('spinbutton', { name: 'Occurrence threshold' }).fill('7');
       }
       await page.getByRole('combobox', { name: 'Issue groups' }).fill(group);
       await page.getByRole('combobox', { name: 'Issue groups' }).press('Enter');
@@ -105,6 +106,8 @@ test('ERR-E2E-002: every issue trigger sends only after its selected transition'
     const saved = alerts.result.alerts.find((rule) => rule.name === ruleName);
     expect(saved?.trigger_type).toBe(item.trigger);
     expect(saved?.filters.issue_groups).toEqual([group]);
+    if (item.trigger === 'occurrences_crossed') expect(saved?.occurrence_threshold).toBe(7);
+    if (item.trigger === 'severity_reached') expect(saved?.severity_threshold).toBe('high');
     await testInfo.attach(`rule-${item.trigger}`, { body: JSON.stringify(saved), contentType: 'application/json' });
 
     const initial = await actor.api.post<SeededIssue>(ISSUE_SEED_PATH, {
@@ -116,7 +119,7 @@ test('ERR-E2E-002: every issue trigger sends only after its selected transition'
     } else if (item.trigger === 'escalating') {
       await actor.api.post(ISSUE_SEED_PATH, { project_id: project.id, issue_id: initial.issue_id, status: 'escalating' });
     } else if (item.trigger === 'occurrences_crossed') {
-      await actor.api.post(ISSUE_SEED_PATH, { project_id: project.id, issue_id: initial.issue_id, occurrences: 5 });
+      await actor.api.post(ISSUE_SEED_PATH, { project_id: project.id, issue_id: initial.issue_id, occurrences: 7 });
     }
     await testInfo.attach(`issue-${item.trigger}`, { body: JSON.stringify(initial), contentType: 'application/json' });
 
