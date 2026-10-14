@@ -974,7 +974,6 @@ def test_stale_workspace_basis_is_rejected_even_for_a_later_message(
     )
 
 
-
 @pytest.mark.django_db
 def test_each_conversation_has_its_own_checkpoint_sequence_clock(
     user, workspace, storage
@@ -1350,3 +1349,242 @@ def test_send_message_rejected_after_conversation_retired(organization):
     assert not HostedHarnessConversationMessage.no_workspace_objects.filter(
         conversation=conversation, client_request_id="again"
     ).exists()
+
+
+@pytest.mark.django_db
+def test_second_chat_turn_from_the_same_sandbox_publishes(user, workspace, storage):
+    from simulate.services.hosted_harness_conversation import (
+        environment_authoring_revision,
+        promote_conversation_checkpoint,
+    )
+    from simulate.services.hosted_harness_gateway import with_authoring_basis
+    from simulate.tests.test_harness_amend_archive import NAMES, _run_environment
+
+    environment = _run_environment(user, workspace, "chat-two-turns")
+    _prime_environment_archive(
+        environment, storage, _chat_checkpoint(NAMES[:2], one_liner="original")
+    )
+    conversation, _, _ = enqueue_message(
+        environment, content="Add a PIN scenario", client_request_id="turn-1"
+    )
+    # The chat sandbox stamps the revision it was started from into its workspace.
+    started_from = environment_authoring_revision(environment)
+
+    first, digest = _put_conversation_checkpoint(
+        conversation,
+        storage,
+        with_authoring_basis(_chat_checkpoint(NAMES, one_liner="first"), started_from),
+    )
+    promote_conversation_checkpoint(
+        conversation,
+        object_key=first,
+        digest=digest,
+        sequence=1,
+        expected_revision=started_from,
+    )
+    environment.refresh_from_db()
+    assert environment.scenario_count == 3
+
+    # Same sandbox, next turn: its workspace still carries the basis it started from.
+    second, digest = _put_conversation_checkpoint(
+        conversation,
+        storage,
+        with_authoring_basis(
+            _chat_checkpoint(NAMES[:2], one_liner="second"), started_from
+        ),
+    )
+    promote_conversation_checkpoint(
+        conversation,
+        object_key=second,
+        digest=digest,
+        sequence=2,
+        expected_revision=environment_authoring_revision(environment),
+    )
+    environment.refresh_from_db()
+    assert environment.scenario_count == 2
+
+
+@pytest.mark.django_db
+def test_an_edit_stores_a_new_snapshot_and_submitted_runs_keep_theirs(
+    user, workspace, storage
+):
+    from simulate.services.hosted_harness_gateway import rewrite_authoring_scenarios
+    from simulate.tests.test_harness_amend_archive import (
+        NAMES,
+        _archive,
+        _key,
+        _read,
+        _run_environment,
+        _suite,
+    )
+
+    environment = _run_environment(user, workspace, "edit-new-snapshot")
+    submitted_key = environment.payload["metadata"]["authoring_object_key"]
+    original = _archive(names=NAMES[:2])
+    storage.objects[submitted_key] = original
+    run, _ = create_selected_harness_run(
+        environment,
+        scenario_keys=[_key(NAMES[0])],
+        trials=1,
+        idempotency_key="before-edit",
+    )
+
+    edited_key = rewrite_authoring_scenarios(environment, _suite(NAMES[:1]))
+
+    environment.refresh_from_db()
+    assert edited_key != submitted_key
+    assert environment.payload["metadata"]["authoring_object_key"] == edited_key
+    assert storage.objects[submitted_key] == original
+    assert run.payload["metadata"]["authoring_object_key"] == submitted_key
+    assert f"scenarios/{NAMES[1]}/scenario.json" not in _read(
+        storage.objects[edited_key]
+    )
+
+
+@pytest.mark.django_db
+def test_a_chat_on_an_older_run_cannot_publish_over_later_edits(
+    user, workspace, storage
+):
+    from simulate.services.hosted_harness import HostedHarnessError
+    from simulate.services.hosted_harness_conversation import (
+        promote_conversation_checkpoint,
+        snapshot_revision,
+    )
+    from simulate.services.hosted_harness_gateway import (
+        rewrite_authoring_scenarios,
+        with_authoring_basis,
+    )
+    from simulate.tests.test_harness_amend_archive import (
+        NAMES,
+        _archive,
+        _key,
+        _run_environment,
+        _suite,
+    )
+
+    environment = _run_environment(user, workspace, "chat-on-older-run")
+    storage.objects[environment.payload["metadata"]["authoring_object_key"]] = _archive(
+        names=NAMES[:2]
+    )
+    run, _ = create_selected_harness_run(
+        environment, scenario_keys=[_key(NAMES[0])], trials=1, idempotency_key="old-run"
+    )
+    edited_key = rewrite_authoring_scenarios(environment, _suite(NAMES[:1]))
+    conversation, _, _ = enqueue_message(
+        run, content="Add a PIN scenario", client_request_id="run-chat"
+    )
+    checkpoint, digest = _put_conversation_checkpoint(
+        conversation,
+        storage,
+        with_authoring_basis(
+            _chat_checkpoint(NAMES, one_liner="from the run"), snapshot_revision(run)
+        ),
+    )
+
+    with pytest.raises(HostedHarnessError, match="environment changed"):
+        promote_conversation_checkpoint(
+            conversation,
+            object_key=checkpoint,
+            digest=digest,
+            sequence=1,
+            expected_revision=snapshot_revision(run),
+        )
+
+    environment.refresh_from_db()
+    assert environment.payload["metadata"]["authoring_object_key"] == edited_key
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "failure, attempt, told",
+    [
+        (
+            HostedHarnessError(
+                "conversation_checkpoint_stale", "stale", status_code=409
+            ),
+            1,
+            "changed while",
+        ),
+        (
+            HostedHarnessError(
+                "conversation_checkpoint_invalid", "bad", status_code=422
+            ),
+            1,
+            "1 to 200",
+        ),
+        (RuntimeError("storage down"), 4, "could not be saved"),
+        (RuntimeError("storage down"), None, "could not be saved"),
+    ],
+)
+def test_a_turn_that_cannot_publish_tells_the_chat_once(
+    user, workspace, storage, monkeypatch, failure, attempt, told
+):
+    from types import SimpleNamespace
+
+    from simulate.services import hosted_harness_conversation as service
+    from simulate.tasks import hosted_harness_conversation as tasks
+    from simulate.tests.test_harness_amend_archive import _run_environment
+    from tfc.logging.temporal import context
+
+    environment = _run_environment(user, workspace, "chat-not-published")
+    conversation, _command, _ = enqueue_message(
+        environment, content="Add a PIN scenario", client_request_id="not-published"
+    )
+
+    def refuse(*_args):
+        raise failure
+
+    monkeypatch.setattr(service, "promote_turn_checkpoint", refuse)
+    monkeypatch.setattr(
+        context,
+        "try_activity_info",
+        lambda: None if attempt is None else SimpleNamespace(attempt=attempt),
+    )
+    promote = tasks.promote_hosted_harness_conversation_checkpoint._original_func
+
+    assert promote(str(conversation.id), 7) == ""
+    assert promote(str(conversation.id), 7) == ""
+
+    replies = conversation.messages.filter(role="assistant")
+    assert [(m.state, told in m.content) for m in replies] == [("failed", True)]
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "failure",
+    [
+        RuntimeError("storage down"),
+        HostedHarnessError(
+            "conversation_workspace_not_ready", "later", status_code=409, retryable=True
+        ),
+    ],
+)
+def test_a_retryable_publish_failure_retries_before_telling_the_chat(
+    user, workspace, storage, monkeypatch, failure
+):
+    from types import SimpleNamespace
+
+    from simulate.services import hosted_harness_conversation as service
+    from simulate.tasks import hosted_harness_conversation as tasks
+    from simulate.tests.test_harness_amend_archive import _run_environment
+    from tfc.logging.temporal import context
+
+    environment = _run_environment(user, workspace, "chat-publish-retry")
+    conversation, _command, _ = enqueue_message(
+        environment, content="Add a PIN scenario", client_request_id="publish-retry"
+    )
+
+    def refuse(*_args):
+        raise failure
+
+    monkeypatch.setattr(service, "promote_turn_checkpoint", refuse)
+    monkeypatch.setattr(
+        context, "try_activity_info", lambda: SimpleNamespace(attempt=3)
+    )
+
+    with pytest.raises(type(failure)):
+        tasks.promote_hosted_harness_conversation_checkpoint._original_func(
+            str(conversation.id), 7
+        )
+
+    assert not conversation.messages.filter(role="assistant").exists()

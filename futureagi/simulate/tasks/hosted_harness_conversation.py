@@ -48,26 +48,36 @@ def schedule_conversation_runtime(conversation_id: str, endpoint_base_url: str):
     )
 
 
-@temporal_activity(time_limit=600, max_retries=3, queue="default")
+_PROMOTE_RETRIES = 3
+
+
+@temporal_activity(time_limit=600, max_retries=_PROMOTE_RETRIES, queue="default")
 def promote_hosted_harness_conversation_checkpoint(
     conversation_id: str, turn_sequence: int
 ) -> str:
     """Publish a finished chat turn's workspace to its environment."""
     from simulate.services.hosted_harness import HostedHarnessError
-    from simulate.services.hosted_harness_conversation import promote_turn_checkpoint
+    from simulate.services.hosted_harness_conversation import (
+        promote_turn_checkpoint,
+        tell_checkpoint_not_published,
+    )
+    from tfc.logging.temporal.context import try_activity_info
 
     try:
         environment = promote_turn_checkpoint(conversation_id, turn_sequence)
-    except HostedHarnessError as exc:
-        if exc.retryable:
+    except Exception as exc:
+        code = exc.code if isinstance(exc, HostedHarnessError) else "unexpected"
+        retryable = not isinstance(exc, HostedHarnessError) or exc.retryable
+        info = try_activity_info()
+        if retryable and info is not None and info.attempt <= _PROMOTE_RETRIES:
             raise
-        # A checkpoint that cannot be published stays unpublished; retrying cannot fix it.
-        logger.error(
+        # A checkpoint that cannot be published stays unpublished; the chat is told so.
+        logger.exception(
             "hosted_conversation_checkpoint_rejected",
             conversation_id=conversation_id,
-            code=exc.code,
-            message=exc.message,
+            code=code,
         )
+        tell_checkpoint_not_published(conversation_id, turn_sequence, code)
         return ""
     return str(environment.id) if environment is not None else ""
 

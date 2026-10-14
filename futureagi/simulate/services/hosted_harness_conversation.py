@@ -382,7 +382,12 @@ def ensure_conversation(job: HostedHarnessJob) -> HostedHarnessConversation:
 
 def environment_authoring_revision(job: HostedHarnessJob) -> str:
     """Revision of the authored files currently accepted by the environment."""
-    environment = job.environment if job.environment_id else job
+    return snapshot_revision(job.environment if job.environment_id else job)
+
+
+def snapshot_revision(job: HostedHarnessJob) -> str:
+    """Revision of the authored snapshot this job replays: a Run's own pinned copy."""
+    environment = job
     metadata = (environment.payload or {}).get("metadata") or {}
     revision = str(metadata.get("authoring_revision") or "")
     if revision:
@@ -415,7 +420,8 @@ def enqueue_message(
     reply_to: uuid.UUID | None = None,
     payload: dict[str, Any] | None = None,
 ) -> tuple[HostedHarnessConversation, HostedHarnessConversationMessage, bool]:
-    expected_revision = environment_authoring_revision(job)
+    # A chat edits the snapshot its job replays, which for a Run is the Run's pinned copy.
+    expected_revision = snapshot_revision(job)
     supplied_payload = {"command_kind": kind, **(payload or {})}
     with transaction.atomic():
         conversation = (
@@ -1111,6 +1117,48 @@ def promote_turn_checkpoint(
     )
 
 
+_NOT_PUBLISHED_REPLIES = {
+    "conversation_checkpoint_stale": (
+        "The scenarios changed while I was working, so this change was not saved. "
+        "I have loaded the latest scenarios; please ask again."
+    ),
+    "conversation_checkpoint_invalid": (
+        "This change was not saved: an environment needs 1 to 200 scenarios, "
+        "each with a different name. Your scenarios are unchanged."
+    ),
+}
+_NOT_PUBLISHED_REPLY = (
+    "This change could not be saved. Your scenarios are unchanged; please try again."
+)
+
+
+def tell_checkpoint_not_published(
+    conversation_id: str, turn_sequence: int, code: str
+) -> None:
+    """Tell the chat that a finished turn's workspace did not become the environment's."""
+    request_id = f"not-published-{turn_sequence}"
+    with transaction.atomic():
+        conversation = (
+            HostedHarnessConversation.no_workspace_objects.select_for_update().get(
+                id=conversation_id
+            )
+        )
+        if conversation.messages.filter(client_request_id=request_id).exists():
+            return
+        HostedHarnessConversationMessage.no_workspace_objects.create(
+            conversation=conversation,
+            client_request_id=request_id,
+            sequence=conversation.next_message_sequence,
+            role=HostedHarnessConversationMessage.Role.ASSISTANT,
+            kind=HostedHarnessConversationMessage.Kind.MESSAGE,
+            state=HostedHarnessConversationMessage.State.FAILED,
+            stage=conversation.current_stage,
+            content=_NOT_PUBLISHED_REPLIES.get(code, _NOT_PUBLISHED_REPLY),
+        )
+        conversation.next_message_sequence += 1
+        conversation.save(update_fields=["next_message_sequence", "updated_at"])
+
+
 def promote_latest_checkpoint(
     conversation: HostedHarnessConversation,
 ) -> HostedHarnessJob | None:
@@ -1136,7 +1184,7 @@ def promote_latest_checkpoint(
     expected_revision = (
         str((command.payload or {}).get("_environment_revision") or "")
         if command is not None
-        else environment_authoring_revision(conversation.job)
+        else snapshot_revision(conversation.job)
     )
     return promote_conversation_checkpoint(
         conversation,
@@ -1237,13 +1285,21 @@ def promote_conversation_checkpoint(
                 status_code=409,
             )
         basis = checkpoint_basis or expected_revision
-        if basis != current_revision:
+        # A later turn in the same workspace still carries the basis it was loaded from; it is
+        # current when nothing but this conversation's own last publish has changed since.
+        continues_own_publish = bool(
+            published.get("basis")
+            and published.get("basis") == basis
+            and published.get("content_revision") == current_revision
+        )
+        if basis != current_revision and not continues_own_publish:
             stale_revision = current_revision
         else:
             checkpoints[conversation_id] = {
                 "digest": digest,
                 "sequence": sequence,
                 "content_revision": content_revision,
+                "basis": basis,
             }
             if content_revision == current_revision:
                 metadata["conversation_checkpoints"] = checkpoints
