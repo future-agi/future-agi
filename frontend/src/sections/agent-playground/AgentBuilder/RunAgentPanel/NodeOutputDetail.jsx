@@ -226,6 +226,12 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
 
   const nodeStatus = nodeDetail?.status?.toLowerCase();
   const isNodeRunning = nodeStatus === "running" || nodeStatus === "pending";
+  const elapsedSeconds = nodeDetail?.duration_seconds ?? nodeDetail?.durationSeconds;
+  const showElapsed = !isNodeRunning &&
+    nodeStatus !== "skipped" &&
+    elapsedSeconds != null &&
+    Number.isFinite(Number(elapsedSeconds)) &&
+    Number(elapsedSeconds) >= 0;
   const nodeExecutionIdentifier =
     nodeDetail?.nodeExecutionId ||
     nodeDetail?.node_execution_id ||
@@ -519,6 +525,11 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
           >
             Agent flow results
           </Typography>
+          {showElapsed && (
+            <Typography typography="s2" color="text.secondary">
+              Duration: {(Number(elapsedSeconds) * 1000).toLocaleString(undefined, { maximumFractionDigits: 0 })} ms
+            </Typography>
+          )}
         </Box>
 
         <FormControlLabel
