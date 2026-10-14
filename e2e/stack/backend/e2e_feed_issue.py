@@ -1,14 +1,14 @@
-"""Isolated E2E issue transition seeder; never registered in normal deployments."""
+"""E2E-image-only issue transition seeder; absent from the product image."""
 
 import uuid
 
-from django.conf import settings
 from django.db import transaction
 from rest_framework import serializers
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from tfc.utils.api_errors import build_error_envelope
 from tracer.models.project import Project
 from tracer.models.trace_error_analysis import TraceErrorGroup
 from tracer.services.feed_alerts.events import issue_snapshot, record_issue_event
@@ -35,8 +35,6 @@ class E2EFeedIssueView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        if settings.ENV_TYPE != "local" or not settings.E2E_ERROR_FEED_ENABLED:
-            return Response(status=404)
         serializer = E2EIssueRequest(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
@@ -46,7 +44,7 @@ class E2EFeedIssueView(APIView):
         workspace = getattr(request, "workspace", None)
         if not workspace or not request.user.can_write_to_workspace(workspace):
             return Response(
-                {"error": "Workspace write access is required."}, status=403
+                build_error_envelope("Workspace write access is required.", status_code=403), status=403
             )
         project = Project.no_workspace_objects.filter(
             pk=data["project_id"],
@@ -55,7 +53,7 @@ class E2EFeedIssueView(APIView):
             deleted=False,
         ).first()
         if project is None:
-            return Response({"error": "Project not found."}, status=404)
+            return Response(build_error_envelope("Project not found.", status_code=404), status=404)
         with transaction.atomic():
             if "issue_id" in data:
                 issue = (
@@ -64,7 +62,7 @@ class E2EFeedIssueView(APIView):
                     .first()
                 )
                 if issue is None:
-                    return Response({"error": "Issue not found."}, status=404)
+                    return Response(build_error_envelope("Issue not found.", status_code=404), status=404)
                 before = issue_snapshot(issue)
             else:
                 title = data.get("title") or "E2E Error Feed issue"

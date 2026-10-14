@@ -3,6 +3,8 @@ import { test, expect } from '../../lib/fixtures';
 import { E2E } from '../../lib/env';
 import { flowAnnotation } from '../../lib/flow-meta';
 
+test.skip(process.env.E2E_STACK === 'standalone', 'Slack fixture image is available in the distributed E2E stack');
+
 // Pinned from frontend/src/api/integrations/index.js and integrations/urls.py.
 const INSTALL_PATH = '/integrations/slack/install/';
 const CONNECTIONS_PATH = '/integrations/connections/';

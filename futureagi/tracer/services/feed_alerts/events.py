@@ -99,7 +99,9 @@ def _matches(rule: ErrorFeedAlertRule, event: ErrorFeedIssueEvent) -> bool:
         ] <= _SEVERITY_RANK.get(after.get("severity"), 0)
     elif rule.trigger_type == FeedAlertTrigger.ESCALATING:
         trigger = (
-            before.get("status") != "escalating" and after.get("status") == "escalating"
+            event.event_kind == "issue_changed"
+            and before.get("status") != "escalating"
+            and after.get("status") == "escalating"
         )
     else:
         trigger = before.get("occurrences", 0) < value <= after.get("occurrences", 0)

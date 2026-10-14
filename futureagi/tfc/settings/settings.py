@@ -1236,6 +1236,7 @@ GITHUB_CALLBACK_URL = f"{BASE_URL}/saml2_auth/github/callback/"
 MICROSOFT_CALLBACK_URL = f"{BASE_URL}/saml2_auth/microsoft/callback/"
 get_assertion_url = f"{BASE_URL}/saml2_auth/acs/"
 
+
 def _app_base_url(host, scheme, default_scheme):
     """APP_URL as an absolute URL, for links that leave the app: emails, invite
     and reset links. A scheme written into APP_URL wins. Otherwise a loopback
@@ -1269,7 +1270,6 @@ SLACK_CLIENT_ID = os.getenv("SLACK_CLIENT_ID", "")
 SLACK_CLIENT_SECRET = os.getenv("SLACK_CLIENT_SECRET", "")
 SLACK_OAUTH_AUTHORIZE_URL = os.getenv("SLACK_OAUTH_AUTHORIZE_URL", "")
 SLACK_API_URL = os.getenv("SLACK_API_URL", "")
-E2E_ERROR_FEED_ENABLED = os.getenv("E2E_ERROR_FEED_ENABLED", "").lower() == "true"
 SLACK_REDIRECT_URI = os.getenv(
     "SLACK_REDIRECT_URI", f"{BASE_URL.rstrip('/')}/integrations/slack/callback/"
 )

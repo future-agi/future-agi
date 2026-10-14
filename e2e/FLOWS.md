@@ -619,26 +619,10 @@
 
 ## error-feed
 
-### FEED-E2E-001 — an old issue URL opens the surviving issue
-
-**Goal:** A saved link to a retired issue opens its surviving issue  
-**Spec:** `flows/error-feed/retired-issue-redirect.spec.ts:7`  
-**Tags:** —
-
-**User steps:**
-
-1. open the retired issue URL
-2. follow its redirect to the active issue URL
-
-**Browser observations:**
-
-- the browser requests the redirect for the retired ID and receives a stubbed response
-- the browser never requests the retired issue detail
-
 ### ERR-E2E-001 — connect Slack and notify only for matching Error Feed issues
 
 **Goal:** A developer connects Slack, creates an Error Feed rule, and receives only matching issue notifications  
-**Spec:** `flows/error-feed/slack-alert.spec.ts:20`  
+**Spec:** `flows/error-feed/slack-alert.spec.ts:22`  
 **Tags:** —
 
 **User steps:**
@@ -658,7 +642,7 @@
 ### ERR-E2E-002 — every issue trigger sends only after its selected transition
 
 **Goal:** A developer chooses each issue trigger and receives a Slack alert when its condition occurs  
-**Spec:** `flows/error-feed/trigger-matrix.spec.ts:27`  
+**Spec:** `flows/error-feed/trigger-matrix.spec.ts:29`  
 **Tags:** —
 
 **User steps:**
@@ -677,7 +661,7 @@
 ### ERR-E2E-003 — failed Slack reconnect can recover and the connection can be removed
 
 **Goal:** A developer can recover from a denied Slack reconnect and disconnect the integration  
-**Spec:** `flows/error-feed/slack-integration-management.spec.ts:15`  
+**Spec:** `flows/error-feed/slack-integration-management.spec.ts:17`  
 **Tags:** —
 
 **User steps:**
@@ -692,6 +676,22 @@
 - denied consent leaves the existing connection active and unchanged
 - successful reconnect preserves the same workspace connection ID
 - disconnect removes the connection from the scoped integrations API
+
+### FEED-E2E-001 — an old issue URL opens the surviving issue
+
+**Goal:** A saved link to a retired issue opens its surviving issue  
+**Spec:** `flows/error-feed/retired-issue-redirect.spec.ts:7`  
+**Tags:** —
+
+**User steps:**
+
+1. open the retired issue URL
+2. follow its redirect to the active issue URL
+
+**Browser observations:**
+
+- the browser requests the redirect for the retired ID and receives a stubbed response
+- the browser never requests the retired issue detail
 
 ## evals
 

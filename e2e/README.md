@@ -38,8 +38,9 @@ code evals run in the worker instead of failing with "Code executor unavailable"
 
 Error Feed flows use the local mock Slack OAuth/API service and inspect its captured messages at
 `http://localhost:28081/messages`. They seed issue transitions through the authenticated
-`POST /tracer/e2e/feed-issue/` route, which is registered only in local mode with
-`E2E_ERROR_FEED_ENABLED=true`. The E2E API and worker share a test-only integration encryption key
+`POST /tracer/e2e/feed-issue/` route, which exists only in the distributed E2E backend image.
+That image also supplies its own Error Feed entitlement in E2E-only settings; neither fixture is
+present in the product image. The E2E API and worker share a test-only integration encryption key
 so the worker can decrypt the connection created during OAuth.
 
 Eval results, annotation scores and the dataset/simulation dashboards reach ClickHouse **only**
@@ -56,6 +57,7 @@ yarn install
 npx playwright install chromium
 
 # from the repo root
+bin/e2e build backend        # include the E2E-only issue seeder and entitlement in a local image
 bin/e2e up                   # boot the isolated futureagi-e2e stack
 bin/e2e test                 # run the whole suite against it
 bin/e2e test flows/observe/  # or one area

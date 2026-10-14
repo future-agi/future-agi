@@ -6,6 +6,7 @@ import uuid
 
 from django.db import transaction
 from django.db.models import OuterRef, Subquery
+from rest_framework import serializers
 
 from integrations.models import (
     ConnectionStatus,
@@ -23,9 +24,10 @@ from tracer.models.project import Project
 
 
 class FeedAlertError(Exception):
-    def __init__(self, message: str, status_code: int = 400):
+    def __init__(self, message: str, status_code: int = 400, field: str | None = None):
         super().__init__(message)
         self.status_code = status_code
+        self.field = field
 
 
 _SEVERITIES = {"low", "medium", "high", "critical"}
@@ -66,7 +68,7 @@ def _project(project_id, organization, workspace):
     try:
         project_id = uuid.UUID(str(project_id))
     except (TypeError, ValueError) as exc:
-        raise FeedAlertError("Project ID must be a UUID.") from exc
+        raise FeedAlertError("Project ID must be a UUID.", field="project_id") from exc
     project = Project.no_workspace_objects.filter(
         pk=project_id,
         organization=organization,
@@ -75,7 +77,9 @@ def _project(project_id, organization, workspace):
         deleted=False,
     ).first()
     if project is None:
-        raise FeedAlertError("Project is not available in this workspace.", 404)
+        raise FeedAlertError(
+            "Project is not available in this workspace.", 404, "project_id"
+        )
     return project
 
 
@@ -83,7 +87,9 @@ def _connection(connection_id, organization, workspace):
     try:
         connection_id = uuid.UUID(str(connection_id))
     except (TypeError, ValueError) as exc:
-        raise FeedAlertError("Slack connection ID must be a UUID.") from exc
+        raise FeedAlertError(
+            "Slack connection ID must be a UUID.", field="slack_connection_id"
+        ) from exc
     connection = IntegrationConnection.no_workspace_objects.filter(
         pk=connection_id,
         organization=organization,
@@ -93,13 +99,15 @@ def _connection(connection_id, organization, workspace):
         deleted=False,
     ).first()
     if connection is None:
-        raise FeedAlertError("Connect an active Slack workspace first.", 400)
+        raise FeedAlertError(
+            "Connect an active Slack workspace first.", 400, "slack_connection_id"
+        )
     return connection
 
 
 def _channel(connection, channel_id: str, *, join_public: bool = False) -> str:
     if not isinstance(channel_id, str) or not channel_id or len(channel_id) > 80:
-        raise FeedAlertError("Choose a Slack channel.")
+        raise FeedAlertError("Choose a Slack channel.", field="slack_channel_id")
     from integrations.services.slack_service import SlackApiError, SlackService
 
     credentials = CredentialManager.decrypt(bytes(connection.encrypted_credentials))
@@ -110,20 +118,29 @@ def _channel(connection, channel_id: str, *, join_public: bool = False) -> str:
     except SlackApiError as exc:
         if exc.code == "missing_scope":
             raise FeedAlertError(
-                "Reconnect Slack to allow the app to join public channels.", 409
+                "Reconnect Slack to allow the app to join public channels.",
+                409,
+                "slack_connection_id",
             ) from exc
         if exc.code == "not_in_channel":
             raise FeedAlertError(
-                "For a private channel, add the Slack app to the channel first."
-                if join_public
-                else "The Slack app is no longer in this channel."
+                (
+                    "For a private channel, add the Slack app to the channel first."
+                    if join_public
+                    else "The Slack app is no longer in this channel."
+                ),
+                field="slack_channel_id",
             ) from exc
-        raise FeedAlertError(f"Slack channel is unavailable ({exc.code}).") from exc
+        raise FeedAlertError(
+            f"Slack channel is unavailable ({exc.code}).", field="slack_channel_id"
+        ) from exc
     except Exception as exc:
-        raise FeedAlertError("Slack channel is unavailable.") from exc
+        raise FeedAlertError(
+            "Slack channel is unavailable.", field="slack_channel_id"
+        ) from exc
     name = channel.get("name") if isinstance(channel, dict) else None
     if not isinstance(name, str) or not name:
-        raise FeedAlertError("Slack channel is unavailable.")
+        raise FeedAlertError("Slack channel is unavailable.", field="slack_channel_id")
     return name[:255]
 
 
@@ -131,7 +148,7 @@ def _validate_filters(value) -> dict:
     if value is None:
         return {}
     if not isinstance(value, dict) or set(value) - _FILTER_KEYS:
-        raise FeedAlertError("Unsupported Error Feed filter.")
+        raise FeedAlertError("Unsupported Error Feed filter.", field="filters")
     result = {}
     for key, items in value.items():
         if (
@@ -139,48 +156,134 @@ def _validate_filters(value) -> dict:
             or len(items) > 50
             or not all(isinstance(item, str) and 0 < len(item) <= 100 for item in items)
         ):
-            raise FeedAlertError(f"{key} must be a list of short values.")
+            raise FeedAlertError(
+                f"{key} must be a list of short values.", field=f"filters.{key}"
+            )
         if key in _FILTER_CHOICES and set(items) - _FILTER_CHOICES[key]:
-            raise FeedAlertError(f"Unsupported {key} filter value.")
+            raise FeedAlertError(
+                f"Unsupported {key} filter value.", field=f"filters.{key}"
+            )
         result[key] = sorted(set(items))
     return result
 
 
 def _validate_trigger(trigger_type, trigger_value):
     if trigger_type not in FeedAlertTrigger.values:
-        raise FeedAlertError("Unsupported Error Feed trigger.")
+        raise FeedAlertError("Unsupported Error Feed trigger.", field="trigger_type")
     if trigger_type == FeedAlertTrigger.SEVERITY_REACHED:
         if not isinstance(trigger_value, str) or trigger_value not in _SEVERITIES:
-            raise FeedAlertError("Select a severity threshold.")
+            raise FeedAlertError("Select a severity threshold.", field="trigger_value")
     elif trigger_type == FeedAlertTrigger.OCCURRENCES_CROSSED:
         if type(trigger_value) is not int or not 1 <= trigger_value <= 1_000_000:
-            raise FeedAlertError("Occurrence threshold must be between 1 and 1000000.")
+            raise FeedAlertError(
+                "Occurrence threshold must be between 1 and 1000000.",
+                field="trigger_value",
+            )
     elif trigger_value is not None:
-        raise FeedAlertError("This trigger does not take a value.")
+        raise FeedAlertError(
+            "This trigger does not take a value.", field="trigger_value"
+        )
+
+
+class FeedAlertRuleSerializer(serializers.Serializer):
+    """The one Error Feed rule contract used for writes and representations."""
+
+    name = serializers.CharField(max_length=255, trim_whitespace=True)
+    enabled = serializers.BooleanField(required=False)
+    project_id = serializers.UUIDField(required=False, allow_null=True)
+    trigger_type = serializers.ChoiceField(choices=FeedAlertTrigger.choices)
+    trigger_value = serializers.JSONField(required=False, allow_null=True)
+    filters = serializers.JSONField(required=False)
+    slack_connection_id = serializers.UUIDField()
+    slack_channel_id = serializers.CharField(max_length=80)
+    cooldown_seconds = serializers.IntegerField(
+        required=False, min_value=0, max_value=86400
+    )
+
+    def to_internal_value(self, data):
+        if not isinstance(data, dict):
+            raise serializers.ValidationError(
+                {"non_field_errors": ["Expected an object."]}
+            )
+        unknown = set(data) - _WRITE_KEYS
+        if unknown:
+            raise serializers.ValidationError(
+                {field: ["Unsupported alert rule field."] for field in sorted(unknown)}
+            )
+        return super().to_internal_value(data)
+
+    def to_representation(self, rule):
+        latest_status = getattr(rule, "latest_delivery_status", None)
+        latest_error = getattr(rule, "latest_delivery_error", None)
+        return {
+            "id": str(rule.id),
+            "kind": "error_feed",
+            "name": rule.name,
+            "enabled": rule.enabled,
+            "project_id": str(rule.project_id) if rule.project_id else None,
+            "trigger_type": rule.trigger_type,
+            "trigger_value": rule.trigger_value,
+            "filters": rule.filters,
+            "slack_connection_id": str(rule.slack_connection_id),
+            "slack_channel_id": rule.slack_channel_id,
+            "slack_channel_name": rule.slack_channel_name,
+            "cooldown_seconds": rule.cooldown_seconds,
+            "last_triggered_at": rule.last_triggered_at,
+            "health": "failed" if latest_status == "failed" else "healthy",
+            "failure_reason": latest_error if latest_status == "failed" else None,
+            "created_at": rule.created_at,
+            "updated_at": rule.updated_at,
+        }
+
+    def validate(self, attrs):
+        current = self.context.get("current")
+        organization = self.context["organization"]
+        workspace = self.context["workspace"]
+        merged = self.to_representation(current) if current is not None else {}
+        merged.update(attrs)
+        if (
+            "trigger_type" in attrs
+            and "trigger_value" not in attrs
+            and attrs["trigger_type"]
+            in {FeedAlertTrigger.NEW_ISSUE, FeedAlertTrigger.ESCALATING}
+        ):
+            merged["trigger_value"] = None
+        try:
+            _validate_trigger(merged.get("trigger_type"), merged.get("trigger_value"))
+            filters = _validate_filters(merged.get("filters", {}))
+            project = _project(merged.get("project_id"), organization, workspace)
+            connection = _connection(
+                merged.get("slack_connection_id"), organization, workspace
+            )
+            channel_id = merged.get("slack_channel_id")
+            channel_name = (
+                current.slack_channel_name
+                if current is not None
+                and current.slack_connection_id == connection.id
+                and current.slack_channel_id == channel_id
+                else _channel(connection, channel_id, join_public=True)
+            )
+        except FeedAlertError as exc:
+            self._status_code = exc.status_code
+            raise serializers.ValidationError(
+                {exc.field or "non_field_errors": [str(exc)]}
+            ) from exc
+        return {
+            "name": merged["name"],
+            "enabled": merged.get("enabled", True),
+            "project": project,
+            "trigger_type": merged["trigger_type"],
+            "trigger_value": merged.get("trigger_value"),
+            "filters": filters,
+            "slack_connection": connection,
+            "slack_channel_id": channel_id,
+            "slack_channel_name": channel_name,
+            "cooldown_seconds": merged.get("cooldown_seconds", 3600),
+        }
 
 
 def serialize_rule(rule: ErrorFeedAlertRule) -> dict:
-    latest_status = getattr(rule, "latest_delivery_status", None)
-    latest_error = getattr(rule, "latest_delivery_error", None)
-    return {
-        "id": str(rule.id),
-        "kind": "error_feed",
-        "name": rule.name,
-        "enabled": rule.enabled,
-        "project_id": str(rule.project_id) if rule.project_id else None,
-        "trigger_type": rule.trigger_type,
-        "trigger_value": rule.trigger_value,
-        "filters": rule.filters,
-        "slack_connection_id": str(rule.slack_connection_id),
-        "slack_channel_id": rule.slack_channel_id,
-        "slack_channel_name": rule.slack_channel_name,
-        "cooldown_seconds": rule.cooldown_seconds,
-        "last_triggered_at": rule.last_triggered_at,
-        "health": "failed" if latest_status == "failed" else "healthy",
-        "failure_reason": latest_error if latest_status == "failed" else None,
-        "created_at": rule.created_at,
-        "updated_at": rule.updated_at,
-    }
+    return dict(FeedAlertRuleSerializer(rule).data)
 
 
 def _with_delivery_health(queryset):
@@ -218,50 +321,20 @@ def get_rule(*, rule_id, organization, workspace) -> dict:
 
 
 def _validated(data, *, organization, workspace, current=None) -> dict:
-    if not isinstance(data, dict) or set(data) - _WRITE_KEYS:
-        raise FeedAlertError("Unsupported alert rule field.")
-    merged = serialize_rule(current) if current is not None else {}
-    merged.update(data)
-    if (
-        "trigger_type" in data
-        and "trigger_value" not in data
-        and data["trigger_type"]
-        in {FeedAlertTrigger.NEW_ISSUE, FeedAlertTrigger.ESCALATING}
-    ):
-        merged["trigger_value"] = None
-    name = merged.get("name")
-    if not isinstance(name, str) or not name.strip() or len(name) > 255:
-        raise FeedAlertError("Name is required and must be at most 255 characters.")
-    enabled = merged.get("enabled", True)
-    if type(enabled) is not bool:
-        raise FeedAlertError("Enabled must be true or false.")
-    _validate_trigger(merged.get("trigger_type"), merged.get("trigger_value"))
-    filters = _validate_filters(merged.get("filters", {}))
-    cooldown = merged.get("cooldown_seconds", 3600)
-    if type(cooldown) is not int or not 0 <= cooldown <= 86400:
-        raise FeedAlertError("Cooldown must be between 0 and 86400 seconds.")
-    project = _project(merged.get("project_id"), organization, workspace)
-    connection = _connection(merged.get("slack_connection_id"), organization, workspace)
-    channel_id = merged.get("slack_channel_id")
-    channel_name = (
-        current.slack_channel_name
-        if current is not None
-        and current.slack_connection_id == connection.id
-        and current.slack_channel_id == channel_id
-        else _channel(connection, channel_id, join_public=True)
+    serializer = FeedAlertRuleSerializer(
+        data=data,
+        partial=current is not None,
+        context={
+            "organization": organization,
+            "workspace": workspace,
+            "current": current,
+        },
     )
-    return {
-        "name": name.strip(),
-        "enabled": enabled,
-        "project": project,
-        "trigger_type": merged["trigger_type"],
-        "trigger_value": merged.get("trigger_value"),
-        "filters": filters,
-        "slack_connection": connection,
-        "slack_channel_id": channel_id,
-        "slack_channel_name": channel_name,
-        "cooldown_seconds": cooldown,
-    }
+    if not serializer.is_valid():
+        field, errors = next(iter(serializer.errors.items()))
+        message = str(errors[0]) if isinstance(errors, list) else str(errors)
+        raise FeedAlertError(message, getattr(serializer, "_status_code", 400), field)
+    return serializer.validated_data
 
 
 def create_rule(*, data, organization, workspace, user) -> dict:

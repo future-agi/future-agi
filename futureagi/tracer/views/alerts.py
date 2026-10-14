@@ -8,6 +8,7 @@ from rest_framework.views import APIView
 
 from tfc.ee_gating import EEResource, check_ee_can_create
 from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_errors import build_error_envelope
 from tracer.models.feed_alert import FeedAlertTrigger
 from tracer.models.monitor import UserAlertMonitor
 from tracer.models.project import Project
@@ -35,6 +36,17 @@ def _scope(request):
     return organization, workspace
 
 
+def _error_response(exc):
+    return Response(
+        build_error_envelope(
+            str(exc),
+            status_code=exc.status_code,
+            details={exc.field: [str(exc)]} if exc.field else None,
+        ),
+        status=exc.status_code,
+    )
+
+
 def _require_write(request, workspace):
     if not request.user.can_write_to_workspace(workspace):
         raise FeedAlertError("Workspace write access is required.", 403)
@@ -54,7 +66,7 @@ def _metric_data(monitor):
 
 
 def _metric_write(request, organization, workspace, monitor=None):
-    data = dict(request.data)
+    data = dict(request.validated_data)
     data.pop("kind", None)
     if "enabled" in data:
         enabled = data.pop("enabled")
@@ -115,12 +127,25 @@ class AlertWriteRequestSerializer(serializers.Serializer):
     slack_connection_id = serializers.UUIDField(required=False)
     slack_channel_id = serializers.CharField(required=False)
     cooldown_seconds = serializers.IntegerField(required=False, min_value=0)
-    project = serializers.UUIDField(required=False)
+    project = serializers.UUIDField(required=False, allow_null=True)
     metric_type = serializers.CharField(required=False)
+    metric = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     threshold_type = serializers.CharField(required=False)
     threshold_operator = serializers.CharField(required=False)
+    threshold_metric_value = serializers.CharField(
+        required=False, allow_null=True, allow_blank=True
+    )
     critical_threshold_value = serializers.FloatField(required=False)
     warning_threshold_value = serializers.FloatField(required=False)
+    alert_frequency = serializers.IntegerField(required=False)
+    auto_threshold_time_window = serializers.IntegerField(required=False)
+    slack_webhook_url = serializers.URLField(
+        required=False, allow_null=True, allow_blank=True
+    )
+    slack_notes = serializers.CharField(
+        required=False, allow_null=True, allow_blank=True
+    )
+    is_mute = serializers.BooleanField(required=False)
     notification_emails = serializers.ListField(
         child=serializers.EmailField(), required=False
     )
@@ -140,15 +165,122 @@ class AlertTestRequestSerializer(serializers.Serializer):
     pass
 
 
+class AlertItemSerializer(serializers.Serializer):
+    """Fields returned by the shared metric / Error Feed alert surface."""
+
+    id = serializers.UUIDField()
+    kind = serializers.ChoiceField(choices=["metric", "error_feed"])
+    name = serializers.CharField()
+    enabled = serializers.BooleanField()
+    project_id = serializers.UUIDField(required=False, allow_null=True)
+    trigger_type = serializers.CharField(required=False)
+    trigger_value = serializers.JSONField(required=False, allow_null=True)
+    filters = serializers.JSONField(required=False)
+    slack_connection_id = serializers.UUIDField(required=False)
+    slack_channel_id = serializers.CharField(required=False)
+    slack_channel_name = serializers.CharField(required=False)
+    cooldown_seconds = serializers.IntegerField(required=False)
+    last_triggered_at = serializers.DateTimeField(required=False, allow_null=True)
+    health = serializers.CharField(required=False)
+    failure_reason = serializers.CharField(required=False, allow_null=True)
+    created_at = serializers.DateTimeField(required=False)
+    updated_at = serializers.DateTimeField(required=False)
+    project = serializers.UUIDField(required=False)
+    organization = serializers.UUIDField(required=False)
+    workspace = serializers.UUIDField(required=False, allow_null=True)
+    created_by = serializers.UUIDField(required=False, allow_null=True)
+    metric_type = serializers.CharField(required=False)
+    metric = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    metric_name = serializers.CharField(required=False)
+    threshold_type = serializers.CharField(required=False)
+    threshold_operator = serializers.CharField(required=False)
+    threshold_metric_value = serializers.CharField(
+        required=False, allow_null=True, allow_blank=True
+    )
+    critical_threshold_value = serializers.FloatField(required=False, allow_null=True)
+    warning_threshold_value = serializers.FloatField(required=False, allow_null=True)
+    alert_frequency = serializers.IntegerField(required=False)
+    auto_threshold_time_window = serializers.IntegerField(required=False)
+    last_checked_at = serializers.DateTimeField(required=False, allow_null=True)
+    slack_webhook_url = serializers.URLField(
+        required=False, allow_null=True, allow_blank=True
+    )
+    slack_notes = serializers.CharField(
+        required=False, allow_null=True, allow_blank=True
+    )
+    is_mute = serializers.BooleanField(required=False)
+    deleted = serializers.BooleanField(required=False)
+    deleted_at = serializers.DateTimeField(required=False, allow_null=True)
+    logs = serializers.ListField(
+        child=serializers.JSONField(), required=False, allow_null=True
+    )
+    notification_emails = serializers.ListField(
+        child=serializers.EmailField(), required=False
+    )
+
+
+class AlertListQuerySerializer(serializers.Serializer):
+    kind = serializers.ChoiceField(choices=["metric", "error_feed"], required=False)
+
+
+class AlertListResultSerializer(serializers.Serializer):
+    alerts = AlertItemSerializer(many=True)
+
+
+class AlertListResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = AlertListResultSerializer()
+
+
+class AlertItemResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = AlertItemSerializer()
+
+
+class AlertOptionSerializer(serializers.Serializer):
+    value = serializers.CharField()
+    label = serializers.CharField()
+
+
+class AlertProjectOptionSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField()
+
+
+class AlertOptionsResultSerializer(serializers.Serializer):
+    triggers = AlertOptionSerializer(many=True)
+    severities = serializers.ListField(child=serializers.CharField())
+    statuses = serializers.ListField(child=serializers.CharField())
+    sources = serializers.ListField(child=serializers.CharField())
+    projects = AlertProjectOptionSerializer(many=True)
+
+
+class AlertOptionsResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = AlertOptionsResultSerializer()
+
+
+class AlertDeletedResultSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    deleted = serializers.BooleanField()
+
+
+class AlertDeletedResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = AlertDeletedResultSerializer()
+
+
 class AlertView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @validated_request(
+        query_serializer=AlertListQuerySerializer,
+        responses={200: AlertListResponseSerializer},
+    )
     def get(self, request):
         try:
             organization, workspace = _scope(request)
-            kind = request.query_params.get("kind")
-            if kind not in (None, "error_feed", "metric"):
-                raise FeedAlertError("Unknown alert kind.")
+            kind = request.validated_query_data.get("kind")
             alerts = []
             if kind in (None, "metric"):
                 alerts.extend(
@@ -167,18 +299,18 @@ class AlertView(APIView):
                         raise
             return Response({"status": True, "result": {"alerts": alerts}})
         except FeedAlertError as exc:
-            return Response(
-                {"status": False, "error": str(exc)}, status=exc.status_code
-            )
+            return _error_response(exc)
 
-    @validated_request(AlertWriteRequestSerializer)
+    @validated_request(
+        AlertWriteRequestSerializer, responses={201: AlertItemResponseSerializer}
+    )
     def post(self, request):
         try:
             organization, workspace = _scope(request)
             _require_write(request, workspace)
-            kind = request.data.get("kind")
+            kind = request.validated_data.get("kind")
             if kind == "error_feed":
-                data = dict(request.data)
+                data = dict(request.validated_data)
                 data.pop("kind", None)
                 result = create_rule(
                     data=data,
@@ -199,18 +331,20 @@ class AlertView(APIView):
                 raise FeedAlertError("Unknown alert kind.")
             return Response({"status": True, "result": result}, status=201)
         except FeedAlertError as exc:
-            return Response(
-                {"status": False, "error": str(exc)}, status=exc.status_code
-            )
+            return _error_response(exc)
 
 
 class AlertOptionsView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @validated_request(
+        query_serializer=AlertListQuerySerializer,
+        responses={200: AlertOptionsResponseSerializer},
+    )
     def get(self, request):
         try:
             organization, workspace = _scope(request)
-            kind = request.query_params.get("kind", "error_feed")
+            kind = request.validated_query_data.get("kind", "error_feed")
             if kind != "error_feed":
                 raise FeedAlertError("Unknown alert kind.")
             from tfc.ee_gating import EEFeature, check_ee_feature
@@ -243,9 +377,7 @@ class AlertOptionsView(APIView):
                 }
             )
         except FeedAlertError as exc:
-            return Response(
-                {"status": False, "error": str(exc)}, status=exc.status_code
-            )
+            return _error_response(exc)
 
 
 class AlertDetailView(APIView):
@@ -257,6 +389,7 @@ class AlertDetailView(APIView):
             raise FeedAlertError("Alert not found.", 404)
         return monitor
 
+    @validated_request(responses={200: AlertItemResponseSerializer})
     def get(self, request, kind, alert_id):
         try:
             organization, workspace = _scope(request)
@@ -272,11 +405,13 @@ class AlertDetailView(APIView):
                 raise FeedAlertError("Unknown alert kind.", 404)
             return Response({"status": True, "result": result})
         except FeedAlertError as exc:
-            return Response(
-                {"status": False, "error": str(exc)}, status=exc.status_code
-            )
+            return _error_response(exc)
 
-    @validated_request(AlertWriteRequestSerializer)
+    @validated_request(
+        AlertWriteRequestSerializer,
+        responses={200: AlertItemResponseSerializer},
+        partial_request_validation=True,
+    )
     def patch(self, request, kind, alert_id):
         try:
             organization, workspace = _scope(request)
@@ -284,7 +419,7 @@ class AlertDetailView(APIView):
             if kind == "error_feed":
                 result = update_rule(
                     rule_id=alert_id,
-                    data=dict(request.data),
+                    data=dict(request.validated_data),
                     organization=organization,
                     workspace=workspace,
                     user=request.user,
@@ -296,10 +431,9 @@ class AlertDetailView(APIView):
                 raise FeedAlertError("Unknown alert kind.", 404)
             return Response({"status": True, "result": result})
         except FeedAlertError as exc:
-            return Response(
-                {"status": False, "error": str(exc)}, status=exc.status_code
-            )
+            return _error_response(exc)
 
+    @validated_request(responses={200: AlertDeletedResponseSerializer})
     def delete(self, request, kind, alert_id):
         try:
             organization, workspace = _scope(request)
@@ -319,9 +453,7 @@ class AlertDetailView(APIView):
                 raise FeedAlertError("Unknown alert kind.", 404)
             return Response({"status": True, "result": result})
         except FeedAlertError as exc:
-            return Response(
-                {"status": False, "error": str(exc)}, status=exc.status_code
-            )
+            return _error_response(exc)
 
 
 class ErrorFeedAlertTestView(APIView):
@@ -343,6 +475,4 @@ class ErrorFeedAlertTestView(APIView):
             )
             return Response({"status": True, "result": result})
         except FeedAlertError as exc:
-            return Response(
-                {"status": False, "error": str(exc)}, status=exc.status_code
-            )
+            return _error_response(exc)

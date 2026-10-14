@@ -1,4 +1,3 @@
-from django.conf import settings
 from django.urls import path  # type: ignore
 from rest_framework.routers import DefaultRouter
 
@@ -26,9 +25,9 @@ from tracer.views.feed import (
     CreateLinearIssueView,
     FeedDeepAnalysisView,
     FeedDetailView,
-    FeedRedirectView,
     FeedListView,
     FeedOverviewView,
+    FeedRedirectView,
     FeedRootCauseView,
     FeedSidebarView,
     FeedStatsView,
@@ -364,8 +363,3 @@ urlpatterns = [
     ),
     *router.urls,
 ]
-
-if settings.ENV_TYPE == "local" and settings.E2E_ERROR_FEED_ENABLED:
-    from tracer.views.e2e_feed_issue import E2EFeedIssueView
-
-    urlpatterns.append(path("e2e/feed-issue/", E2EFeedIssueView.as_view()))

@@ -37,13 +37,43 @@ class SlackInstallSerializer(serializers.Serializer):
     connection_id = serializers.UUIDField(required=False)
 
 
+class SlackInstallResultSerializer(serializers.Serializer):
+    authorization_url = serializers.URLField()
+
+
+class SlackInstallResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = SlackInstallResultSerializer()
+
+
+class SlackChannelsQuerySerializer(serializers.Serializer):
+    cursor = serializers.CharField(required=False, max_length=512, allow_blank=True)
+
+
+class SlackChannelSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    name = serializers.CharField()
+    is_private = serializers.BooleanField()
+    is_member = serializers.BooleanField()
+
+
+class SlackChannelsResultSerializer(serializers.Serializer):
+    channels = SlackChannelSerializer(many=True)
+    next_cursor = serializers.CharField(allow_null=True)
+
+
+class SlackChannelsResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = SlackChannelsResultSerializer()
+
+
 class SlackInstallView(APIView):
     permission_classes = [IsAuthenticated]
 
-    @validated_request(SlackInstallSerializer)
+    @validated_request(
+        SlackInstallSerializer, responses={200: SlackInstallResponseSerializer}
+    )
     def post(self, request):
-        serializer = SlackInstallSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
         organization = get_request_organization(request)
         workspace = getattr(request, "workspace", None)
         if (
@@ -62,7 +92,7 @@ class SlackInstallView(APIView):
                 organization=organization,
                 workspace=workspace,
                 user=request.user,
-                connection_id=serializer.validated_data.get("connection_id"),
+                connection_id=request.validated_data.get("connection_id"),
             )
         except ValueError as exc:
             return Response(build_error_envelope(str(exc), status_code=400), status=400)
@@ -167,6 +197,10 @@ def slack_oauth_callback(request):
 class SlackChannelsView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @validated_request(
+        query_serializer=SlackChannelsQuerySerializer,
+        responses={200: SlackChannelsResponseSerializer},
+    )
     def get(self, request, connection_id):
         organization = get_request_organization(request)
         workspace = getattr(request, "workspace", None)
@@ -194,11 +228,7 @@ class SlackChannelsView(APIView):
                 ),
                 status=409,
             )
-        cursor = request.query_params.get("cursor", "")
-        if len(cursor) > 512:
-            return Response(
-                build_error_envelope("Invalid cursor.", status_code=400), status=400
-            )
+        cursor = request.validated_query_data.get("cursor", "")
         try:
             credentials = CredentialManager.decrypt(
                 bytes(connection.encrypted_credentials)

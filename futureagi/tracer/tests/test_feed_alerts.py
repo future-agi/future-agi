@@ -1,5 +1,6 @@
 """Unit and API integration coverage for Error Feed Slack alert rules."""
 
+import uuid
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -27,6 +28,7 @@ from tracer.models.trace_error_analysis import (
     TraceErrorGroup,
 )
 from tracer.services.feed_alerts import events, rules
+from tracer.views.alerts import _error_response
 
 
 @pytest.fixture
@@ -258,6 +260,50 @@ class TestAlertRuleService:
         assert post.call_args.args[1] == "C0123456789"
 
 
+def test_rule_serializer_keys_invalid_trigger_value():
+    serializer = rules.FeedAlertRuleSerializer(
+        data={
+            "name": "Critical issues",
+            "trigger_type": "occurrences_crossed",
+            "trigger_value": 0,
+            "slack_connection_id": "0050b1f4-0b65-4787-bd3f-f4ad4b61e661",
+            "slack_channel_id": "C0123456789",
+        },
+        context={"organization": object(), "workspace": object(), "current": None},
+    )
+    assert not serializer.is_valid()
+    assert list(serializer.errors) == ["trigger_value"]
+
+
+def test_alert_field_error_uses_common_envelope():
+    response = _error_response(
+        rules.FeedAlertError("Choose a Slack channel.", field="slack_channel_id")
+    )
+    assert response.status_code == 400
+    assert response.data["attr"] == "slack_channel_id"
+    assert response.data["details"] == {"slack_channel_id": ["Choose a Slack channel."]}
+
+
+def test_rule_serializer_validates_and_represents_a_rule(monkeypatch):
+    project = object()
+    connection = SimpleNamespace(id=uuid.UUID("0050b1f4-0b65-4787-bd3f-f4ad4b61e661"))
+    monkeypatch.setattr(rules, "_project", lambda *_: project)
+    monkeypatch.setattr(rules, "_connection", lambda *_: connection)
+    monkeypatch.setattr(rules, "_channel", lambda *_args, **_kwargs: "alerts")
+    data = {
+        "name": "Critical issues",
+        "trigger_type": "new_issue",
+        "filters": {"severities": ["critical"]},
+        "slack_connection_id": str(connection.id),
+        "slack_channel_id": "C0123456789",
+    }
+    values = rules._validated(data, organization=object(), workspace=object())
+    assert values["project"] is project
+    assert values["slack_connection"] is connection
+    assert values["slack_channel_name"] == "alerts"
+    assert values["filters"] == {"severities": ["critical"]}
+
+
 class TestAlertPredicate:
     def test_matches_threshold_transition_and_filters(self):
         rule = SimpleNamespace(
@@ -297,6 +343,14 @@ class TestAlertPredicate:
                 "issue_changed",
                 {"status": "for_review"},
                 {"status": "for_review"},
+                False,
+            ),
+            (
+                FeedAlertTrigger.ESCALATING,
+                None,
+                "new_issue",
+                {},
+                {"status": "escalating"},
                 False,
             ),
             (
@@ -423,18 +477,6 @@ class TestAlertRuleValidation:
     def test_filters_reject_unknown_predicates(self):
         with pytest.raises(rules.FeedAlertError, match="Unsupported Error Feed filter"):
             rules._validate_filters({"trace_input": ["secret"]})
-
-
-def test_local_e2e_error_feed_entitlement_never_applies_to_production(settings):
-    from tfc import ee_gating
-
-    settings.E2E_ERROR_FEED_ENABLED = True
-    settings.ENV_TYPE = "local"
-    ee_gating.check_ee_feature(ee_gating.EEFeature.ERROR_FEED, org_id="test-org")
-
-    settings.ENV_TYPE = "prod"
-    with pytest.raises(ee_gating.FeatureUnavailable):
-        ee_gating.check_ee_feature(ee_gating.EEFeature.ERROR_FEED, org_id="test-org")
 
 
 @pytest.mark.django_db

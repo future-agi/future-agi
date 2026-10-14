@@ -12,7 +12,7 @@ class Migration(migrations.Migration):
             "0025_gcpmarketplaceprocessedevent_gcpmarketplaceaccount_and_more",
         ),
         ("integrations", "0005_slack_integration"),
-        ("tracer", "0111_grouping_budget_wait"),
+        ("tracer", "0114_backfill_group_redirects"),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 

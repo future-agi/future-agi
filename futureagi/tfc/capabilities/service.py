@@ -19,7 +19,6 @@ from dataclasses import dataclass
 from typing import Protocol
 
 import structlog
-from django.conf import settings
 
 from tfc.capabilities.registry import (
     FEATURE_REGISTRY,
@@ -85,7 +84,12 @@ def configure(
     cloud_plan_resolver: CloudPlanResolver | None = None,
 ) -> None:
     """Wire resolvers at application startup. Called from AppConfig.ready()."""
-    global _license_resolver, _cloud_plan_resolver, _deployment_flavor, _deployment_location, _configured
+    global \
+        _license_resolver, \
+        _cloud_plan_resolver, \
+        _deployment_flavor, \
+        _deployment_location, \
+        _configured
     _deployment_flavor = flavor
     _deployment_location = location
     _license_resolver = license_resolver
@@ -140,17 +144,6 @@ def check(
             feature_id=feature_id,
             reason_code=DenialReason.FEATURE_UNKNOWN.value,
         )
-
-    # The isolated browser stack exercises Error Feed without a paid license.
-    # Keep its exception in the central capability decision so the API and UI
-    # receive the same answer; it cannot be enabled outside a local deployment.
-    if (
-        feature_id == "error_feed"
-        and org_id
-        and getattr(settings, "ENV_TYPE", "") == "local"
-        and getattr(settings, "E2E_ERROR_FEED_ENABLED", False)
-    ):
-        return CapabilityDecision(allowed=True, feature_id=feature_id)
 
     # 2. OSS baseline → allow (quota enforcement is separate)
     if feature.oss_baseline:

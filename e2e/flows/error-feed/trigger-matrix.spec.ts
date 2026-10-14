@@ -5,6 +5,8 @@ import { POLL } from '../../lib/state-probe';
 import { E2E } from '../../lib/env';
 import { flowAnnotation } from '../../lib/flow-meta';
 
+test.skip(process.env.E2E_STACK === 'standalone', 'Slack fixture image is available in the distributed E2E stack');
+
 // Pinned from frontend/src/pages/dashboard/error-feed/ErrorFeedAlerts.jsx and
 // futureagi/tracer/views/alerts.py.
 const ALERTS_PATH = '/tracer/alerts/';

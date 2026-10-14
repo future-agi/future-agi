@@ -200,6 +200,14 @@ jobs:
             ${{ matrix.stack == 'standalone' && format('type=registry,ref={0}:backend-slim-amd64', env.BUILD_CACHE) || '' }}
           cache-to: ${{ github.event_name == 'push' && format('type=registry,ref={0}:backend,mode=max', env.CACHE_REPO) || '' }}
 
+      - name: Add E2E-only Error Feed fixtures to distributed backend image
+        if: matrix.stack == 'distributed' && env.BUILD_BACKEND == 'true'
+        run: >
+          docker build
+          --build-arg BASE_TAG="$IMAGE_TAG"
+          -t "futureagi/future-agi:$IMAGE_TAG"
+          -f e2e/stack/backend/Dockerfile .
+
       - name: Build fi-collector image from PR code
         if: env.BUILD_BACKEND == 'true'
         uses: docker/build-push-action@v5
@@ -275,7 +283,7 @@ jobs:
           if [ "$E2E_STACK" = standalone ]; then
             services=(postgres clickhouse mock-llm)
           else
-            services=(postgres clickhouse redis minio temporal mock-llm
+            services=(postgres clickhouse redis minio temporal mock-llm mock-slack
               peerdb-server peerdb-flow-worker peerdb-flow-snapshot-worker
               peerdb-flow-api peerdb-catalog peerdb-temporal peerdb-temporal-init
               peerdb-minio)

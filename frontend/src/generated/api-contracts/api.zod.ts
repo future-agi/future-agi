@@ -10784,6 +10784,7 @@ export const IntegrationsConnectionsListResponse = zod.object({
           "cloud_storage",
           "message_queue",
           "linear",
+          "slack",
         ]),
         display_name: zod
           .string()
@@ -10887,6 +10888,7 @@ export const IntegrationsConnectionsCreateBody = zod.object({
     "cloud_storage",
     "message_queue",
     "linear",
+    "slack",
   ]),
   host_url: zod
     .string()
@@ -10970,6 +10972,7 @@ export const IntegrationsConnectionsValidateCredentialsBody = zod.object({
     "cloud_storage",
     "message_queue",
     "linear",
+    "slack",
   ]),
   host_url: zod
     .string()
@@ -11033,6 +11036,34 @@ export const IntegrationsConnectionsValidateCredentialsResponse = zod.object({
   }),
 });
 
+export const IntegrationsConnectionsSlackChannelsListParams = zod.object({
+  connection_id: zod.string(),
+});
+
+export const integrationsConnectionsSlackChannelsListQueryCursorMax = 512;
+
+export const IntegrationsConnectionsSlackChannelsListQueryParams = zod.object({
+  cursor: zod
+    .string()
+    .max(integrationsConnectionsSlackChannelsListQueryCursorMax)
+    .optional(),
+});
+
+export const IntegrationsConnectionsSlackChannelsListResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    channels: zod.array(
+      zod.object({
+        id: zod.string().min(1),
+        name: zod.string().min(1),
+        is_private: zod.boolean(),
+        is_member: zod.boolean(),
+      }),
+    ),
+    next_cursor: zod.string().min(1),
+  }),
+});
+
 /**
  * API endpoints for managing integration connections.
  */
@@ -11069,6 +11100,7 @@ export const IntegrationsConnectionsReadResponse = zod.object({
     "cloud_storage",
     "message_queue",
     "linear",
+    "slack",
   ]),
   display_name: zod
     .string()
@@ -11204,6 +11236,7 @@ export const IntegrationsConnectionsUpdateResponse = zod.object({
       "cloud_storage",
       "message_queue",
       "linear",
+      "slack",
     ]),
     display_name: zod
       .string()
@@ -11340,6 +11373,7 @@ export const IntegrationsConnectionsPartialUpdateResponse = zod.object({
       "cloud_storage",
       "message_queue",
       "linear",
+      "slack",
     ]),
     display_name: zod
       .string()
@@ -11462,6 +11496,7 @@ export const IntegrationsConnectionsPauseResponse = zod.object({
       "cloud_storage",
       "message_queue",
       "linear",
+      "slack",
     ]),
     display_name: zod
       .string()
@@ -11559,6 +11594,7 @@ export const IntegrationsConnectionsResumeResponse = zod.object({
       "cloud_storage",
       "message_queue",
       "linear",
+      "slack",
     ]),
     display_name: zod
       .string()
@@ -11630,6 +11666,17 @@ export const IntegrationsConnectionsSyncNowResponse = zod.object({
     .default(integrationsConnectionsSyncNowResponseStatusDefault),
   result: zod.object({
     message: zod.string().min(1),
+  }),
+});
+
+export const IntegrationsSlackInstallCreateBody = zod.object({
+  connection_id: zod.string().uuid().optional(),
+});
+
+export const IntegrationsSlackInstallCreateResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    authorization_url: zod.string().url().min(1),
   }),
 });
 
@@ -48340,6 +48387,275 @@ export const TelemetryRegisterCreateResponse = zod.object({
   instance_secret: zod.string().min(1),
 });
 
+export const TracerAlertsListQueryParams = zod.object({
+  kind: zod.enum(["metric", "error_feed"]).optional(),
+});
+
+export const TracerAlertsListResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    alerts: zod.array(
+      zod.object({
+        id: zod.string().uuid(),
+        kind: zod.enum(["metric", "error_feed"]),
+        name: zod.string().min(1),
+        enabled: zod.boolean(),
+        project_id: zod.string().uuid().optional(),
+        trigger_type: zod.string().min(1).optional(),
+        trigger_value: zod.object({}).passthrough().optional(),
+        filters: zod.object({}).passthrough().optional(),
+        slack_connection_id: zod.string().uuid().optional(),
+        slack_channel_id: zod.string().min(1).optional(),
+        slack_channel_name: zod.string().min(1).optional(),
+        cooldown_seconds: zod.number().optional(),
+        last_triggered_at: zod.string().datetime({ offset: true }).optional(),
+        health: zod.string().min(1).optional(),
+        failure_reason: zod.string().min(1).optional(),
+        created_at: zod.string().datetime({ offset: true }).optional(),
+        updated_at: zod.string().datetime({ offset: true }).optional(),
+        project: zod.string().uuid().optional(),
+        organization: zod.string().uuid().optional(),
+        workspace: zod.string().uuid().optional(),
+        created_by: zod.string().uuid().optional(),
+        metric_type: zod.string().min(1).optional(),
+        metric: zod.string().optional(),
+        metric_name: zod.string().min(1).optional(),
+        threshold_type: zod.string().min(1).optional(),
+        threshold_operator: zod.string().min(1).optional(),
+        threshold_metric_value: zod.string().optional(),
+        critical_threshold_value: zod.number().optional(),
+        warning_threshold_value: zod.number().optional(),
+        alert_frequency: zod.number().optional(),
+        auto_threshold_time_window: zod.number().optional(),
+        last_checked_at: zod.string().datetime({ offset: true }).optional(),
+        slack_webhook_url: zod.string().url().optional(),
+        slack_notes: zod.string().optional(),
+        is_mute: zod.boolean().optional(),
+        deleted: zod.boolean().optional(),
+        deleted_at: zod.string().datetime({ offset: true }).optional(),
+        logs: zod.array(zod.object({}).passthrough()).optional(),
+        notification_emails: zod.array(zod.string().email().min(1)).optional(),
+      }),
+    ),
+  }),
+});
+
+export const tracerAlertsCreateBodyCooldownSecondsMin = 0;
+
+export const TracerAlertsCreateBody = zod.object({
+  kind: zod.enum(["metric", "error_feed"]).optional(),
+  name: zod.string().min(1).optional(),
+  enabled: zod.boolean().optional(),
+  project_id: zod.string().uuid().optional(),
+  trigger_type: zod.string().min(1).optional(),
+  trigger_value: zod.object({}).passthrough().optional(),
+  filters: zod.object({}).passthrough().optional(),
+  slack_connection_id: zod.string().uuid().optional(),
+  slack_channel_id: zod.string().min(1).optional(),
+  cooldown_seconds: zod
+    .number()
+    .min(tracerAlertsCreateBodyCooldownSecondsMin)
+    .optional(),
+  project: zod.string().uuid().optional(),
+  metric_type: zod.string().min(1).optional(),
+  metric: zod.string().optional(),
+  threshold_type: zod.string().min(1).optional(),
+  threshold_operator: zod.string().min(1).optional(),
+  threshold_metric_value: zod.string().optional(),
+  critical_threshold_value: zod.number().optional(),
+  warning_threshold_value: zod.number().optional(),
+  alert_frequency: zod.number().optional(),
+  auto_threshold_time_window: zod.number().optional(),
+  slack_webhook_url: zod.string().url().optional(),
+  slack_notes: zod.string().optional(),
+  is_mute: zod.boolean().optional(),
+  notification_emails: zod.array(zod.string().email().min(1)).optional(),
+});
+
+export const TracerAlertsErrorFeedTestCreateParams = zod.object({
+  alert_id: zod.string(),
+});
+
+export const TracerAlertsErrorFeedTestCreateBody = zod.object({}).passthrough();
+
+export const TracerAlertsErrorFeedTestCreateResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    sent: zod.boolean(),
+    slack_ts: zod.string().min(1),
+  }),
+});
+
+export const TracerAlertsOptionsListQueryParams = zod.object({
+  kind: zod.enum(["metric", "error_feed"]).optional(),
+});
+
+export const TracerAlertsOptionsListResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    triggers: zod.array(
+      zod.object({
+        value: zod.string().min(1),
+        label: zod.string().min(1),
+      }),
+    ),
+    severities: zod.array(zod.string().min(1)),
+    statuses: zod.array(zod.string().min(1)),
+    sources: zod.array(zod.string().min(1)),
+    projects: zod.array(
+      zod.object({
+        id: zod.string().uuid(),
+        name: zod.string().min(1),
+      }),
+    ),
+  }),
+});
+
+export const TracerAlertsReadParams = zod.object({
+  kind: zod.string(),
+  alert_id: zod.string(),
+});
+
+export const TracerAlertsReadResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    id: zod.string().uuid(),
+    kind: zod.enum(["metric", "error_feed"]),
+    name: zod.string().min(1),
+    enabled: zod.boolean(),
+    project_id: zod.string().uuid().optional(),
+    trigger_type: zod.string().min(1).optional(),
+    trigger_value: zod.object({}).passthrough().optional(),
+    filters: zod.object({}).passthrough().optional(),
+    slack_connection_id: zod.string().uuid().optional(),
+    slack_channel_id: zod.string().min(1).optional(),
+    slack_channel_name: zod.string().min(1).optional(),
+    cooldown_seconds: zod.number().optional(),
+    last_triggered_at: zod.string().datetime({ offset: true }).optional(),
+    health: zod.string().min(1).optional(),
+    failure_reason: zod.string().min(1).optional(),
+    created_at: zod.string().datetime({ offset: true }).optional(),
+    updated_at: zod.string().datetime({ offset: true }).optional(),
+    project: zod.string().uuid().optional(),
+    organization: zod.string().uuid().optional(),
+    workspace: zod.string().uuid().optional(),
+    created_by: zod.string().uuid().optional(),
+    metric_type: zod.string().min(1).optional(),
+    metric: zod.string().optional(),
+    metric_name: zod.string().min(1).optional(),
+    threshold_type: zod.string().min(1).optional(),
+    threshold_operator: zod.string().min(1).optional(),
+    threshold_metric_value: zod.string().optional(),
+    critical_threshold_value: zod.number().optional(),
+    warning_threshold_value: zod.number().optional(),
+    alert_frequency: zod.number().optional(),
+    auto_threshold_time_window: zod.number().optional(),
+    last_checked_at: zod.string().datetime({ offset: true }).optional(),
+    slack_webhook_url: zod.string().url().optional(),
+    slack_notes: zod.string().optional(),
+    is_mute: zod.boolean().optional(),
+    deleted: zod.boolean().optional(),
+    deleted_at: zod.string().datetime({ offset: true }).optional(),
+    logs: zod.array(zod.object({}).passthrough()).optional(),
+    notification_emails: zod.array(zod.string().email().min(1)).optional(),
+  }),
+});
+
+export const TracerAlertsPartialUpdateParams = zod.object({
+  kind: zod.string(),
+  alert_id: zod.string(),
+});
+
+export const tracerAlertsPartialUpdateBodyCooldownSecondsMin = 0;
+
+export const TracerAlertsPartialUpdateBody = zod.object({
+  kind: zod.enum(["metric", "error_feed"]).optional(),
+  name: zod.string().min(1).optional(),
+  enabled: zod.boolean().optional(),
+  project_id: zod.string().uuid().optional(),
+  trigger_type: zod.string().min(1).optional(),
+  trigger_value: zod.object({}).passthrough().optional(),
+  filters: zod.object({}).passthrough().optional(),
+  slack_connection_id: zod.string().uuid().optional(),
+  slack_channel_id: zod.string().min(1).optional(),
+  cooldown_seconds: zod
+    .number()
+    .min(tracerAlertsPartialUpdateBodyCooldownSecondsMin)
+    .optional(),
+  project: zod.string().uuid().optional(),
+  metric_type: zod.string().min(1).optional(),
+  metric: zod.string().optional(),
+  threshold_type: zod.string().min(1).optional(),
+  threshold_operator: zod.string().min(1).optional(),
+  threshold_metric_value: zod.string().optional(),
+  critical_threshold_value: zod.number().optional(),
+  warning_threshold_value: zod.number().optional(),
+  alert_frequency: zod.number().optional(),
+  auto_threshold_time_window: zod.number().optional(),
+  slack_webhook_url: zod.string().url().optional(),
+  slack_notes: zod.string().optional(),
+  is_mute: zod.boolean().optional(),
+  notification_emails: zod.array(zod.string().email().min(1)).optional(),
+});
+
+export const TracerAlertsPartialUpdateResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    id: zod.string().uuid(),
+    kind: zod.enum(["metric", "error_feed"]),
+    name: zod.string().min(1),
+    enabled: zod.boolean(),
+    project_id: zod.string().uuid().optional(),
+    trigger_type: zod.string().min(1).optional(),
+    trigger_value: zod.object({}).passthrough().optional(),
+    filters: zod.object({}).passthrough().optional(),
+    slack_connection_id: zod.string().uuid().optional(),
+    slack_channel_id: zod.string().min(1).optional(),
+    slack_channel_name: zod.string().min(1).optional(),
+    cooldown_seconds: zod.number().optional(),
+    last_triggered_at: zod.string().datetime({ offset: true }).optional(),
+    health: zod.string().min(1).optional(),
+    failure_reason: zod.string().min(1).optional(),
+    created_at: zod.string().datetime({ offset: true }).optional(),
+    updated_at: zod.string().datetime({ offset: true }).optional(),
+    project: zod.string().uuid().optional(),
+    organization: zod.string().uuid().optional(),
+    workspace: zod.string().uuid().optional(),
+    created_by: zod.string().uuid().optional(),
+    metric_type: zod.string().min(1).optional(),
+    metric: zod.string().optional(),
+    metric_name: zod.string().min(1).optional(),
+    threshold_type: zod.string().min(1).optional(),
+    threshold_operator: zod.string().min(1).optional(),
+    threshold_metric_value: zod.string().optional(),
+    critical_threshold_value: zod.number().optional(),
+    warning_threshold_value: zod.number().optional(),
+    alert_frequency: zod.number().optional(),
+    auto_threshold_time_window: zod.number().optional(),
+    last_checked_at: zod.string().datetime({ offset: true }).optional(),
+    slack_webhook_url: zod.string().url().optional(),
+    slack_notes: zod.string().optional(),
+    is_mute: zod.boolean().optional(),
+    deleted: zod.boolean().optional(),
+    deleted_at: zod.string().datetime({ offset: true }).optional(),
+    logs: zod.array(zod.object({}).passthrough()).optional(),
+    notification_emails: zod.array(zod.string().email().min(1)).optional(),
+  }),
+});
+
+export const TracerAlertsDeleteParams = zod.object({
+  kind: zod.string(),
+  alert_id: zod.string(),
+});
+
+export const TracerAlertsDeleteResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    id: zod.string().uuid(),
+    deleted: zod.boolean(),
+  }),
+});
+
 export const tracerBulkAnnotationCreateBodyRecordsItemAnnotationsDefault = [];
 export const tracerBulkAnnotationCreateBodyRecordsItemNotesDefault = [];
 
@@ -71468,116 +71784,4 @@ export const V1SelfHostedActivationsCreateResponse = zod.object({
   allowed_services: zod.array(zod.string().min(1)),
   allowed_models: zod.array(zod.string().min(1)),
   scope: zod.enum(["oss", "enterprise"]),
-});
-
-export const IntegrationsConnectionsSlackChannelsListParams = zod.object({
-  connection_id: zod.string(),
-});
-
-export const IntegrationsSlackInstallCreateBody = zod.object({
-  connection_id: zod.string().uuid().optional(),
-});
-
-export const tracerAlertsCreateBodyCooldownSecondsMin = 0;
-
-export const TracerAlertsCreateBody = zod.object({
-  kind: zod.enum(["metric", "error_feed"]).optional(),
-  name: zod.string().min(1).optional(),
-  enabled: zod.boolean().optional(),
-  project_id: zod.string().uuid().optional(),
-  trigger_type: zod.string().min(1).optional(),
-  trigger_value: zod.object({}).passthrough().optional(),
-  filters: zod.object({}).passthrough().optional(),
-  slack_connection_id: zod.string().uuid().optional(),
-  slack_channel_id: zod.string().min(1).optional(),
-  cooldown_seconds: zod
-    .number()
-    .min(tracerAlertsCreateBodyCooldownSecondsMin)
-    .optional(),
-  project: zod.string().uuid().optional(),
-  metric_type: zod.string().min(1).optional(),
-  threshold_type: zod.string().min(1).optional(),
-  threshold_operator: zod.string().min(1).optional(),
-  critical_threshold_value: zod.number().optional(),
-  warning_threshold_value: zod.number().optional(),
-  notification_emails: zod.array(zod.string().email().min(1)).optional(),
-});
-
-export const TracerAlertsErrorFeedTestCreateParams = zod.object({
-  alert_id: zod.string(),
-});
-
-export const TracerAlertsErrorFeedTestCreateBody = zod.object({}).passthrough();
-
-export const TracerAlertsErrorFeedTestCreateResponse = zod.object({
-  status: zod.boolean(),
-  result: zod.object({
-    sent: zod.boolean(),
-    slack_ts: zod.string().min(1),
-  }),
-});
-
-export const TracerAlertsReadParams = zod.object({
-  kind: zod.string(),
-  alert_id: zod.string(),
-});
-
-export const TracerAlertsPartialUpdateParams = zod.object({
-  kind: zod.string(),
-  alert_id: zod.string(),
-});
-
-export const tracerAlertsPartialUpdateBodyCooldownSecondsMin = 0;
-
-export const TracerAlertsPartialUpdateBody = zod.object({
-  kind: zod.enum(["metric", "error_feed"]).optional(),
-  name: zod.string().min(1).optional(),
-  enabled: zod.boolean().optional(),
-  project_id: zod.string().uuid().optional(),
-  trigger_type: zod.string().min(1).optional(),
-  trigger_value: zod.object({}).passthrough().optional(),
-  filters: zod.object({}).passthrough().optional(),
-  slack_connection_id: zod.string().uuid().optional(),
-  slack_channel_id: zod.string().min(1).optional(),
-  cooldown_seconds: zod
-    .number()
-    .min(tracerAlertsPartialUpdateBodyCooldownSecondsMin)
-    .optional(),
-  project: zod.string().uuid().optional(),
-  metric_type: zod.string().min(1).optional(),
-  threshold_type: zod.string().min(1).optional(),
-  threshold_operator: zod.string().min(1).optional(),
-  critical_threshold_value: zod.number().optional(),
-  warning_threshold_value: zod.number().optional(),
-  notification_emails: zod.array(zod.string().email().min(1)).optional(),
-});
-
-export const tracerAlertsPartialUpdateResponseCooldownSecondsMin = 0;
-
-export const TracerAlertsPartialUpdateResponse = zod.object({
-  kind: zod.enum(["metric", "error_feed"]).optional(),
-  name: zod.string().min(1).optional(),
-  enabled: zod.boolean().optional(),
-  project_id: zod.string().uuid().optional(),
-  trigger_type: zod.string().min(1).optional(),
-  trigger_value: zod.object({}).passthrough().optional(),
-  filters: zod.object({}).passthrough().optional(),
-  slack_connection_id: zod.string().uuid().optional(),
-  slack_channel_id: zod.string().min(1).optional(),
-  cooldown_seconds: zod
-    .number()
-    .min(tracerAlertsPartialUpdateResponseCooldownSecondsMin)
-    .optional(),
-  project: zod.string().uuid().optional(),
-  metric_type: zod.string().min(1).optional(),
-  threshold_type: zod.string().min(1).optional(),
-  threshold_operator: zod.string().min(1).optional(),
-  critical_threshold_value: zod.number().optional(),
-  warning_threshold_value: zod.number().optional(),
-  notification_emails: zod.array(zod.string().email().min(1)).optional(),
-});
-
-export const TracerAlertsDeleteParams = zod.object({
-  kind: zod.string(),
-  alert_id: zod.string(),
 });
