@@ -55,6 +55,12 @@ GROUPING_POLICY_VERSION: Final[str] = "f6-minilm/v1"
 # their original version; feature representation is unchanged.
 SAMPLED_GROUPING_POLICY_VERSION: Final[str] = "f6-minilm-sampled/v2"
 
+# Which findings of a report become Feed occurrences. Stamped on each report at
+# publish and never rewritten. A report without it keeps the legacy gate
+# (failure outcome and a violated requirement), so already grouped reports keep
+# their occurrence list and source digest.
+GROUPING_GATE_VERSION: Final[str] = "unrecovered/v2"
+
 # Post-grouping impact assessment. Independent of F6 membership decisions.
 # Bump for rubric, evidence selection, or model changes; old receipts retain
 # their original meaning. No count-based severity floor in this policy.
