@@ -117,7 +117,7 @@ export const CustomTreeNode = ({
             }}
           >
             {/* Duration */}
-            <Box
+            {duration != null && Number.isFinite(duration) && <Box
               component="span"
               sx={{
                 display: "flex",
@@ -137,9 +137,9 @@ export const CustomTreeNode = ({
               <Typography color="text.disabled" typography={"s3"}>
                 {formatMs(duration ?? 0)}
               </Typography>
-            </Box>
+            </Box>}
             {/* Tokens */}
-            <Box
+            {tokens != null && <Box
               component="span"
               sx={{
                 display: "flex",
@@ -157,12 +157,12 @@ export const CustomTreeNode = ({
                 src="/assets/icons/ic_tokens.svg"
               />
               <Typography color="text.disabled" typography={"s3"}>
-                {(tokens ?? 0).toLocaleString()}
+                {tokens.toLocaleString()}
               </Typography>
             </Box>
 
             {/* Cost */}
-            <Box
+            {cost != null && <Box
               component="span"
               sx={{
                 display: "flex",
@@ -180,9 +180,9 @@ export const CustomTreeNode = ({
                 src="/assets/icons/components/ic_cost.svg"
               />
               <Typography color="text.disabled" typography={"s3"}>
-                {(cost ?? 0).toFixed(4)}
+                {cost.toFixed(4)}
               </Typography>
-            </Box>
+            </Box>}
           </Box>
         </Box>
       </Stack>
