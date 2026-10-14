@@ -137481,6 +137481,37 @@
                 }
             }
         },
+        "GroupDistinctCounts": {
+            "required": [
+                "personas",
+                "situations",
+                "outcomes",
+                "branches"
+            ],
+            "type": "object",
+            "properties": {
+                "personas": {
+                    "title": "Personas",
+                    "description": "Distinct personas among the group's calls on this page.",
+                    "type": "integer"
+                },
+                "situations": {
+                    "title": "Situations",
+                    "description": "Distinct situations among the group's calls on this page.",
+                    "type": "integer"
+                },
+                "outcomes": {
+                    "title": "Outcomes",
+                    "description": "Distinct ideal outcomes among the group's calls on this page.",
+                    "type": "integer"
+                },
+                "branches": {
+                    "title": "Branches",
+                    "description": "Distinct conversation branches among the group's calls on this page.",
+                    "type": "integer"
+                }
+            }
+        },
         "RunGroup": {
             "required": [
                 "total",
@@ -137494,7 +137525,8 @@
                 "key",
                 "label",
                 "result_ids",
-                "aggregates"
+                "aggregates",
+                "distinct"
             ],
             "type": "object",
             "properties": {
@@ -137545,6 +137577,9 @@
                 },
                 "aggregates": {
                     "$ref": "#/definitions/GroupAggregates"
+                },
+                "distinct": {
+                    "$ref": "#/definitions/GroupDistinctCounts"
                 }
             }
         },
