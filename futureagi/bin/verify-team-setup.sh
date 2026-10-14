@@ -169,7 +169,7 @@ check_file() {
     fi
 }
 
-check_file ".pre-commit-config.yaml"
+check_file "../.pre-commit-config.yaml"
 check_file "pyproject.toml"
 check_file "requirements.txt"
 
