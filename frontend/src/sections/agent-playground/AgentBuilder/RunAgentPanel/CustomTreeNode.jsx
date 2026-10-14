@@ -159,7 +159,7 @@ export const CustomTreeNode = ({
               <Typography color="text.disabled" typography={"s3"}>
                 {tokens.toLocaleString()}
               </Typography>
-            </Box>
+            </Box>}
 
             {/* Cost */}
             {cost != null && <Box
