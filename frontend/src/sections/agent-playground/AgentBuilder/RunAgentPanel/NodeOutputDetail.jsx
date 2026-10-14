@@ -13,6 +13,7 @@ import { AgGridReact } from "ag-grid-react";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { useGetNodeExecutionDetail } from "src/api/agent-playground/agent-playground";
 import CustomJsonViewer from "src/components/custom-json-viewer/CustomJsonViewer";
+import { formatMs } from "src/utils/utils";
 
 const tryParseJson = (str) => {
   if (typeof str !== "string") return null;
@@ -527,7 +528,7 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
           </Typography>
           {showElapsed && (
             <Typography typography="s2" color="text.secondary">
-              Duration: {(Number(elapsedSeconds) * 1000).toLocaleString(undefined, { maximumFractionDigits: 0 })} ms
+              Duration: {formatMs(Number(elapsedSeconds) * 1000)}
             </Typography>
           )}
         </Box>
