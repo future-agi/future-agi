@@ -7,8 +7,15 @@ export const convertToISO = (dateArray) => {
 };
 
 export const normalizeTimestamp = (timestamp) => {
-  if (!timestamp) return timestamp;
+  if (timestamp == null || timestamp === "") return timestamp;
+  if (typeof timestamp === "number") return timestamp;
+  if (typeof timestamp !== "string") return NaN;
 
-  // Remove common timezone patterns: +00:00, -05:00, Z, etc.
-  return timestamp.replace(/([+-]\d{2}:\d{2}|Z)$/, "");
+  const value = timestamp.trim();
+  // Naive server timestamps have historically represented UTC. Preserve that
+  // contract while respecting an explicit Z or numeric timezone offset.
+  const hasOffset = /(?:Z|[+-]\\d{2}:?\\d{2})$/i.test(value);
+  const isoValue = hasOffset ? value : `${value.replace(" ", "T")}Z`;
+  const parsed = Date.parse(isoValue);
+  return Number.isFinite(parsed) ? parsed : NaN;
 };
