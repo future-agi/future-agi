@@ -14,7 +14,7 @@ export const normalizeTimestamp = (timestamp) => {
   const value = timestamp.trim();
   // Naive server timestamps have historically represented UTC. Preserve that
   // contract while respecting an explicit Z or numeric timezone offset.
-  const hasOffset = /(?:Z|[+-]\\d{2}:?\\d{2})$/i.test(value);
+  const hasOffset = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(value);
   const isoValue = hasOffset ? value : `${value.replace(" ", "T")}Z`;
   const parsed = Date.parse(isoValue);
   return Number.isFinite(parsed) ? parsed : NaN;
