@@ -960,7 +960,7 @@ class EvaluationRunner:
                 self.version_number = self._resolved_version.version_number
 
         self.user_eval_metric.status = StatusType.RUNNING.value
-        self.user_eval_metric.save(update_fields=["status"])
+        self.user_eval_metric.save(update_fields=["status", "updated_at"])
 
     def _get_effective_eval_config(self):
         """Return template config with the resolved version snapshot applied.
