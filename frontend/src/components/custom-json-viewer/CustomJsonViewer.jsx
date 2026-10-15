@@ -7,16 +7,22 @@ import { Dialog, DialogContent, useTheme } from "@mui/material";
 import { jsonToDisplayString } from "src/utils/utils";
 import { useDebounce } from "src/hooks/use-debounce";
 import FormSearchField from "../FormSearchField/FormSearchField";
+import { InlineAudio } from "src/components/inline-audio/inline-row-audio";
+import { sanitizeSrc, isImageValue, isAudioValue } from "./media-utils";
 import _ from "lodash";
 
 const MiniImageRender = (props) => {
   const [open, setOpen] = useState(false);
+  const safeSrc = sanitizeSrc(props.value);
+
+  if (!safeSrc) return <span>{props.value}</span>;
+
   return (
     <>
       <Image
         width={150}
-        src={props.value}
-        alt={props.value}
+        src={safeSrc}
+        alt={safeSrc}
         style={{ display: "inline-block" }}
         onClick={() => setOpen(true)}
       />
@@ -26,7 +32,7 @@ const MiniImageRender = (props) => {
             bgcolor: "background.paper",
           }}
         >
-          <img src={props.value} alt="full" style={{ width: "100%" }} />
+          <img src={safeSrc} alt="full" style={{ width: "100%" }} />
         </DialogContent>
       </Dialog>
     </>
@@ -37,17 +43,26 @@ MiniImageRender.propTypes = {
   value: PropTypes.string,
 };
 
+const MiniAudioRender = (props) => {
+  const safeSrc = sanitizeSrc(props.value);
+
+  if (!safeSrc) return <span>{props.value}</span>;
+
+  return <InlineAudio src={safeSrc} />;
+};
+
+MiniAudioRender.propTypes = {
+  value: PropTypes.string,
+};
+
 const imageType = defineDataType({
-  is: (value) => {
-    if (typeof value !== "string") return false;
-    try {
-      const isBase64 = value.startsWith("data:image");
-      return isBase64;
-    } catch {
-      return false;
-    }
-  },
+  is: (value) => isImageValue(value) && !!sanitizeSrc(value),
   Component: MiniImageRender,
+});
+
+const audioType = defineDataType({
+  is: (value) => isAudioValue(value) && !!sanitizeSrc(value),
+  Component: MiniAudioRender,
 });
 
 // Custom comparison function using lodash isEqual
@@ -164,7 +179,7 @@ const CustomJsonViewer = ({
       collapseStringsAfterLength={1000}
       highlightUpdates={false}
       editable={false}
-      valueTypes={[imageType]}
+      valueTypes={[imageType, audioType]}
       // this set same as Typography s1 as it is used for normal text
       sx={{ fontSize: "14px", lineHeight: "22px" }}
       {...rest}
