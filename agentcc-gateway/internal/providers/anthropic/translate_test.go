@@ -1927,7 +1927,6 @@ func TestStreamParse_ServerToolUseDoesNotCorruptAnInFlightToolCall(t *testing.T)
 	}
 }
 
-
 func TestTranslateRequest_ToolChoiceAllowedToolsSingle(t *testing.T) {
 	req := &models.ChatCompletionRequest{
 		Model: "claude-3-5-sonnet",
@@ -1959,8 +1958,8 @@ func TestTranslateRequest_ToolChoiceAllowedToolsSingle(t *testing.T) {
 	if len(ar.Tools) != 1 {
 		t.Fatalf("len(ar.Tools) = %d, want 1", len(ar.Tools))
 	}
-	if ar.ToolChoice == nil || ar.ToolChoice.Type != "tool" || ar.ToolChoice.Name != "tool_b" {
-		t.Fatalf("ar.ToolChoice = %+v, want tool tool_b", ar.ToolChoice)
+	if ar.ToolChoice == nil || ar.ToolChoice.Type != "auto" {
+		t.Fatalf("ar.ToolChoice = %+v, want auto", ar.ToolChoice)
 	}
 }
 

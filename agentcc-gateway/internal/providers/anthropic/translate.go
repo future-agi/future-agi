@@ -521,6 +521,9 @@ func translateToolChoice(raw json.RawMessage) (*anthropicToolChoice, error) {
 			}
 		}
 		if len(names) == 1 {
+			if at.AllowedTools.Mode != "required" {
+				return &anthropicToolChoice{Type: "auto"}, nil
+			}
 			return &anthropicToolChoice{Type: "tool", Name: names[0]}, nil
 		}
 		if at.AllowedTools.Mode == "required" {
