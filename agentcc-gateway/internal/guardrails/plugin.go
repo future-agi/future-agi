@@ -54,26 +54,6 @@ func NewPlugin(engine *Engine, registry map[string]Guardrail, dynamicFactory Dyn
 	}
 }
 
-// NewPlugin creates a new guardrail pipeline plugin.
-func NewPlugin(engine *Engine, registry map[string]Guardrail, dynamicFactory DynamicFactory, policyStore *policy.Store, tenantStore *tenant.Store) *GuardrailPlugin {
-	timeout := 30 * time.Second
-	failOpen := false
-	if engine != nil {
-		timeout = engine.DefaultTimeout()
-		failOpen = engine.FailOpen()
-	}
-	return &GuardrailPlugin{
-		engine:         engine,
-		registry:       registry,
-		dynamicFactory: dynamicFactory,
-		policyStore:    policyStore,
-		tenantStore:    tenantStore,
-		failOpen:       failOpen,
-		defaultTimeout: timeout,
-		dynamicCache:   make(map[string]map[string]Guardrail),
-	}
-}
-
 func (p *GuardrailPlugin) Name() string  { return "guardrails" }
 func (p *GuardrailPlugin) Priority() int { return 50 } // After auth (20), RBAC (30), budget (40). Before cache (200).
 
