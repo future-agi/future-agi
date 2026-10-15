@@ -14,6 +14,7 @@ from tracer.models.trace_error_analysis import ErrorClusterTraces
 from tracer.models.trace_grouping import (
     TraceGroupingAttempt,
     TraceGroupingCall,
+    TraceGroupingConstraint,
     TraceGroupingDecision,
     TraceGroupingFeature,
     TraceGroupingOutbox,
@@ -909,6 +910,73 @@ def test_claim_reads_only_window_members_and_is_deterministic(
     )
     again = claim_grouping_work(worker_id="window-only", limit=1)["claims"][0]
     assert again["candidate_digest"] == claim["candidate_digest"]
+
+
+@override_settings(
+    ERROR_FEED_GROUPING_ENABLED=True,
+    ERROR_FEED_GROUPING_ALL_PROJECTS=True,
+    ERROR_FEED_GROUPING_DEBOUNCE_SECONDS=0,
+    ERROR_FEED_GROUPING_PROJECT_BUDGET_USD="10",
+    ERROR_FEED_GROUPING_WORK_BUDGET_USD="10",
+    ERROR_FEED_GROUPING_TENANT_BUDGET_USD="10",
+)
+def test_blocked_neighbours_are_refilled_from_the_next_eligible_match(
+    observe_project, monkeypatch
+):
+    window = 2 * context.NEIGHBOURS_PER_VIEW
+    grouped = _grouped_issues(observe_project, monkeypatch, window + 1)
+    pending = _prepare_runtime(observe_project, monkeypatch, identity=uuid.uuid4())
+    pending_id = str(pending.findings.get().id)
+    scope = TraceGroupingScope.no_workspace_objects.get(project=observe_project)
+    # The pending finding is excluded from the issues of its 40 nearest
+    # neighbours; the only eligible match is 41st.
+    for issue, _ in grouped[:window]:
+        TraceGroupingConstraint.no_workspace_objects.create(
+            scope=scope,
+            kind="exclude_issue",
+            first_finding_id=pending_id,
+            issue_id=issue.cluster_id,
+        )
+    order = [str(finding.id) for _, finding in grouped]
+    calls = []
+
+    def nearest(self, **kwargs):
+        calls.append(kwargs)
+        allowed = {row["feature_digest"] for row in kwargs["candidates"]}
+        answer = {}
+        for row in kwargs["pending"]:
+            ranked = [
+                item
+                for item in order
+                if hashlib.sha256(f"{item}:{row['view']}".encode()).hexdigest()
+                in allowed
+            ]
+            answer[(row["occurrence_id"], row["view"])] = ranked[: kwargs["limit"]]
+        return answer
+
+    monkeypatch.setattr(FakeFeatureStore, "candidate_occurrences", nearest)
+
+    claim = claim_grouping_work(worker_id="refill", limit=1)["claims"][0]
+
+    match, _ = grouped[window]
+    assert [item["issue_id"] for item in claim["candidate_window"]["issues"]] == [
+        str(match.cluster_id)
+    ]
+    # The second read runs without the excluded issues, and the excluded
+    # issues are still reported as omitted.
+    first, second = calls
+    assert {(row["occurrence_id"], row["view"]) for row in second["pending"]} == {
+        (row["occurrence_id"], row["view"]) for row in first["pending"]
+    }
+    assert len(second["candidates"]) < len(first["candidates"])
+    assert not {str(row["finding__cluster_id"]) for row in second["candidates"]} & {
+        str(issue.cluster_id) for issue, _ in grouped[:window]
+    }
+    assert {
+        item["issue_id"]
+        for item in claim["candidate_window"]["omitted_candidates"]
+        if item["reason"] == "hard_constraint_or_no_top20_view_hit"
+    } == {str(issue.cluster_id) for issue, _ in grouped[:window]}
 
 
 @override_settings(
