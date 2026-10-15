@@ -6,6 +6,8 @@ import { START_ID, END_ID } from "src/components/AgentGraph/layoutUtils";
 import useResolvedExecution from "../../hooks/useResolvedExecution";
 import { useWorkflowRunStoreShallow } from "../../store";
 import NodeOutputDetail from "./NodeOutputDetail";
+import NodeOutputListView from "./NodeOutputListView";
+import { buildExecutedNodeTree } from "./executionList";
 import ResizablePanels from "src/components/resizablePanels/ResizablePanels";
 import PanelErrorBoundary from "../../components/PanelErrorBoundary";
 
@@ -58,6 +60,8 @@ export default function RunAgentPanel({
       setSelectedNodeId(lastNode.id);
     }
   }, [executionData, selectedNodeId, isRunning]);
+
+  const executedNodeTree = buildExecutedNodeTree(executionData?.nodes);
 
   const { nodeExecutionId: selectedNodeExecutionId, resolvedExecutionId } =
     useResolvedExecution({ selectedNodeId, executionData, executionId });
@@ -163,10 +167,21 @@ export default function RunAgentPanel({
             name="NodeOutputDetail"
             onRetry={() => setSelectedNodeId(null)}
           >
-            <NodeOutputDetail
-              executionId={resolvedExecutionId}
-              nodeExecutionId={selectedNodeExecutionId}
-            />
+            <Box sx={{ display: "flex", height: "100%", minWidth: 0 }}>
+              {executedNodeTree.length > 0 && (
+                <NodeOutputListView
+                  nodes={executedNodeTree}
+                  selectedNodeId={selectedNodeId}
+                  onNodeSelect={setSelectedNodeId}
+                />
+              )}
+              <Box sx={{ flex: 1, minWidth: 0 }}>
+                <NodeOutputDetail
+                  executionId={resolvedExecutionId}
+                  nodeExecutionId={selectedNodeExecutionId}
+                />
+              </Box>
+            </Box>
           </PanelErrorBoundary>
         }
       />

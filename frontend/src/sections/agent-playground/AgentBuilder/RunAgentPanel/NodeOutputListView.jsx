@@ -19,9 +19,16 @@ export default function NodeOutputListView({
   const [searchQuery, setSearchQuery] = useState("");
   const filteredNodes = useMemo(() => {
     if (!nodes?.length) return [];
-    return nodes.filter((node) =>
-      (node?.name ?? "").toLowerCase().includes(searchQuery.toLowerCase()),
-    );
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return nodes;
+    const filterTree = (items) => items.flatMap((node) => {
+      const children = filterTree(node.children ?? []);
+      if ((node.name ?? "").toLowerCase().includes(query) || children.length) {
+        return [{ ...node, ...(node.children ? { children } : {}) }];
+      }
+      return [];
+    });
+    return filterTree(nodes);
   }, [nodes, searchQuery]);
   return (
     <Box
