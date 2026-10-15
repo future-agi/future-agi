@@ -6,9 +6,9 @@ import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
 
 import {
-  ADAPTATION_STAGES,
+  ADAPTATION_STEPS,
   BINDING_MODE_LABELS,
-  adaptationStage,
+  adaptationProgress,
   readable,
   shortDigest,
 } from "./harnessShared";
@@ -20,19 +20,18 @@ const GLYPHS = {
   pending: { icon: "solar:record-circle-linear", color: "text.secondary" },
 };
 
-// The adaptation checklist shown on an adaptation job (environment-releases.md §7.5): six
-// stages, then a link to the environment it composed.
+// The adaptation checklist shown on an adaptation job (environment-releases.md §7.5): the steps
+// the builder has done, then a link to the environment it composed.
 export default function AdaptationProgress({ job, conversation, stage }) {
   const navigate = useNavigate();
-  const current = adaptationStage(conversation);
-  const currentIndex = ADAPTATION_STAGES.indexOf(current);
+  const done = adaptationProgress(conversation);
+  const currentIndex = ADAPTATION_STEPS.findIndex((step) => !done.has(step.key));
   const result = job?.metadata?.adaptation_result;
   const completed = stage === "completed";
   const failed = stage === "failed" || stage === "canceled";
 
   const stateOf = (index) => {
-    if (completed) return "done";
-    if (index < currentIndex) return "done";
+    if (completed || done.has(ADAPTATION_STEPS[index].key)) return "done";
     if (index === currentIndex) return failed ? "failed" : "active";
     return "pending";
   };
@@ -44,10 +43,10 @@ export default function AdaptationProgress({ job, conversation, stage }) {
         agent
       </Typography>
       <Stack spacing={0.75}>
-        {ADAPTATION_STAGES.map((name, index) => {
+        {ADAPTATION_STEPS.map((step, index) => {
           const state = stateOf(index);
           return (
-            <Stack key={name} direction="row" spacing={1} alignItems="center">
+            <Stack key={step.key} direction="row" spacing={1} alignItems="center">
               <Iconify
                 icon={GLYPHS[state].icon}
                 color={GLYPHS[state].color}
@@ -58,7 +57,7 @@ export default function AdaptationProgress({ job, conversation, stage }) {
                 color={state === "pending" ? "text.secondary" : "text.primary"}
                 fontWeight={state === "active" ? 600 : 400}
               >
-                {readable(name)}
+                {step.label}
               </Typography>
             </Stack>
           );

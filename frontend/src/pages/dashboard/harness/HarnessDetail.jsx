@@ -1594,7 +1594,7 @@ export default function HarnessDetail() {
                               </Typography>
                             </Stack>
                           )}
-                          {["question", "confirmation"].includes(item.kind) && (
+                          {item.kind === "question" && (
                             <ConversationPrompt
                               item={item}
                               answered={answeredIds.has(

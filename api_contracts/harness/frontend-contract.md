@@ -204,16 +204,15 @@ where the frontend uses them.
 
 | Route / message | Shape | Frontend |
 |---|---|---|
-| `GET harness-releases/` | §7.6 | Create environment page: "Prebuilt environments" gallery (`pages/dashboard/harness/ReleaseGallery.jsx`) |
+| `GET harness-releases/` | §7.6 | Prebuilt environments page: released-environment gallery at the top (`pages/dashboard/harness/ReleaseGallery.jsx` in `PrebuiltEnvironmentsBrowse.jsx`) |
 | `POST harness-adaptations/` | §7.6 | "Use with my agent" dialog, *Adapt to my agent*; navigates to the returned job's detail page |
 | `POST harness-compositions/` | §7.6 | Same dialog, *Compose without adaptation*; navigates to the composed environment |
-| `stage_changed` with an adaptation stage | §7.5 | Job detail: adaptation checklist (`AdaptationProgress.jsx`); `job.metadata.adaptation_result.composition_id` links to the environment |
-| `question` message (`question_requested`) | §7.5 | Option buttons; the answer is `kind: "user_response"`, `reply_to` the question, `payload: {value}` |
-| `confirmation` message (`confirmation_requested`) | §7.5 | Proposal preview with Approve/Reject; the answer is `kind: "approval"`, `reply_to` the proposal, `payload: {approved}` |
-| `GET harness-environments/{id}/` `composition` | §7.6 | Environment workspace: Alignment tab, header summary, labels in the run repeats pickers |
+| `tool_result` events of the adaptation tools | §7.5 | Job detail: adaptation checklist (`AdaptationProgress.jsx`): binding drafted, proved, conflicts reviewed, sealed; `job.metadata.adaptation_result.composition_id` links to the environment |
+| `question` message (`question_requested`) | §7.5 | Option buttons (the builder's approval of the binding is one); the answer is `kind: "user_response"`, `reply_to` the question, `payload: {value}` |
+| `GET harness-environments/{id}/` `composition` | §7.6 | Environment workspace: Alignment tab (including policy conflicts), header summary, labels in the run repeats pickers |
 | `GET harness-environments/{id}/runs/{run_id}/report/?baseline=` | §7.7 | Run detail: Report tab; `run_id` and `baseline` are test execution ids |
 
-A question or proposal counts as answered once a user message replies to it;
+A question counts as answered once a user message replies to it;
 its buttons stay visible and disabled.
 
 ## Not in v0
